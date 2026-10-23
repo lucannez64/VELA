@@ -88,15 +88,15 @@ pub fn epoch_adoption_decision_matches_spec(
     decision: AdoptionDecision,
 ) -> bool {
     if !facts.rotation_state_active {
-        decision == AdoptionDecision::Reject
+        matches!(decision, AdoptionDecision::Reject)
     } else if facts.server_epoch < INITIAL_EPOCH || facts.local_epoch < INITIAL_EPOCH {
-        decision == AdoptionDecision::Reject
+        matches!(decision, AdoptionDecision::Reject)
     } else if facts.server_epoch == facts.local_epoch {
-        decision == AdoptionDecision::Keep
+        matches!(decision, AdoptionDecision::Keep)
     } else if !facts.server_epoch_is_next {
-        decision == AdoptionDecision::Reject
+        matches!(decision, AdoptionDecision::Reject)
     } else if epoch_adoption_is_fetch_pending(facts) {
-        decision == AdoptionDecision::FetchCapsule
+        matches!(decision, AdoptionDecision::FetchCapsule)
     } else if epoch_adoption_is_authorized(facts) {
         matches!(
             decision,
@@ -104,7 +104,7 @@ pub fn epoch_adoption_decision_matches_spec(
                 if permit.epoch() == facts.server_epoch && permit.binds_capsule_epoch()
         )
     } else {
-        decision == AdoptionDecision::Reject
+        matches!(decision, AdoptionDecision::Reject)
     }
 }
 
@@ -295,7 +295,7 @@ pub fn merge_action_matches_spec(facts: ItemMergeFacts, action: MergeAction) -> 
     } else {
         MergeAction::KeepLocal
     };
-    action == expected
+    same_merge_action(action, expected)
 }
 
 #[cfg_attr(hax, hax_lib::ensures(|action| {
@@ -449,5 +449,33 @@ mod tests {
             local_modified_by_this_device: true,
             already_conflicted: false,
         }));
+    }
+}
+
+fn same_merge_action(a: MergeAction, b: MergeAction) -> bool {
+    matches!(
+        (a, b),
+        (MergeAction::StayDeleted, MergeAction::StayDeleted)
+            | (MergeAction::AcceptServer, MergeAction::AcceptServer)
+            | (MergeAction::Conflict, MergeAction::Conflict)
+            | (MergeAction::KeepLocal, MergeAction::KeepLocal)
+    )
+}
+#[cfg(test)]
+mod structural_equality_tests {
+    use super::*;
+    #[test]
+    fn structural_merge_equality_matches_derived_equality_exhaustively() {
+        let values = [
+            MergeAction::StayDeleted,
+            MergeAction::AcceptServer,
+            MergeAction::Conflict,
+            MergeAction::KeepLocal,
+        ];
+        for a in values {
+            for b in values {
+                assert_eq!(same_merge_action(a, b), a == b);
+            }
+        }
     }
 }

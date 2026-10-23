@@ -6,7 +6,7 @@ begin
   with a malicious server.
 
   Code: libVELA/vela-crypto/src/share_envelope.rs (format, signing, opening)
-        libVELA/vela-client-share-policy (admission decision, hax/F*-verified)
+        libVELA/vela-client-share-policy (admission decision, hax/F* proof target)
         desktopVELA/vela-desktop-core/src/sharing.rs, the Android and Apple
         bridges (callers).
 
@@ -70,7 +70,7 @@ rule Reveal_DeviceKey:
 
 rule Reveal_ShareKey:
     [ !ShareKey(B, dk) ]
-  --[ ShareKeyRevealed(B) ]->
+  --[ ShareKeyRevealed(B, pk(dk)) ]->
     [ Out(dk) ]
 
 /* ── Sender (seal_signed_item) ────────────────────────────────────────────── */
@@ -80,18 +80,24 @@ rule Sender_FirstSend:
         sig    = sign(<'vela share item v2', header, ~item>, sk)
     in
     [ !DeviceKey($S, dev, sk), !ShareKey($B, dk), Fr(~lineage), Fr(~item) ]
-  --[ Sent($S, pk(sk), $B, ~lineage, %1, ~item), SecretItem(~item, $B) ]->
-    [ SenderShare($S, dev, sk, $B, dk, ~lineage, %1),
+  --[ Sent($S, pk(sk), $B, ~lineage, %1, ~item), SecretItem(~item, $B, pk(dk)) ]->
+    [ !SenderLineage($S, dev, $B, dk, ~lineage),
       Out(aenc(<'VSE2', header, ~item, sig>, pk(dk))) ]
 
+// Conservative overapproximation: production increments a checked u64 counter.
+// Here a sender may sign any positive revision in its own lineage, in any
+// order. This gives the adversary more signed messages; it removes sender
+// arithmetic from proofs of receiver authentication and rollback rejection.
+// Counter overflow and exact increment behavior remain executable-test scope.
 rule Sender_Update:
-    let header = <$S, dev, pk(sk), $B, h(pk(dk)), lineage, r %+ %1>
+    let header = <$S, dev, pk(sk), $B, h(pk(dk)), lineage, rev>
         sig    = sign(<'vela share item v2', header, ~item>, sk)
     in
-    [ SenderShare($S, dev, sk, $B, dk, lineage, r), Fr(~item) ]
-  --[ Sent($S, pk(sk), $B, lineage, r %+ %1, ~item), SecretItem(~item, $B) ]->
-    [ SenderShare($S, dev, sk, $B, dk, lineage, r %+ %1),
-      Out(aenc(<'VSE2', header, ~item, sig>, pk(dk))) ]
+    [ !SenderLineage($S, dev, $B, dk, lineage), !DeviceKey($S, dev, sk),
+      Fr(~item), In(rev) ]
+  --[ PositiveRevision(rev),
+      Sent($S, pk(sk), $B, lineage, rev, ~item), SecretItem(~item, $B, pk(dk)) ]->
+    [ Out(aenc(<'VSE2', header, ~item, sig>, pk(dk))) ]
 
 /* ── Recipient (admit) ─────────────────────────────────────────────────────── */
 
@@ -102,6 +108,7 @@ rule Recipient_FirstContact:
     [ !ShareKey($B, dk), Fr(~slot),
       In(<S, aenc(<'VSE2', header, item, sig>, pk(dk))>) ]
   --[ Verified(verify(sig, <'vela share item v2', header, item>, vk)),
+      PositiveRevision(rev),
       Accepted(~slot, $B, S, vk, lineage, rev, item),
       Admitted(~slot, $B, S, vk, lineage, rev, item) ]->
     [ Pin(~slot, $B, dk, S, vk, lineage, rev) ]
@@ -117,6 +124,9 @@ rule Recipient_Update:
       Admitted(slot, $B, S, vk, lineage, rev, item) ]->
     [ Pin(slot, $B, dk, S, vk, lineage, rev) ]
 
+restriction PositiveRevision:
+  "All r #i. PositiveRevision(r) @ #i ==> (r = %1 | %1 << r)"
+
 restriction SignatureVerifies:
   "All x #i. Verified(x) @ #i ==> x = true"
 
@@ -129,7 +139,7 @@ restriction RevisionIncreases:
 // honest, unrevealed device key was sent by that device, to this recipient,
 // in this lineage, at this revision, with this content. A malicious server
 // can neither forge nor re-attribute nor retarget it.
-lemma admitted_items_were_sent_by_the_pinned_device:
+lemma admitted_items_were_sent_by_the_pinned_device [use_induction]:
   "All slot B S vk lineage rev item #i #h.
      Admitted(slot, B, S, vk, lineage, rev, item) @ #i &
      HonestDeviceKey(S, vk) @ #h
@@ -139,24 +149,25 @@ lemma admitted_items_were_sent_by_the_pinned_device:
 // After first contact the pin is fixed: every later update to the same slot
 // carries the pinned key and lineage. (Holds even if the pinned key is
 // adversarial: the server cannot swap it for another.)
-lemma updates_keep_the_pinned_key_and_lineage:
+lemma updates_keep_the_pinned_key_and_lineage [use_induction]:
   "All slot B S S2 vk vk2 lineage lineage2 rev rev2 item item2 #i #j.
      Accepted(slot, B, S, vk, lineage, rev, item) @ #i &
      Applied(slot, B, S2, vk2, lineage2, rev2, item2) @ #j
    ==> S = S2 & vk = vk2 & lineage = lineage2"
 
-// No rollback: the revision of each update to a slot is strictly above the
-// revision it replaces.
-lemma updates_strictly_increase_the_revision:
-  "All slot B S vk lineage rev item #i.
-     Applied(slot, B, S, vk, lineage, rev, item) @ #i
-   ==> Ex old item0 #j. Admitted(slot, B, S, vk, lineage, old, item0) @ #j & #j < #i & old << rev"
+// No rollback: every applied revision is strictly above every earlier
+// admitted revision in the same slot, not merely above some predecessor.
+lemma updates_strictly_increase_the_revision [use_induction]:
+  "All slot B S vk lineage rev item S0 vk0 lineage0 old item0 #i #j.
+     Admitted(slot, B, S0, vk0, lineage0, old, item0) @ #i &
+     Applied(slot, B, S, vk, lineage, rev, item) @ #j & #i < #j
+   ==> old << rev"
 
 // Confidentiality: an item sealed to an unrevealed share key stays secret.
-lemma shared_items_stay_secret:
-  "All item B #i #k.
-     SecretItem(item, B) @ #i & K(item) @ #k
-   ==> Ex #r. ShareKeyRevealed(B) @ #r"
+lemma shared_items_stay_secret [use_induction]:
+  "All item B ek #i #k.
+     SecretItem(item, B, ek) @ #i & K(item) @ #k
+   ==> Ex #r. ShareKeyRevealed(B, ek) @ #r & #r < #k"
 
 // Honest first contact and an honest update are both possible.
 lemma honest_share_and_update_are_reachable:
@@ -167,6 +178,6 @@ lemma honest_share_and_update_are_reachable:
      Sent(S, vk, B, lineage, %1 %+ %1, item2) @ #c &
      Applied(slot, B, S, vk, lineage, %1 %+ %1, item2) @ #d &
      not (Ex k #r. DeviceKeyRevealed(k) @ #r) &
-     not (Ex b #r. ShareKeyRevealed(b) @ #r)"
+     not (Ex b ek #r. ShareKeyRevealed(b, ek) @ #r)"
 
 end

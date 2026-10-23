@@ -1,0 +1,100 @@
+theory M28_ShareJournal
+begin
+
+/* Recoverable desktop share commit, after authenticated admission.
+   This model abstracts the fsync+rename helper as atomic durable replacement.
+   Snapshot acquisition, journal persistence, vault persistence, journal cleanup,
+   crashes and recovery are separate rules. Crashes preserve durable files;
+   retaining old snapshots over a crash overapproximates volatile behavior.
+   Signing, byte encodings, FS correctness, local edits and cross-process writes
+   are outside this focused model. Candidate revision monotonicity is the
+   verified admission-policy precondition, not a cryptographic theorem here.
+*/
+functions: successor/1
+
+// One product-state fact records the two durable files. Each write rule
+// changes only its corresponding file fields; no atomic two-file write is
+// assumed. Observation is serialized through the same local profile lock.
+rule Initialize:
+    [ Fr(~slot), Fr(~item) ]
+  --[ Initialized(~slot) ]->
+    [ !Profile(~slot), !ReadyGeneration(~slot, 'initial', 'initial'),
+      DiskClean(~slot, 'initial', 'initial', 'initial', ~item), Out(~slot) ]
+
+// Old generation observations remain available after commits: this safely
+// overapproximates retained stale snapshots, including across a crash.
+rule ReadSnapshot:
+    [ !ReadyGeneration(slot, gen, pinned), Fr(~tx) ]
+  --[ SnapshotRead(slot, ~tx, gen, pinned) ]->
+    [ Snapshot(slot, ~tx, gen, pinned) ]
+
+rule PersistJournal:
+    [ DiskClean(slot, gen, pinned, vrev, vpayload), Snapshot(slot, tx, gen, pinned),
+      In(<next_revision, payload>) ]
+  --[ RevisionIncreases(pinned, next_revision),
+      JournalDurable(slot, tx, successor(gen), pinned, next_revision, payload) ]->
+    [ DiskPending(slot, tx, successor(gen), next_revision, payload, vrev, vpayload) ]
+
+rule PersistVault:
+    [ DiskPending(slot, tx, gen, next, payload, vrev, vpayload) ]
+  --[ VaultDurable(slot, tx, gen, next, payload) ]->
+    [ DiskApplied(slot, tx, gen, next, payload, next, payload) ]
+
+rule ClearJournal:
+    [ DiskApplied(slot, tx, gen, pinned, intended, vrev, vpayload) ]
+  --[ JournalCleared(slot, tx, gen, pinned) ]->
+    [ DiskClean(slot, gen, pinned, vrev, vpayload), !ReadyGeneration(slot, gen, pinned) ]
+
+// Crashes do not change either durable file; they can occur arbitrarily often.
+rule Crash:
+    [ !Profile(slot) ]
+  --[ Crash(slot) ]-> []
+
+rule OpenVault:
+    [ DiskClean(slot, gen, pinned, revision, payload) ]
+  --[ Opened(slot, gen, pinned, revision, payload) ]->
+    [ DiskClean(slot, gen, pinned, revision, payload) ]
+
+// Strict subterm order overapproximates the u64 revision ordering, as in M19c.
+restriction Increasing:
+    "All old next #i. RevisionIncreases(old, next) @ #i ==> old << next"
+
+lemma open_has_matching_content_and_pin [use_induction]:
+    "All slot gen pinned revision payload #i.
+       Opened(slot, gen, pinned, revision, payload) @ #i ==> pinned = revision"
+
+lemma application_requires_prior_durable_journal:
+    "All slot tx gen revision payload #i.
+       VaultDurable(slot, tx, gen, revision, payload) @ #i ==>
+       (Ex old #j. JournalDurable(slot, tx, gen, old, revision, payload) @ #j & #j < #i)"
+
+lemma cleanup_requires_prior_durable_vault:
+    "All slot tx gen revision #i.
+       JournalCleared(slot, tx, gen, revision) @ #i ==>
+       (Ex payload #j. VaultDurable(slot, tx, gen, revision, payload) @ #j & #j < #i)"
+
+lemma commit_uses_snapshot_generation:
+    "All slot tx g old next payload #i.
+       JournalDurable(slot, tx, successor(g), old, next, payload) @ #i ==>
+       (Ex #j. SnapshotRead(slot, tx, g, old) @ #j & #j < #i)"
+
+lemma each_transaction_applies_at_most_once:
+    "All slot tx g1 g2 r1 r2 p1 p2 #i #j.
+       VaultDurable(slot, tx, g1, r1, p1) @ #i &
+       VaultDurable(slot, tx, g2, r2, p2) @ #j ==> #i = #j"
+
+lemma pins_advance_on_every_commit:
+    "All slot tx gen old next payload #i.
+       JournalDurable(slot, tx, gen, old, next, payload) @ #i ==> old << next"
+
+lemma recovery_is_reachable:
+    exists-trace
+    "Ex slot tx gen old next payload #j #c #a #k #o.
+       JournalDurable(slot, tx, gen, old, next, payload) @ #j &
+       Crash(slot) @ #c &
+       VaultDurable(slot, tx, gen, next, payload) @ #a &
+       JournalCleared(slot, tx, gen, next) @ #k &
+       Opened(slot, gen, next, next, payload) @ #o &
+       #j < #c & #c < #a & #a < #k & #k < #o"
+
+end

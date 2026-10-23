@@ -1,164 +1,168 @@
 # 4. Reproducibility
 
-Everything in this package can be re-run from a clean checkout. This
-document lists the exact tool versions, how each one is pinned, the commands
-to run, the output to expect, and where the reference CI evidence lives.
+Use the commit containing this package and verify `MANIFEST.sha256` before
+running tools. Commit `148ff32` is the implementation baseline; the models
+and CI additions here are later changes. The archived CI run at `5a3b72e`
+is historical evidence, not evidence for the new protocols.
 
 ## 4.1 Pinned toolchain
 
-| Tool | Version | How it is pinned | Used for |
-|---|---|---|---|
-| Tamarin Prover | **1.12.0** | CI downloads the release tarball and checks its SHA-256 (`201be06f…b469c6`, see `.github/workflows/security.yml`) | All `.spthy` theories |
-| Maude | **3.2** in CI (Ubuntu noble `maude 3.2-2build1`); 3.5.1 in maintainer runs | CI: distro package, **not pinned**. Tamarin 1.12.0 reports 3.2 as "unsupported" but produces the same verdicts | Tamarin backend |
-| ProVerif | 2.05 according to `security/formal/README.md` | opam `proverif` in switch `vela-proverif` (OCaml 5.1.1). **The package version is not pinned.** CI freezes it through cache key `opam-proverif-ocaml5.1.1-v1`, and the CI log does not record the version | M22 |
-| OCaml | 5.1.1 | opam switch (`ocaml-base-compiler.5.1.1`) | ProVerif, hax engine, F\* |
-| hax (`cargo-hax`, `hax-driver`, `hax-engine`) | **0.3.7** | `cargo install --version 0.3.7 --locked`; engine from git tag `cargo-hax-v0.3.7`; `hax-lib 0.3.7` in `Cargo.lock` | Rust → F\* and ProVerif extraction |
-| Rust nightly for hax | **nightly-2025-11-08** with `rustc-dev`, `llvm-tools-preview`, `rust-analysis`, `rust-src`, `rustfmt` | `serverVELA/vela-rekey-policy/rust-toolchain.toml` | hax frontend |
-| F\* | **2025.10.06** | opam `fstar.2025.10.06` in switch `vela-fstar` | Policy proofs |
-| Z3 | **4.13.3** | Official release binary installed as `z3-4.13.3`. Each runner checks for that exact name | F\* SMT backend |
-| Rust stable | 1.99.1 in the reference CI run | **Not pinned** (`dtolnay/rust-toolchain@stable`). Dependencies are locked by `Cargo.lock` | Executable models, tests, M24 |
-| semgrep, cargo-audit, cargo-deny | semgrep 1.182.1 in the reference run | **Not pinned** | Static scan |
-
-Primitive crate versions from the lockfiles at the baseline: `ml-kem 0.3.2`,
-`fips204 0.4.6`, `x25519-dalek 2.0.1`, `ed25519-dalek 2.2.0`,
-`chacha20poly1305 0.10.1`, `blake3 1.8.5`, `hkdf 0.12.4`, `argon2 0.5.3`,
-`pasetors 0.6.8`, `webauthn-rs 0.5.5`.
-
-## 4.2 Installing
-
-### Tamarin and Maude (Linux x86-64)
-
-```bash
-curl -fL -o /tmp/tamarin.tar.gz \
-  https://github.com/tamarin-prover/tamarin-prover/releases/download/1.12.0/tamarin-prover-1.12.0-linux64-ubuntu.tar.gz
-echo "201be06f469e47cff554df6ca93db8366fc2c69d70c61fcbd1370a1074b469c6  /tmp/tamarin.tar.gz" | sha256sum -c
-sudo tar -xzf /tmp/tamarin.tar.gz -C /usr/local/bin
-sudo apt-get install -y maude ripgrep     # or Maude 3.5.1 from maude.cs.illinois.edu
-export LC_ALL=C.UTF-8 LANG=C.UTF-8
-```
-
-### ProVerif
-
-```bash
-opam switch create vela-proverif ocaml-base-compiler.5.1.1
-opam install --switch vela-proverif --yes proverif.2.05   # pin explicitly; CI does not
-```
-
-### hax, F\*, and Z3
-
-Follow
-[`serverVELA/vela-rekey-policy/README.md` § Install the pinned toolchain](../../serverVELA/vela-rekey-policy/README.md#install-the-pinned-toolchain).
-In short: rustup nightly-2025-11-08 with the components above; `cargo-hax`
-and `hax-driver` 0.3.7; hax engine in opam switch `vela-hax`; F\* 2025.10.06
-in a **separate** switch `vela-fstar` (their PPX constraints conflict);
-`z3-4.13.3` on `PATH`. Then:
-
-```bash
-export PATH="$(opam var bin --switch vela-hax):$(opam var bin --switch vela-fstar):$HOME/.local/bin:$PATH"
-```
-
-## 4.3 Running
-
-### Everything
-
-```bash
-git checkout 5a3b72e7f6d2081cc91b9610adc62a54981f0857
-sha256sum -c security/assurance/MANIFEST.sha256
-security/assurance/run-all.sh --out ./assurance-logs                 # ~10–20 min
-security/assurance/run-all.sh --with-fstar --out ./assurance-logs    # adds hax/F*
-```
-
-`run-all.sh` writes `versions.txt`, one log per step, and `summary.txt`.
-It exits non-zero if any step fails.
-
-### Individual checks
-
-| Check | Command (from repo root) | Expected |
+| Tool | Current gate version | Pin |
 |---|---|---|
-| M1–M10 credential release | `run-all.sh` (step `tamarin-m1-m10-credential-release`), or the loop in `security/formal/README.md` | 83 verified; falsified exactly `m1.secrecy`, `m2.secrecy`, `m9b.credential_never_leaks`, `m9c.credential_never_leaks`, `m9c.unused_credentials_stay_secret` |
-| M11 rekey | `security/formal/run-rekey-proofs.sh` | `31 verified, 0 falsified, 0 warnings` |
-| M12 session | `security/formal/run-session-proofs.sh` | 14 |
-| M13 enrollment | `security/formal/run-enrollment-proofs.sh` | 16 |
-| M14 recovery | `security/formal/run-recovery-proofs.sh` | 18 |
-| M15 client recovery | `security/formal/run-client-recovery-proofs.sh` | 15 |
-| M16 publication | `security/formal/run-recovery-publication-proofs.sh` | 14 |
-| M17 crash recovery | `security/formal/run-recovery-publication-recovery-proofs.sh` | 14 |
-| M18 pair selection | `security/formal/run-pair-selection-proofs.sh` | 15 |
-| M19 share channel | `security/formal/run-share-channel-proofs.sh` | 2 + 6 |
-| M20 pass-through | `security/formal/run-web-session-pass-through-proofs.sh` | 7 |
-| M21 revocation | `security/formal/run-link-revocation-finality-proofs.sh` | 3 |
-| M23 sync | `security/formal/run-sync-admission-proofs.sh` | 11 |
-| M26 composition | `security/formal/run-composition-proofs.sh` | 4 + 6 |
-| M22 ORAM (ProVerif) | `security/formal/run-oram-access-hiding-proofs.sh` | m22a cannot be proved (intended); m22b, m22c true |
-| M24 ORAM stash | `security/formal/run-oram-stash-bounds-tests.sh` | 4/4 tests pass |
-| hax/F\* per crate | `<crate>/verify-fstar.sh` for the 7 crates in [§3.2](03-implementation-correspondence.md#crate-inventory-92-extracted-entry-points) | `cargo test` passes, extraction succeeds, F\* reports all VCs discharged |
-| Executable models | see the `Exhaust the bounded model…` and `Verify the … epoch wire contract` steps in `security.yml` | all pass |
-| Exploit regressions | `cargo build --manifest-path serverVELA/Cargo.toml && security/exploits/run-exploits.sh` | 9 × `[PASS]` |
-| Static scan | `security/run-scan.sh` | `VELA security scan: PASS` |
+| Tamarin | 1.12.0 | Release archive SHA-256 `201be06f469e47cff554df6ca93db8366fc2c69d70c61fcbd1370a1074b469c6` |
+| Maude | 3.5.1 | `Maude3.5.1/Maude-3.5.1-linux-x86_64.zip`, SHA-256 `72ed1ca87e3b3d0dfc6ee1436baf154bf04c45ff97d521bec040c5e8dfc8f92c` |
+| ProVerif | 2.05 | `opam install proverif.2.05` in OCaml 5.1.1 switch; version printed in CI |
+| OCaml | 5.1.1 | `ocaml-base-compiler.5.1.1` for ProVerif, hax and F* switches |
+| hax frontend/driver | 0.3.7 | `cargo install --version 0.3.7 --locked` |
+| hax engine | 0.3.7 | Source commit `d8b5b3d3b666fee8943a351445d2b680105e8ea3` |
+| Rust for hax | nightly-2025-11-08 | Compiler components installed explicitly |
+| F* | 2025.10.06 | `opam install fstar.2025.10.06`, separate switch |
+| Z3 | 4.13.3 | Official x64 glibc-2.35 archive, SHA-256 `32c7377026733c9d7b33c21cd77a68f50ba682367207b031a6bfd80140a8722f` |
+| Rust tests in security CI | 1.99.1 | `dtolnay/rust-toolchain@1.99.1`; Cargo lockfiles pin crate resolution |
 
-The Tamarin runners fail closed: any `WARNING:`, `analysis incomplete`, or
-unexpected `falsified`, or any drift in the lemma count, fails the gate.
-Most derive their expected count from the theory (`grep -cE
-'^(lemma|exists-trace)'`). The rekey, session, recovery, client-recovery,
-publication, pair-selection, and pass-through runners hard-code it.
+Maude 3.2 and unversioned ProVerif were used in the historical reference CI.
+The new gates use the versions above. OS packages, transitive opam resolution,
+GitHub action tags, semgrep, cargo-audit and cargo-deny are not a hermetic
+pinned environment. No bit-for-bit build reproducibility is claimed.
 
-### Interactive inspection
+## 4.2 Installation
+
+For Linux x86-64, the exact Tamarin/Maude install commands and checksums are
+in [security.yml](../../.github/workflows/security.yml), step **Install pinned
+Tamarin 1.12.0 and Maude 3.5.1**. Keep the Maude executable beside its `.maude`
+prelude files and put it on PATH. Do not use the old unsupported distro Maude.
 
 ```bash
-tamarin-prover interactive security/formal/       # browse proofs and attack graphs at http://127.0.0.1:3001
-proverif -in pitype <(cat security/formal/hax_pv_prelude.pvl \
-  libVELA/vela-crypto/proofs/proverif/extraction/lib.pvl \
-  security/formal/m22a_static_position_baseline.pv)   # shows the m22a attack trace
+opam init --bare --no-setup --yes
+opam switch create vela-proverif ocaml-base-compiler.5.1.1
+opam install --switch vela-proverif --yes proverif.2.05
+export PATH="$(opam var bin --switch vela-proverif):$PATH"
 ```
 
-## 4.4 Proof logs
+Some ProVerif opam dependencies require GTK2 development packages even for
+CLI use. CI installs `libgtk2.0-dev` and `pkg-config`.
 
-[`proof-logs/`](proof-logs/) holds filtered excerpts from the reference CI
-run on the baseline commit:
+The optional full hax installation is scripted for a **clean Linux build
+environment** in [`install-hax.sh`](install-hax.sh). It builds compilers and
+tools and can take substantial time; it is not part of the default local run:
 
-| File | Contents |
+```bash
+VELA_MEMORY_MAX=6G VELA_STEP_TIMEOUT=3600 security/assurance/bounded.sh security/assurance/install-hax.sh
+export OPAMROOT="$HOME/.local/opt/vela-hax-0.3.7/opam"
+export PATH="$HOME/.local/opt/vela-hax-0.3.7/bin:$OPAMROOT/vela-hax/bin:$OPAMROOT/vela-fstar/bin:$PATH"
+```
+
+Use a clean Cargo configuration. The installer explicitly selects LLVM and
+sets `--cfg hax` for the names-helper build: ancestor Cargo configurations
+can otherwise interfere. Earlier engine attempts exceeded the **3 GiB** cap;
+those failure logs remain available. A subsequent native build succeeded in
+about 11 minutes with tight OCaml GC, one worker and no swap. Its cap started
+at 5 GiB and was raised to **6 GiB** for headroom. A live peak of 5,123,719,168
+bytes (4.77 GiB) was observed; the final exact metric failed to collect, while
+the systemd journal recorded a rounded 4.7G peak. Dependencies were already
+installed, so this is not a cold full-toolchain benchmark.
+
+Fresh extraction and checking then passed for **all eight policy crates**.
+Their whole workflows (tests, extraction and F*) used **0.74–2.06 GiB** under
+individual 5 GiB caps, sequentially and without swap. See the
+[per-crate measurements and harness](proof-logs/current/refinement-5g/).
+These observations are not minimum requirements or guarantees for other inputs.
+
+CI toolchain installation now uses **6 GiB** (`VELA_MEMORY_MAX=6G`); its first
+successful run is pending. Default local runners retain the **3 GiB** cap.
+
+## 4.3 Commands and resource limits
+
+```bash
+sha256sum -c security/assurance/MANIFEST.sha256
+python3 security/formal/check-correspondence.py
+VELA_PROOF_OUT=/tmp/vela-network security/formal/run-network-boundary-proofs.sh
+security/assurance/run-all.sh --out /tmp/vela-assurance
+security/assurance/run-all.sh --with-fstar --out /tmp/vela-assurance-fstar
+```
+
+`run-all.sh` records versions, source commit, dirty status, per-step logs,
+credential-release per-theory outputs, and a summary; failures return nonzero.
+It includes the 13 original protocol families, the credential-release ladder,
+the five new network theories, ProVerif M22 and M24 statistical tests. It does
+not run the server exploit suite or every server executable model; those have
+separate CI steps. `--with-fstar` adds all eight policy-crate runners, the production share-fact
+constructor/composition, prefix and signature gates, plus the extraction
+assumption/precondition drift gate. The default run also includes
+M28/M29's eighteen named journal/composition verdicts via `run-share-journal-proofs.sh`.
+
+`bounded.sh` uses Linux systemd scopes with **3 GiB memory, zero swap, one
+Cargo/opam/make/test worker**, and a 30-minute whole-command timeout.
+`tamarin-bounded.sh` additionally limits each proof to 180 seconds, one GHC
+worker and a 1500 MiB GHC heap. `VELA_STEP_TIMEOUT` and `VELA_PROOF_TIMEOUT`
+can raise time limits explicitly. `VELA_MEMORY_MAX` is an explicit memory
+override; the documented toolchain installation command configures it to 6G. Without a working systemd manager the
+wrapper fails; CI can use the system manager through passwordless sudo.
+Use a memory-limited Linux environment on other platforms. Do not set
+`VELA_BOUNDED=1` yourself unless an outer wrapper already applies the cap.
+
+Expected symbolic verdicts:
+
+- M1–M10: 83 verified and exactly five named intended falsifications (the
+  runner checks the set, not just the count).
+- Original M11–M26 protocol families: 176 verified, no falsifications.
+- New M13b baseline/fix: 1 + 4 verified; new M19c baseline/fix: 1 + 5;
+  M27 device authentication: 6. Baseline verified lemmas are **attack witnesses**.
+- ProVerif M22: m22a baseline equivalence fails; m22b and m22c equivalences hold.
+- M24: four statistical tests pass.
+
+The five new theories' gate checks every declared lemma by name, rejects
+warnings/incomplete analysis, and preserves full output. Other historical
+runners use their original count-based gates; see their source for details.
+
+Individual original family commands remain `security/formal/run-<family>-proofs.sh`
+(`rekey`, `session`, `enrollment`, `recovery`, `client-recovery`,
+`recovery-publication`, `recovery-publication-recovery`, `pair-selection`,
+`share-channel`, `web-session-pass-through`, `link-revocation-finality`,
+`composition`, `sync-admission`, `oram-access-hiding`). Direct invocation
+bypasses the default all-run resource wrapper; prefer `run-all.sh`.
+
+## 4.4 Logs and CI evidence
+
+[`proof-logs/`](proof-logs/) retains curated excerpts from
+[CI #39864715971](https://github.com/lucannez64/VELA/actions/runs/39864715971)
+at `5a3b72e`: formal, static scan and nine exploit regressions passed.
+Fetch the full historical logs while retained with:
+
+```bash
+gh run view 39864715971 --repo lucannez64/VELA --log
+```
+
+[`proof-logs/current/`](proof-logs/current/) records the current local checks.
+Its `README.md` identifies their source, tools and limitations. The full
+local symbolic/statistical run passed all configured steps, including all
+281 Tamarin verdicts (276 verified and five intended falsifications). The separate `refinement-5g/` evidence records successful fresh hax extraction
+and F* checking for all eight policy crates.
+
+The updated workflow defines:
+
+| Job | Gates / evidence |
 |---|---|
-| `ci-39864715971-formal.txt` | Tool versions, every Tamarin and ProVerif gate line, statistical and executable-model test results |
-| `ci-39864715971-static-scan.txt` | semgrep, `scan.py`, `cargo audit` and `cargo deny` for 5 crates: all clean |
-| `ci-39864715971-regression.txt` | The 9 exploit regressions, each blocked |
+| `formal-rekey` | Correspondence drift check, network models, full all-model run, executable server models and cross-client Rust tests; uploads `assurance-symbolic-logs` even on failure |
+| `sharing-boundaries` | Desktop-core unit suite, including repeated acceptance, stale snapshot and interrupted-commit regressions; uploads `assurance-sharing-logs` |
+| `refinement` | Pinned hax/F*/Z3 installation and fresh extraction/checking of eight policy crates and the production share-fact constructor; uploads `assurance-refinement-logs` even on failure |
+| `static-scan` | semgrep, Rust scan, cargo audit/deny |
+| `regression` | Isolated live exploit regressions |
 
-The full logs stay on GitHub for the Actions retention period. Fetch them
-with:
+These additions require an actual branch CI run before claiming CI success.
+Earlier installation failures are superseded by the successful local engine
+build and eight-crate verification. CI reproduction remains an evidence gap.
 
-```bash
-gh run view 39864715971 --repo lucannez64/VELA --log > security-run.log
-```
+## 4.5 Artifact integrity
 
-hax/F\* logs are **not** in CI. We will attach a maintainer `--with-fstar`
-run to the engagement. Until then, treat **[REF]** claims as reproducible
-but not independently witnessed.
-
-## 4.5 CI evidence
-
-Workflow: [`.github/workflows/security.yml`](../../.github/workflows/security.yml).
-It runs on pushes to `main` and on pull requests that touch `security/`,
-`serverVELA/`, `libVELA/`, the clients, or lockfiles.
-
-| Job | Gates |
-|---|---|
-| `formal-rekey` | All CI-gated Tamarin families, ProVerif M22, statistical M24, executable models, cross-client wire matrix |
-| `static-scan` | semgrep (extension JS), `security/scan.py` (Rust rules), `cargo audit` and `cargo deny` for 5 crates |
-| `regression` | 9 live exploit regressions against an isolated loopback server |
-
-Reference run:
-<https://github.com/lucannez64/VELA/actions/runs/39864715971>, on commit
-`5a3b72e`, all three jobs passed (formal job about 9 minutes). Recent history:
-
-```bash
-gh run list --repo lucannez64/VELA --workflow security.yml --branch main --limit 20
-```
-
-## 4.6 Artifact integrity
-
-[`MANIFEST.sha256`](MANIFEST.sha256) lists SHA-256 hashes of every model,
-runner, committed F\* and ProVerif extraction, and policy crate source at
-the baseline. Regenerate it with:
+Regenerate the manifest after reviewed changes and completed log capture:
 
 ```bash
 security/assurance/make-manifest.sh > security/assurance/MANIFEST.sha256
+sha256sum -c security/assurance/MANIFEST.sha256
 ```
+
+The manifest includes untracked new artifacts that are not ignored in the working tree, so inspect
+what is included before publishing. It excludes itself and does not replace
+a signed release tag. Review source/model changes before updating
+`correspondence.json`; blindly updating hashes defeats its purpose.

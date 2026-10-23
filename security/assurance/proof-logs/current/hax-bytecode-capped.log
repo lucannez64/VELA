@@ -1,0 +1,56 @@
+File "utils/ppx_phases_index/ppx_phases_index.ml", line 27, characters 16-19:
+27 | let list_phases loc : (string * string * string * _ option) list =
+                     ^^^
+Warning 27 [unused-var-strict]: unused variable loc.
+
+File "utils/ppx_phases_index/ppx_phases_index.ml", line 83, characters 5-8:
+83 |     (str : structure_item) : structure_item =
+          ^^^
+Warning 27 [unused-var-strict]: unused variable str.
+
+File "utils/ppx_phases_index/ppx_phases_index.ml", line 89, characters 15-16:
+89 |            let h x = { txt = Lident x; loc } in
+                    ^
+Warning 26 [unused-var]: unused variable h.
+
+File "utils/ppx_phases_index/ppx_phases_index.ml", line 161, characters 5-8:
+161 |     (str : structure_item) : expression =
+           ^^^
+Warning 27 [unused-var-strict]: unused variable str.
+File "utils/ppx_phases_index/ppx_phases_index.ml", line 27, characters 16-19:
+27 | let list_phases loc : (string * string * string * _ option) list =
+                     ^^^
+Warning 27 [unused-var-strict]: unused variable loc.
+
+File "utils/ppx_phases_index/ppx_phases_index.ml", line 83, characters 5-8:
+83 |     (str : structure_item) : structure_item =
+          ^^^
+Warning 27 [unused-var-strict]: unused variable str.
+
+File "utils/ppx_phases_index/ppx_phases_index.ml", line 89, characters 15-16:
+89 |            let h x = { txt = Lident x; loc } in
+                    ^
+Warning 26 [unused-var]: unused variable h.
+
+File "utils/ppx_phases_index/ppx_phases_index.ml", line 161, characters 5-8:
+161 |     (str : structure_item) : expression =
+           ^^^
+Warning 27 [unused-var-strict]: unused variable str.
+File "utils/generate_from_ast/codegen_printer.ml", line 87, characters 19-22:
+87 |   | _ -> Some (fun pos value -> "(" ^ value ^ ")")
+                        ^^^
+Warning 27 [unused-var-strict]: unused variable pos.
+
+File "utils/generate_from_ast/codegen_printer.ml", line 163, characters 8-17:
+163 |     let signature =
+              ^^^^^^^^^
+Warning 26 [unused-var]: unused variable signature.
+File "utils/generate_from_ast/codegen_printer.ml", line 87, characters 19-22:
+87 |   | _ -> Some (fun pos value -> "(" ^ value ^ ")")
+                        ^^^
+Warning 27 [unused-var-strict]: unused variable pos.
+
+File "utils/generate_from_ast/codegen_printer.ml", line 163, characters 8-17:
+163 |     let signature =
+              ^^^^^^^^^
+Warning 26 [unused-var]: unused variable signature.

@@ -1,0 +1,244 @@
+hax-lib 0.3.7 proof-library inventory (not a complete proof-checker/OS TCB inventory).
+The local String compatibility view is separately covered by MANIFEST.sha256.
+
+ed05ad7ca4a04bc8484eff33308b546827605ec9a98449db73f7329ed4737350  proof-libs/fstar/core/Alloc.Alloc.fst
+f7ccee00a797b75547abfe0fc0c84605369298fbeed70d526f074af1cb2e516a  proof-libs/fstar/core/Alloc.Borrow.fst
+cb84915545486799c7a51566975ac27d9f725011207493737f5ca8237c2ea1c5  proof-libs/fstar/core/Alloc.Boxed.fst
+a7d917a837e47c3c9af9931dfc095237255f328a738b4da6961b386bcd7acf4a  proof-libs/fstar/core/Alloc.Collections.Binary_heap.fst
+  trust-review 161: assume val lemma_peek_pop: #t:Type -> (#a: Type) -> (#i: Core_models.Cmp.t_Ord t) -> h: t_BinaryHeap t a
+3bd2743ed994709f43026637702261ff5097944274871ee963d96f694c40ef22  proof-libs/fstar/core/Alloc.Collections.Btree.Set.fsti
+0274980912ab47d637c8890e87b8d25bb59e46e780a11e2ed10407f9813aab5e  proof-libs/fstar/core/Alloc.Collections.Vec_deque.fsti
+fbf273632146916c160e7ea82c9525025370f94eb017bcd1c83dd9eaa9ba077d  proof-libs/fstar/core/Alloc.Fmt.fst
+  trust-review 6: assume
+ee019924ebeec093476f69ad7acf02a6bbd827b661a580ce5433d9a7474bffb1  proof-libs/fstar/core/Alloc.Slice.fst
+  trust-review 18: assume
+93b656a9ca5963810d9277250dfc2d520159be984c96351256ca8f70ce266694  proof-libs/fstar/core/Alloc.String.fst
+e5588acc797f4033b8ba058ea059ad6b8b5fe89915420d215d0cf813a3ad3e21  proof-libs/fstar/core/Alloc.Vec.Drain.fst
+3f26499bcf1b205219b2c8b7d9ca7bb85910e838b5ea77769cbc4802af8f5822  proof-libs/fstar/core/Alloc.Vec.Into_iter.fsti
+f64b813db59eb99e2adf8097339de5f306d8130a094b199bc851bd8f98609e60  proof-libs/fstar/core/Alloc.Vec.fst
+  trust-review 68: assume
+  trust-review 75: assume
+  trust-review 82: assume
+  trust-review 89: assume
+  trust-review 95: assume
+  trust-review 147: assume
+  trust-review 235: assume
+ad42ee1dd2636e18d18d0f3aaeadb28a1cd5d09426ca910aff75aa42a46b5c88  proof-libs/fstar/core/Core_models.Array.Iter.fst
+86bbc0d4bc652d8bf743c7aecc0f8944ce4fdd46dfd98379ae1d8ea53b16e3aa  proof-libs/fstar/core/Core_models.Array.fst
+307c40cbf5dc1a3b0ec446ea47e53e68486b0c3a200fde4a2ac3e0b96ae0fdac  proof-libs/fstar/core/Core_models.Borrow.fsti
+c0846c3c67b97c349ae72a2ac9b4d9653ce6991611913ae4aa73de15e7636edf  proof-libs/fstar/core/Core_models.Bundle.fst
+cb853ed3cb5ccb50a6c3c9a5977a3e54febb7189985e7da75f67f614c341166b  proof-libs/fstar/core/Core_models.Clone.fst
+889d041b771fac54f979846a609b8d05a40caf56dba8522cb13d72baf02a9e58  proof-libs/fstar/core/Core_models.Cmp.fst
+dba5320fa9ece372ef725c7540e79210b01d0f7a7b0bc7c18f07a0f2fb448510  proof-libs/fstar/core/Core_models.Convert.fst
+13fc6d52cd84ccad719aad8a7b42c5c5b0d316fee7bbfacfdb534209d47a0eca  proof-libs/fstar/core/Core_models.Core_arch.Arm_shared.Neon.fsti
+983c28bee123cbba408d8857b1cdc2691ec9486319403be404a328b618c0b7fa  proof-libs/fstar/core/Core_models.Core_arch.X86.Pclmulqdq.fsti
+cf7b2f948c81e2e3b7c9c64a17ce450c9167d49056423c0bd6baa92a7b607ebc  proof-libs/fstar/core/Core_models.Core_arch.X86.Sse2.fsti
+b32cda404aa388da097eca0d407f6db05287f0e740b06a9860d6d922977f48dc  proof-libs/fstar/core/Core_models.Core_arch.X86.fsti
+c78d3803a70c5cea470dccffd598235758780877aeefd1cdda5b3e069a192f21  proof-libs/fstar/core/Core_models.Core_arch.X86_64_.Sse2.fsti
+48071eb3ee948761ad0a340eceab90db9b8083c270827e13ae061c7bb96338d8  proof-libs/fstar/core/Core_models.Core_arch.fsti
+e6f7e8d3d36cd190602f525c143bdf004bc64bd117b17db31c45e8714288bccb  proof-libs/fstar/core/Core_models.Default.fsti
+bf53c35faf97f51cee2c7df15319e55fee9c6131db770d58840df1473a0faf05  proof-libs/fstar/core/Core_models.Error.fsti
+5e61acd74b4294ce92b5d022e1c78b84a0a9c257b5fe492a4120e6dc906f95c6  proof-libs/fstar/core/Core_models.F32.fst
+  trust-review 6: assume
+5249dac955e808420974db401693d6e1a6cf467b135b238e973a2884409238a0  proof-libs/fstar/core/Core_models.Fmt.Rt.fsti
+7aa8d11cdbbf3decb30038014d7e110dd339713fb37b2bea071107069020ee6c  proof-libs/fstar/core/Core_models.Fmt.fsti
+c8c446750863dee9c0e68d77bc2729b513fc79227c467b5930073e0c62c27dcd  proof-libs/fstar/core/Core_models.Hash.fsti
+1ba76292ed3cfa2d3238c35a960b652265ccbcc86fefd199e3b415a978443319  proof-libs/fstar/core/Core_models.Hint.fsti
+7f2066ca291b82c2769fb858d4ec3e42208cbfacc2f13817fd515731660a278c  proof-libs/fstar/core/Core_models.Iter.Adapters.Enumerate.fst
+30a2bd311d0f2810e6e5d712466b8fe4a5bf8143490ce48ae931d8144aa5938e  proof-libs/fstar/core/Core_models.Iter.Adapters.Flat_map.fst
+4b7fd3b2a6c228576b2477665932d9421017ff2c980bb727251b4e252246011f  proof-libs/fstar/core/Core_models.Iter.Adapters.Flatten.fst
+97881d656b53f4fbe667706b90779b0763c67863a1f6f5be718da0a22641d2c9  proof-libs/fstar/core/Core_models.Iter.Adapters.Map.fst
+9639a30a95f2d36a9b173c9e3bdb7fa24ff41b520a015e3ba32ee58649739baf  proof-libs/fstar/core/Core_models.Iter.Adapters.Rev.fsti
+e781698de818957a5396a61b4c971094ab9dc834c5be4bafa5d9a2596f070f01  proof-libs/fstar/core/Core_models.Iter.Adapters.Step_by.fst
+f1623d57b44b06d9e44b0ba0effb782be3dc6d197b3492001ec87b3e0c587cf6  proof-libs/fstar/core/Core_models.Iter.Adapters.Take.fst
+c6a9c3501c1ec2495a20c7587e2a5158400c26edb75f3d54241ccde5d8e5eab0  proof-libs/fstar/core/Core_models.Iter.Adapters.Zip.fst
+fb3fce324c7adbc6db3206e8f4c96c1d488255a3b5e8000952cd4d173a63bfde  proof-libs/fstar/core/Core_models.Iter.Bundle.fst
+  trust-review 124: assume
+  trust-review 164: assume
+  trust-review 218: assume
+  trust-review 265: assume
+4dbaf9b2990d9191b57bcf2c5273dbbdddafab7d47d9dc1a669d3c7b6b7c5058  proof-libs/fstar/core/Core_models.Iter.Sources.Repeat_with.fsti
+b29d45838dfa7770245b7577109d45219f6afd59b120bcea909d3bf2bc32e7d1  proof-libs/fstar/core/Core_models.Iter.Traits.Collect.fst
+0d67c8e79a355a97ccd365b057b59ac906f1171e16707e00a486d6034e49333b  proof-libs/fstar/core/Core_models.Iter.Traits.Iterator.fst
+678d7e313c1a033cb9443e93439e53516c720a995fb8784e985d73ec3a7f8a2d  proof-libs/fstar/core/Core_models.Iter.Traits.fst
+1e4157e4c7d8aaa385ee1676ce3d9023b874714f8abf3c2b4e3bea4e8bf38f66  proof-libs/fstar/core/Core_models.Marker.fst
+da2639713307ec2e2b644968839313527fb380cf3dee1c9ee5382a79186dd298  proof-libs/fstar/core/Core_models.Mem.Manually_drop.fsti
+e6a61dd9c7b32d09373d6b573c2391ced7b1e4d7b716dd0ceb62fa40762f05a2  proof-libs/fstar/core/Core_models.Mem.Maybe_uninit.fsti
+f963f4223866e51c4704890d4f9a9cc1961dd53d9f935dc2027331bdec58a251  proof-libs/fstar/core/Core_models.Mem.Transmutability.fsti
+e07831da925dd271951915d7670c02c09cf7f2eee15282f6351848e70ad78d14  proof-libs/fstar/core/Core_models.Mem.fsti
+7985946dcf2900de8417582fb1b3a2539308cac8ec0b14c824e478aeb5496755  proof-libs/fstar/core/Core_models.Num.Error.fsti
+21ad7faf0423540bd6b19d8b713c5e78d248936b269da04451c6b64fd65940a9  proof-libs/fstar/core/Core_models.Num.Niche_types.fsti
+469708a89f50d38d65c65806789bea0bfdf1bb0d2ab34d0d618c852ae0a8e19a  proof-libs/fstar/core/Core_models.Num.fst
+  trust-review 82: assume
+  trust-review 92: assume
+  trust-review 98: assume
+  trust-review 104: assume
+  trust-review 111: assume
+  trust-review 117: assume
+  trust-review 123: assume
+  trust-review 129: assume
+  trust-review 214: assume
+  trust-review 224: assume
+  trust-review 230: assume
+  trust-review 236: assume
+  trust-review 243: assume
+  trust-review 249: assume
+  trust-review 255: assume
+  trust-review 261: assume
+  trust-review 347: assume
+  trust-review 357: assume
+  trust-review 363: assume
+  trust-review 369: assume
+  trust-review 376: assume
+  trust-review 382: assume
+  trust-review 388: assume
+  trust-review 394: assume
+  trust-review 480: assume
+  trust-review 490: assume
+  trust-review 496: assume
+  trust-review 502: assume
+  trust-review 509: assume
+  trust-review 515: assume
+  trust-review 521: assume
+  trust-review 527: assume
+  trust-review 616: assume
+  trust-review 626: assume
+  trust-review 632: assume
+  trust-review 638: assume
+  trust-review 645: assume
+  trust-review 651: assume
+  trust-review 657: assume
+  trust-review 663: assume
+  trust-review 755: assume
+  trust-review 765: assume
+  trust-review 771: assume
+  trust-review 777: assume
+  trust-review 784: assume
+  trust-review 790: assume
+  trust-review 796: assume
+  trust-review 802: assume
+  trust-review 888: assume
+  trust-review 894: assume
+  trust-review 900: assume
+  trust-review 906: assume
+  trust-review 912: assume
+  trust-review 919: assume
+  trust-review 925: assume
+  trust-review 931: assume
+  trust-review 937: assume
+  trust-review 1025: assume
+  trust-review 1031: assume
+  trust-review 1037: assume
+  trust-review 1043: assume
+  trust-review 1049: assume
+  trust-review 1056: assume
+  trust-review 1062: assume
+  trust-review 1068: assume
+  trust-review 1074: assume
+  trust-review 1163: assume
+  trust-review 1169: assume
+  trust-review 1175: assume
+  trust-review 1181: assume
+  trust-review 1187: assume
+  trust-review 1194: assume
+  trust-review 1200: assume
+  trust-review 1206: assume
+  trust-review 1212: assume
+  trust-review 1301: assume
+  trust-review 1307: assume
+  trust-review 1313: assume
+  trust-review 1319: assume
+  trust-review 1325: assume
+  trust-review 1332: assume
+  trust-review 1338: assume
+  trust-review 1344: assume
+  trust-review 1350: assume
+  trust-review 1442: assume
+  trust-review 1448: assume
+  trust-review 1454: assume
+  trust-review 1460: assume
+  trust-review 1466: assume
+  trust-review 1473: assume
+  trust-review 1479: assume
+  trust-review 1485: assume
+  trust-review 1491: assume
+  trust-review 1587: assume
+  trust-review 1593: assume
+  trust-review 1599: assume
+  trust-review 1605: assume
+  trust-review 1611: assume
+  trust-review 1618: assume
+  trust-review 1624: assume
+  trust-review 1630: assume
+  trust-review 1636: assume
+31b5ec6c8a5908138ccd0da70ddc49fff970cd5664720cc79e149f3373bf156d  proof-libs/fstar/core/Core_models.Ops.Arith.fsti
+02c76135b5dbc8fff697ac821d22a1e686b0b1ad5b399a12d23484e72db16a8e  proof-libs/fstar/core/Core_models.Ops.Bit.fsti
+282c82b755378dd8da7a7d08d5efb261260fae2d2ef1d1b4676b6e02054f0fa8  proof-libs/fstar/core/Core_models.Ops.Control_flow.fst
+4dd9d696a089688334b2a87d5e3d856f5cc600b722cedd6993559a5c3c69a10d  proof-libs/fstar/core/Core_models.Ops.Deref.fst
+2c5371b4ee5a1e559830d58df467dbf362f60085fd1cb7af5f75056174c30f9f  proof-libs/fstar/core/Core_models.Ops.Drop.fst
+d2f38d971ed8d2e3974396d268e08b88c1ae0a18acd8a0574422199949f9eb7d  proof-libs/fstar/core/Core_models.Ops.Function.fst
+a6361ee58d4a76b118b6d212d77188a8d375d35521aebffcb81c1113f3551a3a  proof-libs/fstar/core/Core_models.Ops.Index.IndexMut.fst
+04a2612919ce09c9655a3074863cae4d06363ece4f35616e7fc4d20067abc887  proof-libs/fstar/core/Core_models.Ops.Index.Index_mut.fst
+2fd7dbee65143f3d2a731b5ac4ceb5a3484f34b3d332d894d0c7dfaeb2a76b13  proof-libs/fstar/core/Core_models.Ops.Index.fst
+cc763c0bfd157dcd2cbf22d7abc11a28e1180e022f0e434e364be5ce39a0b905  proof-libs/fstar/core/Core_models.Ops.Range.fst
+51148600574603ece914b8adc63107d499011bfd789c93d701cca9eb5d1e5e0a  proof-libs/fstar/core/Core_models.Ops.Try_trait.fst
+1e9b6271508102faf0d8093111bf49a83b766ae40c819964d9eb04bba51c2023  proof-libs/fstar/core/Core_models.Option.fst
+14249a358b09acafb63b979ea28720b8cfc41c31d4fae564ecc4822ca32ab9e8  proof-libs/fstar/core/Core_models.Panicking.Internal.fsti
+17255d05c7f5ab037203b9d850906677d7ffc57c8c048ba35781084aa4937d2b  proof-libs/fstar/core/Core_models.Panicking.fst
+  trust-review 6: assume
+  trust-review 13: assume
+  trust-review 20: assume
+9a1d1b43bb12b756378257a6aab059c9b2d43d00c1c32f6d585a720a8f0d46b1  proof-libs/fstar/core/Core_models.Result.fst
+3e2e0b3ee57b4961b4477c508ab699b85054d7ae802cba32ca58a057f031f5c4  proof-libs/fstar/core/Core_models.Slice.Iter.fst
+fa5ca145254f49a02226fc49fb937e9ce2cd78da4716d41d475bc02ddb904a69  proof-libs/fstar/core/Core_models.Slice.fst
+  trust-review 21: assume
+  trust-review 27: assume
+  trust-review 43: assume
+0865abb192d6665ebc3913c5ae74d80590e2b13f9559fc96ecfeadd777298892  proof-libs/fstar/core/Core_models.Str.Converts.fsti
+94156f16723054dfc9e7b5e59c598e9d97134f462078e3ce2d396817d1ca6a07  proof-libs/fstar/core/Core_models.Str.Error.fsti
+7f19da61631661cfb96315e239f8ff28e6d8c03b8a565809af28b5891f3e9251  proof-libs/fstar/core/Core_models.Str.Iter.fsti
+1073caa3757e471742e83e58f4b88e8ef7c0dff023e39e4401005a030f1c1174  proof-libs/fstar/core/Core_models.Str.Traits.fsti
+f3495b00bed5d1064ab7f4c07738b49e4cba68ae44588175df5db1da16dc440e  proof-libs/fstar/core/Core_models.Str.fsti
+e20b7a0aa4b639cc7f8305855444d136b1622e31e8994bd380fcabfa0c7e17c4  proof-libs/fstar/core/Core_models.Time.fsti
+1ea1d59c70cb6753ee6b8b3f0d245cd1caab68552886d9fe76b25ee543354cf7  proof-libs/fstar/core/Core_models.TypeClassPlaceHolder.fst
+9a8f974a702c49c8cd864ad41d8f0ed71a4da477a62b09fdf4b8f4cf0e44bc91  proof-libs/fstar/core/Core_models.fst
+83259450eb6042810b76474c93f421289464132e2ed0cf8693daaf8aa1fd0024  proof-libs/fstar/core/Rand.Distr.Distribution.fsti
+e5ccbc48782ab04ece72e934975c9a11cef0c939b38407746de9f002bf0c519c  proof-libs/fstar/core/Rand.Distr.Integer.fsti
+c0742296f1fdb4e8c09603a35a1f82758353e5059da1140200150b87f19b93c2  proof-libs/fstar/core/Rand.Distributions.Distribution.fsti
+b9e6db3480a98255e72ffb9c9178f15e19675142e173276bcf6b2737d47c210b  proof-libs/fstar/core/Rand.Distributions.Integer.fsti
+6c5543c48b3d1cc0b4c42a5973c4cb171086db1c1901fce96056878a546cceac  proof-libs/fstar/core/Rand.Rng.fsti
+441ae0ebf8871aa58ccd3ae0d3792183fcaaf81390bb43bd249ddd7195309886  proof-libs/fstar/core/Rand_core.Os.fsti
+9533bc00fc052ff970df75152884ac56720ae48dfd31292cbdf6155e0fcdd94d  proof-libs/fstar/core/Rand_core.fsti
+54d8a9761791e31eab682af8df75d7af7c3c03c220472690525ef9324ab25b97  proof-libs/fstar/core/Std.Collections.Hash.Map.fsti
+8773f987dcdb1dedc920874e9fae5d43c92258f32ea853306bec16fbfaa210b2  proof-libs/fstar/core/Std.F64.fsti
+8915d9923b3fcafb8514f0483d9b39b5ee8e0e05c2d67bbf7322f7e798d4b0e5  proof-libs/fstar/core/Std.Hash.Random.fsti
+f22925ff2c96175c76a51e342e092b1a92b7cc645cf8b4b72771dfd494d0ecb1  proof-libs/fstar/core/Std.Io.Error.fsti
+c74a4903dd5932b0e897e3586342b26be95f97144381a3c86d294fd6ab12a0a5  proof-libs/fstar/core/Std.Io.Impls.fsti
+1f7f5088573c489337dfbf69877cb4bbc9b84c1c4037485b4696cc69d34618a7  proof-libs/fstar/core/Std.Io.Stdio.fsti
+5520c513eb07baf73db4b7f2d755366bab651e151bc611d60e4ba77492a19aea  proof-libs/fstar/core/Std.Io.fsti
+c6967b30e1d15f06a45db06ed1ac262632cf1537a86fe3d9384a893bffa08758  proof-libs/fstar/rust_primitives/Rust_primitives.Arithmetic.fsti
+f292123d4bfdf3233bd8274443f0138f989b60f5f2de92fda6ac607a14baa255  proof-libs/fstar/rust_primitives/Rust_primitives.Arrays.fsti
+8c3957d8913d2a5e9fd3b0bec5d1aa2adeb0826647adfab9b828dfaf7351e82b  proof-libs/fstar/rust_primitives/Rust_primitives.BitVectors.fsti
+b1b7683bceca0d20bde07345790b1e79b41097a075f5aebc77323fea913c1d29  proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti
+77b2d10331fd22e743117c956736d09b2f7ce65935ee38dca8729aa305eb0676  proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti
+b084a1fc43ce32adb9581309a1b30caecf638d562ebeffe0d73f062edc89fa13  proof-libs/fstar/rust_primitives/Rust_primitives.Hax.Control_flow_monad.Mexception.fst
+7739b64a52bc1000bbdd83e2d754941d20a50581f048f5707a9d1c7fe6d36ca6  proof-libs/fstar/rust_primitives/Rust_primitives.Hax.Control_flow_monad.Moption.fst
+7f0be8e9db9363559fc39f72ec142650cfcae6bad3b734cf6e10b2c660e81788  proof-libs/fstar/rust_primitives/Rust_primitives.Hax.Control_flow_monad.Mresult.fst
+c4dc74bcb120b783aaa5c5d0b9c34e0f87d09e8ebffa2bda7ce31b32c437240e  proof-libs/fstar/rust_primitives/Rust_primitives.Hax.Folds.fsti
+678b0ce6f6e06ca816c2ea9005e3e66296d7a0cf0f6346a0e3796dbabebef190  proof-libs/fstar/rust_primitives/Rust_primitives.Hax.Int.fst
+327643c81b9e8e166e382a85f4d5660d4e45d64f6a338997bab5544e8d52ccef  proof-libs/fstar/rust_primitives/Rust_primitives.Hax.Monomorphized_update_at.fsti
+b55d7d7f3c9f99f17e556f06d01cd117af38466f27575eb9e1c4cf89bd62358d  proof-libs/fstar/rust_primitives/Rust_primitives.Hax.Monomorphized_update_at_Lemmas.fst
+d66f87a944c31aa7a43c5ad01b82b3d1a162a467b3901ee83b1eab5d550351ef  proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst
+  trust-review 62: assume val update_at_array_range t l
+  trust-review 65: assume val update_at_array_range_to t l
+  trust-review 68: assume val update_at_array_range_from t l
+  trust-review 71: assume val update_at_array_range_full t l
+  trust-review 126: assume val while_loop_return #acc_t #ret_t
+ebe1efccda0d877d291c021d889de3375fd50694ac57ea311b6d990bb3c8ae23  proof-libs/fstar/rust_primitives/Rust_primitives.Integers.fsti
+c3c293eb54a9565787c42d4e0359621915f09e4251e4c990e664835358ab11a9  proof-libs/fstar/rust_primitives/Rust_primitives.Iterators.fsti
+59cdbb9565eb3e247307724849151141a78f8b2268984372008af01185251043  proof-libs/fstar/rust_primitives/Rust_primitives.Mem.fsti
+3e37290ef95fe8354fc291d93d81216bcf0e1ab50a96a9298275b2d5b6b09363  proof-libs/fstar/rust_primitives/Rust_primitives.Notations.fsti
+693fe6a49f77cd8af323bd9aaace461fe9aec51dc8fb8efaa97c88fad3a394cb  proof-libs/fstar/rust_primitives/Rust_primitives.Sequence.fst
+21e8d346387f7cb5bc1be8724e4b6e55293f920b181d9895b5b3f6b89532c9e5  proof-libs/fstar/rust_primitives/Rust_primitives.Slice.fsti
+3f865ac0fc463249472191095ccf832d66a57247bb8bd1b5ef3901fd3e4f8abd  proof-libs/fstar/rust_primitives/Rust_primitives.String.fsti
+bf5a6b4731633fcc50cbb6578228ea94006bc23a752037bfe6ec1988d3a2090d  proof-libs/fstar/rust_primitives/Rust_primitives.fst

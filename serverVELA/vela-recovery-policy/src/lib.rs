@@ -240,7 +240,7 @@ pub enum InitiateDecision {
 }
 
 pub fn initiation_is_authorized(facts: InitiateFacts) -> bool {
-    facts.phase == RecoveryPhase::Ready
+    matches!(facts.phase, RecoveryPhase::Ready)
         && facts.account_exists
         && facts.share_present
         && facts.credential_present
@@ -360,7 +360,7 @@ pub enum RecoverDecision {
 }
 
 pub fn recovery_is_authorized(facts: RecoverFacts) -> bool {
-    facts.phase == RecoveryPhase::ChallengePending
+    matches!(facts.phase, RecoveryPhase::ChallengePending)
         && facts.user_matches
         && facts.attempt_matches
         && facts.challenge_consumed
@@ -418,7 +418,7 @@ pub struct ProofInitiateFacts {
 }
 
 pub fn proof_initiation_is_authorized(facts: ProofInitiateFacts) -> bool {
-    facts.phase == RecoveryPhase::Ready
+    matches!(facts.phase, RecoveryPhase::Ready)
         && facts.account_exists
         && facts.share_present
         && facts.possession_hash_present
@@ -488,7 +488,7 @@ impl PossessionGrantPermit {
 }
 
 pub fn possession_recovery_is_authorized(facts: PossessionRecoverFacts) -> bool {
-    facts.phase == RecoveryPhase::ChallengePending
+    matches!(facts.phase, RecoveryPhase::ChallengePending)
         && facts.user_matches
         && facts.attempt_matches
         && facts.challenge_consumed
@@ -516,9 +516,7 @@ pub fn possession_recovery_decision_matches_spec(
 #[cfg_attr(hax, hax_lib::ensures(|decision| {
     possession_recovery_decision_matches_spec(facts, decision)
 }))]
-pub fn plan_possession_recovery(
-    facts: PossessionRecoverFacts,
-) -> PossessionRecoverDecision {
+pub fn plan_possession_recovery(facts: PossessionRecoverFacts) -> PossessionRecoverDecision {
     if possession_recovery_is_authorized(facts) {
         PossessionRecoverDecision::Grant(PossessionGrantPermit {
             epoch: facts.epoch,
@@ -559,14 +557,13 @@ pub fn credential_update_decision_matches_spec(
     facts: CredentialUpdateFacts,
     decision: CredentialUpdateDecision,
 ) -> bool {
-    decision
-        == if !facts.assertion_valid || !facts.credential_matches_current {
-            CredentialUpdateDecision::Reject
-        } else if facts.needs_update {
-            CredentialUpdateDecision::Update
-        } else {
-            CredentialUpdateDecision::Keep
-        }
+    if !facts.assertion_valid || !facts.credential_matches_current {
+        matches!(decision, CredentialUpdateDecision::Reject)
+    } else if facts.needs_update {
+        matches!(decision, CredentialUpdateDecision::Update)
+    } else {
+        matches!(decision, CredentialUpdateDecision::Keep)
+    }
 }
 
 #[cfg_attr(hax, hax_lib::ensures(|decision| {
@@ -628,7 +625,7 @@ pub fn enrollment_is_authorized(facts: EnrollmentFacts) -> bool {
         facts.credential_matches_current
     };
     grant_authority_ok
-        && facts.phase == RecoveryPhase::GrantIssued
+        && matches!(facts.phase, RecoveryPhase::GrantIssued)
         && facts.user_matches
         && facts.grant_live
         && facts.grant_consumed
@@ -847,10 +844,7 @@ mod tests {
             attempt_id_fresh: true,
             ttl_positive: true,
         };
-        assert_eq!(
-            plan_proof_initiation(valid),
-            ProofInitiateDecision::Start
-        );
+        assert_eq!(plan_proof_initiation(valid), ProofInitiateDecision::Start);
         for missing in [
             ProofInitiateFacts {
                 share_present: false,
@@ -861,7 +855,10 @@ mod tests {
                 ..valid
             },
         ] {
-            assert_eq!(plan_proof_initiation(missing), ProofInitiateDecision::Reject);
+            assert_eq!(
+                plan_proof_initiation(missing),
+                ProofInitiateDecision::Reject
+            );
         }
     }
 }

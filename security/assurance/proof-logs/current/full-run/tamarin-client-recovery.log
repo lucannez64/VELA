@@ -1,0 +1,12 @@
+maude tool: 'maude'
+ checking version: 3.5.1. OK.
+ checking installation: OK.
+[Theory M15_ClientRecoveryBoundary] Theory loaded
+[Theory M15_ClientRecoveryBoundary] Theory translated
+[Theory M15_ClientRecoveryBoundary] Derivation checks started
+[Theory M15_ClientRecoveryBoundary] Derivation checks ended
+[Theory M15_ClientRecoveryBoundary] Theory closed
+[Saturating Sources] Step 1 (Max 5)
+[Saturating Sources] Done
+m15_client_recovery_boundary: 15 verified
+client recovery formal proof gate: 15 verified, 0 falsified, 0 warnings

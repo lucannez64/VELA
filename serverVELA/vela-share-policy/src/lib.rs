@@ -305,9 +305,6 @@ mod tests {
 
         let mut missing = valid;
         missing.item_exists = false;
-        assert_eq!(
-            plan_link_mutation(missing),
-            LinkMutationDecision::Reject
-        );
+        assert_eq!(plan_link_mutation(missing), LinkMutationDecision::Reject);
     }
 }

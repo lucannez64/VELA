@@ -31,14 +31,16 @@ pub enum ScopeDecision {
 }
 
 pub fn scope_decision_matches_spec(claim: ScopeClaim, decision: ScopeDecision) -> bool {
-    decision
-        == match claim {
-            ScopeClaim::MissingLegacy | ScopeClaim::Device => {
-                ScopeDecision::Accept(CapabilityScope::Device)
-            }
-            ScopeClaim::WebSession => ScopeDecision::Accept(CapabilityScope::WebSession),
-            ScopeClaim::Unknown => ScopeDecision::Reject,
-        }
+    matches!(
+        (claim, decision),
+        (
+            ScopeClaim::MissingLegacy | ScopeClaim::Device,
+            ScopeDecision::Accept(CapabilityScope::Device)
+        ) | (
+            ScopeClaim::WebSession,
+            ScopeDecision::Accept(CapabilityScope::WebSession)
+        ) | (ScopeClaim::Unknown, ScopeDecision::Reject)
+    )
 }
 
 /// Parse the authenticated scope claim. Missing scope retains the bounded
@@ -103,18 +105,18 @@ pub enum GrantDecision {
 }
 
 pub fn grant_is_authorized(facts: GrantFacts) -> bool {
-    facts.phase == SessionPhase::Pending
+    matches!(facts.phase, SessionPhase::Pending)
         && facts.approver_matches
         && facts.nonce_matches
         && facts.declared_epoch >= INITIAL_EPOCH
-        && (facts.mode == SessionMode::ReadOnly || facts.has_web_vk)
+        && (matches!(facts.mode, SessionMode::ReadOnly) || facts.has_web_vk)
 }
 
 pub fn grant_decision_matches_spec(facts: GrantFacts, decision: GrantDecision) -> bool {
     match decision {
         GrantDecision::Grant(permit) => {
             grant_is_authorized(facts)
-                && permit.mode == facts.mode
+                && same_session_mode(permit.mode, facts.mode)
                 && permit.epoch == facts.declared_epoch
         }
         GrantDecision::Reject => !grant_is_authorized(facts),
@@ -258,7 +260,7 @@ pub fn device_decision_matches_spec(
     match decision {
         TokenDecision::Issue(plan) => {
             token_plan_is_valid(plan, now)
-                && plan.scope == CapabilityScope::Device
+                && matches!(plan.scope, CapabilityScope::Device)
                 && plan.key_epoch.is_none()
                 && plan.expires_at == bounded_expiry(now, plan.hard_cap)
                 && match requested_hard_cap {
@@ -308,8 +310,8 @@ pub fn web_exchange_is_authorized(
     now >= 0
         && hard_cap > now
         && epoch >= INITIAL_EPOCH
-        && facts.phase == SessionPhase::Granted
-        && facts.mode == SessionMode::ReadWrite
+        && matches!(facts.phase, SessionPhase::Granted)
+        && matches!(facts.mode, SessionMode::ReadWrite)
         && facts.approver_bound
         && facts.nonce_bound
         && facts.challenge_consumed
@@ -327,7 +329,7 @@ pub fn web_decision_matches_spec(
         TokenDecision::Issue(plan) => {
             web_exchange_is_authorized(facts, now, hard_cap, epoch)
                 && token_plan_is_valid(plan, now)
-                && plan.scope == CapabilityScope::WebSession
+                && matches!(plan.scope, CapabilityScope::WebSession)
                 && plan.key_epoch == Some(epoch)
                 && plan.hard_cap == hard_cap
                 && plan.expires_at == bounded_expiry(now, hard_cap)
@@ -370,14 +372,14 @@ pub fn renewal_decision_matches_spec(
     decision: RenewalDecision,
 ) -> bool {
     if !renewal_input_is_valid(claims, now) {
-        return decision == RenewalDecision::Reject;
+        return matches!(decision, RenewalDecision::Reject);
     }
     let inside_window = now >= claims.expires_at - RENEWAL_WINDOW_SECS;
     if inside_window && claims.expires_at < claims.hard_cap {
         match decision {
             RenewalDecision::Renew(plan) => {
                 token_plan_is_valid(plan, now)
-                    && plan.scope == claims.scope
+                    && same_capability_scope(plan.scope, claims.scope)
                     && plan.key_epoch == claims.key_epoch
                     && plan.hard_cap == claims.hard_cap
                     && plan.expires_at == bounded_expiry(now, claims.hard_cap)
@@ -385,7 +387,7 @@ pub fn renewal_decision_matches_spec(
             _ => false,
         }
     } else {
-        decision == RenewalDecision::Keep
+        matches!(decision, RenewalDecision::Keep)
     }
 }
 
@@ -472,7 +474,7 @@ pub fn ttl_clamp_can_be_violated(requested: Option<i64>) -> bool {
 }
 
 pub fn route_is_authorized(scope: CapabilityScope, class: RouteClass) -> bool {
-    scope == CapabilityScope::Device || class == RouteClass::Vault
+    matches!(scope, CapabilityScope::Device) || matches!(class, RouteClass::Vault)
 }
 
 pub fn route_decision_matches_spec(
@@ -481,7 +483,9 @@ pub fn route_decision_matches_spec(
     decision: RouteDecision,
 ) -> bool {
     match decision {
-        RouteDecision::Allow(permit) => route_is_authorized(scope, class) && permit.class == class,
+        RouteDecision::Allow(permit) => {
+            route_is_authorized(scope, class) && same_route_class(permit.class, class)
+        }
         RouteDecision::Reject => !route_is_authorized(scope, class),
     }
 }
@@ -503,7 +507,7 @@ pub fn authorize_route(scope: CapabilityScope, class: RouteClass) -> RouteDecisi
 pub fn renewal_escalates_authority(claims: TokenClaims, now: i64) -> bool {
     match plan_renewal(claims, now) {
         RenewalDecision::Renew(plan) => {
-            plan.scope != claims.scope || plan.key_epoch != claims.key_epoch
+            !same_capability_scope(plan.scope, claims.scope) || plan.key_epoch != claims.key_epoch
         }
         RenewalDecision::Keep | RenewalDecision::Reject => false,
     }
@@ -518,7 +522,7 @@ pub fn terminal_session_issues_token(
     hard_cap: i64,
     epoch: i64,
 ) -> bool {
-    if phase != SessionPhase::Revoked && phase != SessionPhase::Expired {
+    if !matches!(phase, SessionPhase::Revoked) && !matches!(phase, SessionPhase::Expired) {
         return false;
     }
     matches!(
@@ -727,5 +731,51 @@ mod tests {
             plan_web_session_token(valid_web_facts(), 100, 1_000, 0),
             TokenDecision::Reject
         );
+    }
+}
+
+// Structural comparisons keep the hax translation independent of opaque
+// derived PartialEq implementations. Normal Rust retains its derived Eq API.
+fn same_session_mode(a: SessionMode, b: SessionMode) -> bool {
+    matches!(
+        (a, b),
+        (SessionMode::ReadOnly, SessionMode::ReadOnly)
+            | (SessionMode::ReadWrite, SessionMode::ReadWrite)
+    )
+}
+fn same_capability_scope(a: CapabilityScope, b: CapabilityScope) -> bool {
+    matches!(
+        (a, b),
+        (CapabilityScope::Device, CapabilityScope::Device)
+            | (CapabilityScope::WebSession, CapabilityScope::WebSession)
+    )
+}
+fn same_route_class(a: RouteClass, b: RouteClass) -> bool {
+    matches!(
+        (a, b),
+        (RouteClass::Vault, RouteClass::Vault)
+            | (RouteClass::PermanentAccount, RouteClass::PermanentAccount)
+    )
+}
+#[cfg(test)]
+mod structural_equality_tests {
+    use super::*;
+    #[test]
+    fn structural_comparisons_match_derived_equality_exhaustively() {
+        for a in [SessionMode::ReadOnly, SessionMode::ReadWrite] {
+            for b in [SessionMode::ReadOnly, SessionMode::ReadWrite] {
+                assert_eq!(same_session_mode(a, b), a == b);
+            }
+        }
+        for a in [CapabilityScope::Device, CapabilityScope::WebSession] {
+            for b in [CapabilityScope::Device, CapabilityScope::WebSession] {
+                assert_eq!(same_capability_scope(a, b), a == b);
+            }
+        }
+        for a in [RouteClass::Vault, RouteClass::PermanentAccount] {
+            for b in [RouteClass::Vault, RouteClass::PermanentAccount] {
+                assert_eq!(same_route_class(a, b), a == b);
+            }
+        }
     }
 }

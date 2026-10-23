@@ -141,7 +141,7 @@ pub enum StartDecision {
 /// Whether an ACTIVE account is ready to begin exactly one rotation.
 pub fn start_is_authorized(state: RekeyState, facts: StartFacts) -> bool {
     state.is_valid()
-        && state.phase == Phase::Active
+        && matches!(state.phase, Phase::Active)
         && next_epoch(state.epoch).is_some()
         && facts.no_oram
         && facts.all_devices_rekey_capable
@@ -199,7 +199,7 @@ pub enum ShadowDecision {
 
 pub fn attempt_is_authorized(state: RekeyState, authority: AttemptAuthority) -> bool {
     state.is_valid()
-        && state.phase == Phase::Freezing
+        && matches!(state.phase, Phase::Freezing)
         && authority.device_scope
         && authority.starter_matches
         && authority.rotation_id_present
@@ -207,7 +207,7 @@ pub fn attempt_is_authorized(state: RekeyState, authority: AttemptAuthority) -> 
 }
 
 #[cfg_attr(hax, hax_lib::ensures(|decision| {
-    (decision == ShadowDecision::Allow) == attempt_is_authorized(state, authority)
+    (matches!(decision, ShadowDecision::Allow)) == attempt_is_authorized(state, authority)
 }))]
 pub fn authorize_attempt(state: RekeyState, authority: AttemptAuthority) -> ShadowDecision {
     if attempt_is_authorized(state, authority) {
@@ -230,7 +230,7 @@ pub fn shadow_is_authorized(
 
 /// Authorize a shadow write using only already-authenticated facts.
 #[cfg_attr(hax, hax_lib::ensures(|decision| {
-    (decision == ShadowDecision::Allow) == shadow_is_authorized(state, route, authority)
+    (matches!(decision, ShadowDecision::Allow)) == shadow_is_authorized(state, route, authority)
 }))]
 pub fn authorize_shadow(
     state: RekeyState,
@@ -312,7 +312,7 @@ pub fn abort_decision_matches_spec(
         AbortDecision::Abort(after) => {
             attempt_is_authorized(state, authority)
                 && after.epoch == state.epoch
-                && after.phase == Phase::Active
+                && matches!(after.phase, Phase::Active)
         }
         AbortDecision::Reject => !attempt_is_authorized(state, authority),
     }
@@ -346,7 +346,10 @@ pub enum TimeoutDecision {
 }
 
 pub fn timeout_is_required(state: RekeyState, facts: TimeoutFacts) -> bool {
-    state.is_valid() && state.phase == Phase::Freezing && facts.expired && facts.rotation_id_present
+    state.is_valid()
+        && matches!(state.phase, Phase::Freezing)
+        && facts.expired
+        && facts.rotation_id_present
 }
 
 pub fn timeout_decision_matches_spec(
@@ -358,7 +361,7 @@ pub fn timeout_decision_matches_spec(
         TimeoutDecision::Rollback(after) => {
             timeout_is_required(state, facts)
                 && after.epoch == state.epoch
-                && after.phase == Phase::Active
+                && matches!(after.phase, Phase::Active)
         }
         TimeoutDecision::Keep => !timeout_is_required(state, facts),
     }
@@ -389,7 +392,7 @@ pub struct CommitReplayFacts {
 
 pub fn commit_replay_is_authorized(state: RekeyState, facts: CommitReplayFacts) -> bool {
     state.is_valid()
-        && state.phase == Phase::Active
+        && matches!(state.phase, Phase::Active)
         && facts.target_epoch == Some(state.epoch)
         && facts.recorded_epoch == Some(state.epoch)
         && facts.rotation_id_present
@@ -398,7 +401,7 @@ pub fn commit_replay_is_authorized(state: RekeyState, facts: CommitReplayFacts) 
 
 /// Accept a lost-response replay exactly when it names the recorded commit.
 #[cfg_attr(hax, hax_lib::ensures(|decision| {
-    (decision == ShadowDecision::Allow) == commit_replay_is_authorized(state, facts)
+    (matches!(decision, ShadowDecision::Allow)) == commit_replay_is_authorized(state, facts)
 }))]
 pub fn authorize_commit_replay(state: RekeyState, facts: CommitReplayFacts) -> ShadowDecision {
     if commit_replay_is_authorized(state, facts) {
@@ -453,13 +456,13 @@ pub fn mutation_request_is_authorized(request: MutationRequest) -> bool {
         && request.declared_epoch == request.authority_epoch
         && match request.kind {
             MutationKind::Vault => {
-                request.authority == MutationAuthority::Device
-                    || request.authority == MutationAuthority::WebSession
+                matches!(request.authority, MutationAuthority::Device)
+                    || matches!(request.authority, MutationAuthority::WebSession)
             }
-            MutationKind::Recovery => request.authority == MutationAuthority::Device,
+            MutationKind::Recovery => matches!(request.authority, MutationAuthority::Device),
             MutationKind::Enrollment => {
-                request.authority == MutationAuthority::Device
-                    || request.authority == MutationAuthority::RecoveryGrant
+                matches!(request.authority, MutationAuthority::Device)
+                    || matches!(request.authority, MutationAuthority::RecoveryGrant)
             }
         }
 }
@@ -494,11 +497,11 @@ pub fn plan_active_mutation(request: MutationRequest) -> MutationDecision {
 
 /// The database-side condition represented by a mutation permit.
 pub fn active_mutation_is_authorized(state: RekeyState, permit: MutationPermit) -> bool {
-    state.is_valid() && state.phase == Phase::Active && state.epoch == permit.epoch
+    state.is_valid() && matches!(state.phase, Phase::Active) && state.epoch == permit.epoch
 }
 
 #[cfg_attr(hax, hax_lib::ensures(|decision| {
-    (decision == ShadowDecision::Allow) == active_mutation_is_authorized(state, permit)
+    (matches!(decision, ShadowDecision::Allow)) == active_mutation_is_authorized(state, permit)
 }))]
 pub fn authorize_active_mutation(state: RekeyState, permit: MutationPermit) -> ShadowDecision {
     if active_mutation_is_authorized(state, permit) {
@@ -512,7 +515,8 @@ pub fn authorize_active_mutation(state: RekeyState, permit: MutationPermit) -> S
 /// transition to ACTIVE(N+1).
 #[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
 pub fn stale_permit_authorizes_successor(before: RekeyState, permit: MutationPermit) -> bool {
-    if !before.is_valid() || before.phase != Phase::Active || permit.epoch != before.epoch {
+    if !before.is_valid() || !matches!(before.phase, Phase::Active) || permit.epoch != before.epoch
+    {
         return false;
     }
     match next_epoch(before.epoch) {

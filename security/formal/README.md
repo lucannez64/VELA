@@ -8,9 +8,16 @@ capability lifecycle, the M13 permanent-device enrollment ceremony, the M14
 account-recovery lifecycle, the M15 client recovery boundary, the M16
 two-phase recovery-publication protocol, and the M17 crash/restart publication
 journal, followed by the M18–M26 recovery, sharing, sync, and composition
-theories and the M22 ProVerif ORAM models. Together the 30 Tamarin theories
-contain 264 lemmas: 259 verified and five intentionally falsified
-impossibility claims (176 of them gated in CI). For the external-review
+theories and the M22 ProVerif ORAM models. The five network-boundary additions
+(M13b baseline/fix, M19c baseline/fix, M27) bring the corpus to 35 Tamarin
+theories and 281 lemmas. Five original impossibility claims intentionally
+falsify. The original CI witnessed 176 protocol lemmas; current CI also
+configures the credential-release and new network gates, with successful
+updated CI evidence still pending. See
+[`network-boundary-correspondence.md`](network-boundary-correspondence.md)
+for exact rule-to-Rust mapping, abstractions, and reproduction.
+
+For the external-review
 package, including claims, adversary models, and known limitations, see
 [`../assurance/`](../assurance/README.md).
 
@@ -421,3 +428,19 @@ This is the interaction property no individual model can express.
 ```
 
 Same runner as above: **4 + 6 Tamarin lemmas verified**.
+
+### M28: recoverable share journal
+
+`run-share-journal-proofs.sh` checks all seven named verdicts and rejects
+warnings, timeouts or incomplete analysis. `run-all.sh` includes it. This is a
+conditional filesystem abstraction, not a Rust refinement theorem. See
+[`../assurance/08-formalization-status.md`](../assurance/08-formalization-status.md)
+for the exact boundary, including stronger all-pairs goals not proved.
+
+### M29: composed dual-signature sharing and durable commit
+
+The journal runner now also checks eleven M29 lemmas. Separate signing keys and
+reveal rules join admission, first pin, stale snapshots, journal/vault/cleanup and
+recovery in one model. The adversary sees signed plaintext, so these are
+conditional authentication/application proofs, not KEM confidentiality results.
+See [the reviewed mapping](signed-share-commit-correspondence.md).

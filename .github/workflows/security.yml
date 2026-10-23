@@ -19,7 +19,7 @@ on:
       - "security/**"
       - "serverVELA/**"
       - "libVELA/vela-crypto/**"
-      - "libVELA/vela-client-recovery-policy/**"
+      - "libVELA/vela-*-policy/**"
       - "libVELA/vela-core/**"
       - "libVELA/vela-android-bridge/**"
       - "libVELA/vela-apple-bridge/**"
@@ -37,7 +37,7 @@ on:
       - "security/**"
       - "serverVELA/**"
       - "libVELA/vela-crypto/**"
-      - "libVELA/vela-client-recovery-policy/**"
+      - "libVELA/vela-*-policy/**"
       - "libVELA/vela-core/**"
       - "libVELA/vela-android-bridge/**"
       - "libVELA/vela-apple-bridge/**"
@@ -57,6 +57,9 @@ permissions:
 jobs:
   formal-rekey:
     runs-on: ubuntu-latest
+    env:
+      CARGO_BUILD_JOBS: 1
+      RUST_TEST_THREADS: 1
     steps:
       - uses: actions/checkout@v4
 
@@ -77,76 +80,29 @@ jobs:
           shared-key: security-rust
           cache-on-failure: true
 
-      - name: Cache Tamarin 1.12.0 and Maude
-        uses: actions/cache@v4
-        with:
-          path: |
-            /usr/local/bin/tamarin-prover
-            /usr/local/bin/maude
-          key: tamarin-1.12.0-maude
+      - uses: dtolnay/rust-toolchain@1.99.1
 
-      - uses: dtolnay/rust-toolchain@stable
-
-      - name: Install Tamarin 1.12.0 and Maude
+      - name: Install pinned Tamarin 1.12.0 and Maude 3.5.1
         run: |
-          if command -v tamarin-prover >/dev/null && command -v maude >/dev/null; then
-            echo "Tamarin and Maude restored from cache"
-            tamarin-prover --version
-            maude --version
-            exit 0
-          fi
-          sudo apt-get update
-          sudo apt-get install --yes maude ripgrep
-          curl --fail --silent --show-error --location \
-            --output /tmp/tamarin-prover.tar.gz \
-            https://github.com/tamarin-prover/tamarin-prover/releases/download/1.12.0/tamarin-prover-1.12.0-linux64-ubuntu.tar.gz
-          echo "201be06f469e47cff554df6ca93db8366fc2c69d70c61fcbd1370a1074b469c6  /tmp/tamarin-prover.tar.gz" \
-            | sha256sum --check
-          sudo tar --extract --gzip --file /tmp/tamarin-prover.tar.gz --directory /usr/local/bin
+          sudo apt-get update -qq
+          sudo apt-get install --yes ripgrep unzip
+          curl -fL -o /tmp/tamarin.tar.gz https://github.com/tamarin-prover/tamarin-prover/releases/download/1.12.0/tamarin-prover-1.12.0-linux64-ubuntu.tar.gz
+          echo "201be06f469e47cff554df6ca93db8366fc2c69d70c61fcbd1370a1074b469c6  /tmp/tamarin.tar.gz" | sha256sum -c
+          sudo tar -xzf /tmp/tamarin.tar.gz -C /usr/local/bin
+          curl -fL -o /tmp/maude.zip https://github.com/maude-lang/Maude/releases/download/Maude3.5.1/Maude-3.5.1-linux-x86_64.zip
+          echo "72ed1ca87e3b3d0dfc6ee1436baf154bf04c45ff97d521bec040c5e8dfc8f92c  /tmp/maude.zip" | sha256sum -c
+          sudo mkdir -p /opt/maude-3.5.1
+          sudo unzip -oq /tmp/maude.zip -d /opt/maude-3.5.1
+          sudo chmod +x /opt/maude-3.5.1/maude
+          sudo ln -s /opt/maude-3.5.1/maude /usr/local/bin/maude
           tamarin-prover --version
           maude --version
 
-      - name: Prove rekey state, capsule, and mutation invariants
-        run: ./security/formal/run-rekey-proofs.sh
+      - name: Check reviewed model correspondence
+        run: python3 security/formal/check-correspondence.py
 
-      - name: Prove web-session capability lifecycle
-        run: ./security/formal/run-session-proofs.sh
-
-      - name: Prove permanent-device enrollment ceremony
-        run: ./security/formal/run-enrollment-proofs.sh
-
-      - name: Prove account-recovery lifecycle
-        run: ./security/formal/run-recovery-proofs.sh
-
-      - name: Prove client recovery reconstruction boundary
-        run: ./security/formal/run-client-recovery-proofs.sh
-
-      - name: Prove recovery setup publication consistency
-        run: ./security/formal/run-recovery-publication-proofs.sh
-
-      - name: Prove crash-consistent recovery publication
-        run: ./security/formal/run-recovery-publication-recovery-proofs.sh
-
-      - name: Prove the full 2-of-3 pair-selection threshold
-        run: ./security/formal/run-pair-selection-proofs.sh
-
-      - name: Prove the cross-user share-channel binding integrity
-        run: ./security/formal/run-share-channel-proofs.sh
-
-      - name: Prove the web-session vault pass-through gating
-        run: ./security/formal/run-web-session-pass-through-proofs.sh
-
-      - name: Prove linked-item revocation finality
-        run: ./security/formal/run-link-revocation-finality-proofs.sh
-
-      - name: Prove cross-milestone rotation-stranding composition
-        run: ./security/formal/run-composition-proofs.sh
-
-      - name: Prove the client sync-admission policy
-        run: ./security/formal/run-sync-admission-proofs.sh
-
-      - name: Statistical stash-bounds verification over the real ORAM
-        run: ./security/formal/run-oram-stash-bounds-tests.sh
+      - name: Prove malicious-server enrollment, shares, and device authentication
+        run: VELA_PROOF_OUT="$RUNNER_TEMP/network-proofs" security/formal/run-network-boundary-proofs.sh
 
       # The opam switch with ProVerif is the slowest toolchain step (ocaml +
       # proverif build ~5 min); the install below is already idempotent, so a
@@ -155,7 +111,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /home/runner/.opam
-          key: opam-proverif-ocaml5.1.1-v1
+          key: opam-proverif-2.05-ocaml5.1.1-v2
 
       - name: Prove Path-ORAM access-pattern hiding (ProVerif)
         run: |
@@ -167,11 +123,10 @@ jobs:
           fi
           # proverif's opam depext pulls GUI libs the headless runner lacks;
           # they are optional for the CLI solver, so skip depext handling.
-          if ! opam list --switch vela-proverif --installed 2>/dev/null | grep -q 'proverif'; then
-            opam install --switch vela-proverif --yes proverif
-          fi
+          opam install --switch vela-proverif --yes proverif.2.05
+          opam list --switch vela-proverif --installed proverif
           eval "$(opam env --switch vela-proverif)"
-          ./security/formal/run-oram-access-hiding-proofs.sh
+          echo "$(opam var bin --switch vela-proverif)" >> "$GITHUB_PATH"
 
       - name: Exhaust the bounded model against real handlers and Turso
         run: |
@@ -185,19 +140,96 @@ jobs:
 
       - name: Verify the desktop, Android, Apple, and web epoch wire contract
         run: |
-          cargo test --manifest-path libVELA/vela-crypto/Cargo.toml recovery::tests
+          cargo test --manifest-path libVELA/vela-client-share-policy/Cargo.toml
+          cargo test --manifest-path libVELA/vela-crypto/Cargo.toml --lib
           cargo test --manifest-path libVELA/vela-crypto/Cargo.toml \
             rekey::tests::fleet_wire_matrix_is_cross_client_and_epoch_compatible
           cargo test --manifest-path libVELA/vela-android-bridge/Cargo.toml --lib
           cargo test --manifest-path libVELA/vela-apple-bridge/Cargo.toml --lib
           cargo test --manifest-path libVELA/vela-wasm-bridge/Cargo.toml --lib
 
+      - name: Run every assurance model, including the credential-release ladder
+        run: security/assurance/run-all.sh --out "$RUNNER_TEMP/assurance-logs"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: assurance-symbolic-logs
+          path: |
+            ${{ runner.temp }}/assurance-logs
+            ${{ runner.temp }}/network-proofs
+
+  sharing-boundaries:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      CARGO_BUILD_JOBS: 1
+      RUST_TEST_THREADS: 1
+      CARGO_PROFILE_DEV_CODEGEN_BACKEND: llvm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.99.1
+      - name: Install desktop core build prerequisites
+        run: sudo apt-get update -qq && sudo apt-get install -y clang pkg-config libudev-dev libwayland-dev libssl-dev
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktopVELA -> target
+          shared-key: security-desktop-core
+      - name: Check desktop policy callers and recoverable share commits
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/sharing-logs"
+          security/assurance/bounded.sh cargo test --manifest-path desktopVELA/Cargo.toml -p vela-desktop-core --locked --lib 2>&1 | tee "$RUNNER_TEMP/sharing-logs/desktop-core-tests.log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: assurance-sharing-logs
+          path: ${{ runner.temp }}/sharing-logs
+
+  refinement:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      CARGO_BUILD_JOBS: 1
+      OPAMJOBS: 1
+      MAKEFLAGS: -j1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.99.1
+      - name: Install build prerequisites
+        run: sudo apt-get update -qq && sudo apt-get install -y opam libgmp-dev pkg-config unzip jq clang
+      - name: Install pinned hax, F* and Z3
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/refinement-logs"
+          VELA_MEMORY_MAX=6G VELA_STEP_TIMEOUT=3600 security/assurance/bounded.sh security/assurance/install-hax.sh 2>&1 | tee "$RUNNER_TEMP/refinement-logs/toolchain-install.log"
+      - name: Extract and check all eight policy crates
+        run: |
+          mkdir -p "$RUNNER_TEMP/refinement-logs"
+          for crate in serverVELA/vela-{rekey,session,enrollment,recovery,share}-policy libVELA/vela-{client-recovery,sync,client-share}-policy; do
+            # Require fresh output even when the repository contains extractions.
+            if [[ -d "$crate/proofs/fstar/extraction" ]]; then
+              find "$crate/proofs/fstar/extraction" -maxdepth 1 -type f \( -name '*.fst' -o -name '*.fsti' \) -delete
+            fi
+            security/assurance/bounded.sh "$crate/verify-fstar.sh" > "$RUNNER_TEMP/refinement-logs/$(basename "$crate").log" 2>&1
+          done
+      - name: Verify production share-fact construction and audit extraction assumptions
+        run: |
+          set -euo pipefail
+          security/assurance/bounded.sh libVELA/vela-crypto/verify-share-facts-fstar.sh > "$RUNNER_TEMP/refinement-logs/share-facts.log" 2>&1
+          python3 security/assurance/check-proof-boundary.py | tee "$RUNNER_TEMP/refinement-logs/proof-boundary.log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: assurance-refinement-logs
+          path: ${{ runner.temp }}/refinement-logs
+
   static-scan:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.1
 
       - name: Install cargo-audit and cargo-deny
         uses: taiki-e/install-action@v2
@@ -214,6 +246,9 @@ jobs:
 
   regression:
     runs-on: ubuntu-latest
+    env:
+      CARGO_BUILD_JOBS: 1
+      RUST_TEST_THREADS: 1
     steps:
       - uses: actions/checkout@v4
 
@@ -225,7 +260,7 @@ jobs:
           shared-key: security-rust
           cache-on-failure: true
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.1
 
       - name: Build server
         run: cargo build --manifest-path serverVELA/Cargo.toml

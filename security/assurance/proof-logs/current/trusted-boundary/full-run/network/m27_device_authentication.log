@@ -1,0 +1,369 @@
+maude tool: 'maude'
+ checking version: 3.5.1. OK.
+ checking installation: OK.
+[Theory M27_DeviceAuthentication] Theory loaded
+[Theory M27_DeviceAuthentication] Theory translated
+[Theory M27_DeviceAuthentication] Derivation checks started
+[Theory M27_DeviceAuthentication] Derivation checks ended
+[Theory M27_DeviceAuthentication] Theory closed
+[Saturating Sources] Step 1 (Max 5)
+[Saturating Sources] Done
+theory M27_DeviceAuthentication
+
+begin
+
+// Function signature and definition of the equational theory E
+
+functions: fst/1, pair/2, pk/1, sign/2, snd/1, true/0, verify/3
+equations:
+    fst(<x.1, x.2>) = x.1,
+    snd(<x.1, x.2>) = x.2,
+    verify(sign(x.1, x.2), x.1, pk(x.2)) = true
+
+/* looping facts with injective instances: DeviceActive/1 */
+
+rule (modulo E) Server_Key:
+   [ Fr( ~paseto ) ] --> [ !ServerKey( ~paseto ), Out( pk(~paseto) ) ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) Register_Device:
+   [ Fr( ~sk ), Fr( ~dev ) ]
+  --[ Registered( $U, ~dev, pk(~sk) ) ]->
+   [
+   !DeviceSecret( $U, ~dev, ~sk ), !DeviceRow( $U, ~dev, pk(~sk) ),
+   DeviceActive( ~dev ), Out( <~dev, pk(~sk)> )
+   ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) Revoke_Device:
+   [ DeviceActive( dev ) ] --[ Revoked( dev ) ]-> [ ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) Reveal_DeviceKey:
+   [ !DeviceSecret( U, dev, sk ) ]
+  --[ DeviceKeyRevealed( dev ) ]->
+   [ Out( sk ) ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) Server_Challenge:
+   [ Fr( ~ch ) ]
+  --[ ChallengeIssued( ~ch ) ]->
+   [ Challenge( ~ch ), Out( ~ch ) ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) Device_SignAuth:
+   [ !DeviceSecret( U, dev, sk ), In( ch ) ]
+  --[ DeviceSignedAuth( dev, ch ) ]->
+   [ Out( <dev, ch, sign(<'vela auth challenge v1', dev, ch>, sk)> ) ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) Server_Lookup:
+   [ !DeviceRow( U, dev, vk ), DeviceActive( dev ), Fr( ~request ) ]
+  --[ ActiveDeviceLookup( ~request, dev ) ]->
+   [ DeviceActive( dev ), LookupResult( ~request, U, dev, vk ) ]
+
+  // loop breaker: [1]
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) Server_Verify:
+   [
+   In( <dev, ch, sig> ), Challenge( ch ),
+   LookupResult( request, U, dev, vk ), !ServerKey( paseto ), Fr( ~jti )
+   ]
+  --[
+  Verified( verify(sig, <'vela auth challenge v1', dev, ch>, vk) ),
+  SessionIssued( U, dev, ch, ~jti ),
+  SessionFromLookup( ~jti, request, dev )
+  ]->
+   [ Out( sign(<'paseto v4', U, dev, ~jti>, paseto) ) ]
+
+  /*
+  rule (modulo AC) Server_Verify:
+     [
+     In( <dev, ch, sig> ), Challenge( ch ),
+     LookupResult( request, U, dev, vk ), !ServerKey( paseto ), Fr( ~jti )
+     ]
+    --[
+    Verified( z ), SessionIssued( U, dev, ch, ~jti ),
+    SessionFromLookup( ~jti, request, dev )
+    ]->
+     [ Out( sign(<'paseto v4', U, dev, ~jti>, paseto) ) ]
+    variants (modulo AC)
+    1. ch    = ch.12
+       dev   = dev.13
+       sig   = sig.16
+       vk    = vk.17
+       z     = verify(sig.16, <'vela auth challenge v1', dev.13, ch.12>, vk.17)
+    
+    2. ch    = ch.16
+       dev   = dev.17
+       sig   = sign(<'vela auth challenge v1', dev.17, ch.16>, x.28)
+       vk    = pk(x.28)
+       z     = true
+  */
+
+restriction SignatureVerifies:
+  "∀ x #i. (Verified( x ) @ #i) ⇒ (x = true)"
+  // safety formula
+
+  /*
+  expanded formula:
+  "∀ x #i. (Verified( x ) @ #i) ⇒ (x = true)"
+  */
+
+rule (modulo E) Device_SignShareEkBinding:
+   [ !DeviceSecret( U, dev, sk ), In( <ek, signed_at> ) ]
+  -->
+   [ Out( sign(<'vela share-ek binding v1', ek, signed_at>, sk) ) ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) Device_SignEnrollmentResult:
+   [ !DeviceSecret( U, dev, sk ), In( grant ) ]
+  -->
+   [ Out( sign(<'vela enrollment result v3', grant>, sk) ) ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) Device_SignEnrollmentPayload:
+   [ !DeviceSecret( U, dev, sk ), In( <ek, vk, capsule> ) ]
+  -->
+   [ Out( sign(<'vela device enrollment v1', ek, vk, capsule>, sk) ) ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) Device_SignShareItem:
+   [ !DeviceSecret( U, dev, sk ), In( <header, item> ) ]
+  -->
+   [ Out( sign(<'vela share item v2', header, item>, sk) ) ]
+
+  /* has exactly the trivial AC variant */
+
+lemma sessions_require_a_device_signature_on_the_challenge:
+  all-traces
+  "∀ U dev ch jti #i.
+    (SessionIssued( U, dev, ch, jti ) @ #i) ⇒
+    ((∃ #j. (DeviceSignedAuth( dev, ch ) @ #j) ∧ (#j < #i)) ∨
+     (∃ #k. (DeviceKeyRevealed( dev ) @ #k) ∧ (#k < #i)))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ U dev ch jti #i.
+  (SessionIssued( U, dev, ch, jti ) @ #i)
+ ∧
+  (∀ #j. (DeviceSignedAuth( dev, ch ) @ #j) ⇒ ¬(#j < #i)) ∧
+  (∀ #k. (DeviceKeyRevealed( dev ) @ #k) ⇒ ¬(#k < #i))"
+*/
+simplify
+solve( Challenge( ch ) ▶₁ #i )
+  case Server_Challenge
+  solve( LookupResult( request, U, dev, pk(x) ) ▶₂ #i )
+    case Server_Lookup
+    solve( !ServerKey( paseto ) ▶₃ #i )
+      case Server_Key
+      solve( !KU( sign(<'vela auth challenge v1', ~dev, ~ch>, ~sk) ) @ #vk.4 )
+        case Device_SignAuth
+        by contradiction /* from formulas */
+      next
+        case c_sign
+        solve( !KU( ~sk ) @ #vk.7 )
+          case Reveal_DeviceKey
+          by contradiction /* from formulas */
+        qed
+      qed
+    qed
+  qed
+qed
+
+lemma a_challenge_yields_at_most_one_session:
+  all-traces
+  "∀ U U2 dev dev2 ch jti jti2 #i #j.
+    ((SessionIssued( U, dev, ch, jti ) @ #i) ∧
+     (SessionIssued( U2, dev2, ch, jti2 ) @ #j)) ⇒
+    (#i = #j)"
+/*
+guarded formula characterizing all counter-examples:
+"∃ U U2 dev dev2 ch jti jti2 #i #j.
+  (SessionIssued( U, dev, ch, jti ) @ #i) ∧
+  (SessionIssued( U2, dev2, ch, jti2 ) @ #j)
+ ∧
+  ¬(#i = #j)"
+*/
+simplify
+solve( (#i < #j)  ∥ (#j < #i) )
+  case case_1
+  solve( Challenge( ch ) ▶₁ #i )
+    case Server_Challenge
+    solve( LookupResult( request, U, dev, pk(x) ) ▶₂ #i )
+      case Server_Lookup
+      solve( !ServerKey( paseto ) ▶₃ #i )
+        case Server_Key
+        solve( Challenge( ~ch ) ▶₁ #j )
+          case Server_Challenge
+          by contradiction /* cyclic */
+        qed
+      qed
+    qed
+  qed
+next
+  case case_2
+  solve( Challenge( ch ) ▶₁ #i )
+    case Server_Challenge
+    solve( LookupResult( request, U, dev, pk(x) ) ▶₂ #i )
+      case Server_Lookup
+      solve( !ServerKey( paseto ) ▶₃ #i )
+        case Server_Key
+        solve( Challenge( ~ch ) ▶₁ #j )
+          case Server_Challenge
+          by contradiction /* cyclic */
+        qed
+      qed
+    qed
+  qed
+qed
+
+lemma sessions_use_server_issued_challenges:
+  all-traces
+  "∀ U dev ch jti #i.
+    (SessionIssued( U, dev, ch, jti ) @ #i) ⇒
+    (∃ #j. (ChallengeIssued( ch ) @ #j) ∧ (#j < #i))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ U dev ch jti #i.
+  (SessionIssued( U, dev, ch, jti ) @ #i)
+ ∧
+  ∀ #j. (ChallengeIssued( ch ) @ #j) ⇒ ¬(#j < #i)"
+*/
+simplify
+solve( Challenge( ch ) ▶₁ #i )
+  case Server_Challenge
+  by contradiction /* from formulas */
+qed
+
+lemma revoked_devices_get_no_fresh_lookup [use_induction]:
+  all-traces
+  "∀ request dev #i #r.
+    ((ActiveDeviceLookup( request, dev ) @ #i) ∧ (Revoked( dev ) @ #r)) ⇒
+    (#i < #r)"
+/*
+guarded formula characterizing all counter-examples:
+"∃ request dev #i #r.
+  (ActiveDeviceLookup( request, dev ) @ #i) ∧ (Revoked( dev ) @ #r)
+ ∧
+  ¬(#i < #r)"
+*/
+induction
+  case empty_trace
+  by contradiction /* from formulas */
+next
+  case non_empty_trace
+  solve( !DeviceRow( U, dev, vk ) ▶₀ #i )
+    case Register_Device
+    solve( DeviceActive( ~dev ) ▶₀ #r )
+      case Register_Device
+      solve( DeviceActive( ~dev ) ▶₁ #i )
+        case Server_Lookup
+        by contradiction /* cyclic */
+      qed
+    next
+      case Server_Lookup
+      solve( DeviceActive( ~dev ) ▶₁ #i )
+        case Register_Device
+        by contradiction /* cyclic */
+      next
+        case Server_Lookup
+        by contradiction /* cyclic */
+      qed
+    qed
+  qed
+qed
+
+lemma sessions_carry_the_registered_user:
+  all-traces
+  "∀ U dev ch jti #i.
+    (SessionIssued( U, dev, ch, jti ) @ #i) ⇒
+    (∃ vk #j. Registered( U, dev, vk ) @ #j)"
+/*
+guarded formula characterizing all counter-examples:
+"∃ U dev ch jti #i.
+  (SessionIssued( U, dev, ch, jti ) @ #i)
+ ∧
+  ∀ vk #j. (Registered( U, dev, vk ) @ #j) ⇒ ⊥"
+*/
+simplify
+solve( Challenge( ch ) ▶₁ #i )
+  case Server_Challenge
+  solve( LookupResult( request, U, dev, pk(x) ) ▶₂ #i )
+    case Server_Lookup
+    by contradiction /* from formulas */
+  qed
+qed
+
+lemma honest_login_is_reachable:
+  exists-trace
+  "∃ U dev ch jti #i.
+    (SessionIssued( U, dev, ch, jti ) @ #i) ∧
+    (¬(∃ d #k. DeviceKeyRevealed( d ) @ #k))"
+/*
+guarded formula characterizing all satisfying traces:
+"∃ U dev ch jti #i.
+  (SessionIssued( U, dev, ch, jti ) @ #i)
+ ∧
+  ∀ d #k. (DeviceKeyRevealed( d ) @ #k) ⇒ ⊥"
+*/
+simplify
+solve( Challenge( ch ) ▶₁ #i )
+  case Server_Challenge
+  solve( LookupResult( request, U, dev, pk(x) ) ▶₂ #i )
+    case Server_Lookup
+    solve( !ServerKey( paseto ) ▶₃ #i )
+      case Server_Key
+      solve( !KU( sign(<'vela auth challenge v1', ~dev, ~ch>, ~sk) ) @ #vk.4 )
+        case Device_SignAuth
+        solve( DeviceActive( ~dev ) ▶₁ #vr.1 )
+          case Register_Device
+          solve( !KU( ~ch ) @ #vk.4 )
+            case Server_Challenge
+            solve( !KU( ~dev ) @ #vk.4 )
+              case Device_SignAuth
+              SOLVED // trace found
+            qed
+          qed
+        qed
+      qed
+    qed
+  qed
+qed
+
+/* All wellformedness checks were successful. */
+
+/*
+Generated from:
+Tamarin version 1.12.0
+Maude version 3.5.1
+Git revision: 82780bbaf3328a45f624ddb41e51bf75425f851c (with uncommited changes), branch: master
+Compiled at: 2026-03-07 14:22:39.174278293 UTC
+*/
+
+end
+
+==============================================================================
+summary of summaries:
+
+analyzed: /home/hirew/.t3/worktrees/VELA/t3-700776df/security/formal/m27_device_authentication.spthy
+
+  processing time: 0.92s
+  
+  sessions_require_a_device_signature_on_the_challenge (all-traces): verified (8 steps)
+  a_challenge_yields_at_most_one_session (all-traces): verified (12 steps)
+  sessions_use_server_issued_challenges (all-traces): verified (3 steps)
+  revoked_devices_get_no_fresh_lookup (all-traces): verified (9 steps)
+  sessions_carry_the_registered_user (all-traces): verified (4 steps)
+  honest_login_is_reachable (exists-trace): verified (9 steps)
+
+==============================================================================

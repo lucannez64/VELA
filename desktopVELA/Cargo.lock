@@ -10706,6 +10706,7 @@ dependencies = [
  "urlencoding",
  "uuid",
  "vela-client-recovery-policy",
+ "vela-client-share-policy",
  "vela-core",
  "vela-crypto",
  "vela-sync-policy",

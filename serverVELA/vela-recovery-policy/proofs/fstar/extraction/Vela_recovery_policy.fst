@@ -187,13 +187,6 @@ type t_RecoveryPhase =
   | RecoveryPhase_Revoked : t_RecoveryPhase
   | RecoveryPhase_Expired : t_RecoveryPhase
 
-[@@ FStar.Tactics.Typeclasses.tcinstance]
-assume
-val impl_53': Core_models.Cmp.t_PartialEq t_RecoveryPhase t_RecoveryPhase
-
-unfold
-let impl_53 = impl_53'
-
 type t_InitiateFacts = {
   f_phase:t_RecoveryPhase;
   f_account_exists:bool;
@@ -210,7 +203,10 @@ type t_InitiateDecision =
   | InitiateDecision_Reject : t_InitiateDecision
 
 let initiation_is_authorized (facts: t_InitiateFacts) : bool =
-  facts.f_phase =. (RecoveryPhase_Ready <: t_RecoveryPhase) && facts.f_account_exists &&
+  (match facts.f_phase <: t_RecoveryPhase with
+    | RecoveryPhase_Ready  -> true
+    | _ -> false) &&
+  facts.f_account_exists &&
   facts.f_share_present &&
   facts.f_credential_present &&
   facts.f_attempt_id_fresh &&
@@ -302,7 +298,10 @@ type t_RecoverDecision =
   | RecoverDecision_Reject : t_RecoverDecision
 
 let recovery_is_authorized (facts: t_RecoverFacts) : bool =
-  facts.f_phase =. (RecoveryPhase_ChallengePending <: t_RecoveryPhase) && facts.f_user_matches &&
+  (match facts.f_phase <: t_RecoveryPhase with
+    | RecoveryPhase_ChallengePending  -> true
+    | _ -> false) &&
+  facts.f_user_matches &&
   facts.f_attempt_matches &&
   facts.f_challenge_consumed &&
   facts.f_credential_matches_current &&
@@ -345,7 +344,10 @@ type t_ProofInitiateFacts = {
 }
 
 let proof_initiation_is_authorized (facts: t_ProofInitiateFacts) : bool =
-  facts.f_phase =. (RecoveryPhase_Ready <: t_RecoveryPhase) && facts.f_account_exists &&
+  (match facts.f_phase <: t_RecoveryPhase with
+    | RecoveryPhase_Ready  -> true
+    | _ -> false) &&
+  facts.f_account_exists &&
   facts.f_share_present &&
   facts.f_possession_hash_present &&
   facts.f_attempt_id_fresh &&
@@ -397,7 +399,10 @@ type t_PossessionRecoverDecision =
 let impl_PossessionGrantPermit__releases_server_share (self: t_PossessionGrantPermit) : bool = false
 
 let possession_recovery_is_authorized (facts: t_PossessionRecoverFacts) : bool =
-  facts.f_phase =. (RecoveryPhase_ChallengePending <: t_RecoveryPhase) && facts.f_user_matches &&
+  (match facts.f_phase <: t_RecoveryPhase with
+    | RecoveryPhase_ChallengePending  -> true
+    | _ -> false) &&
+  facts.f_user_matches &&
   facts.f_attempt_matches &&
   facts.f_challenge_consumed &&
   facts.f_proof_verified &&
@@ -466,24 +471,25 @@ type t_CredentialUpdateDecision =
   | CredentialUpdateDecision_Keep : t_CredentialUpdateDecision
   | CredentialUpdateDecision_Reject : t_CredentialUpdateDecision
 
-[@@ FStar.Tactics.Typeclasses.tcinstance]
-assume
-val impl_149': Core_models.Cmp.t_PartialEq t_CredentialUpdateDecision t_CredentialUpdateDecision
-
-unfold
-let impl_149 = impl_149'
-
 let credential_update_decision_matches_spec
       (facts: t_CredentialUpdateFacts)
       (decision: t_CredentialUpdateDecision)
     : bool =
-  decision =.
-  (if (~.facts.f_assertion_valid <: bool) || (~.facts.f_credential_matches_current <: bool)
-    then CredentialUpdateDecision_Reject <: t_CredentialUpdateDecision
+  if ~.facts.f_assertion_valid || ~.facts.f_credential_matches_current
+  then
+    match decision <: t_CredentialUpdateDecision with
+    | CredentialUpdateDecision_Reject  -> true
+    | _ -> false
+  else
+    if facts.f_needs_update
+    then
+      match decision <: t_CredentialUpdateDecision with
+      | CredentialUpdateDecision_Update  -> true
+      | _ -> false
     else
-      if facts.f_needs_update
-      then CredentialUpdateDecision_Update <: t_CredentialUpdateDecision
-      else CredentialUpdateDecision_Keep <: t_CredentialUpdateDecision)
+      match decision <: t_CredentialUpdateDecision with
+      | CredentialUpdateDecision_Keep  -> true
+      | _ -> false
 
 let plan_credential_update (facts: t_CredentialUpdateFacts)
     : Prims.Pure t_CredentialUpdateDecision
@@ -525,7 +531,10 @@ let enrollment_is_authorized (facts: t_EnrollmentFacts) : bool =
     then facts.f_possession_hash_present
     else facts.f_credential_matches_current
   in
-  grant_authority_ok && facts.f_phase =. (RecoveryPhase_GrantIssued <: t_RecoveryPhase) &&
+  grant_authority_ok &&
+  (match facts.f_phase <: t_RecoveryPhase with
+    | RecoveryPhase_GrantIssued  -> true
+    | _ -> false) &&
   facts.f_user_matches &&
   facts.f_grant_live &&
   facts.f_grant_consumed &&

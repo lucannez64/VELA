@@ -58,8 +58,13 @@ pub struct SharePinPermit {
 impl SharePinPermit {
     /// The revision the caller must record in its pin.
     pub fn revision(self) -> u64 {
-        self.revision
+        share_permit_revision(self)
     }
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == permit.revision))]
+pub fn share_permit_revision(permit: SharePinPermit) -> u64 {
+    permit.revision
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -133,8 +138,8 @@ pub fn is_admitted(decision: ShareAdmissionDecision) -> bool {
 
 // ── Negative theorems ────────────────────────────────────────────────────────
 //
-// Each takes arbitrary facts, falsifies one required observation, and is
-// proved (hax → F*) never to be admitted.
+// Each takes arbitrary facts, falsifies one required observation, and targets a
+// hax → F* proof that it is never admitted. See assurance logs for status.
 
 /// An envelope whose signature did not verify (or that did not parse as v2 —
 /// a legacy unsigned capsule) is never admitted.
@@ -239,9 +244,18 @@ mod tests {
             ShareAdmissionDecision::ApplyUpdate(SharePinPermit { revision: 4 })
         );
         for broken in [
-            ShareAdmissionFacts { candidate_revision: 3, ..update },
-            ShareAdmissionFacts { signer_matches_pin: false, ..update },
-            ShareAdmissionFacts { lineage_matches_pin: false, ..update },
+            ShareAdmissionFacts {
+                candidate_revision: 3,
+                ..update
+            },
+            ShareAdmissionFacts {
+                signer_matches_pin: false,
+                ..update
+            },
+            ShareAdmissionFacts {
+                lineage_matches_pin: false,
+                ..update
+            },
         ] {
             assert_eq!(plan_share_admission(broken), ShareAdmissionDecision::Reject);
         }
@@ -249,7 +263,103 @@ mod tests {
 
     #[test]
     fn revision_zero_is_never_admitted() {
-        let zero = ShareAdmissionFacts { candidate_revision: 0, ..bound() };
+        let zero = ShareAdmissionFacts {
+            candidate_revision: 0,
+            ..bound()
+        };
         assert_eq!(plan_share_admission(zero), ShareAdmissionDecision::Reject);
     }
+}
+
+// ── Durable sharing state decisions ───────────────────────────────────────
+// These functions are called by desktop sharing.rs. They prove decisions over
+// supplied observations, not the disk operations or comparisons supplying them.
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == (!accepted && !has_pin && has_payload)))]
+pub fn initial_acceptance_is_authorized(accepted: bool, has_pin: bool, has_payload: bool) -> bool {
+    !accepted && !has_pin && has_payload
+}
+
+pub fn store_generation_matches_spec(
+    current: u64,
+    snapshot: u64,
+    pending: bool,
+    result: Option<u64>,
+) -> bool {
+    match result {
+        Some(next) => {
+            current == snapshot
+                && !pending
+                && current < u64::MAX
+                && next == current + 1
+                && next > current
+        }
+        None => current != snapshot || pending || current == u64::MAX,
+    }
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| store_generation_matches_spec(current, snapshot, pending, result)))]
+pub fn next_store_generation(current: u64, snapshot: u64, pending: bool) -> Option<u64> {
+    if current != snapshot || pending || current == u64::MAX {
+        None
+    } else {
+        Some(current + 1)
+    }
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn stale_snapshot_can_commit(current: u64, snapshot: u64) -> bool {
+    if current == snapshot {
+        false
+    } else {
+        match next_store_generation(current, snapshot, false) {
+            Some(_) => true,
+            None => false,
+        }
+    }
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn pending_commit_can_be_overwritten(current: u64, snapshot: u64) -> bool {
+    match next_store_generation(current, snapshot, true) {
+        Some(_) => true,
+        None => false,
+    }
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn exhausted_generation_can_commit() -> bool {
+    match next_store_generation(u64::MAX, u64::MAX, false) {
+        Some(_) => true,
+        None => false,
+    }
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == (matches_before && (current_present || !tombstoned))))]
+pub fn recovery_should_apply(
+    matches_before: bool,
+    current_present: bool,
+    tombstoned: bool,
+) -> bool {
+    matches_before && (current_present || !tombstoned)
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn local_edit_can_be_overwritten(current_present: bool, tombstoned: bool) -> bool {
+    recovery_should_apply(false, current_present, tombstoned)
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn deleted_item_can_be_restored(matches_before: bool) -> bool {
+    recovery_should_apply(matches_before, false, true)
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn existing_pin_can_restart_acceptance(accepted: bool, has_payload: bool) -> bool {
+    initial_acceptance_is_authorized(accepted, true, has_payload)
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn missing_payload_can_be_accepted(accepted: bool, has_pin: bool) -> bool {
+    initial_acceptance_is_authorized(accepted, has_pin, false)
 }

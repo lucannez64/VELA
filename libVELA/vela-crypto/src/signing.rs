@@ -81,7 +81,8 @@ pub fn auth_message(device_id: &str, challenge: &[u8]) -> Vec<u8> {
 }
 
 /// Build the domain-separated message authorizing a new device enrollment.
-pub fn enrollment_message(hybrid_ek: &[u8], hybrid_vk: &[u8], rms_capsule: &[u8]) -> Vec<u8> {    let mut message = Vec::with_capacity(
+pub fn enrollment_message(hybrid_ek: &[u8], hybrid_vk: &[u8], rms_capsule: &[u8]) -> Vec<u8> {
+    let mut message = Vec::with_capacity(
         ENROLLMENT_MESSAGE_CONTEXT.len()
             + hybrid_ek.len()
             + hybrid_vk.len()
@@ -107,9 +108,8 @@ pub fn enrollment_message(hybrid_ek: &[u8], hybrid_vk: &[u8], rms_capsule: &[u8]
 /// server compares monotonically against the currently registered binding,
 /// turning replayed old signatures into no-ops.
 pub fn share_ek_binding_message(share_ek: &[u8], signed_at: &str) -> Vec<u8> {
-    let mut message = Vec::with_capacity(
-        SHARE_EK_BINDING_CONTEXT.len() + share_ek.len() + signed_at.len() + 24,
-    );
+    let mut message =
+        Vec::with_capacity(SHARE_EK_BINDING_CONTEXT.len() + share_ek.len() + signed_at.len() + 24);
     message.extend_from_slice(SHARE_EK_BINDING_CONTEXT);
     append_len_prefixed(&mut message, share_ek);
     append_len_prefixed(&mut message, signed_at.as_bytes());
@@ -213,7 +213,24 @@ pub fn verify(vk: &HybridVerifyingKey, message: &[u8], sig: &HybridSignature) ->
     }
 
     let ed25519_ok = vk.ed25519.verify(message, &sig.ed25519).is_ok();
-    Ok(ed25519_ok)
+    Ok(hybrid_components_verify(ml_dsa_ok, ed25519_ok))
+}
+
+/// Checked AND-composition gate. Primitive verification results are observations;
+/// security of either primitive is a separate trusted assumption.
+#[cfg_attr(hax, hax_lib::ensures(|result| result == (ml_dsa_ok && ed25519_ok)))]
+pub fn hybrid_components_verify(ml_dsa_ok: bool, ed25519_ok: bool) -> bool {
+    ml_dsa_ok && ed25519_ok
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn invalid_ml_component_can_authenticate(ed25519_ok: bool) -> bool {
+    hybrid_components_verify(false, ed25519_ok)
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn invalid_ed_component_can_authenticate(ml_dsa_ok: bool) -> bool {
+    hybrid_components_verify(ml_dsa_ok, false)
 }
 
 // ── Serialisation ─────────────────────────────────────────────────────────────

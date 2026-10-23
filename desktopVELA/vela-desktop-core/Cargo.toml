@@ -70,6 +70,7 @@ vela-crypto = { path = "../../libVELA/vela-crypto" }
 vela-core = { path = "../../libVELA/vela-core" }
 vela-client-recovery-policy = { path = "../../libVELA/vela-client-recovery-policy" }
 vela-sync-policy = { path = "../../libVELA/vela-sync-policy" }
+vela-client-share-policy = { path = "../../libVELA/vela-client-share-policy" }
 directories = "5"
 data-encoding = "2"
 subtle = "2"

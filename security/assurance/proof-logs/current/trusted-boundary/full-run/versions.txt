@@ -1,0 +1,12 @@
+commit: 148ff3261b62bd60df0d99d354e093500779fdce
+dirty:  67 changed paths
+date:   2026-10-23T13:37:34Z
+host:   Linux 7.3.0-3-cachyos x86_64
+tamarin-prover:        tamarin-prover 1.12.0, (C) David Basin, Cas Cremers, Jannik Dreier, Simon Meier, Ralf Sasse, Benedikt Schmidt, 2010-2023
+maude:                 3.5.1
+proverif:              Proverif 2.05. Cryptographic protocol verifier, by Bruno Blanchet, Vincent Cheval, and Marc Sylvestre
+rustc:                 rustc 1.101.0-nightly (e9bbadf68 2026-10-12)
+cargo:                 cargo 1.101.0-nightly (29c5daa1a 2026-10-07)
+cargo hax:             hax 
+fstar.exe:             F* 2025.10.06~dev
+z3-4.13.3:             Z3 version 4.13.3 - 64 bit

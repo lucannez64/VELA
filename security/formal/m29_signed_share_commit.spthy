@@ -1,0 +1,182 @@
+theory M29_SignedShareCommit
+begin
+
+/* One composed sender/authentication/journal system. Trusted primitives are
+   ideal signatures and hashing. ML-DSA and Ed25519 have
+   INDEPENDENT keys and reveal rules; both components must verify. The adversary sees the full signed plaintext, a conservative authentication
+   abstraction of the encrypted transport. No KEM confidentiality claim.
+   Durable single-file replacement and the one-AppState mutex are OS contracts.
+   There is no Rust trace-refinement theorem or all-protocol composition claim.
+   Local edits/deletions and RMS migration remain outside this model. */
+builtins: signing, hashing, natural-numbers
+functions: successor/1
+
+rule SenderIdentity:
+    [ Fr(~ml), Fr(~ed), Fr(~device) ]
+  --[ HonestHybridKey($S, pk(~ml), pk(~ed)) ]->
+    [ !SigningKeys($S, ~device, ~ml, ~ed), Out(<$S, ~device, pk(~ml), pk(~ed)>) ]
+
+rule RecipientIdentity:
+    [ Fr(~dk) ] --> [ !RecipientKey($B, ~dk), Out(<$B, pk(~dk)>) ]
+
+rule RevealMlComponent:
+    [ !SigningKeys(S, device, ml, ed) ]
+  --[ MlRevealed(pk(ml)) ]-> [ Out(ml) ]
+
+rule RevealEdComponent:
+    [ !SigningKeys(S, device, ml, ed) ]
+  --[ EdRevealed(pk(ed)) ]-> [ Out(ed) ]
+
+rule RevealRecipientKey:
+    [ !RecipientKey(B, dk) ]
+  --[ RecipientRevealed(B, pk(dk)) ]-> [ Out(dk) ]
+
+rule SenderSend:
+    let header = <$S, device, pk(ml), pk(ed), $B, h(pk(dk)), lineage, revision>
+        transcript = <'vela share item v2', header, item>
+    in
+    [ !SigningKeys($S, device, ml, ed), !RecipientKey($B, dk),
+      In(<lineage, revision, item>) ]
+  --[ PositiveRevision(revision), Sent($S, pk(ml), pk(ed), $B, lineage, revision, item) ]->
+    [ Out(<'VSE2', header, item,
+         sign(<'VELA-DSA-v1', transcript>, ml), sign(transcript, ed)>) ]
+
+// These selected cross-domain oracles cannot sign the share transcript.
+rule OtherSigningDomains:
+    [ !SigningKeys(S, device, ml, ed), In(m) ] -->
+    [ Out(<sign(<'VELA-DSA-v1', <'alternate protocol', m>>, ml),
+           sign(<'alternate protocol', m>, ed)>) ]
+
+rule NewLocalSlot:
+    [ !RecipientKey($B, dk), Fr(~slot) ] -->
+    [ !Profile(~slot), DiskEmpty(~slot, $B, dk), Out(~slot) ]
+
+rule FirstJournal:
+    let header = <S, device, mvk, evk, B, h(pk(dk)), lineage, revision>
+        transcript = <'vela share item v2', header, item>
+    in
+    [ DiskEmpty(slot, B, dk), Fr(~tx),
+      In(<slot, S, <'VSE2', header, item, msig, esig>>) ]
+  --[ Verified(verify(msig, <'VELA-DSA-v1', transcript>, mvk)),
+      Verified(verify(esig, transcript, evk)), PositiveRevision(revision),
+      FirstPinned(slot, <S, mvk, evk, lineage>),
+      JournalAdmitted(slot, B, <S, mvk, evk, lineage>, revision, item, ~tx, 'initial') ]->
+    [ DiskPending(slot, B, dk, <S, mvk, evk, lineage>, revision, item, ~tx, 'initial', 'absent', 'absent') ]
+
+// Snapshot observations remain available even after a newer commit: this is
+// a conservative abstraction of retained stale snapshots and crash recovery.
+rule ReadSnapshot:
+    [ !ReadyGeneration(slot, gen, revision), Fr(~tx) ] -->
+    [ Snapshot(slot, ~tx, gen, revision) ]
+
+rule UpdateJournal:
+    let header = <S, device, mvk, evk, B, h(pk(dk)), lineage, revision>
+        transcript = <'vela share item v2', header, item>
+    in
+    [ DiskClean(slot, B, dk, <S, mvk, evk, lineage>, pinned, gen, vrev, vitem),
+      Snapshot(slot, tx, gen, pinned),
+      In(<slot, S, <'VSE2', header, item, msig, esig>>) ]
+  --[ Verified(verify(msig, <'VELA-DSA-v1', transcript>, mvk)),
+      Verified(verify(esig, transcript, evk)), RevisionIncreases(pinned, revision),
+      PinObserved(slot, <S, mvk, evk, lineage>),
+      JournalAdmitted(slot, B, <S, mvk, evk, lineage>, revision, item, tx, successor(gen)) ]->
+    [ DiskPending(slot, B, dk, <S, mvk, evk, lineage>, revision, item, tx, successor(gen), vrev, vitem) ]
+
+rule PersistVault:
+    [ DiskPending(slot, B, dk, <S, mvk, evk, lineage>, revision, item, tx, gen, oldrev, olditem) ]
+  --[ PinObserved(slot, <S, mvk, evk, lineage>),
+      RemoteApplied(slot, B, <S, mvk, evk, lineage>, revision, item, tx, gen) ]->
+    [ DiskApplied(slot, B, dk, <S, mvk, evk, lineage>, revision, tx, gen, revision, item) ]
+
+rule ClearJournal:
+    [ DiskApplied(slot, B, dk, <S, mvk, evk, lineage>, pinned, tx, gen, vrev, vitem) ]
+  --[ PinObserved(slot, <S, mvk, evk, lineage>), Cleared(slot, tx) ]->
+    [ DiskClean(slot, B, dk, <S, mvk, evk, lineage>, pinned, gen, vrev, vitem),
+      !ReadyGeneration(slot, gen, pinned) ]
+
+rule OpenVault:
+    [ DiskClean(slot, B, dk, <S, mvk, evk, lineage>, pinned, gen, vrev, vitem) ]
+  --[ PinObserved(slot, <S, mvk, evk, lineage>), Opened(slot, pinned, vrev, vitem) ]->
+    [ DiskClean(slot, B, dk, <S, mvk, evk, lineage>, pinned, gen, vrev, vitem) ]
+
+rule Crash:
+    [ !Profile(slot) ] --[ Crash(slot) ]-> []
+
+restriction SignaturesVerify:
+    "All result #i. Verified(result) @ #i ==> result = true"
+restriction Positive:
+    "All r #i. PositiveRevision(r) @ #i ==> (r = %1 | %1 << r)"
+restriction Increasing:
+    "All a b #i. RevisionIncreases(a,b) @ #i ==> a << b"
+
+lemma applied_requires_prior_authenticated_journal:
+    "All slot B S mvk evk lin rev item tx gen #i.
+       RemoteApplied(slot,B,<S,mvk,evk,lin>,rev,item,tx,gen) @ #i ==>
+       (Ex #j. JournalAdmitted(slot,B,<S,mvk,evk,lin>,rev,item,tx,gen) @ #j & #j < #i)"
+
+lemma first_pin_is_unique [reuse, use_induction]:
+    "All slot pin1 pin2 #i #j.
+       FirstPinned(slot,pin1) @ #i & FirstPinned(slot,pin2) @ #j ==> #i = #j & pin1 = pin2"
+
+// Instrumentation only: every transition consuming a pinned state emits the
+// frame it observed. This provides an induction hypothesis across read loops.
+lemma observed_pin_has_first_contact [reuse, use_induction]:
+    "All slot pin #i. PinObserved(slot,pin) @ #i ==>
+       (Ex #j. FirstPinned(slot,pin) @ #j & #j < #i)"
+
+lemma admission_records_observed_pin [reuse, hide_lemma=first_pin_is_unique, hide_lemma=observed_pin_has_first_contact]:
+    "All slot B pin rev item tx gen #i.
+       JournalAdmitted(slot,B,pin,rev,item,tx,gen) @ #i ==>
+       (FirstPinned(slot,pin) @ #i | PinObserved(slot,pin) @ #i)"
+
+lemma journal_preserves_first_pin:
+    "All slot B pin pin0 rev item tx gen #i #j.
+       FirstPinned(slot,pin0) @ #j &
+       JournalAdmitted(slot,B,pin,rev,item,tx,gen) @ #i ==> pin = pin0"
+
+lemma open_has_matching_pin_and_content [use_induction, hide_lemma=first_pin_is_unique, hide_lemma=observed_pin_has_first_contact, hide_lemma=admission_records_observed_pin]:
+    "All slot pinned revision item #i. Opened(slot,pinned,revision,item) @ #i ==> pinned = revision"
+
+lemma crash_recovery_and_update_are_reachable [hide_lemma=first_pin_is_unique, hide_lemma=observed_pin_has_first_contact, hide_lemma=admission_records_observed_pin]:
+    exists-trace
+    "Ex slot B S m e lin r1 r2 i1 i2 t1 t2 g1 g2 #h #s1 #s2 #a #b #c #d #f.
+       HonestHybridKey(S,m,e) @ #h &
+       Sent(S,m,e,B,lin,r1,i1) @ #s1 & Sent(S,m,e,B,lin,r2,i2) @ #s2 &
+       not (Ex #x. MlRevealed(m) @ #x) & not (Ex #y. EdRevealed(e) @ #y) &
+       JournalAdmitted(slot,B,<S,m,e,lin>,r1,i1,t1,g1) @ #a &
+       Crash(slot) @ #b & RemoteApplied(slot,B,<S,m,e,lin>,r1,i1,t1,g1) @ #c &
+       JournalAdmitted(slot,B,<S,m,e,lin>,r2,i2,t2,g2) @ #d &
+       RemoteApplied(slot,B,<S,m,e,lin>,r2,i2,t2,g2) @ #f &
+       #a < #b & #b < #c & #c < #d & #d < #f"
+lemma ml_component_journal_authentication [hide_lemma=first_pin_is_unique, hide_lemma=observed_pin_has_first_contact, hide_lemma=admission_records_observed_pin, reuse, use_induction]:
+    "All slot B S mvk evk lin rev item tx gen #i #h.
+       JournalAdmitted(slot,B,<S,mvk,evk,lin>,rev,item,tx,gen) @ #i &
+       HonestHybridKey(S,mvk,evk) @ #h ==>
+       ((Ex #s. Sent(S,mvk,evk,B,lin,rev,item) @ #s & #s < #i) |
+        (Ex #m. MlRevealed(mvk) @ #m & #m < #i))"
+
+lemma ed_component_journal_authentication [hide_lemma=first_pin_is_unique, hide_lemma=observed_pin_has_first_contact, hide_lemma=admission_records_observed_pin, reuse, use_induction]:
+    "All slot B S mvk evk lin rev item tx gen #i #h.
+       JournalAdmitted(slot,B,<S,mvk,evk,lin>,rev,item,tx,gen) @ #i &
+       HonestHybridKey(S,mvk,evk) @ #h ==>
+       ((Ex #s. Sent(S,mvk,evk,B,lin,rev,item) @ #s & #s < #i) |
+        (Ex #e. EdRevealed(evk) @ #e & #e < #i))"
+
+lemma hybrid_journal_authentication [hide_lemma=first_pin_is_unique, hide_lemma=observed_pin_has_first_contact, hide_lemma=admission_records_observed_pin, reuse]:
+    "All slot B S mvk evk lin rev item tx gen #i #h.
+       JournalAdmitted(slot,B,<S,mvk,evk,lin>,rev,item,tx,gen) @ #i &
+       HonestHybridKey(S,mvk,evk) @ #h ==>
+       ((Ex #s. Sent(S,mvk,evk,B,lin,rev,item) @ #s & #s < #i) |
+        ((Ex #m. MlRevealed(mvk) @ #m & #m < #i) &
+         (Ex #e. EdRevealed(evk) @ #e & #e < #i)))"
+
+lemma durable_content_is_sender_authenticated [hide_lemma=first_pin_is_unique, hide_lemma=observed_pin_has_first_contact, hide_lemma=admission_records_observed_pin]:
+    "All slot B S mvk evk lin rev item tx gen #i #h.
+       RemoteApplied(slot,B,<S,mvk,evk,lin>,rev,item,tx,gen) @ #i &
+       HonestHybridKey(S,mvk,evk) @ #h ==>
+       ((Ex #s. Sent(S,mvk,evk,B,lin,rev,item) @ #s & #s < #i) |
+        ((Ex #m. MlRevealed(mvk) @ #m & #m < #i) &
+         (Ex #e. EdRevealed(evk) @ #e & #e < #i)))"
+
+
+end

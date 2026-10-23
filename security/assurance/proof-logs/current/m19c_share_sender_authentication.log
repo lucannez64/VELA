@@ -1,0 +1,1565 @@
+maude tool: 'maude'
+ checking version: 3.5.1. OK.
+ checking installation: OK.
+[Theory M19c_ShareSenderAuthentication] Theory loaded
+[Theory M19c_ShareSenderAuthentication] Theory translated
+[Theory M19c_ShareSenderAuthentication] Derivation checks started
+[Open Chains] Too many chain constraints, stopping precomputation. Open Chains limits (can be changed with -c=): 10
+[Open Chains] Too many chain constraints, stopping precomputation. Open Chains limits (can be changed with -c=): 10
+[Theory M19c_ShareSenderAuthentication] Derivation checks ended
+[Theory M19c_ShareSenderAuthentication] Theory closed
+[Saturating Sources] Step 1 (Max 5)
+[Saturating Sources] Done
+theory M19c_ShareSenderAuthentication
+
+begin
+
+// Function signature and definition of the equational theory E
+
+builtins: natural-numbers
+functions: adec/2, aenc/2, fst/1, h/1, pair/2, pk/1, sign/2, snd/1,
+           true/0, verify/3
+equations:
+    adec(aenc(x.1, pk(x.2)), x.2) = x.1,
+    fst(<x.1, x.2>) = x.1,
+    snd(<x.1, x.2>) = x.2,
+    verify(sign(x.1, x.2), x.1, pk(x.2)) = true
+
+/* looping facts with injective instances: Pin/7 */
+
+rule (modulo E) Device_Identity:
+   [ Fr( ~sk ), Fr( ~dev ) ]
+  --[ HonestDeviceKey( $S, pk(~sk) ) ]->
+   [ !DeviceKey( $S, ~dev, ~sk ), Out( <$S, ~dev, pk(~sk)> ) ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) Recipient_ShareKey:
+   [ Fr( ~dk ) ]
+  --[ ShareKeyCreated( $B, pk(~dk) ) ]->
+   [ !ShareKey( $B, ~dk ), Out( <$B, pk(~dk)> ) ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) Reveal_DeviceKey:
+   [ !DeviceKey( S, dev, sk ) ]
+  --[ DeviceKeyRevealed( pk(sk) ) ]->
+   [ Out( sk ) ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) Reveal_ShareKey:
+   [ !ShareKey( B, dk ) ]
+  --[ ShareKeyRevealed( B, pk(dk) ) ]->
+   [ Out( dk ) ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) Sender_FirstSend:
+   [
+   !DeviceKey( $S, dev, sk ), !ShareKey( $B, dk ), Fr( ~lineage ),
+   Fr( ~item )
+   ]
+  --[
+  Sent( $S, pk(sk), $B, ~lineage, %1, ~item ),
+  SecretItem( ~item, $B, pk(dk) )
+  ]->
+   [
+   !SenderLineage( $S, dev, $B, dk, ~lineage ),
+   Out( aenc(<'VSE2', <$S, dev, pk(sk), $B, h(pk(dk)), ~lineage, %1>, 
+              ~item, 
+              sign(<'vela share item v2', 
+                    <$S, dev, pk(sk), $B, h(pk(dk)), ~lineage, %1>, ~item>,
+                   sk)
+             >,
+             pk(dk))
+   )
+   ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) Sender_Update:
+   [
+   !SenderLineage( $S, dev, $B, dk, lineage ), !DeviceKey( $S, dev, sk ),
+   Fr( ~item ), In( rev )
+   ]
+  --[
+  PositiveRevision( rev ), Sent( $S, pk(sk), $B, lineage, rev, ~item ),
+  SecretItem( ~item, $B, pk(dk) )
+  ]->
+   [
+   Out( aenc(<'VSE2', <$S, dev, pk(sk), $B, h(pk(dk)), lineage, rev>, 
+              ~item, 
+              sign(<'vela share item v2', 
+                    <$S, dev, pk(sk), $B, h(pk(dk)), lineage, rev>, ~item>,
+                   sk)
+             >,
+             pk(dk))
+   )
+   ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) Recipient_FirstContact:
+   [
+   !ShareKey( $B, dk ), Fr( ~slot ),
+   In( <S, 
+        aenc(<'VSE2', <S, dev, vk, $B, h(pk(dk)), lineage, rev>, item, sig>,
+             pk(dk))
+       >
+   )
+   ]
+  --[
+  Verified( verify(sig,
+                   <'vela share item v2', <S, dev, vk, $B, h(pk(dk)), lineage, rev>, item>,
+                   vk)
+  ),
+  PositiveRevision( rev ),
+  Accepted( ~slot, $B, S, vk, lineage, rev, item ),
+  Admitted( ~slot, $B, S, vk, lineage, rev, item )
+  ]->
+   [ Pin( ~slot, $B, dk, S, vk, lineage, rev ) ]
+
+  /*
+  rule (modulo AC) Recipient_FirstContact:
+     [
+     !ShareKey( $B, dk ), Fr( ~slot ),
+     In( <S, 
+          aenc(<'VSE2', <S, dev, vk, $B, h(pk(dk)), lineage, rev>, item, sig>,
+               pk(dk))
+         >
+     )
+     ]
+    --[
+    Verified( z ), PositiveRevision( rev ),
+    Accepted( ~slot, $B, S, vk, lineage, rev, item ),
+    Admitted( ~slot, $B, S, vk, lineage, rev, item )
+    ]->
+     [ Pin( ~slot, $B, dk, S, vk, lineage, rev ) ]
+    variants (modulo AC)
+    1. $B    = $B.14
+       S     = S.16
+       dev   = dev.17
+       dk    = dk.18
+       item  = item.19
+       lineage
+             = lineage.20
+       rev   = rev.21
+       sig   = sig.22
+       vk    = vk.23
+       z     = verify(sig.22,
+                      <'vela share item v2', 
+                       <S.16, dev.17, vk.23, $B.14, h(pk(dk.18)), lineage.20, rev.21>, item.19>,
+                      vk.23)
+    
+    2. $B    = $B.22
+       S     = S.24
+       dev   = dev.25
+       dk    = dk.26
+       item  = item.27
+       lineage
+             = lineage.28
+       rev   = rev.29
+       sig   = sign(<'vela share item v2', 
+                     <S.24, dev.25, pk(x.42), $B.22, h(pk(dk.26)), lineage.28, rev.29>, 
+                     item.27>,
+                    x.42)
+       vk    = pk(x.42)
+       z     = true
+  */
+
+rule (modulo E) Recipient_Update:
+   [
+   Pin( slot, $B, dk, S, vk, lineage, pinned ),
+   In( <S, 
+        aenc(<'VSE2', <S, dev, vk, $B, h(pk(dk)), lineage, rev>, item, sig>,
+             pk(dk))
+       >
+   )
+   ]
+  --[
+  Verified( verify(sig,
+                   <'vela share item v2', <S, dev, vk, $B, h(pk(dk)), lineage, rev>, item>,
+                   vk)
+  ),
+  RevisionIncreases( pinned, rev ),
+  Applied( slot, $B, S, vk, lineage, rev, item ),
+  Admitted( slot, $B, S, vk, lineage, rev, item )
+  ]->
+   [ Pin( slot, $B, dk, S, vk, lineage, rev ) ]
+
+  // loop breaker: [0]
+  /*
+  rule (modulo AC) Recipient_Update:
+     [
+     Pin( slot, $B, dk, S, vk, lineage, pinned ),
+     In( <S, 
+          aenc(<'VSE2', <S, dev, vk, $B, h(pk(dk)), lineage, rev>, item, sig>,
+               pk(dk))
+         >
+     )
+     ]
+    --[
+    Verified( z ), RevisionIncreases( pinned, rev ),
+    Applied( slot, $B, S, vk, lineage, rev, item ),
+    Admitted( slot, $B, S, vk, lineage, rev, item )
+    ]->
+     [ Pin( slot, $B, dk, S, vk, lineage, rev ) ]
+    variants (modulo AC)
+    1. $B    = $B.15
+       S     = S.16
+       dev   = dev.17
+       dk    = dk.18
+       item  = item.19
+       lineage
+             = lineage.20
+       rev   = rev.22
+       sig   = sig.23
+       vk    = vk.25
+       z     = verify(sig.23,
+                      <'vela share item v2', 
+                       <S.16, dev.17, vk.25, $B.15, h(pk(dk.18)), lineage.20, rev.22>, item.19>,
+                      vk.25)
+    
+    2. $B    = $B.23
+       S     = S.24
+       dev   = dev.25
+       dk    = dk.26
+       item  = item.27
+       lineage
+             = lineage.28
+       rev   = rev.30
+       sig   = sign(<'vela share item v2', 
+                     <S.24, dev.25, pk(x.44), $B.23, h(pk(dk.26)), lineage.28, rev.30>, 
+                     item.27>,
+                    x.44)
+       vk    = pk(x.44)
+       z     = true
+    // loop breaker: [0]
+  */
+
+restriction PositiveRevision:
+  "∀ r #i. (PositiveRevision( r ) @ #i) ⇒ ((r = %1) ∨ (%1 ⊏ r))"
+  // safety formula
+
+  /*
+  expanded formula:
+  "∀ r #i. (PositiveRevision( r ) @ #i) ⇒ ((r = %1) ∨ (%1 ⊏ r))"
+  */
+
+restriction SignatureVerifies:
+  "∀ x #i. (Verified( x ) @ #i) ⇒ (x = true)"
+  // safety formula
+
+  /*
+  expanded formula:
+  "∀ x #i. (Verified( x ) @ #i) ⇒ (x = true)"
+  */
+
+restriction RevisionIncreases:
+  "∀ a b #i. (RevisionIncreases( a, b ) @ #i) ⇒ (a ⊏ b)"
+  // safety formula
+
+  /*
+  expanded formula:
+  "∀ a b #i. (RevisionIncreases( a, b ) @ #i) ⇒ (a ⊏ b)"
+  */
+
+lemma admitted_items_were_sent_by_the_pinned_device [use_induction]:
+  all-traces
+  "∀ slot B S vk lineage rev item #i #h.
+    ((Admitted( slot, B, S, vk, lineage, rev, item ) @ #i) ∧
+     (HonestDeviceKey( S, vk ) @ #h)) ⇒
+    ((∃ #j. (Sent( S, vk, B, lineage, rev, item ) @ #j) ∧ (#j < #i)) ∨
+     (∃ #k. (DeviceKeyRevealed( vk ) @ #k) ∧ (#k < #i)))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ slot B S vk lineage rev item #i #h.
+  (Admitted( slot, B, S, vk, lineage, rev, item ) @ #i) ∧
+  (HonestDeviceKey( S, vk ) @ #h)
+ ∧
+  (∀ #j. (Sent( S, vk, B, lineage, rev, item ) @ #j) ⇒ ¬(#j < #i)) ∧
+  (∀ #k. (DeviceKeyRevealed( vk ) @ #k) ⇒ ¬(#k < #i))"
+*/
+induction
+  case empty_trace
+  by contradiction /* from formulas */
+next
+  case non_empty_trace
+  solve( (last(#h))  ∥ (last(#i))  ∥
+         (∃ #j.
+           (Sent( $S, pk(~sk), B, lineage, rev, item ) @ #j)
+          ∧
+           (¬(last(#j))) ∧ (#j < #i))  ∥
+         (∃ #k. (DeviceKeyRevealed( pk(~sk) ) @ #k) ∧ (¬(last(#k))) ∧ (#k < #i)) )
+    case case_1
+    solve( Admitted( slot, B, $S, pk(~sk), lineage, rev, item ) @ #i )
+      case Recipient_FirstContact
+      by contradiction /* node #i after last node #h */
+    next
+      case Recipient_Update
+      by contradiction /* node #i after last node #h */
+    qed
+  next
+    case case_2
+    solve( Admitted( slot, B, $S, pk(~sk), lineage, rev, item ) @ #i )
+      case Recipient_FirstContact
+      solve( (rev = %1)  ∥ (%1 ⊏ rev) )
+        case case_1
+        solve( !ShareKey( $B, dk ) ▶₀ #i )
+          case Recipient_ShareKey
+          solve( !KU( aenc(<'VSE2', 
+                            <$S, dev.1, pk(~sk), $B, h(pk(~dk)), lineage, %1>, item, 
+                            sign(<'vela share item v2', 
+                                  <$S, dev.1, pk(~sk), $B, h(pk(~dk)), lineage, %1>, item>,
+                                 ~sk)
+                           >,
+                           pk(~dk))
+                 ) @ #vk.2 )
+            case Sender_FirstSend
+            by contradiction /* from formulas */
+          next
+            case Sender_Update
+            by contradiction /* from formulas */
+          next
+            case c_aenc
+            solve( !KU( sign(<'vela share item v2', 
+                              <$S, dev.1, pk(~sk), $B, h(pk(~dk)), lineage, %1>, item>,
+                             ~sk)
+                   ) @ #vk.21 )
+              case Sender_FirstSend
+              by contradiction /* from formulas */
+            next
+              case Sender_Update
+              by contradiction /* from formulas */
+            next
+              case c_sign
+              solve( !KU( ~sk ) @ #vk.24 )
+                case Reveal_DeviceKey
+                by contradiction /* from formulas */
+              qed
+            qed
+          qed
+        qed
+      next
+        case case_2
+        solve( !ShareKey( $B, dk ) ▶₀ #i )
+          case Recipient_ShareKey
+          solve( !KU( aenc(<'VSE2', 
+                            <$S, dev.1, pk(~sk), $B, h(pk(~dk)), lineage, rev>, item, 
+                            sign(<'vela share item v2', 
+                                  <$S, dev.1, pk(~sk), $B, h(pk(~dk)), lineage, rev>, item>,
+                                 ~sk)
+                           >,
+                           pk(~dk))
+                 ) @ #vk.2 )
+            case Sender_FirstSend
+            by contradiction /* contradictory subterm store */
+          next
+            case Sender_Update
+            by contradiction /* from formulas */
+          next
+            case c_aenc
+            solve( !KU( sign(<'vela share item v2', 
+                              <$S, dev.1, pk(~sk), $B, h(pk(~dk)), lineage, rev>, item>,
+                             ~sk)
+                   ) @ #vk.21 )
+              case Sender_FirstSend
+              by contradiction /* contradictory subterm store */
+            next
+              case Sender_Update
+              by contradiction /* from formulas */
+            next
+              case c_sign
+              solve( !KU( ~sk ) @ #vk.24 )
+                case Reveal_DeviceKey
+                by contradiction /* from formulas */
+              qed
+            qed
+          qed
+        qed
+      qed
+    next
+      case Recipient_Update
+      solve( !KU( aenc(<'VSE2', 
+                        <$S, dev.1, pk(~sk), $B, h(pk(dk)), lineage, rev>, item, 
+                        sign(<'vela share item v2', 
+                              <$S, dev.1, pk(~sk), $B, h(pk(dk)), lineage, rev>, item>,
+                             ~sk)
+                       >,
+                       pk(dk))
+             ) @ #vk.2 )
+        case Sender_FirstSend
+        by contradiction /* contradictory subterm store */
+      next
+        case Sender_Update
+        by contradiction /* from formulas */
+      next
+        case c_aenc
+        solve( !KU( sign(<'vela share item v2', 
+                          <$S, dev.1, pk(~sk), $B, h(pk(dk)), lineage, rev>, item>,
+                         ~sk)
+               ) @ #vk.21 )
+          case Sender_FirstSend
+          by contradiction /* contradictory subterm store */
+        next
+          case Sender_Update
+          by contradiction /* from formulas */
+        next
+          case c_sign
+          solve( !KU( ~sk ) @ #vk.24 )
+            case Reveal_DeviceKey
+            by contradiction /* from formulas */
+          qed
+        qed
+      qed
+    qed
+  next
+    case case_3
+    by contradiction /* from formulas */
+  next
+    case case_4
+    by contradiction /* from formulas */
+  qed
+qed
+
+lemma updates_keep_the_pinned_key_and_lineage [use_induction]:
+  all-traces
+  "∀ slot B S S2 vk vk2 lineage lineage2 rev rev2 item item2 #i #j.
+    ((Accepted( slot, B, S, vk, lineage, rev, item ) @ #i) ∧
+     (Applied( slot, B, S2, vk2, lineage2, rev2, item2 ) @ #j)) ⇒
+    (((S = S2) ∧ (vk = vk2)) ∧ (lineage = lineage2))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ slot B S S2 vk vk2 lineage lineage2 rev rev2 item item2 #i #j.
+  (Accepted( slot, B, S, vk, lineage, rev, item ) @ #i) ∧
+  (Applied( slot, B, S2, vk2, lineage2, rev2, item2 ) @ #j)
+ ∧
+  ((¬(S = S2)) ∨ (¬(vk = vk2)) ∨ (¬(lineage = lineage2)))"
+*/
+induction
+  case empty_trace
+  by contradiction /* from formulas */
+next
+  case non_empty_trace
+  solve( (¬(S = S2))  ∥ (¬(pk(x) = pk(x.1)))  ∥ (¬(lineage = lineage2)) )
+    case case_1
+    solve( (rev = %1)  ∥ (%1 ⊏ rev) )
+      case case_1
+      solve( (last(#j))  ∥
+             ((S = S2) ∧ (pk(x) = pk(x.1)) ∧ (lineage = lineage2)) )
+        case case_1
+        solve( !ShareKey( $B, dk ) ▶₀ #i )
+          case Recipient_ShareKey
+          solve( !KU( aenc(<'VSE2', <S, dev, pk(x), $B, h(pk(~dk)), lineage, %1>, 
+                            item, 
+                            sign(<'vela share item v2', 
+                                  <S, dev, pk(x), $B, h(pk(~dk)), lineage, %1>, item>,
+                                 x)
+                           >,
+                           pk(~dk))
+                 ) @ #vk.2 )
+            case Sender_FirstSend
+            solve( Pin( ~slot, $B, dk.1, S2, pk(x), lineage2, pinned ) ▶₀ #j )
+              case Recipient_FirstContact
+              by contradiction /* from formulas */
+            next
+              case Recipient_Update
+              by contradiction /* from formulas */
+            qed
+          next
+            case Sender_Update
+            solve( Pin( ~slot, $B, dk.1, S2, pk(x), lineage2, pinned ) ▶₀ #j )
+              case Recipient_FirstContact
+              by contradiction /* from formulas */
+            next
+              case Recipient_Update
+              by contradiction /* from formulas */
+            qed
+          next
+            case c_aenc
+            solve( !KU( sign(<'vela share item v2', 
+                              <S, dev, pk(x), $B, h(pk(~dk)), lineage, %1>, item>,
+                             x)
+                   ) @ #vk.24 )
+              case Sender_FirstSend
+              solve( !KU( ~dk ) @ #vk.25 )
+                case Reveal_ShareKey
+                solve( Pin( ~slot, $B, dk.1, S2, pk(x), lineage2, pinned ) ▶₀ #j )
+                  case Recipient_FirstContact
+                  by contradiction /* from formulas */
+                next
+                  case Recipient_Update
+                  by contradiction /* from formulas */
+                qed
+              qed
+            next
+              case Sender_Update
+              solve( !KU( ~dk ) @ #vk.25 )
+                case Reveal_ShareKey
+                solve( Pin( ~slot, $B, dk.1, S2, pk(x), lineage2, pinned ) ▶₀ #j )
+                  case Recipient_FirstContact
+                  by contradiction /* from formulas */
+                next
+                  case Recipient_Update
+                  by contradiction /* from formulas */
+                qed
+              qed
+            next
+              case c_sign
+              solve( !KU( h(pk(~dk)) ) @ #vk.20 )
+                case Sender_FirstSend
+                solve( !KU( ~dk ) @ #vk.29 )
+                  case Reveal_ShareKey
+                  solve( Pin( ~slot, $B, dk.1, S2, pk(x.1), lineage2, pinned ) ▶₀ #j )
+                    case Recipient_FirstContact
+                    by contradiction /* from formulas */
+                  next
+                    case Recipient_Update
+                    by contradiction /* from formulas */
+                  qed
+                qed
+              next
+                case Sender_Update
+                solve( (rev = %1)  ∥ (%1 ⊏ rev) )
+                  case case_1
+                  solve( !KU( ~dk ) @ #vk.29 )
+                    case Reveal_ShareKey
+                    solve( Pin( ~slot, $B, dk.1, S2, pk(x.1), lineage2, pinned ) ▶₀ #j )
+                      case Recipient_FirstContact
+                      by contradiction /* from formulas */
+                    next
+                      case Recipient_Update
+                      by contradiction /* from formulas */
+                    qed
+                  qed
+                next
+                  case case_2
+                  solve( !KU( ~dk ) @ #vk.30 )
+                    case Reveal_ShareKey
+                    solve( Pin( ~slot, $B, dk.1, S2, pk(x.1), lineage2, pinned ) ▶₀ #j )
+                      case Recipient_FirstContact
+                      by contradiction /* from formulas */
+                    next
+                      case Recipient_Update
+                      by contradiction /* from formulas */
+                    qed
+                  qed
+                qed
+              next
+                case c_h
+                solve( Pin( ~slot, $B, dk.1, S2, pk(x.1), lineage2, pinned ) ▶₀ #j )
+                  case Recipient_FirstContact
+                  by contradiction /* from formulas */
+                next
+                  case Recipient_Update
+                  by contradiction /* from formulas */
+                qed
+              qed
+            qed
+          qed
+        qed
+      next
+        case case_2
+        by contradiction /* from formulas */
+      qed
+    next
+      case case_2
+      solve( (last(#j))  ∥
+             ((S = S2) ∧ (pk(x) = pk(x.1)) ∧ (lineage = lineage2)) )
+        case case_1
+        solve( !ShareKey( $B, dk ) ▶₀ #i )
+          case Recipient_ShareKey
+          solve( !KU( aenc(<'VSE2', <S, dev, pk(x), $B, h(pk(~dk)), lineage, rev>, 
+                            item, 
+                            sign(<'vela share item v2', 
+                                  <S, dev, pk(x), $B, h(pk(~dk)), lineage, rev>, item>,
+                                 x)
+                           >,
+                           pk(~dk))
+                 ) @ #vk.2 )
+            case Sender_FirstSend
+            by contradiction /* contradictory subterm store */
+          next
+            case Sender_Update
+            solve( Pin( ~slot, $B, dk.1, S2, pk(x), lineage2, pinned ) ▶₀ #j )
+              case Recipient_FirstContact
+              by contradiction /* from formulas */
+            next
+              case Recipient_Update
+              by contradiction /* from formulas */
+            qed
+          next
+            case c_aenc
+            solve( !KU( sign(<'vela share item v2', 
+                              <S, dev, pk(x), $B, h(pk(~dk)), lineage, rev>, item>,
+                             x)
+                   ) @ #vk.24 )
+              case Sender_FirstSend
+              by contradiction /* contradictory subterm store */
+            next
+              case Sender_Update
+              solve( !KU( ~dk ) @ #vk.25 )
+                case Reveal_ShareKey
+                solve( Pin( ~slot, $B, dk.1, S2, pk(x), lineage2, pinned ) ▶₀ #j )
+                  case Recipient_FirstContact
+                  by contradiction /* from formulas */
+                next
+                  case Recipient_Update
+                  by contradiction /* from formulas */
+                qed
+              qed
+            next
+              case c_sign
+              solve( !KU( h(pk(~dk)) ) @ #vk.20 )
+                case Sender_FirstSend
+                solve( !KU( ~dk ) @ #vk.29 )
+                  case Reveal_ShareKey
+                  solve( Pin( ~slot, $B, dk.1, S2, pk(x.1), lineage2, pinned ) ▶₀ #j )
+                    case Recipient_FirstContact
+                    by contradiction /* from formulas */
+                  next
+                    case Recipient_Update
+                    by contradiction /* from formulas */
+                  qed
+                qed
+              next
+                case Sender_Update
+                solve( (rev.1 = %1)  ∥ (%1 ⊏ rev.1) )
+                  case case_1
+                  solve( !KU( ~dk ) @ #vk.30 )
+                    case Reveal_ShareKey
+                    solve( Pin( ~slot, $B, dk.1, S2, pk(x.1), lineage2, pinned ) ▶₀ #j )
+                      case Recipient_FirstContact
+                      by contradiction /* from formulas */
+                    next
+                      case Recipient_Update
+                      by contradiction /* from formulas */
+                    qed
+                  qed
+                next
+                  case case_2
+                  solve( !KU( ~dk ) @ #vk.30 )
+                    case Reveal_ShareKey
+                    solve( Pin( ~slot, $B, dk.1, S2, pk(x.1), lineage2, pinned ) ▶₀ #j )
+                      case Recipient_FirstContact
+                      by contradiction /* from formulas */
+                    next
+                      case Recipient_Update
+                      by contradiction /* from formulas */
+                    qed
+                  qed
+                qed
+              next
+                case c_h
+                solve( Pin( ~slot, $B, dk.1, S2, pk(x.1), lineage2, pinned ) ▶₀ #j )
+                  case Recipient_FirstContact
+                  by contradiction /* from formulas */
+                next
+                  case Recipient_Update
+                  by contradiction /* from formulas */
+                qed
+              qed
+            qed
+          qed
+        qed
+      next
+        case case_2
+        by contradiction /* from formulas */
+      qed
+    qed
+  next
+    case case_2
+    solve( (rev = %1)  ∥ (%1 ⊏ rev) )
+      case case_1
+      solve( (last(#j))  ∥
+             ((S = S2) ∧ (pk(x) = pk(x.1)) ∧ (lineage = lineage2)) )
+        case case_1
+        solve( !ShareKey( $B, dk ) ▶₀ #i )
+          case Recipient_ShareKey
+          solve( !KU( aenc(<'VSE2', <S, dev, pk(x), $B, h(pk(~dk)), lineage, %1>, 
+                            item, 
+                            sign(<'vela share item v2', 
+                                  <S, dev, pk(x), $B, h(pk(~dk)), lineage, %1>, item>,
+                                 x)
+                           >,
+                           pk(~dk))
+                 ) @ #vk.2 )
+            case Sender_FirstSend
+            solve( Pin( ~slot, $B, dk.1, S2, pk(x), lineage2, pinned ) ▶₀ #j )
+              case Recipient_FirstContact
+              by contradiction /* from formulas */
+            next
+              case Recipient_Update
+              by contradiction /* from formulas */
+            qed
+          next
+            case Sender_Update
+            solve( Pin( ~slot, $B, dk.1, S2, pk(x), lineage2, pinned ) ▶₀ #j )
+              case Recipient_FirstContact
+              by contradiction /* from formulas */
+            next
+              case Recipient_Update
+              by contradiction /* from formulas */
+            qed
+          next
+            case c_aenc
+            solve( !KU( sign(<'vela share item v2', 
+                              <S, dev, pk(x), $B, h(pk(~dk)), lineage, %1>, item>,
+                             x)
+                   ) @ #vk.24 )
+              case Sender_FirstSend
+              solve( !KU( ~dk ) @ #vk.25 )
+                case Reveal_ShareKey
+                solve( Pin( ~slot, $B, dk.1, S2, pk(x), lineage2, pinned ) ▶₀ #j )
+                  case Recipient_FirstContact
+                  by contradiction /* from formulas */
+                next
+                  case Recipient_Update
+                  by contradiction /* from formulas */
+                qed
+              qed
+            next
+              case Sender_Update
+              solve( !KU( ~dk ) @ #vk.25 )
+                case Reveal_ShareKey
+                solve( Pin( ~slot, $B, dk.1, S2, pk(x), lineage2, pinned ) ▶₀ #j )
+                  case Recipient_FirstContact
+                  by contradiction /* from formulas */
+                next
+                  case Recipient_Update
+                  by contradiction /* from formulas */
+                qed
+              qed
+            next
+              case c_sign
+              solve( !KU( h(pk(~dk)) ) @ #vk.20 )
+                case Sender_FirstSend
+                solve( !KU( ~dk ) @ #vk.29 )
+                  case Reveal_ShareKey
+                  solve( Pin( ~slot, $B, dk.1, S2, pk(x.1), lineage2, pinned ) ▶₀ #j )
+                    case Recipient_FirstContact
+                    by contradiction /* from formulas */
+                  next
+                    case Recipient_Update
+                    by contradiction /* from formulas */
+                  qed
+                qed
+              next
+                case Sender_Update
+                solve( (rev = %1)  ∥ (%1 ⊏ rev) )
+                  case case_1
+                  solve( !KU( ~dk ) @ #vk.29 )
+                    case Reveal_ShareKey
+                    solve( Pin( ~slot, $B, dk.1, S2, pk(x.1), lineage2, pinned ) ▶₀ #j )
+                      case Recipient_FirstContact
+                      by contradiction /* from formulas */
+                    next
+                      case Recipient_Update
+                      by contradiction /* from formulas */
+                    qed
+                  qed
+                next
+                  case case_2
+                  solve( !KU( ~dk ) @ #vk.30 )
+                    case Reveal_ShareKey
+                    solve( Pin( ~slot, $B, dk.1, S2, pk(x.1), lineage2, pinned ) ▶₀ #j )
+                      case Recipient_FirstContact
+                      by contradiction /* from formulas */
+                    next
+                      case Recipient_Update
+                      by contradiction /* from formulas */
+                    qed
+                  qed
+                qed
+              next
+                case c_h
+                solve( Pin( ~slot, $B, dk.1, S2, pk(x.1), lineage2, pinned ) ▶₀ #j )
+                  case Recipient_FirstContact
+                  by contradiction /* from formulas */
+                next
+                  case Recipient_Update
+                  by contradiction /* from formulas */
+                qed
+              qed
+            qed
+          qed
+        qed
+      next
+        case case_2
+        by contradiction /* from formulas */
+      qed
+    next
+      case case_2
+      solve( (last(#j))  ∥
+             ((S = S2) ∧ (pk(x) = pk(x.1)) ∧ (lineage = lineage2)) )
+        case case_1
+        solve( !ShareKey( $B, dk ) ▶₀ #i )
+          case Recipient_ShareKey
+          solve( !KU( aenc(<'VSE2', <S, dev, pk(x), $B, h(pk(~dk)), lineage, rev>, 
+                            item, 
+                            sign(<'vela share item v2', 
+                                  <S, dev, pk(x), $B, h(pk(~dk)), lineage, rev>, item>,
+                                 x)
+                           >,
+                           pk(~dk))
+                 ) @ #vk.2 )
+            case Sender_FirstSend
+            by contradiction /* contradictory subterm store */
+          next
+            case Sender_Update
+            solve( Pin( ~slot, $B, dk.1, S2, pk(x), lineage2, pinned ) ▶₀ #j )
+              case Recipient_FirstContact
+              by contradiction /* from formulas */
+            next
+              case Recipient_Update
+              by contradiction /* from formulas */
+            qed
+          next
+            case c_aenc
+            solve( !KU( sign(<'vela share item v2', 
+                              <S, dev, pk(x), $B, h(pk(~dk)), lineage, rev>, item>,
+                             x)
+                   ) @ #vk.24 )
+              case Sender_FirstSend
+              by contradiction /* contradictory subterm store */
+            next
+              case Sender_Update
+              solve( !KU( ~dk ) @ #vk.25 )
+                case Reveal_ShareKey
+                solve( Pin( ~slot, $B, dk.1, S2, pk(x), lineage2, pinned ) ▶₀ #j )
+                  case Recipient_FirstContact
+                  by contradiction /* from formulas */
+                next
+                  case Recipient_Update
+                  by contradiction /* from formulas */
+                qed
+              qed
+            next
+              case c_sign
+              solve( !KU( h(pk(~dk)) ) @ #vk.20 )
+                case Sender_FirstSend
+                solve( !KU( ~dk ) @ #vk.29 )
+                  case Reveal_ShareKey
+                  solve( Pin( ~slot, $B, dk.1, S2, pk(x.1), lineage2, pinned ) ▶₀ #j )
+                    case Recipient_FirstContact
+                    by contradiction /* from formulas */
+                  next
+                    case Recipient_Update
+                    by contradiction /* from formulas */
+                  qed
+                qed
+              next
+                case Sender_Update
+                solve( (rev.1 = %1)  ∥ (%1 ⊏ rev.1) )
+                  case case_1
+                  solve( !KU( ~dk ) @ #vk.30 )
+                    case Reveal_ShareKey
+                    solve( Pin( ~slot, $B, dk.1, S2, pk(x.1), lineage2, pinned ) ▶₀ #j )
+                      case Recipient_FirstContact
+                      by contradiction /* from formulas */
+                    next
+                      case Recipient_Update
+                      by contradiction /* from formulas */
+                    qed
+                  qed
+                next
+                  case case_2
+                  solve( !KU( ~dk ) @ #vk.30 )
+                    case Reveal_ShareKey
+                    solve( Pin( ~slot, $B, dk.1, S2, pk(x.1), lineage2, pinned ) ▶₀ #j )
+                      case Recipient_FirstContact
+                      by contradiction /* from formulas */
+                    next
+                      case Recipient_Update
+                      by contradiction /* from formulas */
+                    qed
+                  qed
+                qed
+              next
+                case c_h
+                solve( Pin( ~slot, $B, dk.1, S2, pk(x.1), lineage2, pinned ) ▶₀ #j )
+                  case Recipient_FirstContact
+                  by contradiction /* from formulas */
+                next
+                  case Recipient_Update
+                  by contradiction /* from formulas */
+                qed
+              qed
+            qed
+          qed
+        qed
+      next
+        case case_2
+        by contradiction /* from formulas */
+      qed
+    qed
+  next
+    case case_3
+    solve( (rev = %1)  ∥ (%1 ⊏ rev) )
+      case case_1
+      solve( (last(#j))  ∥
+             ((S = S2) ∧ (pk(x) = pk(x.1)) ∧ (lineage = lineage2)) )
+        case case_1
+        solve( !ShareKey( $B, dk ) ▶₀ #i )
+          case Recipient_ShareKey
+          solve( !KU( aenc(<'VSE2', <S, dev, pk(x), $B, h(pk(~dk)), lineage, %1>, 
+                            item, 
+                            sign(<'vela share item v2', 
+                                  <S, dev, pk(x), $B, h(pk(~dk)), lineage, %1>, item>,
+                                 x)
+                           >,
+                           pk(~dk))
+                 ) @ #vk.2 )
+            case Sender_FirstSend
+            solve( Pin( ~slot, $B, dk.1, S2, pk(x), lineage2, pinned ) ▶₀ #j )
+              case Recipient_FirstContact
+              by contradiction /* from formulas */
+            next
+              case Recipient_Update
+              by contradiction /* from formulas */
+            qed
+          next
+            case Sender_Update
+            solve( Pin( ~slot, $B, dk.1, S2, pk(x), lineage2, pinned ) ▶₀ #j )
+              case Recipient_FirstContact
+              by contradiction /* from formulas */
+            next
+              case Recipient_Update
+              by contradiction /* from formulas */
+            qed
+          next
+            case c_aenc
+            solve( !KU( sign(<'vela share item v2', 
+                              <S, dev, pk(x), $B, h(pk(~dk)), lineage, %1>, item>,
+                             x)
+                   ) @ #vk.24 )
+              case Sender_FirstSend
+              solve( !KU( ~dk ) @ #vk.25 )
+                case Reveal_ShareKey
+                solve( Pin( ~slot, $B, dk.1, S2, pk(x), lineage2, pinned ) ▶₀ #j )
+                  case Recipient_FirstContact
+                  by contradiction /* from formulas */
+                next
+                  case Recipient_Update
+                  by contradiction /* from formulas */
+                qed
+              qed
+            next
+              case Sender_Update
+              solve( !KU( ~dk ) @ #vk.25 )
+                case Reveal_ShareKey
+                solve( Pin( ~slot, $B, dk.1, S2, pk(x), lineage2, pinned ) ▶₀ #j )
+                  case Recipient_FirstContact
+                  by contradiction /* from formulas */
+                next
+                  case Recipient_Update
+                  by contradiction /* from formulas */
+                qed
+              qed
+            next
+              case c_sign
+              solve( !KU( h(pk(~dk)) ) @ #vk.20 )
+                case Sender_FirstSend
+                solve( !KU( ~dk ) @ #vk.29 )
+                  case Reveal_ShareKey
+                  solve( Pin( ~slot, $B, dk.1, S2, pk(x.1), lineage2, pinned ) ▶₀ #j )
+                    case Recipient_FirstContact
+                    by contradiction /* from formulas */
+                  next
+                    case Recipient_Update
+                    by contradiction /* from formulas */
+                  qed
+                qed
+              next
+                case Sender_Update
+                solve( (rev = %1)  ∥ (%1 ⊏ rev) )
+                  case case_1
+                  solve( !KU( ~dk ) @ #vk.29 )
+                    case Reveal_ShareKey
+                    solve( Pin( ~slot, $B, dk.1, S2, pk(x.1), lineage2, pinned ) ▶₀ #j )
+                      case Recipient_FirstContact
+                      by contradiction /* from formulas */
+                    next
+                      case Recipient_Update
+                      by contradiction /* from formulas */
+                    qed
+                  qed
+                next
+                  case case_2
+                  solve( !KU( ~dk ) @ #vk.30 )
+                    case Reveal_ShareKey
+                    solve( Pin( ~slot, $B, dk.1, S2, pk(x.1), lineage2, pinned ) ▶₀ #j )
+                      case Recipient_FirstContact
+                      by contradiction /* from formulas */
+                    next
+                      case Recipient_Update
+                      by contradiction /* from formulas */
+                    qed
+                  qed
+                qed
+              next
+                case c_h
+                solve( Pin( ~slot, $B, dk.1, S2, pk(x.1), lineage2, pinned ) ▶₀ #j )
+                  case Recipient_FirstContact
+                  by contradiction /* from formulas */
+                next
+                  case Recipient_Update
+                  by contradiction /* from formulas */
+                qed
+              qed
+            qed
+          qed
+        qed
+      next
+        case case_2
+        by contradiction /* from formulas */
+      qed
+    next
+      case case_2
+      solve( (last(#j))  ∥
+             ((S = S2) ∧ (pk(x) = pk(x.1)) ∧ (lineage = lineage2)) )
+        case case_1
+        solve( !ShareKey( $B, dk ) ▶₀ #i )
+          case Recipient_ShareKey
+          solve( !KU( aenc(<'VSE2', <S, dev, pk(x), $B, h(pk(~dk)), lineage, rev>, 
+                            item, 
+                            sign(<'vela share item v2', 
+                                  <S, dev, pk(x), $B, h(pk(~dk)), lineage, rev>, item>,
+                                 x)
+                           >,
+                           pk(~dk))
+                 ) @ #vk.2 )
+            case Sender_FirstSend
+            by contradiction /* contradictory subterm store */
+          next
+            case Sender_Update
+            solve( Pin( ~slot, $B, dk.1, S2, pk(x), lineage2, pinned ) ▶₀ #j )
+              case Recipient_FirstContact
+              by contradiction /* from formulas */
+            next
+              case Recipient_Update
+              by contradiction /* from formulas */
+            qed
+          next
+            case c_aenc
+            solve( !KU( sign(<'vela share item v2', 
+                              <S, dev, pk(x), $B, h(pk(~dk)), lineage, rev>, item>,
+                             x)
+                   ) @ #vk.24 )
+              case Sender_FirstSend
+              by contradiction /* contradictory subterm store */
+            next
+              case Sender_Update
+              solve( !KU( ~dk ) @ #vk.25 )
+                case Reveal_ShareKey
+                solve( Pin( ~slot, $B, dk.1, S2, pk(x), lineage2, pinned ) ▶₀ #j )
+                  case Recipient_FirstContact
+                  by contradiction /* from formulas */
+                next
+                  case Recipient_Update
+                  by contradiction /* from formulas */
+                qed
+              qed
+            next
+              case c_sign
+              solve( !KU( h(pk(~dk)) ) @ #vk.20 )
+                case Sender_FirstSend
+                solve( !KU( ~dk ) @ #vk.29 )
+                  case Reveal_ShareKey
+                  solve( Pin( ~slot, $B, dk.1, S2, pk(x.1), lineage2, pinned ) ▶₀ #j )
+                    case Recipient_FirstContact
+                    by contradiction /* from formulas */
+                  next
+                    case Recipient_Update
+                    by contradiction /* from formulas */
+                  qed
+                qed
+              next
+                case Sender_Update
+                solve( (rev.1 = %1)  ∥ (%1 ⊏ rev.1) )
+                  case case_1
+                  solve( !KU( ~dk ) @ #vk.30 )
+                    case Reveal_ShareKey
+                    solve( Pin( ~slot, $B, dk.1, S2, pk(x.1), lineage2, pinned ) ▶₀ #j )
+                      case Recipient_FirstContact
+                      by contradiction /* from formulas */
+                    next
+                      case Recipient_Update
+                      by contradiction /* from formulas */
+                    qed
+                  qed
+                next
+                  case case_2
+                  solve( !KU( ~dk ) @ #vk.30 )
+                    case Reveal_ShareKey
+                    solve( Pin( ~slot, $B, dk.1, S2, pk(x.1), lineage2, pinned ) ▶₀ #j )
+                      case Recipient_FirstContact
+                      by contradiction /* from formulas */
+                    next
+                      case Recipient_Update
+                      by contradiction /* from formulas */
+                    qed
+                  qed
+                qed
+              next
+                case c_h
+                solve( Pin( ~slot, $B, dk.1, S2, pk(x.1), lineage2, pinned ) ▶₀ #j )
+                  case Recipient_FirstContact
+                  by contradiction /* from formulas */
+                next
+                  case Recipient_Update
+                  by contradiction /* from formulas */
+                qed
+              qed
+            qed
+          qed
+        qed
+      next
+        case case_2
+        by contradiction /* from formulas */
+      qed
+    qed
+  qed
+qed
+
+lemma updates_strictly_increase_the_revision [use_induction]:
+  all-traces
+  "∀ slot B S vk lineage rev item S0 vk0 lineage0 old item0 #i #j.
+    (((Admitted( slot, B, S0, vk0, lineage0, old, item0 ) @ #i) ∧
+      (Applied( slot, B, S, vk, lineage, rev, item ) @ #j)) ∧
+     (#i < #j)) ⇒
+    (old ⊏ rev)"
+/*
+guarded formula characterizing all counter-examples:
+"∃ slot B S vk lineage rev item S0 vk0 lineage0 old item0 #i #j.
+  (Admitted( slot, B, S0, vk0, lineage0, old, item0 ) @ #i) ∧
+  (Applied( slot, B, S, vk, lineage, rev, item ) @ #j)
+ ∧
+  (#i < #j) ∧ (¬(old ⊏ rev))"
+*/
+induction
+  case empty_trace
+  by contradiction /* from formulas */
+next
+  case non_empty_trace
+  simplify
+  solve( Admitted( slot, $B, S0, vk0, lineage0, old, item0 ) @ #i )
+    case Recipient_FirstContact
+    simplify
+    solve( (old = %1)  ∥ (%1 ⊏ old) )
+      case case_1
+      solve( !ShareKey( $B, dk ) ▶₀ #i )
+        case Recipient_ShareKey
+        solve( !KU( aenc(<'VSE2', 
+                          <S0, dev, pk(x), $B, h(pk(~dk)), lineage0, %1>, item0, 
+                          sign(<'vela share item v2', 
+                                <S0, dev, pk(x), $B, h(pk(~dk)), lineage0, %1>, item0>,
+                               x)
+                         >,
+                         pk(~dk))
+               ) @ #vk.5 )
+          case Sender_FirstSend
+          solve( Pin( ~slot, $B, dk.1, S.1, pk(x), lineage.1, pinned ) ▶₀ #j )
+            case Recipient_FirstContact
+            by contradiction /* from formulas */
+          next
+            case Recipient_Update
+            by contradiction /* from formulas */
+          qed
+        next
+          case Sender_Update
+          solve( Pin( ~slot, $B, dk.1, S.1, pk(x), lineage.1, pinned ) ▶₀ #j )
+            case Recipient_FirstContact
+            by contradiction /* from formulas */
+          next
+            case Recipient_Update
+            by contradiction /* from formulas */
+          qed
+        next
+          case c_aenc
+          solve( !KU( sign(<'vela share item v2', 
+                            <S0, dev, pk(x), $B, h(pk(~dk)), lineage0, %1>, item0>,
+                           x)
+                 ) @ #vk.24 )
+            case Sender_FirstSend
+            solve( !KU( ~dk ) @ #vk.25 )
+              case Reveal_ShareKey
+              solve( Pin( ~slot, $B, dk.1, S.1, pk(x), lineage.1, pinned ) ▶₀ #j )
+                case Recipient_FirstContact
+                by contradiction /* from formulas */
+              next
+                case Recipient_Update
+                by contradiction /* from formulas */
+              qed
+            qed
+          next
+            case Sender_Update
+            solve( !KU( ~dk ) @ #vk.25 )
+              case Reveal_ShareKey
+              solve( Pin( ~slot, $B, dk.1, S.1, pk(x), lineage.1, pinned ) ▶₀ #j )
+                case Recipient_FirstContact
+                by contradiction /* from formulas */
+              next
+                case Recipient_Update
+                by contradiction /* from formulas */
+              qed
+            qed
+          next
+            case c_sign
+            solve( !KU( h(pk(~dk)) ) @ #vk.20 )
+              case Sender_FirstSend
+              solve( !KU( ~dk ) @ #vk.29 )
+                case Reveal_ShareKey
+                solve( Pin( ~slot, $B, dk.1, S, pk(x.1), lineage, pinned ) ▶₀ #j )
+                  case Recipient_FirstContact
+                  by contradiction /* from formulas */
+                next
+                  case Recipient_Update
+                  by contradiction /* from formulas */
+                qed
+              qed
+            next
+              case Sender_Update
+              solve( (rev.1 = %1)  ∥ (%1 ⊏ rev.1) )
+                case case_1
+                solve( !KU( ~dk ) @ #vk.29 )
+                  case Reveal_ShareKey
+                  solve( Pin( ~slot, $B, dk.1, S, pk(x.1), lineage, pinned ) ▶₀ #j )
+                    case Recipient_FirstContact
+                    by contradiction /* from formulas */
+                  next
+                    case Recipient_Update
+                    by contradiction /* from formulas */
+                  qed
+                qed
+              next
+                case case_2
+                solve( !KU( ~dk ) @ #vk.30 )
+                  case Reveal_ShareKey
+                  solve( Pin( ~slot, $B, dk.1, S, pk(x.1), lineage, pinned ) ▶₀ #j )
+                    case Recipient_FirstContact
+                    by contradiction /* from formulas */
+                  next
+                    case Recipient_Update
+                    by contradiction /* from formulas */
+                  qed
+                qed
+              qed
+            next
+              case c_h
+              solve( Pin( ~slot, $B, dk.1, S, pk(x.1), lineage, pinned ) ▶₀ #j )
+                case Recipient_FirstContact
+                by contradiction /* from formulas */
+              next
+                case Recipient_Update
+                by contradiction /* from formulas */
+              qed
+            qed
+          qed
+        qed
+      qed
+    next
+      case case_2
+      solve( !ShareKey( $B, dk ) ▶₀ #i )
+        case Recipient_ShareKey
+        solve( !KU( aenc(<'VSE2', 
+                          <S0, dev, pk(x), $B, h(pk(~dk)), lineage0, old>, item0, 
+                          sign(<'vela share item v2', 
+                                <S0, dev, pk(x), $B, h(pk(~dk)), lineage0, old>, item0>,
+                               x)
+                         >,
+                         pk(~dk))
+               ) @ #vk.5 )
+          case Sender_FirstSend
+          by contradiction /* contradictory subterm store */
+        next
+          case Sender_Update
+          solve( Pin( ~slot, $B, dk.1, S.1, pk(x), lineage.1, pinned ) ▶₀ #j )
+            case Recipient_FirstContact
+            by contradiction /* from formulas */
+          next
+            case Recipient_Update
+            by contradiction /* from formulas */
+          qed
+        next
+          case c_aenc
+          solve( !KU( sign(<'vela share item v2', 
+                            <S0, dev, pk(x), $B, h(pk(~dk)), lineage0, old>, item0>,
+                           x)
+                 ) @ #vk.24 )
+            case Sender_FirstSend
+            by contradiction /* contradictory subterm store */
+          next
+            case Sender_Update
+            solve( !KU( ~dk ) @ #vk.25 )
+              case Reveal_ShareKey
+              solve( Pin( ~slot, $B, dk.1, S.1, pk(x), lineage.1, pinned ) ▶₀ #j )
+                case Recipient_FirstContact
+                by contradiction /* from formulas */
+              next
+                case Recipient_Update
+                by contradiction /* from formulas */
+              qed
+            qed
+          next
+            case c_sign
+            solve( !KU( h(pk(~dk)) ) @ #vk.20 )
+              case Sender_FirstSend
+              solve( !KU( ~dk ) @ #vk.29 )
+                case Reveal_ShareKey
+                solve( Pin( ~slot, $B, dk.1, S, pk(x.1), lineage, pinned ) ▶₀ #j )
+                  case Recipient_FirstContact
+                  by contradiction /* from formulas */
+                next
+                  case Recipient_Update
+                  by contradiction /* from formulas */
+                qed
+              qed
+            next
+              case Sender_Update
+              solve( (rev.1 = %1)  ∥ (%1 ⊏ rev.1) )
+                case case_1
+                solve( !KU( ~dk ) @ #vk.30 )
+                  case Reveal_ShareKey
+                  solve( Pin( ~slot, $B, dk.1, S, pk(x.1), lineage, pinned ) ▶₀ #j )
+                    case Recipient_FirstContact
+                    by contradiction /* from formulas */
+                  next
+                    case Recipient_Update
+                    by contradiction /* from formulas */
+                  qed
+                qed
+              next
+                case case_2
+                solve( !KU( ~dk ) @ #vk.30 )
+                  case Reveal_ShareKey
+                  solve( Pin( ~slot, $B, dk.1, S, pk(x.1), lineage, pinned ) ▶₀ #j )
+                    case Recipient_FirstContact
+                    by contradiction /* from formulas */
+                  next
+                    case Recipient_Update
+                    by contradiction /* from formulas */
+                  qed
+                qed
+              qed
+            next
+              case c_h
+              solve( Pin( ~slot, $B, dk.1, S, pk(x.1), lineage, pinned ) ▶₀ #j )
+                case Recipient_FirstContact
+                by contradiction /* from formulas */
+              next
+                case Recipient_Update
+                by contradiction /* from formulas */
+              qed
+            qed
+          qed
+        qed
+      qed
+    qed
+  next
+    case Recipient_Update
+    simplify
+    solve( Pin( slot, $B, dk, S, pk(x), lineage, pinned.1 ) ▶₀ #j )
+      case Recipient_FirstContact
+      by contradiction /* cyclic */
+    next
+      case Recipient_Update
+      simplify
+      solve( (#vr = #i)  ∥ (#i < #vr)  ∥ (pinned.1 ⊏ old) )
+        case case_1
+        by contradiction /* from formulas */
+      next
+        case case_2
+        by contradiction /* from formulas */
+      next
+        case case_3
+        solve( (#i = #vr)  ∥ (#vr < #i) )
+          case case_1
+          by contradiction /* contradictory subterm store */
+        next
+          case case_2
+          by contradiction /* non-injective facts (#vr,#i,#j) */
+        qed
+      qed
+    qed
+  qed
+qed
+
+lemma shared_items_stay_secret [use_induction]:
+  all-traces
+  "∀ item B ek #i #k.
+    ((SecretItem( item, B, ek ) @ #i) ∧ (K( item ) @ #k)) ⇒
+    (∃ #r. (ShareKeyRevealed( B, ek ) @ #r) ∧ (#r < #k))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ item B ek #i #k.
+  (SecretItem( item, B, ek ) @ #i) ∧ (K( item ) @ #k)
+ ∧
+  ∀ #r. (ShareKeyRevealed( B, ek ) @ #r) ⇒ ¬(#r < #k)"
+*/
+induction
+  case empty_trace
+  by contradiction /* from formulas */
+next
+  case non_empty_trace
+  solve( (last(#k))  ∥ (last(#i))  ∥
+         (∃ #r. (ShareKeyRevealed( B, ek ) @ #r) ∧ (¬(last(#r))) ∧ (#r < #k)) )
+    case case_1
+    solve( SecretItem( item, B, ek ) @ #i )
+      case Sender_FirstSend
+      solve( !DeviceKey( $S, dev, sk ) ▶₀ #i )
+        case Device_Identity
+        solve( !ShareKey( $B, dk ) ▶₁ #i )
+          case Recipient_ShareKey
+          solve( !KU( ~item ) @ #vk )
+            case Sender_FirstSend
+            solve( !KU( ~dk ) @ #vk.1 )
+              case Reveal_ShareKey
+              by contradiction /* from formulas */
+            qed
+          qed
+        qed
+      qed
+    next
+      case Sender_Update
+      solve( (rev = %1)  ∥ (%1 ⊏ rev) )
+        case case_1
+        solve( !SenderLineage( $S, dev, $B, dk, lineage ) ▶₀ #i )
+          case Sender_FirstSend
+          solve( !DeviceKey( $S, ~dev, sk ) ▶₁ #i )
+            case Device_Identity
+            solve( !KU( ~item ) @ #vk )
+              case Sender_Update
+              solve( !KU( ~dk ) @ #vk.2 )
+                case Reveal_ShareKey
+                by contradiction /* from formulas */
+              qed
+            qed
+          qed
+        qed
+      next
+        case case_2
+        solve( !SenderLineage( $S, dev, $B, dk, lineage ) ▶₀ #i )
+          case Sender_FirstSend
+          solve( !DeviceKey( $S, ~dev, sk ) ▶₁ #i )
+            case Device_Identity
+            solve( !KU( ~item ) @ #vk )
+              case Sender_Update
+              solve( !KU( ~dk ) @ #vk.2 )
+                case Reveal_ShareKey
+                by contradiction /* from formulas */
+              qed
+            qed
+          qed
+        qed
+      qed
+    qed
+  next
+    case case_2
+    solve( SecretItem( item, B, ek ) @ #i )
+      case Sender_FirstSend
+      by contradiction /* node #k after last node #i */
+    next
+      case Sender_Update
+      by contradiction /* node #k after last node #i */
+    qed
+  next
+    case case_3
+    by contradiction /* from formulas */
+  qed
+qed
+
+lemma honest_share_and_update_are_reachable:
+  exists-trace
+  "∃ slot B S vk lineage item1 item2 #a #b #c #d.
+    (((((Sent( S, vk, B, lineage, %1, item1 ) @ #a) ∧
+        (Accepted( slot, B, S, vk, lineage, %1, item1 ) @ #b)) ∧
+       (Sent( S, vk, B, lineage, (%1%+%1), item2 ) @ #c)) ∧
+      (Applied( slot, B, S, vk, lineage, (%1%+%1), item2 ) @ #d)) ∧
+     (¬(∃ k #r. DeviceKeyRevealed( k ) @ #r))) ∧
+    (¬(∃ b.1 ek #r. ShareKeyRevealed( b.1, ek ) @ #r))"
+/*
+guarded formula characterizing all satisfying traces:
+"∃ slot B S vk lineage item1 item2 #a #b #c #d.
+  (Sent( S, vk, B, lineage, %1, item1 ) @ #a) ∧
+  (Accepted( slot, B, S, vk, lineage, %1, item1 ) @ #b) ∧
+  (Sent( S, vk, B, lineage, (%1%+%1), item2 ) @ #c) ∧
+  (Applied( slot, B, S, vk, lineage, (%1%+%1), item2 ) @ #d)
+ ∧
+  (∀ k #r. (DeviceKeyRevealed( k ) @ #r) ⇒ ⊥) ∧
+  (∀ b.1 ek #r. (ShareKeyRevealed( b.1, ek ) @ #r) ⇒ ⊥)"
+*/
+simplify
+solve( !ShareKey( $B, dk ) ▶₀ #b )
+  case Recipient_ShareKey
+  solve( Sent( S, pk(x), $B, lineage, %1, item1 ) @ #a )
+    case Sender_FirstSend
+    solve( !DeviceKey( $S, dev, x ) ▶₀ #a )
+      case Device_Identity
+      solve( !ShareKey( $B, dk ) ▶₁ #a )
+        case Recipient_ShareKey
+        solve( Sent( $S, pk(~sk), $B, ~lineage, (%1%+%1), item2 ) @ #c )
+          case Sender_Update
+          solve( !SenderLineage( $S, dev.2, $B, dk.2, ~lineage ) ▶₀ #c )
+            case Sender_FirstSend
+            solve( !DeviceKey( $S, ~dev, ~sk ) ▶₁ #c )
+              case Device_Identity
+              solve( !KU( aenc(<'VSE2', 
+                                <$S, dev.1, pk(~sk), $B, h(pk(~dk.1)), ~lineage, %1>, ~item, 
+                                sign(<'vela share item v2', 
+                                      <$S, dev.1, pk(~sk), $B, h(pk(~dk.1)), ~lineage, %1>, ~item>,
+                                     ~sk)
+                               >,
+                               pk(~dk.1))
+                     ) @ #vk.3 )
+                case Sender_FirstSend
+                solve( !KU( aenc(<'VSE2', 
+                                  <$S, dev.1, pk(~sk), $B, h(pk(dk.1)), ~lineage, (%1%+%1)>, ~item.1, 
+                                  sign(<'vela share item v2', 
+                                        <$S, dev.1, pk(~sk), $B, h(pk(dk.1)), ~lineage, (%1%+%1)>, ~item.1>,
+                                       ~sk)
+                                 >,
+                                 pk(dk.1))
+                       ) @ #vk.4 )
+                  case Sender_Update
+                  solve( Pin( ~slot, $B, ~dk, $S, pk(~sk), ~lineage, %1 ) ▶₀ #d )
+                    case Recipient_FirstContact
+                    SOLVED // trace found
+                  qed
+                qed
+              qed
+            qed
+          qed
+        qed
+      qed
+    qed
+  qed
+qed
+
+/* All wellformedness checks were successful. */
+
+/*
+Generated from:
+Tamarin version 1.12.0
+Maude version 3.5.1
+Git revision: 82780bbaf3328a45f624ddb41e51bf75425f851c (with uncommited changes), branch: master
+Compiled at: 2026-03-07 14:22:39.174278293 UTC
+*/
+
+end
+
+==============================================================================
+summary of summaries:
+
+analyzed: /home/hirew/.t3/worktrees/VELA/t3-700776df/security/formal/m19c_share_sender_authentication.spthy
+
+  processing time: 15.02s
+  
+  admitted_items_were_sent_by_the_pinned_device (all-traces): verified (36 steps)
+  updates_keep_the_pinned_key_and_lineage (all-traces): verified (207 steps)
+  updates_strictly_increase_the_revision (all-traces): verified (79 steps)
+  shared_items_stay_secret (all-traces): verified (24 steps)
+  honest_share_and_update_are_reachable (exists-trace): verified (12 steps)
+
+==============================================================================

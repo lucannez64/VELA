@@ -1,79 +1,110 @@
-# VELA formal verification and security assurance package
+# VELA security assurance for external researchers
 
-This package is written for external researchers: cryptographers, protocol
-analysts, formal-methods people, and auditors. It states what VELA claims,
-which of those claims are machine-checked and under which assumptions, how
-the models relate to the shipped Rust, how to re-run every check, and what
-is not covered.
-
-It is meant to be read skeptically. Each claim is tagged with the evidence
-behind it. "Proved" means proved in a stated model. It never means proved
-about the deployed system as a whole.
+Read this package as a set of scoped claims and reviewable evidence.
+A proof establishes a property of its stated model, not of the whole deployed
+system. Start with the claims, then inspect the assumptions and Rust mapping.
 
 ## Baseline
 
-| | |
-|---|---|
-| Repository | <https://github.com/lucannez64/VELA> (MIT) |
-| Baseline commit | `5a3b72e7f6d2081cc91b9610adc62a54981f0857` (2026-10-22) |
-| Reference CI run | [security #39864715971](https://github.com/lucannez64/VELA/actions/runs/39864715971): `formal-rekey`, `static-scan`, and `regression` all passed on that commit |
-| Protocol specification | [`SPEC.md`](../../SPEC.md) v2.1 |
-| Artifact hashes | [`MANIFEST.sha256`](MANIFEST.sha256) |
+Repository: <https://github.com/lucannez64/VELA> (MIT).
+The current implementation baseline is commit `148ff32` (share signatures,
+enrollment fingerprint v4, KEM combiner v2). This package adds revised models,
+correspondence records, local proof logs and CI configuration on top of it.
+[`MANIFEST.sha256`](MANIFEST.sha256) identifies the exact reviewed artifacts;
+use the commit containing this manifest to reproduce this package.
 
-If you review a later commit, re-run [`run-all.sh`](run-all.sh) and compare
-your results with [`proof-logs/`](proof-logs/).
+The older [CI run #39864715971](https://github.com/lucannez64/VELA/actions/runs/39864715971)
+passed on `5a3b72e7f6d2081cc91b9610adc62a54981f0857`. Its logs are historical
+baseline evidence. They do not validate the subsequent protocol changes.
+No successful CI run for this updated package is asserted.
 
 ## Contents
 
-| # | Document | Answers |
-|---|---|---|
-| 1 | [`01-security-claims.md`](01-security-claims.md) | Which confidentiality, authentication, integrity, and compromise-resilience properties VELA claims, each with an ID and its evidence level |
-| 2 | [`02-formal-models.md`](02-formal-models.md) | The 30 Tamarin theories and 3 ProVerif models: what each one models, the adversary it gives, and the assumptions it makes |
-| 3 | [`03-implementation-correspondence.md`](03-implementation-correspondence.md) | How the models map to Rust, what hax/F\* verifies, and what is trusted or unproved |
-| 4 | [`04-reproducibility.md`](04-reproducibility.md) | Pinned tool versions, exact commands, expected outputs, proof logs, and CI evidence |
-| 5 | [`05-known-limitations.md`](05-known-limitations.md) | Unproved properties, trusted components, attacks outside the models, and known gaps in the assurance itself |
-| 6 | [`06-engaging-researchers.md`](06-engaging-researchers.md) | Audit scope, priority questions, how to report, and how to engage with the project |
+1. [Security claims](01-security-claims.md): confidentiality, authentication,
+   integrity, compromise resilience, with stable claim IDs.
+2. [Formal models](02-formal-models.md): Tamarin and ProVerif adversaries,
+   assumptions and model boundaries.
+3. [Implementation correspondence](03-implementation-correspondence.md):
+   Rust mapping, hax/F* scope and unproved seams.
+4. [Reproducibility](04-reproducibility.md): pinned proof tools, commands,
+   logs and CI status.
+5. [Known limitations](05-known-limitations.md): unproved properties,
+   trusted components and attacks outside the models.
+6. [Engaging researchers](06-engaging-researchers.md): prioritized audit
+   questions, contact routes and ready-to-adapt outreach text.
+
+7. [Implementation-boundary review](07-boundary-review.md): three reproduced,
+   sharing caller/storage findings, their fixes, regression coverage and limits.
+
+The caller/storage fixes have executable regression coverage. Their storage
+correctness is not a consequence of the pure-policy proofs.
+
+8. [Formalization status](08-formalization-status.md): checked sharing
+   extensions, explicit trusted boundary and outstanding whole-system obligations.
+
+9. [Selected proof boundary](09-target-contract.md): trust OS/compiler and
+   primitive security; retain VELA construction and application obligations.
 
 ## Evidence levels
 
-Every claim in this package carries one or more of these tags:
-
 | Tag | Meaning |
 |---|---|
-| **[SYM]** | Proved in a symbolic (Dolev-Yao) model with Tamarin or ProVerif, and gated in CI |
-| **[SYM-local]** | Proved in a symbolic model, but **not** run by CI. The result comes from a maintainer's run |
-| **[REF]** | A pure Rust decision function is extracted with hax and its postconditions are discharged by F\*. The proof is **not** run by CI (see [§5 G-1](05-known-limitations.md#gaps-in-the-assurance-itself)) |
-| **[EXEC]** | Bounded or exhaustive executable model tests against real handlers or real SQL, gated in CI |
-| **[EXPLOIT]** | A live exploit regression against an isolated server, gated in CI |
-| **[STAT]** | Statistical testing of the production implementation, gated in CI |
-| **[ARG]** | Design argument or reliance on a standard primitive. Nothing machine-checked |
+| **[SYM]** | Symbolic proof witnessed in the linked historical CI run; check baseline before applying it to newer code |
+| **[SYM-local]** | Symbolic result from local runs; current CI configuration may gate it, but a successful new CI run is still needed |
+| **[REF]** | Fresh local hax extraction and F* checking of selected pure policy functions; no whole-handler correctness implication |
+| **[EXEC]** | Executable model or test; distinguish linked historical CI results from current local logs |
+| **[EXPLOIT]** | Live exploit regression at the cited baseline |
+| **[STAT]** | Statistical implementation evidence, not a universal proof |
+| **[ARG]** | Design argument or reliance on a primitive; no machine-checked support |
 
-## Totals at the baseline commit
+## Recorded results and pending evidence
 
-| Tool | Scope | Result | In CI |
-|---|---|---|---|
-| Tamarin 1.12.0 | 17 protocol theories (M11–M26) | 176 lemmas verified, 0 falsified, 0 warnings | yes |
-| Tamarin 1.12.0 | 13 credential-release theories (M1–M10) | 83 verified, 5 falsified **by design** (impossibility baselines) | **no** |
-| ProVerif (opam, OCaml 5.1.1 switch) | 3 ORAM access-pattern equivalence models (M22) | 2 equivalences proved, 1 baseline attack found as intended | yes |
-| hax 0.3.7 + F\* 2025.10.06 + Z3 4.13.3 | 7 policy crates, about 80 extracted entry points | all VCs discharged (maintainer runs) | **no** |
-| Rust executable models | rekey, session, enrollment, recovery, client recovery | all pass | yes |
-| Exploit regressions | 9 previously confirmed attacks | all blocked | yes |
-| Statistical | Path ORAM stash bounds and invariants | 4/4 | yes |
+- Historical CI: 176 Tamarin lemmas; ProVerif M22b/M22c equivalence and the
+  intended M22a baseline failure; executable models, statistics and exploit
+  regressions. See [`proof-logs/`](proof-logs/).
+- Current full local run: **276 verified / 5 intended falsifications** across
+  all 35 Tamarin theories, the expected three ProVerif verdicts, and four
+  passing ORAM statistical tests. [Run summary](proof-logs/current/full-run/summary.txt).
+- Current network-boundary run: **17/17 verified** in five theories, including
+  explicit attack witnesses for the old share and enrollment designs.
+  Full logs: [`proof-logs/current/`](proof-logs/current/).
+- Corpus inventory: **37 Tamarin theories / 299 lemmas**, plus three ProVerif
+  models. The earlier full run covers 35 theories; M28 adds seven journal
+  properties and M29 adds eleven composed authentication/journal properties.
+  Combined evidence is **294 verified / five intended falsifications**; it is
+  not a new whole-corpus CI result.
+- Current hax/F*: fresh checks cover **117 selected functions / 114 explicit
+  postconditions** across eight policy crates and the sharing/signature kernels.
+  All **18 local enum-equality assumptions were removed** through structural
+  Rust comparisons; current generated modules contain zero local `assume val`
+  declarations. Imported proof libraries, the String view and tools remain
+  trusted. [Current evidence](proof-logs/current/trusted-boundary/README.md).
+- The earlier [resource measurements](proof-logs/current/refinement-5g/) are
+  historical: engine build about 4.8 GiB under a cap raised to 6 GiB; individual
+  policy workflows 0.74–2.06 GiB under 5 GiB caps. Current proof/regression
+  commands used 3 GiB caps without swap; no engine rebuild was needed.
+- CI now defines all-model and eight-crate refinement gates and log artifacts.
+  Their new runs remain pending until this branch is published and CI runs.
+  Toolchain installation in the dedicated CI job has a separate 6 GiB cap;
+  local runners default to 3 GiB.
 
 ## Quick start
 
 ```bash
-git clone https://github.com/lucannez64/VELA && cd VELA
-git checkout 5a3b72e7f6d2081cc91b9610adc62a54981f0857
-sha256sum -c security/assurance/MANIFEST.sha256      # artifacts match this package
-# install the toolchain in 04-reproducibility.md, then:
-security/assurance/run-all.sh                         # Tamarin + ProVerif + stats
-security/assurance/run-all.sh --with-fstar            # also hax/F*
+sha256sum -c security/assurance/MANIFEST.sha256
+python3 security/formal/check-correspondence.py
+VELA_PROOF_OUT=/tmp/vela-network security/formal/run-network-boundary-proofs.sh
+security/assurance/run-all.sh --out /tmp/vela-assurance
+# With the pinned hax/F* tools installed:
+security/assurance/run-all.sh --with-fstar --out /tmp/vela-assurance-fstar
 ```
 
-## Reporting
+Install tools using [reproducibility](04-reproducibility.md). Runners use one
+prover worker, sequential steps, time limits and a 3 GiB process-tree memory
+cap with no swap. They require Linux systemd scopes; on other hosts use an
+equivalently limited Linux environment. Toolchain installation is separate.
 
-Report suspected vulnerabilities privately, as described in
-[`SECURITY.md`](../../SECURITY.md) and [§6](06-engaging-researchers.md#reporting).
-Model bugs, over-claims in this package, and proofs that pass for the wrong
-reason count as security reports too. We want to hear about them.
+Report privately through [GitHub advisories](https://github.com/lucannez64/VELA/security/advisories/new)
+and [`SECURITY.md`](../../SECURITY.md). Private reporting was checked enabled
+on 2026-10-23. Model inadequacy, vacuous proofs and overstated claims are
+valid assurance findings.

@@ -1,0 +1,12 @@
+maude tool: 'maude'
+ checking version: 3.5.1. OK.
+ checking installation: OK.
+[Theory M21_LinkRevocationFinality] Theory loaded
+[Theory M21_LinkRevocationFinality] Theory translated
+[Theory M21_LinkRevocationFinality] Derivation checks started
+[Theory M21_LinkRevocationFinality] Derivation checks ended
+[Theory M21_LinkRevocationFinality] Theory closed
+[Saturating Sources] Step 1 (Max 5)
+[Saturating Sources] Done
+m21_link_revocation_finality: 3 verified
+m21 link-revocation formal proof gate: 3 verified, 0 falsified, 0 warnings

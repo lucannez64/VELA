@@ -34,13 +34,6 @@ type t_PublicationAction =
   | PublicationAction_Retire : t_PublicationAction
   | PublicationAction_Reject : t_PublicationAction
 
-[@@ FStar.Tactics.Typeclasses.tcinstance]
-assume
-val impl_13': Core_models.Cmp.t_PartialEq t_PublicationAction t_PublicationAction
-
-unfold
-let impl_13 = impl_13'
-
 let publication_state_is_well_formed (facts: t_PublicationFacts) : bool =
   (~.facts.f_server_finalized || facts.f_server_staged && facts.f_cloud_candidate_durable) &&
   (~.facts.f_cloud_active || facts.f_server_finalized)
@@ -59,25 +52,46 @@ let publication_is_current (facts: t_PublicationFacts) : bool =
 
 let publication_plan_matches_spec (facts: t_PublicationFacts) (action: t_PublicationAction) : bool =
   if ~.(publication_journal_is_bound facts <: bool)
-  then action =. (PublicationAction_Reject <: t_PublicationAction)
+  then
+    match action <: t_PublicationAction with
+    | PublicationAction_Reject  -> true
+    | _ -> false
   else
     if
       facts.f_current_epoch <. v_INITIAL_EPOCH || facts.f_journal_epoch <>. facts.f_current_epoch ||
       ~.facts.f_account_epoch_active
-    then action =. (PublicationAction_Retire <: t_PublicationAction)
+    then
+      match action <: t_PublicationAction with
+      | PublicationAction_Retire  -> true
+      | _ -> false
     else
       if facts.f_cloud_active
-      then action =. (PublicationAction_Complete <: t_PublicationAction)
+      then
+        match action <: t_PublicationAction with
+        | PublicationAction_Complete  -> true
+        | _ -> false
       else
         if facts.f_server_finalized
-        then action =. (PublicationAction_PromoteCloudActive <: t_PublicationAction)
+        then
+          match action <: t_PublicationAction with
+          | PublicationAction_PromoteCloudActive  -> true
+          | _ -> false
         else
           if ~.facts.f_server_staged
-          then action =. (PublicationAction_StageServer <: t_PublicationAction)
+          then
+            match action <: t_PublicationAction with
+            | PublicationAction_StageServer  -> true
+            | _ -> false
           else
             if ~.facts.f_cloud_candidate_durable
-            then action =. (PublicationAction_UploadCloudCandidate <: t_PublicationAction)
-            else action =. (PublicationAction_FinalizeServer <: t_PublicationAction)
+            then
+              match action <: t_PublicationAction with
+              | PublicationAction_UploadCloudCandidate  -> true
+              | _ -> false
+            else
+              match action <: t_PublicationAction with
+              | PublicationAction_FinalizeServer  -> true
+              | _ -> false
 
 /// Return the single operation that should be retried for this journal.
 let plan_publication_resume (facts: t_PublicationFacts)
@@ -188,13 +202,6 @@ type t_RecoveryChannel =
   | RecoveryChannel_Server : t_RecoveryChannel
   | RecoveryChannel_TrustedContact : t_RecoveryChannel
 
-[@@ FStar.Tactics.Typeclasses.tcinstance]
-assume
-val impl_19': Core_models.Cmp.t_PartialEq t_RecoveryChannel t_RecoveryChannel
-
-unfold
-let impl_19 = impl_19'
-
 /// Durable observations about one candidate share of a recovery pair.
 /// Every share must be bound to the same account, epoch, and Shamir split as
 /// its partner. `recipient_bound` may only be claimed for a share that was
@@ -225,54 +232,6 @@ type t_ReconstructionPermit = {
 type t_ReconstructionDecision =
   | ReconstructionDecision_Reconstruct : t_ReconstructionPermit -> t_ReconstructionDecision
   | ReconstructionDecision_Reject : t_ReconstructionDecision
-
-/// M18 pair-selection policy: any two *distinct* channels of the same exact
-/// account/epoch/split context reconstruct, provided both shares are
-/// authenticated, address distinct Shamir coordinates, and trusted-contact
-/// shares arrived through a recipient-bound authenticated envelope.
-let reconstruction_is_authorized (facts: t_PairSelectionFacts) : bool =
-  let (first: t_BoundShareFacts), (second: t_BoundShareFacts) =
-    facts.f_first, facts.f_second <: (t_BoundShareFacts & t_BoundShareFacts)
-  in
-  facts.f_requested_account_present && first.f_account_matches && second.f_account_matches &&
-  first.f_channel <>. second.f_channel &&
-  first.f_epoch >=. v_INITIAL_EPOCH &&
-  first.f_epoch =. second.f_epoch &&
-  (~.first.f_split_id_present && ~.second.f_split_id_present ||
-  first.f_split_id_present && second.f_split_id_present && facts.f_split_ids_match) &&
-  first.f_share_authenticated &&
-  second.f_share_authenticated &&
-  (first.f_channel <>. (RecoveryChannel_TrustedContact <: t_RecoveryChannel) ||
-  first.f_recipient_bound) &&
-  (second.f_channel <>. (RecoveryChannel_TrustedContact <: t_RecoveryChannel) ||
-  second.f_recipient_bound) &&
-  first.f_coordinate <>. second.f_coordinate
-
-let reconstruction_decision_matches_spec
-      (facts: t_PairSelectionFacts)
-      (decision: t_ReconstructionDecision)
-    : bool =
-  match decision <: t_ReconstructionDecision with
-  | ReconstructionDecision_Reconstruct permit ->
-    reconstruction_is_authorized facts && permit.f_epoch =. facts.f_first.f_epoch &&
-    permit.f_exact_account_and_epoch
-  | ReconstructionDecision_Reject  -> ~.(reconstruction_is_authorized facts <: bool)
-
-let plan_reconstruction (facts: t_PairSelectionFacts)
-    : Prims.Pure t_ReconstructionDecision
-      Prims.l_True
-      (ensures
-        fun decision ->
-          let decision:t_ReconstructionDecision = decision in
-          reconstruction_decision_matches_spec facts decision) =
-  if reconstruction_is_authorized facts
-  then
-    ReconstructionDecision_Reconstruct
-    ({ f_epoch = facts.f_first.f_epoch; f_exact_account_and_epoch = true } <: t_ReconstructionPermit
-    )
-    <:
-    t_ReconstructionDecision
-  else ReconstructionDecision_Reject <: t_ReconstructionDecision
 
 type t_AdoptionFacts = {
   f_shares_authenticated_together:bool;
@@ -315,6 +274,186 @@ let plan_adoption (reconstruction: t_ReconstructionPermit) (facts: t_AdoptionFac
     <:
     t_AdoptionDecision
   else AdoptionDecision_Reject <: t_AdoptionDecision
+
+/// Durable observations for handing Share 3 to its trusted contact.
+type t_ContactDeliveryFacts = {
+  f_journal_bound:bool;
+  f_journal_is_current:bool;
+  f_split_id_present:bool;
+  f_share_present:bool;
+  f_recipient_key_present:bool
+}
+
+type t_ContactDeliveryAction =
+  | ContactDeliveryAction_Seal : t_ContactDeliveryAction
+  | ContactDeliveryAction_Retire : t_ContactDeliveryAction
+  | ContactDeliveryAction_Reject : t_ContactDeliveryAction
+
+let contact_delivery_plan_matches_spec
+      (facts: t_ContactDeliveryFacts)
+      (action: t_ContactDeliveryAction)
+    : bool =
+  if ~.facts.f_journal_bound
+  then
+    match action <: t_ContactDeliveryAction with
+    | ContactDeliveryAction_Reject  -> true
+    | _ -> false
+  else
+    if ~.facts.f_journal_is_current || ~.facts.f_share_present
+    then
+      match action <: t_ContactDeliveryAction with
+      | ContactDeliveryAction_Retire  -> true
+      | _ -> false
+    else
+      if facts.f_split_id_present && facts.f_recipient_key_present
+      then
+        match action <: t_ContactDeliveryAction with
+        | ContactDeliveryAction_Seal  -> true
+        | _ -> false
+      else
+        match action <: t_ContactDeliveryAction with
+        | ContactDeliveryAction_Reject  -> true
+        | _ -> false
+
+/// Decide what may happen to the cached trusted-contact share: seal it into
+/// an authenticated envelope for the recorded recipient, retire it because
+/// its epoch no longer matches (RMS rotation), or reject a malformed journal.
+let plan_contact_delivery (facts: t_ContactDeliveryFacts)
+    : Prims.Pure t_ContactDeliveryAction
+      Prims.l_True
+      (ensures
+        fun action ->
+          let action:t_ContactDeliveryAction = action in
+          contact_delivery_plan_matches_spec facts action) =
+  if ~.facts.f_journal_bound
+  then ContactDeliveryAction_Reject <: t_ContactDeliveryAction
+  else
+    if ~.facts.f_journal_is_current || ~.facts.f_share_present
+    then ContactDeliveryAction_Retire <: t_ContactDeliveryAction
+    else
+      if facts.f_split_id_present && facts.f_recipient_key_present
+      then ContactDeliveryAction_Seal <: t_ContactDeliveryAction
+      else ContactDeliveryAction_Reject <: t_ContactDeliveryAction
+
+let rotated_contact_journal_can_seal (facts: t_ContactDeliveryFacts)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let facts:t_ContactDeliveryFacts =
+    { facts with f_journal_is_current = false } <: t_ContactDeliveryFacts
+  in
+  contact_delivery_plan_matches_spec facts (ContactDeliveryAction_Seal <: t_ContactDeliveryAction)
+
+let keyless_contact_delivery_can_seal (facts: t_ContactDeliveryFacts)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let facts:t_ContactDeliveryFacts =
+    { facts with f_recipient_key_present = false } <: t_ContactDeliveryFacts
+  in
+  contact_delivery_plan_matches_spec facts (ContactDeliveryAction_Seal <: t_ContactDeliveryAction)
+
+let unauthenticated_secret_can_be_adopted
+      (reconstruction: t_ReconstructionPermit)
+      (facts: t_AdoptionFacts)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let facts:t_AdoptionFacts =
+    { facts with f_shares_authenticated_together = false } <: t_AdoptionFacts
+  in
+  adoption_is_authorized reconstruction facts
+
+let wrong_epoch_secret_can_be_adopted
+      (reconstruction: t_ReconstructionPermit)
+      (facts: t_AdoptionFacts)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let facts:t_AdoptionFacts =
+    {
+      facts with
+      f_target_epoch
+      =
+      if reconstruction.f_epoch =. Core_models.Num.impl_i64__MAX
+      then reconstruction.f_epoch -! mk_i64 1
+      else reconstruction.f_epoch +! mk_i64 1
+    }
+    <:
+    t_AdoptionFacts
+  in
+  adoption_is_authorized reconstruction facts
+
+let same_recovery_channel (a b: t_RecoveryChannel) : bool =
+  match a, b <: (t_RecoveryChannel & t_RecoveryChannel) with
+  | RecoveryChannel_Cloud , RecoveryChannel_Cloud
+  | RecoveryChannel_Server , RecoveryChannel_Server
+  | RecoveryChannel_TrustedContact , RecoveryChannel_TrustedContact  -> true
+  | _ -> false
+
+/// M18 pair-selection policy: any two *distinct* channels of the same exact
+/// account/epoch/split context reconstruct, provided both shares are
+/// authenticated, address distinct Shamir coordinates, and trusted-contact
+/// shares arrived through a recipient-bound authenticated envelope.
+let reconstruction_is_authorized (facts: t_PairSelectionFacts) : bool =
+  let (first: t_BoundShareFacts), (second: t_BoundShareFacts) =
+    facts.f_first, facts.f_second <: (t_BoundShareFacts & t_BoundShareFacts)
+  in
+  facts.f_requested_account_present && first.f_account_matches && second.f_account_matches &&
+  ~.(same_recovery_channel first.f_channel second.f_channel <: bool) &&
+  first.f_epoch >=. v_INITIAL_EPOCH &&
+  first.f_epoch =. second.f_epoch &&
+  (~.first.f_split_id_present && ~.second.f_split_id_present ||
+  first.f_split_id_present && second.f_split_id_present && facts.f_split_ids_match) &&
+  first.f_share_authenticated &&
+  second.f_share_authenticated &&
+  (~.(match first.f_channel <: t_RecoveryChannel with
+    | RecoveryChannel_TrustedContact  -> true
+    | _ -> false) ||
+  first.f_recipient_bound) &&
+  (~.(match second.f_channel <: t_RecoveryChannel with
+    | RecoveryChannel_TrustedContact  -> true
+    | _ -> false) ||
+  second.f_recipient_bound) &&
+  first.f_coordinate <>. second.f_coordinate
+
+let reconstruction_decision_matches_spec
+      (facts: t_PairSelectionFacts)
+      (decision: t_ReconstructionDecision)
+    : bool =
+  match decision <: t_ReconstructionDecision with
+  | ReconstructionDecision_Reconstruct permit ->
+    reconstruction_is_authorized facts && permit.f_epoch =. facts.f_first.f_epoch &&
+    permit.f_exact_account_and_epoch
+  | ReconstructionDecision_Reject  -> ~.(reconstruction_is_authorized facts <: bool)
+
+let plan_reconstruction (facts: t_PairSelectionFacts)
+    : Prims.Pure t_ReconstructionDecision
+      Prims.l_True
+      (ensures
+        fun decision ->
+          let decision:t_ReconstructionDecision = decision in
+          reconstruction_decision_matches_spec facts decision) =
+  if reconstruction_is_authorized facts
+  then
+    ReconstructionDecision_Reconstruct
+    ({ f_epoch = facts.f_first.f_epoch; f_exact_account_and_epoch = true } <: t_ReconstructionPermit
+    )
+    <:
+    t_ReconstructionDecision
+  else ReconstructionDecision_Reject <: t_ReconstructionDecision
 
 let cross_account_shares_can_reconstruct (facts: t_PairSelectionFacts)
     : Prims.Pure bool
@@ -463,119 +602,3 @@ let unbound_contact_share_can_reconstruct (facts: t_PairSelectionFacts)
     t_PairSelectionFacts
   in
   reconstruction_is_authorized facts
-
-/// Durable observations for handing Share 3 to its trusted contact.
-type t_ContactDeliveryFacts = {
-  f_journal_bound:bool;
-  f_journal_is_current:bool;
-  f_split_id_present:bool;
-  f_share_present:bool;
-  f_recipient_key_present:bool
-}
-
-type t_ContactDeliveryAction =
-  | ContactDeliveryAction_Seal : t_ContactDeliveryAction
-  | ContactDeliveryAction_Retire : t_ContactDeliveryAction
-  | ContactDeliveryAction_Reject : t_ContactDeliveryAction
-
-[@@ FStar.Tactics.Typeclasses.tcinstance]
-assume
-val impl_73': Core_models.Cmp.t_PartialEq t_ContactDeliveryAction t_ContactDeliveryAction
-
-unfold
-let impl_73 = impl_73'
-
-let contact_delivery_plan_matches_spec
-      (facts: t_ContactDeliveryFacts)
-      (action: t_ContactDeliveryAction)
-    : bool =
-  if ~.facts.f_journal_bound
-  then action =. (ContactDeliveryAction_Reject <: t_ContactDeliveryAction)
-  else
-    if ~.facts.f_journal_is_current || ~.facts.f_share_present
-    then action =. (ContactDeliveryAction_Retire <: t_ContactDeliveryAction)
-    else
-      if facts.f_split_id_present && facts.f_recipient_key_present
-      then action =. (ContactDeliveryAction_Seal <: t_ContactDeliveryAction)
-      else action =. (ContactDeliveryAction_Reject <: t_ContactDeliveryAction)
-
-/// Decide what may happen to the cached trusted-contact share: seal it into
-/// an authenticated envelope for the recorded recipient, retire it because
-/// its epoch no longer matches (RMS rotation), or reject a malformed journal.
-let plan_contact_delivery (facts: t_ContactDeliveryFacts)
-    : Prims.Pure t_ContactDeliveryAction
-      Prims.l_True
-      (ensures
-        fun action ->
-          let action:t_ContactDeliveryAction = action in
-          contact_delivery_plan_matches_spec facts action) =
-  if ~.facts.f_journal_bound
-  then ContactDeliveryAction_Reject <: t_ContactDeliveryAction
-  else
-    if ~.facts.f_journal_is_current || ~.facts.f_share_present
-    then ContactDeliveryAction_Retire <: t_ContactDeliveryAction
-    else
-      if facts.f_split_id_present && facts.f_recipient_key_present
-      then ContactDeliveryAction_Seal <: t_ContactDeliveryAction
-      else ContactDeliveryAction_Reject <: t_ContactDeliveryAction
-
-let rotated_contact_journal_can_seal (facts: t_ContactDeliveryFacts)
-    : Prims.Pure bool
-      Prims.l_True
-      (ensures
-        fun result ->
-          let result:bool = result in
-          result =. false) =
-  let facts:t_ContactDeliveryFacts =
-    { facts with f_journal_is_current = false } <: t_ContactDeliveryFacts
-  in
-  contact_delivery_plan_matches_spec facts (ContactDeliveryAction_Seal <: t_ContactDeliveryAction)
-
-let keyless_contact_delivery_can_seal (facts: t_ContactDeliveryFacts)
-    : Prims.Pure bool
-      Prims.l_True
-      (ensures
-        fun result ->
-          let result:bool = result in
-          result =. false) =
-  let facts:t_ContactDeliveryFacts =
-    { facts with f_recipient_key_present = false } <: t_ContactDeliveryFacts
-  in
-  contact_delivery_plan_matches_spec facts (ContactDeliveryAction_Seal <: t_ContactDeliveryAction)
-
-let unauthenticated_secret_can_be_adopted
-      (reconstruction: t_ReconstructionPermit)
-      (facts: t_AdoptionFacts)
-    : Prims.Pure bool
-      Prims.l_True
-      (ensures
-        fun result ->
-          let result:bool = result in
-          result =. false) =
-  let facts:t_AdoptionFacts =
-    { facts with f_shares_authenticated_together = false } <: t_AdoptionFacts
-  in
-  adoption_is_authorized reconstruction facts
-
-let wrong_epoch_secret_can_be_adopted
-      (reconstruction: t_ReconstructionPermit)
-      (facts: t_AdoptionFacts)
-    : Prims.Pure bool
-      Prims.l_True
-      (ensures
-        fun result ->
-          let result:bool = result in
-          result =. false) =
-  let facts:t_AdoptionFacts =
-    {
-      facts with
-      f_target_epoch
-      =
-      if reconstruction.f_epoch =. Core_models.Num.impl_i64__MAX
-      then reconstruction.f_epoch -! mk_i64 1
-      else reconstruction.f_epoch +! mk_i64 1
-    }
-    <:
-    t_AdoptionFacts
-  in
-  adoption_is_authorized reconstruction facts

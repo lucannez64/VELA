@@ -76,7 +76,7 @@ pub enum ClaimDecision {
 }
 
 pub fn claim_is_authorized(facts: ClaimFacts) -> bool {
-    facts.phase == CeremonyPhase::Open
+    matches!(facts.phase, CeremonyPhase::Open)
         && facts.grant_live
         && facts.no_existing_claim
         && facts.public_keys_valid
@@ -120,7 +120,7 @@ pub enum InspectDecision {
 }
 
 pub fn inspection_is_authorized(facts: InspectFacts) -> bool {
-    facts.phase == CeremonyPhase::Claimed
+    matches!(facts.phase, CeremonyPhase::Claimed)
         && facts.user_matches
         && facts.opener_matches
         && facts.claim_present
@@ -174,7 +174,7 @@ pub enum CompletionDecision {
 }
 
 pub fn completion_is_authorized(facts: CompletionFacts) -> bool {
-    facts.phase == CeremonyPhase::Claimed
+    matches!(facts.phase, CeremonyPhase::Claimed)
         && facts.user_matches
         && facts.opener_matches
         && facts.opener_active
@@ -240,7 +240,8 @@ pub enum ResultDecision {
 }
 
 pub fn result_is_authorized(facts: ResultFacts) -> bool {
-    (facts.phase == CeremonyPhase::Claimed || facts.phase == CeremonyPhase::Completed)
+    (matches!(facts.phase, CeremonyPhase::Claimed)
+        || matches!(facts.phase, CeremonyPhase::Completed))
         && facts.claimed_key_present
         && facts.claimed_key_proof_valid
 }
@@ -249,12 +250,11 @@ pub fn result_decision_matches_spec(facts: ResultFacts, decision: ResultDecision
     match decision {
         ResultDecision::Return(permit) => {
             result_is_authorized(facts)
-                && permit.kind
-                    == if facts.phase == CeremonyPhase::Claimed {
-                        ResultKind::Pending
-                    } else {
-                        ResultKind::Enrolled
-                    }
+                && if matches!(facts.phase, CeremonyPhase::Claimed) {
+                    matches!(permit.kind, ResultKind::Pending)
+                } else {
+                    matches!(permit.kind, ResultKind::Enrolled)
+                }
         }
         ResultDecision::Reject => !result_is_authorized(facts),
     }
@@ -267,7 +267,7 @@ pub fn authorize_result(facts: ResultFacts) -> ResultDecision {
     if !result_is_authorized(facts) {
         return ResultDecision::Reject;
     }
-    let kind = if facts.phase == CeremonyPhase::Claimed {
+    let kind = if matches!(facts.phase, CeremonyPhase::Claimed) {
         ResultKind::Pending
     } else {
         ResultKind::Enrolled
@@ -335,7 +335,7 @@ mod tests {
         };
         assert!(matches!(
             authorize_result(facts),
-            ResultDecision::Return(permit) if permit.kind() == ResultKind::Enrolled
+            ResultDecision::Return(permit) if matches!(permit.kind(), ResultKind::Enrolled)
         ));
         assert!(!result_without_claimed_key_proof(facts));
     }

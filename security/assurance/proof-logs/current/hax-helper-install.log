@@ -1,0 +1,6 @@
+  Installing hax-engine-names-extract v0.3.7 (/home/hirew/.local/opt/vela-tools/src/hax-0.3.7/engine/names/extract)
+    Updating crates.io index
+   Compiling hax-engine-names-extract v0.3.7 (/home/hirew/.local/opt/vela-tools/src/hax-0.3.7/engine/names/extract)
+    Finished `release` profile [optimized] target(s) in 1m 01s
+  Installing /home/hirew/.local/opt/vela-tools/bin/hax-engine-names-extract
+   Installed package `hax-engine-names-extract v0.3.7 (/home/hirew/.local/opt/vela-tools/src/hax-0.3.7/engine/names/extract)` (executable `hax-engine-names-extract`)

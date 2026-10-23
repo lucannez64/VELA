@@ -1,0 +1,612 @@
+warning: unused field `edition` in `workspace.package`
+  --> Cargo.toml:10:1
+   |
+10 | edition = "2021"
+   | ^^^^^^^
+   |
+   = note: `cargo::unused_workspace_package_fields` is set to `warn` by default
+help: consider removing the field `workspace.package.edition`
+warning: workspace (manifest) generated 1 warning
+warning: unused import: `ImportedEntry`
+   --> vela-desktop-core/src/commands/vault.rs:796:36
+    |
+796 |     use crate::import::{EntryKind, ImportedEntry};
+    |                                    ^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: duplicated attribute
+    --> vela-desktop-core/src/commands/vault.rs:1939:5
+     |
+1939 |     #[test]
+     |     ^^^^^^^
+     |
+     = note: `#[warn(duplicate_macro_attributes)]` on by default
+
+warning: unused import: `is_provider`
+   --> vela-desktop-core/src/ipc.rs:136:43
+    |
+136 |     use crate::ipc_gate::{authorize_host, is_provider, OsProcessTable};
+    |                                           ^^^^^^^^^^^
+
+warning: unused imports: `Arc` and `Mutex`
+  --> vela-desktop-core/src/js_login.rs:45:17
+   |
+45 | use std::sync::{Arc, Mutex};
+   |                 ^^^  ^^^^^
+
+warning: unused variable: `autofill_source`
+   --> vela-desktop-core/src/ipc.rs:436:13
+    |
+436 |         let autofill_source = (
+    |             ^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_autofill_source`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `browser_cookies`
+   --> vela-desktop-core/src/login.rs:514:9
+    |
+514 |     let browser_cookies: &[crate::login::BrowserCookie] = request
+    |         ^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_browser_cookies`
+
+warning: type `RateLimitState` is more private than the item `AppState::rate_limiter`
+   --> vela-desktop-core/src/lib.rs:107:5
+    |
+107 |     pub rate_limiter: RwLock<HashMap<String, RateLimitState>>,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ field `AppState::rate_limiter` is reachable at visibility `pub`
+    |
+note: but type `RateLimitState` is only usable at visibility `pub(crate)`
+   --> vela-desktop-core/src/lib.rs:368:1
+    |
+368 | struct RateLimitState {
+    | ^^^^^^^^^^^^^^^^^^^^^
+    = note: `#[warn(private_interfaces)]` on by default
+
+warning: constant `PASSWORD_CREDENTIAL_NAME` is never used
+ --> vela-desktop-core/src/biometric.rs:8:7
+  |
+8 | const PASSWORD_CREDENTIAL_NAME: &str = "VELA_RMS_PASSWORD";
+  |       ^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `unsupported_total` is never used
+    --> vela-desktop-core/src/commands/vault.rs:1066:4
+     |
+1066 | fn unsupported_total(unsupported: &[String]) -> u32 {
+     |    ^^^^^^^^^^^^^^^^^
+
+warning: constant `REKEY_CAPSULE_V1_MAGIC` is never used
+   --> vela-desktop-core/src/crypto.rs:157:7
+    |
+157 | const REKEY_CAPSULE_V1_MAGIC: &[u8] = b"vela rekey capsule v1\0";
+    |       ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `REKEY_CAPSULE_BINDING_CONTEXT` is never used
+   --> vela-desktop-core/src/crypto.rs:158:7
+    |
+158 | const REKEY_CAPSULE_BINDING_CONTEXT: &str = "vela rekey capsule binding v1";
+    |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `TPM_PERSISTENT_HANDLE` is never used
+   --> vela-desktop-core/src/device.rs:515:11
+    |
+515 |     const TPM_PERSISTENT_HANDLE: &str = "0x81000001";
+    |           ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `first_uri` is never used
+   --> vela-desktop-core/src/import.rs:451:4
+    |
+451 | fn first_uri(login: &Value) -> String {
+    |    ^^^^^^^^^
+
+warning: constant `SCRIPT_STEP_LIMIT` is never used
+  --> vela-desktop-core/src/js_login.rs:58:7
+   |
+58 | const SCRIPT_STEP_LIMIT: usize = 2_000_000;
+   |       ^^^^^^^^^^^^^^^^^
+
+warning: function `inline_scripts` is never used
+   --> vela-desktop-core/src/js_login.rs:442:4
+    |
+442 | fn inline_scripts(html: &str) -> Vec<String> {
+    |    ^^^^^^^^^^^^^^
+
+warning: function `page` is never used
+ --> vela-desktop-core/src/js_login/tests.rs:9:4
+  |
+9 | fn page(script: &str) -> String {
+  |    ^^^^
+
+warning: constant `EMAIL_CODE` is never used
+   --> vela-desktop-core/src/login/recipe.rs:435:15
+    |
+435 |     pub const EMAIL_CODE: u64 = 1;
+    |               ^^^^^^^^^^
+
+warning: constant `EMAIL_CONFIRMATION` is never used
+   --> vela-desktop-core/src/login/recipe.rs:438:15
+    |
+438 |     pub const EMAIL_CONFIRMATION: u64 = 4;
+    |               ^^^^^^^^^^^^^^^^^^
+
+warning: `vela-desktop-core` (lib test) generated 18 warnings (run `cargo fix --lib -p vela-desktop-core --tests` to apply 5 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.65s
+     Running unittests src/lib.rs (target/debug/build/vela-desktop-core/7a7a9c8670254914/out/vela_desktop_core-7a7a9c8670254914)
+
+running 472 tests
+test api::tests::an_active_schema_floor_does_not_need_another_activation_write ... ok
+test api::tests::chunk_delete_declares_the_ciphertext_epoch ... ok
+test api::tests::conflict_status_surfaces_as_error ... ok
+test api::tests::get_challenge_errors_on_failure_status ... ok
+test api::tests::get_challenge_parses_response ... ok
+test api::tests::get_chunk_reads_version_headers_and_body ... ok
+test api::tests::health_check_false_on_server_error ... ok
+test api::tests::health_check_reflects_status ... ok
+test api::tests::http_base_url_uses_fallback_client ... ok
+test api::tests::missing_epoch_endpoint_is_treated_as_legacy_epoch_one ... ok
+test api::tests::put_chunk_sends_concurrency_headers ... ok
+test api::tests::recovery_share_writes_declare_the_source_epoch ... ok
+test api::tests::shadow_chunk_upload_declares_epoch_and_create_semantics ... ok
+test api::tests::sync_manifest_sends_bearer_and_captures_rotated_token ... ok
+test api::tests::sync_manifest_without_rotation_returns_none ... ok
+test api::tests::verify_signature_roundtrip ... ok
+test audit::tests::add_entry_caps_log_at_1000_keeping_newest ... ok
+test audit::tests::audit_action_serde_uses_snake_case_tag ... ok
+test audit::tests::load_audit_log_requires_crypto ... ok
+test audit::tests::merge_caps_at_1000_entries ... ok
+test audit::tests::merge_unions_by_id_sorted_and_keeps_local ... ok
+test audit::tests::record_and_load_roundtrip_encrypted ... ok
+test audit::tests::replace_audit_from_plaintext_validates_json ... ok
+test biometric::tests::secret_service_probes_run_without_a_tokio_runtime ... ok
+test breach::tests::hibp_json_deserializes_into_breach_entry ... ok
+test breach::tests::parse_pwned_range_finds_suffix_and_count ... ok
+test breach::tests::parse_pwned_range_misses_unknown_suffix ... ok
+test breach::tests::parse_pwned_range_tolerates_malformed_lines ... ok
+test breach::tests::pwned_hash_parts_splits_uppercase_sha1 ... ok
+test commands::devices::tests::enrollment_requires_matching_active_authenticated_epoch ... ok
+test commands::devices::tests::qr_chunks_short_code_stays_single ... ok
+test commands::devices::tests::qr_chunks_split_with_position_prefixes ... ok
+test commands::devices::tests::stale_enrollment_preflight_fails_before_any_rms_is_sealed ... ok
+test commands::devices::tests::unreadable_epoch_marker_stops_enrollment_before_server_preflight ... ok
+test commands::devices::tests::verification_code_is_deterministic_and_code_dependent ... ok
+test commands::enrollment_v3::tests::a_capsule_sealed_to_a_claim_opens_with_the_joining_devices_key ... ok
+test commands::enrollment_v3::tests::a_pick_must_equal_the_answer ... ok
+test commands::enrollment_v3::tests::a_v3_code_carries_no_key_material ... ok
+test commands::enrollment_v3::tests::the_joining_fingerprint_is_over_the_devices_own_key ... ok
+test commands::enrollment_v3::tests::v2_and_v3_codes_are_told_apart_by_prefix ... ok
+test commands::organization::tests::activation_keeps_decryptable_pre_upgrade_backup ... ok
+test commands::organization::tests::bulk_assignment_is_atomic_when_selection_contains_a_missing_item ... ok
+test commands::organization::tests::encrypted_archive_restores_rich_vault_on_a_clean_install ... ok
+test commands::organization::tests::folder_edit_saves_name_and_parent_atomically ... ok
+test commands::organization::tests::rich_vault_lifecycle_persists_organization_and_preserves_omitted_fields ... ok
+test commands::rekey::tests::capsule_fanout_is_split_at_the_server_request_limit ... ok
+test commands::rekey::tests::rotation_preflight_requires_active_matching_authenticated_epoch ... ok
+test commands::session::tests::auto_lock_wipes_secrets_once_the_deadline_passes ... ok
+test commands::session::tests::confirm_with_human_proceeds_only_on_explicit_approval ... ok
+test commands::session::tests::locking_zeroizes_the_password_needed_for_rekey ... ok
+test commands::session::tests::reset_with_a_declined_confirmation_wipes_nothing ... ok
+test commands::session::tests::reset_with_no_way_to_ask_is_refused_and_wipes_nothing ... ok
+test commands::session::tests::watchdog_locks_in_the_background_and_reports_it ... ok
+test commands::settings::tests::extension_status_is_sticky_for_the_session ... ok
+test commands::settings::tests::get_settings_returns_defaults_with_state_overlays ... ok
+test commands::settings::tests::update_settings_persists_and_normalizes ... ok
+test commands::settings::tests::update_settings_rejects_insecure_url_without_persisting ... ok
+test commands::vault::tests::a_desktop_edit_does_not_pin_later_remote_changes_as_conflicts ... ok
+test commands::vault::tests::add_update_delete_roundtrip_through_disk ... ok
+test commands::vault::tests::an_edit_cannot_turn_a_passkey_into_another_type ... ok
+test commands::vault::tests::archive_passphrase_is_enforced ... ok
+test commands::vault::tests::csv_export_is_bitwarden_schema_and_formula_safe ... ok
+test commands::vault::tests::deleting_a_future_schema_vault_is_rejected ... ok
+test commands::vault::tests::encrypted_archive_roundtrips_every_item_type ... ok
+test commands::vault::tests::export_import_roundtrip_preserves_login_fields ... ok
+test commands::vault::tests::export_path_accepts_absolute_json_under_real_dir ... ok
+test commands::vault::tests::export_path_canonicalizes_symlinked_parents ... ok
+test commands::vault::tests::export_path_never_writes_into_app_data_dir ... ok
+test commands::vault::tests::export_path_rejects_missing_directory ... ok
+test commands::vault::tests::export_path_rejects_parent_traversal ... ok
+test commands::vault::tests::export_path_rejects_relative_and_empty ... ok
+test commands::vault::tests::export_path_requires_json_extension ... ok
+test commands::vault::tests::generate_password_clamps_an_absurd_length ... ok
+test commands::vault::tests::generate_password_respects_options ... ok
+test commands::vault::tests::import_adds_login_items_and_normalizes_urls ... ok
+test commands::vault::tests::import_creates_cards_and_identities_with_a_report ... ok
+test commands::vault::tests::import_folds_rich_fields_into_notes_before_collections ... ok
+test commands::vault::tests::import_preserves_rich_fields_when_collections_are_enabled ... ok
+test commands::vault::tests::import_preserves_rich_fields_when_collections_are_enabled ... ok
+test commands::vault::tests::import_rejects_bad_input_before_touching_vault ... ok
+test commands::vault::tests::import_vault_file_creates_secure_notes_and_reports_skipped_types ... ok
+test commands::vault::tests::import_vault_file_dedups_against_vault_and_within_file ... ok
+test commands::vault::tests::import_vault_file_requires_unlocked_vault ... ok
+test commands::vault::tests::index_from_rejects_the_biased_tail ... ok
+test commands::vault::tests::normalize_import_url_schemes ... ok
+test commands::vault::tests::passkey_update_preserves_the_stored_credential ... ok
+test commands::vault::tests::passkeys_cannot_be_shared ... ok
+test commands::vault::tests::password_strength_bands ... ok
+test commands::vault::tests::received_shares_are_immutable ... ok
+test commands::vault::tests::require_unlocked_gates_on_state ... ok
+test commands::vault::tests::vault_health_counts_weak_and_reused ... ok
+test commands::web_session::tests::base32_encode_matches_rfc4648_vectors ... ok
+test commands::web_session::tests::key_fingerprint_is_13_base32_chars_and_deterministic ... ok
+test commands::web_session::tests::parse_session_id_requires_full_code ... ok
+test commands::web_session::tests::rw_envelope_ships_chunk_keys_and_never_the_rms ... ok
+test credential_key::tests::a_key_round_trips_through_its_stored_scalar ... ok
+test credential_key::tests::a_short_scalar_is_refused_rather_than_padded ... ok
+test credential_key::tests::a_signature_does_not_verify_for_a_different_message ... ok
+test credential_key::tests::a_signature_does_not_verify_under_another_credentials_key ... ok
+test credential_key::tests::cose_key_layout_is_canonical ... ok
+test credential_key::tests::credential_ids_do_not_repeat ... ok
+test credential_key::tests::sign_verifies_like_a_relying_party_would ... ok
+test crypto::tests::auth_signature_is_base64 ... ok
+test crypto::tests::challenge_response_is_deterministic_sha256 ... ok
+test crypto::tests::derive_device_id_is_stable_uuid ... ok
+test crypto::tests::identity_keypair_has_all_key_material ... ok
+test crypto::tests::rms_capsule_roundtrip ... ok
+test crypto::tests::share_seal_open_roundtrip ... ok
+test crypto::tests::sign_enrollment_produces_hybrid_signature ... ok
+test crypto::tests::vault_key_derivation_is_context_separated ... ok
+test crypto::timestamp_tests::binding_timestamp_is_server_canonical ... ok
+test crypto::v3_capsule_tests::a_capsule_opens_only_with_the_device_that_was_sealed_to ... ok
+test crypto::v3_capsule_tests::a_tampered_capsule_does_not_open ... ok
+test crypto::v3_capsule_tests::rekey_capsules_bind_rms_epoch_and_rotation_attempt ... ok
+test crypto::v3_capsule_tests::stale_rekey_capsule_cannot_be_relabelled_with_current_epoch ... ok
+test device::tpm::fprint::tests::enrolled_fingers_are_detected ... ok
+test device::tpm::fprint::tests::no_enrolled_fingers_is_not_confused_with_enrollment ... ok
+test device::tpm::tests::test_check_tpm_device ... ok
+test device::tpm::tests::test_is_tpm_available ... ok
+test extension_management::tests::approved_editor_can_manage_collections_and_roundtrip_rich_fields ... ok
+test extension_management::tests::failed_item_persistence_does_not_publish_changes ... ok
+test extension_management::tests::list_is_metadata_only_and_read_requires_native_approval ... ok
+test extension_management::tests::locked_and_provider_requests_are_rejected ... ok
+test extension_management::tests::passkey_private_key_never_enters_editor_response ... ok
+test favicon::tests::content_type_detection_by_magic_bytes ... ok
+test favicon::tests::content_type_detection_falls_back_to_declared_image_type ... ok
+test favicon::tests::content_type_detection_rejects_non_images ... ok
+test favicon::tests::favicon_cache_eviction_drops_expired_then_stalest ... ok
+test favicon::tests::globally_routable_ip_classification ... ok
+test favicon::tests::normalize_login_domain_adds_scheme_and_lowercases ... ok
+test favicon::tests::normalize_login_domain_rejects_ips_and_garbage ... ok
+test favicon::tests::pick_best_favicon_apple_touch_icon_beats_plain_icon ... ok
+test favicon::tests::pick_best_favicon_handles_missing_and_broken_links ... ok
+test favicon::tests::pick_best_favicon_prefers_larger_declared_size ... ok
+test favicon::tests::pick_best_favicon_prefers_svg_then_png_then_ico ... ok
+test favicon::tests::pick_best_favicon_resolves_relative_hrefs ... ok
+test import::tests::a_1pux_zip_is_named_as_such ... ok
+test import::tests::bitwarden_cards_identities_fields_and_extra_urls_survive ... ok
+test import::tests::bitwarden_csv_maps_prefixed_columns_and_row_types ... ok
+test import::tests::browser_csv_chrome_edge_safari_and_proton_share_one_mapping ... ok
+test import::tests::encrypted_bitwarden_json_is_named_as_such ... ok
+test import::tests::keepass_csv_group_lands_in_notes ... ok
+test import::tests::legacy_vela_json_still_imports ... ok
+test import::tests::one_password_1pux_reads_logins_cards_identities_and_tags ... ok
+test import::tests::onepassword_1pif_parses_logins_and_skips_others ... ok
+test import::tests::proton_pass_vault_json_imports_logins_and_aliases ... ok
+test import::tests::quoted_csv_with_embedded_quotes_and_commas_parses ... ok
+test import::tests::real_bitwarden_json_imports_logins_notes_and_skips_cards ... ok
+test ipc::server::tests::a_declined_in_core_login_never_contacts_the_site ... ok
+test ipc::server::tests::a_locked_vault_produces_no_assertion ... ok
+test ipc::server::tests::a_locked_vault_refuses_an_in_core_login_without_asking ... ok
+test ipc::server::tests::a_lookalike_relying_party_gets_no_assertion_and_no_prompt ... ok
+test ipc::server::tests::a_machine_that_cannot_ask_refuses_the_login ... ok
+test ipc::server::tests::a_missed_match_is_not_a_release ... ok
+test ipc::server::tests::a_release_is_audited_with_the_caller_named ... ok
+test ipc::server::tests::a_release_is_refused_when_its_audit_entry_cannot_be_written ... ok
+test ipc::server::tests::a_stranger_is_refused_before_any_message_is_read ... ok
+test ipc::server::tests::an_assertion_is_bound_to_the_relying_party_that_asked ... ok
+test ipc::server::tests::an_assertion_is_refused_to_a_peer_the_kernel_says_is_someone_else ... ok
+test ipc::server::tests::an_assertion_response_never_carries_the_credential_key ... ok
+test ipc::server::tests::an_in_core_login_returns_a_session_and_never_the_password ... ok
+test ipc::server::tests::autofill_card_request_returns_cards_regardless_of_domain ... ok
+test ipc::server::tests::autofill_identity_is_explicit_and_excludes_sensitive_extras ... ok
+test ipc::server::tests::autofill_locked_vault_requires_biometric ... ok
+test ipc::server::tests::autofill_needs_no_prompt_when_the_vault_is_open ... ok
+test ipc::server::tests::autofill_returns_full_items_when_user_initiated ... ok
+test ipc::server::tests::every_assertion_costs_its_own_confirmation ... ok
+test ipc::server::tests::frames_reject_bad_lengths ... ok
+test ipc::server::tests::frames_roundtrip ... ok
+test ipc::server::tests::in_core_login_message_types_have_the_wire_names_the_native_host_expects ... ok
+test ipc::server::tests::listing_login_candidates_returns_no_password_and_does_not_prompt ... ok
+test ipc::server::tests::listing_passkeys_returns_metadata_and_no_key ... ok
+test ipc::server::tests::metadata_does_not_need_a_presence_confirmation ... ok
+test ipc::server::tests::no_assertion_where_there_is_no_way_to_ask ... ok
+test ipc::server::tests::no_assertion_without_a_presence_confirmation ... ok
+test ipc::server::tests::no_capability_file_and_a_well_known_endpoint ... ok
+test ipc::server::tests::one_unlock_only_releases_so_many_distinct_domains ... ok
+test ipc::server::tests::passkey_message_types_have_the_wire_names_the_native_host_expects ... ok
+test ipc::server::tests::ping_pong_and_open_vault ... ok
+test ipc::server::tests::provider_message_types_have_the_wire_names_the_provider_expects ... ok
+test ipc::server::tests::provider_status_reports_lock_state ... ok
+test ipc::server::tests::provider_sync_credentials_refuses_a_browser_host ... ok
+test ipc::server::tests::save_credentials_locked_vault_surfaces_window ... ok
+test ipc::server::tests::save_credentials_update_of_missing_item_is_refused ... ok
+test ipc::server::tests::save_credentials_update_refuses_received_share ... ok
+test ipc::server::tests::save_credentials_validates_and_persists ... ok
+test ipc::server::tests::save_credentials_with_item_id_updates_the_login ... ok
+test ipc::server::tests::the_capability_field_is_dead_wire_weight ... ok
+test ipc::server::tests::the_login_response_payload_keys_are_the_ones_the_native_host_reads ... ok
+test ipc::server::tests::the_response_says_what_the_session_residual_is_worth ... ok
+test ipc::server::tests::the_signature_counter_advances_per_assertion ... ok
+test ipc::server::tests::totp_message_types_have_the_wire_names_the_native_host_expects ... ok
+test ipc::server::tests::user_verification_is_satisfied_by_an_explicit_dialog_approval ... ok
+test ipc::tests::extract_base_domain_returns_full_lowercase_host ... ok
+test ipc::tests::ipc_message_type_serde_and_aliases ... ok
+test ipc::tests::message_constructors ... ok
+test ipc_gate::tests::another_users_connection_is_refused_first ... ok
+test ipc_gate::tests::arbitrary_process_is_refused_before_the_lineage_walk ... ok
+test ipc_gate::tests::browser_spawned_host_is_admitted ... ok
+test ipc_gate::tests::copy_of_the_host_run_from_a_terminal_is_refused ... ok
+test ipc_gate::tests::copy_of_the_provider_run_from_a_terminal_is_also_admitted ... ok
+test ipc_gate::tests::deep_lineage_beyond_the_hop_limit_does_not_rescue_anything ... ok
+test ipc_gate::tests::extra_browser_names_env_adds_to_the_list ... ok
+test ipc_gate::tests::orphaned_host_with_no_parent_left_is_refused ... ok
+test ipc_gate::tests::provider_exe_is_admitted_without_browser_ancestry ... ok
+test ipc_gate::tests::unidentifiable_peer_is_refused_not_waved_through ... ok
+test ipc_gate::tests::windows_spelled_names_match ... ok
+test ipc_gate::tests::wrapper_between_browser_and_host_still_admitted ... ok
+test ipc_gate::tests::zen_browser_process_names_are_admitted ... ok
+test ipc_peer::tests::a_peer_we_could_not_identify_is_not_treated_as_ours ... ok
+test ipc_peer::tests::describe_names_the_program_without_leaking_the_path ... ok
+test ipc_peer::tests::describe_survives_an_unidentifiable_peer ... ok
+test ipc_peer::tests::our_own_socket_peer_is_us ... ok
+test js_login::tests::a_body_that_lost_the_marker_is_not_sent ... ok
+test js_login::tests::a_request_aimed_off_the_site_is_refused ... ok
+test js_login::tests::an_http_request_is_refused_for_an_https_page ... ok
+test login::recipe::live::riot ... ignored, live verification against the real site (needs VELA_LIVE_RIOT_* credentials + a solved captcha)
+test login::recipe::live::steam ... ignored, live verification against the real site (needs VELA_LIVE_STEAM_* credentials)
+test login::recipe::steam_pb::tests::parses_a_real_steam_response ... ok
+test login::recipe::steam_pb::tests::round_trips_our_own_encodings ... ok
+test login::recipe::tests::a_recipe_cannot_move_the_password_off_the_domains_it_claims ... ok
+test login::recipe::tests::browser_cookies_are_scoped_before_they_are_seeded ... ok
+test login::recipe::tests::endpoint_claimed_allows_steams_cross_domain_login ... ok
+test login::recipe::tests::every_template_carries_the_markers_it_documents ... ok
+test login::recipe::tests::fill_json_substitutes_every_marker ... ok
+test login::recipe::tests::for_url_matches_on_the_registrable_domain ... ok
+test login::recipe::tests::mode_for_site_classifies_the_gate ... ok
+test login::recipe::tests::optional_markers_substitute_empty_when_absent ... ok
+test login::recipe::tests::riot_login_answers_the_multifactor_gate_with_the_vault_totp ... ok
+test login::recipe::tests::riot_login_refuses_when_the_captcha_was_not_minted_in_the_browser ... ok
+test login::recipe::tests::riot_login_submits_the_captcha_and_password_and_reports_success ... ok
+test login::recipe::tests::steam_login_answers_a_device_code_inside_the_same_approval ... ok
+test login::recipe::tests::steam_login_encrypts_the_password_in_the_core_and_completes ... ok
+test login::recipe::tests::steam_login_reports_a_wrong_password_honestly ... ok
+test login::recipe::tests::the_registry_claims_the_expected_sites ... ok
+test login::tests::a_cookie_may_widen_to_its_own_domain_but_no_further ... ok
+test login::tests::a_cookie_with_no_domain_is_host_only ... ok
+test login::tests::a_form_is_read_for_its_action_fields_and_hidden_inputs ... ok
+test login::tests::a_get_form_is_refused ... ok
+test login::tests::a_grant_for_another_item_is_refused ... ok
+test login::tests::a_grant_for_another_site_is_refused ... ok
+test login::tests::a_hardened_site_reports_a_session_bounded_residual ... ok
+test login::tests::a_locked_vault_refuses ... ok
+test login::tests::a_login_page_that_merely_offers_passkeys_is_not_a_security_key_gate ... ok
+test login::tests::a_login_page_that_redirects_is_still_a_login_page ... ok
+test login::tests::a_login_url_off_the_items_site_is_refused ... ok
+test login::tests::a_page_with_no_password_form_is_refused ... ok
+test login::tests::a_recipe_site_is_still_scoped_to_its_approved_domain ... ok
+test login::tests::a_recovery_code_link_is_never_taken_for_an_authenticator_one ... ok
+test login::tests::a_redirect_off_the_site_is_refused ... ok
+test login::tests::a_rejected_code_is_not_reported_as_signed_in ... ok
+test login::tests::a_rejected_password_is_not_reported_as_a_login ... ok
+test login::tests::a_returned_login_form_is_not_a_second_factor_prompt ... ok
+test login::tests::a_same_site_redirect_is_followed_and_its_cookies_kept ... ok
+test login::tests::a_second_factor_form_pointing_off_site_is_refused ... ok
+test login::tests::a_security_key_gate_is_not_reported_as_a_successful_login ... ok
+test login::tests::a_site_that_refuses_the_login_page_is_not_called_a_javascript_login ... ok
+test login::tests::a_stronger_factor_is_not_downgraded_without_the_opt_in ... ok
+test login::tests::a_two_factor_site_is_answered_from_the_vault ... ok
+test login::tests::a_two_factor_site_without_a_saved_secret_says_which_half_worked ... ok
+test login::tests::an_empty_action_posts_back_to_the_page ... ok
+test login::tests::an_error_status_on_the_post_is_not_a_successful_login ... ok
+test login::tests::an_http_target_is_not_same_site_as_an_https_page ... ok
+test login::tests::an_unmarked_site_reports_the_pessimistic_residual ... ok
+test login::tests::answering_the_code_is_not_undone_by_the_url_it_lands_on ... ok
+test login::tests::chromium_fractional_cookie_expiry_does_not_discard_the_cookie ... ok
+test login::tests::cookie_attributes_survive_the_trip ... ok
+test login::tests::expires_is_parsed_and_max_age_wins_over_it ... ok
+test login::tests::neither_the_totp_secret_nor_the_code_leaves_the_core ... ok
+test login::tests::one_grant_covers_both_steps_of_a_two_step_login ... ok
+test login::tests::only_code_shaped_fields_count_as_a_second_factor ... ok
+test login::tests::only_http_urls_are_login_pages ... ok
+test login::tests::real_login_pages_are_read_correctly_or_refused_clearly ... ignored, hits the live internet
+test login::tests::real_site_login ... ignored, signs in to a real account; needs VELA_LOGIN_* in the environment
+test login::tests::site_identity_is_the_registrable_domain ... ok
+test login::tests::the_form_with_the_password_field_is_the_one_used ... ok
+test login::tests::the_jar_sends_a_cookie_only_where_it_belongs ... ok
+test login::tests::the_opt_in_completes_the_login_and_reports_the_downgrade ... ok
+test login::tests::the_password_never_appears_in_what_leaves_the_core ... ok
+test login::tests::the_site_is_told_who_is_asking ... ok
+test login::tests::the_site_receives_the_credential_and_the_csrf_token ... ok
+test passkey_rp_test::a_real_relying_party_accepts_registration_and_authentication ... ok
+test passkey_rp_test::an_assertion_does_not_verify_at_a_different_relying_party ... ok
+test passkey_rp_test::the_relying_party_sees_the_counter_advance ... ok
+test perf_bench::bench_audit ... ignored, timing harness
+test perf_bench::bench_lookup ... ignored, timing harness
+test perf_bench::bench_merge ... ignored, timing harness
+test perf_bench::bench_store ... ignored, timing harness
+test presence::tests::registration_and_authentication_read_differently ... ok
+test presence::tests::the_prompt_names_both_the_site_and_the_caller ... ok
+test recovery::tests::cached_split_is_never_reused_across_key_epochs ... ok
+test recovery::tests::cloud_scan_accepts_only_legacy_or_epoch_named_share_files ... ok
+test recovery::tests::cloud_scan_keeps_only_the_highest_epoch_per_account ... ok
+test recovery::tests::contact_pair_recovery_rejects_unauthenticated_contact_envelopes ... ok
+test recovery::tests::corrupt_publication_journal_never_mints_a_replacement_split ... ok
+test recovery::tests::delivery_epoch_probe_requires_matching_active_server_state ... ok
+test recovery::tests::envelope_parses_back_into_a_share ... ok
+test recovery::tests::envelope_rejects_garbage ... ok
+test recovery::tests::incomplete_legacy_epoch_one_setup_cannot_be_finalized ... ok
+test recovery::tests::invalid_authenticated_epoch_fails_closed ... ok
+test recovery::tests::legacy_cloud_envelope_defaults_to_epoch_one ... ok
+test recovery::tests::per_account_path_contains_the_user_id ... ok
+test recovery::tests::per_account_path_rejects_path_traversal_and_separators ... ok
+test recovery::tests::recovery_refuses_cloud_and_server_shares_from_different_epochs ... ok
+test recovery::tests::recovery_status_never_reports_delivery_from_a_retired_epoch ... ok
+test recovery::tests::remint_fails_closed_and_resets_on_a_corrupt_split ... ok
+test recovery::tests::remint_produces_shares_that_reconstruct_the_unlocked_seed ... ok
+test recovery::tests::version_three_requires_an_active_split_bound_pointer ... ok
+test session::tests::generate_local_token_embeds_decodable_claims ... ok
+test session::tests::new_session_is_inactive_and_expired ... ok
+test session::tests::rate_limit_backoff_grows_exponentially_and_caps ... ok
+test session::tests::rate_limit_backoff_starts_after_free_attempts ... ok
+test session::tests::rate_limit_success_resets ... ok
+test session::tests::refresh_extending_the_server_token_does_not_report_unexpired_idle ... ok
+test session::tests::refresh_extends_expiry_and_rotates_token_near_expiry ... ok
+test session::tests::refresh_extends_the_server_token_but_not_the_idle_deadline ... ok
+test session::tests::refresh_keeps_token_when_far_from_expiry ... ok
+test session::tests::refresh_never_extends_past_absolute_cap ... ok
+test session::tests::refresh_never_resurrects_expired_session ... ok
+test session::tests::refresh_on_inactive_session_is_noop ... ok
+test session::tests::touch_resets_the_idle_deadline_to_now_plus_duration ... ok
+test session::tests::unlock_caps_duration_at_max_session ... ok
+test session::tests::unlock_preserves_server_token_but_lock_clears_it ... ok
+test session::tests::unlock_sets_active_state_and_token_prefix ... ok
+test session::tests::zero_duration_unlock_is_immediately_expired ... ok
+test settings::tests::default_settings_values ... ok
+test settings::tests::normalize_shortcut_falls_back_to_default_on_empty ... ok
+test settings::tests::normalize_shortcut_trims_and_keeps_valid ... ok
+test settings::tests::settings_json_missing_shortcut_uses_default ... ok
+test settings::tests::settings_roundtrip ... ok
+test settings::tests::theme_deserializes_all_variants_including_legacy ... ok
+test settings::tests::theme_serializes_lowercase ... ok
+test share_link::tests::link_secret_maps_login_fields ... ok
+test share_link::tests::link_secret_rejects_unsupported_types ... ok
+test share_link::tests::sealed_payload_roundtrips_through_the_link_crypto ... ok
+test sharing::assurance_boundary_review::a_stale_snapshot_cannot_overwrite_a_newer_pin ... ok
+test sharing::assurance_boundary_review::concurrent_acceptance_adds_only_one_copy ... ok
+test sharing::assurance_boundary_review::corrupt_store_is_preserved_and_fails_closed ... ok
+test sharing::assurance_boundary_review::interrupted_first_acceptance_recovers_exactly_one_item ... ok
+test sharing::assurance_boundary_review::interrupted_linked_update_recovers_content_and_pin_on_open ... ok
+test sharing::assurance_boundary_review::legacy_share_store_is_read_without_resetting_history ... ok
+test sharing::assurance_boundary_review::missing_payload_cannot_be_marked_accepted ... ok
+test sharing::assurance_boundary_review::offline_refresh_still_returns_authenticated_local_records ... ok
+test sharing::assurance_boundary_review::pending_commit_survives_rms_rotation ... ok
+test sharing::assurance_boundary_review::recovery_does_not_resurrect_a_deleted_received_copy ... ok
+test sharing::assurance_boundary_review::recovery_preserves_a_local_edit_after_an_interrupted_commit ... ok
+test sharing::assurance_boundary_review::repeated_acceptance_keeps_the_existing_signer_and_item ... ok
+test sharing::assurance_boundary_review::unreadable_store_never_changes_vault_contents ... ok
+test sharing::tests::a_replayed_share_capsule_cannot_revert_a_newer_item ... ok
+test sharing::tests::a_server_forged_update_is_not_applied ... ok
+test sharing::tests::stored_pins_round_trip ... ok
+test store::tests::an_encrypted_file_that_happens_to_start_with_a_brace_still_loads ... ok
+test store::tests::device_id_is_generated_once_and_stable ... ok
+test store::tests::has_existing_vault_tracks_files ... ok
+test store::tests::identity_keys_roundtrip_encrypted ... ok
+test store::tests::key_epoch_marker_is_authenticated_by_the_current_rms ... ok
+test store::tests::legacy_plaintext_identity_file_is_migrated_to_encrypted ... ok
+test store::tests::load_vault_rejects_truncated_file ... ok
+test store::tests::load_vault_without_file_returns_empty ... ok
+test store::tests::migration_recovery_keeps_authority_corruption_fatal ... ok
+test store::tests::migration_recovery_quarantines_non_authority_corruption ... ok
+test store::tests::rekey_migrates_every_rms_derived_file ... ok
+test store::tests::rms_migration_journal_recovers_from_either_key_and_mixed_files ... ok
+test store::tests::rms_roundtrip_and_wrong_key_rejection ... ok
+test store::tests::settings_roundtrip_and_default_when_missing ... ok
+test store::tests::the_plaintext_migration_flag_is_reported_once ... ok
+test store::tests::vault_file_permissions_are_owner_only ... ok
+test store::tests::vault_save_load_roundtrip ... ok
+test store::tests::write_secret_file_is_complete_and_restricted ... ok
+test sync::tests::a_chunk_sealed_under_this_devices_key_is_available ... ok
+test sync::tests::a_chunk_this_account_cannot_decrypt_is_unreadable ... ok
+test sync::tests::a_server_serving_an_older_revision_is_refused ... ok
+test sync::tests::adoption_validates_every_authenticated_capsule_authority ... ok
+test sync::tests::authenticated_epoch_overrides_missing_or_legacy_sync_metadata ... ok
+test sync::tests::completed_migration_cannot_resurrect_a_locked_session ... ok
+test sync::tests::duplicate_tombstones_keep_newest_timestamp ... ok
+test sync::tests::epoch_marker_io_errors_never_fall_back_to_plaintext ... ok
+test sync::tests::equal_timestamps_are_not_a_conflict ... ok
+test sync::tests::invalid_authenticated_epoch_never_falls_back_to_plaintext ... ok
+test sync::tests::local_newer_is_kept_without_conflict ... ok
+test sync::tests::local_unsynced_edit_produces_conflict_not_overwrite ... ok
+test sync::tests::locked_sync_status_uses_chunk_clocks_without_trusting_plaintext_epoch ... ok
+test sync::tests::malformed_authenticated_epoch_never_falls_back_to_plaintext ... ok
+test sync::tests::malformed_plaintext_metadata_cannot_hide_a_valid_marker ... ok
+test sync::tests::merge_repairs_assignments_to_deleted_folders_and_tags ... ok
+test sync::tests::missing_authenticated_epoch_is_strictly_legacy_epoch_one ... ok
+test sync::tests::one_sided_items_are_unioned ... ok
+test sync::tests::own_writes_and_control_frames_do_not_trigger_sync ... ok
+test sync::tests::plaintext_epoch_updates_cannot_change_authenticated_authority ... ok
+test sync::tests::remote_newer_from_other_device_merges_without_conflict ... ok
+test sync::tests::server_edit_newer_than_tombstone_resurrects_item ... ok
+test sync::tests::sse_parser_frames_data_across_chunks ... ok
+test sync::tests::tombstoned_item_stays_deleted_despite_server_copy ... ok
+test sync::tests::unreadable_authenticated_epoch_never_falls_back_to_plaintext ... ok
+test sync::tests::unreadable_epoch_marker_aborts_sync_before_manifest_or_repair_upload ... ok
+test sync::tests::unreadable_server_chunk_aborts_sync_without_any_upload ... ok
+test tests::is_unlocked_and_generation_guard ... ok
+test tests::normalize_server_url_trims ... ok
+test tests::rate_limiter_blocks_after_repeated_failures ... ok
+test tests::session_token_is_none_when_locked_or_expired ... ok
+test tests::unlock_throttle_persists_across_restarts_and_resets_on_success ... ok
+test tests::validate_server_url_accepts_empty_and_https ... ok
+test tests::validate_server_url_allows_http_only_for_loopback ... ok
+test tests::validate_server_url_rejects_other_schemes_and_garbage ... ok
+test token::tests::cleanup_expired_drops_only_dead_revocations ... ok
+test token::tests::create_validate_roundtrip_preserves_claims ... ok
+test token::tests::distinct_generated_keys_and_from_bytes_roundtrip ... ok
+test token::tests::expired_token_is_rejected ... ok
+test token::tests::malformed_segment_counts_are_rejected ... ok
+test token::tests::missing_timestamps_are_rejected_not_silently_accepted ... ok
+test token::tests::over_age_token_is_rejected_even_when_unexpired ... ok
+test token::tests::paseto_token_refresh_window ... ok
+test token::tests::tampered_payload_is_rejected ... ok
+test token::tests::token_store_revocation_lifecycle ... ok
+test token::tests::wrong_key_is_rejected ... ok
+test totp::tests::base32_decode_handles_rfc_secret_and_sloppy_input ... ok
+test totp::tests::generate_totp_rejects_invalid_base32 ... ok
+test totp::tests::generate_totp_rejects_out_of_bounds_params ... ok
+test totp::tests::generate_totp_returns_code_with_period_metadata ... ok
+test totp::tests::hotp_matches_rfc4226_vectors ... ok
+test totp::tests::hotp_matches_rfc6238_sha1_8digit_vectors ... ok
+test totp::tests::hotp_matches_rfc6238_sha256_and_sha512_vectors ... ok
+test totp::tests::params_validate_enforces_rfc_bounds ... ok
+test totp::tests::parse_otpauth_defaults_and_garbage_fallbacks ... ok
+test totp::tests::parse_otpauth_honors_algorithm_parameter ... ok
+test totp::tests::parse_otpauth_uri_extracts_all_params ... ok
+test totp::tests::verify_totp_accepts_current_code_and_rejects_wrong ... ok
+test totp::tests::verify_totp_tolerates_one_step_rollover ... ok
+test vault::tests::a_login_from_before_these_fields_reads_as_undecided ... ok
+test vault::tests::a_passkey_is_not_an_autofill_candidate ... ok
+test vault::tests::a_replaced_store_never_serves_the_previous_sessions_snapshot ... ok
+test vault::tests::app_links_sent_by_the_caller_win ... ok
+test vault::tests::count_and_filter_by_type ... ok
+test vault::tests::debug_never_prints_a_credential_key ... ok
+test vault::tests::debug_never_prints_a_secret ... ok
+test vault::tests::delete_item_tombstones_and_prune ... ok
+test vault::tests::deleting_from_the_middle_keeps_every_other_lookup_correct ... ok
+test vault::tests::deserializing_a_vault_indexes_it ... ok
+test vault::tests::dropping_an_item_wipes_its_secrets ... ok
+test vault::tests::editing_a_login_here_keeps_the_app_links_made_on_a_phone ... ok
+test vault::tests::editing_a_login_here_keeps_the_second_factor_decisions ... ok
+test vault::tests::fast_host_split_agrees_with_the_url_parser ... ok
+test vault::tests::is_received_share_semantics ... ok
+test vault::tests::items_snapshot_shares_until_mutated ... ok
+test vault::tests::masked_value_per_item_type ... ok
+test vault::tests::meta_deserializes_legacy_snake_case_fields ... ok
+test vault::tests::passkey_lookup_by_credential_id ... ok
+test vault::tests::passkey_serde_roundtrip_keeps_the_scoping_fields ... ok
+test vault::tests::passkeys_for_rp_matches_exactly_and_not_by_suffix ... ok
+test vault::tests::password_generator_defaults ... ok
+test vault::tests::replace_items_reindexes_and_invalidates_the_snapshot ... ok
+test vault::tests::replacing_items_directly_does_not_return_the_wrong_item ... ok
+test vault::tests::search_by_domain_filters_to_logins_and_matches_psl ... ok
+test vault::tests::search_matches_name_username_url_notes_case_insensitively ... ok
+test vault::tests::subdomain_suffix_check_matches_the_formatted_version ... ok
+test vault::tests::the_item_form_can_set_both_second_factor_flags ... ok
+test vault::tests::turning_a_second_factor_flag_off_is_not_undone_by_the_old_value ... ok
+test vault::tests::update_item_replaces_or_adds ... ok
+test vault::tests::url_crate_elides_default_ports_like_the_fast_path ... ok
+test vault::tests::urls_match_cases ... ok
+test vault::tests::vault_item_tagged_serde_roundtrip ... ok
+test vault::tests::vault_store_serde_roundtrip_preserves_items_and_tombstones ... ok
+test vault_lifecycle_test::create_vault_add_items_persist_reload_decrypt ... ok
+test vault_lifecycle_test::legacy_blake3_blob_opens_and_is_flagged_for_migration ... ok
+test vault_lifecycle_test::master_password_unlock_roundtrip ... ok
+test vault_lifecycle_test::recovery_shares_any_two_of_three_reconstruct_rms ... ok
+test vault_lifecycle_test::search_update_delete_items ... ok
+test vault_lifecycle_test::wrong_master_seed_cannot_decrypt_vault ... ok
+test wayland_shortcut::tests::portal_trigger_accepts_modifier_aliases ... ok
+test wayland_shortcut::tests::portal_trigger_leaves_plain_keys_untouched ... ok
+test wayland_shortcut::tests::portal_trigger_maps_modifiers ... ok
+test wayland_shortcut::tests::portal_trigger_tolerates_whitespace_and_case ... ok
+
+test result: ok. 464 passed; 0 failed; 8 ignored; 0 measured; 0 filtered out; finished in 3.22s
+

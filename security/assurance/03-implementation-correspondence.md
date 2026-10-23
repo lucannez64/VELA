@@ -25,7 +25,10 @@ Two seams in this stack are **not** formally verified:
 
 1. **Model ↔ policy.** No tool checks that a policy crate's Rust spec
    predicate is the same as the corresponding Tamarin rule guard. The
-   relationship is maintained by hand. Names line up on purpose (for example,
+   relationship is maintained by hand. The new network models have a detailed
+   [mapping table](../formal/network-boundary-correspondence.md) and reviewed
+   artifact hashes checked by `check-correspondence.py`. This detects drift
+   in listed files but is not a semantic equivalence proof. Names line up on purpose (for example,
    M11c `ACTIVE`-at-permit-epoch and `authorize_active_mutation`), but this
    is a reviewable claim, not a theorem.
 2. **Facts ↔ reality.** A policy function takes facts such as
@@ -59,7 +62,7 @@ Each crate follows the same pattern:
   }
   ```
 
-### Crate inventory (92 extracted entry points)
+### Crate inventory (111 selected policy functions plus six crypto functions)
 
 | Crate | Entry points | Models | Production call sites |
 |---|---:|---|---|
@@ -71,6 +74,25 @@ Each crate follows the same pattern:
 | `libVELA/vela-client-recovery-policy` | 18: `plan_reconstruction`, `plan_adoption`, `plan_publication_resume`, `plan_contact_delivery`, plus 14 negative theorems | M15, M17, M18 (client side) | `vela-crypto/src/recovery.rs`, `desktopVELA/vela-desktop-core/src/recovery.rs`, Android and Apple bridges |
 | `libVELA/vela-sync-policy` | 11: `plan_epoch_adoption`, `plan_chunk_download`, `classify_merge_action`, plus 8 negative theorems | M23 | `desktopVELA/vela-desktop-core/src/sync.rs` **only** |
 
+The eighth crate, `libVELA/vela-client-share-policy`, selects 19 postconditions:
+share admission, ten transaction/recovery functions/theorems, and the actual
+permit-revision getter. Desktop sharing calls the corresponding decisions.
+Six additional `vela-crypto` functions have checked postconditions: the actual
+fact constructor, `plan_observed_share` composing decoded fields through that
+constructor and policy, the prefix parser used by Reader, and the hybrid
+signature AND gate with two rejection theorems. They do not prove the complete
+parser, authenticated-open wrapper, transcript encoding or concrete I/O.
+
+All eight policy crates were freshly extracted and checked after replacing
+derived-enum equality uses with structural matches. No local `assume val`
+declarations remain. The [current evidence](proof-logs/current/trusted-boundary/README.md)
+and [crypto contract boundary](../../libVELA/vela-crypto/proofs/fstar/README.md)
+record their assumptions. Current code has 117 selected functions and 114
+explicit postconditions; selected functions and predicates are different counts.
+
+The CI `refinement` job installs pinned tools, runs all eight crates and the constructor,
+retaining logs. A successful new CI run is still pending.
+
 Every crate has a `verify-fstar.sh` runner, and most have a README that
 states its proof boundary (for example
 [`vela-rekey-policy/README.md`](../../serverVELA/vela-rekey-policy/README.md)).
@@ -81,19 +103,24 @@ states its proof boundary (for example
 |---|---|
 | **hax frontend and engine 0.3.7** | Extraction soundness. hax is research-grade. A translation bug could make F\* prove something about code that differs from the Rust |
 | **hax `core_models` / `rust_primitives` F\* libraries** | Models of Rust integers, slices, and `Option`. Shipped by hax, not reviewed here |
-| **15 `assume val` `PartialEq` instances** | hax emits `assume val impl_N': Core_models.Cmp.t_PartialEq T T` for `#[derive(PartialEq)]` on enums (for example `t_CapabilityScope`, `t_RouteClass`, `t_MergeAction`, `t_RecoveryChannel`). Proofs that go through `==` on these types depend on an axiomatised equality. No other `assume` or `admit` appears in the committed extractions |
+| **Structural equality and local declarations** | The earlier 18 opaque PartialEq assumptions have been eliminated. Current extracted modules contain no local assume val/admit bodies; the drift gate enforces this reviewed state. Imported hax libraries still include trusted models/assumptions and emit float/loop warnings |
 | **F\* 2025.10.06 and Z3 4.13.3** | Standard trusted computing base for F\* |
 | **The spec predicates** | `*_matches_spec` predicates are written in Rust by the same authors. F\* proves code = spec, not spec = intent |
 
 ### Extraction artifacts
 
-Extracted `.fst` files are committed for six crates
-(`proofs/fstar/extraction/*.fst`) and listed in
-[`MANIFEST.sha256`](MANIFEST.sha256). `vela-rekey-policy` gitignores its
-extraction, so it is regenerated on each run. **CI does not regenerate or
-check any extraction** ([§5 G-1](05-known-limitations.md#gaps-in-the-assurance-itself)),
-so a committed `.fst` may be stale relative to its `src/lib.rs`. Always
-re-extract before you rely on one.
+The [local run snapshots](proof-logs/current/refinement-5g/extractions/)
+contain fresh checked `.fst` files for all eight crates and their Cargo
+lockfiles, covered by [`MANIFEST.sha256`](MANIFEST.sha256). The source-tree
+extractions were regenerated too. Rekey's source-tree extraction remains
+ignored by its restored `.gitignore`; its snapshot is included in the evidence.
+Historical CI did not regenerate or check extractions. The new CI gate removes
+previous `.fst`/`.fsti` output before extracting; its first successful run is pending.
+Current snapshots of all ten Rust modules and the String view are under
+`proof-logs/current/trusted-boundary/extractions/`; earlier evidence is historical.
+Always re-extract after changing Rust sources. `check-proof-boundary.py` records
+114 explicit postconditions; three selected functions have no `ensures`. It
+detects added extraction assumptions, not semantic correspondence.
 
 ## 3.3 Executable refinement evidence (CI-gated)
 
@@ -110,6 +137,13 @@ These tests check the layer that F\* does not cover:
 | `vela-crypto rekey::tests::fleet_wire_matrix_is_cross_client_and_epoch_compatible` | Every producer × consumer across desktop, web, Android, and Apple at epochs 1–4. Exact epoch AAD; legacy rejected after epoch 1 |
 | Android, Apple, and WASM bridge `--lib` tests | Same wire contract through each FFI |
 | `security/exploits/run-exploits.sh` | 9 live exploits (S-1/2/4, IDOR/XFF, P-1, S-3/RT-1, RT-2, RT-4, RT-5, RT-6, RT-7) against an isolated server |
+
+The desktop [sharing-boundary fixes](07-boundary-review.md) add an encrypted
+write-ahead record for pins and pending item changes, generation-checked
+snapshots and serialized callers. Thirteen new regressions exercise rejection,
+concurrent acceptance, corruption, interrupted commits, recovery conflict
+handling and RMS rotation. These are executable implementation checks, not a
+formal refinement of the filesystem or journal into M19c's atomic rule.
 
 ## 3.4 ProVerif extraction (M22)
 

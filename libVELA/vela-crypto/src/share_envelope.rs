@@ -123,9 +123,8 @@ fn push_header(out: &mut Vec<u8>, header: &ShareHeader) {
 
 /// The exact bytes the sending device signs.
 pub fn signing_transcript(header: &ShareHeader, item: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(
-        SHARE_ITEM_CONTEXT.len() + header.sender_vk.len() + item.len() + 256,
-    );
+    let mut out =
+        Vec::with_capacity(SHARE_ITEM_CONTEXT.len() + header.sender_vk.len() + item.len() + 256);
     out.extend_from_slice(SHARE_ITEM_CONTEXT);
     push_header(&mut out, header);
     push_lp(&mut out, item);
@@ -154,7 +153,9 @@ pub fn seal_signed_item(
         ));
     }
     if header.revision == 0 {
-        return Err(VelaError::InvalidParameter("share revisions start at 1".into()));
+        return Err(VelaError::InvalidParameter(
+            "share revisions start at 1".into(),
+        ));
     }
     let signature = signing::sign(signing_key, &signing_transcript(header, item))?;
 
@@ -168,20 +169,36 @@ pub fn seal_signed_item(
     kem::seal_share(recipient, &plaintext)
 }
 
+/// Pure prefix parser used by the real signed-envelope reader. Under the
+/// trusted slice semantics, success returns exactly the requested prefix and
+/// suffix; failure consumes nothing and never indexes outside the input.
+#[cfg_attr(hax, hax_lib::ensures(|result| match result {
+    Some((prefix, suffix)) => n <= input.len()
+        && prefix == &input[..n] && suffix == &input[n..],
+    None => input.len() < n,
+}))]
+pub fn split_envelope_prefix(input: &[u8], n: usize) -> Option<(&[u8], &[u8])> {
+    if input.len() < n {
+        None
+    } else {
+        Some((&input[..n], &input[n..]))
+    }
+}
+
 struct Reader<'a>(&'a [u8]);
 
 impl<'a> Reader<'a> {
     fn take(&mut self, n: usize) -> Result<&'a [u8]> {
-        if self.0.len() < n {
-            return Err(VelaError::InvalidParameter("share envelope is truncated".into()));
-        }
-        let (head, tail) = self.0.split_at(n);
+        let (head, tail) = split_envelope_prefix(self.0, n)
+            .ok_or_else(|| VelaError::InvalidParameter("share envelope is truncated".into()))?;
         self.0 = tail;
         Ok(head)
     }
 
     fn u64(&mut self) -> Result<u64> {
-        Ok(u64::from_be_bytes(self.take(8)?.try_into().expect("8 bytes")))
+        Ok(u64::from_be_bytes(
+            self.take(8)?.try_into().expect("8 bytes"),
+        ))
     }
 
     fn lp(&mut self) -> Result<&'a [u8]> {
@@ -201,7 +218,10 @@ impl<'a> Reader<'a> {
 /// verify its signature and recipient binding.
 ///
 /// Fails for v1 (unsigned) capsules: there is no way to tell who made them.
-pub fn open_signed_item(recipient_sk: &kem::HybridSecretKey, capsule: &[u8]) -> Result<OpenedShare> {
+pub fn open_signed_item(
+    recipient_sk: &kem::HybridSecretKey,
+    capsule: &[u8],
+) -> Result<OpenedShare> {
     let plaintext = zeroize::Zeroizing::new(kem::open_share(recipient_sk, capsule)?);
     let mut r = Reader(&plaintext);
     if r.take(SHARE_ENVELOPE_MAGIC.len())? != SHARE_ENVELOPE_MAGIC {
@@ -221,21 +241,24 @@ pub fn open_signed_item(recipient_sk: &kem::HybridSecretKey, capsule: &[u8]) -> 
     let item = r.lp()?.to_vec();
     let signature = r.lp()?;
     if !r.0.is_empty() {
-        return Err(VelaError::InvalidParameter("share envelope has trailing bytes".into()));
+        return Err(VelaError::InvalidParameter(
+            "share envelope has trailing bytes".into(),
+        ));
     }
 
-    let vk_bytes: &[u8; signing::HYBRID_VK_LEN] = header
-        .sender_vk
-        .as_slice()
-        .try_into()
-        .map_err(|_| VelaError::InvalidParameter("share sender key has the wrong length".into()))?;
+    let vk_bytes: &[u8; signing::HYBRID_VK_LEN] =
+        header.sender_vk.as_slice().try_into().map_err(|_| {
+            VelaError::InvalidParameter("share sender key has the wrong length".into())
+        })?;
     let sig_bytes: &[u8; signing::HYBRID_SIG_LEN] = signature
         .try_into()
         .map_err(|_| VelaError::InvalidParameter("share signature has the wrong length".into()))?;
     let vk = signing::HybridVerifyingKey::from_bytes(vk_bytes)?;
     let sig = signing::HybridSignature::from_bytes(sig_bytes)?;
     if !signing::verify(&vk, &signing_transcript(&header, &item), &sig)? {
-        return Err(VelaError::InvalidParameter("share signature does not verify".into()));
+        return Err(VelaError::InvalidParameter(
+            "share signature does not verify".into(),
+        ));
     }
     if header.recipient_ek_digest != recipient_ek_digest(&recipient_sk.public_key().to_bytes()) {
         return Err(VelaError::InvalidParameter(
@@ -255,16 +278,16 @@ pub fn admit(
     context: AdmissionContext<'_>,
 ) -> Result<AdmittedShare> {
     let opened = open_signed_item(recipient_sk, capsule);
-    let facts = admission_facts(opened.as_ref().ok(), &context);
-    let decision = plan_share_admission(facts);
+    let decision = plan_observed_share(opened.as_ref().ok(), &context);
     let (permit, first_contact): (SharePinPermit, bool) = match decision {
         ShareAdmissionDecision::AcceptFirstContact(permit) => (permit, true),
         ShareAdmissionDecision::ApplyUpdate(permit) => (permit, false),
         ShareAdmissionDecision::Reject => {
+            let facts = admission_facts(opened.as_ref().ok(), &context);
             return Err(match opened {
                 Err(error) => error,
                 Ok(_) => VelaError::InvalidParameter(rejection_reason(&facts).into()),
-            })
+            });
         }
     };
     let opened = opened.expect("the policy admits only authenticated envelopes");
@@ -283,7 +306,24 @@ pub fn admit(
 
 /// Turn observations into policy facts. Public so tests and bridges can
 /// check the mapping itself.
-pub fn admission_facts(opened: Option<&OpenedShare>, context: &AdmissionContext<'_>) -> ShareAdmissionFacts {
+#[cfg_attr(hax, hax_lib::ensures(|facts| {
+    facts.envelope_authenticated == opened.is_some()
+        && facts.has_pin == context.pin.is_some()
+        && facts.pinned_revision == context.pin.map_or(0, |pin| pin.revision)
+        && facts.candidate_revision == opened.map_or(0, |value| value.header.revision)
+        && match opened {
+            Some(value) => facts.addressed_to_recipient == (value.header.recipient_user_id.as_str() == context.recipient_user_id)
+                && facts.sender_matches_attribution == (value.header.sender_user_id.as_str() == context.attributed_sender_user_id)
+                && facts.signer_matches_pin == context.pin.is_some_and(|pin| pin.sender_vk == value.header.sender_vk && pin.sender_user_id == value.header.sender_user_id)
+                && facts.lineage_matches_pin == context.pin.is_some_and(|pin| pin.lineage_id == value.header.lineage_id),
+            None => !facts.addressed_to_recipient && !facts.sender_matches_attribution
+                && !facts.signer_matches_pin && !facts.lineage_matches_pin,
+        }
+}))]
+pub fn admission_facts(
+    opened: Option<&OpenedShare>,
+    context: &AdmissionContext<'_>,
+) -> ShareAdmissionFacts {
     let Some(opened) = opened else {
         return ShareAdmissionFacts {
             envelope_authenticated: false,
@@ -300,8 +340,8 @@ pub fn admission_facts(opened: Option<&OpenedShare>, context: &AdmissionContext<
     ShareAdmissionFacts {
         envelope_authenticated: true,
         // The recipient key digest was already checked by `open_signed_item`.
-        addressed_to_recipient: h.recipient_user_id == context.recipient_user_id,
-        sender_matches_attribution: h.sender_user_id == context.attributed_sender_user_id,
+        addressed_to_recipient: h.recipient_user_id.as_str() == context.recipient_user_id,
+        sender_matches_attribution: h.sender_user_id.as_str() == context.attributed_sender_user_id,
         has_pin: context.pin.is_some(),
         signer_matches_pin: context
             .pin
@@ -310,6 +350,61 @@ pub fn admission_facts(opened: Option<&OpenedShare>, context: &AdmissionContext<
         pinned_revision: context.pin.map_or(0, |p| p.revision),
         candidate_revision: h.revision,
     }
+}
+
+/// Exact authorization contract over decoded observations, rather than a facts
+/// struct supplied by the caller. Cryptographic opening is a separate boundary.
+pub fn observed_admission_matches_spec(
+    opened: Option<&OpenedShare>,
+    context: &AdmissionContext<'_>,
+    decision: ShareAdmissionDecision,
+) -> bool {
+    let Some(opened) = opened else {
+        return matches!(decision, ShareAdmissionDecision::Reject);
+    };
+    let h = &opened.header;
+    let bound = h.recipient_user_id.as_str() == context.recipient_user_id
+        && h.sender_user_id.as_str() == context.attributed_sender_user_id
+        && h.revision >= 1;
+    match decision {
+        ShareAdmissionDecision::AcceptFirstContact(permit) => {
+            context.pin.is_none()
+                && bound
+                && vela_client_share_policy::share_permit_revision(permit) == h.revision
+        }
+        ShareAdmissionDecision::ApplyUpdate(permit) => match context.pin {
+            Some(pin) => {
+                bound
+                    && pin.sender_user_id == h.sender_user_id
+                    && pin.sender_vk == h.sender_vk
+                    && pin.lineage_id == h.lineage_id
+                    && h.revision > pin.revision
+                    && vela_client_share_policy::share_permit_revision(permit) == h.revision
+            }
+            None => false,
+        },
+        ShareAdmissionDecision::Reject => {
+            !bound
+                || match context.pin {
+                    None => false,
+                    Some(pin) => {
+                        pin.sender_user_id != h.sender_user_id
+                            || pin.sender_vk != h.sender_vk
+                            || pin.lineage_id != h.lineage_id
+                            || h.revision <= pin.revision
+                    }
+                }
+        }
+    }
+}
+
+/// Production composition: decoded fields -> facts -> verified policy.
+#[cfg_attr(hax, hax_lib::ensures(|decision| observed_admission_matches_spec(opened, context, decision)))]
+pub fn plan_observed_share(
+    opened: Option<&OpenedShare>,
+    context: &AdmissionContext<'_>,
+) -> ShareAdmissionDecision {
+    plan_share_admission(admission_facts(opened, context))
 }
 
 fn rejection_reason(facts: &ShareAdmissionFacts) -> &'static str {
@@ -339,7 +434,10 @@ mod tests {
 
     fn device() -> Party {
         let (vk, sk) = signing::generate_keypair().unwrap();
-        Party { vk: vk.to_bytes().to_vec(), sk }
+        Party {
+            vk: vk.to_bytes().to_vec(),
+            sk,
+        }
     }
 
     fn header(sender: &Party, recipient: &kem::HybridPublicKey, revision: u64) -> ShareHeader {
@@ -363,16 +461,33 @@ mod tests {
     }
 
     #[test]
+    fn reader_prefix_failure_preserves_input_and_success_consumes_exactly() {
+        let input = b"signed-envelope-field";
+        for n in [input.len() + 1, usize::MAX] {
+            let mut reader = Reader(input);
+            assert!(reader.take(n).is_err());
+            assert_eq!(reader.0, input);
+        }
+        for n in 0..=input.len() {
+            let mut reader = Reader(input);
+            assert_eq!(reader.take(n).unwrap(), &input[..n]);
+            assert_eq!(reader.0, &input[n..]);
+        }
+    }
+
+    #[test]
     fn first_contact_then_newer_update_is_admitted() {
         let alice = device();
         let (bob_pk, bob_sk) = kem::generate_keypair();
-        let first = seal_signed_item(&alice.sk, &header(&alice, &bob_pk, 1), &bob_pk, b"v1").unwrap();
+        let first =
+            seal_signed_item(&alice.sk, &header(&alice, &bob_pk, 1), &bob_pk, b"v1").unwrap();
         let admitted = admit(&bob_sk, &first, ctx(None)).unwrap();
         assert!(admitted.first_contact);
         assert_eq!(admitted.opened.item, b"v1");
         assert_eq!(admitted.pin.revision, 1);
 
-        let second = seal_signed_item(&alice.sk, &header(&alice, &bob_pk, 2), &bob_pk, b"v2").unwrap();
+        let second =
+            seal_signed_item(&alice.sk, &header(&alice, &bob_pk, 2), &bob_pk, b"v2").unwrap();
         let updated = admit(&bob_sk, &second, ctx(Some(&admitted.pin))).unwrap();
         assert!(!updated.first_contact);
         assert_eq!(updated.opened.item, b"v2");
@@ -389,7 +504,8 @@ mod tests {
         let alice = device();
         let mallory = device();
         let (bob_pk, bob_sk) = kem::generate_keypair();
-        let first = seal_signed_item(&alice.sk, &header(&alice, &bob_pk, 1), &bob_pk, b"real").unwrap();
+        let first =
+            seal_signed_item(&alice.sk, &header(&alice, &bob_pk, 1), &bob_pk, b"real").unwrap();
         let pin = admit(&bob_sk, &first, ctx(None)).unwrap().pin;
 
         // Mallory signs with her own key but claims Alice's identity and a
@@ -401,7 +517,10 @@ mod tests {
         };
         let forged = seal_signed_item(&mallory.sk, &forged_header, &bob_pk, b"phish").unwrap();
         let err = admit(&bob_sk, &forged, ctx(Some(&pin))).unwrap_err();
-        assert!(err.to_string().contains("not signed by the device"), "{err}");
+        assert!(
+            err.to_string().contains("not signed by the device"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -417,7 +536,8 @@ mod tests {
         let alice = device();
         let (bob_pk, bob_sk) = kem::generate_keypair();
         let (carol_pk, carol_sk) = kem::generate_keypair();
-        let to_bob = seal_signed_item(&alice.sk, &header(&alice, &bob_pk, 1), &bob_pk, b"x").unwrap();
+        let to_bob =
+            seal_signed_item(&alice.sk, &header(&alice, &bob_pk, 1), &bob_pk, b"x").unwrap();
         // Bob decrypts and re-seals Alice's signed plaintext to Carol.
         let plaintext = kem::open_share(&bob_sk, &to_bob).unwrap();
         let forwarded = kem::seal_share(&carol_pk, &plaintext).unwrap();
@@ -428,10 +548,17 @@ mod tests {
     fn misaddressed_and_misattributed_envelopes_are_rejected() {
         let alice = device();
         let (bob_pk, bob_sk) = kem::generate_keypair();
-        let capsule = seal_signed_item(&alice.sk, &header(&alice, &bob_pk, 1), &bob_pk, b"x").unwrap();
-        let wrong_recipient = AdmissionContext { recipient_user_id: "carol", ..ctx(None) };
+        let capsule =
+            seal_signed_item(&alice.sk, &header(&alice, &bob_pk, 1), &bob_pk, b"x").unwrap();
+        let wrong_recipient = AdmissionContext {
+            recipient_user_id: "carol",
+            ..ctx(None)
+        };
         assert!(admit(&bob_sk, &capsule, wrong_recipient).is_err());
-        let wrong_sender = AdmissionContext { attributed_sender_user_id: "mallory", ..ctx(None) };
+        let wrong_sender = AdmissionContext {
+            attributed_sender_user_id: "mallory",
+            ..ctx(None)
+        };
         assert!(admit(&bob_sk, &capsule, wrong_sender).is_err());
     }
 
@@ -442,18 +569,42 @@ mod tests {
         let h = header(&alice, &bob_pk, 1);
         let signature = signing::sign(&alice.sk, &signing_transcript(&h, b"item")).unwrap();
         for tampered in [
-            ShareHeader { sender_user_id: "eve".into(), ..h.clone() },
-            ShareHeader { sender_device_id: "eve-phone".into(), ..h.clone() },
-            ShareHeader { recipient_user_id: "carol".into(), ..h.clone() },
-            ShareHeader { lineage_id: "lineage-2".into(), ..h.clone() },
-            ShareHeader { revision: 2, ..h.clone() },
-            ShareHeader { recipient_ek_digest: [0u8; 32], ..h.clone() },
+            ShareHeader {
+                sender_user_id: "eve".into(),
+                ..h.clone()
+            },
+            ShareHeader {
+                sender_device_id: "eve-phone".into(),
+                ..h.clone()
+            },
+            ShareHeader {
+                recipient_user_id: "carol".into(),
+                ..h.clone()
+            },
+            ShareHeader {
+                lineage_id: "lineage-2".into(),
+                ..h.clone()
+            },
+            ShareHeader {
+                revision: 2,
+                ..h.clone()
+            },
+            ShareHeader {
+                recipient_ek_digest: [0u8; 32],
+                ..h.clone()
+            },
         ] {
-            let vk = signing::HybridVerifyingKey::from_bytes(alice.vk.as_slice().try_into().unwrap()).unwrap();
-            assert!(!signing::verify(&vk, &signing_transcript(&tampered, b"item"), &signature).unwrap_or(false));
+            let vk =
+                signing::HybridVerifyingKey::from_bytes(alice.vk.as_slice().try_into().unwrap())
+                    .unwrap();
+            assert!(
+                !signing::verify(&vk, &signing_transcript(&tampered, b"item"), &signature)
+                    .unwrap_or(false)
+            );
         }
         assert!(!signing::verify(
-            &signing::HybridVerifyingKey::from_bytes(alice.vk.as_slice().try_into().unwrap()).unwrap(),
+            &signing::HybridVerifyingKey::from_bytes(alice.vk.as_slice().try_into().unwrap())
+                .unwrap(),
             &signing_transcript(&h, b"other item"),
             &signature
         )

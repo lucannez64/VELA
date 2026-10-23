@@ -2,7 +2,7 @@
 name = "vela-client-share-policy"
 version = "0.1.0"
 edition = "2021"
-description = "Pure, formally verified admission policy for items shared between VELA users"
+description = "Pure admission policy with formal verification targets for items shared between VELA users"
 license = "MIT OR Apache-2.0"
 
 [lib]

@@ -1,0 +1,101 @@
+--- a/desktopVELA/vela-desktop-core/src/sharing.rs
++++ b/desktopVELA/vela-desktop-core/src/sharing.rs
+@@ -766,7 +766,7 @@
+         }
+     }
+ 
+-    fn login(id: &str, name: &str, pass: &str, updated_at: DateTime<Utc>) -> VaultItem {
++    pub(super) fn login(id: &str, name: &str, pass: &str, updated_at: DateTime<Utc>) -> VaultItem {
+         VaultItem::Login {
+             meta: meta(id, name, updated_at),
+             url: "https://example.com".into(),
+@@ -779,7 +779,7 @@
+         }
+     }
+ 
+-    fn identity() -> crate::store::IdentityKeysStore {
++    pub(super) fn identity() -> crate::store::IdentityKeysStore {
+         let keys = crate::crypto::generate_identity_keypair().unwrap();
+         crate::store::IdentityKeysStore {
+             hybrid_ek: keys.hybrid_ek,
+@@ -856,3 +856,80 @@
+         assert_eq!(StoredSharePin::from_pin(&pin).to_pin(), Some(pin));
+     }
+ }
++
++// Diagnostic witnesses for the assurance boundary review; applied temporarily.
++#[cfg(test)]
++mod assurance_boundary_review {
++    use super::*;
++
++    fn fixture() -> (tempfile::TempDir, AppState, crate::store::IdentityKeysStore, crate::store::IdentityKeysStore, ShareStore) {
++        let dir = tempfile::tempdir().unwrap();
++        let state = AppState::for_test(dir.path());
++        state.unlock_for_test(&[71; 32]);
++        let bob = super::tests::identity();
++        state.store.save_identity_keys_full(&bob, state.crypto.read().as_ref().unwrap()).unwrap();
++        let alice = super::tests::identity();
++        let capsule = capsule(&alice, &bob, 2, "original");
++        let admitted = admit_received(&bob, &capsule, "test-user", "alice", None).unwrap();
++        let item: VaultItem = serde_json::from_slice(&admitted.opened.item).unwrap();
++        state.vault.write().add_item(item.with_id("local-copy".into()));
++        state.persist_current_vault().unwrap();
++        let store = ShareStore { sent_shares: vec![], received_shares: vec![Share {
++            id: "share-1".into(), item_id: "local-copy".into(), item_name: "original".into(),
++            item_type: "login".into(), direction: ShareDirection::Received, from: "alice".into(),
++            to: None, shared_at: Utc::now(), accepted: Some(true), allow_edit: false,
++            encrypted_payload: Some(capsule), recipient_share_ek: None, lineage_id: None,
++            revision: 0, pin: Some(StoredSharePin::from_pin(&admitted.pin)), sender_fingerprint: None,
++        }] };
++        save_share_store(&state, &store).unwrap();
++        (dir, state, bob, alice, store)
++    }
++
++    fn capsule(sender: &crate::store::IdentityKeysStore, bob: &crate::store::IdentityKeysStore, revision: u64, name: &str) -> Vec<u8> {
++        let item = super::tests::login("remote-item", name, name, Utc::now());
++        seal_for_recipient(sender, "alice", "sender-device", "test-user", &bob.share_ek,
++            "lineage-1", revision, &serde_json::to_vec(&item).unwrap()).unwrap()
++    }
++
++    #[tokio::test]
++    async fn witness_reaccept_replaces_existing_signer_pin() {
++        let (_dir, state, bob, _alice, mut store) = fixture();
++        let original_pin = store.received_shares[0].pin.clone().unwrap();
++        let mallory = super::tests::identity();
++        let forged = capsule(&mallory, &bob, 1, "attacker");
++        assert!(admit_received(&bob, &forged, "test-user", "alice", Some(&original_pin.to_pin().unwrap())).is_err());
++        store.received_shares[0].encrypted_payload = Some(forged);
++        save_share_store(&state, &store).unwrap();
++        accept_share(&state, "share-1").await.unwrap();
++        let after = load_share_store(&state).unwrap();
++        let replaced = after.received_shares[0].pin.as_ref().unwrap();
++        assert_ne!(replaced.sender_vk_b64, original_pin.sender_vk_b64);
++        assert_eq!(replaced.revision, 1);
++        assert_eq!(state.vault.read().items_snapshot().len(), 2);
++    }
++
++    #[test]
++    fn witness_stale_snapshot_can_overwrite_a_newer_pin() {
++        let (_dir, state, _bob, _alice, stale) = fixture();
++        let mut newer = load_share_store(&state).unwrap();
++        newer.received_shares[0].pin.as_mut().unwrap().revision = 10;
++        save_share_store(&state, &newer).unwrap();
++        save_share_store(&state, &stale).unwrap();
++        assert_eq!(load_share_store(&state).unwrap().received_shares[0].pin.as_ref().unwrap().revision, 2);
++    }
++    #[test]
++    fn witness_crash_between_vault_and_pin_writes_leaves_old_pin() {
++        let (_dir, state, bob, alice, mut store) = fixture();
++        store.received_shares[0].encrypted_payload = Some(capsule(&alice, &bob, 3, "new-revision"));
++        sync_received_linked_items(&state, &mut store).unwrap();
++        assert_eq!(store.received_shares[0].pin.as_ref().unwrap().revision, 3);
++        // Model process loss before refresh_linked_shares_inner calls save_share_store.
++        // Read the files via fresh Store objects, without saving the in-memory pin.
++        let restarted_store = crate::store::Store::new_at(state.store.store_path().to_path_buf()).unwrap();
++        let crypto = crate::crypto::Crypto::new(&[71; 32]);
++        let persisted_vault = restarted_store.load_vault(&crypto).unwrap();
++        assert_eq!(persisted_vault.get_item("local-copy").unwrap().name(), "new-revision");
++        assert_eq!(load_share_store(&state).unwrap().received_shares[0].pin.as_ref().unwrap().revision, 2);
++    }
++
++}

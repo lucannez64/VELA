@@ -10,13 +10,6 @@ type t_CeremonyPhase =
   | CeremonyPhase_Revoked : t_CeremonyPhase
   | CeremonyPhase_Expired : t_CeremonyPhase
 
-[@@ FStar.Tactics.Typeclasses.tcinstance]
-assume
-val impl_7': Core_models.Cmp.t_PartialEq t_CeremonyPhase t_CeremonyPhase
-
-unfold
-let impl_7 = impl_7'
-
 type t_OpenFacts = {
   f_device_scope:bool;
   f_user_bound:bool;
@@ -63,7 +56,10 @@ type t_ClaimDecision =
   | ClaimDecision_Reject : t_ClaimDecision
 
 let claim_is_authorized (facts: t_ClaimFacts) : bool =
-  facts.f_phase =. (CeremonyPhase_Open <: t_CeremonyPhase) && facts.f_grant_live &&
+  (match facts.f_phase <: t_CeremonyPhase with
+    | CeremonyPhase_Open  -> true
+    | _ -> false) &&
+  facts.f_grant_live &&
   facts.f_no_existing_claim &&
   facts.f_public_keys_valid
 
@@ -97,7 +93,10 @@ type t_InspectDecision =
   | InspectDecision_Reject : t_InspectDecision
 
 let inspection_is_authorized (facts: t_InspectFacts) : bool =
-  facts.f_phase =. (CeremonyPhase_Claimed <: t_CeremonyPhase) && facts.f_user_matches &&
+  (match facts.f_phase <: t_CeremonyPhase with
+    | CeremonyPhase_Claimed  -> true
+    | _ -> false) &&
+  facts.f_user_matches &&
   facts.f_opener_matches &&
   facts.f_claim_present
 
@@ -135,7 +134,10 @@ type t_CompletionDecision =
   | CompletionDecision_Reject : t_CompletionDecision
 
 let completion_is_authorized (facts: t_CompletionFacts) : bool =
-  facts.f_phase =. (CeremonyPhase_Claimed <: t_CeremonyPhase) && facts.f_user_matches &&
+  (match facts.f_phase <: t_CeremonyPhase with
+    | CeremonyPhase_Claimed  -> true
+    | _ -> false) &&
+  facts.f_user_matches &&
   facts.f_opener_matches &&
   facts.f_opener_active &&
   facts.f_claim_present &&
@@ -174,13 +176,6 @@ type t_ResultKind =
   | ResultKind_Pending : t_ResultKind
   | ResultKind_Enrolled : t_ResultKind
 
-[@@ FStar.Tactics.Typeclasses.tcinstance]
-assume
-val impl_91': Core_models.Cmp.t_PartialEq t_ResultKind t_ResultKind
-
-unfold
-let impl_91 = impl_91'
-
 type t_ResultPermit = { f_kind:t_ResultKind }
 
 type t_ResultDecision =
@@ -188,8 +183,12 @@ type t_ResultDecision =
   | ResultDecision_Reject : t_ResultDecision
 
 let result_is_authorized (facts: t_ResultFacts) : bool =
-  (facts.f_phase =. (CeremonyPhase_Claimed <: t_CeremonyPhase) ||
-  facts.f_phase =. (CeremonyPhase_Completed <: t_CeremonyPhase)) &&
+  ((match facts.f_phase <: t_CeremonyPhase with
+    | CeremonyPhase_Claimed  -> true
+    | _ -> false) ||
+  (match facts.f_phase <: t_CeremonyPhase with
+    | CeremonyPhase_Completed  -> true
+    | _ -> false)) &&
   facts.f_claimed_key_present &&
   facts.f_claimed_key_proof_valid
 
@@ -197,10 +196,18 @@ let result_decision_matches_spec (facts: t_ResultFacts) (decision: t_ResultDecis
   match decision <: t_ResultDecision with
   | ResultDecision_Return permit ->
     result_is_authorized facts &&
-    permit.f_kind =.
-    (if facts.f_phase =. (CeremonyPhase_Claimed <: t_CeremonyPhase) <: bool
-      then ResultKind_Pending <: t_ResultKind
-      else ResultKind_Enrolled <: t_ResultKind)
+    (if
+        match facts.f_phase <: t_CeremonyPhase with
+        | CeremonyPhase_Claimed  -> true
+        | _ -> false
+      then
+        match permit.f_kind <: t_ResultKind with
+        | ResultKind_Pending  -> true
+        | _ -> false
+      else
+        match permit.f_kind <: t_ResultKind with
+        | ResultKind_Enrolled  -> true
+        | _ -> false)
   | ResultDecision_Reject  -> ~.(result_is_authorized facts <: bool)
 
 let authorize_result (facts: t_ResultFacts)
@@ -214,7 +221,10 @@ let authorize_result (facts: t_ResultFacts)
   then ResultDecision_Reject <: t_ResultDecision
   else
     let kind:t_ResultKind =
-      if facts.f_phase =. (CeremonyPhase_Claimed <: t_CeremonyPhase)
+      if
+        match facts.f_phase <: t_CeremonyPhase with
+        | CeremonyPhase_Claimed  -> true
+        | _ -> false
       then ResultKind_Pending <: t_ResultKind
       else ResultKind_Enrolled <: t_ResultKind
     in

@@ -1,6 +1,6 @@
 # 2. Formal models
 
-All models live in [`security/formal/`](../formal/). There are 30 Tamarin
+All models live in [`security/formal/`](../formal/). There are 35 Tamarin
 theories (`.spthy`) and 3 ProVerif models (`.pv`). Each theory's header
 comment states its scope. This document collects those scopes in one place
 and makes the adversary in each model explicit, because the models differ
@@ -53,14 +53,14 @@ The models use five adversary classes. Each model in §2.3 names its class.
 | **Adversarial storage** | Can replay, relabel, and recombine envelopes held by an untrusted custodian (cloud in M15/M18; the server's advertised clock and epoch in M23) | Ability to forge authenticated origin (abstracted as an origin check standing in for MAC verification) |
 | **Ordering-only** | **No** network adversary. The theory proves that honest state transitions happen only in certain orders (linearity, provenance, invalidation) | Everything: there are no `In`/`Out` facts. Secrecy and MITM claims are out of scope |
 
-The **server** is modelled as an honest party that enforces its own state
+Except in the malicious-server M13b/M19c additions documented below, the **server** is modelled as an honest party that enforces its own state
 machine in M11–M21 and M26. It is never a fully malicious state-machine
 deviator in these theories. Confidentiality against a malicious server rests
 on the cryptographic architecture (**[ARG]**), and server-side state
 enforcement is cross-checked by **[REF]** and **[EXEC]**. See
 [§5 T-2](05-known-limitations.md#trusted-components).
 
-**Long-term key compromise** is generally **not** modelled outside M8/M10
+**Long-term key compromise** is modelled in the new M19c/M27 reveal rules, but generally **not** outside those theories and M8/M10
 (`Corrupt_Client`). M19b states explicitly that device-key theft is outside
 its boundary. No theory models RMS compromise followed by recovery
 (post-compromise security), except that M11/M26 prove old-epoch artifacts
@@ -71,7 +71,7 @@ are stranded.
 ### Credential release (M1–M10), the "working-set" ladder
 
 Design-space analysis for releasing credentials to a browser. Run locally
-with Tamarin 1.12.0. **Not gated by CI** ([§5 G-2](05-known-limitations.md#gaps-in-the-assurance-itself)).
+with Tamarin 1.12.0. **Not gated by the historical CI run; current CI adds a gate** ([§5 G-2](05-known-limitations.md#gaps-in-the-assurance-itself)).
 
 | Model | Lemmas | Adversary | What it shows |
 |---|---:|---|---|
@@ -177,7 +177,7 @@ checks round-trip integrity, bucket padding, unregister completeness, and a
 stash bound with wide margins. This is testing, not proof. An EasyCrypt
 supermartingale proof is listed as out of scope.
 
-## 2.4 Lemma totals
+## 2.4 Historical baseline lemma totals
 
 | Family | Theories | Lemmas | CI |
 |---|---:|---:|---|
@@ -206,3 +206,51 @@ supermartingale proof is listed as out of scope.
 5. Run with `--prove` and look for `verified`, `falsified`, and
    `analysis incomplete`. The runners fail on the latter two (except
    M1–M10's intended falsifications) and on any `WARNING:`.
+
+## Current network-adversary additions
+
+The historical catalogue above describes the original 30 theories. Five more
+now model concrete wire boundaries. All 17 added lemmas were locally verified
+with Tamarin 1.12.0 / Maude 3.5.1; the new CI gate is configured but not yet
+witnessed by a successful run.
+
+| Theory | Lemmas | Adversary and result |
+|---|---:|---|
+| `m13b_enrollment_v3_baseline` | 1 | Malicious server: an attack witness leaks RMS by substituting the KEM key |
+| `m13b_enrollment_key_binding` | 4 | Malicious server; both-key fingerprint and authentic human comparison; secrecy, key provenance, reachability |
+| `m19c_share_v1_baseline` | 1 | Malicious server: forged-update witness, no compromised keys |
+| `m19c_share_sender_authentication` | 5 | Malicious server plus key reveals; honest-pin provenance, pin/lineage stability, revision growth, recipient-key secrecy, reachability |
+| `m27_device_authentication` | 6 | DY network, honest server, device-key reveal and selected signing oracles; challenge provenance/single-use and registered-user binding |
+
+[The rule-to-Rust table](../formal/network-boundary-correspondence.md) is part
+of the model definition. In particular: M13b assumes an ideal human comparison
+and proves no adoption authentication; M19c permits arbitrary positive sender
+revisions (a conservative overapproximation), assumes an honest initial
+recipient key directory for secrecy, and does not authenticate first contact;
+M27 separates lookup from issuance and permits revocation races. These models
+remain hand-written abstractions rather than extracted Rust protocols.
+
+## Recoverable share storage (M28)
+
+[`m28_share_journal.spthy`](../formal/m28_share_journal.spthy) adds seven locally
+verified properties about journal/vault/cleanup ordering, matching pins/content
+on opening, snapshot-generation provenance, per-transaction application
+uniqueness, per-commit revision advancement and crash/recovery reachability.
+Its product-state facts encode separate writes to the two files. Durable
+single-file replacement is trusted; local edits, native persistence and
+independent processes are outside this model. Stale snapshots survive crashes
+as an overapproximation. Generation successor terms abstract checked u64
+increments; overflow is rejected by the separately checked production policy.
+See [formalization status](08-formalization-status.md) for exact nonclaims and
+the stronger goals whose searches did not complete.
+
+## Composed signed sharing and commit (M29)
+
+M29 adds eleven checked lemmas to the same transition system: independent
+ML-DSA/Ed25519 keys and reveals, actual sender provenance, first-pin uniqueness
+and preservation, separate journal/vault/cleanup, matching content/pin views,
+and honest crash/recovery/update reachability. It gives the attacker signed
+plaintext and makes no hybrid-KEM confidentiality claim. See the
+[code mapping](../formal/signed-share-commit-correspondence.md) and
+[selected boundary](09-target-contract.md). The journal runner checks M28/M29
+and rejects missing verdicts, warnings or timeouts.
