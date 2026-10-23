@@ -31,6 +31,9 @@ curl -fL -o "$root/z3.zip" https://github.com/Z3Prover/z3/releases/download/z3-4
 echo "32c7377026733c9d7b33c21cd77a68f50ba682367207b031a6bfd80140a8722f  $root/z3.zip" | sha256sum -c
 unzip -oq "$root/z3.zip" -d "$root"
 install -m755 "$root/z3-4.13.3-x64-glibc-2.35/bin/z3" "$root/bin/z3-4.13.3"
+# Keep installed libraries/binaries, but omit disposable OCaml build/download
+# directories from the completed-toolchain cache.
+opam clean --all-switches --yes
 # GITHUB_PATH is optional: this script also works outside Actions.
 if [[ -n ${GITHUB_PATH:-} ]]; then
   printf 'CARGO_HOME=%s\n' "$CARGO_HOME" >> "$GITHUB_ENV"

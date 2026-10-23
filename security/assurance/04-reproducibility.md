@@ -30,7 +30,21 @@ The new gates use the versions above. OS packages, transitive opam resolution,
 GitHub action tags, semgrep, cargo-audit and cargo-deny are not a hermetic
 pinned environment. No bit-for-bit build reproducibility is claimed.
 
+The refinement job restores installed proof tools and the pinned Rust nightly
+from an exact GitHub Actions cache key containing OS, architecture, Ubuntu 24
+and the installer script hash. A miss builds them under the documented memory
+cap; completed tools are cached before application proofs. Activation checks
+hax/engine/F★ versions and logs Z3/Rust versions. GitHub's cache and tool
+installation remain trusted CI infrastructure; a cache key is not a toolchain
+soundness proof. VELA extraction output is regenerated and checked on every run.
+
 ## 4.2 Installation
+
+The refinement prerequisites explicitly include the system `nodejs` package:
+the pinned hax engine declares it as an opam external dependency. Apt uses
+`--no-install-recommends` to avoid the unused distro OCaml installation;
+OCaml 5.1.1 is built in the pinned opam switches. Apt operations have network
+retries/timeouts and a 15-minute step limit.
 
 For Linux x86-64, the exact Tamarin/Maude install commands and checksums are
 in [security.yml](../../.github/workflows/security.yml), step **Install pinned
