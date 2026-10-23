@@ -852,7 +852,10 @@ fn import_parsed(
             })
             .collect();
 
-        for entry in parsed.entries {
+        for mut entry in parsed.entries {
+            // Attachments are stored after the item itself, so a duplicate
+            // login does not leave orphaned notes behind.
+            let attachments = std::mem::take(&mut entry.attachments);
             let name = fallback_name(&entry);
 
             // Rich data is only first-class once the vault has collections.
@@ -990,6 +993,28 @@ fn import_parsed(
                     });
                     added_count += 1;
                 }
+            }
+
+            // 1Password attachments: the vault has no file-blob viewer yet, so
+            // keep the bytes in an encrypted note with a decodable header.
+            for attachment in attachments {
+                let content = crate::import::encode_attachment_note(
+                    &attachment.file_name,
+                    &attachment.mime,
+                    &attachment.bytes,
+                );
+                vault.add_item(VaultItem::SecureNote {
+                    meta: import_meta(
+                        &format!("{} — {}", name, attachment.file_name),
+                        None,
+                        false,
+                        vela_core::rich_items::RichItemData::default(),
+                    ),
+                    title: attachment.file_name.clone(),
+                    content,
+                });
+                added_count += 1;
+                preserved_count += 1;
             }
         }
 
@@ -1988,6 +2013,35 @@ mod tests {
         let notes = item.notes().unwrap_or("");
         assert!(notes.contains("Folder: Work"), "{notes}");
         assert!(notes.contains("Recovery: R-1"), "{notes}");
+    }
+
+    #[test]
+    fn imported_attachments_become_encrypted_notes() {
+        let (_dir, state) = unlocked_state();
+        let mut entry = crate::import::ImportedEntry {
+            name: "GitHub".into(),
+            kind: crate::import::EntryKind::Login,
+            ..Default::default()
+        };
+        entry.attachments.push(crate::import::ImportedAttachment {
+            file_name: "notes.txt".into(),
+            mime: "text/plain".into(),
+            bytes: b"attachment body".to_vec(),
+        });
+        let parsed = crate::import::ParsedImport {
+            entries: vec![entry],
+            skipped_unsupported: 0,
+            unsupported: Default::default(),
+            source: "test",
+        };
+        let report = import_parsed(&state, parsed).unwrap();
+        assert_eq!(report.added, 2);
+        assert_eq!(report.preserved, 1);
+        let vault = state.vault.read();
+        assert!(vault.items.iter().any(|item| matches!(
+            item,
+            VaultItem::SecureNote { content, .. } if content.contains("VELA IMPORTED ATTACHMENT")
+        )));
     }
 
     #[test]

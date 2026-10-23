@@ -9,6 +9,7 @@ license = "MIT OR Apache-2.0"
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
+vela-import = { path = "../vela-import" }
 base64 = "0.22"
 ciborium = "0.2"
 getrandom = "0.2"

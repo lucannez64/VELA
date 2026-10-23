@@ -9,9 +9,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
-- Migration importer fidelity: Bitwarden JSON and 1Password `.1pux` now bring
-  cards, identities, custom fields, extra websites and favorites alongside
-  logins and notes. Folder paths and tags become first-class collections when
+- Migration importer fidelity: the importer now lives in the shared
+  `vela-import` crate so every client can reuse it. Bitwarden JSON, 1Password
+  `.1pux`, Proton Pass JSON and the CSV formats bring cards, identities,
+  custom fields, extra websites, favorites, folder paths and tags alongside
+  logins and notes; `.1pux` attachments up to 8 MiB are kept as encrypted
+  notes with a decodable header. Folder paths and tags become first-class collections when
   the vault is upgraded, and are otherwise folded into notes rather than lost.
   `.1pux` archives are read directly (ZIP + `export.data`). The import report
   now carries the detected source, preserved/converted counts and field-level
