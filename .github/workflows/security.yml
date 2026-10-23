@@ -198,7 +198,7 @@ jobs:
 
   refinement:
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 120
     env:
       CARGO_BUILD_JOBS: 1
       OPAMJOBS: 1
@@ -225,7 +225,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/refinement-logs"
-          VELA_MEMORY_MAX=6G VELA_STEP_TIMEOUT=3600 security/assurance/bounded.sh security/assurance/install-hax.sh 2>&1 | tee "$RUNNER_TEMP/refinement-logs/toolchain-install.log"
+          VELA_MEMORY_MAX=6G VELA_STEP_TIMEOUT=5400 security/assurance/bounded.sh security/assurance/install-hax.sh 2>&1 | tee "$RUNNER_TEMP/refinement-logs/toolchain-install.log"
       - name: Activate and check pinned proof tools
         run: |
           set -euo pipefail

@@ -33,7 +33,8 @@ pinned environment. No bit-for-bit build reproducibility is claimed.
 The refinement job restores installed proof tools and the pinned Rust nightly
 from an exact GitHub Actions cache key containing OS, architecture, Ubuntu 24
 and the installer script hash. A miss builds them under the documented memory
-cap; completed tools are cached before application proofs. Activation checks
+cap, with a 90-minute cold-install limit inside a two-hour job budget;
+completed tools are cached before application proofs. Activation checks
 hax/engine/F★ versions and logs Z3/Rust versions. GitHub's cache and tool
 installation remain trusted CI infrastructure; a cache key is not a toolchain
 soundness proof. VELA extraction output is regenerated and checked on every run.
@@ -69,7 +70,7 @@ environment** in [`install-hax.sh`](install-hax.sh). It builds compilers and
 tools and can take substantial time; it is not part of the default local run:
 
 ```bash
-VELA_MEMORY_MAX=6G VELA_STEP_TIMEOUT=3600 security/assurance/bounded.sh security/assurance/install-hax.sh
+VELA_MEMORY_MAX=6G VELA_STEP_TIMEOUT=5400 security/assurance/bounded.sh security/assurance/install-hax.sh
 export OPAMROOT="$HOME/.local/opt/vela-hax-0.3.7/opam"
 export PATH="$HOME/.local/opt/vela-hax-0.3.7/bin:$OPAMROOT/vela-hax/bin:$OPAMROOT/vela-fstar/bin:$PATH"
 ```
