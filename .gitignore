@@ -1,6 +1,7 @@
 
 # Rust build outputs
 **/target/
+/target-lib/
 /desktopVELA/target
 
 # iOS bridge build outputs

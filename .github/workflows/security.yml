@@ -63,28 +63,26 @@ jobs:
   formal-rekey:
     runs-on: ubuntu-latest
     env:
-      CARGO_BUILD_JOBS: 1
+      # Compilation uses all runner cores; tests stay serial.
       RUST_TEST_THREADS: 1
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@1.99.1
 
-      # Target paths are relative to each workspace. All resolve to VELA/target.
-      # Publish the combined dependency cache only after this job succeeds;
-      # regression restores it read-only, so its smaller build cannot win the
-      # immutable cache key. Parallel cold jobs still compile independently.
+      # One workspace entry per cached target directory. On save, rust-cache
+      # prunes each listed target down to that workspace's dependencies; listing
+      # several workspaces that share one target keeps only the crates common
+      # to all of them, which threw away the server's dependency tree and made
+      # every run rebuild from scratch. The server builds into target/, the
+      # libVELA crates into target-lib/ (CARGO_TARGET_DIR on those steps); the
+      # Android bridge's dependency tree covers vela-crypto and the policies.
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: |
             serverVELA -> ../target
-            libVELA/vela-crypto -> ../../target
-            libVELA/vela-client-recovery-policy -> ../../target
-            libVELA/vela-client-share-policy -> ../../target
-            libVELA/vela-android-bridge -> ../../target
-            libVELA/vela-apple-bridge -> ../../target
-            libVELA/vela-wasm-bridge -> ../../target
-          shared-key: security-rust-v2
+            libVELA/vela-android-bridge -> ../../target-lib
+          shared-key: security-formal-v3
 
       - name: Install pinned Tamarin 1.12.0 and Maude 3.5.1
         run: |
@@ -167,6 +165,8 @@ jobs:
           cargo test --manifest-path libVELA/vela-client-recovery-policy/Cargo.toml --test bounded_refinement
 
       - name: Verify the desktop, Android, Apple, and web epoch wire contract
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target-lib
         run: |
           cargo test --manifest-path libVELA/vela-client-share-policy/Cargo.toml
           cargo test --manifest-path libVELA/vela-crypto/Cargo.toml --lib
@@ -177,6 +177,10 @@ jobs:
           cargo test --manifest-path libVELA/vela-wasm-bridge/Cargo.toml --lib
 
       - name: Run every assurance model, including the credential-release ladder
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target-lib
+          VELA_CARGO_JOBS: 4
+          VELA_MEMORY_MAX: 10G
         run: security/assurance/run-all.sh --out "$RUNNER_TEMP/assurance-logs"
 
       - uses: actions/upload-artifact@v4
@@ -191,8 +195,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     env:
-      CARGO_BUILD_JOBS: 1
       RUST_TEST_THREADS: 1
+      # bounded.sh defaults to one job under 3 GiB (safe on a workstation).
+      # The runner is a dedicated 4-core, 16 GiB machine.
+      VELA_CARGO_JOBS: 4
+      VELA_MEMORY_MAX: 10G
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.99.1
@@ -201,7 +208,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: desktopVELA -> ../target
-          shared-key: security-desktop-core-v2
+          shared-key: security-desktop-core-v3
       - name: Check desktop policy callers and recoverable share commits
         run: |
           set -euo pipefail
@@ -333,27 +340,18 @@ jobs:
   regression:
     runs-on: ubuntu-latest
     env:
-      CARGO_BUILD_JOBS: 1
       RUST_TEST_THREADS: 1
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@1.99.1
 
-      # Identical workspace inputs give the same dependency key as formal-rekey.
-      # Restore its previous successful cache; do not publish this subset.
+      # Its own cache: `cargo build` of the server resolves features differently
+      # from formal-rekey's `cargo test`, so sharing that cache only partly helps.
       - uses: swatinem/rust-cache@v2
         with:
-          workspaces: |
-            serverVELA -> ../target
-            libVELA/vela-crypto -> ../../target
-            libVELA/vela-client-recovery-policy -> ../../target
-            libVELA/vela-client-share-policy -> ../../target
-            libVELA/vela-android-bridge -> ../../target
-            libVELA/vela-apple-bridge -> ../../target
-            libVELA/vela-wasm-bridge -> ../../target
-          shared-key: security-rust-v2
-          save-if: false
+          workspaces: serverVELA -> ../target
+          shared-key: security-regression-v3
 
       - name: Build server
         run: cargo build --manifest-path serverVELA/Cargo.toml

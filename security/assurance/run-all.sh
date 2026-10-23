@@ -15,7 +15,7 @@ set -uo pipefail
 if [[ ${VELA_BOUNDED:-0} != 1 ]]; then
   exec "$(dirname "$0")/bounded.sh" "$0" "$@"
 fi
-export CARGO_BUILD_JOBS=1 OPAMJOBS=1 MAKEFLAGS=-j1
+export CARGO_BUILD_JOBS="${VELA_CARGO_JOBS:-1}" OPAMJOBS=1 MAKEFLAGS=-j1
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 formal="$repo_root/security/formal"
