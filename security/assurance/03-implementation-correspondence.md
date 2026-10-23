@@ -128,14 +128,15 @@ detects added extraction assumptions, not semantic correspondence.
 
 ## 3.3 Executable refinement evidence (CI-gated)
 
-These tests check the layer that F\* does not cover:
+The table distinguishes finite policy enumeration from concrete handler,
+database and FFI execution. Coverage is limited to each listed property:
 
 | Test | What it checks |
 |---|---|
 | `serverVELA/vela-server/tests/rekey_state_model.rs` | Fixed-point state exploration (epoch ≤3, 4 attempts, 2 devices, 2 chunks). All 24 upload orderings run against the real Axum handlers and Turso. Start-vs-write and timeout-vs-commit races |
-| `…/tests/session_capability_model.rs` | Session lifecycle against real handlers |
-| `…/tests/enrollment_ceremony_model.rs` | Enrollment ceremony. Exactly one racing completion wins |
-| `…/tests/recovery_lifecycle_model.rs` | Recovery lifecycle against real handlers |
+| `…/tests/session_capability_model.rs` | Finite grant, renewal and route fact combinations against the pure session policy; no HTTP/database execution |
+| `…/tests/enrollment_ceremony_model.rs` | Finite enrollment fact combinations against pure policy constructors; no handler execution or concurrent completion race |
+| `…/tests/recovery_lifecycle_model.rs` | Finite recovery phases/facts against pure recovery policy constructors; no HTTP/database execution |
 | `…/tests/integration.rs::recovery_publication_finalizes_exactly_the_current_staged_split` | The SQL pending-row compare and atomic promotion |
 | `libVELA/vela-client-recovery-policy/tests/bounded_refinement.rs` | Exhausts the reducer's Boolean state space |
 | `vela-crypto rekey::tests::fleet_wire_matrix_is_cross_client_and_epoch_compatible` | Every producer × consumer across desktop, web, Android, and Apple at epochs 1–4. Exact epoch AAD; legacy rejected after epoch 1 |

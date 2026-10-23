@@ -139,7 +139,7 @@ jobs:
           eval "$(opam env --switch vela-proverif)"
           echo "$(opam var bin --switch vela-proverif)" >> "$GITHUB_PATH"
 
-      - name: Exhaust the bounded model against real handlers and Turso
+      - name: Check bounded policies and rekey handler/database conformance
         run: |
           cargo test --manifest-path serverVELA/Cargo.toml --test rekey_state_model
           cargo test --manifest-path serverVELA/Cargo.toml --test session_capability_model
@@ -176,7 +176,6 @@ jobs:
     env:
       CARGO_BUILD_JOBS: 1
       RUST_TEST_THREADS: 1
-      CARGO_PROFILE_DEV_CODEGEN_BACKEND: llvm
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.99.1

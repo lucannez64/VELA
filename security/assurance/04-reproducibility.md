@@ -20,6 +20,11 @@ is historical evidence, not evidence for the new protocols.
 | Z3 | 4.13.3 | Official x64 glibc-2.35 archive, SHA-256 `32c7377026733c9d7b33c21cd77a68f50ba682367207b031a6bfd80140a8722f` |
 | Rust tests in security CI | 1.99.1 | `dtolnay/rust-toolchain@1.99.1`; Cargo lockfiles pin crate resolution |
 
+Stable Rust CI uses its default LLVM backend. Do not set
+`CARGO_PROFILE_DEV_CODEGEN_BACKEND` in stable jobs: explicit backend selection
+requires an unstable Cargo feature. The pinned hax nightly installer enables
+that feature explicitly for its own LLVM override.
+
 Maude 3.2 and unversioned ProVerif were used in the historical reference CI.
 The new gates use the versions above. OS packages, transitive opam resolution,
 GitHub action tags, semgrep, cargo-audit and cargo-deny are not a hermetic

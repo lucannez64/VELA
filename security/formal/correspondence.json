@@ -11,7 +11,7 @@
         "security/formal/m19c_share_v1_baseline.spthy": "5e42bb07a3c6bfddeb4467736edbab9c8d89d12f8795907dbdefdcf82fed9b57",
         "desktopVELA/vela-desktop-core/src/lib.rs": "fc669ad646ca899e39cff2891e06d2f0d4d47d3332b610464ee9aecff7caa856",
         "desktopVELA/vela-desktop-core/src/store.rs": "b6de27f088698a5f37e1754bc81691260d8222545686d78fc0cc1d94d5234324",
-        "desktopVELA/Cargo.lock": "26dceff3ef4713b334e2726051bf2fc9193acb14fe0f0646e4c49070847ae373"
+        "desktopVELA/Cargo.lock": "ea90e8a8712206f5000303fe26031894c8016715f5d1a20fd2737015bf3cfbd3"
       }
     },
     {
@@ -53,7 +53,7 @@
         "desktopVELA/vela-desktop-core/src/store.rs": "b6de27f088698a5f37e1754bc81691260d8222545686d78fc0cc1d94d5234324",
         "desktopVELA/vela-desktop-core/src/lib.rs": "fc669ad646ca899e39cff2891e06d2f0d4d47d3332b610464ee9aecff7caa856",
         "desktopVELA/vela-desktop-core/Cargo.toml": "e2393fd6288f54662cd8f33e23256a28dae2061178e94d22ff4b1a42ca4d9a75",
-        "desktopVELA/Cargo.lock": "26dceff3ef4713b334e2726051bf2fc9193acb14fe0f0646e4c49070847ae373"
+        "desktopVELA/Cargo.lock": "ea90e8a8712206f5000303fe26031894c8016715f5d1a20fd2737015bf3cfbd3"
       }
     },
     {
