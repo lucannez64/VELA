@@ -6,23 +6,23 @@ From repository root with the pinned hax/F*/Z3 tools on PATH:
 security/assurance/bounded.sh libVELA/vela-crypto/verify-share-facts-fstar.sh
 ```
 
-The runner checks 19 selected policy postconditions and eleven crypto contracts:
-the actual fact constructor, decoded-observation/policy composition, exact
-prefix reader, and the hybrid verification AND gate with two rejection theorems, and five
-fixed-width wire arithmetic contracts (decode, quotient/remainder, encode
-round-trip, explicit round-trip, and encoding injectivity).
-The production `admit` path calls the checked composition; Reader calls the
-checked prefix function; signing verification calls the checked gate.
+The runner checks 19 selected policy postconditions and 22 crypto contracts.
+The crypto scope includes fact construction, decoded-observation/policy
+composition, hybrid verification gates, fixed-width arithmetic, exact LP/u64
+splitting, mutable/grouped cursor readers, the full raw byte-frame parser's
+refinement to a functional grammar, and three opened-share accessors.
+
+The production opener uses the checked byte parser. OpenedShare fields are
+private, with compiler-negative tests for construction/mutation. Its read-only
+methods delegate to the checked free-function kernels. See the
+[precise boundary](../../../../security/assurance/11-parser-refinement.md).
 
 There is no lax checking, admitted body or local assumption declaration in
-these generated modules. Imported models remain trusted. In particular,
-`Some(OpenedShare)` must come from correct authenticated opening; the proof
-does not establish that the complete parser, KEM, signature wrapper or recipient
-key digest check justifies that observation. Context origins, pin copying and
-persistent effects also need separate refinement. Prefix splitting is checked;
-fixed-width u64 round-trip and injectivity are checked. Variable-length fields,
-UTF-8, bounds, and the complete wire format still lack that theorem. The
-AND gate is checked, but does not supply a computational-security reduction.
+these generated modules. Imported models remain trusted. UTF-8 conversion,
+encoder inverse, signature-message reconstruction, primitive wrappers,
+recipient-key provenance, context origins and persistent effects still need
+separate refinement. These checks do not establish complete authenticated
+opening or computational construction security.
 
 ## Explicit compatibility model
 

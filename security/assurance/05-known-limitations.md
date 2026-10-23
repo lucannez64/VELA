@@ -53,7 +53,7 @@ reduce selected gaps; no full-system or computational security proof is claimed.
 | **O-3** | Coercion; social engineering of the trusted contact or of a fingerprint comparison | Non-goal |
 | **O-4** | A malicious server denying service, dropping writes, or forking views between devices | Rollback is partly covered (INT-1). Fork consistency across devices is **not** claimed |
 | **O-5** | Supply-chain compromise of dependencies, toolchains, or vendored `gpui-ce` | `cargo audit` and `cargo deny` only |
-| **O-6** | Implementation bugs outside the policy crates: parsing, serialization, FFI memory safety (see C-4), UI confusion, autofill origin mapping (see A-2) | Fuzzing exists for some parsers (`.github/workflows/fuzz.yml`). No proofs |
+| **O-6** | Implementation bugs outside the policy crates: parsing, serialization, FFI memory safety (see C-4), UI confusion, autofill origin mapping (see A-2) | The share byte-frame parser has scoped refinement evidence; other parsing, serialization, UI and FFI paths remain unproved. Fuzzing exists for some parsers (`.github/workflows/fuzz.yml`) |
 | **O-7** | Compromise of a browser that has been granted a web session | Bounded by AUTH-6 and COMP-6, but chunk keys already copied stay valid until rotation (audit D-2 residual) |
 | **O-8** | Quantum adversaries against the classical half alone, or classical attacks against the lattice half alone | Hybrid design intent (COMP-5). No proof |
 | **O-9** | The WASM fallback with a PIN when no desktop app is present | Explicitly weaker (SPEC §7.4) |
@@ -65,7 +65,7 @@ them. Each is an easy place for a reviewer to find an over-claim.
 
 | ID | Gap | Impact | Planned fix |
 |---|---|---|---|
-| **G-1** | **Current CI refinement evidence is pending.** All eight crates passed fresh local hax/F* checking; logs and checked extractions are attached | Local policy proofs do not establish whole-handler correctness or an independent CI reproduction | The refinement job installs pinned tools with a 6 GiB cap and extracts/checks all eight crates; publish and run CI before claiming CI success |
+| **G-1** | **The new parser/accessor increment awaits CI.** The preceding 119-postcondition snapshot passed the complete hosted security workflow on e690dfc; current local evidence covers 130 postconditions | Local policy proofs do not establish whole-handler correctness or an independent CI reproduction | The refinement job installs pinned tools with a 6 GiB cap and extracts/checks all eight crates; reproduce the new source snapshot before attributing hosted success to it |
 | **G-2** | **Credential-release CI gap: configuration added, successful run pending** | Historical CONF-6/7/8, AUTH-9 and COMP-7 evidence is local | `run-all.sh` is now in CI and checks 83 verified plus exactly five named intended falsifications |
 | **G-3** | **Partly pinned environment** | Historical CI used unsupported Maude 3.2 and unpinned ProVerif | Current proof gates pin Tamarin 1.12.0, Maude 3.5.1, ProVerif 2.05 and Rust 1.99.1; hax/F*/Z3 versions are pinned. OS packages, action tags, transitive opam resolution and static scanners remain non-hermetic |
 | **G-4** | **Historical documentation drift** | The original package predated the new protocols | This update removes the unsupported GL20 citation and the claimed reduction, records current counts and preserves old CI results as historical evidence |

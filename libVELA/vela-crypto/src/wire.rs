@@ -58,9 +58,209 @@ pub fn u64_wire_encoding_is_injective(left: u64, right: u64) -> bool {
     encode_u64_be(left) != encode_u64_be(right) || left == right
 }
 
+/// Decode a fixed-width integer and its exact remaining input.
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    if input.len() < 8 {
+        matches!(result, None)
+    } else {
+        match result {
+            Some((value, rest)) => value == decode_u64_be([
+                input[0], input[1], input[2], input[3],
+                input[4], input[5], input[6], input[7],
+            ]) && rest == &input[8..],
+            None => false,
+        }
+    }
+}))]
+pub fn split_u64_prefix(input: &[u8]) -> Option<(u64, &[u8])> {
+    if input.len() < 8 {
+        return None;
+    }
+    Some((
+        decode_u64_be([
+            input[0], input[1], input[2], input[3], input[4], input[5], input[6], input[7],
+        ]),
+        &input[8..],
+    ))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    match split_u64_prefix(input) {
+        Some((value, rest)) => result == Some(value) && *future(input) == rest,
+        None => matches!(result, None) && *future(input) == *input,
+    }
+}))]
+pub fn take_u64(input: &mut &[u8]) -> Option<u64> {
+    match split_u64_prefix(input) {
+        Some((value, rest)) => {
+            *input = rest;
+            Some(value)
+        }
+        None => None,
+    }
+}
+
+/// Parse a u64-length-prefixed field, returning its exact payload and remainder.
+/// The length is checked before narrowing it to usize or indexing the payload.
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    if input.len() < 8 {
+        matches!(result, None)
+    } else {
+        let length = decode_u64_be([input[0], input[1], input[2], input[3],
+                                   input[4], input[5], input[6], input[7]]);
+        if length > (input.len() - 8) as u64 {
+            matches!(result, None)
+        } else {
+            match result {
+                Some((field, rest)) => field == &input[8..8 + length as usize]
+                    && rest == &input[8 + length as usize..],
+                None => false,
+            }
+        }
+    }
+}))]
+pub fn split_length_prefixed(input: &[u8]) -> Option<(&[u8], &[u8])> {
+    if input.len() < 8 {
+        return None;
+    }
+    let length = decode_u64_be([
+        input[0], input[1], input[2], input[3], input[4], input[5], input[6], input[7],
+    ]);
+    let payload = &input[8..];
+    if length > payload.len() as u64 {
+        return None;
+    }
+    let length = length as usize;
+    Some((&payload[..length], &payload[length..]))
+}
+
+/// Stateful reader operation: successful reads consume exactly one field;
+/// rejected reads preserve the cursor. Used directly by the envelope reader.
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    match split_length_prefixed(*input) {
+        Some((field, rest)) => result == Some(field) && *future(input) == rest,
+        None => matches!(result, None) && *future(input) == *input,
+    }
+}))]
+pub fn take_length_prefixed<'a>(input: &mut &'a [u8]) -> Option<&'a [u8]> {
+    match split_length_prefixed(input) {
+        Some((field, rest)) => {
+            *input = rest;
+            Some(field)
+        }
+        None => None,
+    }
+}
+
+/// Grammar combinators for two and four adjacent LP fields. The stateful
+/// operations commit their cursor only after the complete group succeeds.
+pub fn split_lp_pair(input: &[u8]) -> Option<((&[u8], &[u8]), &[u8])> {
+    let (first, rest) = split_length_prefixed(input)?;
+    let (second, rest) = split_length_prefixed(rest)?;
+    Some(((first, second), rest))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    match split_lp_pair(input) {
+        Some(((first, second), tail)) => match result {
+            Some((a, b)) => a == first && b == second && *future(input) == tail,
+            None => false,
+        },
+        None => matches!(result, None) && *future(input) == *input,
+    }
+}))]
+pub fn take_lp_pair<'a>(input: &mut &'a [u8]) -> Option<(&'a [u8], &'a [u8])> {
+    let mut rest = *input;
+    let first = take_length_prefixed(&mut rest)?;
+    let second = take_length_prefixed(&mut rest)?;
+    *input = rest;
+    Some((first, second))
+}
+
+pub fn split_lp_four(input: &[u8]) -> Option<(((&[u8], &[u8]), (&[u8], &[u8])), &[u8])> {
+    let (first, rest) = split_lp_pair(input)?;
+    let (second, rest) = split_lp_pair(rest)?;
+    Some(((first, second), rest))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    match split_lp_four(input) {
+        Some((((a, b), (c, d)), tail)) => match result {
+            Some(((w, x), (y, z))) => w == a && x == b && y == c && z == d
+                && *future(input) == tail,
+            None => false,
+        },
+        None => matches!(result, None) && *future(input) == *input,
+    }
+}))]
+pub fn take_lp_four<'a>(
+    input: &mut &'a [u8],
+) -> Option<((&'a [u8], &'a [u8]), (&'a [u8], &'a [u8]))> {
+    let mut rest = *input;
+    let first = take_lp_pair(&mut rest)?;
+    let second = take_lp_pair(&mut rest)?;
+    *input = rest;
+    Some((first, second))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn length_prefix_rejects_truncation_and_preserves_the_exact_remainder() {
+        for n in 0..8 {
+            assert!(split_length_prefixed(&[0; 8][..n]).is_none());
+        }
+        let framed = [0, 0, 0, 0, 0, 0, 0, 3, 0xaa, 0xbb, 0xcc, 0xdd];
+        assert_eq!(
+            split_length_prefixed(&framed),
+            Some((&framed[8..11], &framed[11..]))
+        );
+        assert!(split_length_prefixed(&framed[..10]).is_none());
+        assert_eq!(split_length_prefixed(&[0; 8]), Some((&[][..], &[][..])));
+        assert!(split_length_prefixed(&u64::MAX.to_be_bytes()).is_none());
+        let exceeds_32_bit = 0x1_0000_0000u64.to_be_bytes();
+        assert!(split_length_prefixed(&exceeds_32_bit).is_none());
+    }
+
+    #[test]
+    fn grouped_fields_do_not_commit_a_partial_cursor() {
+        let one = [0, 0, 0, 0, 0, 0, 0, 1, b'a'];
+        let mut cursor = one.as_slice();
+        assert!(take_lp_pair(&mut cursor).is_none());
+        assert_eq!(cursor, one.as_slice());
+        let encoded = [0, 0, 0, 0, 0, 0, 0, 1, b'a', 0, 0, 0, 0, 0, 0, 0, 1, b'b'];
+        let mut cursor = encoded.as_slice();
+        assert!(take_lp_four(&mut cursor).is_none());
+        assert_eq!(cursor, encoded.as_slice());
+        assert_eq!(take_lp_pair(&mut cursor), Some((&b"a"[..], &b"b"[..])));
+        assert!(cursor.is_empty());
+    }
+
+    #[test]
+    fn integer_cursor_reads_exactly_eight_bytes_and_preserves_failed_input() {
+        let bytes = [1, 2, 3, 4, 5, 6, 7, 8, 0xff];
+        let mut cursor = bytes.as_slice();
+        assert_eq!(take_u64(&mut cursor), Some(0x0102_0304_0506_0708));
+        assert_eq!(cursor, &[0xff]);
+        assert_eq!(take_u64(&mut cursor), None);
+        assert_eq!(cursor, &[0xff]);
+    }
+
+    #[test]
+    fn cursor_failure_is_atomic_and_adjacent_fields_stay_separate() {
+        let encoded = [0, 0, 0, 0, 0, 0, 0, 1, b'a', 0, 0, 0, 0, 0, 0, 0, 1, b'b'];
+        let mut cursor = encoded.as_slice();
+        assert_eq!(take_length_prefixed(&mut cursor), Some(&b"a"[..]));
+        assert_eq!(take_length_prefixed(&mut cursor), Some(&b"b"[..]));
+        assert!(cursor.is_empty());
+        for bytes in [&encoded[..7], &encoded[..8]] {
+            let mut cursor = bytes;
+            assert!(take_length_prefixed(&mut cursor).is_none());
+            assert_eq!(cursor, bytes);
+        }
+    }
 
     #[test]
     fn wire_arithmetic_matches_standard_big_endian_encoding() {

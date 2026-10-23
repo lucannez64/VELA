@@ -13,7 +13,7 @@
     },
     {
       "artifact": "libVELA/vela-crypto/proofs/fstar/extraction/Vela_crypto.Share_envelope.fst",
-      "selected_postconditions": 3,
+      "selected_postconditions": 8,
       "allowed_assume_val": []
     },
     {
@@ -58,7 +58,7 @@
     },
     {
       "artifact": "libVELA/vela-crypto/proofs/fstar/extraction/Vela_crypto.Wire.fst",
-      "selected_postconditions": 5,
+      "selected_postconditions": 11,
       "allowed_assume_val": []
     }
   ]

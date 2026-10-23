@@ -15,7 +15,7 @@ def check_artifact(path, expected):
         raise ValueError(f'{path}: unreviewed assume val declarations')
     if len(re.findall(r'^assume\b', code, re.M)) != len(assumptions):
         raise ValueError(f'{path}: unreviewed assumption syntax')
-    if re.search(r'\b(?:admit|admit1|magic|unsafe_coerce)\b|--lax\b', code):
+    if re.search(r'\b(?:admit|admit1|magic|unsafe_coerce)\b|--(?:lax|admit_smt_queries|unsafe_tactic_exec)\b', code):
         raise ValueError(f'{path}: admitted/unsafe proof body or lax checking')
     count = len(re.findall(r'\(ensures\b', code))
     if count != expected['selected_postconditions']:

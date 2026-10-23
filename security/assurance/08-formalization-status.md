@@ -51,15 +51,16 @@ turn any open obligation below into a proved result.
 - **Reduced assumption boundary.** Structural Rust matches replaced the 18
   opaque derived-enum equality uses. Fresh checking of all eight policy crates
   succeeded with zero local assume val declarations. The inventory now has
-  **119 explicit postconditions / 122 selected functions** in eleven Rust modules,
-  plus one defined String compatibility model. Three selected functions have
+  **130 explicit postconditions / 137 selected functions** in eleven Rust modules,
+  plus one defined String compatibility model. Seven selected functions have
   no explicit ensures. Imported library assumptions and proof tools remain
   trusted; the drift checker is not a proof checker.
 
 [Current evidence](proof-logs/current/trusted-boundary/README.md) supersedes
 prior extraction snapshots for all eight policy crates. CI includes the new
 checks. The [hosted refinement job](proof-logs/current/hosted-refinement-40002230354/README.md)
-passed on `b27dcd6`; the complete security workflow remains pending.
+passed on `b27dcd6`, and the [complete security workflow](https://github.com/lucannez64/VELA/actions/runs/40008926193)
+passed on `e690dfc`. The new parser/accessor increment awaits hosted CI.
 
 The I/O-contract review also found and fixed an uncertain-write recovery gap:
 readable pending metadata now receives a successful durability re-arm before
@@ -74,13 +75,23 @@ for review; its computational game and simulation are not machine-checked.
 Five freshly extracted wire contracts prove exact big-endian decoding, byte
 decomposition, encoding round-trip and injectivity for all u64 values. The
 production share-envelope integer writer/reader use this checked codec. This
-does not prove the entire parser or variable-length field framing.
+is extended by the [concrete byte-frame refinement](11-parser-refinement.md),
+including LP bounds, grouped cursor operations and exact frame field values.
+UTF-8/object conversion, encoder inverse and authenticated-opening composition
+remain unproved.
+
+The production byte parser now refines a functional VSE2 grammar for all input
+slices. Cursor contracts cover fixed/LP fields and atomic grouped reads. Three
+accessor kernels preserve opened fields/bytes; Rust module privacy and two
+compile-fail checks prevent safe external construction/mutation of opened
+observations. These results do not establish crypto-wrapper correctness or
+context origins; see [the exact boundary](11-parser-refinement.md).
 
 ## Remaining obligations for the six requested areas
 
 | Area | Status | Required to close |
 |---|---|---|
-| F-1: handler facts | Partial | Prove parser/authenticated-open contracts and independent context origins; cover SQL, token, epoch, enrollment and recovery fact construction across all handlers |
+| F-1: handler facts | Partial | Complete UTF-8/object and authenticated-open composition after the checked byte-frame parser; prove independent context origins; cover SQL, token, epoch, enrollment and recovery fact construction across all handlers |
 | F-2: state transitions | Partial | Machine-check concrete handler/database transitions against protocol transitions, including exceptions, cancellation and concurrency |
 | F-3: persistence/recovery | Partial: M28 and composed M29 | Prove the actual journal implementation refines M28; formalize collection equality and filesystem outcomes; compose local edits/deletions and RMS migration; cover or explicitly exclude independent processes |
 | F-4: construction security | Partial: AND gate and ideal-signature composition | Define computational games and prove reductions for VELA hybrid KEM/signatures, framing, share tags, possession proofs and KDFs under named primitive assumptions; verify application randomness/error/erasure handling. Primitive internals and leakage resistance are trusted under the selected boundary |

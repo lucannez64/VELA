@@ -4,9 +4,9 @@
     {
       "boundary": "share admission",
       "artifacts": {
-        "libVELA/vela-crypto/src/share_envelope.rs": "111b8cdce4451b1c58ee5f8f120093a7f1907f3b3ffa508ec30066b3ad2da16d",
+        "libVELA/vela-crypto/src/share_envelope.rs": "76613044cc70189ae8d9093078d1d76d3a32768ecba0d90acb3b6720ea3aba64",
         "libVELA/vela-client-share-policy/src/lib.rs": "97a94c6af11d40b6eafa4930940212d62d2cb5393d6940c7457bb9ce12e9a261",
-        "desktopVELA/vela-desktop-core/src/sharing.rs": "e5b2a83d5bdb2ec6bfd4091d706e6a6ecc55159af2d8867ab8e263d356d3b9a0",
+        "desktopVELA/vela-desktop-core/src/sharing.rs": "2c6b8ac1e82d1858e92937a874fa7c971b0821de22bce368eb17165c9b7db0f3",
         "security/formal/m19c_share_sender_authentication.spthy": "7cb3e243ec013165a20fa9988ef65f5697cb71e564eb8853e8d6d0113f291935",
         "security/formal/m19c_share_v1_baseline.spthy": "5e42bb07a3c6bfddeb4467736edbab9c8d89d12f8795907dbdefdcf82fed9b57",
         "desktopVELA/vela-desktop-core/src/lib.rs": "fc669ad646ca899e39cff2891e06d2f0d4d47d3332b610464ee9aecff7caa856",
@@ -46,10 +46,10 @@
         "security/formal/m28_share_journal.spthy": "e6ae320389499cba9fc49db9ec995ddf16345d033efe8e78b83b9d86541ad06f",
         "security/formal/share-journal-correspondence.md": "ae10815e146c5a73ea6418caf20fe99df4bf9040a407d05ba5bfd5f64dbc2c53",
         "libVELA/vela-client-share-policy/src/lib.rs": "97a94c6af11d40b6eafa4930940212d62d2cb5393d6940c7457bb9ce12e9a261",
-        "libVELA/vela-crypto/src/share_envelope.rs": "111b8cdce4451b1c58ee5f8f120093a7f1907f3b3ffa508ec30066b3ad2da16d",
-        "libVELA/vela-crypto/verify-share-facts-fstar.sh": "ce39937b714c17049c02722704645cdace0f099f62fd644affb2fe5066eafe2c",
+        "libVELA/vela-crypto/src/share_envelope.rs": "76613044cc70189ae8d9093078d1d76d3a32768ecba0d90acb3b6720ea3aba64",
+        "libVELA/vela-crypto/verify-share-facts-fstar.sh": "71a5e7240184ff281f2c14df4c12979a9e7f45f48dd4bf6783584855e035909d",
         "libVELA/vela-crypto/proofs/fstar/models/Alloc.String.fst": "ebb0c20ed7755594351ea238964573d1c0987427570839bf5a4cf11d5bc3864d",
-        "desktopVELA/vela-desktop-core/src/sharing.rs": "e5b2a83d5bdb2ec6bfd4091d706e6a6ecc55159af2d8867ab8e263d356d3b9a0",
+        "desktopVELA/vela-desktop-core/src/sharing.rs": "2c6b8ac1e82d1858e92937a874fa7c971b0821de22bce368eb17165c9b7db0f3",
         "desktopVELA/vela-desktop-core/src/store.rs": "b6de27f088698a5f37e1754bc81691260d8222545686d78fc0cc1d94d5234324",
         "desktopVELA/vela-desktop-core/src/lib.rs": "fc669ad646ca899e39cff2891e06d2f0d4d47d3332b610464ee9aecff7caa856",
         "desktopVELA/vela-desktop-core/Cargo.toml": "e2393fd6288f54662cd8f33e23256a28dae2061178e94d22ff4b1a42ca4d9a75",
@@ -62,9 +62,9 @@
         "libVELA/vela-client-recovery-policy/src/lib.rs": "787d421ea62a246aa66cd55d320cf17b2193ea2466180afaeefb2e1fa670cdc7",
         "libVELA/vela-client-share-policy/src/lib.rs": "97a94c6af11d40b6eafa4930940212d62d2cb5393d6940c7457bb9ce12e9a261",
         "libVELA/vela-client-share-policy/verify-fstar.sh": "4268a7d2c8db86028962f32b1ce9a9f9d93cd1ec302e9d1ab920f1ec68256d15",
-        "libVELA/vela-crypto/src/share_envelope.rs": "111b8cdce4451b1c58ee5f8f120093a7f1907f3b3ffa508ec30066b3ad2da16d",
+        "libVELA/vela-crypto/src/share_envelope.rs": "76613044cc70189ae8d9093078d1d76d3a32768ecba0d90acb3b6720ea3aba64",
         "libVELA/vela-crypto/src/signing.rs": "82c9e2f3f9882d62cad5707cd8287b1299b373b10629eff912477f519249150b",
-        "libVELA/vela-crypto/verify-share-facts-fstar.sh": "ce39937b714c17049c02722704645cdace0f099f62fd644affb2fe5066eafe2c",
+        "libVELA/vela-crypto/verify-share-facts-fstar.sh": "71a5e7240184ff281f2c14df4c12979a9e7f45f48dd4bf6783584855e035909d",
         "libVELA/vela-sync-policy/src/lib.rs": "6f7e4eff2087e03fc5d337a238abacc0d69777aece0dc4b7acd017e4fa997618",
         "security/formal/m29_signed_share_commit.spthy": "1b57cbec760120c4ac42267ab277a3d17db6439f425f0cddee65a22d32bdd08c",
         "security/formal/signed-share-commit-correspondence.md": "8b1a5ae7bc8dbedd8c83c6a979fd82470706c87703d73503cc1f70ea6f582822",
@@ -76,13 +76,18 @@
       }
     },
     {
-      "boundary": "fixed-width share wire arithmetic (complete parser refinement remains open)",
+      "boundary": "share wire arithmetic and concrete byte-frame parsing (crypto/context/I/O refinement remains open)",
       "artifacts": {
-        "libVELA/vela-crypto/src/wire.rs": "878a40d6413ca636394ec9e44d430f38b63a5cd41a809ffd6cdfac8b12dbfd4f",
-        "libVELA/vela-crypto/src/share_envelope.rs": "111b8cdce4451b1c58ee5f8f120093a7f1907f3b3ffa508ec30066b3ad2da16d",
-        "libVELA/vela-crypto/proofs/fstar/extraction/Vela_crypto.Wire.fst": "4085764548b8d16e5092419fea68e98bca41cd9cecb31b7f1469e00c287e535c",
-        "libVELA/vela-crypto/verify-share-facts-fstar.sh": "ce39937b714c17049c02722704645cdace0f099f62fd644affb2fe5066eafe2c",
-        "security/assurance/10-signature-reduction.md": "6195325eeb49502147aaf0934799348259b96a8861c0aed77acbdcd5590020d3"
+        "libVELA/vela-crypto/src/wire.rs": "89eb295d9f5e6acd44bcbaa569eb718ea5748224f8787437c612fb45df9cbe2e",
+        "libVELA/vela-crypto/src/share_envelope.rs": "76613044cc70189ae8d9093078d1d76d3a32768ecba0d90acb3b6720ea3aba64",
+        "libVELA/vela-crypto/proofs/fstar/extraction/Vela_crypto.Wire.fst": "8a99d47cb5796c1fdddb0d5d4ddbe02dab8dfb0f8f23d6faba1add5282db843b",
+        "libVELA/vela-crypto/verify-share-facts-fstar.sh": "71a5e7240184ff281f2c14df4c12979a9e7f45f48dd4bf6783584855e035909d",
+        "security/assurance/10-signature-reduction.md": "8d3a6809245272d97c39dad6f67c0343900fc6dd1b897591ebf58dfad2a4b9a6",
+        "security/assurance/11-parser-refinement.md": "cc1be44842fd51f9071c8751a5f7bb169396957ad2ba9c3ab086e041407ec8dd",
+        "libVELA/vela-crypto/proofs/fstar/extraction/Vela_crypto.Share_envelope.fst": "553ffa877f731d853ea1da3c782570b67c0abd23e1fc833d4e213f7a41da7802",
+        "libVELA/vela-crypto/proofs/fstar/extraction/Vela_crypto.Signing.fst": "d6b62ebffa9ca4ce5cd61b4c2969d26c0f3979be0409b3cbc5a9827c8dc6834b",
+        "libVELA/vela-apple-bridge/src/lib.rs": "0325d227a6c0ce2536cc0a1c95fad491498e20ee8327715f3f3323e0749b976c",
+        "libVELA/vela-android-bridge/src/lib.rs": "b351b0f475e48d90007710e90d55ff15bb242a2ed958a3e2e75c4a46f353534c"
       }
     }
   ]

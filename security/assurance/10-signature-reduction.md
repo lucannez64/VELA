@@ -74,9 +74,10 @@ At the application layer, an unqueried structured operation must encode to
 an unqueried byte string. That requires injective framing, distinct domains,
 and an inventory of every use of the same signing key. A collision between
 an operation and another signed operation defeats that implication without
-breaking either primitive. The full framing/parser theorem and all-domain
-composition remain open. M29's selected other-domain abstraction does not
-close them.
+breaking either primitive. The [checked byte-frame parser](11-parser-refinement.md)
+now establishes a raw grammar boundary. Encoder inverse, UTF-8/transcript
+reconstruction and all-domain composition remain open. M29's selected
+other-domain abstraction does not close them.
 
 The KEM/HKDF construction requires its own IND-CCA game and reduction. This
 signature argument supplies no KEM, confidentiality, KDF, recovery or

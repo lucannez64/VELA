@@ -17,7 +17,8 @@ The older [CI run #39864715971](https://github.com/lucannez64/VELA/actions/runs/
 passed on `5a3b72e7f6d2081cc91b9610adc62a54981f0857`. Its logs are historical
 baseline evidence. They do not validate the subsequent protocol changes.
 The [refinement job passed on `b27dcd6`](proof-logs/current/hosted-refinement-40002230354/README.md).
-A successful complete security workflow for the updated package remains pending.
+The complete [security workflow](https://github.com/lucannez64/VELA/actions/runs/40008926193)
+passed on `e690dfc`. The subsequent parser/accessor increment awaits hosted CI.
 
 ## Contents
 
@@ -50,6 +51,9 @@ correctness is not a consequence of the pure-policy proofs.
     EUF-CMA game and a written reduction to either component, with explicit
     implementation and machine-checking obligations.
 
+11. [Concrete parser refinement](11-parser-refinement.md): byte grammar, checked
+    cursor transitions and read-only opened-share observations.
+
 ## Evidence levels
 
 | Tag | Meaning |
@@ -78,7 +82,7 @@ correctness is not a consequence of the pure-policy proofs.
   properties and M29 adds eleven composed authentication/journal properties.
   Combined evidence is **294 verified / five intended falsifications**; it is
   not a new whole-corpus CI result.
-- Current hax/F*: [fresh checks with the official prebuilt F★ release](proof-logs/current/prebuilt-fstar/README.md) cover **122 selected functions / 119 explicit
+- Current hax/F*: [fresh checks with the official prebuilt F★ release](proof-logs/current/prebuilt-fstar/README.md) cover **137 selected functions / 130 explicit
   postconditions** across eight policy crates and the sharing/signature kernels.
   All **18 local enum-equality assumptions were removed** through structural
   Rust comparisons; current generated modules contain zero local `assume val`

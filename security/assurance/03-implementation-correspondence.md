@@ -77,24 +77,23 @@ Each crate follows the same pattern:
 The eighth crate, `libVELA/vela-client-share-policy`, selects 19 postconditions:
 share admission, ten transaction/recovery functions/theorems, and the actual
 permit-revision getter. Desktop sharing calls the corresponding decisions.
-Eleven additional `vela-crypto` functions have checked postconditions: the actual
-fact constructor, `plan_observed_share` composing decoded fields through that
-constructor and policy, the prefix parser used by Reader, and the hybrid
-signature AND gate with two rejection theorems, plus five fixed-width wire
-arithmetic contracts. These prove exact u64 decoding, byte decomposition,
-encoding round-trip and injectivity. They do not prove the complete
-parser, authenticated-open wrapper, transcript encoding or concrete I/O.
+Twenty-two crypto postconditions cover fact construction, decoded-field/policy
+composition, hybrid verification gates, fixed-width arithmetic, exact LP/u64
+splitting, stateful/grouped cursors, full byte-frame grammar refinement and
+read-only accessor kernels. See [the parser boundary](11-parser-refinement.md)
+for the remaining UTF-8, authenticated-open, encoder and I/O obligations.
 
 All eight policy crates were freshly extracted and checked after replacing
 derived-enum equality uses with structural matches. No local `assume val`
 declarations remain. The [current evidence](proof-logs/current/trusted-boundary/README.md)
 and [crypto contract boundary](../../libVELA/vela-crypto/proofs/fstar/README.md)
-record their assumptions. Current code has 122 selected functions and 119
+record their assumptions. Current code has 137 selected functions and 130
 explicit postconditions; selected functions and predicates are different counts.
 
 The CI `refinement` job installs pinned tools, runs all eight crates and the constructor,
-retaining logs. [the hosted refinement job](proof-logs/current/hosted-refinement-40002230354/README.md) passed on `b27dcd6`; the complete
-security workflow remains pending.
+retaining logs. The complete [security workflow](https://github.com/lucannez64/VELA/actions/runs/40008926193)
+passed on `e690dfc` for the preceding 119-postcondition snapshot. The new parser/
+accessor increment has local proof evidence and awaits its own hosted run.
 
 Every crate has a `verify-fstar.sh` runner, and most have a README that
 states its proof boundary (for example
@@ -122,10 +121,11 @@ previous `.fst`/`.fsti` output before extracting; [the hosted refinement job](pr
 passed on `b27dcd6`.
 The eight policy modules, two crypto modules and String view are recorded in
 `proof-logs/current/trusted-boundary/extractions/`. Fresh crypto modules including
-the new Wire module are under `proof-logs/current/wire-refinement/extractions/`;
-their checking log supersedes the earlier crypto snapshots.
+the latest parser/accessor changes are under
+`proof-logs/current/frame-parser-refinement/extractions/`; their checking log
+supersedes earlier crypto snapshots.
 Always re-extract after changing Rust sources. `check-proof-boundary.py` records
-119 explicit postconditions; three selected functions have no `ensures`. It
+130 explicit postconditions; seven selected functions have no `ensures`. It
 detects added extraction assumptions, not semantic correspondence.
 
 ## 3.3 Executable refinement evidence (CI-gated)

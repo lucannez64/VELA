@@ -66,10 +66,62 @@ pub struct ShareHeader {
 
 /// A verified envelope: the signature checked out under `header.sender_vk`
 /// and the recipient key digest matches the key that opened it.
+///
+/// Safe callers cannot construct a witness from unchecked fields:
+/// ```compile_fail
+/// use vela_crypto::share_envelope::{OpenedShare, ShareHeader};
+/// fn forge(header: ShareHeader, item: Vec<u8>) -> OpenedShare {
+///     OpenedShare { header, item }
+/// }
+/// ```
+/// Nor can they mutate its authenticated plaintext:
+/// ```compile_fail
+/// use vela_crypto::share_envelope::OpenedShare;
+/// fn change(share: &mut OpenedShare) { share.item.clear(); }
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OpenedShare {
-    pub header: ShareHeader,
-    pub item: Vec<u8>,
+    header: ShareHeader,
+    item: Vec<u8>,
+}
+
+impl OpenedShare {
+    /// Authenticated fields are exposed immutably; construction stays local to
+    /// successful opening, so safe callers cannot forge or mutate this witness.
+    pub fn header(&self) -> &ShareHeader {
+        opened_share_header(self)
+    }
+
+    pub fn item(&self) -> &[u8] {
+        opened_share_item(self)
+    }
+
+    pub fn into_item(self) -> Vec<u8> {
+        into_opened_share_item(self)
+    }
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|header| {
+    header.sender_user_id.as_str() == share.header.sender_user_id.as_str()
+        && header.sender_device_id.as_str() == share.header.sender_device_id.as_str()
+        && header.sender_vk == share.header.sender_vk
+        && header.recipient_user_id.as_str() == share.header.recipient_user_id.as_str()
+        && header.recipient_ek_digest == share.header.recipient_ek_digest
+        && header.lineage_id.as_str() == share.header.lineage_id.as_str()
+        && header.revision == share.header.revision
+}))]
+pub fn opened_share_header(share: &OpenedShare) -> &ShareHeader {
+    &share.header
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|bytes| bytes == share.item.as_slice()))]
+pub fn opened_share_item(share: &OpenedShare) -> &[u8] {
+    share.item.as_slice()
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|bytes| bytes.as_slice() == share.item.as_slice()))]
+pub fn into_opened_share_item(share: OpenedShare) -> Vec<u8> {
+    share.item
 }
 
 /// What a recipient remembers about a share it accepted.
@@ -185,33 +237,119 @@ pub fn split_envelope_prefix(input: &[u8], n: usize) -> Option<(&[u8], &[u8])> {
     }
 }
 
-struct Reader<'a>(&'a [u8]);
+/// Borrowed syntactic fields. Authentication and UTF-8 validation occur after
+/// this framing step; no field is trusted merely because parsing succeeded.
+#[derive(Clone, Copy, Debug)]
+pub struct ShareFrame<'a> {
+    pub sender_user_id: &'a [u8],
+    pub sender_device_id: &'a [u8],
+    pub sender_vk: &'a [u8],
+    pub recipient_user_id: &'a [u8],
+    pub recipient_ek_digest: &'a [u8],
+    pub lineage_id: &'a [u8],
+    pub revision: u64,
+    pub item: &'a [u8],
+    pub signature: &'a [u8],
+}
 
-impl<'a> Reader<'a> {
-    fn take(&mut self, n: usize) -> Result<&'a [u8]> {
-        let (head, tail) = split_envelope_prefix(self.0, n)
-            .ok_or_else(|| VelaError::InvalidParameter("share envelope is truncated".into()))?;
-        self.0 = tail;
-        Ok(head)
+/// Cursor operation used by the concrete frame parser.
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    match split_envelope_prefix(input, n) {
+        Some((head, tail)) => result == Some(head) && *future(input) == tail,
+        None => matches!(result, None) && *future(input) == *input,
     }
+}))]
+pub fn take_frame_prefix<'a>(input: &mut &'a [u8], n: usize) -> Option<&'a [u8]> {
+    let (head, tail) = split_envelope_prefix(input, n)?;
+    *input = tail;
+    Some(head)
+}
 
-    fn u64(&mut self) -> Result<u64> {
-        Ok(crate::wire::decode_u64_be(
-            self.take(8)?.try_into().expect("8 bytes"),
-        ))
+/// Functional byte grammar used as the specification of the stateful parser.
+/// Each LP production expands to the separately checked exact slice contract.
+pub fn share_frame_spec(input: &[u8]) -> Option<ShareFrame<'_>> {
+    let digest_len: usize = 32;
+    let (prefix, rest) = split_envelope_prefix(input, 4)?;
+    if prefix != SHARE_ENVELOPE_MAGIC {
+        return None;
     }
+    let (((sender_user_id, sender_device_id), (sender_vk, recipient_user_id)), rest) =
+        crate::wire::split_lp_four(rest)?;
+    let (recipient_ek_digest, rest) = split_envelope_prefix(rest, digest_len)?;
+    let (lineage_id, rest) = crate::wire::split_length_prefixed(rest)?;
+    let (revision, rest) = crate::wire::split_u64_prefix(rest)?;
+    let ((item, signature), rest) = crate::wire::split_lp_pair(rest)?;
+    if !rest.is_empty()
+        || sender_vk.len() != signing::HYBRID_VK_LEN
+        || signature.len() != signing::HYBRID_SIG_LEN
+    {
+        return None;
+    }
+    Some(ShareFrame {
+        sender_user_id,
+        sender_device_id,
+        sender_vk,
+        recipient_user_id,
+        recipient_ek_digest,
+        lineage_id,
+        revision,
+        item,
+        signature,
+    })
+}
 
-    fn lp(&mut self) -> Result<&'a [u8]> {
-        let len = self.u64()?;
-        let len = usize::try_from(len)
-            .map_err(|_| VelaError::InvalidParameter("share envelope field too long".into()))?;
-        self.take(len)
+/// Explicit structural comparison avoids an opaque derived-equality assumption.
+pub fn frame_results_equal(left: Option<ShareFrame<'_>>, right: Option<ShareFrame<'_>>) -> bool {
+    match (left, right) {
+        (None, None) => true,
+        (Some(left), Some(right)) => {
+            left.sender_user_id == right.sender_user_id
+                && left.sender_device_id == right.sender_device_id
+                && left.sender_vk == right.sender_vk
+                && left.recipient_user_id == right.recipient_user_id
+                && left.recipient_ek_digest == right.recipient_ek_digest
+                && left.lineage_id == right.lineage_id
+                && left.revision == right.revision
+                && left.item == right.item
+                && left.signature == right.signature
+        }
+        _ => false,
     }
+}
 
-    fn string(&mut self) -> Result<String> {
-        String::from_utf8(self.lp()?.to_vec())
-            .map_err(|_| VelaError::InvalidParameter("share envelope field is not UTF-8".into()))
+/// Concrete stateful parser refines the complete byte grammar, including all
+/// rejection cases and exact field values. This does not prove authentication.
+#[cfg_attr(hax, hax_lib::fstar::options("--fuel 2 --ifuel 2"))]
+#[cfg_attr(hax, hax_lib::ensures(|result| frame_results_equal(result, share_frame_spec(input))))]
+pub fn parse_share_frame(input: &[u8]) -> Option<ShareFrame<'_>> {
+    let digest_len: usize = 32;
+    let mut rest = input;
+    if take_frame_prefix(&mut rest, 4)? != SHARE_ENVELOPE_MAGIC {
+        return None;
     }
+    let ((sender_user_id, sender_device_id), (sender_vk, recipient_user_id)) =
+        crate::wire::take_lp_four(&mut rest)?;
+    let recipient_ek_digest = take_frame_prefix(&mut rest, digest_len)?;
+    let lineage_id = crate::wire::take_length_prefixed(&mut rest)?;
+    let revision = crate::wire::take_u64(&mut rest)?;
+    let (item, signature) = crate::wire::take_lp_pair(&mut rest)?;
+    if !rest.is_empty()
+        || sender_vk.len() != signing::HYBRID_VK_LEN
+        || signature.len() != signing::HYBRID_SIG_LEN
+    {
+        return None;
+    }
+    Some(ShareFrame {
+        sender_user_id,
+        sender_device_id,
+        sender_vk,
+        recipient_user_id,
+        recipient_ek_digest,
+        lineage_id,
+        revision,
+        item,
+        signature,
+    })
 }
 
 /// Open a capsule with this device's share key, parse the v2 envelope, and
@@ -223,28 +361,24 @@ pub fn open_signed_item(
     capsule: &[u8],
 ) -> Result<OpenedShare> {
     let plaintext = zeroize::Zeroizing::new(kem::open_share(recipient_sk, capsule)?);
-    let mut r = Reader(&plaintext);
-    if r.take(SHARE_ENVELOPE_MAGIC.len())? != SHARE_ENVELOPE_MAGIC {
-        return Err(VelaError::InvalidParameter(
-            "shared item is not a signed v2 envelope".into(),
-        ));
-    }
-    let header = ShareHeader {
-        sender_user_id: r.string()?,
-        sender_device_id: r.string()?,
-        sender_vk: r.lp()?.to_vec(),
-        recipient_user_id: r.string()?,
-        recipient_ek_digest: r.take(32)?.try_into().expect("32 bytes"),
-        lineage_id: r.string()?,
-        revision: r.u64()?,
+    let frame = parse_share_frame(&plaintext).ok_or_else(|| {
+        VelaError::InvalidParameter("share envelope has invalid v2 framing".into())
+    })?;
+    let string = |bytes: &[u8]| {
+        String::from_utf8(bytes.to_vec())
+            .map_err(|_| VelaError::InvalidParameter("share envelope field is not UTF-8".into()))
     };
-    let item = r.lp()?.to_vec();
-    let signature = r.lp()?;
-    if !r.0.is_empty() {
-        return Err(VelaError::InvalidParameter(
-            "share envelope has trailing bytes".into(),
-        ));
-    }
+    let header = ShareHeader {
+        sender_user_id: string(frame.sender_user_id)?,
+        sender_device_id: string(frame.sender_device_id)?,
+        sender_vk: frame.sender_vk.to_vec(),
+        recipient_user_id: string(frame.recipient_user_id)?,
+        recipient_ek_digest: frame.recipient_ek_digest.try_into().expect("32 bytes"),
+        lineage_id: string(frame.lineage_id)?,
+        revision: frame.revision,
+    };
+    let item = frame.item.to_vec();
+    let signature = frame.signature;
 
     let vk_bytes: &[u8; signing::HYBRID_VK_LEN] =
         header.sender_vk.as_slice().try_into().map_err(|_| {
@@ -464,15 +598,45 @@ mod tests {
     fn reader_prefix_failure_preserves_input_and_success_consumes_exactly() {
         let input = b"signed-envelope-field";
         for n in [input.len() + 1, usize::MAX] {
-            let mut reader = Reader(input);
-            assert!(reader.take(n).is_err());
-            assert_eq!(reader.0, input);
+            let mut cursor = input.as_slice();
+            assert!(take_frame_prefix(&mut cursor, n).is_none());
+            assert_eq!(cursor, input);
         }
         for n in 0..=input.len() {
-            let mut reader = Reader(input);
-            assert_eq!(reader.take(n).unwrap(), &input[..n]);
-            assert_eq!(reader.0, &input[n..]);
+            let mut cursor = input.as_slice();
+            assert_eq!(take_frame_prefix(&mut cursor, n).unwrap(), &input[..n]);
+            assert_eq!(cursor, &input[n..]);
         }
+    }
+
+    #[test]
+    fn byte_frame_matches_sender_fields_and_rejects_trailing_or_missing_bytes() {
+        let alice = device();
+        let (bob_pk, bob_sk) = kem::generate_keypair();
+        let expected = header(&alice, &bob_pk, 0x0102_0304_0506_0708);
+        let capsule = seal_signed_item(&alice.sk, &expected, &bob_pk, b"payload").unwrap();
+        let mut plaintext = kem::open_share(&bob_sk, &capsule).unwrap();
+        let frame = parse_share_frame(&plaintext).unwrap();
+        assert_eq!(frame.sender_user_id, expected.sender_user_id.as_bytes());
+        assert_eq!(frame.sender_device_id, expected.sender_device_id.as_bytes());
+        assert_eq!(frame.sender_vk, expected.sender_vk.as_slice());
+        assert_eq!(
+            frame.recipient_user_id,
+            expected.recipient_user_id.as_bytes()
+        );
+        assert_eq!(
+            frame.recipient_ek_digest,
+            expected.recipient_ek_digest.as_slice()
+        );
+        assert_eq!(frame.lineage_id, expected.lineage_id.as_bytes());
+        assert_eq!(frame.revision, expected.revision);
+        assert_eq!(frame.item, b"payload");
+        assert_eq!(frame.signature.len(), signing::HYBRID_SIG_LEN);
+        assert!(parse_share_frame(&plaintext[..plaintext.len() - 1]).is_none());
+        plaintext.push(0);
+        assert!(parse_share_frame(&plaintext).is_none());
+        plaintext[4..12].copy_from_slice(&u64::MAX.to_be_bytes());
+        assert!(parse_share_frame(&plaintext).is_none());
     }
 
     #[test]

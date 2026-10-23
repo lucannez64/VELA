@@ -396,7 +396,7 @@ fn preview_received(
     let admitted = load_identity(state)
         .and_then(|keys| admit_received(&keys, capsule, &user_id, attributed_sender_user_id, None));
     match admitted {
-        Ok(admitted) => match serde_json::from_slice::<VaultItem>(&admitted.opened.item) {
+        Ok(admitted) => match serde_json::from_slice::<VaultItem>(admitted.opened.item()) {
             Ok(item) => (
                 item.name().to_string(),
                 format!("{:?}", item.item_type()).to_lowercase(),
@@ -488,7 +488,7 @@ fn sync_received_linked_items(state: &AppState, store: &mut ShareStore) -> Resul
                 continue;
             }
         };
-        let Ok(item) = serde_json::from_slice::<VaultItem>(&admitted.opened.item) else {
+        let Ok(item) = serde_json::from_slice::<VaultItem>(admitted.opened.item()) else {
             continue;
         };
         if matches!(item, VaultItem::Passkey { .. }) {
@@ -801,7 +801,7 @@ pub async fn accept_share(state: &AppState, share_id: &str) -> Result<(), String
     let admitted = admit_received(&keys, capsule, &current_user_id(state), &share.from, None)
         .map_err(|e| format!("This share cannot be verified and was not added: {e}"))?;
     let item: VaultItem =
-        serde_json::from_slice(&admitted.opened.item).map_err(|e| e.to_string())?;
+        serde_json::from_slice(admitted.opened.item()).map_err(|e| e.to_string())?;
     if matches!(item, VaultItem::Passkey { .. }) {
         return Err("Passkeys cannot be shared".into());
     }
@@ -1127,7 +1127,7 @@ mod assurance_boundary_review {
         let alice = super::tests::identity();
         let capsule = capsule(&alice, &bob, 2, "original");
         let admitted = admit_received(&bob, &capsule, "test-user", "alice", None).unwrap();
-        let item: VaultItem = serde_json::from_slice(&admitted.opened.item).unwrap();
+        let item: VaultItem = serde_json::from_slice(admitted.opened.item()).unwrap();
         state
             .vault
             .write()

@@ -974,7 +974,7 @@ fn identity_admit_share_impl(request_json: &str) -> FfiResult<AdmitShareResponse
         )
     })?;
     Ok(AdmitShareResponse {
-        item_json: String::from_utf8(admitted.opened.item)?,
+        item_json: String::from_utf8(admitted.opened.into_item())?,
         first_contact: admitted.first_contact,
         sender_fingerprint: vela_crypto::verification::signing_key_fingerprint(&admitted.pin.sender_vk),
         pin: SharePinJson {

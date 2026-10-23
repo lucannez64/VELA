@@ -3,6 +3,12 @@ module Vela_crypto.Share_envelope
 open FStar.Mul
 open Core_models
 
+/// Prefix of the sealed plaintext.
+let v_SHARE_ENVELOPE_MAGIC: t_Array u8 (mk_usize 4) =
+  let list = [mk_u8 86; mk_u8 83; mk_u8 69; mk_u8 50] in
+  FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 4);
+  Rust_primitives.Hax.array_of_list 4 list
+
 /// Everything the sender signs besides the item itself.
 type t_ShareHeader = {
   f_sender_user_id:Alloc.String.t_String;
@@ -16,10 +22,59 @@ type t_ShareHeader = {
 
 /// A verified envelope: the signature checked out under `header.sender_vk`
 /// and the recipient key digest matches the key that opened it.
+/// Safe callers cannot construct a witness from unchecked fields:
+/// ```compile_fail
+/// use vela_crypto::share_envelope::{OpenedShare, ShareHeader};
+/// fn forge(header: ShareHeader, item: Vec<u8>) -> OpenedShare {
+///     OpenedShare { header, item }
+/// }
+/// ```
+/// Nor can they mutate its authenticated plaintext:
+/// ```compile_fail
+/// use vela_crypto::share_envelope::OpenedShare;
+/// fn change(share: &mut OpenedShare) { share.item.clear(); }
+/// ```
 type t_OpenedShare = {
   f_header:t_ShareHeader;
   f_item:Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global
 }
+
+let opened_share_header (share: t_OpenedShare)
+    : Prims.Pure t_ShareHeader
+      Prims.l_True
+      (ensures
+        fun header ->
+          let header:t_ShareHeader = header in
+          (Alloc.String.impl_String__as_str header.f_sender_user_id <: string) =.
+          (Alloc.String.impl_String__as_str share.f_header.f_sender_user_id <: string) &&
+          (Alloc.String.impl_String__as_str header.f_sender_device_id <: string) =.
+          (Alloc.String.impl_String__as_str share.f_header.f_sender_device_id <: string) &&
+          header.f_sender_vk =. share.f_header.f_sender_vk &&
+          (Alloc.String.impl_String__as_str header.f_recipient_user_id <: string) =.
+          (Alloc.String.impl_String__as_str share.f_header.f_recipient_user_id <: string) &&
+          header.f_recipient_ek_digest =. share.f_header.f_recipient_ek_digest &&
+          (Alloc.String.impl_String__as_str header.f_lineage_id <: string) =.
+          (Alloc.String.impl_String__as_str share.f_header.f_lineage_id <: string) &&
+          header.f_revision =. share.f_header.f_revision) = share.f_header
+
+let opened_share_item (share: t_OpenedShare)
+    : Prims.Pure (t_Slice u8)
+      Prims.l_True
+      (ensures
+        fun bytes ->
+          let bytes:t_Slice u8 = bytes in
+          bytes =. (Alloc.Vec.impl_1__as_slice #u8 #Alloc.Alloc.t_Global share.f_item <: t_Slice u8)
+      ) = Alloc.Vec.impl_1__as_slice #u8 #Alloc.Alloc.t_Global share.f_item
+
+let into_opened_share_item (share: t_OpenedShare)
+    : Prims.Pure (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global)
+      Prims.l_True
+      (ensures
+        fun bytes ->
+          let bytes:Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global = bytes in
+          (Alloc.Vec.impl_1__as_slice #u8 #Alloc.Alloc.t_Global bytes <: t_Slice u8) =.
+          (Alloc.Vec.impl_1__as_slice #u8 #Alloc.Alloc.t_Global share.f_item <: t_Slice u8)) =
+  share.f_item
 
 /// What a recipient remembers about a share it accepted.
 type t_SharePin = {
@@ -70,6 +125,262 @@ let split_envelope_prefix (input: t_Slice u8) (n: usize)
       (t_Slice u8 & t_Slice u8))
     <:
     Core_models.Option.t_Option (t_Slice u8 & t_Slice u8)
+
+/// Borrowed syntactic fields. Authentication and UTF-8 validation occur after
+/// this framing step; no field is trusted merely because parsing succeeded.
+type t_ShareFrame = {
+  f_sender_user_id:t_Slice u8;
+  f_sender_device_id:t_Slice u8;
+  f_sender_vk:t_Slice u8;
+  f_recipient_user_id:t_Slice u8;
+  f_recipient_ek_digest:t_Slice u8;
+  f_lineage_id:t_Slice u8;
+  f_revision:u64;
+  f_item:t_Slice u8;
+  f_signature:t_Slice u8
+}
+
+/// Cursor operation used by the concrete frame parser.
+let take_frame_prefix (input: t_Slice u8) (n: usize)
+    : Prims.Pure (t_Slice u8 & Core_models.Option.t_Option (t_Slice u8))
+      Prims.l_True
+      (ensures
+        fun temp_0_ ->
+          let (input_future: t_Slice u8), (result: Core_models.Option.t_Option (t_Slice u8)) =
+            temp_0_
+          in
+          match
+            split_envelope_prefix input n <: Core_models.Option.t_Option (t_Slice u8 & t_Slice u8)
+          with
+          | Core_models.Option.Option_Some (head, tail) ->
+            result =.
+            (Core_models.Option.Option_Some head <: Core_models.Option.t_Option (t_Slice u8)) &&
+            input_future =. tail
+          | Core_models.Option.Option_None  ->
+            (match result <: Core_models.Option.t_Option (t_Slice u8) with
+              | Core_models.Option.Option_None  -> true
+              | _ -> false) &&
+            input_future =. input) =
+  match split_envelope_prefix input n <: Core_models.Option.t_Option (t_Slice u8 & t_Slice u8) with
+  | Core_models.Option.Option_Some (head, tail) ->
+    let input:t_Slice u8 = tail in
+    let hax_temp_output:Core_models.Option.t_Option (t_Slice u8) =
+      Core_models.Option.Option_Some head <: Core_models.Option.t_Option (t_Slice u8)
+    in
+    input, hax_temp_output <: (t_Slice u8 & Core_models.Option.t_Option (t_Slice u8))
+  | Core_models.Option.Option_None  ->
+    input, (Core_models.Option.Option_None <: Core_models.Option.t_Option (t_Slice u8))
+    <:
+    (t_Slice u8 & Core_models.Option.t_Option (t_Slice u8))
+
+/// Functional byte grammar used as the specification of the stateful parser.
+/// Each LP production expands to the separately checked exact slice contract.
+let share_frame_spec (input: t_Slice u8) : Core_models.Option.t_Option t_ShareFrame =
+  let (digest_len: usize):usize = mk_usize 32 in
+  match
+    split_envelope_prefix input (mk_usize 4)
+    <:
+    Core_models.Option.t_Option (t_Slice u8 & t_Slice u8)
+  with
+  | Core_models.Option.Option_Some (prefix, rest) ->
+    if prefix <>. v_SHARE_ENVELOPE_MAGIC
+    then Core_models.Option.Option_None <: Core_models.Option.t_Option t_ShareFrame
+    else
+      (match
+          Vela_crypto.Wire.split_lp_four rest
+          <:
+          Core_models.Option.t_Option
+          (((t_Slice u8 & t_Slice u8) & (t_Slice u8 & t_Slice u8)) & t_Slice u8)
+        with
+        | Core_models.Option.Option_Some
+          (((sender_user_id, sender_device_id), (sender_vk, recipient_user_id)), rest) ->
+          (match
+              split_envelope_prefix rest digest_len
+              <:
+              Core_models.Option.t_Option (t_Slice u8 & t_Slice u8)
+            with
+            | Core_models.Option.Option_Some (recipient_ek_digest, rest) ->
+              (match
+                  Vela_crypto.Wire.split_length_prefixed rest
+                  <:
+                  Core_models.Option.t_Option (t_Slice u8 & t_Slice u8)
+                with
+                | Core_models.Option.Option_Some (lineage_id, rest) ->
+                  (match
+                      Vela_crypto.Wire.split_u64_prefix rest
+                      <:
+                      Core_models.Option.t_Option (u64 & t_Slice u8)
+                    with
+                    | Core_models.Option.Option_Some (revision, rest) ->
+                      (match
+                          Vela_crypto.Wire.split_lp_pair rest
+                          <:
+                          Core_models.Option.t_Option ((t_Slice u8 & t_Slice u8) & t_Slice u8)
+                        with
+                        | Core_models.Option.Option_Some ((item, signature), rest) ->
+                          if
+                            ~.(Core_models.Slice.impl__is_empty #u8 rest <: bool) ||
+                            (Core_models.Slice.impl__len #u8 sender_vk <: usize) <>.
+                            Vela_crypto.Signing.v_HYBRID_VK_LEN ||
+                            (Core_models.Slice.impl__len #u8 signature <: usize) <>.
+                            Vela_crypto.Signing.v_HYBRID_SIG_LEN
+                          then
+                            Core_models.Option.Option_None
+                            <:
+                            Core_models.Option.t_Option t_ShareFrame
+                          else
+                            Core_models.Option.Option_Some
+                            ({
+                                f_sender_user_id = sender_user_id;
+                                f_sender_device_id = sender_device_id;
+                                f_sender_vk = sender_vk;
+                                f_recipient_user_id = recipient_user_id;
+                                f_recipient_ek_digest = recipient_ek_digest;
+                                f_lineage_id = lineage_id;
+                                f_revision = revision;
+                                f_item = item;
+                                f_signature = signature
+                              }
+                              <:
+                              t_ShareFrame)
+                            <:
+                            Core_models.Option.t_Option t_ShareFrame
+                        | Core_models.Option.Option_None  ->
+                          Core_models.Option.Option_None <: Core_models.Option.t_Option t_ShareFrame
+                      )
+                    | Core_models.Option.Option_None  ->
+                      Core_models.Option.Option_None <: Core_models.Option.t_Option t_ShareFrame)
+                | Core_models.Option.Option_None  ->
+                  Core_models.Option.Option_None <: Core_models.Option.t_Option t_ShareFrame)
+            | Core_models.Option.Option_None  ->
+              Core_models.Option.Option_None <: Core_models.Option.t_Option t_ShareFrame)
+        | Core_models.Option.Option_None  ->
+          Core_models.Option.Option_None <: Core_models.Option.t_Option t_ShareFrame)
+  | Core_models.Option.Option_None  ->
+    Core_models.Option.Option_None <: Core_models.Option.t_Option t_ShareFrame
+
+/// Explicit structural comparison avoids an opaque derived-equality assumption.
+let frame_results_equal (left right: Core_models.Option.t_Option t_ShareFrame) : bool =
+  match
+    left, right
+    <:
+    (Core_models.Option.t_Option t_ShareFrame & Core_models.Option.t_Option t_ShareFrame)
+  with
+  | Core_models.Option.Option_None , Core_models.Option.Option_None  -> true
+  | Core_models.Option.Option_Some left, Core_models.Option.Option_Some right ->
+    left.f_sender_user_id =. right.f_sender_user_id &&
+    left.f_sender_device_id =. right.f_sender_device_id &&
+    left.f_sender_vk =. right.f_sender_vk &&
+    left.f_recipient_user_id =. right.f_recipient_user_id &&
+    left.f_recipient_ek_digest =. right.f_recipient_ek_digest &&
+    left.f_lineage_id =. right.f_lineage_id &&
+    left.f_revision =. right.f_revision &&
+    left.f_item =. right.f_item &&
+    left.f_signature =. right.f_signature
+  | _ -> false
+
+#push-options "--fuel 2 --ifuel 2"
+
+/// Concrete stateful parser refines the complete byte grammar, including all
+/// rejection cases and exact field values. This does not prove authentication.
+let parse_share_frame (input: t_Slice u8)
+    : Prims.Pure (Core_models.Option.t_Option t_ShareFrame)
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:Core_models.Option.t_Option t_ShareFrame = result in
+          frame_results_equal result
+            (share_frame_spec input <: Core_models.Option.t_Option t_ShareFrame)) =
+  let (digest_len: usize):usize = mk_usize 32 in
+  let rest:t_Slice u8 = input in
+  let (tmp0: t_Slice u8), (out: Core_models.Option.t_Option (t_Slice u8)) =
+    take_frame_prefix rest (mk_usize 4)
+  in
+  let rest:t_Slice u8 = tmp0 in
+  match out <: Core_models.Option.t_Option (t_Slice u8) with
+  | Core_models.Option.Option_Some hoist4 ->
+    if hoist4 <>. v_SHARE_ENVELOPE_MAGIC
+    then Core_models.Option.Option_None <: Core_models.Option.t_Option t_ShareFrame
+    else
+      let
+      (tmp0: t_Slice u8),
+      (out: Core_models.Option.t_Option ((t_Slice u8 & t_Slice u8) & (t_Slice u8 & t_Slice u8))) =
+        Vela_crypto.Wire.take_lp_four rest
+      in
+      let rest:t_Slice u8 = tmp0 in
+      (match
+          out <: Core_models.Option.t_Option ((t_Slice u8 & t_Slice u8) & (t_Slice u8 & t_Slice u8))
+        with
+        | Core_models.Option.Option_Some
+          ((sender_user_id, sender_device_id), (sender_vk, recipient_user_id)) ->
+          let (tmp0: t_Slice u8), (out: Core_models.Option.t_Option (t_Slice u8)) =
+            take_frame_prefix rest digest_len
+          in
+          let rest:t_Slice u8 = tmp0 in
+          (match out <: Core_models.Option.t_Option (t_Slice u8) with
+            | Core_models.Option.Option_Some recipient_ek_digest ->
+              let (tmp0: t_Slice u8), (out: Core_models.Option.t_Option (t_Slice u8)) =
+                Vela_crypto.Wire.take_length_prefixed rest
+              in
+              let rest:t_Slice u8 = tmp0 in
+              (match out <: Core_models.Option.t_Option (t_Slice u8) with
+                | Core_models.Option.Option_Some lineage_id ->
+                  let (tmp0: t_Slice u8), (out: Core_models.Option.t_Option u64) =
+                    Vela_crypto.Wire.take_u64 rest
+                  in
+                  let rest:t_Slice u8 = tmp0 in
+                  (match out <: Core_models.Option.t_Option u64 with
+                    | Core_models.Option.Option_Some revision ->
+                      let
+                      (tmp0: t_Slice u8),
+                      (out: Core_models.Option.t_Option (t_Slice u8 & t_Slice u8)) =
+                        Vela_crypto.Wire.take_lp_pair rest
+                      in
+                      let rest:t_Slice u8 = tmp0 in
+                      (match out <: Core_models.Option.t_Option (t_Slice u8 & t_Slice u8) with
+                        | Core_models.Option.Option_Some (item, signature) ->
+                          if
+                            ~.(Core_models.Slice.impl__is_empty #u8 rest <: bool) ||
+                            (Core_models.Slice.impl__len #u8 sender_vk <: usize) <>.
+                            Vela_crypto.Signing.v_HYBRID_VK_LEN ||
+                            (Core_models.Slice.impl__len #u8 signature <: usize) <>.
+                            Vela_crypto.Signing.v_HYBRID_SIG_LEN
+                          then
+                            Core_models.Option.Option_None
+                            <:
+                            Core_models.Option.t_Option t_ShareFrame
+                          else
+                            Core_models.Option.Option_Some
+                            ({
+                                f_sender_user_id = sender_user_id;
+                                f_sender_device_id = sender_device_id;
+                                f_sender_vk = sender_vk;
+                                f_recipient_user_id = recipient_user_id;
+                                f_recipient_ek_digest = recipient_ek_digest;
+                                f_lineage_id = lineage_id;
+                                f_revision = revision;
+                                f_item = item;
+                                f_signature = signature
+                              }
+                              <:
+                              t_ShareFrame)
+                            <:
+                            Core_models.Option.t_Option t_ShareFrame
+                        | Core_models.Option.Option_None  ->
+                          Core_models.Option.Option_None <: Core_models.Option.t_Option t_ShareFrame
+                      )
+                    | Core_models.Option.Option_None  ->
+                      Core_models.Option.Option_None <: Core_models.Option.t_Option t_ShareFrame)
+                | Core_models.Option.Option_None  ->
+                  Core_models.Option.Option_None <: Core_models.Option.t_Option t_ShareFrame)
+            | Core_models.Option.Option_None  ->
+              Core_models.Option.Option_None <: Core_models.Option.t_Option t_ShareFrame)
+        | Core_models.Option.Option_None  ->
+          Core_models.Option.Option_None <: Core_models.Option.t_Option t_ShareFrame)
+  | Core_models.Option.Option_None  ->
+    Core_models.Option.Option_None <: Core_models.Option.t_Option t_ShareFrame
+
+#pop-options
 
 /// Turn observations into policy facts. Public so tests and bridges can
 /// check the mapping itself.

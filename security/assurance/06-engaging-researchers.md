@@ -77,7 +77,7 @@ I am seeking an independent review of our Rust policy proofs and protocol
 models. The assurance package documents claims, adversary assumptions,
 rule-to-code mappings, reproducible checks and known gaps. The repository
 contains Tamarin/ProVerif models and hax/F* specifications for eight policy
-crates. Fresh local checking now covers 119 explicit postconditions with no
+crates. Fresh local checking now covers 130 explicit postconditions with no
 local extraction assumptions; imported libraries and proof tools remain trusted.
 Composed sharing/journal models have named local verdicts. Concrete whole-system
 refinement and updated hosted CI results remain incomplete.
