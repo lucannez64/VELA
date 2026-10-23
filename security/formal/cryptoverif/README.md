@@ -33,8 +33,13 @@ KEM combiner in the computational model"). Logs: `security/assurance/proof-logs/
   feed those values to the oracle directly instead of their hashes. The step
   is argued, not modelled.
 - **X25519 as a prime-order group** (`DH_good_group` + `GDH`). The real curve
-  has cofactor 8; `kem.rs` rejects non-contributory (low-order) results.
-  CryptoVerif's `DH_X25519` modelling of the cofactor is not used here.
+  has cofactor 8; `kem.rs` rejects non-contributory (low-order) results, and
+  the transcript binds `x25519_epk`, so two ephemeral keys that differ by a
+  low-order point (and give the same DH output) still derive different keys.
+  This is the same abstraction the CryptoVerif analysis of HPKE uses for
+  DHKEM(X25519) (Alwen, Blanchet, Hauck, Kiltz, Lipp, Riepel, Eurocrypt 2021,
+  eprint 2020/1499), which justifies it for X25519. A cofactor-exact model
+  with CryptoVerif's `DH_X25519` macro is not attempted here.
 - **One recipient key, one challenge.** Multi-user, multi-challenge security
   follows by a standard hybrid argument that is not machine-checked.
 - **KEM-DEM is proved modularly.** `kem_dem_seal_share.ocv` assumes an
