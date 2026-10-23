@@ -58,7 +58,8 @@ turn any open obligation below into a proved result.
 
 [Current evidence](proof-logs/current/trusted-boundary/README.md) supersedes
 prior extraction snapshots for all eight policy crates. CI includes the new
-checks; no successful new hosted run is asserted.
+checks. The [hosted refinement job](proof-logs/current/hosted-refinement-40002230354/README.md)
+passed on `b27dcd6`; the complete security workflow remains pending.
 
 The I/O-contract review also found and fixed an uncertain-write recovery gap:
 readable pending metadata now receives a successful durability re-arm before

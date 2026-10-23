@@ -45,7 +45,9 @@ The refinement prerequisites explicitly include the system `nodejs` package:
 the pinned hax engine declares it as an opam external dependency. Apt uses
 `--no-install-recommends` to avoid the unused distro OCaml installation;
 OCaml 5.1.1 is built for hax; F★ uses its official prebuilt release. Apt operations have network
-retries/timeouts and a 15-minute step limit.
+retries/timeouts and a 15-minute refinement prerequisite limit. The separate
+ProVerif setup has a 25-minute limit and also omits recommended distro OCaml;
+its completed switch is cached before application tests/proofs.
 
 For Linux x86-64, the exact Tamarin/Maude install commands and checksums are
 in [security.yml](../../.github/workflows/security.yml), step **Install pinned
@@ -95,7 +97,9 @@ individual 5 GiB caps, sequentially and without swap. See the
 These observations are not minimum requirements or guarantees for other inputs.
 
 CI toolchain installation now uses **6 GiB** (`VELA_MEMORY_MAX=6G`); its first
-successful run is pending. Default local runners retain the **3 GiB** cap.
+successful refinement job passed on `b27dcd6` (see
+[hosted logs](proof-logs/current/hosted-refinement-40002230354/README.md)).
+Default local runners retain the **3 GiB** cap.
 
 ## 4.3 Commands and resource limits
 

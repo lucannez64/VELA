@@ -1,0 +1,904 @@
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0
+ 31  156M   31 50.0M    0     0  76.4M      0  0:00:02 --:--:--  0:00:02 76.4M100  156M  100  156M    0     0   133M      0  0:00:01  0:00:01 --:--:--  204M
+/home/runner/.local/opt/vela-hax-0.3.7/fstar.tar.gz: OK
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0
+100 47.3M  100 47.3M    0     0  87.0M      0 --:--:-- --:--:-- --:--:-- 87.0M
+/home/runner/.local/opt/vela-hax-0.3.7/z3.zip: OK
+F* 2025.10.06
+platform=Linux_x86_64
+compiler=OCaml 4.14.2
+date=2025-10-06 12:00:42 -0700
+commit=7b347386330d0e5a331a220535b6f15288903234
+No configuration file found, using built-in defaults.
+Checking for available remotes: rsync and local, git, mercurial.
+  - you won't be able to use darcs repositories unless you install the darcs command on your system.
+
+
+<><> Fetching repository information ><><><><><><><><><><><><><><><><><><><><><>
+[default] Initialised
+default (at https://opam.ocaml.org): 
+    [INFO] opam is out-of-date. Please consider updating (https://opam.ocaml.org/doc/Install.html)
+
+default (at https://opam.ocaml.org): 
+    [INFO] please ensure to have GNU patch installed as `patch`. Otherwise update may fail silently (since it can't remove files).
+
+default (at https://opam.ocaml.org): 
+    [WARNING] opam >= 2.5.2 includes important security fixes; please consider upgrading (https://opam.ocaml.org/doc/Install.html)
+
+info: syncing channel updates for nightly-2025-11-08-x86_64-unknown-linux-gnu
+info: latest update on 2025-11-08 for version 1.93.0-nightly (843f8ce2e 2025-11-07)
+info: downloading 8 components
+
+  nightly-2025-11-08-x86_64-unknown-linux-gnu installed - rustc 1.93.0-nightly (843f8ce2e 2025-11-07)
+
+[1m[92m    Updating[0m crates.io index
+[1m[92m Downloading[0m crates ...
+[1m[92m  Downloaded[0m cargo-hax v0.3.7
+[1m[92m  Installing[0m cargo-hax v0.3.7
+[1m[92m    Updating[0m crates.io index
+[1m[92m    Updating[0m crates.io index
+[1m[92m Downloading[0m crates ...
+[1m[92m  Downloaded[0m anstyle-parse v0.2.7
+[1m[92m  Downloaded[0m annotate-snippets v0.11.5
+[1m[92m  Downloaded[0m atomic-waker v1.1.2
+[1m[92m  Downloaded[0m anstyle-query v1.1.4
+[1m[92m  Downloaded[0m autocfg v1.5.0
+[1m[92m  Downloaded[0m anstyle v1.0.11
+[1m[92m  Downloaded[0m anstream v0.6.20
+[1m[92m  Downloaded[0m ascii v1.1.0
+[1m[92m  Downloaded[0m arrayvec v0.5.2
+[1m[92m  Downloaded[0m futures-core v0.3.31
+[1m[92m  Downloaded[0m cargo-platform v0.1.9
+[1m[92m  Downloaded[0m schemars v0.8.22
+[1m[92m  Downloaded[0m scopeguard v1.2.0
+[1m[92m  Downloaded[0m ryu v1.0.20
+[1m[92m  Downloaded[0m lazy_static v1.5.0
+[1m[92m  Downloaded[0m httpdate v1.0.3
+[1m[92m  Downloaded[0m colorchoice v1.0.4
+[1m[92m  Downloaded[0m cfg-if v1.0.3
+[1m[92m  Downloaded[0m pin-utils v0.1.0
+[1m[92m  Downloaded[0m heck v0.5.0
+[1m[92m  Downloaded[0m futures-task v0.3.31
+[1m[92m  Downloaded[0m ext-trait-proc_macros v1.0.1
+[1m[92m  Downloaded[0m fastrand v2.3.0
+[1m[92m  Downloaded[0m schemars_derive v0.8.22
+[1m[92m  Downloaded[0m serde_urlencoded v0.7.1
+[1m[92m  Downloaded[0m equivalent v1.0.2
+[1m[92m  Downloaded[0m dyn-clone v1.0.20
+[1m[92m  Downloaded[0m chunked_transfer v1.5.0
+[1m[92m  Downloaded[0m rustup-toolchain v0.1.10
+[1m[92m  Downloaded[0m quote v1.0.40
+[1m[92m  Downloaded[0m toml_write v0.1.2
+[1m[92m  Downloaded[0m typed-arena v2.0.2
+[1m[92m  Downloaded[0m serde-jsonlines v0.5.0
+[1m[92m  Downloaded[0m tower-layer v0.3.3
+[1m[92m  Downloaded[0m proc-macro-crate v3.3.0
+[1m[92m  Downloaded[0m path-clean v1.0.1
+[1m[92m  Downloaded[0m newline-converter v0.2.2
+[1m[92m  Downloaded[0m http-body v1.0.1
+[1m[92m  Downloaded[0m serde_stacker v0.1.12
+[1m[92m  Downloaded[0m mime v0.3.17
+[1m[92m  Downloaded[0m which v4.4.2
+[1m[92m  Downloaded[0m pkg-config v0.3.32
+[1m[92m  Downloaded[0m toml_datetime v0.6.11
+[1m[92m  Downloaded[0m sync_wrapper v1.0.2
+[1m[92m  Downloaded[0m signal-hook-mio v0.2.4
+[1m[92m  Downloaded[0m cargo_metadata v0.15.4
+[1m[92m  Downloaded[0m version_check v0.9.5
+[1m[92m  Downloaded[0m utf8parse v0.2.2
+[1m[92m  Downloaded[0m tower-service v0.3.3
+[1m[92m  Downloaded[0m miette-derive v7.6.0
+[1m[92m  Downloaded[0m psm v0.1.26
+[1m[92m  Downloaded[0m futures-channel v0.3.31
+[1m[92m  Downloaded[0m pretty v0.12.4
+[1m[92m  Downloaded[0m paste v1.0.15
+[1m[92m  Downloaded[0m serde_spanned v0.6.9
+[1m[92m  Downloaded[0m parking_lot_core v0.9.11
+[1m[92m  Downloaded[0m tokio-macros v2.6.0
+[1m[92m  Downloaded[0m semver v1.0.26
+[1m[92m  Downloaded[0m camino v1.1.12
+[1m[92m  Downloaded[0m thiserror-impl v2.0.16
+[1m[92m  Downloaded[0m thiserror-impl v1.0.69
+[1m[92m  Downloaded[0m zstd v0.13.3
+[1m[92m  Downloaded[0m getrandom v0.3.3
+[1m[92m  Downloaded[0m miette v7.6.0
+[1m[92m  Downloaded[0m tracing-attributes v0.1.30
+[1m[92m  Downloaded[0m zstd-safe v7.2.4
+[1m[92m  Downloaded[0m mio v1.1.1
+[1m[92m  Downloaded[0m itertools v0.13.0
+[1m[92m  Downloaded[0m uuid v1.18.0
+[1m[92m  Downloaded[0m tracing-core v0.1.34
+[1m[92m  Downloaded[0m toml_edit v0.22.27
+[1m[92m  Downloaded[0m serde_core v1.0.228
+[1m[92m  Downloaded[0m serde v1.0.228
+[1m[92m  Downloaded[0m signal-hook v0.3.18
+[1m[92m  Downloaded[0m unicode-segmentation v1.12.0
+[1m[92m  Downloaded[0m tracing v0.1.41
+[1m[92m  Downloaded[0m tower v0.5.2
+[1m[92m  Downloaded[0m prettyplease v0.2.37
+[1m[92m  Downloaded[0m socket2 v0.6.1
+[1m[92m  Downloaded[0m winnow v0.7.13
+[1m[92m  Downloaded[0m serde_json v1.0.143
+[1m[92m  Downloaded[0m futures-util v0.3.31
+[1m[92m  Downloaded[0m libc v0.2.178
+[1m[92m  Downloaded[0m syn v1.0.109
+[1m[92m  Downloaded[0m unicode-width v0.2.1
+[1m[92m  Downloaded[0m unicode-width v0.1.14
+[1m[92m  Downloaded[0m clap_builder v4.5.46
+[1m[92m  Downloaded[0m syn v2.0.106
+[1m[92m  Downloaded[0m axum v0.8.7
+[1m[92m  Downloaded[0m tiny_http v0.12.0
+[1m[92m  Downloaded[0m tempfile v3.21.0
+[1m[92m  Downloaded[0m rustix v1.0.8
+[1m[92m  Downloaded[0m rustix v0.38.44
+[1m[92m  Downloaded[0m serde_derive v1.0.228
+[1m[92m  Downloaded[0m serde-brief v0.1.1
+[1m[92m  Downloaded[0m hyper v1.8.1
+[1m[92m  Downloaded[0m hashbrown v0.15.5
+[1m[92m  Downloaded[0m itertools v0.11.0
+[1m[92m  Downloaded[0m crossterm v0.25.0
+[1m[92m  Downloaded[0m cc v1.2.34
+[1m[92m  Downloaded[0m linux-raw-sys v0.4.15
+[1m[92m  Downloaded[0m mio v0.8.11
+[1m[92m  Downloaded[0m indexmap v2.11.0
+[1m[92m  Downloaded[0m linux-raw-sys v0.9.4
+[1m[92m  Downloaded[0m hax-types v0.3.7
+[1m[92m  Downloaded[0m hax-adt-into v0.3.7
+[1m[92m  Downloaded[0m hax-frontend-exporter-options v0.3.7
+[1m[92m  Downloaded[0m hyper-util v0.1.19
+[1m[92m  Downloaded[0m hax-rust-engine v0.3.7
+[1m[92m  Downloaded[0m http v1.4.0
+[1m[92m  Downloaded[0m zstd-sys v2.0.15+zstd.1.5.7
+[1m[92m  Downloaded[0m hax-frontend-exporter v0.3.7
+[1m[92m  Downloaded[0m unicode-ident v1.0.18
+[1m[92m  Downloaded[0m serde_derive_internals v0.29.1
+[1m[92m  Downloaded[0m tokio v1.48.0
+[1m[92m  Downloaded[0m memchr v2.7.5
+[1m[92m  Downloaded[0m toml v0.8.23
+[1m[92m  Downloaded[0m thiserror v1.0.69
+[1m[92m  Downloaded[0m smallvec v1.15.1
+[1m[92m  Downloaded[0m proc-macro2 v1.0.101
+[1m[92m  Downloaded[0m log v0.4.27
+[1m[92m  Downloaded[0m darling_core v0.20.11
+[1m[92m  Downloaded[0m clap v4.5.46
+[1m[92m  Downloaded[0m bytes v1.11.0
+[1m[92m  Downloaded[0m thiserror v2.0.16
+[1m[92m  Downloaded[0m serde_path_to_error v0.1.20
+[1m[92m  Downloaded[0m pin-project-lite v0.2.16
+[1m[92m  Downloaded[0m stacker v0.1.21
+[1m[92m  Downloaded[0m shlex v1.3.0
+[1m[92m  Downloaded[0m signal-hook-registry v1.4.6
+[1m[92m  Downloaded[0m once_cell v1.21.3
+[1m[92m  Downloaded[0m httparse v1.10.1
+[1m[92m  Downloaded[0m darling v0.20.11
+[1m[92m  Downloaded[0m colored v2.2.0
+[1m[92m  Downloaded[0m clap_derive v4.5.45
+[1m[92m  Downloaded[0m bitflags v2.9.3
+[1m[92m  Downloaded[0m axum-macros v0.5.0
+[1m[92m  Downloaded[0m axum-core v0.5.5
+[1m[92m  Downloaded[0m parking_lot v0.12.4
+[1m[92m  Downloaded[0m matchit v0.8.4
+[1m[92m  Downloaded[0m lock_api v0.4.13
+[1m[92m  Downloaded[0m jobserver v0.1.34
+[1m[92m  Downloaded[0m is-terminal v0.4.16
+[1m[92m  Downloaded[0m http-body-util v0.1.3
+[1m[92m  Downloaded[0m either v1.15.0
+[1m[92m  Downloaded[0m inquire v0.6.2
+[1m[92m  Downloaded[0m strsim v0.11.1
+[1m[92m  Downloaded[0m home v0.5.11
+[1m[92m  Downloaded[0m clap_lex v0.7.5
+[1m[92m  Downloaded[0m ident_case v1.0.1
+[1m[92m  Downloaded[0m hax-rust-engine-macros v0.3.7
+[1m[92m  Downloaded[0m errno v0.3.13
+[1m[92m  Downloaded[0m derive_generic_visitor v0.3.0
+[1m[92m  Downloaded[0m is_terminal_polyfill v1.70.1
+[1m[92m  Downloaded[0m hax-lib-macros-types v0.3.7
+[1m[92m  Downloaded[0m darling_macro v0.20.11
+[1m[92m  Downloaded[0m form_urlencoded v1.2.2
+[1m[92m  Downloaded[0m fnv v1.0.7
+[1m[92m  Downloaded[0m extension-traits v1.0.1
+[1m[92m  Downloaded[0m ext-trait v1.0.1
+[1m[92m  Downloaded[0m percent-encoding v2.3.2
+[1m[92m  Downloaded[0m derive_generic_visitor_macros v0.3.0
+[1m[92m  Downloaded[0m pastey v0.1.1
+[1m[92m  Downloaded[0m itoa v1.0.15
+[1m[92m  Downloaded[0m convert_case v0.6.0
+[1m[92m  Downloaded[0m bitflags v1.3.2
+[1m[92m   Compiling[0m proc-macro2 v1.0.101
+[1m[92m   Compiling[0m unicode-ident v1.0.18
+[1m[92m   Compiling[0m quote v1.0.40
+[1m[92m   Compiling[0m syn v2.0.106
+[1m[92m   Compiling[0m libc v0.2.178
+[1m[92m   Compiling[0m serde v1.0.228
+[1m[92m   Compiling[0m serde_derive v1.0.228
+[1m[92m   Compiling[0m jobserver v0.1.34
+[1m[92m   Compiling[0m shlex v1.3.0
+[1m[92m   Compiling[0m cc v1.2.34
+[1m[92m   Compiling[0m serde_core v1.0.228
+[1m[92m   Compiling[0m itoa v1.0.15
+[1m[92m   Compiling[0m syn v1.0.109
+[1m[92m   Compiling[0m pkg-config v0.3.32
+[1m[92m   Compiling[0m zstd-sys v2.0.15+zstd.1.5.7
+[1m[92m   Compiling[0m either v1.15.0
+[1m[92m   Compiling[0m schemars v0.8.22
+[1m[92m   Compiling[0m pin-project-lite v0.2.16
+[1m[92m   Compiling[0m serde_derive_internals v0.29.1
+[1m[92m   Compiling[0m schemars_derive v0.8.22
+[1m[92m   Compiling[0m tracing-attributes v0.1.30
+[1m[92m   Compiling[0m ext-trait-proc_macros v1.0.1
+[1m[92m   Compiling[0m strsim v0.11.1
+[1m[92m   Compiling[0m futures-core v0.3.31
+[1m[92m   Compiling[0m zstd-safe v7.2.4
+[1m[92m   Compiling[0m serde_json v1.0.143
+[1m[92m   Compiling[0m ryu v1.0.20
+[1m[92m   Compiling[0m itertools v0.11.0
+[1m[92m   Compiling[0m getrandom v0.3.3
+[1m[92m   Compiling[0m bytes v1.11.0
+[1m[92m   Compiling[0m cfg-if v1.0.3
+[1m[92m   Compiling[0m memchr v2.7.5
+[1m[92m   Compiling[0m once_cell v1.21.3
+[1m[92m   Compiling[0m tracing-core v0.1.34
+[1m[92m   Compiling[0m http v1.4.0
+[1m[92m   Compiling[0m hax-adt-into v0.3.7
+[1m[92m   Compiling[0m paste v1.0.15
+[1m[92m   Compiling[0m log v0.4.27
+[1m[92m   Compiling[0m tracing v0.1.41
+[1m[92m   Compiling[0m http-body v1.0.1
+[1m[92m   Compiling[0m mio v1.1.1
+[1m[92m   Compiling[0m socket2 v0.6.1
+[1m[92m   Compiling[0m tokio-macros v2.6.0
+[1m[92m   Compiling[0m hashbrown v0.15.5
+[1m[92m   Compiling[0m heck v0.5.0
+[1m[92m   Compiling[0m utf8parse v0.2.2
+[1m[92m   Compiling[0m httparse v1.10.1
+[1m[92m   Compiling[0m equivalent v1.0.2
+[1m[92m   Compiling[0m fnv v1.0.7
+[1m[92m   Compiling[0m anstyle v1.0.11
+[1m[92m   Compiling[0m ident_case v1.0.1
+[1m[92m   Compiling[0m pin-utils v0.1.0
+[1m[92m   Compiling[0m dyn-clone v1.0.20
+[1m[92m   Compiling[0m darling_core v0.20.11
+[1m[92m   Compiling[0m indexmap v2.11.0
+[1m[92m   Compiling[0m anstyle-parse v0.2.7
+[1m[92m   Compiling[0m clap_derive v4.5.45
+[1m[92m   Compiling[0m tokio v1.48.0
+[1m[92m   Compiling[0m toml_datetime v0.6.11
+[1m[92m   Compiling[0m serde_spanned v0.6.9
+[1m[92m   Compiling[0m psm v0.1.26
+[1m[92m   Compiling[0m miette-derive v7.6.0
+[1m[92m   Compiling[0m tower-service v0.3.3
+[1m[92m   Compiling[0m is_terminal_polyfill v1.70.1
+[1m[92m   Compiling[0m toml_write v0.1.2
+[1m[92m   Compiling[0m winnow v0.7.13
+[1m[92m   Compiling[0m anstyle-query v1.1.4
+[1m[92m   Compiling[0m colorchoice v1.0.4
+[1m[92m   Compiling[0m hax-types v0.3.7
+[1m[92m   Compiling[0m anstream v0.6.20
+[1m[92m   Compiling[0m toml_edit v0.22.27
+[1m[92m   Compiling[0m darling_macro v0.20.11
+[1m[92m   Compiling[0m futures-channel v0.3.31
+[1m[92m   Compiling[0m ext-trait v1.0.1
+[1m[92m   Compiling[0m stacker v0.1.21
+[1m[92m   Compiling[0m futures-task v0.3.31
+[1m[92m   Compiling[0m autocfg v1.5.0
+[1m[92m   Compiling[0m tower-layer v0.3.3
+[1m[92m   Compiling[0m smallvec v1.15.1
+[1m[92m   Compiling[0m unicode-segmentation v1.12.0
+[1m[92m   Compiling[0m httpdate v1.0.3
+[1m[92m   Compiling[0m clap_lex v0.7.5
+[1m[92m   Compiling[0m percent-encoding v2.3.2
+[1m[92m   Compiling[0m atomic-waker v1.1.2
+[1m[92m   Compiling[0m unicode-width v0.1.14
+[1m[92m   Compiling[0m sync_wrapper v1.0.2
+[1m[92m   Compiling[0m lazy_static v1.5.0
+[1m[92m   Compiling[0m hyper v1.8.1
+[1m[92m   Compiling[0m form_urlencoded v1.2.2
+[1m[92m   Compiling[0m clap_builder v4.5.46
+[1m[92m   Compiling[0m convert_case v0.6.0
+[1m[92m   Compiling[0m lock_api v0.4.13
+[1m[92m   Compiling[0m futures-util v0.3.31
+[1m[92m   Compiling[0m extension-traits v1.0.1
+[1m[92m   Compiling[0m darling v0.20.11
+[1m[92m   Compiling[0m hax-frontend-exporter-options v0.3.7
+[1m[92m   Compiling[0m http-body-util v0.1.3
+[1m[92m   Compiling[0m itertools v0.13.0
+[1m[92m   Compiling[0m unicode-width v0.2.1
+[1m[92m   Compiling[0m camino v1.1.12
+[1m[92m   Compiling[0m mime v0.3.17
+[1m[92m   Compiling[0m signal-hook v0.3.18
+[1m[92m   Compiling[0m parking_lot_core v0.9.11
+[1m[92m   Compiling[0m axum-core v0.5.5
+[1m[92m   Compiling[0m annotate-snippets v0.11.5
+[1m[92m   Compiling[0m derive_generic_visitor_macros v0.3.0
+[1m[92m   Compiling[0m hax-frontend-exporter v0.3.7
+[1m[92m   Compiling[0m zstd v0.13.3
+[1m[92m   Compiling[0m uuid v1.18.0
+[1m[92m   Compiling[0m tower v0.5.2
+[1m[92m   Compiling[0m clap v4.5.46
+[1m[92m   Compiling[0m serde_urlencoded v0.7.1
+[1m[92m   Compiling[0m hyper-util v0.1.19
+[1m[92m   Compiling[0m colored v2.2.0
+[1m[92m   Compiling[0m miette v7.6.0
+[1m[92m   Compiling[0m proc-macro-crate v3.3.0
+[1m[92m   Compiling[0m signal-hook-registry v1.4.6
+[1m[92m   Compiling[0m serde_path_to_error v0.1.20
+[1m[92m   Compiling[0m serde-brief v0.1.1
+[1m[92m   Compiling[0m axum-macros v0.5.0
+[1m[92m   Compiling[0m arrayvec v0.5.2
+[1m[92m   Compiling[0m scopeguard v1.2.0
+[1m[92m   Compiling[0m bitflags v2.9.3
+[1m[92m   Compiling[0m typed-arena v2.0.2
+[1m[92m   Compiling[0m path-clean v1.0.1
+[1m[92m   Compiling[0m matchit v0.8.4
+[1m[92m   Compiling[0m thiserror v1.0.69
+[1m[92m   Compiling[0m axum v0.8.7
+[1m[92m   Compiling[0m pretty v0.12.4
+[1m[92m   Compiling[0m hax-rust-engine-macros v0.3.7
+[1m[92m   Compiling[0m hax-lib-macros-types v0.3.7
+[1m[92m   Compiling[0m serde_stacker v0.1.12
+[1m[92m   Compiling[0m derive_generic_visitor v0.3.0
+[1m[92m   Compiling[0m mio v0.8.11
+[1m[92m   Compiling[0m thiserror-impl v1.0.69
+[1m[92m   Compiling[0m semver v1.0.26
+[1m[92m   Compiling[0m rustix v1.0.8
+[1m[92m   Compiling[0m pastey v0.1.1
+[1m[92m   Compiling[0m thiserror v2.0.16
+[1m[92m   Compiling[0m rustix v0.38.44
+[1m[92m   Compiling[0m prettyplease v0.2.37
+[1m[92m   Compiling[0m hax-rust-engine v0.3.7
+[1m[92m   Compiling[0m signal-hook-mio v0.2.4
+[1m[92m   Compiling[0m parking_lot v0.12.4
+[1m[92m   Compiling[0m toml v0.8.23
+[1m[92m   Compiling[0m thiserror-impl v2.0.16
+[1m[92m   Compiling[0m linux-raw-sys v0.4.15
+[1m[92m   Compiling[0m version_check v0.9.5
+[1m[92m   Compiling[0m bitflags v1.3.2
+[1m[92m   Compiling[0m linux-raw-sys v0.9.4
+[1m[92m   Compiling[0m crossterm v0.25.0
+[1m[92m   Compiling[0m newline-converter v0.2.2
+[1m[92m   Compiling[0m cargo-hax v0.3.7
+[1m[92m   Compiling[0m cargo-platform v0.1.9
+[1m[92m   Compiling[0m home v0.5.11
+[1m[92m   Compiling[0m chunked_transfer v1.5.0
+[1m[92m   Compiling[0m fastrand v2.3.0
+[1m[92m   Compiling[0m ascii v1.1.0
+[1m[92m   Compiling[0m tiny_http v0.12.0
+[1m[92m   Compiling[0m tempfile v3.21.0
+[1m[92m   Compiling[0m which v4.4.2
+[1m[92m   Compiling[0m cargo_metadata v0.15.4
+[1m[92m   Compiling[0m rustup-toolchain v0.1.10
+[1m[92m   Compiling[0m inquire v0.6.2
+[1m[92m   Compiling[0m serde-jsonlines v0.5.0
+[1m[92m   Compiling[0m is-terminal v0.4.16
+[1m[92m    Finished[0m `release` profile [optimized] target(s) in 3m 57s
+[1m[92m  Installing[0m /home/runner/.local/opt/vela-hax-0.3.7/bin/cargo-hax
+[1m[92m  Installing[0m /home/runner/.local/opt/vela-hax-0.3.7/bin/hax-export-json-schemas
+[1m[92m   Installed[0m package `cargo-hax v0.3.7` (executables `cargo-hax`, `hax-export-json-schemas`)
+[1m[92m    Updating[0m crates.io index
+[1m[92m Downloading[0m crates ...
+[1m[92m  Downloaded[0m hax-driver v0.3.7
+[1m[92m  Installing[0m hax-driver v0.3.7
+[1m[92m    Updating[0m crates.io index
+[1m[92m    Updating[0m crates.io index
+[1m[92m Downloading[0m crates ...
+[1m[92m  Downloaded[0m nu-ansi-term v0.46.0
+[1m[92m  Downloaded[0m overload v0.1.1
+[1m[92m  Downloaded[0m matchers v0.1.0
+[1m[92m  Downloaded[0m tracing-log v0.2.0
+[1m[92m  Downloaded[0m tracing-log v0.1.4
+[1m[92m  Downloaded[0m tracing-tree v0.2.5
+[1m[92m  Downloaded[0m thread_local v1.1.9
+[1m[92m  Downloaded[0m sharded-slab v0.1.7
+[1m[92m  Downloaded[0m regex-automata v0.1.10
+[1m[92m  Downloaded[0m aho-corasick v1.1.3
+[1m[92m  Downloaded[0m regex v1.11.2
+[1m[92m  Downloaded[0m tracing-subscriber v0.3.19
+[1m[92m  Downloaded[0m regex-syntax v0.6.29
+[1m[92m  Downloaded[0m regex-syntax v0.8.6
+[1m[92m  Downloaded[0m regex-automata v0.4.10
+[1m[92m   Compiling[0m proc-macro2 v1.0.101
+[1m[92m   Compiling[0m unicode-ident v1.0.18
+[1m[92m   Compiling[0m quote v1.0.40
+[1m[92m   Compiling[0m syn v2.0.106
+[1m[92m   Compiling[0m libc v0.2.178
+[1m[92m   Compiling[0m serde_core v1.0.228
+[1m[92m   Compiling[0m serde v1.0.228
+[1m[92m   Compiling[0m syn v1.0.109
+[1m[92m   Compiling[0m jobserver v0.1.34
+[1m[92m   Compiling[0m serde_derive v1.0.228
+[1m[92m   Compiling[0m cfg-if v1.0.3
+[1m[92m   Compiling[0m shlex v1.3.0
+[1m[92m   Compiling[0m once_cell v1.21.3
+[1m[92m   Compiling[0m tracing-core v0.1.34
+[1m[92m   Compiling[0m cc v1.2.34
+[1m[92m   Compiling[0m pkg-config v0.3.32
+[1m[92m   Compiling[0m serde_json v1.0.143
+[1m[92m   Compiling[0m zstd-sys v2.0.15+zstd.1.5.7
+[1m[92m   Compiling[0m itoa v1.0.15
+[1m[92m   Compiling[0m memchr v2.7.5
+[1m[92m   Compiling[0m ryu v1.0.20
+[1m[92m   Compiling[0m lazy_static v1.5.0
+[1m[92m   Compiling[0m tracing-attributes v0.1.30
+[1m[92m   Compiling[0m serde_derive_internals v0.29.1
+[1m[92m   Compiling[0m either v1.15.0
+[1m[92m   Compiling[0m schemars v0.8.22
+[1m[92m   Compiling[0m utf8parse v0.2.2
+[1m[92m   Compiling[0m anstyle v1.0.11
+[1m[92m   Compiling[0m pin-project-lite v0.2.16
+[1m[92m   Compiling[0m tracing v0.1.41
+[1m[92m   Compiling[0m anstyle-parse v0.2.7
+[1m[92m   Compiling[0m itertools v0.11.0
+[1m[92m   Compiling[0m schemars_derive v0.8.22
+[1m[92m   Compiling[0m ext-trait-proc_macros v1.0.1
+[1m[92m   Compiling[0m zstd-safe v7.2.4
+[1m[92m   Compiling[0m getrandom v0.3.3
+[1m[92m   Compiling[0m regex-syntax v0.8.6
+[1m[92m   Compiling[0m colorchoice v1.0.4
+[1m[92m   Compiling[0m log v0.4.27
+[1m[92m   Compiling[0m anstyle-query v1.1.4
+[1m[92m   Compiling[0m paste v1.0.15
+[1m[92m   Compiling[0m regex-syntax v0.6.29
+[1m[92m   Compiling[0m dyn-clone v1.0.20
+[1m[92m   Compiling[0m is_terminal_polyfill v1.70.1
+[1m[92m   Compiling[0m anstream v0.6.20
+[1m[92m   Compiling[0m regex-automata v0.1.10
+[1m[92m   Compiling[0m regex-automata v0.4.10
+[1m[92m   Compiling[0m ext-trait v1.0.1
+[1m[92m   Compiling[0m hax-adt-into v0.3.7
+[1m[92m   Compiling[0m overload v0.1.1
+[1m[92m   Compiling[0m strsim v0.11.1
+[1m[92m   Compiling[0m heck v0.5.0
+[1m[92m   Compiling[0m clap_lex v0.7.5
+[1m[92m   Compiling[0m clap_builder v4.5.46
+[1m[92m   Compiling[0m clap_derive v4.5.45
+[1m[92m   Compiling[0m nu-ansi-term v0.46.0
+[1m[92m   Compiling[0m hax-frontend-exporter-options v0.3.7
+[1m[92m   Compiling[0m extension-traits v1.0.1
+[1m[92m   Compiling[0m regex v1.11.2
+[1m[92m   Compiling[0m matchers v0.1.0
+[1m[92m   Compiling[0m tracing-log v0.2.0
+[1m[92m   Compiling[0m sharded-slab v0.1.7
+[1m[92m   Compiling[0m thread_local v1.1.9
+[1m[92m   Compiling[0m miette-derive v7.6.0
+[1m[92m   Compiling[0m unicode-width v0.2.1
+[1m[92m   Compiling[0m hax-types v0.3.7
+[1m[92m   Compiling[0m unicode-width v0.1.14
+[1m[92m   Compiling[0m smallvec v1.15.1
+[1m[92m   Compiling[0m tracing-subscriber v0.3.19
+[1m[92m   Compiling[0m miette v7.6.0
+[1m[92m   Compiling[0m annotate-snippets v0.11.5
+[1m[92m   Compiling[0m hax-frontend-exporter v0.3.7
+[1m[92m   Compiling[0m uuid v1.18.0
+[1m[92m   Compiling[0m zstd v0.13.3
+[1m[92m   Compiling[0m clap v4.5.46
+[1m[92m   Compiling[0m tracing-log v0.1.4
+[1m[92m   Compiling[0m colored v2.2.0
+[1m[92m   Compiling[0m serde-brief v0.1.1
+[1m[92m   Compiling[0m path-clean v1.0.1
+[1m[92m   Compiling[0m tracing-tree v0.2.5
+[1m[92m   Compiling[0m hax-lib-macros-types v0.3.7
+[1m[92m   Compiling[0m hax-driver v0.3.7
+[1m[92m    Finished[0m `release` profile [optimized] target(s) in 2m 45s
+[1m[92m  Installing[0m /home/runner/.local/opt/vela-hax-0.3.7/bin/driver-hax-frontend-exporter
+[1m[92m   Installed[0m package `hax-driver v0.3.7` (executable `driver-hax-frontend-exporter`)
+Cloning into '/home/runner/.local/opt/vela-hax-0.3.7/hax'...
+Note: switching to 'd8b5b3d3b666fee8943a351445d2b680105e8ea3'.
+
+You are in 'detached HEAD' state. You can look around, make experimental
+changes and commit them, and you can discard any commits you make in this
+state without impacting any branches by switching back to a branch.
+
+If you want to create a new branch to retain commits you create, you may
+do so (now or later) by using -c with the switch command. Example:
+
+  git switch -c <new-branch-name>
+
+Or undo this operation with:
+
+  git switch -
+
+Turn off this advice by setting config variable advice.detachedHead to false
+
+HEAD is now at d8b5b3d3b Merge pull request #2030 from cryspen/release-0.3.7
+[1m[92m  Installing[0m hax-engine-names-extract v0.3.7 (/home/runner/.local/opt/vela-hax-0.3.7/hax/engine/names/extract)
+[1m[92m    Updating[0m crates.io index
+[1m[92m Downloading[0m crates ...
+[1m[92m  Downloaded[0m getrandom v0.2.16
+[1m[92m  Downloaded[0m num-integer v0.1.46
+[1m[92m  Downloaded[0m rand_chacha v0.3.1
+[1m[92m  Downloaded[0m proc-macro-error-attr2 v2.0.0
+[1m[92m  Downloaded[0m libcrux-platform v0.0.2-pre.2
+[1m[92m  Downloaded[0m ppv-lite86 v0.2.21
+[1m[92m  Downloaded[0m rand_core v0.6.4
+[1m[92m  Downloaded[0m proc-macro-error2 v2.0.1
+[1m[92m  Downloaded[0m num-bigint v0.4.6
+[1m[92m  Downloaded[0m num-traits v0.2.19
+[1m[92m  Downloaded[0m rand v0.8.5
+[1m[92m  Downloaded[0m libjade-sys v0.0.2-pre.2
+[1m[92m  Downloaded[0m libcrux v0.0.2-pre.2
+[1m[92m  Downloaded[0m zerocopy v0.8.26
+[1m[92m  Downloaded[0m libcrux-hacl v0.0.2-pre.2
+[1m[92m   Compiling[0m libc v0.2.178
+[1m[92m   Compiling[0m proc-macro2 v1.0.101
+[1m[92m   Compiling[0m unicode-ident v1.0.18
+[1m[92m   Compiling[0m cfg-if v1.0.3
+[1m[92m   Compiling[0m quote v1.0.40
+[1m[92m   Compiling[0m libcrux-platform v0.0.2-pre.2
+[1m[92m   Compiling[0m jobserver v0.1.34
+[1m[92m   Compiling[0m shlex v1.3.0
+[1m[92m   Compiling[0m cc v1.2.34
+[1m[92m   Compiling[0m syn v2.0.106
+[1m[92m   Compiling[0m getrandom v0.3.3
+[1m[92m   Compiling[0m zerocopy v0.8.26
+[1m[92m   Compiling[0m serde_core v1.0.228
+[1m[92m   Compiling[0m serde v1.0.228
+[1m[92m   Compiling[0m autocfg v1.5.0
+[1m[92m   Compiling[0m num-traits v0.2.19
+[1m[92m   Compiling[0m serde_derive v1.0.228
+[1m[92m   Compiling[0m getrandom v0.2.16
+[1m[92m   Compiling[0m serde_json v1.0.143
+[1m[92m   Compiling[0m rand_core v0.6.4
+[1m[92m   Compiling[0m ppv-lite86 v0.2.21
+[1m[92m   Compiling[0m libcrux-hacl v0.0.2-pre.2
+[1m[92m   Compiling[0m libjade-sys v0.0.2-pre.2
+[1m[92m   Compiling[0m ryu v1.0.20
+[1m[92m   Compiling[0m itoa v1.0.15
+[1m[92m   Compiling[0m memchr v2.7.5
+[1m[92m   Compiling[0m rand_chacha v0.3.1
+[1m[92m   Compiling[0m uuid v1.18.0
+[1m[92m   Compiling[0m libcrux v0.0.2-pre.2
+[1m[92m   Compiling[0m proc-macro-error-attr2 v2.0.0
+[1m[92m   Compiling[0m proc-macro-error2 v2.0.1
+[1m[92m   Compiling[0m hax-lib-macros-types v0.3.7 (/home/runner/.local/opt/vela-hax-0.3.7/hax/hax-lib/macros/types)
+[1m[92m   Compiling[0m rand v0.8.5
+[1m[92m   Compiling[0m num-integer v0.1.46
+[1m[92m   Compiling[0m syn v1.0.109
+[1m[92m   Compiling[0m rustix v1.0.8
+[1m[92m   Compiling[0m hax-lib v0.3.7 (/home/runner/.local/opt/vela-hax-0.3.7/hax/hax-lib)
+[1m[92m   Compiling[0m num-bigint v0.4.6
+[1m[92m   Compiling[0m hax-lib-macros v0.3.7 (/home/runner/.local/opt/vela-hax-0.3.7/hax/hax-lib/macros)
+[1m[92m   Compiling[0m bitflags v2.9.3
+[1m[92m   Compiling[0m either v1.15.0
+[1m[92m   Compiling[0m linux-raw-sys v0.9.4
+[1m[92m   Compiling[0m itertools v0.11.0
+[1m[92m   Compiling[0m hax-lib-protocol v0.3.7 (/home/runner/.local/opt/vela-hax-0.3.7/hax/hax-lib-protocol)
+[1m[92m   Compiling[0m once_cell v1.21.3
+[1m[92m   Compiling[0m fastrand v2.3.0
+[1m[92m   Compiling[0m tempfile v3.21.0
+[1m[92m   Compiling[0m hax-adt-into v0.3.7 (/home/runner/.local/opt/vela-hax-0.3.7/hax/frontend/exporter/adt-into)
+[1m[92m   Compiling[0m hax-engine-names v0.3.7 (/home/runner/.local/opt/vela-hax-0.3.7/hax/engine/names)
+[1m[92m   Compiling[0m hax-engine-names-extract v0.3.7 (/home/runner/.local/opt/vela-hax-0.3.7/hax/engine/names/extract)
+[1m[92m    Finished[0m `release` profile [optimized] target(s) in 1m 19s
+[1m[92m  Installing[0m /home/runner/.local/opt/vela-hax-0.3.7/bin/hax-engine-names-extract
+[1m[92m   Installed[0m package `hax-engine-names-extract v0.3.7 (/home/runner/.local/opt/vela-hax-0.3.7/hax/engine/names/extract)` (executable `hax-engine-names-extract`)
+
+<><> Installing new switch packages <><><><><><><><><><><><><><><><><><><><><><>
+Switch invariant: ["ocaml-base-compiler" {= "5.1.1"}]
+
+<><> Processing actions <><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+∗ installed base-bigarray.base
+∗ installed base-threads.base
+∗ installed base-unix.base
+∗ installed ocaml-options-vanilla.1
+⬇ retrieved ocaml-config.3  (2 extra sources)
+⬇ retrieved ocaml-base-compiler.5.1.1  (https://opam.ocaml.org/cache)
+∗ installed ocaml-base-compiler.5.1.1
+∗ installed ocaml-config.3
+∗ installed ocaml.5.1.1
+∗ installed base-domains.base
+∗ installed base-nnp.base
+Done.
+# Run eval $(opam env --switch=vela-hax) to update the current shell environment
+Package hax-engine does not exist, create as a NEW package? [Y/n] y
+hax-engine is now pinned to file:///home/runner/.local/opt/vela-hax-0.3.7/hax/engine (version 0.3.7)
+The following actions will be performed:
+  ∗ install dune                        3.24.2    [required by hax-engine]
+  ∗ install seq                         base      [required by gen]
+  ∗ install ocamlfind                   1.9.8     [required by batteries, logs]
+  ∗ install ocamlbuild                  0.16.1    [required by logs]
+  ∗ install cmdliner                    2.1.1     [required by hax-engine]
+  ∗ install num                         1.6       [required by batteries]
+  ∗ install yojson                      3.0.0     [required by hax-engine]
+  ∗ install stdlib-shims                0.3.0     [required by ppxlib]
+  ∗ install stdint                      0.7.2     [required by hax-engine]
+  ∗ install sexplib0                    v0.17.0   [required by base]
+  ∗ install re                          1.14.0    [required by hax-engine]
+  ∗ install ppx_derivers                1.2.1     [required by ppx_deriving]
+  ∗ install pprint                      20230830  [required by hax-engine]
+  ∗ install octavius                    1.2.2     [required by ppx_js_style]
+  ∗ install ocamlgraph                  2.2.0     [required by hax-engine]
+  ∗ install ocaml-syntax-shims          1.0.0     [required by angstrom]
+  ∗ install ocaml-compiler-libs         v0.12.4   [required by js_of_ocaml-compiler]
+  ∗ install ocaml_intrinsics_kernel     v0.17.2   [required by base]
+  ∗ install menhirSdk                   20260209  [required by js_of_ocaml-compiler]
+  ∗ install menhirLib                   20260209  [required by hax-engine]
+  ∗ install menhirGLR                   20260209  [required by menhir]
+  ∗ install menhirCST                   20260209  [required by menhir]
+  ∗ install jane-street-headers         v0.17.0   [required by core]
+  ∗ install csexp                       1.5.2     [required by dune-configurator]
+  ∗ install cppo                        1.8.0     [required by ppx_deriving]
+  ∗ install camlp-streams               5.0.1     [required by batteries]
+  ∗ install gen                         1.1       [required by sedlex]
+  ∗ install topkg                       1.1.1     [required by logs]
+  ∗ install ppx_yojson_conv_lib         v0.17.0   [required by ppx_yojson_conv]
+  ∗ install parsexp                     v0.17.0   [required by sexplib]
+  ∗ install ppxlib                      0.35.0    [required by hax-engine]
+  ∗ install menhir                      20260209  [required by js_of_ocaml-compiler]
+  ∗ install dune-configurator           3.24.2    [required by base]
+  ∗ install batteries                   3.11.0    [required by hax-engine]
+  ∗ install sexplib                     v0.17.0   [required by core]
+  ∗ install sedlex                      3.8.1     [required by hax-engine]
+  ∗ install ppxlib_jane                 v0.17.0   [required by ppx_diff]
+  ∗ install ppx_pipebang                v0.17.0   [required by ppx_jane]
+  ∗ install ppx_matches                 0.2.0     [required by hax-engine]
+  ∗ install ppx_ignore_instrumentation  v0.17.0   [required by ppx_jane]
+  ∗ install ppx_deriving                6.0.3     [required by hax-engine]
+  ∗ install bigstringaf                 0.10.0    [required by angstrom]
+  ∗ install base                        v0.17.3   [required by hax-engine]
+  ∗ install js_of_ocaml-compiler        6.4.1     [required by hax-engine]
+  ∗ install ppx_deriving_yojson         3.9.1     [required by hax-engine]
+  ∗ install angstrom                    0.16.1    [required by hax-engine]
+  ∗ install variantslib                 v0.17.0   [required by core]
+  ∗ install typerep                     v0.17.1   [required by core]
+  ∗ install stdio                       v0.17.0   [required by core]
+  ∗ install ppx_tydi                    v0.17.0   [required by ppx_jane]
+  ∗ install ppx_stable_witness          v0.17.0   [required by ppx_jane]
+  ∗ install ppx_stable                  v0.17.0   [required by ppx_jane]
+  ∗ install ppx_sexp_conv               v0.17.0   [required by hax-engine]
+  ∗ install ppx_optional                v0.17.0   [required by ppx_jane]
+  ∗ install ppx_js_style                v0.17.0   [required by ppx_yojson_conv]
+  ∗ install ppx_here                    v0.17.0   [required by ppx_jane]
+  ∗ install ppx_globalize               v0.17.0   [required by ppx_base]
+  ∗ install ppx_fixed_literal           v0.17.0   [required by ppx_jane]
+  ∗ install ppx_enumerate               v0.17.0   [required by ppx_diff]
+  ∗ install ppx_disable_unused_warnings v0.17.0   [required by ppx_jane]
+  ∗ install ppx_compare                 v0.17.0   [required by hax-engine]
+  ∗ install ppx_cold                    v0.17.0   [required by ppx_base]
+  ∗ install non_empty_list              0.1       [required by hax-engine]
+  ∗ install fieldslib                   v0.17.0   [required by core]
+  ∗ install logs                        0.10.0    [required by hax-engine]
+  ∗ install js_of_ocaml                 6.4.1     [required by hax-engine]
+  ∗ install ppx_variants_conv           v0.17.0   [required by ppx_jane]
+  ∗ install ppx_typerep_conv            v0.17.0   [required by ppx_jane]
+  ∗ install ppx_optcomp                 v0.17.0   [required by core]
+  ∗ install ppx_custom_printf           v0.17.0   [required by ppx_jane]
+  ∗ install ppx_yojson_conv             v0.17.0   [required by hax-engine]
+  ∗ install ppx_sexp_value              v0.17.0   [required by ppx_jane]
+  ∗ install ppx_sexp_message            v0.17.0   [required by core]
+  ∗ install ppx_let                     v0.17.0   [required by ppx_jane]
+  ∗ install ppx_hash                    v0.17.0   [required by hax-engine]
+  ∗ install ppx_assert                  v0.17.0   [required by core]
+  ∗ install ppx_fields_conv             v0.17.0   [required by ppx_jane]
+  ∗ install js_of_ocaml-ppx             6.4.1     [required by hax-engine]
+  ∗ install ppx_base                    v0.17.0   [required by core]
+  ∗ install jst-config                  v0.17.0   [required by core]
+  ∗ install bin_prot                    v0.17.0-1 [required by core]
+  ∗ install ppx_string                  v0.17.0   [required by hax-engine]
+  ∗ install capitalization              v0.17.0   [required by ppx_string_conv]
+  ∗ install time_now                    v0.17.0   [required by core]
+  ∗ install ppx_bin_prot                v0.17.0   [required by ppx_jane]
+  ∗ install ppx_string_conv             v0.17.0   [required by ppx_jane]
+  ∗ install ppx_module_timer            v0.17.0   [required by ppx_jane]
+  ∗ install ppx_inline_test             v0.17.0   [required by core]
+  ∗ install ppx_expect                  v0.17.2   [required by ppx_jane]
+  ∗ install ppx_bench                   v0.17.0   [required by ppx_jane]
+  ∗ install ppx_log                     v0.17.0   [required by ppx_jane]
+  ∗ install splittable_random           v0.17.0   [required by core]
+  ∗ install base_quickcheck             v0.17.0   [required by core]
+  ∗ install ppx_jane                    v0.17.0   [required by core]
+  ∗ install int_repr                    v0.17.0   [required by base_bigstring]
+  ∗ install gel                         v0.17.0   [required by ppx_diff]
+  ∗ install base_bigstring              v0.17.0   [required by core]
+  ∗ install ppx_diff                    v0.17.0   [required by core]
+  ∗ install core                        v0.17.2   [required by hax-engine]
+  ∗ install hax-engine                  0.3.7*
+===== ∗ 100 =====
+
+<><> Processing actions <><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+⬇ retrieved base_bigstring.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved angstrom.0.16.1  (https://opam.ocaml.org/cache)
+⬇ retrieved base.v0.17.3  (https://opam.ocaml.org/cache)
+⬇ retrieved base_quickcheck.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved bigstringaf.0.10.0  (https://opam.ocaml.org/cache)
+⬇ retrieved batteries.3.11.0  (https://opam.ocaml.org/cache)
+⬇ retrieved camlp-streams.5.0.1  (https://opam.ocaml.org/cache)
+⬇ retrieved bin_prot.v0.17.0-1  (https://opam.ocaml.org/cache)
+⬇ retrieved capitalization.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved cmdliner.2.1.1  (https://opam.ocaml.org/cache)
+⬇ retrieved cppo.1.8.0  (https://opam.ocaml.org/cache)
+⬇ retrieved core.v0.17.2  (https://opam.ocaml.org/cache)
+⬇ retrieved csexp.1.5.2  (https://opam.ocaml.org/cache)
+⬇ retrieved fieldslib.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved gel.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved gen.1.1  (https://opam.ocaml.org/cache)
+⬇ retrieved hax-engine.0.3.7  (file:///home/runner/.local/opt/vela-hax-0.3.7/hax/engine)
+⬇ retrieved int_repr.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved jane-street-headers.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved dune.3.24.2  (https://opam.ocaml.org/cache)
+∗ installed cmdliner.2.1.1
+⬇ retrieved dune-configurator.3.24.2  (https://opam.ocaml.org/cache)
+⬇ retrieved js_of_ocaml.6.4.1  (https://opam.ocaml.org/cache)
+⬇ retrieved js_of_ocaml-ppx.6.4.1  (cached)
+⬇ retrieved jst-config.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved logs.0.10.0  (https://opam.ocaml.org/cache)
+⬇ retrieved menhir.20260209  (https://opam.ocaml.org/cache)
+⬇ retrieved menhirGLR.20260209  (cached)
+⬇ retrieved js_of_ocaml-compiler.6.4.1  (https://opam.ocaml.org/cache)
+⬇ retrieved menhirLib.20260209  (cached)
+⬇ retrieved menhirSdk.20260209  (cached)
+⬇ retrieved non_empty_list.0.1  (https://opam.ocaml.org/cache)
+⬇ retrieved num.1.6  (https://opam.ocaml.org/cache)
+⬇ retrieved ocaml-compiler-libs.v0.12.4  (https://opam.ocaml.org/cache)
+⬇ retrieved menhirCST.20260209  (https://opam.ocaml.org/cache)
+⬇ retrieved ocaml-syntax-shims.1.0.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ocaml_intrinsics_kernel.v0.17.2  (https://opam.ocaml.org/cache)
+⬇ retrieved ocamlbuild.0.16.1  (https://opam.ocaml.org/cache)
+⬇ retrieved ocamlfind.1.9.8  (https://opam.ocaml.org/cache)
+⬇ retrieved ocamlgraph.2.2.0  (https://opam.ocaml.org/cache)
+⬇ retrieved octavius.1.2.2  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_assert.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved parsexp.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved pprint.20230830  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_bench.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_base.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_bin_prot.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_cold.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_compare.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_derivers.1.2.1  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_custom_printf.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_deriving.6.0.3  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_deriving_yojson.3.9.1  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_disable_unused_warnings.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_diff.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_enumerate.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_fields_conv.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_expect.v0.17.2  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_fixed_literal.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_globalize.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_hash.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_here.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_ignore_instrumentation.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_jane.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_js_style.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_inline_test.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_let.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_matches.0.2.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_log.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_module_timer.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_optional.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_optcomp.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_pipebang.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_sexp_message.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_sexp_value.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_sexp_conv.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_stable.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_stable_witness.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_string.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_tydi.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_string_conv.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_typerep_conv.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_variants_conv.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_yojson_conv_lib.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_yojson_conv.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppxlib_jane.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved re.1.14.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppxlib.0.35.0  (https://opam.ocaml.org/cache)
+⬇ retrieved sedlex.3.8.1  (https://opam.ocaml.org/cache)
+⬇ retrieved sexplib.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved seq.base  (2 extra sources)
+⬇ retrieved sexplib0.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved splittable_random.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved stdint.0.7.2  (https://opam.ocaml.org/cache)
+⬇ retrieved stdio.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved stdlib-shims.0.3.0  (https://opam.ocaml.org/cache)
+⬇ retrieved time_now.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved typerep.v0.17.1  (https://opam.ocaml.org/cache)
+⬇ retrieved variantslib.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved topkg.1.1.1  (https://opam.ocaml.org/cache)
+⬇ retrieved yojson.3.0.0  (https://opam.ocaml.org/cache)
+∗ installed dune.3.24.2
+∗ installed num.1.6
+∗ installed camlp-streams.5.0.1
+∗ installed cppo.1.8.0
+∗ installed csexp.1.5.2
+∗ installed jane-street-headers.v0.17.0
+∗ installed dune-configurator.3.24.2
+∗ installed menhirCST.20260209
+∗ installed bigstringaf.0.10.0
+∗ installed menhirGLR.20260209
+∗ installed menhirLib.20260209
+∗ installed menhirSdk.20260209
+∗ installed ocaml-compiler-libs.v0.12.4
+∗ installed menhir.20260209
+∗ installed ocaml-syntax-shims.1.0.0
+∗ installed ocaml_intrinsics_kernel.v0.17.2
+∗ installed angstrom.0.16.1
+∗ installed ocamlbuild.0.16.1
+∗ installed ocamlfind.1.9.8
+∗ installed ocamlgraph.2.2.0
+∗ installed batteries.3.11.0
+∗ installed octavius.1.2.2
+∗ installed pprint.20230830
+∗ installed ppx_derivers.1.2.1
+∗ installed re.1.14.0
+∗ installed seq.base
+∗ installed sexplib0.v0.17.0
+∗ installed gen.1.1
+∗ installed base.v0.17.3
+∗ installed parsexp.v0.17.0
+∗ installed fieldslib.v0.17.0
+∗ installed sexplib.v0.17.0
+∗ installed stdint.0.7.2
+∗ installed stdio.v0.17.0
+∗ installed stdlib-shims.0.3.0
+∗ installed topkg.1.1.1
+∗ installed ppxlib.0.35.0
+∗ installed typerep.v0.17.1
+∗ installed ppx_cold.v0.17.0
+∗ installed ppx_deriving.6.0.3
+∗ installed ppx_disable_unused_warnings.v0.17.0
+∗ installed non_empty_list.0.1
+∗ installed ppx_fields_conv.v0.17.0
+∗ installed ppx_fixed_literal.v0.17.0
+∗ installed ppx_here.v0.17.0
+∗ installed ppx_ignore_instrumentation.v0.17.0
+∗ installed ppx_js_style.v0.17.0
+∗ installed ppx_let.v0.17.0
+∗ installed ppx_matches.0.2.0
+∗ installed ppx_optcomp.v0.17.0
+∗ installed ppx_pipebang.v0.17.0
+∗ installed ppx_stable.v0.17.0
+∗ installed ppx_stable_witness.v0.17.0
+∗ installed ppx_tydi.v0.17.0
+∗ installed ppx_typerep_conv.v0.17.0
+∗ installed ppxlib_jane.v0.17.0
+∗ installed sedlex.3.8.1
+∗ installed ppx_compare.v0.17.0
+∗ installed ppx_enumerate.v0.17.0
+∗ installed ppx_globalize.v0.17.0
+∗ installed ppx_optional.v0.17.0
+∗ installed ppx_sexp_conv.v0.17.0
+∗ installed variantslib.v0.17.0
+∗ installed ppx_assert.v0.17.0
+∗ installed ppx_custom_printf.v0.17.0
+∗ installed jst-config.v0.17.0
+∗ installed ppx_hash.v0.17.0
+∗ installed ppx_sexp_message.v0.17.0
+∗ installed ppx_base.v0.17.0
+∗ installed ppx_sexp_value.v0.17.0
+∗ installed capitalization.v0.17.0
+∗ installed ppx_string.v0.17.0
+∗ installed ppx_variants_conv.v0.17.0
+∗ installed ppx_string_conv.v0.17.0
+∗ installed bin_prot.v0.17.0-1
+∗ installed time_now.v0.17.0
+∗ installed ppx_bin_prot.v0.17.0
+∗ installed ppx_inline_test.v0.17.0
+∗ installed ppx_module_timer.v0.17.0
+∗ installed ppx_bench.v0.17.0
+∗ installed ppx_expect.v0.17.2
+∗ installed splittable_random.v0.17.0
+∗ installed ppx_log.v0.17.0
+∗ installed base_quickcheck.v0.17.0
+∗ installed yojson.3.0.0
+∗ installed ppx_jane.v0.17.0
+∗ installed js_of_ocaml-compiler.6.4.1
+∗ installed gel.v0.17.0
+∗ installed int_repr.v0.17.0
+∗ installed js_of_ocaml.6.4.1
+∗ installed base_bigstring.v0.17.0
+∗ installed js_of_ocaml-ppx.6.4.1
+∗ installed logs.0.10.0
+∗ installed ppx_deriving_yojson.3.9.1
+∗ installed ppx_diff.v0.17.0
+∗ installed ppx_yojson_conv_lib.v0.17.0
+∗ installed core.v0.17.2
+∗ installed ppx_yojson_conv.v0.17.0
+∗ installed hax-engine.0.3.7
+Done.
+# Run eval $(opam env) to update the current shell environment
+Cleaning up switch vela-hax

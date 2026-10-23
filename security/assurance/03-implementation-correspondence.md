@@ -93,7 +93,8 @@ record their assumptions. Current code has 122 selected functions and 119
 explicit postconditions; selected functions and predicates are different counts.
 
 The CI `refinement` job installs pinned tools, runs all eight crates and the constructor,
-retaining logs. A successful new CI run is still pending.
+retaining logs. [the hosted refinement job](proof-logs/current/hosted-refinement-40002230354/README.md) passed on `b27dcd6`; the complete
+security workflow remains pending.
 
 Every crate has a `verify-fstar.sh` runner, and most have a README that
 states its proof boundary (for example
@@ -117,7 +118,8 @@ lockfiles, covered by [`MANIFEST.sha256`](MANIFEST.sha256). The source-tree
 extractions were regenerated too. Rekey's source-tree extraction remains
 ignored by its restored `.gitignore`; its snapshot is included in the evidence.
 Historical CI did not regenerate or check extractions. The new CI gate removes
-previous `.fst`/`.fsti` output before extracting; its first successful run is pending.
+previous `.fst`/`.fsti` output before extracting; [the hosted refinement job](proof-logs/current/hosted-refinement-40002230354/README.md)
+passed on `b27dcd6`.
 The eight policy modules, two crypto modules and String view are recorded in
 `proof-logs/current/trusted-boundary/extractions/`. Fresh crypto modules including
 the new Wire module are under `proof-logs/current/wire-refinement/extractions/`;

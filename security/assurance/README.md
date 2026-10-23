@@ -16,7 +16,8 @@ use the commit containing this manifest to reproduce this package.
 The older [CI run #39864715971](https://github.com/lucannez64/VELA/actions/runs/39864715971)
 passed on `5a3b72e7f6d2081cc91b9610adc62a54981f0857`. Its logs are historical
 baseline evidence. They do not validate the subsequent protocol changes.
-No successful CI run for this updated package is asserted.
+The [refinement job passed on `b27dcd6`](proof-logs/current/hosted-refinement-40002230354/README.md).
+A successful complete security workflow for the updated package remains pending.
 
 ## Contents
 

@@ -54,6 +54,11 @@ on:
 permissions:
   contents: read
 
+# PR and manual runs for the same branch share a slot; retain main's queued runs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   formal-rekey:
     runs-on: ubuntu-latest
@@ -115,29 +120,42 @@ jobs:
       - name: Prove malicious-server enrollment, shares, and device authentication
         run: VELA_PROOF_OUT="$RUNNER_TEMP/network-proofs" security/formal/run-network-boundary-proofs.sh
 
-      # The opam switch with ProVerif is the slowest toolchain step (ocaml +
-      # proverif build ~5 min); the install below is already idempotent, so a
-      # cache hit just skips straight to the proof.
-      - name: Cache opam/ProVerif toolchain
-        uses: actions/cache@v4
+      # Keep installation separate from the later run-all.sh proof execution.
+      - name: Restore pinned ProVerif toolchain
+        id: proverif-toolchain-cache
+        uses: actions/cache/restore@v4
         with:
           path: /home/runner/.opam
           key: opam-proverif-2.05-ocaml5.1.1-v2
 
-      - name: Prove Path-ORAM access-pattern hiding (ProVerif)
+      - name: Install pinned ProVerif 2.05 (setup only)
+        timeout-minutes: 25
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq opam libgtk2.0-dev pkg-config
-          opam init --auto-setup --bare -y
-          if ! opam switch list | grep -q 'vela-proverif'; then
-            opam switch create vela-proverif ocaml-base-compiler.5.1.1
+          set -euo pipefail
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          # Avoid opam's recommended distro OCaml; the pinned switch supplies it.
+          # ProVerif's opam package declares the GTK2 development dependency.
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends opam libgtk2.0-dev pkg-config
+          opam init --no-setup --bare --yes
+          if ! opam switch list --short | grep -Fxq 'vela-proverif'; then
+            opam switch create vela-proverif ocaml-base-compiler.5.1.1 --yes
           fi
-          # proverif's opam depext pulls GUI libs the headless runner lacks;
-          # they are optional for the CLI solver, so skip depext handling.
           opam install --switch vela-proverif --yes proverif.2.05
           opam list --switch vela-proverif --installed proverif
-          eval "$(opam env --switch vela-proverif)"
           echo "$(opam var bin --switch vela-proverif)" >> "$GITHUB_PATH"
+
+      - name: Cache completed ProVerif toolchain
+        if: steps.proverif-toolchain-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /home/runner/.opam
+          key: ${{ steps.proverif-toolchain-cache.outputs.cache-primary-key }}
+
+      - name: Prove Path-ORAM access-pattern hiding (ProVerif)
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/assurance-logs"
+          security/assurance/bounded.sh security/formal/run-oram-access-hiding-proofs.sh 2>&1 | tee "$RUNNER_TEMP/assurance-logs/oram-precheck.log"
 
       - name: Check bounded policies and rekey handler/database conformance
         run: |
