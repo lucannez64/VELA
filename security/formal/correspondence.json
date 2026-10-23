@@ -98,7 +98,9 @@
         "libVELA/vela-crypto/src/kem.rs": "c9a17b26b6624f65ad4539b0d3449e10b36236cd6a015be7a4546c4b56457885",
         "security/formal/cryptoverif/kem_v2_x25519_gdh.ocv": "505969a2f28518d207b53bab0b4c76d0cbe63df7aa14fc17398c5dad9d40627f",
         "security/formal/cryptoverif/kem_v2_mlkem_cca.ocv": "0fdb3a92d3bb02232f9f5245fffb63e9573ac217db01fc36bb0e3d580d524ba1",
-        "security/formal/cryptoverif/kem_v1_x25519_baseline.ocv": "f617ffc3e84966bc8b5a92c31957f555fd97ae475440db62a3d05002445938e4"
+        "security/formal/cryptoverif/kem_v1_x25519_baseline.ocv": "f617ffc3e84966bc8b5a92c31957f555fd97ae475440db62a3d05002445938e4",
+        "libVELA/vela-crypto/src/aead.rs": "7840cd68b6b510284e3fba940ced84712af0ecd7914f2833fc1bbc8cccb2e46f",
+        "security/formal/cryptoverif/kem_dem_seal_share.ocv": "e3748c7aae82802d9a088e221ba0f4babb9e7165ed054dd6ad687a2c5e445725"
       }
     }
   ]

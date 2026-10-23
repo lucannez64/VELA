@@ -11,6 +11,7 @@ ss = HKDF-SHA256(ss_mlkem ‖ ss_x25519 ‖ x25519_epk ‖ x25519_pk ‖ SHA-256
 |---|---|---|
 | `kem_v2_x25519_gdh.ocv` | proved | IND-CCA2 of the hybrid KEM from **Gap-DH on X25519 alone**. ML-KEM is an arbitrary function and the adversary holds its secret key. Bound: `4·pDistRerandom + 2·pGDH(t, 2·qH) + (2·Qd + 2·qH)/|Z|` |
 | `kem_v2_mlkem_cca.ocv` | proved | IND-CCA2 of the hybrid KEM from **IND-CCA2 of ML-KEM alone**. The adversary holds the X25519 secret key. Bound: `2·Penc(t, 1, 1, Qd) + 6·Qd·Pctxtcoll + 2·qH/|mlss| + (8·Qd + 2·qH)/|Z|` |
+| `kem_dem_seal_share.ocv` | proved | `seal_share`/`open_share` (KEM ‖ XChaCha20-Poly1305, no AAD) is **IND-CCA2 public-key encryption**, assuming an IND-CCA2 KEM (the two rows above) and IND-CPA + INT-CTXT for the AEAD with a fresh random nonce. Bound: `2·Pkem + 2·Pencctxt + 4·Penc + 10·Qd·Pctxtcoll` (Penc per message, from the log) |
 | `kem_v1_x25519_baseline.ocv` | not proved (expected) | The legacy combiner `HKDF(ss_mlkem ‖ ss_x25519)` in the first game. Consistent with the known attack when ML-KEM is broken; CryptoVerif reports proof failure, not an attack trace |
 
 Together the two proved theorems give the hybrid claim (COMP-5): the combined
@@ -30,9 +31,12 @@ KEM combiner in the computational model"). Logs: `security/assurance/proof-logs/
   CryptoVerif's `DH_X25519` modelling of the cofactor is not used here.
 - **One recipient key, one challenge.** Multi-user, multi-challenge security
   follows by a standard hybrid argument that is not machine-checked.
-- **KEM only.** `seal_share` composes this KEM with XChaCha20-Poly1305
-  (KEM-DEM). That composition, nonce handling, and the share/contact
-  envelope encodings above it are not covered by these models.
+- **KEM-DEM is proved modularly.** `kem_dem_seal_share.ocv` assumes an
+  abstract IND-CCA2 KEM; the combiner theorems discharge that assumption one
+  component at a time. The two steps are composed by hand (the abstract KEM
+  is instantiated with the proved combiner), not in a single CryptoVerif run.
+  Envelope encodings above `seal_share` (share envelope v2, contact
+  envelopes with AAD) are not covered here.
 - **Legacy path.** `decapsulate_legacy_v1` remains for trusted-contact
   envelopes written before v2 (`recovery.rs`, version byte 1). Those
   envelopes do not get this guarantee.

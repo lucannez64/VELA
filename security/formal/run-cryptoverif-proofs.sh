@@ -3,6 +3,7 @@
 #   kem_v2_x25519_gdh     must prove: IND-CCA2 from Gap-DH, ML-KEM broken
 #   kem_v2_mlkem_cca      must prove: IND-CCA2 from ML-KEM IND-CCA2, X25519 broken
 #   kem_v1_x25519_baseline must NOT prove: the legacy combiner lacks transcript binding
+#   kem_dem_seal_share    must prove: seal_share (KEM + XChaCha20-Poly1305) is IND-CCA2 PKE
 # Needs `cryptoverif` on PATH (or CRYPTOVERIF=/path/to/cryptoverif) and its
 # library `default.ocvl` next to the binary (or CRYPTOVERIF_LIB=/path/to/default).
 set -euo pipefail
@@ -26,4 +27,5 @@ run() {
 run kem_v2_x25519_gdh proved
 run kem_v2_mlkem_cca proved
 run kem_v1_x25519_baseline unproved
+run kem_dem_seal_share proved
 printf 'Full CryptoVerif logs: %s\n' "$out"
