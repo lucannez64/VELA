@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 /// The settings hub: server sync, sharing, devices, tools, vault security and
 /// about, in the Instrument layout. Presented as a sheet with its own stack.
@@ -14,6 +15,8 @@ struct SettingsView: View {
     @AppStorage("vela.backgroundSyncMinutes") private var backgroundSyncMinutes = 5
     @State private var confirmReset = false
     @State private var copied = false
+    @State private var showImporter = false
+    @State private var importStatus: String?
 
     var body: some View {
         NavigationStack {
@@ -35,7 +38,8 @@ struct SettingsView: View {
                         devicesGroup.arrive(2)
                         toolsGroup.arrive(3)
                         securityGroup.arrive(4)
-                        aboutGroup.arrive(5)
+                        importGroup.arrive(5)
+                        aboutGroup.arrive(6)
 
                         if !accountVM.status.isEmpty {
                             FineText(accountVM.status, size: 10).padding(.top, 4)
@@ -181,6 +185,57 @@ struct SettingsView: View {
                     .accessibilityIdentifier("resetButton")
             }
             .padding(.bottom, 12)
+        }
+    }
+
+    private var importGroup: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            GroupLabel(text: "05 / Import")
+            InstrumentGroup {
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    showImporter = true
+                } label: {
+                    HStack(spacing: 12) {
+                        InstrumentIcon(name: .vault, size: 17, color: ink.muted)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Import vault").font(InstrumentFont.body(12)).foregroundColor(ink.text)
+                            FineText("Bitwarden, 1Password (.1pif/.1pux), KeePass, browsers or Proton Pass", size: 10)
+                        }
+                        Spacer()
+                    }
+                    .padding(.horizontal, 15)
+                    .frame(minHeight: 55)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("importVaultButton")
+                if let importStatus {
+                    GroupDivider()
+                    FineText(importStatus, size: 10).padding(.horizontal, 15).padding(.vertical, 10)
+                }
+            }
+        }
+        .fileImporter(
+            isPresented: $showImporter,
+            allowedContentTypes: [.json, .commaSeparatedText, .zip, .data, .plainText],
+            allowsMultipleSelection: false
+        ) { result in
+            switch result {
+            case .success(let urls):
+                guard let url = urls.first else { return }
+                let accessing = url.startAccessingSecurityScopedResource()
+                defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+                do {
+                    let data = try Data(contentsOf: url)
+                    let summary = vm.importVault(data: data)
+                    importStatus = summary.summary
+                } catch {
+                    importStatus = "Import failed: \(error.localizedDescription)"
+                }
+            case .failure(let error):
+                importStatus = "Import failed: \(error.localizedDescription)"
+            }
         }
     }
 

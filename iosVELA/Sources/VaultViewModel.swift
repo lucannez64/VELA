@@ -450,3 +450,347 @@ final class VaultViewModel: ObservableObject {
         }
     }
 }
+
+/// Result of one import run, mirroring the desktop/Android report.
+struct VaultImportSummary {
+    var source = ""
+    var added = 0
+    var duplicates = 0
+    var skipped = 0
+    var preserved = 0
+    var converted = 0
+    var unsupported: [String] = []
+    var failure: String?
+
+    var summary: String {
+        if let failure { return "Import failed: \(failure)" }
+        var text = source.isEmpty ? "" : "\(source): "
+        text += "imported \(added)"
+        if duplicates > 0 { text += ", \(duplicates) already in vault" }
+        if preserved > 0 { text += ", \(preserved) with folders/tags/fields" }
+        if converted > 0 { text += ", \(converted) converted to notes" }
+        if skipped > 0 { text += ", \(skipped) item types skipped" }
+        if !unsupported.isEmpty { text += " · unsupported: \(unsupported.joined(separator: ", "))" }
+        return text
+    }
+}
+
+extension VaultViewModel {
+    /// Import a password-manager export (JSON, CSV, .1pif, .1pux). Parsing runs
+    /// in the shared Rust crate; this maps the neutral entries onto the vault
+    /// and writes them in one transaction.
+    @discardableResult
+    func importVault(data: Data) -> VaultImportSummary {
+        var summary = VaultImportSummary()
+        let response: [String: Any]
+        do {
+            response = try VelaCoreFFI.parseImport(["dataBase64": data.base64EncodedString()])
+        } catch {
+            summary.failure = error.localizedDescription
+            return summary
+        }
+        summary.source = response["source"] as? String ?? ""
+        summary.skipped = (response["skippedUnsupported"] as? NSNumber)?.intValue ?? 0
+        if let unsupported = response["unsupported"] as? [String: Any] {
+            summary.unsupported = unsupported.compactMap { key, value in
+                (value as? NSNumber).map { "\(key) ×\($0.intValue)" }
+            }.sorted()
+        }
+        guard let entries = response["entries"] as? [[String: Any]] else { return summary }
+
+        let collections = envelope.schemaVersion >= 2
+        var next = currentStore
+        var orgObject = next.organizationObject
+        let device = Self.organizationDeviceID
+        var folderCache: [String: String] = [:]
+        var tagCache: [String: String] = [:]
+
+        func firstFolder(named name: String, parent: String?) -> String? {
+            guard let folders = orgObject["folders"] as? [[String: Any]] else { return nil }
+            return folders.first {
+                (($0["name"] as? String)?.caseInsensitiveCompare(name) == .orderedSame)
+                    && (($0["parentId"] as? String) ?? "") == (parent ?? "")
+            }?["id"] as? String
+        }
+
+        func ensureFolder(_ path: String) -> String? {
+            var parent: String?
+            var accumulated = ""
+            for raw in path.split(separator: "/") {
+                let segment = raw.trimmingCharacters(in: .whitespaces)
+                if segment.isEmpty { continue }
+                accumulated = accumulated.isEmpty ? segment : accumulated + "/" + segment
+                if let cached = folderCache[accumulated] { parent = cached; continue }
+                var id = firstFolder(named: segment, parent: parent)
+                if id == nil {
+                    var action: [String: Any] = ["operation": "createFolder", "name": segment]
+                    if let parent { action["parentId"] = parent }
+                    guard let result = try? VelaCoreFFI.richItems([
+                        "operation": "mutate", "deviceId": device,
+                        "organization": orgObject, "action": action,
+                    ]) else { return nil }
+                    orgObject = result
+                    id = firstFolder(named: segment, parent: parent)
+                }
+                guard let id else { return nil }
+                folderCache[accumulated] = id
+                parent = id
+            }
+            return parent
+        }
+
+        func ensureTag(_ name: String) -> String? {
+            let trimmed = name.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty { return nil }
+            let key = trimmed.lowercased()
+            if let cached = tagCache[key] { return cached }
+            if let tags = orgObject["tags"] as? [[String: Any]],
+               let existing = tags.first(where: { ($0["name"] as? String)?.caseInsensitiveCompare(trimmed) == .orderedSame })?["id"] as? String {
+                tagCache[key] = existing
+                return existing
+            }
+            guard let result = try? VelaCoreFFI.richItems([
+                "operation": "mutate", "deviceId": device,
+                "organization": orgObject, "action": ["operation": "createTag", "name": trimmed],
+            ]) else { return nil }
+            orgObject = result
+            guard let id = (result["tags"] as? [[String: Any]])?
+                .first(where: { ($0["name"] as? String)?.caseInsensitiveCompare(trimmed) == .orderedSame })?["id"] as? String
+            else { return nil }
+            tagCache[key] = id
+            return id
+        }
+
+        var seenLogins = Set(items.filter { $0.kind == .login }.map { importLoginKey($0.url ?? "", $0.name, $0.username ?? "") })
+        var seenCards = Set(items.filter { $0.kind == .creditCard }.map { importCardKey($0.number ?? "", $0.name) })
+        var seenIdentities = Set(items.filter { $0.kind == .identity }.map { importIdentityKey($0.name, $0.notes ?? "") })
+
+        for entry in entries {
+            let kind = entry["kind"] as? String ?? "login"
+            let name = importNonEmpty(entry["name"] as? String)
+                ?? importNonEmpty(entry["url"] as? String)
+                ?? importNonEmpty(entry["username"] as? String)
+                ?? "Imported item"
+            let itemType: String
+            switch kind {
+            case "note": itemType = "secureNote"
+            case "card": itemType = "creditCard"
+            case "identity": itemType = "identity"
+            default: itemType = "login"
+            }
+            let stamp = VaultClock.nowISO8601()
+            var item = VaultItem(item_type: itemType, id: UUID().uuidString.lowercased(), name: name, createdAt: stamp, updatedAt: stamp)
+            item.favorite = entry["favorite"] as? Bool ?? false
+            var notes = entry["notes"] as? String ?? ""
+            var entryPreserved = false
+
+            if collections {
+                if let folder = importNonEmpty(entry["folder"] as? String) {
+                    if let id = ensureFolder(folder) { item.folderId = id; entryPreserved = true } else { summary.converted += 1 }
+                }
+                if let tags = entry["tags"] as? [String], !tags.isEmpty {
+                    let ids = tags.compactMap { ensureTag($0) }
+                    summary.converted += tags.count - ids.count
+                    if !ids.isEmpty { item.tagIds = ids; entryPreserved = true }
+                }
+                if let fields = entry["fields"] as? [[String: Any]], !fields.isEmpty {
+                    var records: [PreservedJSON] = []
+                    var dropped = 0
+                    for field in fields {
+                        let label = (field["label"] as? String)?.trimmingCharacters(in: .whitespaces) ?? ""
+                        if label.isEmpty { dropped += 1; continue }
+                        let fieldKind = field["kind"] as? String ?? "text"
+                        var object: [String: Any] = ["id": UUID().uuidString.lowercased(), "label": label, "type": fieldKind]
+                        if fieldKind == "boolean" {
+                            object["value"] = (field["value"] as? Bool) ?? ((field["value"] as? String)?.lowercased() == "true")
+                        } else {
+                            object["value"] = field["value"] as? String ?? ""
+                        }
+                        if let record = PreservedJSON(any: object) { records.append(record) }
+                    }
+                    summary.converted += dropped
+                    if !records.isEmpty { item.customFields = records; entryPreserved = true }
+                }
+                if let urls = entry["extraUrls"] as? [String], !urls.isEmpty {
+                    let records = urls.compactMap { raw -> PreservedJSON? in
+                        let url = raw.trimmingCharacters(in: .whitespaces)
+                        guard !url.isEmpty else { return nil }
+                        return PreservedJSON(any: ["id": UUID().uuidString.lowercased(), "url": url, "match": "exact"])
+                    }
+                    if !records.isEmpty { item.additionalUrls = records; entryPreserved = true }
+                }
+                if let details = importIdentityDetails(entry) {
+                    item.identityDetails = details
+                    entryPreserved = true
+                }
+                if entryPreserved {
+                    let valid = (try? VelaCoreFFI.richItems([
+                        "operation": "validate", "organization": orgObject,
+                        "rich": item.richObject, "old": [:],
+                    ])) != nil
+                    if !valid {
+                        item.folderId = nil
+                        item.tagIds = nil
+                        item.customFields = nil
+                        item.additionalUrls = nil
+                        item.identityDetails = nil
+                        entryPreserved = false
+                        summary.converted += 1
+                    }
+                }
+            }
+
+            if !collections || !entryPreserved {
+                let folded = importFoldIntoNotes(entry)
+                if !folded.isEmpty {
+                    notes = notes.isEmpty ? folded : notes + "\n" + folded
+                    summary.converted += 1
+                }
+            }
+            item.notes = importNonEmpty(notes)
+
+            switch kind {
+            case "login":
+                item.url = importNonEmpty(entry["url"] as? String)
+                item.username = importNonEmpty(entry["username"] as? String)
+                item.password = entry["password"] as? String ?? ""
+                item.totp = importNonEmpty(entry["totp"] as? String)
+                let key = importLoginKey(item.url ?? "", item.name, item.username ?? "")
+                if seenLogins.contains(key) { summary.duplicates += 1; continue }
+                seenLogins.insert(key)
+            case "note":
+                item.title = item.name
+                item.content = notes
+            case "card":
+                let card = entry["card"] as? [String: Any] ?? [:]
+                item.number = importNonEmpty(card["number"] as? String)
+                item.exp = importNonEmpty(card["expiry"] as? String)
+                item.cvv = importNonEmpty(card["cvv"] as? String)
+                item.pin = importNonEmpty(card["pin"] as? String)
+                item.cardholderName = importNonEmpty(card["cardholder"] as? String)
+                let key = importCardKey(item.number ?? "", item.name)
+                if seenCards.contains(key) { summary.duplicates += 1; continue }
+                seenCards.insert(key)
+            case "identity":
+                let identity = entry["identity"] as? [String: Any] ?? [:]
+                item.firstName = importNonEmpty(identity["first"] as? String)
+                item.lastName = importNonEmpty(identity["last"] as? String)
+                item.ssn = importNonEmpty(identity["ssn"] as? String)
+                let key = importIdentityKey(item.name, notes)
+                if seenIdentities.contains(key) { summary.duplicates += 1; continue }
+                seenIdentities.insert(key)
+            default:
+                continue
+            }
+
+            next.items.append(item)
+            summary.added += 1
+            if entryPreserved { summary.preserved += 1 }
+
+            if let attachments = entry["attachments"] as? [[String: Any]] {
+                for attachment in attachments {
+                    let file = attachment["fileName"] as? String ?? "attachment"
+                    let noteStamp = VaultClock.nowISO8601()
+                    var note = VaultItem(item_type: "secureNote", id: UUID().uuidString.lowercased(),
+                                         name: "\(name) — \(file)", createdAt: noteStamp, updatedAt: noteStamp)
+                    note.title = file
+                    note.content = attachment["note"] as? String ?? ""
+                    next.items.append(note)
+                    summary.added += 1
+                    summary.preserved += 1
+                }
+            }
+        }
+
+        next.folders = (orgObject["folders"] as? [Any])?.compactMap { PreservedJSON(any: $0) } ?? next.folders
+        next.tags = (orgObject["tags"] as? [Any])?.compactMap { PreservedJSON(any: $0) } ?? next.tags
+        do {
+            try commit(next)
+            AuditLog.shared.record("vault_imported", summary.source)
+        } catch {
+            summary.failure = error.localizedDescription
+        }
+        return summary
+    }
+}
+
+private func importNonEmpty(_ value: String?) -> String? {
+    guard let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+    return value
+}
+
+private func importLoginKey(_ url: String, _ name: String, _ username: String) -> String {
+    "\(url.lowercased())|\(name.lowercased())|\(username.lowercased())"
+}
+
+private func importCardKey(_ number: String, _ name: String) -> String {
+    "\(number.filter(\.isNumber).suffix(4))|\(name.lowercased())"
+}
+
+private func importIdentityKey(_ name: String, _ notes: String) -> String {
+    "\(name.lowercased())|\(notes.lowercased())"
+}
+
+private func importIdentityDetails(_ entry: [String: Any]) -> PreservedJSON? {
+    guard let identity = entry["identity"] as? [String: Any] else { return nil }
+    var details: [String: Any] = [:]
+    if let middle = importNonEmpty(identity["middle"] as? String) { details["middleName"] = middle }
+    if let email = importNonEmpty(identity["email"] as? String) { details["email"] = email }
+    if let phone = importNonEmpty(identity["phone"] as? String) { details["phone"] = phone }
+    if let company = importNonEmpty(identity["company"] as? String) { details["company"] = company }
+    if let jobTitle = importNonEmpty(identity["jobTitle"] as? String) { details["jobTitle"] = jobTitle }
+    if let addresses = identity["addresses"] as? [[String: Any]] {
+        let records: [[String: Any]] = addresses.compactMap { address in
+            let joined = ["line1", "city", "postal"].contains { importNonEmpty(address[$0] as? String) != nil }
+            guard joined else { return nil }
+            return [
+                "id": UUID().uuidString.lowercased(),
+                "label": address["label"] as? String ?? "",
+                "line1": address["line1"] as? String ?? "",
+                "line2": address["line2"] as? String ?? "",
+                "city": address["city"] as? String ?? "",
+                "region": address["region"] as? String ?? "",
+                "postalCode": address["postal"] as? String ?? "",
+                "countryCode": address["country"] as? String ?? "",
+            ]
+        }
+        if !records.isEmpty { details["addresses"] = records }
+    }
+    guard !details.isEmpty else { return nil }
+    return PreservedJSON(any: details)
+}
+
+private func importFoldIntoNotes(_ entry: [String: Any]) -> String {
+    var lines: [String] = []
+    if let folder = importNonEmpty(entry["folder"] as? String) { lines.append("Folder: \(folder)") }
+    if let tags = entry["tags"] as? [String], !tags.isEmpty { lines.append("Tags: \(tags.joined(separator: ", "))") }
+    if let fields = entry["fields"] as? [[String: Any]], !fields.isEmpty {
+        lines.append("Custom fields:")
+        for field in fields {
+            lines.append("  \(field["label"] as? String ?? ""): \(field["value"] ?? "")")
+        }
+    }
+    if let urls = entry["extraUrls"] as? [String], !urls.isEmpty {
+        lines.append("Additional websites:")
+        lines.append(contentsOf: urls.map { "  \($0)" })
+    }
+    if (entry["kind"] as? String) == "identity", let identity = entry["identity"] as? [String: Any] {
+        var details: [String] = []
+        for (key, label) in [("email", "Email"), ("phone", "Phone"), ("company", "Company"), ("jobTitle", "Job title")] {
+            if let value = importNonEmpty(identity[key] as? String) { details.append("  \(label): \(value)") }
+        }
+        if let addresses = identity["addresses"] as? [[String: Any]] {
+            for address in addresses {
+                let joined = ["line1", "line2", "city", "region", "postal", "country"]
+                    .compactMap { importNonEmpty(address[$0] as? String) }
+                    .joined(separator: ", ")
+                if !joined.isEmpty { details.append("  Address: \(joined)") }
+            }
+        }
+        if !details.isEmpty {
+            lines.append("Identity:")
+            lines.append(contentsOf: details)
+        }
+    }
+    return lines.joined(separator: "\n")
+}
