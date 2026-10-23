@@ -331,6 +331,15 @@ jobs:
         with:
           name: assurance-refinement-logs
           path: ${{ runner.temp }}/refinement-logs
+      # The extractions F* just checked, so they can be committed verbatim.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: assurance-refinement-extractions
+          path: |
+            serverVELA/vela-*-policy/proofs/fstar/extraction/*.fst
+            libVELA/vela-*-policy/proofs/fstar/extraction/*.fst
+            libVELA/vela-crypto/proofs/fstar/extraction/*.fst
 
   static-scan:
     runs-on: ubuntu-latest
