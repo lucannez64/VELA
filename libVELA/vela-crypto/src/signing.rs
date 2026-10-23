@@ -56,7 +56,7 @@ pub const ED25519_SIG_LEN: usize = 64;
 /// Total hybrid verifying-key wire length.
 pub const HYBRID_VK_LEN: usize = ML_DSA_VK_LEN + ED25519_VK_LEN; // 2624
 /// Total hybrid signature wire length.
-pub const HYBRID_SIG_LEN: usize = ML_DSA_SIG_LEN + ED25519_SIG_LEN; // 4659
+pub const HYBRID_SIG_LEN: usize = ML_DSA_SIG_LEN + ED25519_SIG_LEN; // 4691
 
 /// Domain-separation context passed to ML-DSA-87's context string parameter.
 const ML_DSA_CTX: &[u8] = b"vela device identity v1";

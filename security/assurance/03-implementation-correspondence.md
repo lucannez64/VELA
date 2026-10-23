@@ -77,17 +77,19 @@ Each crate follows the same pattern:
 The eighth crate, `libVELA/vela-client-share-policy`, selects 19 postconditions:
 share admission, ten transaction/recovery functions/theorems, and the actual
 permit-revision getter. Desktop sharing calls the corresponding decisions.
-Six additional `vela-crypto` functions have checked postconditions: the actual
+Eleven additional `vela-crypto` functions have checked postconditions: the actual
 fact constructor, `plan_observed_share` composing decoded fields through that
 constructor and policy, the prefix parser used by Reader, and the hybrid
-signature AND gate with two rejection theorems. They do not prove the complete
+signature AND gate with two rejection theorems, plus five fixed-width wire
+arithmetic contracts. These prove exact u64 decoding, byte decomposition,
+encoding round-trip and injectivity. They do not prove the complete
 parser, authenticated-open wrapper, transcript encoding or concrete I/O.
 
 All eight policy crates were freshly extracted and checked after replacing
 derived-enum equality uses with structural matches. No local `assume val`
 declarations remain. The [current evidence](proof-logs/current/trusted-boundary/README.md)
 and [crypto contract boundary](../../libVELA/vela-crypto/proofs/fstar/README.md)
-record their assumptions. Current code has 117 selected functions and 114
+record their assumptions. Current code has 122 selected functions and 119
 explicit postconditions; selected functions and predicates are different counts.
 
 The CI `refinement` job installs pinned tools, runs all eight crates and the constructor,
@@ -116,10 +118,12 @@ extractions were regenerated too. Rekey's source-tree extraction remains
 ignored by its restored `.gitignore`; its snapshot is included in the evidence.
 Historical CI did not regenerate or check extractions. The new CI gate removes
 previous `.fst`/`.fsti` output before extracting; its first successful run is pending.
-Current snapshots of all ten Rust modules and the String view are under
-`proof-logs/current/trusted-boundary/extractions/`; earlier evidence is historical.
+The eight policy modules, two crypto modules and String view are recorded in
+`proof-logs/current/trusted-boundary/extractions/`. Fresh crypto modules including
+the new Wire module are under `proof-logs/current/wire-refinement/extractions/`;
+their checking log supersedes the earlier crypto snapshots.
 Always re-extract after changing Rust sources. `check-proof-boundary.py` records
-114 explicit postconditions; three selected functions have no `ensures`. It
+119 explicit postconditions; three selected functions have no `ensures`. It
 detects added extraction assumptions, not semantic correspondence.
 
 ## 3.3 Executable refinement evidence (CI-gated)

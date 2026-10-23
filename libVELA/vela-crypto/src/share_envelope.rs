@@ -107,7 +107,7 @@ pub fn recipient_ek_digest(share_ek: &[u8]) -> [u8; 32] {
 }
 
 fn push_lp(out: &mut Vec<u8>, value: &[u8]) {
-    out.extend_from_slice(&(value.len() as u64).to_be_bytes());
+    out.extend_from_slice(&crate::wire::encode_u64_be(value.len() as u64));
     out.extend_from_slice(value);
 }
 
@@ -118,7 +118,7 @@ fn push_header(out: &mut Vec<u8>, header: &ShareHeader) {
     push_lp(out, header.recipient_user_id.as_bytes());
     out.extend_from_slice(&header.recipient_ek_digest);
     push_lp(out, header.lineage_id.as_bytes());
-    out.extend_from_slice(&header.revision.to_be_bytes());
+    out.extend_from_slice(&crate::wire::encode_u64_be(header.revision));
 }
 
 /// The exact bytes the sending device signs.
@@ -196,7 +196,7 @@ impl<'a> Reader<'a> {
     }
 
     fn u64(&mut self) -> Result<u64> {
-        Ok(u64::from_be_bytes(
+        Ok(crate::wire::decode_u64_be(
             self.take(8)?.try_into().expect("8 bytes"),
         ))
     }

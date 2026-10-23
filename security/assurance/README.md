@@ -45,6 +45,10 @@ correctness is not a consequence of the pure-policy proofs.
 9. [Selected proof boundary](09-target-contract.md): trust OS/compiler and
    primitive security; retain VELA construction and application obligations.
 
+10. [Hybrid-signature reduction](10-signature-reduction.md): exact byte-message
+    EUF-CMA game and a written reduction to either component, with explicit
+    implementation and machine-checking obligations.
+
 ## Evidence levels
 
 | Tag | Meaning |
@@ -73,7 +77,7 @@ correctness is not a consequence of the pure-policy proofs.
   properties and M29 adds eleven composed authentication/journal properties.
   Combined evidence is **294 verified / five intended falsifications**; it is
   not a new whole-corpus CI result.
-- Current hax/F*: fresh checks cover **117 selected functions / 114 explicit
+- Current hax/F*: fresh checks cover **122 selected functions / 119 explicit
   postconditions** across eight policy crates and the sharing/signature kernels.
   All **18 local enum-equality assumptions were removed** through structural
   Rust comparisons; current generated modules contain zero local `assume val`

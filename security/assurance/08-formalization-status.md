@@ -51,7 +51,7 @@ turn any open obligation below into a proved result.
 - **Reduced assumption boundary.** Structural Rust matches replaced the 18
   opaque derived-enum equality uses. Fresh checking of all eight policy crates
   succeeded with zero local assume val declarations. The inventory now has
-  **114 explicit postconditions / 117 selected functions** in ten Rust modules,
+  **119 explicit postconditions / 122 selected functions** in eleven Rust modules,
   plus one defined String compatibility model. Three selected functions have
   no explicit ensures. Imported library assumptions and proof tools remain
   trusted; the drift checker is not a proof checker.
@@ -64,6 +64,16 @@ The I/O-contract review also found and fixed an uncertain-write recovery gap:
 readable pending metadata now receives a successful durability re-arm before
 vault application. Its regression fails on the previous ordering and passes
 with the fix. This does not close the concrete I/O refinement obligation.
+
+A [written hybrid-signature EUF-CMA reduction](10-signature-reduction.md) now
+specifies the exact byte-message game, a lossless projection to either
+component, and disclosure of the other key. It is a mathematical argument
+for review; its computational game and simulation are not machine-checked.
+
+Five freshly extracted wire contracts prove exact big-endian decoding, byte
+decomposition, encoding round-trip and injectivity for all u64 values. The
+production share-envelope integer writer/reader use this checked codec. This
+does not prove the entire parser or variable-length field framing.
 
 ## Remaining obligations for the six requested areas
 

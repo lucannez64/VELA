@@ -55,6 +55,11 @@
       "artifact": "libVELA/vela-crypto/proofs/fstar/extraction/Vela_crypto.Signing.fst",
       "selected_postconditions": 3,
       "allowed_assume_val": []
+    },
+    {
+      "artifact": "libVELA/vela-crypto/proofs/fstar/extraction/Vela_crypto.Wire.fst",
+      "selected_postconditions": 5,
+      "allowed_assume_val": []
     }
   ]
 }

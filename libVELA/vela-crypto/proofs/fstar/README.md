@@ -6,9 +6,11 @@ From repository root with the pinned hax/F*/Z3 tools on PATH:
 security/assurance/bounded.sh libVELA/vela-crypto/verify-share-facts-fstar.sh
 ```
 
-The runner checks 19 selected policy postconditions and six crypto contracts:
+The runner checks 19 selected policy postconditions and eleven crypto contracts:
 the actual fact constructor, decoded-observation/policy composition, exact
-prefix reader, and the hybrid verification AND gate with two rejection theorems.
+prefix reader, and the hybrid verification AND gate with two rejection theorems, and five
+fixed-width wire arithmetic contracts (decode, quotient/remainder, encode
+round-trip, explicit round-trip, and encoding injectivity).
 The production `admit` path calls the checked composition; Reader calls the
 checked prefix function; signing verification calls the checked gate.
 
@@ -18,7 +20,8 @@ these generated modules. Imported models remain trusted. In particular,
 does not establish that the complete parser, KEM, signature wrapper or recipient
 key digest check justifies that observation. Context origins, pin copying and
 persistent effects also need separate refinement. Prefix splitting is checked;
-a complete wire-format round-trip/injectivity proof is still missing. The
+fixed-width u64 round-trip and injectivity are checked. Variable-length fields,
+UTF-8, bounds, and the complete wire format still lack that theorem. The
 AND gate is checked, but does not supply a computational-security reduction.
 
 ## Explicit compatibility model

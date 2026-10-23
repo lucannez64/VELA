@@ -27,5 +27,6 @@ pub mod shamir;
 pub mod share_envelope;
 pub mod signing;
 pub mod verification;
+pub mod wire;
 
 pub use error::{Result, VelaError};
