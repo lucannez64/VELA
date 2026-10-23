@@ -1,7 +1,8 @@
 # Computational argument for the hybrid signature construction
 
-**Status: a written reduction for external review, not a machine-checked
-computational proof or a Rust refinement theorem.** The F★ AND-gate contract
+**Status: machine-checked in CryptoVerif** (`security/formal/cryptoverif/hybrid_sig_mldsa_euf.ocv`,
+`hybrid_sig_ed25519_euf.ocv`, gated in CI), with the modelling choices listed
+in that directory's README. It is not a Rust refinement theorem. The F★ AND-gate contract
 and the Tamarin M29 proof establish different, narrower statements.
 
 ## Exact game and assumptions

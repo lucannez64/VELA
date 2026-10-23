@@ -82,7 +82,7 @@
         "libVELA/vela-crypto/src/share_envelope.rs": "332b8a1ccd3324dda61262c6254c63f0286c16a814851b491c23ce23687bdf21",
         "libVELA/vela-crypto/proofs/fstar/extraction/Vela_crypto.Wire.fst": "fea6b864fc5821891d2647dc6ff374a85bc368b7e4c011d39c3f611eac7a45b8",
         "libVELA/vela-crypto/verify-share-facts-fstar.sh": "a34a1d189f72a46f2c34ce5fe97db0a315f5f077ba82579b1c0262b25929756d",
-        "security/assurance/10-signature-reduction.md": "8d3a6809245272d97c39dad6f67c0343900fc6dd1b897591ebf58dfad2a4b9a6",
+        "security/assurance/10-signature-reduction.md": "866b47dd1c0c733766bae269c0406bc41b74a4b75091f7cec413dae4fbea4c49",
         "security/assurance/11-parser-refinement.md": "135d8f867126ec2883b6c99f04bdfd27fb755c2776e0070d5ba03b0a5c774a58",
         "libVELA/vela-crypto/proofs/fstar/extraction/Vela_crypto.Share_envelope.fst": "47e61d7acb26f06f80d92d6a524e9ea5711b19affb41eaee32564b124ec9def1",
         "libVELA/vela-crypto/proofs/fstar/extraction/Vela_crypto.Signing.fst": "d6b62ebffa9ca4ce5cd61b4c2969d26c0f3979be0409b3cbc5a9827c8dc6834b",
@@ -101,6 +101,15 @@
         "security/formal/cryptoverif/kem_v1_x25519_baseline.ocv": "f617ffc3e84966bc8b5a92c31957f555fd97ae475440db62a3d05002445938e4",
         "libVELA/vela-crypto/src/aead.rs": "7840cd68b6b510284e3fba940ced84712af0ecd7914f2833fc1bbc8cccb2e46f",
         "security/formal/cryptoverif/kem_dem_seal_share.ocv": "e3748c7aae82802d9a088e221ba0f4babb9e7165ed054dd6ad687a2c5e445725"
+      }
+    },
+    {
+      "boundary": "hybrid signature",
+      "artifacts": {
+        "libVELA/vela-crypto/src/signing.rs": "82c9e2f3f9882d62cad5707cd8287b1299b373b10629eff912477f519249150b",
+        "security/formal/cryptoverif/hybrid_sig_mldsa_euf.ocv": "835dec5e6880fa6aa669ea65b55312b804a4787f0ad861fea05d4fd992970287",
+        "security/formal/cryptoverif/hybrid_sig_ed25519_euf.ocv": "89fdf3ca41a6ac0638f5818f689a18d99835f58740c1f549194ce4a37c8ca03f",
+        "security/assurance/10-signature-reduction.md": "866b47dd1c0c733766bae269c0406bc41b74a4b75091f7cec413dae4fbea4c49"
       }
     }
   ]

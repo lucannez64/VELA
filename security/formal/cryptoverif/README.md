@@ -1,4 +1,4 @@
-# Computational proofs of the hybrid KEM combiner (CryptoVerif 2.12)
+# Computational proofs of the hybrid constructions (CryptoVerif 2.12)
 
 These are the first computational, not symbolic, proofs in VELA. They cover
 the KEM combiner in `libVELA/vela-crypto/src/kem.rs` (`combine_v2`):
@@ -12,10 +12,16 @@ ss = HKDF-SHA256(ss_mlkem ‖ ss_x25519 ‖ x25519_epk ‖ x25519_pk ‖ SHA-256
 | `kem_v2_x25519_gdh.ocv` | proved | IND-CCA2 of the hybrid KEM from **Gap-DH on X25519 alone**. ML-KEM is an arbitrary function and the adversary holds its secret key. Bound: `4·pDistRerandom + 2·pGDH(t, 2·qH) + (2·Qd + 2·qH)/|Z|` |
 | `kem_v2_mlkem_cca.ocv` | proved | IND-CCA2 of the hybrid KEM from **IND-CCA2 of ML-KEM alone**. The adversary holds the X25519 secret key. Bound: `2·Penc(t, 1, 1, Qd) + 6·Qd·Pctxtcoll + 2·qH/|mlss| + (8·Qd + 2·qH)/|Z|` |
 | `kem_dem_seal_share.ocv` | proved | `seal_share`/`open_share` (KEM ‖ XChaCha20-Poly1305, no AAD) is **IND-CCA2 public-key encryption**, assuming an IND-CCA2 KEM (the two rows above) and IND-CPA + INT-CTXT for the AEAD with a fresh random nonce. Bound: `2·Pkem + 2·Pencctxt + 4·Penc + 10·Qd·Pctxtcoll` (Penc per message, from the log) |
+| `hybrid_sig_mldsa_euf.ocv` | proved | The hybrid signature (`signing.rs`: both component signatures over the same bytes, verify = AND) is **EUF-CMA from ML-DSA-87 alone**; the adversary holds the Ed25519 secret key. Bound: `Pmldsa(t, Qs)` |
+| `hybrid_sig_ed25519_euf.ocv` | proved | Same, **from Ed25519 alone**; the adversary holds the ML-DSA secret key. Bound: `Ped(t, Qs)` |
 | `kem_v1_x25519_baseline.ocv` | not proved (expected) | The legacy combiner `HKDF(ss_mlkem ‖ ss_x25519)` in the first game. Consistent with the known attack when ML-KEM is broken; CryptoVerif reports proof failure, not an attack trace |
 
-Together the two proved theorems give the hybrid claim (COMP-5): the combined
-KEM is IND-CCA2 if **either** ML-KEM is IND-CCA2 **or** Gap-DH holds on X25519.
+Together these give the hybrid claim (COMP-5): the combined KEM is IND-CCA2
+if **either** ML-KEM is IND-CCA2 **or** Gap-DH holds on X25519, and the hybrid
+signature is EUF-CMA if **either** ML-DSA-87 **or** Ed25519 is. The signature
+games machine-check the reduction written in
+`security/assurance/10-signature-reduction.md`; signature parsing into two
+fixed-length components is modelled as a bijective pair.
 
 Run: `security/formal/run-cryptoverif-proofs.sh` (CI step "Prove the hybrid
 KEM combiner in the computational model"). Logs: `security/assurance/proof-logs/current/cryptoverif/`.

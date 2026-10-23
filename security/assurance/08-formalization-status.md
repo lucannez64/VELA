@@ -97,7 +97,9 @@ from IND-CCA2 of ML-KEM with the X25519 secret key leaked. Together they give
 the "either component" hybrid claim (COMP-5) for the KEM itself. The legacy v1
 combiner does not prove in the first game, as expected. A third game proves
 `seal_share` IND-CCA2 as public-key encryption from an IND-CCA2 KEM and an
-IND-CPA + INT-CTXT AEAD (KEM-DEM). HKDF is a random oracle; the X25519
+IND-CPA + INT-CTXT AEAD (KEM-DEM). Two more games machine-check the hybrid
+signature reduction: the AND signature is EUF-CMA from ML-DSA-87 alone and
+from Ed25519 alone, with the other secret key leaked. HKDF is a random oracle; the X25519
 cofactor, the SHA-256 step and multi-user security are open, as listed in
 [the model README](../formal/cryptoverif/README.md). CI gates all three outcomes.
 
@@ -108,7 +110,7 @@ cofactor, the SHA-256 step and multi-user security are open, as listed in
 | F-1: handler facts | Partial | Complete UTF-8/object and authenticated-open composition after the checked byte-frame parser; prove independent context origins; cover SQL, token, epoch, enrollment and recovery fact construction across all handlers |
 | F-2: state transitions | Partial | Machine-check concrete handler/database transitions against protocol transitions, including exceptions, cancellation and concurrency |
 | F-3: persistence/recovery | Partial: M28 and composed M29 | Prove the actual journal implementation refines M28; formalize collection equality and filesystem outcomes; compose local edits/deletions and RMS migration; cover or explicitly exclude independent processes |
-| F-4: construction security | Partial: hybrid KEM combiner v2 IND-CCA2 machine-checked (CryptoVerif) under either component assumption; AND gate and ideal-signature composition | Close the combiner gaps listed in `security/formal/cryptoverif/README.md` (X25519 cofactor vs prime-order group, SHA-256 step, multi-user; KEM-DEM is proved modularly); computational games and reductions for hybrid signatures, envelope framing, share tags, possession proofs and KDFs under named primitive assumptions; verify application randomness/error/erasure handling. Primitive internals and leakage resistance are trusted under the selected boundary |
+| F-4: construction security | Partial: machine-checked in CryptoVerif — hybrid KEM combiner v2 IND-CCA2 and hybrid AND signature EUF-CMA, each under either component's assumption, plus `seal_share` KEM-DEM IND-CCA2 | Close the combiner gaps listed in `security/formal/cryptoverif/README.md` (X25519 cofactor vs prime-order group, SHA-256 step, multi-user; KEM-DEM is proved modularly); computational games and reductions for envelope framing, share tags, possession proofs and KDFs under named primitive assumptions; verify application randomness/error/erasure handling. Primitive internals and leakage resistance are trusted under the selected boundary |
 | F-5: native clients/composition | Open beyond scoped tests/models | Verify Kotlin/Swift callers, persistence and FFI; formalize enrollment UI trust; compose recovery, enrollment, sync, sharing and revocation in one argument |
 | F-6: trusted base | Partial | Maintain zero local extraction assumptions and review imported model contracts; verify/review std/hax model correspondence and the String/Vec models; retain extraction/compiler correctness explicitly as trusted under the chosen boundary; review solver/library/OS interface assumptions; reproduce in CI and obtain independent review |
 
