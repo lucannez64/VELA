@@ -34,7 +34,7 @@ def main():
         totals[0] += assumptions
         totals[1] += count
     print(f'{len(boundary["artifacts"])} checked module artifacts: {totals[1]} selected postconditions, {totals[0]} explicitly reviewed assume val declarations.')
-    print('Imported libraries, the String compatibility view, extraction, solvers and the OS remain trusted; this static gate is not a proof.')
+    print('Imported libraries, the defined String/Vec models, extraction, solvers and the OS remain trusted; this static gate is not a proof.')
 
 if __name__ == '__main__':
     main()

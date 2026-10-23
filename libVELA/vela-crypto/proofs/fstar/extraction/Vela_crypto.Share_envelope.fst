@@ -129,6 +129,7 @@ let split_envelope_prefix (input: t_Slice u8) (n: usize)
 /// Borrowed syntactic fields. Authentication and UTF-8 validation occur after
 /// this framing step; no field is trusted merely because parsing succeeded.
 type t_ShareFrame = {
+  f_signed_body:t_Slice u8;
   f_sender_user_id:t_Slice u8;
   f_sender_device_id:t_Slice u8;
   f_sender_vk:t_Slice u8;
@@ -177,6 +178,8 @@ let take_frame_prefix (input: t_Slice u8) (n: usize)
 /// Each LP production expands to the separately checked exact slice contract.
 let share_frame_spec (input: t_Slice u8) : Core_models.Option.t_Option t_ShareFrame =
   let (digest_len: usize):usize = mk_usize 32 in
+  let (marker_len: usize):usize = mk_usize 4 in
+  let (signature_trailer: usize):usize = mk_usize 8 +! Vela_crypto.Signing.v_HYBRID_SIG_LEN in
   match
     split_envelope_prefix input (mk_usize 4)
     <:
@@ -229,22 +232,33 @@ let share_frame_spec (input: t_Slice u8) : Core_models.Option.t_Option t_ShareFr
                             <:
                             Core_models.Option.t_Option t_ShareFrame
                           else
-                            Core_models.Option.Option_Some
-                            ({
-                                f_sender_user_id = sender_user_id;
-                                f_sender_device_id = sender_device_id;
-                                f_sender_vk = sender_vk;
-                                f_recipient_user_id = recipient_user_id;
-                                f_recipient_ek_digest = recipient_ek_digest;
-                                f_lineage_id = lineage_id;
-                                f_revision = revision;
-                                f_item = item;
-                                f_signature = signature
-                              }
-                              <:
-                              t_ShareFrame)
-                            <:
-                            Core_models.Option.t_Option t_ShareFrame
+                            (match
+                                Vela_crypto.Wire.frame_body input marker_len signature_trailer
+                                <:
+                                Core_models.Option.t_Option (t_Slice u8)
+                              with
+                              | Core_models.Option.Option_Some signed_body ->
+                                Core_models.Option.Option_Some
+                                ({
+                                    f_signed_body = signed_body;
+                                    f_sender_user_id = sender_user_id;
+                                    f_sender_device_id = sender_device_id;
+                                    f_sender_vk = sender_vk;
+                                    f_recipient_user_id = recipient_user_id;
+                                    f_recipient_ek_digest = recipient_ek_digest;
+                                    f_lineage_id = lineage_id;
+                                    f_revision = revision;
+                                    f_item = item;
+                                    f_signature = signature
+                                  }
+                                  <:
+                                  t_ShareFrame)
+                                <:
+                                Core_models.Option.t_Option t_ShareFrame
+                              | Core_models.Option.Option_None  ->
+                                Core_models.Option.Option_None
+                                <:
+                                Core_models.Option.t_Option t_ShareFrame)
                         | Core_models.Option.Option_None  ->
                           Core_models.Option.Option_None <: Core_models.Option.t_Option t_ShareFrame
                       )
@@ -268,7 +282,7 @@ let frame_results_equal (left right: Core_models.Option.t_Option t_ShareFrame) :
   with
   | Core_models.Option.Option_None , Core_models.Option.Option_None  -> true
   | Core_models.Option.Option_Some left, Core_models.Option.Option_Some right ->
-    left.f_sender_user_id =. right.f_sender_user_id &&
+    left.f_signed_body =. right.f_signed_body && left.f_sender_user_id =. right.f_sender_user_id &&
     left.f_sender_device_id =. right.f_sender_device_id &&
     left.f_sender_vk =. right.f_sender_vk &&
     left.f_recipient_user_id =. right.f_recipient_user_id &&
@@ -292,6 +306,8 @@ let parse_share_frame (input: t_Slice u8)
           frame_results_equal result
             (share_frame_spec input <: Core_models.Option.t_Option t_ShareFrame)) =
   let (digest_len: usize):usize = mk_usize 32 in
+  let (marker_len: usize):usize = mk_usize 4 in
+  let (signature_trailer: usize):usize = mk_usize 8 +! Vela_crypto.Signing.v_HYBRID_SIG_LEN in
   let rest:t_Slice u8 = input in
   let (tmp0: t_Slice u8), (out: Core_models.Option.t_Option (t_Slice u8)) =
     take_frame_prefix rest (mk_usize 4)
@@ -350,22 +366,33 @@ let parse_share_frame (input: t_Slice u8)
                             <:
                             Core_models.Option.t_Option t_ShareFrame
                           else
-                            Core_models.Option.Option_Some
-                            ({
-                                f_sender_user_id = sender_user_id;
-                                f_sender_device_id = sender_device_id;
-                                f_sender_vk = sender_vk;
-                                f_recipient_user_id = recipient_user_id;
-                                f_recipient_ek_digest = recipient_ek_digest;
-                                f_lineage_id = lineage_id;
-                                f_revision = revision;
-                                f_item = item;
-                                f_signature = signature
-                              }
-                              <:
-                              t_ShareFrame)
-                            <:
-                            Core_models.Option.t_Option t_ShareFrame
+                            (match
+                                Vela_crypto.Wire.frame_body input marker_len signature_trailer
+                                <:
+                                Core_models.Option.t_Option (t_Slice u8)
+                              with
+                              | Core_models.Option.Option_Some signed_body ->
+                                Core_models.Option.Option_Some
+                                ({
+                                    f_signed_body = signed_body;
+                                    f_sender_user_id = sender_user_id;
+                                    f_sender_device_id = sender_device_id;
+                                    f_sender_vk = sender_vk;
+                                    f_recipient_user_id = recipient_user_id;
+                                    f_recipient_ek_digest = recipient_ek_digest;
+                                    f_lineage_id = lineage_id;
+                                    f_revision = revision;
+                                    f_item = item;
+                                    f_signature = signature
+                                  }
+                                  <:
+                                  t_ShareFrame)
+                                <:
+                                Core_models.Option.t_Option t_ShareFrame
+                              | Core_models.Option.Option_None  ->
+                                Core_models.Option.Option_None
+                                <:
+                                Core_models.Option.t_Option t_ShareFrame)
                         | Core_models.Option.Option_None  ->
                           Core_models.Option.Option_None <: Core_models.Option.t_Option t_ShareFrame
                       )

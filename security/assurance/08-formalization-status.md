@@ -51,8 +51,8 @@ turn any open obligation below into a proved result.
 - **Reduced assumption boundary.** Structural Rust matches replaced the 18
   opaque derived-enum equality uses. Fresh checking of all eight policy crates
   succeeded with zero local assume val declarations. The inventory now has
-  **130 explicit postconditions / 137 selected functions** in eleven Rust modules,
-  plus one defined String compatibility model. Seven selected functions have
+  **132 explicit postconditions / 139 selected functions** in eleven Rust modules,
+  plus defined String and Vec compatibility models. Seven selected functions have
   no explicit ensures. Imported library assumptions and proof tools remain
   trusted; the drift checker is not a proof checker.
 
@@ -60,7 +60,7 @@ turn any open obligation below into a proved result.
 prior extraction snapshots for all eight policy crates. CI includes the new
 checks. The [hosted refinement job](proof-logs/current/hosted-refinement-40002230354/README.md)
 passed on `b27dcd6`, and the [complete security workflow](https://github.com/lucannez64/VELA/actions/runs/40008926193)
-passed on `e690dfc`. The new parser/accessor increment awaits hosted CI.
+passed on `e690dfc`. The parser/accessor and received-byte transcript increments await hosted CI.
 
 The I/O-contract review also found and fixed an uncertain-write recovery gap:
 readable pending metadata now receives a successful durability re-arm before
@@ -77,8 +77,10 @@ decomposition, encoding round-trip and injectivity for all u64 values. The
 production share-envelope integer writer/reader use this checked codec. This
 is extended by the [concrete byte-frame refinement](11-parser-refinement.md),
 including LP bounds, grouped cursor operations and exact frame field values.
-UTF-8/object conversion, encoder inverse and authenticated-opening composition
-remain unproved.
+The [received-byte transcript increment](12-authenticated-transcript.md) adds
+checked body slicing and exact domain concatenation, used by the production
+sender and opener. UTF-8/object conversion, encoder inverse and complete
+authenticated-opening composition remain unproved.
 
 The production byte parser now refines a functional VSE2 grammar for all input
 slices. Cursor contracts cover fixed/LP fields and atomic grouped reads. Three
@@ -96,7 +98,7 @@ context origins; see [the exact boundary](11-parser-refinement.md).
 | F-3: persistence/recovery | Partial: M28 and composed M29 | Prove the actual journal implementation refines M28; formalize collection equality and filesystem outcomes; compose local edits/deletions and RMS migration; cover or explicitly exclude independent processes |
 | F-4: construction security | Partial: AND gate and ideal-signature composition | Define computational games and prove reductions for VELA hybrid KEM/signatures, framing, share tags, possession proofs and KDFs under named primitive assumptions; verify application randomness/error/erasure handling. Primitive internals and leakage resistance are trusted under the selected boundary |
 | F-5: native clients/composition | Open beyond scoped tests/models | Verify Kotlin/Swift callers, persistence and FFI; formalize enrollment UI trust; compose recovery, enrollment, sync, sharing and revocation in one argument |
-| F-6: trusted base | Partial | Maintain zero local extraction assumptions and review imported model contracts; verify/review std/hax model correspondence and the String view; retain extraction/compiler correctness explicitly as trusted under the chosen boundary; review solver/library/OS interface assumptions; reproduce in CI and obtain independent review |
+| F-6: trusted base | Partial | Maintain zero local extraction assumptions and review imported model contracts; verify/review std/hax model correspondence and the String/Vec models; retain extraction/compiler correctness explicitly as trusted under the chosen boundary; review solver/library/OS interface assumptions; reproduce in CI and obtain independent review |
 
 Every complete scoped proof must still choose a logic/kernel, machine model
 and interface to physical execution. An assumed OS operation in a model is

@@ -58,7 +58,12 @@
     },
     {
       "artifact": "libVELA/vela-crypto/proofs/fstar/extraction/Vela_crypto.Wire.fst",
-      "selected_postconditions": 11,
+      "selected_postconditions": 13,
+      "allowed_assume_val": []
+    },
+    {
+      "artifact": "libVELA/vela-crypto/proofs/fstar/models/Alloc.Vec.fst",
+      "selected_postconditions": 0,
       "allowed_assume_val": []
     }
   ]

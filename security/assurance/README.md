@@ -54,13 +54,16 @@ correctness is not a consequence of the pure-policy proofs.
 11. [Concrete parser refinement](11-parser-refinement.md): byte grammar, checked
     cursor transitions and read-only opened-share observations.
 
+12. [Received-byte transcript](12-authenticated-transcript.md): exact body and
+    domain concatenation, compatibility model and remaining opening obligations.
+
 ## Evidence levels
 
 | Tag | Meaning |
 |---|---|
 | **[SYM]** | Symbolic proof witnessed in the linked historical CI run; check baseline before applying it to newer code |
 | **[SYM-local]** | Symbolic result from local runs; current CI configuration may gate it, but a successful new CI run is still needed |
-| **[REF]** | Fresh local hax extraction and F* checking of selected pure policy functions; no whole-handler correctness implication |
+| **[REF]** | Fresh local hax extraction and F* checking of selected Rust functions; no whole-handler correctness implication |
 | **[EXEC]** | Executable model or test; distinguish linked historical CI results from current local logs |
 | **[EXPLOIT]** | Live exploit regression at the cited baseline |
 | **[STAT]** | Statistical implementation evidence, not a universal proof |
@@ -82,11 +85,11 @@ correctness is not a consequence of the pure-policy proofs.
   properties and M29 adds eleven composed authentication/journal properties.
   Combined evidence is **294 verified / five intended falsifications**; it is
   not a new whole-corpus CI result.
-- Current hax/F*: [fresh checks with the official prebuilt F★ release](proof-logs/current/prebuilt-fstar/README.md) cover **137 selected functions / 130 explicit
+- Current hax/F*: [fresh received-byte transcript checks](proof-logs/current/authenticated-transcript/README.md) cover **139 selected functions / 132 explicit
   postconditions** across eight policy crates and the sharing/signature kernels.
   All **18 local enum-equality assumptions were removed** through structural
   Rust comparisons; current generated modules contain zero local `assume val`
-  declarations. Imported proof libraries, the String view and tools remain
+  declarations. Imported proof libraries, the String/Vec models and tools remain
   trusted. [Current evidence](proof-logs/current/trusted-boundary/README.md).
 - The earlier [resource measurements](proof-logs/current/refinement-5g/) are
   historical: engine build about 4.8 GiB under a cap raised to 6 GiB; individual

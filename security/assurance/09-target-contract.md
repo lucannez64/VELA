@@ -16,8 +16,8 @@ scope. It does not make existing VELA constructions trusted primitives.
   bypass the profile lock are outside this application theorem.
 - Rust/LLVM and native language compilers correctly implement their languages;
   proof extraction and proof checkers remain an explicit trusted toolchain.
-  Standard-library semantics and the String compatibility view must still
-  correspond to those language contracts; the local model is not a new axiom
+  Standard-library semantics and the String/Vec compatibility models must still
+  correspond to those language contracts; the local models are not new axioms
   granting application correctness.
 - The pinned signature, KEM/DH, AEAD, hash, KDF and password-hashing primitives
   meet the precise security notions used by a proof. Their implementation,

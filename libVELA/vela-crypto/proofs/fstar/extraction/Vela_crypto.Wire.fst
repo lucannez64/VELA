@@ -517,3 +517,115 @@ let take_lp_four (input: t_Slice u8)
     <:
     (t_Slice u8 &
       Core_models.Option.t_Option ((t_Slice u8 & t_Slice u8) & (t_Slice u8 & t_Slice u8)))
+
+/// Exact body between a fixed prefix and fixed trailer, without allocation.
+let frame_body (input: t_Slice u8) (prefix_len trailer_len: usize)
+    : Prims.Pure (Core_models.Option.t_Option (t_Slice u8))
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:Core_models.Option.t_Option (t_Slice u8) = result in
+          if
+            (Core_models.Slice.impl__len #u8 input <: usize) <. prefix_len ||
+            ((Core_models.Slice.impl__len #u8 input <: usize) -! prefix_len <: usize) <. trailer_len
+          then
+            match result <: Core_models.Option.t_Option (t_Slice u8) with
+            | Core_models.Option.Option_None  -> true
+            | _ -> false
+          else
+            match result <: Core_models.Option.t_Option (t_Slice u8) with
+            | Core_models.Option.Option_Some body ->
+              body =.
+              (input.[ {
+                    Core_models.Ops.Range.f_start = prefix_len;
+                    Core_models.Ops.Range.f_end
+                    =
+                    (Core_models.Slice.impl__len #u8 input <: usize) -! trailer_len <: usize
+                  }
+                  <:
+                  Core_models.Ops.Range.t_Range usize ]
+                <:
+                t_Slice u8)
+            | Core_models.Option.Option_None  -> false) =
+  if
+    (Core_models.Slice.impl__len #u8 input <: usize) <. prefix_len ||
+    ((Core_models.Slice.impl__len #u8 input <: usize) -! prefix_len <: usize) <. trailer_len
+  then Core_models.Option.Option_None <: Core_models.Option.t_Option (t_Slice u8)
+  else
+    Core_models.Option.Option_Some
+    input.[ {
+        Core_models.Ops.Range.f_start = prefix_len;
+        Core_models.Ops.Range.f_end
+        =
+        (Core_models.Slice.impl__len #u8 input <: usize) -! trailer_len <: usize
+      }
+      <:
+      Core_models.Ops.Range.t_Range usize ]
+    <:
+    Core_models.Option.t_Option (t_Slice u8)
+
+#push-options "--fuel 2 --ifuel 2"
+
+/// Domain prefix followed by the exact received body. Reject capacities above
+/// Rust\'s byte-vector limit before doing length arithmetic or appending.
+let domain_message (domain body: t_Slice u8)
+    : Prims.Pure (Core_models.Option.t_Option (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global))
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:Core_models.Option.t_Option (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global) =
+            result
+          in
+          let maximum:usize = cast (Core_models.Num.impl_isize__MAX <: isize) <: usize in
+          match result <: Core_models.Option.t_Option (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global) with
+          | Core_models.Option.Option_Some message ->
+            (Core_models.Slice.impl__len #u8 domain <: usize) <=. maximum &&
+            (Core_models.Slice.impl__len #u8 body <: usize) <=.
+            (maximum -! (Core_models.Slice.impl__len #u8 domain <: usize) <: usize) &&
+            (Alloc.Vec.impl_1__len #u8 #Alloc.Alloc.t_Global message <: usize) =.
+            ((Core_models.Slice.impl__len #u8 domain <: usize) +!
+              (Core_models.Slice.impl__len #u8 body <: usize)
+              <:
+              usize) &&
+            ((Alloc.Vec.impl_1__as_slice #u8 #Alloc.Alloc.t_Global message <: t_Slice u8).[ {
+                  Core_models.Ops.Range.f_end = Core_models.Slice.impl__len #u8 domain <: usize
+                }
+                <:
+                Core_models.Ops.Range.t_RangeTo usize ]
+              <:
+              t_Slice u8) =.
+            domain &&
+            ((Alloc.Vec.impl_1__as_slice #u8 #Alloc.Alloc.t_Global message <: t_Slice u8).[ {
+                  Core_models.Ops.Range.f_start = Core_models.Slice.impl__len #u8 domain <: usize
+                }
+                <:
+                Core_models.Ops.Range.t_RangeFrom usize ]
+              <:
+              t_Slice u8) =.
+            body
+          | Core_models.Option.Option_None  ->
+            (Core_models.Slice.impl__len #u8 domain <: usize) >. maximum ||
+            (Core_models.Slice.impl__len #u8 body <: usize) >.
+            (maximum -! (Core_models.Slice.impl__len #u8 domain <: usize) <: usize)) =
+  let maximum:usize = cast (Core_models.Num.impl_isize__MAX <: isize) <: usize in
+  if
+    (Core_models.Slice.impl__len #u8 domain <: usize) >. maximum ||
+    (Core_models.Slice.impl__len #u8 body <: usize) >.
+    (maximum -! (Core_models.Slice.impl__len #u8 domain <: usize) <: usize)
+  then
+    Core_models.Option.Option_None
+    <:
+    Core_models.Option.t_Option (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global)
+  else
+    let message:Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global = Alloc.Vec.impl__new #u8 () in
+    let message:Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global =
+      Alloc.Vec.impl_2__extend_from_slice #u8 #Alloc.Alloc.t_Global message domain
+    in
+    let message:Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global =
+      Alloc.Vec.impl_2__extend_from_slice #u8 #Alloc.Alloc.t_Global message body
+    in
+    Core_models.Option.Option_Some message
+    <:
+    Core_models.Option.t_Option (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global)
+
+#pop-options

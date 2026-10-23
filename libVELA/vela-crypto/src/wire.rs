@@ -203,9 +203,70 @@ pub fn take_lp_four<'a>(
     Some((first, second))
 }
 
+/// Exact body between a fixed prefix and fixed trailer, without allocation.
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    if input.len() < prefix_len || input.len() - prefix_len < trailer_len {
+        matches!(result, None)
+    } else {
+        match result {
+            Some(body) => body == &input[prefix_len..input.len() - trailer_len],
+            None => false,
+        }
+    }
+}))]
+pub fn frame_body(input: &[u8], prefix_len: usize, trailer_len: usize) -> Option<&[u8]> {
+    if input.len() < prefix_len || input.len() - prefix_len < trailer_len {
+        None
+    } else {
+        Some(&input[prefix_len..input.len() - trailer_len])
+    }
+}
+
+/// Domain prefix followed by the exact received body. Reject capacities above
+/// Rust's byte-vector limit before doing length arithmetic or appending.
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    let maximum = isize::MAX as usize;
+    match result {
+        Some(message) => domain.len() <= maximum && body.len() <= maximum - domain.len()
+            && message.len() == domain.len() + body.len()
+            && &message.as_slice()[..domain.len()] == domain
+            && &message.as_slice()[domain.len()..] == body,
+        None => domain.len() > maximum || body.len() > maximum - domain.len(),
+    }
+}))]
+#[cfg_attr(hax, hax_lib::fstar::options("--fuel 2 --ifuel 2"))]
+pub fn domain_message(domain: &[u8], body: &[u8]) -> Option<Vec<u8>> {
+    let maximum = isize::MAX as usize;
+    if domain.len() > maximum || body.len() > maximum - domain.len() {
+        return None;
+    }
+    let mut message = Vec::new();
+    message.extend_from_slice(domain);
+    message.extend_from_slice(body);
+    Some(message)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn transcript_boundaries_preserve_binary_bytes_and_reject_short_frames() {
+        let domain = b"d\0\xff";
+        let frame = [0xaa, 0, 0xfe, 0xff, 0xbb];
+        let body = frame_body(&frame, 1, 1).unwrap();
+        assert_eq!(
+            domain_message(domain, body).unwrap(),
+            [b'd', 0, 0xff, 0, 0xfe, 0xff]
+        );
+        assert_eq!(frame_body(&frame, 5, 0), Some(&[][..]));
+        assert_eq!(frame_body(&frame, 0, 5), Some(&[][..]));
+        assert_eq!(frame_body(&frame, 5, 1), None);
+        assert_eq!(frame_body(&frame, usize::MAX, 1), None);
+        assert_eq!(frame_body(&frame, 1, usize::MAX), None);
+        assert_eq!(frame_body(&[], 0, 0), Some(&[][..]));
+        assert_eq!(domain_message(&[], &[]), Some(Vec::new()));
+    }
 
     #[test]
     fn length_prefix_rejects_truncation_and_preserves_the_exact_remainder() {

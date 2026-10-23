@@ -35,7 +35,8 @@ pure grammar combinators. This is cursor atomicity, not filesystem atomicity.
 
 The actual production `parse_share_frame` uses stateful cursor operations.
 Its postcondition equates its complete optional result with this grammar,
-using an explicit structural comparator for all nine decoded values. It covers
+using an explicit structural comparator for the signed body and all nine decoded
+values. It covers
 both successful values and rejection; an implementation that always rejects
 does not satisfy the contract. The primitive splitting postconditions give the
 grammar its exact byte meaning. The grammar's correspondence to intended VSE2
@@ -70,11 +71,11 @@ constructor bypass or mutable accessor is provided.
 
 ## Proof/evidence boundary
 
-The inventory now has 137 directly selected functions and 130 explicit
+The inventory now has 139 directly selected functions and 132 explicit
 postconditions. Seven selected specification/comparison functions have no
 explicit ensures. All reviewed extracted postconditions have trivial
 preconditions; there are zero local assume val declarations. Imported models,
-the defined String view, extraction, compilers and proof tools remain trusted.
+the defined String/Vec models, extraction, compilers and proof tools remain trusted.
 
 All source algorithms are the Rust production algorithms. No generated body
 was patched or replaced. The frame function uses scoped `--fuel 2 --ifuel 2`
@@ -84,12 +85,17 @@ readers made the proof compositional. The static boundary checker additionally
 rejects `--admit_smt_queries` and `--unsafe_tactic_exec`; negative fixtures cover
 those flags and lax mode. That checker detects drift, not logical validity.
 
-[Current logs and extraction snapshots](proof-logs/current/frame-parser-refinement/README.md)
-record the new checks. Historical hosted success on e690dfc covers the earlier
+[Parser increment evidence](proof-logs/current/frame-parser-refinement/README.md)
+is retained; [current transcript evidence](proof-logs/current/authenticated-transcript/README.md)
+supersedes its crypto snapshots. Historical hosted success on e690dfc covers the earlier
 119-postcondition snapshot; this increment requires a fresh hosted run.
 
+See [the received-byte transcript increment](12-authenticated-transcript.md) for
+the new exact-body and domain-concatenation contracts.
+
 Remaining: UTF-8/object conversions; encoder/parser inverse and all-domain
-framing composition; exact signed-message/recipient-key provenance in opening;
+framing composition; complete authenticated-opening composition and recipient-key
+provenance;
 primitive-wrapper correspondence; context origins; application effects and
 failure/concurrency refinement; native callers and computational reductions.
 The slice parser allocates no payload buffers; allocation/failure behavior in

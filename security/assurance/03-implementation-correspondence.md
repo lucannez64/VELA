@@ -77,17 +77,20 @@ Each crate follows the same pattern:
 The eighth crate, `libVELA/vela-client-share-policy`, selects 19 postconditions:
 share admission, ten transaction/recovery functions/theorems, and the actual
 permit-revision getter. Desktop sharing calls the corresponding decisions.
-Twenty-two crypto postconditions cover fact construction, decoded-field/policy
+Twenty-four crypto postconditions cover fact construction, decoded-field/policy
 composition, hybrid verification gates, fixed-width arithmetic, exact LP/u64
 splitting, stateful/grouped cursors, full byte-frame grammar refinement and
-read-only accessor kernels. See [the parser boundary](11-parser-refinement.md)
-for the remaining UTF-8, authenticated-open, encoder and I/O obligations.
+read-only accessor kernels, exact signed-body slicing and domain concatenation.
+The latter uses a defined Vec compatibility model with a checked sequence
+concatenation contract; its std correspondence remains trusted. See
+[the parser boundary](11-parser-refinement.md) for the remaining UTF-8,
+authenticated-open, encoder and I/O obligations.
 
 All eight policy crates were freshly extracted and checked after replacing
 derived-enum equality uses with structural matches. No local `assume val`
 declarations remain. The [current evidence](proof-logs/current/trusted-boundary/README.md)
 and [crypto contract boundary](../../libVELA/vela-crypto/proofs/fstar/README.md)
-record their assumptions. Current code has 137 selected functions and 130
+record their assumptions. Current code has 139 selected functions and 132
 explicit postconditions; selected functions and predicates are different counts.
 
 The CI `refinement` job installs pinned tools, runs all eight crates and the constructor,
@@ -119,13 +122,15 @@ ignored by its restored `.gitignore`; its snapshot is included in the evidence.
 Historical CI did not regenerate or check extractions. The new CI gate removes
 previous `.fst`/`.fsti` output before extracting; [the hosted refinement job](proof-logs/current/hosted-refinement-40002230354/README.md)
 passed on `b27dcd6`.
-The eight policy modules, two crypto modules and String view are recorded in
-`proof-logs/current/trusted-boundary/extractions/`. Fresh crypto modules including
-the latest parser/accessor changes are under
-`proof-logs/current/frame-parser-refinement/extractions/`; their checking log
-supersedes earlier crypto snapshots.
+The earlier eight-policy and crypto snapshots remain in
+`proof-logs/current/trusted-boundary/extractions/`. Current snapshots of all
+thirteen artifacts (eight policy modules, three crypto modules and String/Vec
+models) are in `proof-logs/current/authenticated-transcript/extractions/`.
+Its fresh crypto checking log supersedes the earlier parser snapshot. The
+defined Vec subset exposes checked sequence-concatenation refinements;
+correspondence to Rust std remains trusted.
 Always re-extract after changing Rust sources. `check-proof-boundary.py` records
-130 explicit postconditions; seven selected functions have no `ensures`. It
+132 explicit postconditions; seven selected functions have no `ensures`. It
 detects added extraction assumptions, not semantic correspondence.
 
 ## 3.3 Executable refinement evidence (CI-gated)

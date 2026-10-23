@@ -4,7 +4,7 @@
     {
       "boundary": "share admission",
       "artifacts": {
-        "libVELA/vela-crypto/src/share_envelope.rs": "76613044cc70189ae8d9093078d1d76d3a32768ecba0d90acb3b6720ea3aba64",
+        "libVELA/vela-crypto/src/share_envelope.rs": "332b8a1ccd3324dda61262c6254c63f0286c16a814851b491c23ce23687bdf21",
         "libVELA/vela-client-share-policy/src/lib.rs": "97a94c6af11d40b6eafa4930940212d62d2cb5393d6940c7457bb9ce12e9a261",
         "desktopVELA/vela-desktop-core/src/sharing.rs": "2c6b8ac1e82d1858e92937a874fa7c971b0821de22bce368eb17165c9b7db0f3",
         "security/formal/m19c_share_sender_authentication.spthy": "7cb3e243ec013165a20fa9988ef65f5697cb71e564eb8853e8d6d0113f291935",
@@ -46,8 +46,8 @@
         "security/formal/m28_share_journal.spthy": "e6ae320389499cba9fc49db9ec995ddf16345d033efe8e78b83b9d86541ad06f",
         "security/formal/share-journal-correspondence.md": "ae10815e146c5a73ea6418caf20fe99df4bf9040a407d05ba5bfd5f64dbc2c53",
         "libVELA/vela-client-share-policy/src/lib.rs": "97a94c6af11d40b6eafa4930940212d62d2cb5393d6940c7457bb9ce12e9a261",
-        "libVELA/vela-crypto/src/share_envelope.rs": "76613044cc70189ae8d9093078d1d76d3a32768ecba0d90acb3b6720ea3aba64",
-        "libVELA/vela-crypto/verify-share-facts-fstar.sh": "71a5e7240184ff281f2c14df4c12979a9e7f45f48dd4bf6783584855e035909d",
+        "libVELA/vela-crypto/src/share_envelope.rs": "332b8a1ccd3324dda61262c6254c63f0286c16a814851b491c23ce23687bdf21",
+        "libVELA/vela-crypto/verify-share-facts-fstar.sh": "a34a1d189f72a46f2c34ce5fe97db0a315f5f077ba82579b1c0262b25929756d",
         "libVELA/vela-crypto/proofs/fstar/models/Alloc.String.fst": "ebb0c20ed7755594351ea238964573d1c0987427570839bf5a4cf11d5bc3864d",
         "desktopVELA/vela-desktop-core/src/sharing.rs": "2c6b8ac1e82d1858e92937a874fa7c971b0821de22bce368eb17165c9b7db0f3",
         "desktopVELA/vela-desktop-core/src/store.rs": "b6de27f088698a5f37e1754bc81691260d8222545686d78fc0cc1d94d5234324",
@@ -62,9 +62,9 @@
         "libVELA/vela-client-recovery-policy/src/lib.rs": "787d421ea62a246aa66cd55d320cf17b2193ea2466180afaeefb2e1fa670cdc7",
         "libVELA/vela-client-share-policy/src/lib.rs": "97a94c6af11d40b6eafa4930940212d62d2cb5393d6940c7457bb9ce12e9a261",
         "libVELA/vela-client-share-policy/verify-fstar.sh": "4268a7d2c8db86028962f32b1ce9a9f9d93cd1ec302e9d1ab920f1ec68256d15",
-        "libVELA/vela-crypto/src/share_envelope.rs": "76613044cc70189ae8d9093078d1d76d3a32768ecba0d90acb3b6720ea3aba64",
+        "libVELA/vela-crypto/src/share_envelope.rs": "332b8a1ccd3324dda61262c6254c63f0286c16a814851b491c23ce23687bdf21",
         "libVELA/vela-crypto/src/signing.rs": "82c9e2f3f9882d62cad5707cd8287b1299b373b10629eff912477f519249150b",
-        "libVELA/vela-crypto/verify-share-facts-fstar.sh": "71a5e7240184ff281f2c14df4c12979a9e7f45f48dd4bf6783584855e035909d",
+        "libVELA/vela-crypto/verify-share-facts-fstar.sh": "a34a1d189f72a46f2c34ce5fe97db0a315f5f077ba82579b1c0262b25929756d",
         "libVELA/vela-sync-policy/src/lib.rs": "6f7e4eff2087e03fc5d337a238abacc0d69777aece0dc4b7acd017e4fa997618",
         "security/formal/m29_signed_share_commit.spthy": "1b57cbec760120c4ac42267ab277a3d17db6439f425f0cddee65a22d32bdd08c",
         "security/formal/signed-share-commit-correspondence.md": "8b1a5ae7bc8dbedd8c83c6a979fd82470706c87703d73503cc1f70ea6f582822",
@@ -76,18 +76,20 @@
       }
     },
     {
-      "boundary": "share wire arithmetic and concrete byte-frame parsing (crypto/context/I/O refinement remains open)",
+      "boundary": "share wire arithmetic, concrete byte-frame parsing and received-byte transcripts (crypto/context/I/O composition remains open)",
       "artifacts": {
-        "libVELA/vela-crypto/src/wire.rs": "89eb295d9f5e6acd44bcbaa569eb718ea5748224f8787437c612fb45df9cbe2e",
-        "libVELA/vela-crypto/src/share_envelope.rs": "76613044cc70189ae8d9093078d1d76d3a32768ecba0d90acb3b6720ea3aba64",
-        "libVELA/vela-crypto/proofs/fstar/extraction/Vela_crypto.Wire.fst": "8a99d47cb5796c1fdddb0d5d4ddbe02dab8dfb0f8f23d6faba1add5282db843b",
-        "libVELA/vela-crypto/verify-share-facts-fstar.sh": "71a5e7240184ff281f2c14df4c12979a9e7f45f48dd4bf6783584855e035909d",
+        "libVELA/vela-crypto/src/wire.rs": "f0f8eb5ef9d7a58a27baec6b3ab302bc32bc2b334b516589318db50f47d645ec",
+        "libVELA/vela-crypto/src/share_envelope.rs": "332b8a1ccd3324dda61262c6254c63f0286c16a814851b491c23ce23687bdf21",
+        "libVELA/vela-crypto/proofs/fstar/extraction/Vela_crypto.Wire.fst": "fea6b864fc5821891d2647dc6ff374a85bc368b7e4c011d39c3f611eac7a45b8",
+        "libVELA/vela-crypto/verify-share-facts-fstar.sh": "a34a1d189f72a46f2c34ce5fe97db0a315f5f077ba82579b1c0262b25929756d",
         "security/assurance/10-signature-reduction.md": "8d3a6809245272d97c39dad6f67c0343900fc6dd1b897591ebf58dfad2a4b9a6",
-        "security/assurance/11-parser-refinement.md": "cc1be44842fd51f9071c8751a5f7bb169396957ad2ba9c3ab086e041407ec8dd",
-        "libVELA/vela-crypto/proofs/fstar/extraction/Vela_crypto.Share_envelope.fst": "553ffa877f731d853ea1da3c782570b67c0abd23e1fc833d4e213f7a41da7802",
+        "security/assurance/11-parser-refinement.md": "135d8f867126ec2883b6c99f04bdfd27fb755c2776e0070d5ba03b0a5c774a58",
+        "libVELA/vela-crypto/proofs/fstar/extraction/Vela_crypto.Share_envelope.fst": "47e61d7acb26f06f80d92d6a524e9ea5711b19affb41eaee32564b124ec9def1",
         "libVELA/vela-crypto/proofs/fstar/extraction/Vela_crypto.Signing.fst": "d6b62ebffa9ca4ce5cd61b4c2969d26c0f3979be0409b3cbc5a9827c8dc6834b",
         "libVELA/vela-apple-bridge/src/lib.rs": "0325d227a6c0ce2536cc0a1c95fad491498e20ee8327715f3f3323e0749b976c",
-        "libVELA/vela-android-bridge/src/lib.rs": "b351b0f475e48d90007710e90d55ff15bb242a2ed958a3e2e75c4a46f353534c"
+        "libVELA/vela-android-bridge/src/lib.rs": "b351b0f475e48d90007710e90d55ff15bb242a2ed958a3e2e75c4a46f353534c",
+        "libVELA/vela-crypto/proofs/fstar/models/Alloc.Vec.fst": "e67ad0f23c2e21d3175dc8cacd62c0496c6c09f53b144ff6e113df669cb34982",
+        "security/assurance/12-authenticated-transcript.md": "81e96b0a7a9bbc8990803ddeddc272b53df7d83cb69430436e34e9175e795334"
       }
     }
   ]

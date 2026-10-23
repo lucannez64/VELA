@@ -209,14 +209,17 @@ pub fn seal_signed_item(
             "share revisions start at 1".into(),
         ));
     }
-    let signature = signing::sign(signing_key, &signing_transcript(header, item))?;
-
     let mut plaintext = zeroize::Zeroizing::new(Vec::with_capacity(
         SHARE_ENVELOPE_MAGIC.len() + header.sender_vk.len() + item.len() + 4_900,
     ));
     plaintext.extend_from_slice(SHARE_ENVELOPE_MAGIC);
     push_header(&mut plaintext, header);
     push_lp(&mut plaintext, item);
+    // Serialize once: authenticate the same bytes that are placed in the frame.
+    let transcript =
+        crate::wire::domain_message(SHARE_ITEM_CONTEXT, &plaintext[SHARE_ENVELOPE_MAGIC.len()..])
+            .ok_or_else(|| VelaError::InvalidParameter("share transcript is too large".into()))?;
+    let signature = signing::sign(signing_key, &transcript)?;
     push_lp(&mut plaintext, &signature.to_bytes());
     kem::seal_share(recipient, &plaintext)
 }
@@ -241,6 +244,8 @@ pub fn split_envelope_prefix(input: &[u8], n: usize) -> Option<(&[u8], &[u8])> {
 /// this framing step; no field is trusted merely because parsing succeeded.
 #[derive(Clone, Copy, Debug)]
 pub struct ShareFrame<'a> {
+    /// Exact authenticated bytes, excluding VSE2 and the LP signature trailer.
+    pub signed_body: &'a [u8],
     pub sender_user_id: &'a [u8],
     pub sender_device_id: &'a [u8],
     pub sender_vk: &'a [u8],
@@ -269,6 +274,8 @@ pub fn take_frame_prefix<'a>(input: &mut &'a [u8], n: usize) -> Option<&'a [u8]>
 /// Each LP production expands to the separately checked exact slice contract.
 pub fn share_frame_spec(input: &[u8]) -> Option<ShareFrame<'_>> {
     let digest_len: usize = 32;
+    let marker_len: usize = 4;
+    let signature_trailer: usize = 8 + signing::HYBRID_SIG_LEN;
     let (prefix, rest) = split_envelope_prefix(input, 4)?;
     if prefix != SHARE_ENVELOPE_MAGIC {
         return None;
@@ -285,7 +292,9 @@ pub fn share_frame_spec(input: &[u8]) -> Option<ShareFrame<'_>> {
     {
         return None;
     }
+    let signed_body = crate::wire::frame_body(input, marker_len, signature_trailer)?;
     Some(ShareFrame {
+        signed_body,
         sender_user_id,
         sender_device_id,
         sender_vk,
@@ -303,7 +312,8 @@ pub fn frame_results_equal(left: Option<ShareFrame<'_>>, right: Option<ShareFram
     match (left, right) {
         (None, None) => true,
         (Some(left), Some(right)) => {
-            left.sender_user_id == right.sender_user_id
+            left.signed_body == right.signed_body
+                && left.sender_user_id == right.sender_user_id
                 && left.sender_device_id == right.sender_device_id
                 && left.sender_vk == right.sender_vk
                 && left.recipient_user_id == right.recipient_user_id
@@ -323,6 +333,8 @@ pub fn frame_results_equal(left: Option<ShareFrame<'_>>, right: Option<ShareFram
 #[cfg_attr(hax, hax_lib::ensures(|result| frame_results_equal(result, share_frame_spec(input))))]
 pub fn parse_share_frame(input: &[u8]) -> Option<ShareFrame<'_>> {
     let digest_len: usize = 32;
+    let marker_len: usize = 4;
+    let signature_trailer: usize = 8 + signing::HYBRID_SIG_LEN;
     let mut rest = input;
     if take_frame_prefix(&mut rest, 4)? != SHARE_ENVELOPE_MAGIC {
         return None;
@@ -339,7 +351,9 @@ pub fn parse_share_frame(input: &[u8]) -> Option<ShareFrame<'_>> {
     {
         return None;
     }
+    let signed_body = crate::wire::frame_body(input, marker_len, signature_trailer)?;
     Some(ShareFrame {
+        signed_body,
         sender_user_id,
         sender_device_id,
         sender_vk,
@@ -389,7 +403,9 @@ pub fn open_signed_item(
         .map_err(|_| VelaError::InvalidParameter("share signature has the wrong length".into()))?;
     let vk = signing::HybridVerifyingKey::from_bytes(vk_bytes)?;
     let sig = signing::HybridSignature::from_bytes(sig_bytes)?;
-    if !signing::verify(&vk, &signing_transcript(&header, &item), &sig)? {
+    let transcript = crate::wire::domain_message(SHARE_ITEM_CONTEXT, frame.signed_body)
+        .ok_or_else(|| VelaError::InvalidParameter("share transcript is too large".into()))?;
+    if !signing::verify(&vk, &transcript, &sig)? {
         return Err(VelaError::InvalidParameter(
             "share signature does not verify".into(),
         ));
@@ -632,11 +648,42 @@ mod tests {
         assert_eq!(frame.revision, expected.revision);
         assert_eq!(frame.item, b"payload");
         assert_eq!(frame.signature.len(), signing::HYBRID_SIG_LEN);
+        // The reference encoder predates the raw-frame verification path.
+        assert_eq!(
+            crate::wire::domain_message(SHARE_ITEM_CONTEXT, frame.signed_body).unwrap(),
+            signing_transcript(&expected, b"payload")
+        );
         assert!(parse_share_frame(&plaintext[..plaintext.len() - 1]).is_none());
         plaintext.push(0);
         assert!(parse_share_frame(&plaintext).is_none());
         plaintext[4..12].copy_from_slice(&u64::MAX.to_be_bytes());
         assert!(parse_share_frame(&plaintext).is_none());
+    }
+
+    #[test]
+    fn reference_encoded_v2_opens_and_received_payload_tampering_is_rejected() {
+        let alice = device();
+        let (bob_pk, bob_sk) = kem::generate_keypair();
+        let h = header(&alice, &bob_pk, 1);
+        let item = b"a\0\xffpayload";
+        // Assemble using the pre-existing transcript encoder, independently
+        // of the production sealer's serialize-once path.
+        let signature = signing::sign(&alice.sk, &signing_transcript(&h, item)).unwrap();
+        let mut plaintext = SHARE_ENVELOPE_MAGIC.to_vec();
+        push_header(&mut plaintext, &h);
+        push_lp(&mut plaintext, item);
+        push_lp(&mut plaintext, &signature.to_bytes());
+        let capsule = kem::seal_share(&bob_pk, &plaintext).unwrap();
+        assert_eq!(open_signed_item(&bob_sk, &capsule).unwrap().item(), item);
+        let payload_offset = plaintext.len() - (8 + signing::HYBRID_SIG_LEN) - item.len();
+        plaintext[payload_offset] ^= 1;
+        assert!(parse_share_frame(&plaintext).is_some());
+        let tampered = kem::seal_share(&bob_pk, &plaintext).unwrap();
+        let error = open_signed_item(&bob_sk, &tampered).unwrap_err();
+        assert!(
+            error.to_string().contains("signature does not verify"),
+            "{error}"
+        );
     }
 
     #[test]

@@ -40,7 +40,7 @@ reduce selected gaps; no full-system or computational security proof is claimed.
 | **T-6** | Client RNG (`OsRng`, `getrandom`) | Fresh values are uniform. M22 and every `Fr(…)` depend on this |
 | **T-7** | TLS 1.3 and Web PKI | Needed for availability and metadata protection. Confidentiality claims are designed not to depend on it |
 | **T-8** | Cloud providers (iCloud, Google Drive) | Durable (M16, M17). Not trusted for secrecy |
-| **T-9** | Verification toolchain: Tamarin, Maude, ProVerif, hax, F\*, Z3, and hax's `core_models` | Sound. hax is research-grade. The prior 18 local PartialEq assumptions are removed; imported models and the String view remain trusted ([§3.2](03-implementation-correspondence.md#trusted-in-the-f-layer)) |
+| **T-9** | Verification toolchain: Tamarin, Maude, ProVerif, hax, F\*, Z3, and hax's `core_models` | Sound. hax is research-grade. The prior 18 local PartialEq assumptions are removed; imported models and the defined String/Vec models remain trusted ([§3.2](03-implementation-correspondence.md#trusted-in-the-f-layer)) |
 | **T-10** | Specification predicates in the policy crates | They express the intended property. F\* proves code = spec, not spec = intent |
 | **T-11** | Build and distribution pipeline: GitHub Actions, release signing, app stores, extension stores | Out of the assurance scope. No reproducible-build attestation |
 
@@ -65,7 +65,7 @@ them. Each is an easy place for a reviewer to find an over-claim.
 
 | ID | Gap | Impact | Planned fix |
 |---|---|---|---|
-| **G-1** | **The new parser/accessor increment awaits CI.** The preceding 119-postcondition snapshot passed the complete hosted security workflow on e690dfc; current local evidence covers 130 postconditions | Local policy proofs do not establish whole-handler correctness or an independent CI reproduction | The refinement job installs pinned tools with a 6 GiB cap and extracts/checks all eight crates; reproduce the new source snapshot before attributing hosted success to it |
+| **G-1** | **The current parser/transcript increments await CI.** The preceding 119-postcondition snapshot passed the complete hosted security workflow on e690dfc; current local evidence covers 132 postconditions | Local policy proofs do not establish whole-handler correctness or an independent CI reproduction | The refinement job installs pinned tools with a 6 GiB cap and extracts/checks all eight crates; reproduce the new source snapshot before attributing hosted success to it |
 | **G-2** | **Credential-release CI gap: configuration added, successful run pending** | Historical CONF-6/7/8, AUTH-9 and COMP-7 evidence is local | `run-all.sh` is now in CI and checks 83 verified plus exactly five named intended falsifications |
 | **G-3** | **Partly pinned environment** | Historical CI used unsupported Maude 3.2 and unpinned ProVerif | Current proof gates pin Tamarin 1.12.0, Maude 3.5.1, ProVerif 2.05 and Rust 1.99.1; hax/F*/Z3 versions are pinned. OS packages, action tags, transitive opam resolution and static scanners remain non-hermetic |
 | **G-4** | **Historical documentation drift** | The original package predated the new protocols | This update removes the unsupported GL20 citation and the claimed reduction, records current counts and preserves old CI results as historical evidence |
