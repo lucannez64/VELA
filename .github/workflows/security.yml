@@ -233,13 +233,13 @@ jobs:
           {
             proof_tools="$HOME/.local/opt/vela-hax-0.3.7"
             export CARGO_HOME="$proof_tools/cargo-home" OPAMROOT="$proof_tools/opam"
-            export PATH="$proof_tools/bin:$OPAMROOT/vela-hax/bin:$OPAMROOT/vela-fstar/bin:$PATH"
+            export PATH="$proof_tools/bin:$OPAMROOT/vela-hax/bin:$proof_tools/fstar/bin:$PATH"
             printf 'CARGO_HOME=%s\nOPAMROOT=%s\n' "$CARGO_HOME" "$OPAMROOT" >> "$GITHUB_ENV"
-            printf '%s\n' "$proof_tools/bin" "$OPAMROOT/vela-hax/bin" "$OPAMROOT/vela-fstar/bin" >> "$GITHUB_PATH"
+            printf '%s\n' "$proof_tools/bin" "$OPAMROOT/vela-hax/bin" "$proof_tools/fstar/bin" >> "$GITHUB_PATH"
             cargo hax --version | grep -Fx 'version=0.3.7'
             test -x "$OPAMROOT/vela-hax/bin/hax-engine"
             test "$(opam list --switch vela-hax --installed --columns=version --short hax-engine)" = 0.3.7
-            test "$(opam list --switch vela-fstar --installed --columns=version --short fstar)" = 2025.10.06
+            test "$(cat "$proof_tools/fstar/version.txt")" = 2025.10.06
             fstar.exe --version
             z3-4.13.3 --version
             rustc +nightly-2025-11-08 --version

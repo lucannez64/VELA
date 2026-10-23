@@ -12,11 +12,11 @@ is historical evidence, not evidence for the new protocols.
 | Tamarin | 1.12.0 | Release archive SHA-256 `201be06f469e47cff554df6ca93db8366fc2c69d70c61fcbd1370a1074b469c6` |
 | Maude | 3.5.1 | `Maude3.5.1/Maude-3.5.1-linux-x86_64.zip`, SHA-256 `72ed1ca87e3b3d0dfc6ee1436baf154bf04c45ff97d521bec040c5e8dfc8f92c` |
 | ProVerif | 2.05 | `opam install proverif.2.05` in OCaml 5.1.1 switch; version printed in CI |
-| OCaml | 5.1.1 | `ocaml-base-compiler.5.1.1` for ProVerif, hax and F* switches |
+| OCaml | 5.1.1 | `ocaml-base-compiler.5.1.1` for ProVerif/hax; the prebuilt F★ release reports OCaml 4.14.2 |
 | hax frontend/driver | 0.3.7 | `cargo install --version 0.3.7 --locked` |
 | hax engine | 0.3.7 | Source commit `d8b5b3d3b666fee8943a351445d2b680105e8ea3` |
 | Rust for hax | nightly-2025-11-08 | Compiler components installed explicitly |
-| F* | 2025.10.06 | `opam install fstar.2025.10.06`, separate switch |
+| F* | 2025.10.06 | Official Linux x86-64 release, SHA-256 `940c187d7a6dc3e95d17fd5159b5eaec17d62981c7f135a7e6c531ce3b59442d` |
 | Z3 | 4.13.3 | Official x64 glibc-2.35 archive, SHA-256 `32c7377026733c9d7b33c21cd77a68f50ba682367207b031a6bfd80140a8722f` |
 | Rust tests in security CI | 1.99.1 | `dtolnay/rust-toolchain@1.99.1`; Cargo lockfiles pin crate resolution |
 
@@ -32,8 +32,8 @@ pinned environment. No bit-for-bit build reproducibility is claimed.
 
 The refinement job restores installed proof tools and the pinned Rust nightly
 from an exact GitHub Actions cache key containing OS, architecture, Ubuntu 24
-and the installer script hash. A miss builds them under the documented memory
-cap, with a 90-minute cold-install limit inside a two-hour job budget;
+and the installer script hash. A miss builds hax under the documented memory
+cap and downloads the pinned prebuilt F★/Z3 releases, with a 90-minute cold-install limit inside a two-hour job budget;
 completed tools are cached before application proofs. Activation checks
 hax/engine/F★ versions and logs Z3/Rust versions. GitHub's cache and tool
 installation remain trusted CI infrastructure; a cache key is not a toolchain
@@ -44,7 +44,7 @@ soundness proof. VELA extraction output is regenerated and checked on every run.
 The refinement prerequisites explicitly include the system `nodejs` package:
 the pinned hax engine declares it as an opam external dependency. Apt uses
 `--no-install-recommends` to avoid the unused distro OCaml installation;
-OCaml 5.1.1 is built in the pinned opam switches. Apt operations have network
+OCaml 5.1.1 is built for hax; F★ uses its official prebuilt release. Apt operations have network
 retries/timeouts and a 15-minute step limit.
 
 For Linux x86-64, the exact Tamarin/Maude install commands and checksums are
@@ -66,13 +66,16 @@ Some ProVerif opam dependencies require GTK2 development packages even for
 CLI use. CI installs `libgtk2.0-dev` and `pkg-config`.
 
 The optional full hax installation is scripted for a **clean Linux build
-environment** in [`install-hax.sh`](install-hax.sh). It builds compilers and
-tools and can take substantial time; it is not part of the default local run:
+environment** in [`install-hax.sh`](install-hax.sh). It builds hax and one OCaml
+switch; F★ and Z3 are downloaded from official releases with checked hashes.
+The F★ release is commit `7b347386330d0e5a331a220535b6f15288903234` and includes
+its matching standard libraries. Cold hax installation can still take substantial
+time; it is not part of the default local run:
 
 ```bash
 VELA_MEMORY_MAX=6G VELA_STEP_TIMEOUT=5400 security/assurance/bounded.sh security/assurance/install-hax.sh
 export OPAMROOT="$HOME/.local/opt/vela-hax-0.3.7/opam"
-export PATH="$HOME/.local/opt/vela-hax-0.3.7/bin:$OPAMROOT/vela-hax/bin:$OPAMROOT/vela-fstar/bin:$PATH"
+export PATH="$HOME/.local/opt/vela-hax-0.3.7/bin:$OPAMROOT/vela-hax/bin:$HOME/.local/opt/vela-hax-0.3.7/fstar/bin:$PATH"
 ```
 
 Use a clean Cargo configuration. The installer explicitly selects LLVM and

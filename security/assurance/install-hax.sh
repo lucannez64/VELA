@@ -10,6 +10,18 @@ mkdir -p "$root/bin" "$root/cargo-home"
 export CARGO_HOME="$root/cargo-home"
 export PATH="$root/bin:$HOME/.cargo/bin:$PATH"
 export OPAMROOT="$root/opam"
+# Use the official release instead of building a second OCaml compiler + F★.
+# The archive contains the executable and its matching standard libraries.
+curl -fL --retry 3 --connect-timeout 30 -o "$root/fstar.tar.gz" https://github.com/FStarLang/FStar/releases/download/v2025.10.06/fstar-v2025.10.06-Linux-x86_64.tar.gz
+echo "940c187d7a6dc3e95d17fd5159b5eaec17d62981c7f135a7e6c531ce3b59442d  $root/fstar.tar.gz" | sha256sum -c
+tar -xzf "$root/fstar.tar.gz" -C "$root"
+test "$(cat "$root/fstar/version.txt")" = 2025.10.06
+rm "$root/fstar.tar.gz"
+curl -fL -o "$root/z3.zip" https://github.com/Z3Prover/z3/releases/download/z3-4.13.3/z3-4.13.3-x64-glibc-2.35.zip
+echo "32c7377026733c9d7b33c21cd77a68f50ba682367207b031a6bfd80140a8722f  $root/z3.zip" | sha256sum -c
+unzip -oq "$root/z3.zip" -d "$root"
+install -m755 "$root/z3-4.13.3-x64-glibc-2.35/bin/z3" "$root/bin/z3-4.13.3"
+"$root/fstar/bin/fstar.exe" --version
 opam init --bare --disable-sandboxing --no-setup --yes
 rustup toolchain install nightly-2025-11-08 --profile minimal \
   --component rustc-dev --component llvm-tools-preview --component rust-analysis \
@@ -25,17 +37,11 @@ opam switch create vela-hax ocaml-base-compiler.5.1.1 --yes
 # Reduce heap slack for the large generated OCaml AST module. Native engine
 # installation exceeded 3 GiB; the successful local run used a 6 GiB cap.
 OCAMLRUNPARAM="o=10,s=256k" opam install --switch vela-hax --yes "$root/hax/engine"
-opam switch create vela-fstar ocaml-base-compiler.5.1.1 --yes
-opam install --switch vela-fstar --yes fstar.2025.10.06
-curl -fL -o "$root/z3.zip" https://github.com/Z3Prover/z3/releases/download/z3-4.13.3/z3-4.13.3-x64-glibc-2.35.zip
-echo "32c7377026733c9d7b33c21cd77a68f50ba682367207b031a6bfd80140a8722f  $root/z3.zip" | sha256sum -c
-unzip -oq "$root/z3.zip" -d "$root"
-install -m755 "$root/z3-4.13.3-x64-glibc-2.35/bin/z3" "$root/bin/z3-4.13.3"
 # Keep installed libraries/binaries, but omit disposable OCaml build/download
 # directories from the completed-toolchain cache.
 opam clean --all-switches --yes
 # GITHUB_PATH is optional: this script also works outside Actions.
 if [[ -n ${GITHUB_PATH:-} ]]; then
   printf 'CARGO_HOME=%s\n' "$CARGO_HOME" >> "$GITHUB_ENV"
-  printf '%s\n' "$root/bin" "$OPAMROOT/vela-hax/bin" "$OPAMROOT/vela-fstar/bin" >> "$GITHUB_PATH"
+  printf '%s\n' "$root/bin" "$OPAMROOT/vela-hax/bin" "$root/fstar/bin" >> "$GITHUB_PATH"
 fi
