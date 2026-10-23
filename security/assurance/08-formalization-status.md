@@ -56,6 +56,19 @@ turn any open obligation below into a proved result.
   no explicit ensures. Imported library assumptions and proof tools remain
   trusted; the drift checker is not a proof checker.
 
+The enrollment ceremony now computes every policy fact through five pure
+constructors (`open_facts`, `claim_facts`, `inspect_facts`, `completion_facts`,
+`result_facts`) with hax postconditions, plus fifteen negative theorems. The
+handlers read grant/claim presence, decoded key lengths, session/grant identity
+equality, the opener's `revoked` column, the primary/collector signature result,
+and the account epoch/rotation state. These twenty entry points are listed in
+`serverVELA/vela-enrollment-policy/verify-fstar.sh` but are **not** in the
+132/139 checked snapshot until the hosted refinement job re-extracts and checks
+them. The observations themselves (SQL queries, store calls, signature
+verifier, session ids) remain unverified glue; `claim_key_source: StoredClaim`
+records the structural fact that the handler never accepts claim keys from the
+request body.
+
 [Current evidence](proof-logs/current/trusted-boundary/README.md) supersedes
 prior extraction snapshots for all eight policy crates. CI includes the new
 checks. The [hosted refinement job](proof-logs/current/hosted-refinement-40002230354/README.md)
@@ -93,7 +106,7 @@ context origins; see [the exact boundary](11-parser-refinement.md).
 
 | Area | Status | Required to close |
 |---|---|---|
-| F-1: handler facts | Partial | Complete UTF-8/object and authenticated-open composition after the checked byte-frame parser; prove independent context origins; cover SQL, token, epoch, enrollment and recovery fact construction across all handlers |
+| F-1: handler facts | Partial: enrollment fact constructors specified; hosted F* extraction pending | Re-extract and check the twenty new enrollment entry points in CI; verify the observation producers (SQL rows, store lookups, signature verifier, session ids) themselves; complete UTF-8/object and authenticated-open composition after the checked byte-frame parser; prove independent context origins; cover token, epoch, recovery and remaining handler fact construction |
 | F-2: state transitions | Partial | Machine-check concrete handler/database transitions against protocol transitions, including exceptions, cancellation and concurrency |
 | F-3: persistence/recovery | Partial: M28 and composed M29 | Prove the actual journal implementation refines M28; formalize collection equality and filesystem outcomes; compose local edits/deletions and RMS migration; cover or explicitly exclude independent processes |
 | F-4: construction security | Partial: AND gate and ideal-signature composition | Define computational games and prove reductions for VELA hybrid KEM/signatures, framing, share tags, possession proofs and KDFs under named primitive assumptions; verify application randomness/error/erasure handling. Primitive internals and leakage resistance are trusted under the selected boundary |

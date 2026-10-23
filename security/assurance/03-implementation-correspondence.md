@@ -68,7 +68,7 @@ Each crate follows the same pattern:
 |---|---:|---|---|
 | `serverVELA/vela-rekey-policy` | 12: `next_epoch`, `resolve_write_epoch`, `plan_start`, `authorize_attempt`, `authorize_shadow`, `plan_commit`, `plan_abort`, `plan_timeout`, `authorize_commit_replay`, `plan_active_mutation`, `authorize_active_mutation`, `stale_permit_authorizes_successor` | M11, M11c | `vault/rekey.rs`, `middleware.rs`, `device/enroll.rs`, `device/rendezvous.rs`, `recovery/mod.rs`, `recovery/enroll_device.rs` |
 | `serverVELA/vela-session-policy` | 11: `parse_scope_claim`, `plan_grant`, `plan_device_token`, `plan_web_session_token`, `plan_renewal`, `authorize_route`, `clamp_web_ttl`, `web_session_expired`, plus 3 negative theorems | M12, M20 | `middleware.rs` (`DeviceSession` extractor), `auth/token.rs`, `web_session/mod.rs` |
-| `serverVELA/vela-enrollment-policy` | 9: `plan_open`, `plan_claim`, `authorize_inspection`, `plan_completion`, `authorize_result`, plus 4 negative theorems | M13 | `device/rendezvous.rs` |
+| `serverVELA/vela-enrollment-policy` | 29 selected in `verify-fstar.sh`: 9 previously checked (5 decisions + 4 theorems), plus 5 fact constructors and 15 negative theorems awaiting hosted extraction | M13 | `device/rendezvous.rs` |
 | `serverVELA/vela-recovery-policy` | 21: publication stage/finalize, initiation, registration, recovery, credential update, enrollment, proof initiation, possession recovery, plus 12 negative theorems | M14, M16, M18 (server side) | `recovery/{initiate,recover,possess,webauthn,enroll_device,mod}.rs` |
 | `serverVELA/vela-share-policy` | 10: `plan_ek_registration`, `plan_send`, `plan_link_mutation`, `timestamp_format_plausible`, plus 6 negative theorems | M19b, M21 | `share/mod.rs` |
 | `libVELA/vela-client-recovery-policy` | 18: `plan_reconstruction`, `plan_adoption`, `plan_publication_resume`, `plan_contact_delivery`, plus 14 negative theorems | M15, M17, M18 (client side) | `vela-crypto/src/recovery.rs`, `desktopVELA/vela-desktop-core/src/recovery.rs`, Android and Apple bridges |
@@ -92,6 +92,10 @@ declarations remain. The [current evidence](proof-logs/current/trusted-boundary/
 and [crypto contract boundary](../../libVELA/vela-crypto/proofs/fstar/README.md)
 record their assumptions. Current code has 139 selected functions and 132
 explicit postconditions; selected functions and predicates are different counts.
+The enrollment fact-construction increment adds five observation-to-fact
+constructors and fifteen negative theorems (twenty selected entry points) that
+await hosted extraction; the 139/132 counts describe the previously checked
+snapshot and do not include them.
 
 The CI `refinement` job installs pinned tools, runs all eight crates and the constructor,
 retaining logs. The complete [security workflow](https://github.com/lucannez64/VELA/actions/runs/40008926193)
