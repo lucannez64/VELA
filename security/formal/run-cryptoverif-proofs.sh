@@ -18,9 +18,21 @@ mkdir -p "$out"
 
 run() {
   local model=$1 expect=$2 log="$out/$1.log"
-  "$root/../assurance/bounded.sh" timeout 600 "$cv" -lib "$lib" "$root/cryptoverif/$model.ocv" >"$log" 2>&1 || true
+  local status=0 got
+  "$root/../assurance/bounded.sh" timeout 600 "$cv" -lib "$lib" "$root/cryptoverif/$model.ocv" >"$log" 2>&1 || status=$?
+  if (( status != 0 )); then
+    echo "$model: proof process failed (exit $status); see $log" >&2
+    exit 1
+  fi
   if grep -q '^Error' "$log"; then echo "$model: CryptoVerif error; see $log" >&2; exit 1; fi
-  if grep -q '^All queries proved\.' "$log"; then got=proved; else got=unproved; fi
+  if grep -q '^All queries proved\.' "$log"; then
+    got=proved
+  elif grep -q '^RESULT Could not prove bit secrecy of b\.$' "$log"; then
+    got=unproved
+  else
+    echo "$model: no recognized proof verdict; see $log" >&2
+    exit 1
+  fi
   if [[ $got != "$expect" ]]; then echo "$model: expected $expect, got $got; see $log" >&2; exit 1; fi
   echo "$model: $got (as expected)"
   grep '^RESULT Proved' "$log" | sort -u | sed 's/^/  /' || true

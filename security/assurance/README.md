@@ -86,7 +86,7 @@ correctness is not a consequence of the pure-policy proofs.
   properties and M29 adds eleven composed authentication/journal properties.
   Combined evidence is **294 verified / five intended falsifications**; it is
   not a new whole-corpus CI result.
-- Current hax/F*: [fresh received-byte transcript checks](proof-logs/current/authenticated-transcript/README.md) cover **139 selected functions / 132 explicit
+- Current hax/F*: [hosted policy and enrollment checks](proof-logs/current/hosted-enrollment-40039992434/README.md) cover **159 selected functions / 152 explicit
   postconditions** across eight policy crates and the sharing/signature kernels.
   All **18 local enum-equality assumptions were removed** through structural
   Rust comparisons; current generated modules contain zero local `assume val`
@@ -97,7 +97,8 @@ correctness is not a consequence of the pure-policy proofs.
   policy workflows 0.74–2.06 GiB under 5 GiB caps. Current proof/regression
   commands used 3 GiB caps without swap; no engine rebuild was needed.
 - CI now defines all-model and eight-crate refinement gates and log artifacts.
-  Their new runs remain pending until this branch is published and CI runs.
+  Hosted refinement passed on fbe35c0; its full workflow failed before
+  CryptoVerif ran. The executable/failure-handling repair awaits hosted checking.
   Toolchain installation in the dedicated CI job has a separate 6 GiB cap;
   local runners default to 3 GiB.
 

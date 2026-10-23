@@ -51,7 +51,7 @@ turn any open obligation below into a proved result.
 - **Reduced assumption boundary.** Structural Rust matches replaced the 18
   opaque derived-enum equality uses. Fresh checking of all eight policy crates
   succeeded with zero local assume val declarations. The inventory now has
-  **132 explicit postconditions / 139 selected functions** in eleven Rust modules,
+  **152 explicit postconditions / 159 selected functions** in eleven Rust modules,
   plus defined String and Vec compatibility models. Seven selected functions have
   no explicit ensures. Imported library assumptions and proof tools remain
   trusted; the drift checker is not a proof checker.
@@ -62,9 +62,11 @@ constructors (`open_facts`, `claim_facts`, `inspect_facts`, `completion_facts`,
 handlers read grant/claim presence, decoded key lengths, session/grant identity
 equality, the opener's `revoked` column, the primary/collector signature result,
 and the account epoch/rotation state. These twenty entry points are listed in
-`serverVELA/vela-enrollment-policy/verify-fstar.sh` but are **not** in the
-132/139 checked snapshot until the hosted refinement job re-extracts and checks
-them. The observations themselves (SQL queries, store calls, signature
+`serverVELA/vela-enrollment-policy/verify-fstar.sh` and were extracted and checked
+in the [successful hosted refinement job](https://github.com/lucannez64/VELA/actions/runs/40039992434/job/120708563220)
+on fbe35c0. The current inventory is 152 postconditions / 159 selected functions.
+The exact CI extraction and logs are retained in the
+[enrollment evidence](proof-logs/current/hosted-enrollment-40039992434/README.md). The observations themselves (SQL queries, store calls, signature
 verifier, session ids) remain unverified glue; `claim_key_source: StoredClaim`
 records the structural fact that the handler never accepts claim keys from the
 request body.
@@ -73,7 +75,10 @@ request body.
 prior extraction snapshots for all eight policy crates. CI includes the new
 checks. The [hosted refinement job](proof-logs/current/hosted-refinement-40002230354/README.md)
 passed on `b27dcd6`, and the [complete security workflow](https://github.com/lucannez64/VELA/actions/runs/40008926193)
-passed on `e690dfc`. The parser/accessor and received-byte transcript increments await hosted CI.
+passed on `e690dfc`. The parser/transcript and new enrollment contracts also passed hosted
+refinement on fbe35c0. That full workflow failed before CryptoVerif ran because
+of its runner permission error; a successful refinement job is not a successful
+whole-workflow result.
 
 The I/O-contract review also found and fixed an uncertain-write recovery gap:
 readable pending metadata now receives a successful durability re-arm before
@@ -82,8 +87,9 @@ with the fix. This does not close the concrete I/O refinement obligation.
 
 A [written hybrid-signature EUF-CMA reduction](10-signature-reduction.md) now
 specifies the exact byte-message game, a lossless projection to either
-component, and disclosure of the other key. It is a mathematical argument
-for review; its computational game and simulation are not machine-checked.
+component, and disclosure of the other key. Its computational byte-message games now have CryptoVerif proofs under the
+assumptions in the model README; complete Rust wrapper and game-composition
+correspondence remains open.
 
 Five freshly extracted wire contracts prove exact big-endian decoding, byte
 decomposition, encoding round-trip and injectivity for all u64 values. The
@@ -114,13 +120,14 @@ IND-CPA + INT-CTXT AEAD (KEM-DEM). Two more games machine-check the hybrid
 signature reduction: the AND signature is EUF-CMA from ML-DSA-87 alone and
 from Ed25519 alone, with the other secret key leaked. HKDF is a random oracle; the X25519
 cofactor, the SHA-256 step and multi-user security are open, as listed in
-[the model README](../formal/cryptoverif/README.md). CI gates all three outcomes.
+[the model README](../formal/cryptoverif/README.md). CI expects five proved models and one explicitly unproved legacy baseline;
+the repaired runner rejects process errors/timeouts and missing verdicts.
 
 ## Remaining obligations for the six requested areas
 
 | Area | Status | Required to close |
 |---|---|---|
-| F-1: handler facts | Partial: enrollment fact constructors specified; hosted F* extraction pending | Re-extract and check the twenty new enrollment entry points in CI; verify the observation producers (SQL rows, store lookups, signature verifier, session ids) themselves; complete UTF-8/object and authenticated-open composition after the checked byte-frame parser; prove independent context origins; cover token, epoch, recovery and remaining handler fact construction |
+| F-1: handler facts | Partial: enrollment fact constructors checked in hosted F* | Maintain the checked twenty new enrollment entry points; verify the observation producers (SQL rows, store lookups, signature verifier, session ids) themselves; complete UTF-8/object and authenticated-open composition after the checked byte-frame parser; prove independent context origins; cover token, epoch, recovery and remaining handler fact construction |
 | F-2: state transitions | Partial | Machine-check concrete handler/database transitions against protocol transitions, including exceptions, cancellation and concurrency |
 | F-3: persistence/recovery | Partial: M28 and composed M29 | Prove the actual journal implementation refines M28; formalize collection equality and filesystem outcomes; compose local edits/deletions and RMS migration; cover or explicitly exclude independent processes |
 | F-4: construction security | Partial: machine-checked in CryptoVerif — hybrid KEM combiner v2 IND-CCA2 and hybrid AND signature EUF-CMA, each under either component's assumption, plus `seal_share` KEM-DEM IND-CCA2 | Close the combiner gaps listed in `security/formal/cryptoverif/README.md` (X25519 cofactor vs prime-order group, SHA-256 step, multi-user; KEM-DEM is proved modularly); computational games and reductions for envelope framing, share tags, possession proofs and KDFs under named primitive assumptions; verify application randomness/error/erasure handling. Primitive internals and leakage resistance are trusted under the selected boundary |

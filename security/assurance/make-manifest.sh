@@ -8,7 +8,8 @@ from pathlib import Path
 patterns = [
     'security/formal/*.spthy', 'security/formal/*.pv', 'security/formal/*.pvl',
     'security/formal/*.sh', 'security/formal/*.py', 'security/formal/*.json',
-    'security/formal/cryptoverif/*.ocv',
+    'security/formal/cryptoverif/*.ocv', 'security/formal/cryptoverif/*.md',
+    'security/formal/tests/*.py',
     'security/formal/network-boundary-correspondence.md',
     'security/assurance/*.patch', 'security/assurance/*.md', 'security/assurance/*.sh',
     'security/assurance/*.py', 'security/assurance/*.json',

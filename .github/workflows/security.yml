@@ -154,6 +154,9 @@ jobs:
           mkdir -p "$RUNNER_TEMP/assurance-logs"
           security/assurance/bounded.sh security/formal/run-oram-access-hiding-proofs.sh 2>&1 | tee "$RUNNER_TEMP/assurance-logs/oram-precheck.log"
 
+      - name: Check computational proof runner failure handling
+        run: python3 -m unittest discover -s security/formal/tests -p 'test_cryptoverif_runner.py'
+
       # Computational (not symbolic) proofs of the hybrid KEM combiner. Built
       # with the pinned OCaml switch the ProVerif step put on PATH.
       - name: Prove the hybrid KEM combiner in the computational model (CryptoVerif 2.12)

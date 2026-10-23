@@ -68,7 +68,7 @@ Each crate follows the same pattern:
 |---|---:|---|---|
 | `serverVELA/vela-rekey-policy` | 12: `next_epoch`, `resolve_write_epoch`, `plan_start`, `authorize_attempt`, `authorize_shadow`, `plan_commit`, `plan_abort`, `plan_timeout`, `authorize_commit_replay`, `plan_active_mutation`, `authorize_active_mutation`, `stale_permit_authorizes_successor` | M11, M11c | `vault/rekey.rs`, `middleware.rs`, `device/enroll.rs`, `device/rendezvous.rs`, `recovery/mod.rs`, `recovery/enroll_device.rs` |
 | `serverVELA/vela-session-policy` | 11: `parse_scope_claim`, `plan_grant`, `plan_device_token`, `plan_web_session_token`, `plan_renewal`, `authorize_route`, `clamp_web_ttl`, `web_session_expired`, plus 3 negative theorems | M12, M20 | `middleware.rs` (`DeviceSession` extractor), `auth/token.rs`, `web_session/mod.rs` |
-| `serverVELA/vela-enrollment-policy` | 29 selected in `verify-fstar.sh`: 9 previously checked (5 decisions + 4 theorems), plus 5 fact constructors and 15 negative theorems awaiting hosted extraction | M13 | `device/rendezvous.rs` |
+| `serverVELA/vela-enrollment-policy` | 29 checked in hosted F★: 5 decisions, 5 fact constructors and 19 negative theorems | M13 | `device/rendezvous.rs` |
 | `serverVELA/vela-recovery-policy` | 21: publication stage/finalize, initiation, registration, recovery, credential update, enrollment, proof initiation, possession recovery, plus 12 negative theorems | M14, M16, M18 (server side) | `recovery/{initiate,recover,possess,webauthn,enroll_device,mod}.rs` |
 | `serverVELA/vela-share-policy` | 10: `plan_ek_registration`, `plan_send`, `plan_link_mutation`, `timestamp_format_plausible`, plus 6 negative theorems | M19b, M21 | `share/mod.rs` |
 | `libVELA/vela-client-recovery-policy` | 18: `plan_reconstruction`, `plan_adoption`, `plan_publication_resume`, `plan_contact_delivery`, plus 14 negative theorems | M15, M17, M18 (client side) | `vela-crypto/src/recovery.rs`, `desktopVELA/vela-desktop-core/src/recovery.rs`, Android and Apple bridges |
@@ -90,17 +90,19 @@ All eight policy crates were freshly extracted and checked after replacing
 derived-enum equality uses with structural matches. No local `assume val`
 declarations remain. The [current evidence](proof-logs/current/trusted-boundary/README.md)
 and [crypto contract boundary](../../libVELA/vela-crypto/proofs/fstar/README.md)
-record their assumptions. Current code has 139 selected functions and 132
+record their assumptions. Current code has 159 selected functions and 152
 explicit postconditions; selected functions and predicates are different counts.
 The enrollment fact-construction increment adds five observation-to-fact
 constructors and fifteen negative theorems (twenty selected entry points) that
-await hosted extraction; the 139/132 counts describe the previously checked
-snapshot and do not include them.
+passed hosted extraction and F★ checking on fbe35c0. The 159/152 counts include
+them. The [exact CI evidence](proof-logs/current/hosted-enrollment-40039992434/README.md)
+preserves the regenerated enrollment artifact without editing its body.
 
 The CI `refinement` job installs pinned tools, runs all eight crates and the constructor,
 retaining logs. The complete [security workflow](https://github.com/lucannez64/VELA/actions/runs/40008926193)
-passed on `e690dfc` for the preceding 119-postcondition snapshot. The new parser/
-accessor increment has local proof evidence and awaits its own hosted run.
+passed on `e690dfc` for the preceding 119-postcondition snapshot. The parser/transcript and enrollment increments subsequently passed the hosted
+refinement job on fbe35c0; its full security workflow failed before computational
+proof execution because of the runner's executable bit.
 
 Every crate has a `verify-fstar.sh` runner, and most have a README that
 states its proof boundary (for example
@@ -134,7 +136,7 @@ Its fresh crypto checking log supersedes the earlier parser snapshot. The
 defined Vec subset exposes checked sequence-concatenation refinements;
 correspondence to Rust std remains trusted.
 Always re-extract after changing Rust sources. `check-proof-boundary.py` records
-132 explicit postconditions; seven selected functions have no `ensures`. It
+152 explicit postconditions; seven selected functions have no `ensures`. It
 detects added extraction assumptions, not semantic correspondence.
 
 ## 3.3 Executable refinement evidence (CI-gated)
