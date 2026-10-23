@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Run in a clean Linux environment. No global Cargo flags: nested hax needs --cfg hax.
 set -euo pipefail
+# Explicit backend selection needs the matching Cargo feature on pinned nightly.
+# Do not rely on a developer's global Cargo configuration enabling it.
+export CARGO_UNSTABLE_CODEGEN_BACKEND=true
 export CARGO_BUILD_JOBS=1 OPAMJOBS=1 MAKEFLAGS=-j1 CARGO_PROFILE_DEV_CODEGEN_BACKEND=llvm
 root=${VELA_HAX_ROOT:-$HOME/.local/opt/vela-hax-0.3.7}
 mkdir -p "$root/bin" "$root/cargo-home"

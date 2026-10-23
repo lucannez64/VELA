@@ -30,7 +30,10 @@ pinned environment. No bit-for-bit build reproducibility is claimed.
 For Linux x86-64, the exact Tamarin/Maude install commands and checksums are
 in [security.yml](../../.github/workflows/security.yml), step **Install pinned
 Tamarin 1.12.0 and Maude 3.5.1**. Keep the Maude executable beside its `.maude`
-prelude files and put it on PATH. Do not use the old unsupported distro Maude.
+prelude files. The PATH entry must be a wrapper setting `MAUDE_LIB` to that
+directory; a bare symlink can leave the prelude undiscoverable. CI checks that
+Tamarin reports no installation warning before running proofs. Do not use the
+old unsupported distro Maude.
 
 ```bash
 opam init --bare --no-setup --yes

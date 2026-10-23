@@ -1,0 +1,8 @@
+error: config profile `dev` is not valid (defined in `environment variable `CARGO_PROFILE_DEV``)
+
+Caused by:
+  feature `codegen-backend` is required
+
+  The package requires the Cargo feature called `codegen-backend`, but that feature is not stabilized in this version of Cargo (1.93.0-nightly (636800288 2025-10-31)).
+  Consider adding `cargo-features = ["codegen-backend"]` to the top of Cargo.toml (above the [package] table) to tell Cargo you are opting in to use this unstable feature.
+  See https://doc.rust-lang.org/nightly/cargo/reference/unstable.html#codegen-backend for more information about the status of this feature.

@@ -94,8 +94,19 @@ jobs:
           sudo mkdir -p /opt/maude-3.5.1
           sudo unzip -oq /tmp/maude.zip -d /opt/maude-3.5.1
           sudo chmod +x /opt/maude-3.5.1/maude
-          sudo ln -s /opt/maude-3.5.1/maude /usr/local/bin/maude
-          tamarin-prover --version
+          # Maude locates its prelude through MAUDE_LIB; a symlink alone loses
+          # that location when called from a repository/proof directory.
+          cat > /tmp/vela-maude <<'SH'
+          #!/bin/sh
+          export MAUDE_LIB=/opt/maude-3.5.1
+          exec "$MAUDE_LIB/maude" "$@"
+          SH
+          sudo install -m755 /tmp/vela-maude /usr/local/bin/maude
+          tamarin-prover --version 2>&1 | tee /tmp/vela-tamarin-version.txt
+          if rg -q 'WARNING:|unsupported' /tmp/vela-tamarin-version.txt; then
+            echo 'Tamarin/Maude installation self-check failed' >&2
+            exit 1
+          fi
           maude --version
 
       - name: Check reviewed model correspondence
