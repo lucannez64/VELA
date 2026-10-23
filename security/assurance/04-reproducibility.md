@@ -39,6 +39,17 @@ hax/engine/F★ versions and logs Z3/Rust versions. GitHub's cache and tool
 installation remain trusted CI infrastructure; a cache key is not a toolchain
 soundness proof. VELA extraction output is regenerated and checked on every run.
 
+Application dependency artifacts have a separate Rust cache, restored after
+proof-tool activation so it uses the proof job's actual Cargo home. Workspace
+mappings resolve to the shared repository-root target directory. It does not
+cache VELA proof verdicts: extraction and all F★ checks still run fresh.
+The ordinary formal/regression jobs select pinned Rust before cache lookup and
+use identical workspace inputs. Only a successful formal job publishes their
+combined dependency cache; regression restores it read-only. Parallel jobs on
+a cold cache still compile independently, and cross-target/profile/toolchain
+builds retain separate artifacts. The first run after these cache-key changes
+is expected to be cold. Hosted hit rates and savings require subsequent runs.
+
 ## 4.2 Installation
 
 The refinement prerequisites explicitly include the system `nodejs` package:

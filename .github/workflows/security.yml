@@ -68,24 +68,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # All Rust compilation in this job (server model tests, crypto, bridges)
-      # shares the repo-root target dir, so one cache entry covers it. The
-      # same shared-key is used by the regression job below: whichever job
-      # finishes first saves, the other restores, and neither repeats the
-      # dependency compilation the next run.
+      - uses: dtolnay/rust-toolchain@1.99.1
+
+      # Target paths are relative to each workspace. All resolve to VELA/target.
+      # Publish the combined dependency cache only after this job succeeds;
+      # regression restores it read-only, so its smaller build cannot win the
+      # immutable cache key. Parallel cold jobs still compile independently.
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: |
-            serverVELA -> target
-            libVELA/vela-crypto -> target
-            libVELA/vela-client-recovery-policy -> target
-            libVELA/vela-android-bridge -> target
-            libVELA/vela-apple-bridge -> target
-            libVELA/vela-wasm-bridge -> target
-          shared-key: security-rust
-          cache-on-failure: true
-
-      - uses: dtolnay/rust-toolchain@1.99.1
+            serverVELA -> ../target
+            libVELA/vela-crypto -> ../../target
+            libVELA/vela-client-recovery-policy -> ../../target
+            libVELA/vela-client-share-policy -> ../../target
+            libVELA/vela-android-bridge -> ../../target
+            libVELA/vela-apple-bridge -> ../../target
+            libVELA/vela-wasm-bridge -> ../../target
+          shared-key: security-rust-v2
 
       - name: Install pinned Tamarin 1.12.0 and Maude 3.5.1
         run: |
@@ -201,8 +200,8 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y clang pkg-config libudev-dev libwayland-dev libssl-dev
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: desktopVELA -> target
-          shared-key: security-desktop-core
+          workspaces: desktopVELA -> ../target
+          shared-key: security-desktop-core-v2
       - name: Check desktop policy callers and recoverable share commits
         run: |
           set -euo pipefail
@@ -270,6 +269,26 @@ jobs:
             ~/.local/opt/vela-hax-0.3.7
             ~/.rustup/toolchains/nightly-2025-11-08-x86_64-unknown-linux-gnu
           key: ${{ steps.refinement-toolchain-cache.outputs.cache-primary-key }}
+      # Installed tools are immutable above; application dependencies need their
+      # own evolving cache. Activate CARGO_HOME before restoring this cache.
+      # Keep proof outputs fresh: this action caches dependency build artifacts,
+      # not successful VELA proof verdicts or workspace crate artifacts.
+      - name: Cache refinement Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            serverVELA/vela-rekey-policy -> ../../target
+            serverVELA/vela-session-policy -> ../../target
+            serverVELA/vela-enrollment-policy -> ../../target
+            serverVELA/vela-recovery-policy -> ../../target
+            serverVELA/vela-share-policy -> ../../target
+            libVELA/vela-client-recovery-policy -> ../../target
+            libVELA/vela-sync-policy -> ../../target
+            libVELA/vela-client-share-policy -> ../../target
+            libVELA/vela-crypto -> ../../target
+          shared-key: refinement-rust-v1
+          key: ${{ hashFiles('security/assurance/install-hax.sh') }}
+          cache-bin: false
       - name: Extract and check all eight policy crates
         run: |
           mkdir -p "$RUNNER_TEMP/refinement-logs"
@@ -319,15 +338,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Same shared-key as formal-rekey above: the server dependencies that
-      # job compiled are reused here instead of a second full compile.
+      - uses: dtolnay/rust-toolchain@1.99.1
+
+      # Identical workspace inputs give the same dependency key as formal-rekey.
+      # Restore its previous successful cache; do not publish this subset.
       - uses: swatinem/rust-cache@v2
         with:
-          workspaces: serverVELA -> target
-          shared-key: security-rust
-          cache-on-failure: true
-
-      - uses: dtolnay/rust-toolchain@1.99.1
+          workspaces: |
+            serverVELA -> ../target
+            libVELA/vela-crypto -> ../../target
+            libVELA/vela-client-recovery-policy -> ../../target
+            libVELA/vela-client-share-policy -> ../../target
+            libVELA/vela-android-bridge -> ../../target
+            libVELA/vela-apple-bridge -> ../../target
+            libVELA/vela-wasm-bridge -> ../../target
+          shared-key: security-rust-v2
+          save-if: false
 
       - name: Build server
         run: cargo build --manifest-path serverVELA/Cargo.toml
