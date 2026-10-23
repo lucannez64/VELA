@@ -22,7 +22,7 @@ patterns = [
     'libVELA/vela-crypto/proofs/fstar/models/*.fst',
     'libVELA/vela-crypto/proofs/fstar/*.md',
     'libVELA/vela-crypto/verify-share-facts-fstar.sh',
-    '.gitignore', 'SPEC.md', 'SECURITY.md', '.cargo/config.toml', 'serverVELA/Cargo.lock',
+    '.gitignore', '.gitattributes', 'SPEC.md', 'SECURITY.md', '.cargo/config.toml', 'serverVELA/Cargo.lock',
     '*/vela-*-policy/rust-toolchain.toml',
     'libVELA/vela-crypto/SECURITY.md', 'libVELA/vela-crypto/Cargo.toml', 'libVELA/vela-crypto/Cargo.lock',
     'libVELA/vela-crypto/src/oram.rs', 'libVELA/vela-crypto/tests/oram_stash_bounds.rs',

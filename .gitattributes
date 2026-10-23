@@ -1,0 +1,4 @@
+# Preserve raw proof-tool output verbatim; its bytes are integrity-checked.
+security/assurance/proof-logs/**/*.log -whitespace
+security/assurance/proof-logs/**/*.out -whitespace
+security/assurance/proof-logs/**/*.txt -whitespace
