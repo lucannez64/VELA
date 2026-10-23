@@ -2,3 +2,4 @@
 security/assurance/proof-logs/**/*.log -whitespace
 security/assurance/proof-logs/**/*.out -whitespace
 security/assurance/proof-logs/**/*.txt -whitespace
+security/assurance/*.patch -whitespace
