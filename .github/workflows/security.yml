@@ -154,6 +154,21 @@ jobs:
           mkdir -p "$RUNNER_TEMP/assurance-logs"
           security/assurance/bounded.sh security/formal/run-oram-access-hiding-proofs.sh 2>&1 | tee "$RUNNER_TEMP/assurance-logs/oram-precheck.log"
 
+      # Computational (not symbolic) proofs of the hybrid KEM combiner. Built
+      # with the pinned OCaml switch the ProVerif step put on PATH.
+      - name: Prove the hybrid KEM combiner in the computational model (CryptoVerif 2.12)
+        timeout-minutes: 20
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 -o /tmp/cryptoverif.tar.gz https://bblanche.gitlabpages.inria.fr/CryptoVerif/cryptoverif2.12.tar.gz
+          echo "77730861be7bfbde5b078f7785db478869d33aba2761a428d50aaad537098757  /tmp/cryptoverif.tar.gz" | sha256sum -c
+          mkdir -p /tmp/cryptoverif && tar -xzf /tmp/cryptoverif.tar.gz -C /tmp/cryptoverif
+          (cd /tmp/cryptoverif/cryptoverif2.12 && ./build)
+          mkdir -p "$RUNNER_TEMP/assurance-logs"
+          CRYPTOVERIF=/tmp/cryptoverif/cryptoverif2.12/cryptoverif \
+            VELA_PROOF_OUT="$RUNNER_TEMP/assurance-logs/cryptoverif" \
+            security/formal/run-cryptoverif-proofs.sh
+
       - name: Check bounded policies and rekey handler/database conformance
         run: |
           cargo test --manifest-path serverVELA/Cargo.toml --test rekey_state_model

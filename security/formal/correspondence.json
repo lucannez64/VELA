@@ -91,6 +91,15 @@
         "libVELA/vela-crypto/proofs/fstar/models/Alloc.Vec.fst": "e67ad0f23c2e21d3175dc8cacd62c0496c6c09f53b144ff6e113df669cb34982",
         "security/assurance/12-authenticated-transcript.md": "81e96b0a7a9bbc8990803ddeddc272b53df7d83cb69430436e34e9175e795334"
       }
+    },
+    {
+      "boundary": "hybrid KEM combiner",
+      "artifacts": {
+        "libVELA/vela-crypto/src/kem.rs": "c9a17b26b6624f65ad4539b0d3449e10b36236cd6a015be7a4546c4b56457885",
+        "security/formal/cryptoverif/kem_v2_x25519_gdh.ocv": "505969a2f28518d207b53bab0b4c76d0cbe63df7aa14fc17398c5dad9d40627f",
+        "security/formal/cryptoverif/kem_v2_mlkem_cca.ocv": "0fdb3a92d3bb02232f9f5245fffb63e9573ac217db01fc36bb0e3d580d524ba1",
+        "security/formal/cryptoverif/kem_v1_x25519_baseline.ocv": "f617ffc3e84966bc8b5a92c31957f555fd97ae475440db62a3d05002445938e4"
+      }
     }
   ]
 }

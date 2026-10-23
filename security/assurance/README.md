@@ -67,6 +67,7 @@ correctness is not a consequence of the pure-policy proofs.
 | **[EXEC]** | Executable model or test; distinguish linked historical CI results from current local logs |
 | **[EXPLOIT]** | Live exploit regression at the cited baseline |
 | **[STAT]** | Statistical implementation evidence, not a universal proof |
+| **[COMP]** | Computational-model proof checked by CryptoVerif, gated in CI; the game, assumptions and bound are stated with the model |
 | **[ARG]** | Design argument or reliance on a primitive; no machine-checked support |
 
 ## Recorded results and pending evidence
