@@ -1,12 +1,13 @@
-(* VELA hybrid KEM, combiner v2 — IND-CCA2 when ML-KEM is IND-CCA2, even if
-   X25519 is completely broken.
+(* VELA hybrid KEM, combiner v2 — IND-CCA2 from ML-KEM IND-CCA2 and
+   the library collision bounds, with the DH secret exponent disclosed.
 
    Code: libVELA/vela-crypto/src/kem.rs (encapsulate, decapsulate, combine_v2).
 
      ss = H(ss_mlkem, ss_x25519, x25519_epk, x25519_pk, ct_mlkem, pk_mlkem)
 
    Assumptions:
-   - ML-KEM-1024: IND-CCA2 KEM (cryptolib IND_CCA2_KEM). Decapsulation may
+   - ML-KEM-1024: IND-CCA2 KEM plus the library's public-key and
+     encapsulation-ciphertext collision bounds (IND_CCA2_KEM). Decapsulation may
      fail in the generic model; ML-KEM's implicit rejection never does, which
      is a special case.
    - HKDF-SHA256 over the transcript: a random oracle H.

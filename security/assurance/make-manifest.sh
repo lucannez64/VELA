@@ -15,7 +15,7 @@ patterns = [
     'security/assurance/*.py', 'security/assurance/*.json',
     'security/assurance/proof-logs/**/*.txt', 'security/assurance/proof-logs/**/*.out', 'security/assurance/proof-logs/**/*.log',
     'security/assurance/proof-logs/**/*.md', 'security/assurance/proof-logs/**/*.fst',
-    'security/assurance/proof-logs/**/*.fsti',
+    'security/assurance/proof-logs/**/*.fsti', 'security/assurance/proof-logs/**/*.ocv',
     '*/vela-*-policy/src/*.rs', '*/vela-*-policy/verify-fstar.sh',
     '*/vela-*-policy/README.md', '*/vela-*-policy/Cargo.toml', '*/vela-*-policy/Cargo.lock',
     '*/vela-*-policy/proofs/fstar/extraction/*.fst',

@@ -48,8 +48,8 @@ correctness is not a consequence of the pure-policy proofs.
    primitive security; retain VELA construction and application obligations.
 
 10. [Hybrid-signature reduction](10-signature-reduction.md): exact byte-message
-    EUF-CMA game and a written reduction to either component, with explicit
-    implementation and machine-checking obligations.
+    EUF-CMA game, written component reductions and local CryptoVerif model proofs,
+    with explicit implementation and composition obligations.
 
 11. [Concrete parser refinement](11-parser-refinement.md): byte grammar, checked
     cursor transitions and read-only opened-share observations.
@@ -86,6 +86,12 @@ correctness is not a consequence of the pure-policy proofs.
   properties and M29 adds eleven composed authentication/journal properties.
   Combined evidence is **294 verified / five intended falsifications**; it is
   not a new whole-corpus CI result.
+- Computational models: five positive CryptoVerif game results and one explicitly
+  unproved legacy baseline, with a random-oracle and uniform-group boundary.
+  The [review corrections](proof-logs/current/computational-review-corrections/README.md)
+  add leaked-key KEM correctness and clarify assumptions; hosted reproduction
+  is pending. These results do not establish full Rust or quantum-adversary
+  construction correspondence.
 - Current hax/F*: [hosted policy and enrollment checks](proof-logs/current/hosted-enrollment-40039992434/README.md) cover **159 selected functions / 152 explicit
   postconditions** across eight policy crates and the sharing/signature kernels.
   All **18 local enum-equality assumptions were removed** through structural

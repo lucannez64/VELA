@@ -1,7 +1,7 @@
 # Computational argument for the hybrid signature construction
 
 **Status: machine-checked in CryptoVerif** (`security/formal/cryptoverif/hybrid_sig_mldsa_euf.ocv`,
-`hybrid_sig_ed25519_euf.ocv`, gated in CI), with the modelling choices listed
+`hybrid_sig_ed25519_euf.ocv`; local logs retained, CI gate configured), with the modelling choices listed
 in that directory's README. It is not a Rust refinement theorem. The F★ AND-gate contract
 and the Tamarin M29 proof establish different, narrower statements.
 
@@ -45,8 +45,11 @@ Consequently, for each `i`,
 
 `Pr[HybridForge(A)] <= Adv_EUF-CMA_i(B_i)`.
 
-With both component bounds available, the bound is their minimum, with the
-reduction's time and signing-query overhead included in each bound. No
+Use the bound for whichever component's security assumption remains justified,
+including the reduction's time and signing-query overhead. In the common
+no-secret-disclosure game, both bounds apply when both assumptions hold, so
+their minimum is a valid bound. With one component secret disclosed, use only
+the undisclosed component's bound. No
 independence between the two *forgery events* is needed, and their
 probabilities must not be multiplied.
 

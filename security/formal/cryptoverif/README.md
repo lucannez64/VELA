@@ -1,55 +1,88 @@
-# Computational proofs of the hybrid constructions (CryptoVerif 2.12)
+# Computational construction models (CryptoVerif 2.12)
 
-These are the first computational, not symbolic, proofs in VELA. They cover
-the KEM combiner in `libVELA/vela-crypto/src/kem.rs` (`combine_v2`):
+These are scoped computational model proofs, separate from the symbolic
+Tamarin/ProVerif results and from a complete Rust refinement theorem. The KEM
+models follow `libVELA/vela-crypto/src/kem.rs::combine_v2`:
 
 ```text
 ss = HKDF-SHA256(ss_mlkem ‖ ss_x25519 ‖ x25519_epk ‖ x25519_pk ‖ SHA-256(ct_mlkem) ‖ SHA-256(pk_mlkem))
 ```
 
-| Model | Result | Statement |
+| Model | Local result | Statement and bound |
 |---|---|---|
-| `kem_v2_x25519_gdh.ocv` | proved | IND-CCA2 of the hybrid KEM from **Gap-DH on X25519 alone**. ML-KEM is an arbitrary function and the adversary holds its secret key. Bound: `4·pDistRerandom + 2·pGDH(t, 2·qH) + (2·Qd + 2·qH)/|Z|` |
-| `kem_v2_mlkem_cca.ocv` | proved | IND-CCA2 of the hybrid KEM from **IND-CCA2 of ML-KEM alone**. The adversary holds the X25519 secret key. Bound: `2·Penc(t, 1, 1, Qd) + 6·Qd·Pctxtcoll + 2·qH/|mlss| + (8·Qd + 2·qH)/|Z|` |
-| `kem_dem_seal_share.ocv` | proved | `seal_share`/`open_share` (KEM ‖ XChaCha20-Poly1305, no AAD) is **IND-CCA2 public-key encryption**, assuming an IND-CCA2 KEM (the two rows above) and IND-CPA + INT-CTXT for the AEAD with a fresh random nonce. Bound: `2·Pkem + 2·Pencctxt + 4·Penc + 10·Qd·Pctxtcoll` (Penc per message, from the log) |
-| `hybrid_sig_mldsa_euf.ocv` | proved | The hybrid signature (`signing.rs`: both component signatures over the same bytes, verify = AND) is **EUF-CMA from ML-DSA-87 alone**; the adversary holds the Ed25519 secret key. Bound: `Pmldsa(t, Qs)` |
-| `hybrid_sig_ed25519_euf.ocv` | proved | Same, **from Ed25519 alone**; the adversary holds the ML-DSA secret key. Bound: `Ped(t, Qs)` |
-| `kem_v1_x25519_baseline.ocv` | not proved (expected) | The legacy combiner `HKDF(ss_mlkem ‖ ss_x25519)` in the first game. Consistent with the known attack when ML-KEM is broken; CryptoVerif reports proof failure, not an attack trace |
+| `kem_v2_x25519_gdh.ocv` | proved | Single-recipient IND-CCA2 in a **uniform prime-order GDH model**, with public ML-KEM functions, a correctness equation and the ML-KEM secret key disclosed. No ML-KEM secrecy assumption. Bound: `4·pDistRerandom + 2·pGDH(t, 2·qH) + (2·Qd + 2·qH)/|Z|` |
+| `kem_v2_mlkem_cca.ocv` | proved | Single-recipient IND-CCA2 under **ML-KEM IND-CCA2 and the library collision bounds**, with the DH secret exponent disclosed. Bound: `2·Penc(t, 1, 1, Qd) + 6·Qd·Pctxtcoll + 2·qH/|mlss| + (8·Qd + 2·qH)/|Z|` |
+| `kem_dem_seal_share.ocv` | proved | Modular IND-CCA2 public-key encryption for an abstract IND-CCA2 KEM plus IND-CPA/INT-CTXT AEAD and a fresh random nonce. The bound includes `2·Pkem`, `2·Pencctxt`, two separate `2·Penc` terms and `10·Qd·Pctxtcoll`; full time/message-length arguments are in the log |
+| `hybrid_sig_mldsa_euf.ocv` | proved | AND-signature EUF-CMA under the ML-DSA-87 assumption, with the Ed25519 secret key disclosed. Bound: `Pmldsa(t, Qs)` |
+| `hybrid_sig_ed25519_euf.ocv` | proved | AND-signature EUF-CMA under the Ed25519 assumption, with the ML-DSA secret key disclosed. Bound: `Ped(t, Qs)` |
+| `kem_v1_x25519_baseline.ocv` | explicitly unproved | Legacy combiner without transcript binding. An unproved-query control, not a CryptoVerif attack trace |
 
-Together these give the hybrid claim (COMP-5): the combined KEM is IND-CCA2
-if **either** ML-KEM is IND-CCA2 **or** Gap-DH holds on X25519, and the hybrid
-signature is EUF-CMA if **either** ML-DSA-87 **or** Ed25519 is. The signature
-games machine-check the reduction written in
-`security/assurance/10-signature-reduction.md`; signature parsing into two
-fixed-length components is modelled as a bijective pair.
+The two KEM games support a model-level surviving-component claim subject to
+all their assumptions. They do not prove the complete concrete X25519
+construction secure under a single unqualified primitive assumption. In
+particular, collision and finite-domain terms in the displayed bounds must be
+bounded; they are not set to zero. `IND_CCA2_KEM` supplies public-key and
+encapsulation-ciphertext collision bounds; the displayed one-recipient result
+contains `Pctxtcoll` even though `Pkeycoll` does not occur in its final bound.
 
-Run: `security/formal/run-cryptoverif-proofs.sh` (CI step "Prove the hybrid
-KEM combiner in the computational model"). Logs: `security/assurance/proof-logs/current/cryptoverif/`.
+The signature games machine-check the reduction described in
+[the signature note](../../assurance/10-signature-reduction.md), under independent
+keys, the surviving component's assumption and a bijective fixed-length pair
+encoding. Use the bound for a component whose assumption holds; take the minimum
+only for a common game where both bounds are justified, such as the
+no-secret-disclosure game. A disclosed component cannot supply its own
+unforgeability bound.
 
-## Assumptions and gaps (read before citing)
+Run `security/formal/run-cryptoverif-proofs.sh`. The CI step is configured to run
+this gate. The [review-correction evidence](../../assurance/proof-logs/current/computational-review-corrections/README.md)
+contains local results for the strengthened correctness-equation games. Earlier
+logs in `proof-logs/current/cryptoverif/` and `cryptoverif-runner-repair/` predate
+that correction and do not establish the strengthened statement. Hosted
+reproduction is a separate result; a configured gate is not evidence it passed.
 
-- **HKDF-SHA256 is a random oracle** on the concatenated input.
-- **SHA-256 collision resistance** for `ct_mlkem` and `pk_mlkem`: the models
-  feed those values to the oracle directly instead of their hashes. The step
-  is argued, not modelled.
-- **X25519 as a prime-order group** (`DH_good_group` + `GDH`). The real curve
-  has cofactor 8; `kem.rs` rejects non-contributory (low-order) results, and
-  the transcript binds `x25519_epk`, so two ephemeral keys that differ by a
-  low-order point (and give the same DH output) still derive different keys.
-  This is the same abstraction the CryptoVerif analysis of HPKE uses for
-  DHKEM(X25519) (Alwen, Blanchet, Hauck, Kiltz, Lipp, Riepel, Eurocrypt 2021,
-  eprint 2020/1499), which justifies it for X25519. A cofactor-exact model
-  with CryptoVerif's `DH_X25519` macro is not attempted here.
-- **One recipient key, one challenge.** Multi-user, multi-challenge security
-  follows by a standard hybrid argument that is not machine-checked.
-- **KEM-DEM is proved modularly.** `kem_dem_seal_share.ocv` assumes an
-  abstract IND-CCA2 KEM; the combiner theorems discharge that assumption one
-  component at a time. The two steps are composed by hand (the abstract KEM
-  is instantiated with the proved combiner), not in a single CryptoVerif run.
-  Envelope encodings above `seal_share` (share envelope v2, contact
-  envelopes with AAD) are not covered here.
-- **Legacy path.** `decapsulate_legacy_v1` remains for trusted-contact
-  envelopes written before v2 (`recovery.rs`, version byte 1). Those
-  envelopes do not get this guarantee.
-- Primitive implementations (`ml-kem`, `x25519-dalek`, `hkdf`, `sha2`) are
-  trusted under the selected boundary (`09-target-contract.md`).
+## Assumptions and open correspondence
+
+- **HKDF-SHA256 is a random oracle** on the concatenated input, not a proved
+  instantiation of that idealization by the concrete HKDF implementation.
+- **SHA-256 collision resistance** for `ct_mlkem` and `pk_mlkem` bridges the
+  real hashed fields to the raw fields supplied to the modeled oracle. This
+  bridge is a written argument, not part of these machine-checked games.
+- **Uniform prime-order DH.** `DH_good_group` with bounded `Z` models uniform
+  prime-field exponents. Real X25519 uses clamped, nonuniform scalars and has
+  cofactor 8. The code's non-contributory-result check and transcript binding
+  do not prove either abstraction bridge. These are distinct open obligations.
+  The symbolic `pDistRerandom` term has no concrete Curve25519 instantiation
+  here. The shipped HPKE development uses a different `DH_basic`/nonuniform
+  exponent model with `GDH_RSR_minimal` and explicit distribution/collision
+  constants; its Curve25519 analysis cannot simply be transferred to this game.
+- **Other-component disclosure, not arbitrary corruption semantics.** The
+  GDH game exposes the ML-KEM secret key and gives public algorithms satisfying
+  decapsulation correctness for honest encapsulations. It assumes no ML-KEM
+  secrecy. This is perfect correctness in the model; no separate concrete
+  decapsulation-failure loss is instantiated. The opposite game discloses the
+  DH exponent. Keys are still honestly
+  and independently generated; malicious key generation and adaptive multi-user
+  corruptions are not covered.
+- **One recipient key and one challenge.** Multi-user/multi-challenge and
+  quantum-oracle-query composition are not machine-checked by these games.
+- **KEM-DEM is modular.** The encryption game assumes an abstract IND-CCA2 KEM;
+  instantiating it with a combiner theorem is a manual composition step. The
+  model uses no AAD. Signed share-envelope and contact-envelope/AAD encodings
+  above this transport are not covered by that encryption theorem.
+- **Legacy attack argument needs an extra capability.** If an attacker can
+  find a different ML-KEM ciphertext decapsulating to the challenge ML-KEM
+  secret, keeping its DH ephemeral key breaks the unbound v1 combiner. Secret
+  key disclosure alone does not grant that ciphertext-collision/second-preimage
+  capability. The baseline has correctness but does not supply such an
+  algorithm, and its failed proof is not evidence of that attack.
+- **Legacy handling remains separate.** `decapsulate_legacy_v1` supports old
+  trusted-contact envelopes in `recovery.rs`; the v2 result does not cover it.
+- Primitive implementations remain trusted under
+  [the selected boundary](../../assurance/09-target-contract.md). Concrete
+  randomness, errors, encoding, Rust execution and protocol composition still
+  require correspondence proofs.
+
+The runner rejects process failures, missing verdicts, missing expected query
+results and local manual/admitted proof syntax. The lexical source check is a
+drift guard, not a proof that every equation, collision axiom, primitive
+assumption or encoding faithfully represents the implementation.

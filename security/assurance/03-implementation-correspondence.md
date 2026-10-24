@@ -180,9 +180,15 @@ checks the real ORAM statistically.
 
 ## 3.5 Components with no formal correspondence
 
+This is a Rust correspondence boundary. The [CryptoVerif games](../formal/cryptoverif/README.md)
+provide computational model proofs for the idealized KEM, modular KEM-DEM and
+AND signature. They do not close the manual mapping to the concrete Rust,
+its failure paths, encoding, randomness or the real X25519 scalar distribution.
+
+
 | Component | Covered by |
 |---|---|
-| `vela-crypto` primitives and constructions: hybrid KEM combiner, hybrid signatures, AEAD wrappers and AAD encoding, BLAKE3 context registry, Shamir and its share tags, link encryption, Argon2id parameters | Unit and interop tests; dependency audit (`cargo audit`, `cargo deny`) |
+| `vela-crypto` primitives and constructions: hybrid KEM combiner, hybrid signatures, AEAD wrappers and AAD encoding, BLAKE3 context registry, Shamir and its share tags, link encryption, Argon2id parameters | Scoped CryptoVerif construction games for KEM/KEM-DEM/AND signatures; complete Rust correspondence remains manual. Other listed constructions have unit/interop tests and dependency audit (`cargo audit`, `cargo deny`) |
 | Device authentication (`/auth/challenge`, `/auth/verify`) and PASETO v4 issuance and validation | Unit and integration tests; RT exploit suite |
 | Rate limiting (sled TTL counters) | RT-7 exploit regression |
 | Desktop IPC peer checks (`ipc_peer`, `ipc_gate`), native host, extension | M6 abstracts them as `BrowserSpawned`; audit D-4, E-1, E-2 |

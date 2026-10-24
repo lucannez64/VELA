@@ -1,5 +1,5 @@
-(* VELA hybrid KEM, combiner v2 — IND-CCA2 when X25519 is secure, even if
-   ML-KEM is completely broken.
+(* VELA hybrid KEM, combiner v2 — IND-CCA2 in a uniform prime-order
+   GDH model with the other KEM's secret key disclosed.
 
    Code: libVELA/vela-crypto/src/kem.rs (encapsulate, decapsulate, combine_v2).
 
@@ -13,8 +13,8 @@
    - The code hashes ct_mlkem and pk_mlkem with SHA-256 before the KDF; the
      model feeds them to H directly, i.e. SHA-256 is assumed collision
      resistant on these inputs (the step is argued, not modelled).
-   - ML-KEM: NO assumption. Its algorithms are arbitrary functions and the
-     adversary receives the ML-KEM secret key.
+   - ML-KEM: correctness, but no secrecy assumption. Algorithms are public
+     functions with the correctness equation below; its secret key is leaked.
 
    Game: one honest recipient key pair, one challenge encapsulation, Qd
    decapsulation queries on any capsule other than the challenge, qH random
@@ -43,6 +43,11 @@ fun mlpkgen(mlsk): mlpk.
 fun mlencap_ct(mlpk, mlseed): mlct.
 fun mlencap_ss(mlpk, mlseed): mlss.
 fun mldecap(mlct, mlsk): mlss.
+
+(* Leaked-key decapsulation must recover the honest challenge secret too.
+   No confidentiality assumption is made about these ML-KEM functions. *)
+equation forall sk: mlsk, seed: mlseed;
+  mldecap(mlencap_ct(mlpkgen(sk), seed), sk) = mlencap_ss(mlpkgen(sk), seed).
 
 (* ── The combiner: HKDF-SHA256 as a random oracle ── *)
 type hashkey [fixed].

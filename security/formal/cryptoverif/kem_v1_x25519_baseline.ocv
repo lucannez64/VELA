@@ -2,15 +2,15 @@
 
      v1: ss = HKDF(ss_mlkem || ss_x25519)   -- no transcript binding
 
-   With ML-KEM broken (adversary holds its secret key), an adversary can
-   build a capsule with a different ML-KEM ciphertext that decapsulates to
-   the same ML-KEM secret, keep the challenge X25519 ephemeral key, and ask
-   for its decapsulation: the derived key equals the challenge key. v1 is
-   therefore not IND-CCA2 from X25519 alone.
+   Hand argument, under an additional capability: if an adversary can find
+   a different ML-KEM ciphertext decapsulating to the challenge ML-KEM secret,
+   it can retain the challenge ephemeral key and query the alternative capsule
+   to recover the v1 challenge key. Secret-key disclosure alone does not imply
+   that ciphertext-collision/second-preimage capability.
 
-   Expected: CryptoVerif does NOT prove the query. That is consistent with
-   the attack above but is not itself an attack: CryptoVerif reports proof
-   failure, not counterexamples.
+   Expected: CryptoVerif does NOT prove the query. This is an unproved-query
+   control, not an attack trace or a machine-checked realization of that extra
+   capability. Correctness is modelled below; no second-preimage algorithm is.
 *)
 
 param Qd.
@@ -33,6 +33,11 @@ fun mlpkgen(mlsk): mlpk.
 fun mlencap_ct(mlpk, mlseed): mlct.
 fun mlencap_ss(mlpk, mlseed): mlss.
 fun mldecap(mlct, mlsk): mlss.
+
+(* Leaked-key decapsulation must recover the honest challenge secret too.
+   No confidentiality assumption is made about these ML-KEM functions. *)
+equation forall sk: mlsk, seed: mlseed;
+  mldecap(mlencap_ct(mlpkgen(sk), seed), sk) = mlencap_ss(mlpkgen(sk), seed).
 
 (* ── The combiner: HKDF-SHA256 as a random oracle ── *)
 type hashkey [fixed].

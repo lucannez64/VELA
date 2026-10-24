@@ -1,7 +1,7 @@
 # 2. Formal models
 
-All models live in [`security/formal/`](../formal/). There are 35 Tamarin
-theories (`.spthy`) and 3 ProVerif models (`.pv`). Each theory's header
+All models live in [`security/formal/`](../formal/). There are 37 Tamarin
+theories (`.spthy`), 3 ProVerif models (`.pv`) and 6 CryptoVerif games (`.ocv`). Each theory's header
 comment states its scope. This document collects those scopes in one place
 and makes the adversary in each model explicit, because the models differ
 a lot in how much adversary they include.
@@ -12,13 +12,18 @@ Per-family assurance records with lemma-by-lemma prose:
 
 ## 2.1 Common modelling conventions
 
-**Cryptography is perfect and symbolic.** Tamarin `builtins` (`signing`,
-`hashing`, `symmetric-encryption`) or uninterpreted, often `[private]`,
-function symbols stand in for the real primitives. No model reasons about
-ML-KEM, ML-DSA, X25519, Ed25519, XChaCha20-Poly1305, BLAKE3, HKDF, or Argon2
-as such. Hybrid constructions appear as one idealised primitive. There is
-no computational proof (CryptoVerif, EasyCrypt, or SSProve) of any
-construction.
+**Symbolic models use ideal cryptography.** Tamarin and ProVerif use ideal
+signatures, hashes and encryption, or uninterpreted/private functions. Some
+models abstract a hybrid as one primitive; M29 represents the two signature
+checks separately. These models do not prove primitive implementation security.
+
+**Computational exceptions are scoped.** Six CryptoVerif games cover the
+idealized v2 KEM combiner, modular KEM-DEM encryption and the AND signature
+construction, plus an explicitly unproved legacy baseline. They use named
+primitive assumptions and a random oracle, not a complete Rust construction
+refinement. The uniform prime-order DH model does not establish concrete
+X25519 clamping/cofactor correspondence. See
+[the computational model boundary](../formal/cryptoverif/README.md).
 
 **Unbounded sessions, bounded by fuel in some models.** Most theories allow
 unbounded sessions. To make Tamarin terminate, some theories bound

@@ -10,7 +10,7 @@ cite them.
 |---|---|---|
 | **U-1** | **End-to-end secrecy of the RMS and vault plaintext against a malicious server** (CONF-1, CONF-2) | No theory models the whole system with the server as attacker. Secrecy is argued from the architecture. Individual theories either model the server as an honest enforcer (M11–M21, M26) or make capsule contents opaque by assumption (M19b, M21) |
 | **U-2** | **Device authentication beyond the challenge proof** | M27 locally proves signature provenance, challenge single use and registered-user binding. PASETO parsing, TTL, JTI revocation, device-revocation cascade and concurrent issuance remain unproved. An in-flight request can pass lookup before revocation and mint later. |
-| **U-3** | **Computational security of every construction**: the hybrid KEM combiner, the hybrid signature AND-composition, AEAD AAD encodings, BLAKE3 context separation, the Shamir share-tag MAC, link-key and passphrase mixing, the possession-proof keyed hash | Symbolic models treat all of these as perfect. No CryptoVerif or EasyCrypt proof exists. See [Q-1](06-engaging-researchers.md#priority-questions) |
+| **U-3** | **Computational security of the complete constructions**, including AEAD AAD encodings, BLAKE3 contexts, Shamir share tags, link-key/passphrase mixing and possession proofs | Scoped exceptions: CryptoVerif proofs exist for the idealized v2 KEM combiner, modular KEM-DEM and hybrid AND signatures under the [listed assumptions](../formal/cryptoverif/README.md). The other constructions, concrete Rust correspondence and full composition remain unproved. See [Q-1](06-engaging-researchers.md#priority-questions) |
 | **U-4** | **Enrollment beyond both-key fingerprint binding** | M13b locally proves secrecy against key substitution under an ideal authentic human comparison. It does not prove primary-to-joiner authentication, correct adoption, human behavior, finite fingerprint collision resistance, or full composition with M13. |
 | **U-5** | **Recovery with a network adversary** | M14 is ordering-only. M15 and M18 add adversarial cloud storage and contact responses, but WebAuthn is an idealised honest rule |
 | **U-6** | **Long-term key compromise and post-compromise security** | M8/M10 model local client-key corruption; new M19c/M27 model device-key reveals and M19c models recipient decryption-key reveal. RMS compromise followed by rotation and cross-protocol compromise composition remain unproved. |
@@ -26,7 +26,8 @@ cite them.
 
 The [formalization obligation ledger](08-formalization-status.md) records the
 remaining work across all six requested areas. New sharing contracts and M28
-reduce selected gaps; no full-system or computational security proof is claimed.
+reduce selected gaps; the computational model proofs above do not establish a
+full-system theorem.
 
 ## Trusted components
 
@@ -40,7 +41,7 @@ reduce selected gaps; no full-system or computational security proof is claimed.
 | **T-6** | Client RNG (`OsRng`, `getrandom`) | Fresh values are uniform. M22 and every `Fr(…)` depend on this |
 | **T-7** | TLS 1.3 and Web PKI | Needed for availability and metadata protection. Confidentiality claims are designed not to depend on it |
 | **T-8** | Cloud providers (iCloud, Google Drive) | Durable (M16, M17). Not trusted for secrecy |
-| **T-9** | Verification toolchain: Tamarin, Maude, ProVerif, hax, F\*, Z3, and hax's `core_models` | Sound. hax is research-grade. The prior 18 local PartialEq assumptions are removed; imported models and the defined String/Vec models remain trusted ([§3.2](03-implementation-correspondence.md#trusted-in-the-f-layer)) |
+| **T-9** | Verification toolchain: Tamarin, Maude, ProVerif, CryptoVerif/default.ocvl, hax, F\*, Z3, and hax's `core_models` | Sound. hax is research-grade. The prior 18 local PartialEq assumptions are removed; imported models and the defined String/Vec models remain trusted ([§3.2](03-implementation-correspondence.md#trusted-in-the-f-layer)) |
 | **T-10** | Specification predicates in the policy crates | They express the intended property. F\* proves code = spec, not spec = intent |
 | **T-11** | Build and distribution pipeline: GitHub Actions, release signing, app stores, extension stores | Out of the assurance scope. No reproducible-build attestation |
 
@@ -55,7 +56,7 @@ reduce selected gaps; no full-system or computational security proof is claimed.
 | **O-5** | Supply-chain compromise of dependencies, toolchains, or vendored `gpui-ce` | `cargo audit` and `cargo deny` only |
 | **O-6** | Implementation bugs outside the policy crates: parsing, serialization, FFI memory safety (see C-4), UI confusion, autofill origin mapping (see A-2) | The share byte-frame parser has scoped refinement evidence; other parsing, serialization, UI and FFI paths remain unproved. Fuzzing exists for some parsers (`.github/workflows/fuzz.yml`) |
 | **O-7** | Compromise of a browser that has been granted a web session | Bounded by AUTH-6 and COMP-6, but chunk keys already copied stay valid until rotation (audit D-2 residual) |
-| **O-8** | Quantum adversaries against the classical half alone, or classical attacks against the lattice half alone | Hybrid design intent (COMP-5). No proof |
+| **O-8** | Quantum-adversary and quantum-random-oracle composition | The computational games model ordinary oracle queries and the stated leaked-key cases. No QROM or complete quantum-adversary theorem for the concrete hybrid is supplied (COMP-5) |
 | **O-9** | The WASM fallback with a PIN when no desktop app is present | Explicitly weaker (SPEC §7.4) |
 
 ## Gaps in the assurance itself

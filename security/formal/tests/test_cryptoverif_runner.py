@@ -22,6 +22,9 @@ if model == 'kem_v1_x25519_baseline':
         print('Error: invalid model')
     print('RESULT Could not prove bit secrecy of b.')
     sys.exit(124 if mode == 'baseline_timeout' else 0)
+if mode != 'missing_query_witness':
+    query = 'event(forge) ==> false' if model.startswith('hybrid_sig_') else 'bit secrecy of b'
+    print('RESULT Proved ' + query + ' up to probability 0')
 print('All queries proved.')
 '''
 
@@ -72,10 +75,39 @@ class RunnerTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('proof process failed (exit 137)', result.stderr)
 
+    def test_success_banner_requires_expected_query_witness(self):
+        result = self.invoke('missing_query_witness')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('missing expected query result', result.stderr)
+
     def test_error_banner_cannot_count_as_expected_nonproof(self):
         result = self.invoke('error_banner')
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('CryptoVerif error', result.stderr)
+
+
+class SourceBoundaryTests(unittest.TestCase):
+    def invoke(self, source):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'fixture.ocv'
+            path.write_text(source)
+            return subprocess.run(
+                ['python3', str(ROOT / 'security/formal/check-cryptoverif-boundary.py'), str(path)],
+                capture_output=True, text=True, timeout=5,
+            )
+
+    def test_manual_hypothesis_is_rejected(self):
+        self.assertNotEqual(self.invoke('equiv(x) [manual] left right.').returncode, 0)
+
+    def test_admitted_declaration_is_rejected(self):
+        self.assertNotEqual(self.invoke('assume secret.').returncode, 0)
+
+    def test_nested_comment_is_not_a_declaration(self):
+        result = self.invoke('(* [manual] (* assume *) *) param Q.')
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_unterminated_comment_is_rejected(self):
+        self.assertNotEqual(self.invoke('(* comment').returncode, 0)
 
 
 if __name__ == '__main__':

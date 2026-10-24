@@ -12,6 +12,7 @@ is historical evidence, not evidence for the new protocols.
 | Tamarin | 1.12.0 | Release archive SHA-256 `201be06f469e47cff554df6ca93db8366fc2c69d70c61fcbd1370a1074b469c6` |
 | Maude | 3.5.1 | `Maude3.5.1/Maude-3.5.1-linux-x86_64.zip`, SHA-256 `72ed1ca87e3b3d0dfc6ee1436baf154bf04c45ff97d521bec040c5e8dfc8f92c` |
 | ProVerif | 2.05 | `opam install proverif.2.05` in OCaml 5.1.1 switch; version printed in CI |
+| CryptoVerif | 2.12 | `cryptoverif2.12.tar.gz`, SHA-256 `77730861be7bfbde5b078f7785db478869d33aba2761a428d50aaad537098757`; bundled `default.ocvl` library |
 | OCaml | 5.1.1 | `ocaml-base-compiler.5.1.1` for ProVerif/hax; the prebuilt F★ release reports OCaml 4.14.2 |
 | hax frontend/driver | 0.3.7 | `cargo install --version 0.3.7 --locked` |
 | hax engine | 0.3.7 | Source commit `d8b5b3d3b666fee8943a351445d2b680105e8ea3` |
@@ -131,6 +132,21 @@ separate CI steps. `--with-fstar` adds all eight policy-crate runners, the produ
 constructor/composition, prefix and signature gates, plus the extraction
 assumption/precondition drift gate. The default run also includes
 M28/M29's eighteen named journal/composition verdicts via `run-share-journal-proofs.sh`.
+
+The computational gate is separate from `run-all.sh`. With the checksum-pinned
+CryptoVerif binary and its matching `default.ocvl` beside it, run:
+
+```bash
+security/assurance/bounded.sh env CRYPTOVERIF=/path/to/cryptoverif2.12/cryptoverif security/formal/run-cryptoverif-proofs.sh
+python3 -m unittest discover -s security/formal/tests -p 'test_cryptoverif_runner.py' -v
+```
+
+The gate requires the expected query result and rejects process failures,
+missing verdicts and local manual/admitted declarations. Its source scan is a
+lexical drift guard; it does not establish the soundness or adequacy of each
+primitive assumption, equation, type or implementation mapping. Model-review
+corrections and local evidence are in
+`proof-logs/current/computational-review-corrections/`.
 
 `bounded.sh` uses Linux systemd scopes with **3 GiB memory, zero swap, one
 Cargo/opam/make/test worker**, and a 30-minute whole-command timeout.

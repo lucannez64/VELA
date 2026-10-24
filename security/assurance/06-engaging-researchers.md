@@ -12,7 +12,9 @@ vacuity and overstated assurance are welcome findings.
 1. **KEM v2 computational security.** Review `kem.rs::combine_v2`, including
    transcript encoding, key/ciphertext digests, rejection of non-contributory
    X25519 values, and legacy trusted-contact recovery. Binding the transcript
-   is implemented; a reduction for this exact construction is not provided.
+   is implemented; scoped CryptoVerif games are provided under the documented
+   random-oracle, correctness and group assumptions. Review the remaining
+   concrete scalar/hash/encoding and Rust correspondence bridges.
 2. **Share trust bootstrap and persistence.** Review signed envelope parsing,
    fact computation, first-contact TOFU, recipient-key directory trust, and
    persisted pins across crashes/concurrency. M19c proves properties relative
