@@ -8,7 +8,7 @@ observation to carry actual decoded key lengths and re-extracted/rechecked all
 71 contracts. The live extraction is that newer artifact; see the parent
 [evidence](../../../../security/assurance/proof-logs/current/recovery-possession-enrollment/README.md).
 
-## Toolchain and limits
+## Historical delegated run (t3-14097854): toolchain and limits
 
 - hax 0.3.7 (`cargo-hax`, `hax-engine` pinned to the local 0.3.7 source)
 - Rust nightly-2025-11-08 (the workspace pin used by hax)
@@ -18,9 +18,10 @@ observation to carry actual decoded key lengths and re-extracted/rechecked all
   `~/.local/opt/vela-tools/bin/vela-heavy` (global lock, 3 GiB, no swap, one
   Cargo worker) with `VELA_STEP_TIMEOUT=600`. The parent's warm
   `t3-700776df/target` was reused through `CARGO_TARGET_DIR`; the logs show the
-  current sources compiled from this worktree.
+  delegated sources compiled from sibling worktree `t3-14097854`, not from
+  the parent checkout. The live extraction is the subsequent parent run.
 
-## Inventory
+## Historical delegated inventory
 
 `verify-fstar.sh` selects **71** functions; the extraction contains **71**
 `ensures` postconditions and **0** `assume`/`admit`/`--lax` declarations. 29 are
@@ -81,11 +82,13 @@ Every other recovery status class, message and precedence is unchanged.
 - No full handler/I/O, native, protocol or full-system theorem is claimed.
   Hosted CI has not rerun this increment.
 
-## Parent-owned follow-up
+## Superseded delegated handoff
 
-`security/assurance/proof-boundary.json` still expects 42 postconditions for
-`Vela_recovery_policy.fst`, so `python3 security/assurance/check-proof-boundary.py`
-now fails with `expected 42 postconditions, found 71`. The parent owns that
-manifest and the global counts/docs: the recovery artifact and total should move
-42 → 71 and 173 → 202 postconditions, with 180 → 209 selected functions (the
-same seven selected spec/comparison functions remain without `ensures`).
+At delegated-run time, based on `5fa4e9f`, the parent-owned gate still expected
+42 recovery contracts; this worktree alone therefore reported the expected
+42-versus-71 drift. The standalone increment would have moved 173/180 to
+202/209. That is not the integrated inventory: the parent's web-session work
+adds another ten contracts. The parent has now updated the gate, correspondence
+and manifest, and checks pass with **212 postconditions / 219 selected functions**
+(71 recovery contracts, zero local `assume val`). See the current parent evidence
+linked above for the six-unit/seven-observation-test run and exact artifact.

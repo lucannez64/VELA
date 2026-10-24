@@ -35,6 +35,14 @@ use crate::{
 
 const HYBRID_EK_LEN: usize = vela_recovery_policy::HYBRID_EK_LEN;
 const HYBRID_VK_LEN: usize = vela_recovery_policy::HYBRID_VK_LEN;
+// Pin the policy constants to the actual crypto wire sizes and the enrollment
+// ceremony's policy; drift is a build failure rather than a weaker admission.
+const _: () = {
+    assert!(HYBRID_EK_LEN == vela_crypto::kem::ML_KEM_EK_LEN + 32);
+    assert!(HYBRID_VK_LEN == vela_crypto::signing::HYBRID_VK_LEN);
+    assert!(HYBRID_EK_LEN == vela_enrollment_policy::HYBRID_EK_LEN);
+    assert!(HYBRID_VK_LEN == vela_enrollment_policy::HYBRID_VK_LEN);
+};
 #[derive(Deserialize)]
 pub struct EnrollDeviceRequest {
     pub user_id: Uuid,
@@ -199,12 +207,8 @@ pub async fn post_enroll_device(
         })) {
             EnrollmentDecision::Enroll(permit) => permit,
             EnrollmentDecision::Reject => {
-                crate::recovery::recover::restore_enroll_grant(
-                    &state,
-                    body.user_id,
-                    body.recovery_grant,
-                    &consumed_grant,
-                )?;
+                // Policy denial is terminal; do not re-arm a consumed grant.
+                // Retryable storage/rotation paths below restore separately.
                 return Err(AppError::Unauthorized(
                     "verified recovery policy rejected device enrollment".into(),
                 ));
@@ -316,7 +320,7 @@ pub async fn post_enroll_device(
             return Err(AppError::NotFound("account no longer exists".into()));
         };
         if consumed_grant.possession {
-            if !matches!(row.get(1), Some(TursoValue::Text(_))) {
+            if !row.text(1).is_some_and(|commitment| !commitment.is_empty()) {
                 // Setup deletion is revocation, not a retryable rotation:
                 // leave the old grant consumed.
                 return Err(AppError::Unauthorized(
@@ -376,7 +380,10 @@ async fn insert_recovered_device(
             "AND recovery_webauthn_cred_id = ?",
             Some(TursoValue::Text(credential_id.clone())),
         ),
-        None => ("AND recovery_auth_hash IS NOT NULL", None),
+        None => (
+            "AND recovery_auth_hash IS NOT NULL AND recovery_auth_hash <> ''",
+            None,
+        ),
     };
     let sql = format!(
         "INSERT INTO devices

@@ -17,9 +17,9 @@ Rust decisions to F* and checks their postconditions for every input.
 | `proof_initiate_facts` | Phase, account/share presence, commitment presence (decoded length), the rekey column, attempt-slot freshness and positive TTL are exactly the row and store observations. |
 | `plan_proof_initiation` (M18) | A possession-proof challenge is issued only when the share *and* a non-empty staged RMS commitment exist on a non-rotating account. |
 | `possession_recover_facts` | Phase and one-shot consumption come from whether the exact attempt key was removed; decoded envelope identity, the verification result, the rekey column, decoded commitment length/epoch and the normalized live epoch map field-by-field. |
-| `plan_possession_recovery` (M18) | An enrollment grant issues only from a consumed, attempt-bound, cryptographically verified possession proof with a non-empty commitment at the live epoch on an active account — and never releases the server share. |
-| `enrollment_facts` | Grant presence/consumption/replacement, decoded grant possession marker, decoded credential-id equality, decoded commitment length, decoded key validity, the rekey column and the normalized grant/account epochs map field-by-field. |
-| `plan_enrollment` | A recovered device requires a consumed user-bound grant, current credential (or staged commitment for possession grants), valid keys, and exact active grant/account epoch. |
+| `plan_possession_recovery` (M18) | An enrollment grant issues only from a consumed, attempt-bound, verified possession-proof observation with a non-empty commitment at the live epoch on an active account; its decision type grants enrollment, not share release. |
+| `enrollment_facts` | Grant presence/consumption/replacement, decoded grant possession marker, decoded credential-id equality, decoded commitment length, decoded key lengths, the rekey column and the normalized grant/account epochs map field-by-field. |
+| `plan_enrollment` | A recovered device requires a consumed grant loaded under the request's user/grant store key, current credential (or staged commitment for possession grants), valid keys, and exact active grant/account epoch. |
 | `plan_publication_stage` | A server share is staged only for the current active account epoch with a nonempty share and split id. |
 | `plan_publication_finalize` | First promotion requires an empty active slot plus the exact pending epoch, split id, and stored share; an exact already-active retry is handled idempotently by the server. |
 | theorem helpers | Replaced credentials, challenge/grant replay, cross-user grants, rotated grants and epochs, competing splits, retired epochs, unproven possession claims, stale commitments, commitment-less possession grants and accounts, unassigned grants, concurrent grant replacement, invalid key lengths and absent user rows cannot authorize recovery authority. Observation theorems additionally reject missing shares/credentials, colliding attempt ids, expired initiation TTLs, unverified assertions, missing/replayed attempts, cross-user observations and rekeying accounts. |
@@ -73,3 +73,16 @@ computes their exact 1600/2624-byte validity inside the checked kernel. The
 server's preliminary checks share these policy constants. It does not accept
 a caller-supplied `public_keys_valid` boolean as an observation. The policy
 still proves no cryptographic validity of correctly sized key bytes.
+
+Enrollment's `user_matches` observation is a store-key binding, not an
+independently checked identity comparison: the stored grant has no embedded
+user id. The current handler's early returns enforce every enrollment predicate
+before the final policy call; that call rechecks the observations and its
+rejection branch is unreachable at this call site today. The pure negative
+theorems therefore do not prove the early-return code or full handler traces.
+Possession initiation/recovery have live policy gates for empty commitments
+and failed proof observations.
+
+`PossessionGrantPermit::releases_server_share()` is false by definition of
+the enrollment-only permit. It does not prove that the effectful handler never
+invokes another release API; that absence is inspected, not formally refined.

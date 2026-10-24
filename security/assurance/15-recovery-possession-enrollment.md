@@ -36,7 +36,16 @@ The production handlers now call these constructors. Two concrete tightenings:
 The handler order retains the existing grant-before-account-observation rule,
 so an absent grant does not expose account/rotation state. Consumption remains
 single-use; a race-replaced grant is rejected and restored through the existing
-path. This description is a code review, not a proved database trace.
+path. This description is a code review, not a proved database trace. For enrollment,
+every policy conjunct is currently pre-enforced by an early return; the final
+policy decision is a redundant confirmation. Its negative theorems do not
+establish those early-return paths. Possession initiation and recovery do have
+live policy denials (empty commitment and unsuccessful proof respectively).
+The guarded possession insert now requires non-null, non-empty commitment text,
+and its retry-time recheck rejects empty text as well. This relies on the
+normal canonical base64 storage path; malformed concurrent storage values and
+all SQL semantics still need refinement. A final policy denial leaves the
+grant consumed instead of re-arming its TTL; retry paths remain separate.
 
 The [evidence](proof-logs/current/recovery-possession-enrollment/README.md)
 separates the delegated boolean-key-validity snapshot from the parent's exact
@@ -64,3 +73,10 @@ proof is not an epoch-freshness theorem. Commitment presence requires nonzero
 length, not a scheme-specific format proof. Neither these observation contracts
 nor the passing integration tests establish full F-1/F-2 or a whole-system
 security theorem.
+
+The permit's `releases_server_share()` accessor returns false definitionally.
+The corresponding pure contract is not a theorem about the handler's I/O.
+Grant commitment checks establish current presence, not equality to the exact
+commitment used at issuance. Setup-deletion rejection before consumption leaves
+the grant available for retry after restaging during its TTL; permanent
+revocation across deletion/restaging is not established by this increment.

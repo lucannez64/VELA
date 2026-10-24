@@ -1,6 +1,7 @@
 # Recovery observation-to-fact refinement
 
-The production recovery policy now has 42 checked postconditions, including
+At this increment, recovery had 42 checked postconditions (now 71; see
+[the later increment](15-recovery-possession-enrollment.md)), including
 21 new contracts for initiation, credential metadata update, share release and
 epoch normalization. The actual handlers call the checked fact constructors.
 This is a conditional mapping over observations, not complete handler/I/O or

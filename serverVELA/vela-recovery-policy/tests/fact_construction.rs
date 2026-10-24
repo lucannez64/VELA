@@ -404,12 +404,12 @@ fn enrollment_facts_are_exactly_the_grant_consumption_credential_commitment_and_
                                                     credential_id_matches,
                                                     commitment_len,
                                                     hybrid_ek_len: if public_keys_valid {
-                                                        1600
+                                                        vela_recovery_policy::HYBRID_EK_LEN
                                                     } else {
                                                         0
                                                     },
                                                     hybrid_vk_len: if public_keys_valid {
-                                                        2624
+                                                        vela_recovery_policy::HYBRID_VK_LEN
                                                     } else {
                                                         0
                                                     },
@@ -550,6 +550,8 @@ fn enrollment_facts_are_exactly_the_grant_consumption_credential_commitment_and_
 
 #[test]
 fn enrollment_checks_each_decoded_key_length() {
+    assert_eq!(vela_recovery_policy::HYBRID_EK_LEN, 1600);
+    assert_eq!(vela_recovery_policy::HYBRID_VK_LEN, 2624);
     let valid = EnrollmentObservation {
         grant_present: true,
         grant_consumed: true,

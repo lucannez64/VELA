@@ -890,7 +890,8 @@ pub struct EnrollmentFacts {
     /// The `users` row named by the grant still exists.
     pub account_present: bool,
     /// The observed grant was loaded under the request's `(user_id, grant)`
-    /// store key, so its user binding is the request's.
+    /// store key. This is a caller-supplied store-key binding, not an independent
+    /// identity comparison: the grant value has no embedded user id.
     pub user_matches: bool,
     pub grant_live: bool,
     pub grant_consumed: bool,
