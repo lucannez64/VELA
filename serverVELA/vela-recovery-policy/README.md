@@ -18,7 +18,7 @@ Rust decisions to F* and checks their postconditions for every input.
 | `plan_proof_initiation` (M18) | A possession-proof challenge is issued only when the share *and* a non-empty staged RMS commitment exist on a non-rotating account. |
 | `possession_recover_facts` | Phase and one-shot consumption come from whether the exact attempt key was removed; decoded envelope identity, the verification result, the rekey column, decoded commitment length/epoch and the normalized live epoch map field-by-field. |
 | `plan_possession_recovery` (M18) | An enrollment grant issues only from a consumed, attempt-bound, verified possession-proof observation with a non-empty commitment at the live epoch on an active account; its decision type grants enrollment, not share release. |
-| `plan_enrollment_preflight` | Before grant redemption, the plan matches its shared grant/account/epoch/rotation/commitment/credential rejection predicate and carries the observed epoch/type. Predicate order is reviewed and tested; independent ordering proof remains open. The handler skips account lookup for missing grants (inspected glue); `NotQueried` and `AccountUnavailable` distinguish unknown from absent. |
+| `plan_enrollment_preflight` | Before the single-use grant is spent, the production rejection is universally checked against an independent ranked table of account/epoch/rotation/commitment/credential guards, with the earliest applicable rank winning. The commitment guard applies only to possession grants and the credential guard only to WebAuthn grants, so they are disjoint; the table places commitment before credential only as a total-order convenience. `Ready` implies every positive readiness guard and exactly the observed grant's epoch/possession, and their conjunction implies `Ready`. A missing-grant observation yields `GrantUnavailable`; the handler skips querying the account (inspected glue), and `NotQueried` and `AccountUnavailable` are explicit unknowns, never observed absence. |
 | `enrollment_facts` | Grant presence/consumption/replacement, decoded grant possession marker, decoded credential-id equality, decoded commitment length, decoded key lengths, the rekey column and the normalized grant/account epochs map field-by-field. |
 | `plan_enrollment` | A recovered device requires the actual consumed grant to match the preflight-observed grant, loaded under the request's user/grant store key, current credential (or staged commitment for possession grants), valid keys, and exact active grant/account epoch. |
 | `plan_publication_stage` | A server share is staged only for the current active account epoch with a nonempty share and split id. |
@@ -48,13 +48,16 @@ export PATH="$(opam var bin --switch vela-hax):$(opam var bin --switch vela-fsta
 ./verify-fstar.sh
 ```
 
-The runner extracts seventy-nine production/theorem entry points and asks F* to
+The runner extracts ninety production/theorem entry points and asks F* to
 discharge every verification condition without `--lax`. The checked-in
 extraction is the fresh output of `verify-fstar.sh` for these sources; hosted CI
 must still re-extract and check the entry points. Every selected function has an
-explicit postcondition (79/79); the constructors cover the decoded possession
-and enrollment state rather than only the boolean facts. The eight new contracts
-are the preflight decision plus seven rejection/unknown negative theorems.
+explicit postcondition (90/90); the constructors cover the decoded possession
+and enrollment state rather than only the boolean facts. The eleven new checked
+lemmas connect the preflight decision to an independent ranked table/fold and
+to positive readiness guards, and prove parametric adjacent precedence and
+disjointness facts. They sit alongside the preflight decision and seven
+rejection/unknown negative theorems.
 
 One fail-closed tightening accompanies the decoded commitment observation: a
 row whose `recovery_auth_hash` decodes to zero bytes no longer yields a
@@ -76,18 +79,24 @@ server's preliminary checks share these policy constants. It does not accept
 a caller-supplied `public_keys_valid` boolean as an observation. The policy
 still proves no cryptographic validity of correctly sized key bytes.
 
-Enrollment now runs a checked preflight kernel before redemption. It decides
-account presence, normalized epoch equality, rotation, and credential or
-commitment authority in the handler's historical status/message precedence,
-and it receives `NotQueried` for a missing grant so the handler's 401 precedes
-any account query. Its `ReadyToConsume` permit only allows attempting the
-atomic `get_del`; it never asserts that consumption occurred and it does not
-authorize the device insert. After redemption, `plan_enrollment` still requires
-the actual consumed grant to equal the preflight-observed grant and builds the
-final `EnrollmentPermit` from those actual observations. A terminal policy
-denial and an insert-time credential/commitment revocation leave the grant
-consumed; storage failures and retryable rotation races restore it as
-documented.
+Enrollment now runs a checked preflight kernel before redemption. Its production
+predicate is the historical nested status/message if-chain; a separate ranked
+table and first-applicable fold state the ordering specification without calling
+that predicate. A universal checked lemma proves the production rejection always
+equals the first applicable table entry, and further checked lemmas prove
+parametric adjacent-precedence/overlap facts and the commitment/credential
+disjointness. The kernel decides account presence, normalized epoch equality,
+rotation, and credential or commitment authority, and it receives `NotQueried`
+for a missing grant so the handler's 401 precedes any account query. A second
+independent statement of positive readiness guards is connected to `Ready` in
+both directions, including the permit's epoch/possession fields. Its
+`ReadyToConsume` permit only allows attempting the atomic `get_del`; it never
+asserts that consumption occurred and it does not authorize the device insert.
+After redemption, `plan_enrollment` still requires the actual consumed grant to
+equal the preflight-observed grant and builds the final `EnrollmentPermit` from
+those actual observations. A terminal policy denial and an insert-time
+credential/commitment revocation leave the grant consumed; storage failures and
+retryable rotation races restore it as documented.
 
 Enrollment's `user_matches` observation is a store-key binding, not an
 independently checked identity comparison: the stored grant has no embedded
@@ -102,6 +111,12 @@ or split id. Consequently:
 
 - `user_matches` is the binding implied by the `(user_id, grant)` store key,
   not an independently decoded identity comparison.
+- The commitment guard and the credential-replacement guard are disjoint by
+  grant type: a possession grant can only fail the commitment guard and a
+  WebAuthn grant can only fail the credential guard. Their table order is
+  therefore not a live overlap; the checked disjointness lemma records this.
+  The preflight specification proves the decision and its precedence, not the
+  handler's SQL/store effects or the effectful `get_del`.
 - Early authority rejections (credential replacement, or a missing possession
   commitment) run before consumption, so the same grant remains redeemable
   within its TTL if the expected credential or commitment is restored.
@@ -118,9 +133,8 @@ or split id. Consequently:
 the enrollment-only permit. It does not prove that the effectful handler never
 invokes another release API; that absence is inspected, not formally refined.
 
-The preflight postcondition currently relates the plan to the same rejection
-predicate used by its body. Predicate order is inspected and tested; a proof
-against an independent ordering specification remains open. Commitment and
-credential guards are disjoint on the possession marker. The post-insert
-concurrent recheck uses its historical revocation-before-rotation priority;
-that handler trace is outside the policy proof.
+The independent ordering theorem concerns supplied observations. The handler
+skips account lookup for missing grants by inspected control flow; this is not
+an SQL trace theorem. The post-insert concurrent recheck uses its historical
+revocation-before-rotation priority; that handler trace is outside the policy
+proof.

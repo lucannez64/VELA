@@ -1,23 +1,45 @@
 # Enrollment preflight and possession/enrollment fact-construction increment
 
-## Current delegated run (baseline `350cd57`)
+## Current review-correction run (baseline `5361406`)
 
-This run adds the production-used preflight/sequencing kernel in
-`src/lib.rs` and wires `vela-server/src/recovery/enroll_device.rs` through it.
-`verify-fstar.sh` now selects **79** functions; the extraction contains **79**
-`ensures` postconditions and **0** `assume`/`admit`/`--lax` declarations. Eight
-contracts are new: `plan_enrollment_preflight` plus seven rejection/unknown
-negative theorems. The exact generated artifact is
+This run corrects the preflight specification in `src/lib.rs` only; it does not
+edit `vela-server/src/recovery/enroll_device.rs` and does not change integration
+behavior. The production predicate remains the historical nested if-chain. An
+independent ranked guard table plus first-true fold now states the ordering
+separately, and checked lemmas prove the production rejection equals the first
+applicable entry, that `Ready` implies every positive readiness guard and the
+observed grant's epoch/possession fields and conversely, and parametric
+adjacent-precedence/overlap facts including commitment/credential disjointness.
+The enumeration test now uses its own independent table/fold oracle.
+
+`verify-fstar.sh` selects **90** functions; the extraction contains **90**
+`ensures` postconditions and **0** `assume`/`admit`/`--lax` declarations.
+Eleven checked ordering/readiness lemmas are new beyond the prior eight
+contracts. The exact generated artifact is
 `proofs/fstar/extraction/Vela_recovery_policy.fst`
-(sha256 `c3a4d03995c24ec0739da16f483c458d8714b2666df6e52d1ce0bdad90f7c828`);
+(sha256 `eaf1148be9567b8d8d6dbca8ceca3a4369df8b3c3856f19afc2de9eeee070327`);
 it was not hand-edited.
+
+The crate's 7 unit tests and 8 observation-enumeration tests passed. The server
+integration/logs from `5361406` remain the applicable evidence because no
+handler or server test changed; this correction only reruns the policy crate and
+the 90-contract F* check. Raw output is preserved under
+[`security/assurance/proof-logs/current/recovery-enrollment-preflight/delegated/`](../../../../security/assurance/proof-logs/current/recovery-enrollment-preflight/delegated/).
+
+## Prior integrated preflight run (baseline `350cd57`)
+
+The original increment added the production-used preflight/sequencing kernel in
+`src/lib.rs` and wired `vela-server/src/recovery/enroll_device.rs` through it.
+That run selected **79** functions with **79** ensures and **0**
+`assume`/`admit`/`--lax` declarations, and added the preflight decision plus
+seven rejection/unknown negative theorems. The superseded artifact hash was
+`c3a4d03995c24ec0739da16f483c458d8714b2666df6e52d1ce0bdad90f7c828`.
 
 The crate's 7 unit tests and 8 observation-enumeration tests passed. The
 server integration suite passed 63/63, including the missing-grant privacy
 test, the key-validation precedence test and the credential/commitment
 restaging characterizations.
-`recovery_lifecycle_model` passed 3/3. Raw output is preserved under
-[`security/assurance/proof-logs/current/recovery-enrollment-preflight/delegated/`](../../../../security/assurance/proof-logs/current/recovery-enrollment-preflight/delegated/).
+`recovery_lifecycle_model` passed 3/3.
 
 ## Historical possession/enrollment run
 
@@ -90,12 +112,19 @@ Every other recovery status class, message and precedence is unchanged.
   rate limiting, clocks and TTL expiry. The policy proves the conditional
   mapping from these observations, not that they are produced correctly.
 - Enrollment's account/epoch/rotation/credential/commitment rejections now go
-  through the checked preflight kernel, but the kernel proves only the decision
-  and permit construction, not the handler's SQL/store effects or the insert
-  guard. Other handlers still return errors before their constructors run
-  (missing row/attempt, rotation, missing commitment, unverified
-  assertion/proof, failed grant load). Negative constructor theorems do not
-  establish those early-return traces.
+  through the checked preflight kernel. The ordering proof is a universal
+  equality between the production if-chain and an independently stated ranked
+  table/fold; the readiness proof ties `Ready` to positive guards and permit
+  fields in both directions. The kernel still proves only the decision and
+  permit construction, not the handler's SQL/store effects or the insert guard.
+  Other handlers still return errors before their constructors run (missing
+  row/attempt, rotation, missing commitment, unverified assertion/proof, failed
+  grant load). Negative constructor theorems do not establish those
+  early-return traces.
+- The preflight commitment guard and credential guard are disjoint by grant
+  type, so the table's commitment-before-credential order is not a reachable
+  overlap. The policy proves that disjointness; it does not prove the
+  effectful `get_del`/SQL behavior or permanent revocation.
 - Enrollment `user_matches` is the store-key user binding (the grant value
   carries no user id); it is not an independent decoded identity comparison.
 - Early credential/commitment rejection leaves the grant unconsumed. The grant
@@ -120,5 +149,6 @@ At delegated-run time, based on `5fa4e9f`, the parent-owned gate still expected
 202/209. That is not the integrated inventory: the parent's web-session work
 adds another ten contracts. The parent has now updated the gate, correspondence
 and manifest, and checks pass with **212 postconditions / 219 selected functions**
-(71 recovery contracts, zero local `assume val`). See the current parent evidence
-linked above for the six-unit/seven-observation-test run and exact artifact.
+(71 recovery contracts, zero local `assume val`). This review correction raises
+the recovery crate to 90 contracts (+11), so the parent must recompute the
+global totals; no global manifest or correspondence file was edited here.

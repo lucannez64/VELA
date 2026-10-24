@@ -29,6 +29,19 @@ use vela_recovery_policy::{
     PossessionRecoverObservation, ProofInitiateObservation,
 };
 use vela_recovery_policy::{
+    all_applicable_guards_imply_ready, commitment_missing_and_credential_replaced_are_disjoint,
+    enrollment_preflight_decision_matches_independent_spec, enrollment_preflight_guards,
+    enrollment_preflight_is_ready, enrollment_preflight_ordering_is_checked,
+    enrollment_preflight_readiness, enrollment_preflight_rejection,
+    enrollment_preflight_spec_rejection, epoch_mismatch_precedes_commitment_missing,
+    epoch_mismatch_precedes_credential_replaced, epoch_mismatch_precedes_rotation_paused,
+    missing_grant_precedes_account_rejection, plan_enrollment_preflight,
+    ready_preflight_implies_guards_and_fields, ready_preflight_matches_independent_readiness,
+    rotation_paused_precedes_commitment_missing, rotation_paused_precedes_credential_replaced,
+    EnrollmentAccountFacts, EnrollmentAccountObservation, EnrollmentGrantFacts,
+    EnrollmentPreflightDecision, EnrollmentPreflightObservation, EnrollmentPreflightRejection,
+};
+use vela_recovery_policy::{
     colliding_attempt_id_can_initiate, credential_update_decision_matches_spec,
     credential_update_facts, credentialless_account_can_initiate,
     cross_user_recover_observation_can_release, expired_initiate_ttl_can_start, initiate_facts,
@@ -42,11 +55,6 @@ use vela_recovery_policy::{
     unverified_observed_assertion_can_release, CredentialUpdateDecision,
     CredentialUpdateObservation, InitiateObservation, RecoverObservation, RecoveryAttemptSource,
     RecoveryPhase, INITIAL_EPOCH,
-};
-use vela_recovery_policy::{
-    enrollment_preflight_is_ready, enrollment_preflight_rejection, plan_enrollment_preflight,
-    EnrollmentAccountFacts, EnrollmentAccountObservation, EnrollmentGrantFacts,
-    EnrollmentPreflightDecision, EnrollmentPreflightObservation, EnrollmentPreflightRejection,
 };
 use vela_recovery_policy::{
     plan_enrollment, plan_possession_recovery, plan_proof_initiation, EnrollmentDecision,
@@ -553,6 +561,55 @@ fn enrollment_facts_are_exactly_the_grant_consumption_credential_commitment_and_
     }
 }
 
+/// Independent oracle for the preflight ordering. This is a ranked table and a
+/// first-true fold, written from the observation and the declared precedence
+/// rather than from the production predicate. It is intentionally not the
+/// crate's `enrollment_preflight_spec_rejection` function: the test compares
+/// the production predicate, the crate specification and this oracle.
+fn oracle_preflight_guards(obs: EnrollmentPreflightObservation) -> [bool; 7] {
+    match (obs.grant, obs.account) {
+        (None, _) => [true, false, false, false, false, false, false],
+        (Some(_), EnrollmentAccountObservation::NotQueried) => {
+            [false, true, false, false, false, false, false]
+        }
+        (Some(_), EnrollmentAccountObservation::Absent) => {
+            [false, false, true, false, false, false, false]
+        }
+        (Some(grant), EnrollmentAccountObservation::Present(account)) => [
+            false,
+            false,
+            false,
+            expected_epoch(account.stored_epoch) != grant.epoch,
+            !account.epoch_active,
+            grant.possession && account.commitment_len == 0,
+            !grant.possession && !account.credential_id_matches,
+        ],
+    }
+}
+
+fn oracle_preflight_rejection(
+    obs: EnrollmentPreflightObservation,
+) -> Option<EnrollmentPreflightRejection> {
+    let guards = oracle_preflight_guards(obs);
+    let table = [
+        (guards[0], EnrollmentPreflightRejection::GrantUnavailable),
+        (guards[1], EnrollmentPreflightRejection::AccountUnavailable),
+        (guards[2], EnrollmentPreflightRejection::AccountAbsent),
+        (guards[3], EnrollmentPreflightRejection::EpochMismatch),
+        (guards[4], EnrollmentPreflightRejection::RotationPaused),
+        (guards[5], EnrollmentPreflightRejection::CommitmentMissing),
+        (guards[6], EnrollmentPreflightRejection::CredentialReplaced),
+    ];
+    table
+        .into_iter()
+        .find(|(applies, _)| *applies)
+        .map(|(_, rejection)| rejection)
+}
+
+fn oracle_preflight_ready(obs: EnrollmentPreflightObservation) -> bool {
+    !oracle_preflight_guards(obs).into_iter().any(|guard| guard)
+}
+
 #[test]
 fn preflight_decides_each_rejection_reason_in_handler_precedence_order() {
     let stored_epochs = [None, Some(0), Some(INITIAL_EPOCH), Some(4), Some(5)];
@@ -603,36 +660,85 @@ fn preflight_decides_each_rejection_reason_in_handler_precedence_order() {
                 grant,
                 account: *account,
             };
-            let expected = match (grant, account) {
-                (None, _) => Some(EnrollmentPreflightRejection::GrantUnavailable),
-                (Some(_), EnrollmentAccountObservation::NotQueried) => {
-                    Some(EnrollmentPreflightRejection::AccountUnavailable)
-                }
-                (Some(_), EnrollmentAccountObservation::Absent) => {
-                    Some(EnrollmentPreflightRejection::AccountAbsent)
-                }
-                (Some(grant), EnrollmentAccountObservation::Present(account)) => {
-                    if expected_epoch(account.stored_epoch) != grant.epoch {
-                        Some(EnrollmentPreflightRejection::EpochMismatch)
-                    } else if !account.epoch_active {
-                        Some(EnrollmentPreflightRejection::RotationPaused)
-                    } else if grant.possession && account.commitment_len == 0 {
-                        Some(EnrollmentPreflightRejection::CommitmentMissing)
-                    } else if !grant.possession && !account.credential_id_matches {
-                        Some(EnrollmentPreflightRejection::CredentialReplaced)
-                    } else {
-                        None
-                    }
-                }
-            };
+            let guards = enrollment_preflight_guards(obs);
+            let oracle_guards = oracle_preflight_guards(obs);
+            assert_eq!(
+                [
+                    guards.grant_unavailable,
+                    guards.account_unavailable,
+                    guards.account_absent,
+                    guards.epoch_mismatch,
+                    guards.rotation_paused,
+                    guards.commitment_missing,
+                    guards.credential_replaced,
+                ],
+                oracle_guards,
+                "{obs:?}"
+            );
 
+            let expected = oracle_preflight_rejection(obs);
+            assert_eq!(
+                enrollment_preflight_spec_rejection(obs),
+                expected,
+                "{obs:?}"
+            );
             assert_eq!(enrollment_preflight_rejection(obs), expected, "{obs:?}");
             assert_eq!(
                 enrollment_preflight_is_ready(obs),
-                expected.is_none(),
+                oracle_preflight_ready(obs),
                 "{obs:?}"
             );
-            match plan_enrollment_preflight(obs) {
+            assert!(enrollment_preflight_ordering_is_checked(obs), "{obs:?}");
+            assert!(
+                ready_preflight_matches_independent_readiness(obs),
+                "{obs:?}"
+            );
+            assert!(ready_preflight_implies_guards_and_fields(obs), "{obs:?}");
+            assert!(all_applicable_guards_imply_ready(obs), "{obs:?}");
+            assert!(missing_grant_precedes_account_rejection(*account));
+
+            let decision = plan_enrollment_preflight(obs);
+            assert!(
+                enrollment_preflight_decision_matches_independent_spec(obs, decision),
+                "{obs:?}"
+            );
+            let readiness = enrollment_preflight_readiness(obs);
+            assert_eq!(readiness.grant_present, grant.is_some(), "{obs:?}");
+            assert_eq!(
+                readiness.account_observed,
+                grant.is_some() && matches!(account, EnrollmentAccountObservation::Present(_)),
+                "{obs:?}"
+            );
+            if let (Some(grant), EnrollmentAccountObservation::Present(account)) = (grant, account)
+            {
+                assert_eq!(
+                    readiness.epoch_matches,
+                    expected_epoch(account.stored_epoch) == grant.epoch,
+                    "{obs:?}"
+                );
+                assert_eq!(readiness.rotation_active, account.epoch_active, "{obs:?}");
+                assert_eq!(
+                    readiness.authority_present,
+                    if grant.possession {
+                        account.commitment_len > 0
+                    } else {
+                        account.credential_id_matches
+                    },
+                    "{obs:?}"
+                );
+                assert!(epoch_mismatch_precedes_rotation_paused(grant, *account));
+                assert!(epoch_mismatch_precedes_commitment_missing(grant, *account));
+                assert!(epoch_mismatch_precedes_credential_replaced(grant, *account));
+                assert!(rotation_paused_precedes_commitment_missing(grant, *account));
+                assert!(rotation_paused_precedes_credential_replaced(
+                    grant, *account
+                ));
+                assert!(commitment_missing_and_credential_replaced_are_disjoint(
+                    grant, *account
+                ));
+            }
+
+            match decision {
                 EnrollmentPreflightDecision::Ready(permit) => {
                     let Some(grant) = grant else {
                         panic!("ready without a grant: {obs:?}");

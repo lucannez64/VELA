@@ -1025,6 +1025,216 @@ pub fn enrollment_preflight_rejection(
     }
 }
 
+/// Independently stated rejection guards. Each guard is a pure formula over
+/// the observation and is deliberately written without the nested conditionals
+/// used by `enrollment_preflight_rejection`. Later guards can overlap earlier
+/// ones (for example an inactive, epoch-mismatched account); the ranked table
+/// below resolves that by taking the earliest applicable rank. The
+/// commitment/credential pair is disjoint by possession polarity.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EnrollmentPreflightGuards {
+    pub grant_unavailable: bool,
+    pub account_unavailable: bool,
+    pub account_absent: bool,
+    pub epoch_mismatch: bool,
+    pub rotation_paused: bool,
+    pub commitment_missing: bool,
+    pub credential_replaced: bool,
+}
+
+pub fn enrollment_preflight_guards(
+    obs: EnrollmentPreflightObservation,
+) -> EnrollmentPreflightGuards {
+    match obs.grant {
+        None => EnrollmentPreflightGuards {
+            grant_unavailable: true,
+            account_unavailable: false,
+            account_absent: false,
+            epoch_mismatch: false,
+            rotation_paused: false,
+            commitment_missing: false,
+            credential_replaced: false,
+        },
+        Some(grant) => match obs.account {
+            EnrollmentAccountObservation::NotQueried => EnrollmentPreflightGuards {
+                grant_unavailable: false,
+                account_unavailable: true,
+                account_absent: false,
+                epoch_mismatch: false,
+                rotation_paused: false,
+                commitment_missing: false,
+                credential_replaced: false,
+            },
+            EnrollmentAccountObservation::Absent => EnrollmentPreflightGuards {
+                grant_unavailable: false,
+                account_unavailable: false,
+                account_absent: true,
+                epoch_mismatch: false,
+                rotation_paused: false,
+                commitment_missing: false,
+                credential_replaced: false,
+            },
+            EnrollmentAccountObservation::Present(account) => EnrollmentPreflightGuards {
+                grant_unavailable: false,
+                account_unavailable: false,
+                account_absent: false,
+                epoch_mismatch: observed_recovery_epoch(account.stored_epoch) != grant.epoch,
+                rotation_paused: !account.epoch_active,
+                commitment_missing: grant.possession && account.commitment_len == 0,
+                credential_replaced: !grant.possession && !account.credential_id_matches,
+            },
+        },
+    }
+}
+
+/// Positive readiness guards. These are the independent statement that a
+/// preflight observation is actually ready; `plan_enrollment_preflight`'s
+/// `Ready` permit must imply every one of them and the grant's fields, and
+/// their conjunction must imply the permit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EnrollmentPreflightReadiness {
+    pub grant_present: bool,
+    pub account_observed: bool,
+    pub epoch_matches: bool,
+    pub rotation_active: bool,
+    pub authority_present: bool,
+}
+
+pub fn enrollment_preflight_readiness(
+    obs: EnrollmentPreflightObservation,
+) -> EnrollmentPreflightReadiness {
+    match obs.grant {
+        None => EnrollmentPreflightReadiness {
+            grant_present: false,
+            account_observed: false,
+            epoch_matches: false,
+            rotation_active: false,
+            authority_present: false,
+        },
+        Some(grant) => match obs.account {
+            EnrollmentAccountObservation::Present(account) => EnrollmentPreflightReadiness {
+                grant_present: true,
+                account_observed: true,
+                epoch_matches: observed_recovery_epoch(account.stored_epoch) == grant.epoch,
+                rotation_active: account.epoch_active,
+                authority_present: enrollment_preflight_authority(account, grant.possession),
+            },
+            _ => EnrollmentPreflightReadiness {
+                grant_present: true,
+                account_observed: false,
+                epoch_matches: false,
+                rotation_active: false,
+                authority_present: false,
+            },
+        },
+    }
+}
+
+/// A ranked table of the rejection each guard would produce. The table and its
+/// fold are the independent ordering specification; the production predicate
+/// above is not built from them.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EnrollmentPreflightSpecTable {
+    pub grant_unavailable: Option<EnrollmentPreflightRejection>,
+    pub account_unavailable: Option<EnrollmentPreflightRejection>,
+    pub account_absent: Option<EnrollmentPreflightRejection>,
+    pub epoch_mismatch: Option<EnrollmentPreflightRejection>,
+    pub rotation_paused: Option<EnrollmentPreflightRejection>,
+    pub commitment_missing: Option<EnrollmentPreflightRejection>,
+    pub credential_replaced: Option<EnrollmentPreflightRejection>,
+}
+
+pub fn enrollment_preflight_spec_table(
+    obs: EnrollmentPreflightObservation,
+) -> EnrollmentPreflightSpecTable {
+    let guards = enrollment_preflight_guards(obs);
+    EnrollmentPreflightSpecTable {
+        grant_unavailable: if guards.grant_unavailable {
+            Some(EnrollmentPreflightRejection::GrantUnavailable)
+        } else {
+            None
+        },
+        account_unavailable: if guards.account_unavailable {
+            Some(EnrollmentPreflightRejection::AccountUnavailable)
+        } else {
+            None
+        },
+        account_absent: if guards.account_absent {
+            Some(EnrollmentPreflightRejection::AccountAbsent)
+        } else {
+            None
+        },
+        epoch_mismatch: if guards.epoch_mismatch {
+            Some(EnrollmentPreflightRejection::EpochMismatch)
+        } else {
+            None
+        },
+        rotation_paused: if guards.rotation_paused {
+            Some(EnrollmentPreflightRejection::RotationPaused)
+        } else {
+            None
+        },
+        commitment_missing: if guards.commitment_missing {
+            Some(EnrollmentPreflightRejection::CommitmentMissing)
+        } else {
+            None
+        },
+        credential_replaced: if guards.credential_replaced {
+            Some(EnrollmentPreflightRejection::CredentialReplaced)
+        } else {
+            None
+        },
+    }
+}
+
+/// First-true fold over the ranked table, from highest to lowest precedence.
+pub fn enrollment_preflight_first_applicable(
+    table: EnrollmentPreflightSpecTable,
+) -> Option<EnrollmentPreflightRejection> {
+    match table.grant_unavailable {
+        Some(rejection) => Some(rejection),
+        None => match table.account_unavailable {
+            Some(rejection) => Some(rejection),
+            None => match table.account_absent {
+                Some(rejection) => Some(rejection),
+                None => match table.epoch_mismatch {
+                    Some(rejection) => Some(rejection),
+                    None => match table.rotation_paused {
+                        Some(rejection) => Some(rejection),
+                        None => match table.commitment_missing {
+                            Some(rejection) => Some(rejection),
+                            None => table.credential_replaced,
+                        },
+                    },
+                },
+            },
+        },
+    }
+}
+
+pub fn enrollment_preflight_spec_rejection(
+    obs: EnrollmentPreflightObservation,
+) -> Option<EnrollmentPreflightRejection> {
+    enrollment_preflight_first_applicable(enrollment_preflight_spec_table(obs))
+}
+
+pub fn enrollment_preflight_spec_decision(
+    obs: EnrollmentPreflightObservation,
+) -> EnrollmentPreflightDecision {
+    match enrollment_preflight_spec_rejection(obs) {
+        Some(reason) => EnrollmentPreflightDecision::Reject(reason),
+        None => match obs.grant {
+            Some(grant) => EnrollmentPreflightDecision::Ready(ReadyToConsume {
+                epoch: grant.epoch,
+                possession: grant.possession,
+            }),
+            None => {
+                EnrollmentPreflightDecision::Reject(EnrollmentPreflightRejection::GrantUnavailable)
+            }
+        },
+    }
+}
+
 /// Structural reason equality, kept explicit so the extracted kernel does not
 /// depend on a derived `PartialEq` instance (hax would emit a trusted
 /// declaration for that instance).
@@ -1073,31 +1283,37 @@ pub fn enrollment_preflight_is_ready(obs: EnrollmentPreflightObservation) -> boo
     }
 }
 
-pub fn enrollment_preflight_decision_matches_spec(
+pub fn enrollment_preflight_decisions_match(
+    actual: EnrollmentPreflightDecision,
+    expected: EnrollmentPreflightDecision,
+) -> bool {
+    match (actual, expected) {
+        (
+            EnrollmentPreflightDecision::Ready(actual),
+            EnrollmentPreflightDecision::Ready(expected),
+        ) => actual.epoch() == expected.epoch() && actual.possession() == expected.possession(),
+        (
+            EnrollmentPreflightDecision::Reject(actual),
+            EnrollmentPreflightDecision::Reject(expected),
+        ) => enrollment_preflight_rejection_matches(actual, expected),
+        _ => false,
+    }
+}
+
+/// The production decision must agree with the independent table/fold
+/// specification, including the permit's epoch and possession fields. This is
+/// deliberately *not* stated in terms of the production rejection predicate.
+pub fn enrollment_preflight_decision_matches_independent_spec(
     obs: EnrollmentPreflightObservation,
     decision: EnrollmentPreflightDecision,
 ) -> bool {
-    match decision {
-        EnrollmentPreflightDecision::Ready(permit) => {
-            enrollment_preflight_is_ready(obs)
-                && match obs.grant {
-                    Some(grant) => {
-                        permit.epoch == grant.epoch && permit.possession == grant.possession
-                    }
-                    None => false,
-                }
-        }
-        EnrollmentPreflightDecision::Reject(reason) => match enrollment_preflight_rejection(obs) {
-            Some(actual) => enrollment_preflight_rejection_matches(actual, reason),
-            None => false,
-        },
-    }
+    enrollment_preflight_decisions_match(decision, enrollment_preflight_spec_decision(obs))
 }
 
 /// Decide whether the handler may attempt to consume the grant, and why not
 /// otherwise. This function has no effect and cannot observe consumption.
 #[cfg_attr(hax, hax_lib::ensures(|decision| {
-    enrollment_preflight_decision_matches_spec(obs, decision)
+    enrollment_preflight_decision_matches_independent_spec(obs, decision)
 }))]
 pub fn plan_enrollment_preflight(
     obs: EnrollmentPreflightObservation,
@@ -1115,6 +1331,229 @@ pub fn plan_enrollment_preflight(
             }
         },
     }
+}
+
+pub fn enrollment_preflight_rejection_is_first_applicable(
+    obs: EnrollmentPreflightObservation,
+) -> bool {
+    match enrollment_preflight_rejection(obs) {
+        Some(actual) => match enrollment_preflight_spec_rejection(obs) {
+            Some(expected) => enrollment_preflight_rejection_matches(actual, expected),
+            None => false,
+        },
+        None => match enrollment_preflight_spec_rejection(obs) {
+            None => true,
+            Some(_) => false,
+        },
+    }
+}
+
+/// Universal checked lemma: for every observation, the production rejection is
+/// exactly the first applicable entry of the independent ranked table.
+#[cfg_attr(hax, hax_lib::ensures(|result| result == true))]
+pub fn enrollment_preflight_ordering_is_checked(obs: EnrollmentPreflightObservation) -> bool {
+    enrollment_preflight_rejection_is_first_applicable(obs)
+}
+
+pub fn enrollment_preflight_ready_permit_matches_guards(
+    obs: EnrollmentPreflightObservation,
+) -> bool {
+    match plan_enrollment_preflight(obs) {
+        EnrollmentPreflightDecision::Ready(permit) => match obs.grant {
+            Some(grant) => {
+                let readiness = enrollment_preflight_readiness(obs);
+                readiness.grant_present
+                    && readiness.account_observed
+                    && readiness.epoch_matches
+                    && readiness.rotation_active
+                    && readiness.authority_present
+                    && permit.epoch() == grant.epoch
+                    && permit.possession() == grant.possession
+            }
+            None => false,
+        },
+        EnrollmentPreflightDecision::Reject(_) => true,
+    }
+}
+
+/// Universal checked lemma: a `Ready` decision implies every positive
+/// readiness guard and the observed grant's epoch/possession fields.
+#[cfg_attr(hax, hax_lib::ensures(|result| result == true))]
+pub fn ready_preflight_implies_guards_and_fields(obs: EnrollmentPreflightObservation) -> bool {
+    enrollment_preflight_ready_permit_matches_guards(obs)
+}
+
+pub fn enrollment_preflight_guards_imply_ready(obs: EnrollmentPreflightObservation) -> bool {
+    let readiness = enrollment_preflight_readiness(obs);
+    if readiness.grant_present
+        && readiness.account_observed
+        && readiness.epoch_matches
+        && readiness.rotation_active
+        && readiness.authority_present
+    {
+        match obs.grant {
+            Some(grant) => match plan_enrollment_preflight(obs) {
+                EnrollmentPreflightDecision::Ready(permit) => {
+                    permit.epoch() == grant.epoch && permit.possession() == grant.possession
+                }
+                EnrollmentPreflightDecision::Reject(_) => false,
+            },
+            None => false,
+        }
+    } else {
+        true
+    }
+}
+
+/// Universal checked converse: the conjunction of every positive readiness
+/// guard implies a `Ready` permit carrying the observed grant's fields.
+#[cfg_attr(hax, hax_lib::ensures(|result| result == true))]
+pub fn all_applicable_guards_imply_ready(obs: EnrollmentPreflightObservation) -> bool {
+    enrollment_preflight_guards_imply_ready(obs)
+}
+
+pub fn enrollment_preflight_ready_matches_independent_readiness(
+    obs: EnrollmentPreflightObservation,
+) -> bool {
+    let readiness = enrollment_preflight_readiness(obs);
+    enrollment_preflight_is_ready(obs)
+        == (readiness.grant_present
+            && readiness.account_observed
+            && readiness.epoch_matches
+            && readiness.rotation_active
+            && readiness.authority_present)
+}
+
+/// Universal checked lemma connecting the production readiness predicate to
+/// the independent positive guards.
+#[cfg_attr(hax, hax_lib::ensures(|result| result == true))]
+pub fn ready_preflight_matches_independent_readiness(obs: EnrollmentPreflightObservation) -> bool {
+    enrollment_preflight_ready_matches_independent_readiness(obs)
+}
+
+pub fn enrollment_preflight_present_observation(
+    grant: EnrollmentGrantFacts,
+    account: EnrollmentAccountFacts,
+) -> EnrollmentPreflightObservation {
+    EnrollmentPreflightObservation {
+        grant: Some(grant),
+        account: EnrollmentAccountObservation::Present(account),
+    }
+}
+
+pub fn enrollment_preflight_rejects_as(
+    obs: EnrollmentPreflightObservation,
+    expected: EnrollmentPreflightRejection,
+) -> bool {
+    match enrollment_preflight_rejection(obs) {
+        Some(actual) => enrollment_preflight_rejection_matches(actual, expected),
+        None => false,
+    }
+}
+
+/// Parametric adjacent-precedence lemma: whenever the epoch guard and the
+/// rotation guard both apply, the production predicate reports `EpochMismatch`.
+#[cfg_attr(hax, hax_lib::ensures(|result| result == true))]
+pub fn epoch_mismatch_precedes_rotation_paused(
+    grant: EnrollmentGrantFacts,
+    account: EnrollmentAccountFacts,
+) -> bool {
+    let obs = enrollment_preflight_present_observation(grant, account);
+    let guards = enrollment_preflight_guards(obs);
+    if guards.epoch_mismatch && guards.rotation_paused {
+        enrollment_preflight_rejects_as(obs, EnrollmentPreflightRejection::EpochMismatch)
+    } else {
+        true
+    }
+}
+
+/// Parametric overlap lemma: an epoch mismatch outranks a missing commitment.
+#[cfg_attr(hax, hax_lib::ensures(|result| result == true))]
+pub fn epoch_mismatch_precedes_commitment_missing(
+    grant: EnrollmentGrantFacts,
+    account: EnrollmentAccountFacts,
+) -> bool {
+    let obs = enrollment_preflight_present_observation(grant, account);
+    let guards = enrollment_preflight_guards(obs);
+    if guards.epoch_mismatch && guards.commitment_missing {
+        enrollment_preflight_rejects_as(obs, EnrollmentPreflightRejection::EpochMismatch)
+    } else {
+        true
+    }
+}
+
+/// Parametric overlap lemma: an epoch mismatch outranks a replaced credential.
+#[cfg_attr(hax, hax_lib::ensures(|result| result == true))]
+pub fn epoch_mismatch_precedes_credential_replaced(
+    grant: EnrollmentGrantFacts,
+    account: EnrollmentAccountFacts,
+) -> bool {
+    let obs = enrollment_preflight_present_observation(grant, account);
+    let guards = enrollment_preflight_guards(obs);
+    if guards.epoch_mismatch && guards.credential_replaced {
+        enrollment_preflight_rejects_as(obs, EnrollmentPreflightRejection::EpochMismatch)
+    } else {
+        true
+    }
+}
+
+/// Parametric adjacent-precedence lemma: whenever the rotation guard and the
+/// commitment guard both apply and the earlier epoch guard does not, the
+/// production predicate reports `RotationPaused`.
+#[cfg_attr(hax, hax_lib::ensures(|result| result == true))]
+pub fn rotation_paused_precedes_commitment_missing(
+    grant: EnrollmentGrantFacts,
+    account: EnrollmentAccountFacts,
+) -> bool {
+    let obs = enrollment_preflight_present_observation(grant, account);
+    let guards = enrollment_preflight_guards(obs);
+    if guards.rotation_paused && guards.commitment_missing && !guards.epoch_mismatch {
+        enrollment_preflight_rejects_as(obs, EnrollmentPreflightRejection::RotationPaused)
+    } else {
+        true
+    }
+}
+
+/// Parametric adjacent-precedence lemma: whenever the rotation guard and the
+/// replaced-credential guard both apply and the earlier epoch guard does not,
+/// the production predicate reports `RotationPaused`.
+#[cfg_attr(hax, hax_lib::ensures(|result| result == true))]
+pub fn rotation_paused_precedes_credential_replaced(
+    grant: EnrollmentGrantFacts,
+    account: EnrollmentAccountFacts,
+) -> bool {
+    let obs = enrollment_preflight_present_observation(grant, account);
+    let guards = enrollment_preflight_guards(obs);
+    if guards.rotation_paused && guards.credential_replaced && !guards.epoch_mismatch {
+        enrollment_preflight_rejects_as(obs, EnrollmentPreflightRejection::RotationPaused)
+    } else {
+        true
+    }
+}
+
+/// Parametric disjointness lemma: a possession grant's commitment guard and a
+/// WebAuthn grant's credential guard can never both apply, so their adjacent
+/// order in the table is immaterial (the README records this explicitly).
+#[cfg_attr(hax, hax_lib::ensures(|result| result == true))]
+pub fn commitment_missing_and_credential_replaced_are_disjoint(
+    grant: EnrollmentGrantFacts,
+    account: EnrollmentAccountFacts,
+) -> bool {
+    let obs = enrollment_preflight_present_observation(grant, account);
+    let guards = enrollment_preflight_guards(obs);
+    !(guards.commitment_missing && guards.credential_replaced)
+}
+
+/// Parametric privacy-precedence lemma: for every possible account observation,
+/// a missing grant is rejected as `GrantUnavailable` before any account state
+/// is considered.
+#[cfg_attr(hax, hax_lib::ensures(|result| result == true))]
+pub fn missing_grant_precedes_account_rejection(account: EnrollmentAccountObservation) -> bool {
+    let obs = EnrollmentPreflightObservation {
+        grant: None,
+        account,
+    };
+    enrollment_preflight_rejects_as(obs, EnrollmentPreflightRejection::GrantUnavailable)
 }
 
 #[cfg_attr(hax, hax_lib::ensures(|result| result == false))]

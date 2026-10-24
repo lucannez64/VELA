@@ -865,10 +865,20 @@ type t_ReadyToConsume = {
   f_possession:bool
 }
 
+let impl_ReadyToConsume__epoch (self: t_ReadyToConsume) : i64 = self.f_epoch
+
+let impl_ReadyToConsume__possession (self: t_ReadyToConsume) : bool = self.f_possession
+
 type t_EnrollmentPreflightDecision =
   | EnrollmentPreflightDecision_Ready : t_ReadyToConsume -> t_EnrollmentPreflightDecision
   | EnrollmentPreflightDecision_Reject : t_EnrollmentPreflightRejection
     -> t_EnrollmentPreflightDecision
+
+/// WebAuthn grants need their exact credential; possession grants need their
+/// staged commitment. The grant value carries no commitment id or generation,
+/// so this is presence, not an exact binding.
+let enrollment_preflight_authority (account: t_EnrollmentAccountFacts) (possession: bool) : bool =
+  if possession then account.f_commitment_len >. mk_usize 0 else account.f_credential_id_matches
 
 /// The first rejection reason in status/message precedence order, or `None`
 /// when the redemption may be attempted.
@@ -925,6 +935,295 @@ let enrollment_preflight_rejection (obs: t_EnrollmentPreflightObservation)
               <:
               Core_models.Option.t_Option t_EnrollmentPreflightRejection
 
+/// Independently stated rejection guards. Each guard is a pure formula over
+/// the observation and is deliberately written without the nested conditionals
+/// used by `enrollment_preflight_rejection`. Later guards can overlap earlier
+/// ones (for example an inactive, epoch-mismatched account); the ranked table
+/// below resolves that by taking the earliest applicable rank. The
+/// commitment/credential pair is disjoint by possession polarity.
+type t_EnrollmentPreflightGuards = {
+  f_grant_unavailable:bool;
+  f_account_unavailable:bool;
+  f_account_absent:bool;
+  f_epoch_mismatch:bool;
+  f_rotation_paused:bool;
+  f_commitment_missing:bool;
+  f_credential_replaced:bool
+}
+
+let enrollment_preflight_guards (obs: t_EnrollmentPreflightObservation)
+    : t_EnrollmentPreflightGuards =
+  match obs.f_grant <: Core_models.Option.t_Option t_EnrollmentGrantFacts with
+  | Core_models.Option.Option_None  ->
+    {
+      f_grant_unavailable = true;
+      f_account_unavailable = false;
+      f_account_absent = false;
+      f_epoch_mismatch = false;
+      f_rotation_paused = false;
+      f_commitment_missing = false;
+      f_credential_replaced = false
+    }
+    <:
+    t_EnrollmentPreflightGuards
+  | Core_models.Option.Option_Some grant ->
+    match obs.f_account <: t_EnrollmentAccountObservation with
+    | EnrollmentAccountObservation_NotQueried  ->
+      {
+        f_grant_unavailable = false;
+        f_account_unavailable = true;
+        f_account_absent = false;
+        f_epoch_mismatch = false;
+        f_rotation_paused = false;
+        f_commitment_missing = false;
+        f_credential_replaced = false
+      }
+      <:
+      t_EnrollmentPreflightGuards
+    | EnrollmentAccountObservation_Absent  ->
+      {
+        f_grant_unavailable = false;
+        f_account_unavailable = false;
+        f_account_absent = true;
+        f_epoch_mismatch = false;
+        f_rotation_paused = false;
+        f_commitment_missing = false;
+        f_credential_replaced = false
+      }
+      <:
+      t_EnrollmentPreflightGuards
+    | EnrollmentAccountObservation_Present account ->
+      {
+        f_grant_unavailable = false;
+        f_account_unavailable = false;
+        f_account_absent = false;
+        f_epoch_mismatch = (observed_recovery_epoch account.f_stored_epoch <: i64) <>. grant.f_epoch;
+        f_rotation_paused = ~.account.f_epoch_active;
+        f_commitment_missing = grant.f_possession && account.f_commitment_len =. mk_usize 0;
+        f_credential_replaced = ~.grant.f_possession && ~.account.f_credential_id_matches
+      }
+      <:
+      t_EnrollmentPreflightGuards
+
+/// Positive readiness guards. These are the independent statement that a
+/// preflight observation is actually ready; `plan_enrollment_preflight`'s
+/// `Ready` permit must imply every one of them and the grant's fields, and
+/// their conjunction must imply the permit.
+type t_EnrollmentPreflightReadiness = {
+  f_grant_present:bool;
+  f_account_observed:bool;
+  f_epoch_matches:bool;
+  f_rotation_active:bool;
+  f_authority_present:bool
+}
+
+let enrollment_preflight_readiness (obs: t_EnrollmentPreflightObservation)
+    : t_EnrollmentPreflightReadiness =
+  match obs.f_grant <: Core_models.Option.t_Option t_EnrollmentGrantFacts with
+  | Core_models.Option.Option_None  ->
+    {
+      f_grant_present = false;
+      f_account_observed = false;
+      f_epoch_matches = false;
+      f_rotation_active = false;
+      f_authority_present = false
+    }
+    <:
+    t_EnrollmentPreflightReadiness
+  | Core_models.Option.Option_Some grant ->
+    match obs.f_account <: t_EnrollmentAccountObservation with
+    | EnrollmentAccountObservation_Present account ->
+      {
+        f_grant_present = true;
+        f_account_observed = true;
+        f_epoch_matches = (observed_recovery_epoch account.f_stored_epoch <: i64) =. grant.f_epoch;
+        f_rotation_active = account.f_epoch_active;
+        f_authority_present = enrollment_preflight_authority account grant.f_possession
+      }
+      <:
+      t_EnrollmentPreflightReadiness
+    | _ ->
+      {
+        f_grant_present = true;
+        f_account_observed = false;
+        f_epoch_matches = false;
+        f_rotation_active = false;
+        f_authority_present = false
+      }
+      <:
+      t_EnrollmentPreflightReadiness
+
+/// A ranked table of the rejection each guard would produce. The table and its
+/// fold are the independent ordering specification; the production predicate
+/// above is not built from them.
+type t_EnrollmentPreflightSpecTable = {
+  f_grant_unavailable:Core_models.Option.t_Option t_EnrollmentPreflightRejection;
+  f_account_unavailable:Core_models.Option.t_Option t_EnrollmentPreflightRejection;
+  f_account_absent:Core_models.Option.t_Option t_EnrollmentPreflightRejection;
+  f_epoch_mismatch:Core_models.Option.t_Option t_EnrollmentPreflightRejection;
+  f_rotation_paused:Core_models.Option.t_Option t_EnrollmentPreflightRejection;
+  f_commitment_missing:Core_models.Option.t_Option t_EnrollmentPreflightRejection;
+  f_credential_replaced:Core_models.Option.t_Option t_EnrollmentPreflightRejection
+}
+
+let enrollment_preflight_spec_table (obs: t_EnrollmentPreflightObservation)
+    : t_EnrollmentPreflightSpecTable =
+  let guards:t_EnrollmentPreflightGuards = enrollment_preflight_guards obs in
+  {
+    f_grant_unavailable
+    =
+    if guards.f_grant_unavailable
+    then
+      Core_models.Option.Option_Some
+      (EnrollmentPreflightRejection_GrantUnavailable <: t_EnrollmentPreflightRejection)
+      <:
+      Core_models.Option.t_Option t_EnrollmentPreflightRejection
+    else
+      Core_models.Option.Option_None <: Core_models.Option.t_Option t_EnrollmentPreflightRejection;
+    f_account_unavailable
+    =
+    if guards.f_account_unavailable
+    then
+      Core_models.Option.Option_Some
+      (EnrollmentPreflightRejection_AccountUnavailable <: t_EnrollmentPreflightRejection)
+      <:
+      Core_models.Option.t_Option t_EnrollmentPreflightRejection
+    else
+      Core_models.Option.Option_None <: Core_models.Option.t_Option t_EnrollmentPreflightRejection;
+    f_account_absent
+    =
+    if guards.f_account_absent
+    then
+      Core_models.Option.Option_Some
+      (EnrollmentPreflightRejection_AccountAbsent <: t_EnrollmentPreflightRejection)
+      <:
+      Core_models.Option.t_Option t_EnrollmentPreflightRejection
+    else
+      Core_models.Option.Option_None <: Core_models.Option.t_Option t_EnrollmentPreflightRejection;
+    f_epoch_mismatch
+    =
+    if guards.f_epoch_mismatch
+    then
+      Core_models.Option.Option_Some
+      (EnrollmentPreflightRejection_EpochMismatch <: t_EnrollmentPreflightRejection)
+      <:
+      Core_models.Option.t_Option t_EnrollmentPreflightRejection
+    else
+      Core_models.Option.Option_None <: Core_models.Option.t_Option t_EnrollmentPreflightRejection;
+    f_rotation_paused
+    =
+    if guards.f_rotation_paused
+    then
+      Core_models.Option.Option_Some
+      (EnrollmentPreflightRejection_RotationPaused <: t_EnrollmentPreflightRejection)
+      <:
+      Core_models.Option.t_Option t_EnrollmentPreflightRejection
+    else
+      Core_models.Option.Option_None <: Core_models.Option.t_Option t_EnrollmentPreflightRejection;
+    f_commitment_missing
+    =
+    if guards.f_commitment_missing
+    then
+      Core_models.Option.Option_Some
+      (EnrollmentPreflightRejection_CommitmentMissing <: t_EnrollmentPreflightRejection)
+      <:
+      Core_models.Option.t_Option t_EnrollmentPreflightRejection
+    else
+      Core_models.Option.Option_None <: Core_models.Option.t_Option t_EnrollmentPreflightRejection;
+    f_credential_replaced
+    =
+    if guards.f_credential_replaced
+    then
+      Core_models.Option.Option_Some
+      (EnrollmentPreflightRejection_CredentialReplaced <: t_EnrollmentPreflightRejection)
+      <:
+      Core_models.Option.t_Option t_EnrollmentPreflightRejection
+    else
+      Core_models.Option.Option_None <: Core_models.Option.t_Option t_EnrollmentPreflightRejection
+  }
+  <:
+  t_EnrollmentPreflightSpecTable
+
+/// First-true fold over the ranked table, from highest to lowest precedence.
+let enrollment_preflight_first_applicable (table: t_EnrollmentPreflightSpecTable)
+    : Core_models.Option.t_Option t_EnrollmentPreflightRejection =
+  match table.f_grant_unavailable <: Core_models.Option.t_Option t_EnrollmentPreflightRejection with
+  | Core_models.Option.Option_Some rejection ->
+    Core_models.Option.Option_Some rejection
+    <:
+    Core_models.Option.t_Option t_EnrollmentPreflightRejection
+  | Core_models.Option.Option_None  ->
+    match
+      table.f_account_unavailable <: Core_models.Option.t_Option t_EnrollmentPreflightRejection
+    with
+    | Core_models.Option.Option_Some rejection ->
+      Core_models.Option.Option_Some rejection
+      <:
+      Core_models.Option.t_Option t_EnrollmentPreflightRejection
+    | Core_models.Option.Option_None  ->
+      match
+        table.f_account_absent <: Core_models.Option.t_Option t_EnrollmentPreflightRejection
+      with
+      | Core_models.Option.Option_Some rejection ->
+        Core_models.Option.Option_Some rejection
+        <:
+        Core_models.Option.t_Option t_EnrollmentPreflightRejection
+      | Core_models.Option.Option_None  ->
+        match
+          table.f_epoch_mismatch <: Core_models.Option.t_Option t_EnrollmentPreflightRejection
+        with
+        | Core_models.Option.Option_Some rejection ->
+          Core_models.Option.Option_Some rejection
+          <:
+          Core_models.Option.t_Option t_EnrollmentPreflightRejection
+        | Core_models.Option.Option_None  ->
+          match
+            table.f_rotation_paused <: Core_models.Option.t_Option t_EnrollmentPreflightRejection
+          with
+          | Core_models.Option.Option_Some rejection ->
+            Core_models.Option.Option_Some rejection
+            <:
+            Core_models.Option.t_Option t_EnrollmentPreflightRejection
+          | Core_models.Option.Option_None  ->
+            match
+              table.f_commitment_missing
+              <:
+              Core_models.Option.t_Option t_EnrollmentPreflightRejection
+            with
+            | Core_models.Option.Option_Some rejection ->
+              Core_models.Option.Option_Some rejection
+              <:
+              Core_models.Option.t_Option t_EnrollmentPreflightRejection
+            | Core_models.Option.Option_None  -> table.f_credential_replaced
+
+let enrollment_preflight_spec_rejection (obs: t_EnrollmentPreflightObservation)
+    : Core_models.Option.t_Option t_EnrollmentPreflightRejection =
+  enrollment_preflight_first_applicable (enrollment_preflight_spec_table obs
+      <:
+      t_EnrollmentPreflightSpecTable)
+
+let enrollment_preflight_spec_decision (obs: t_EnrollmentPreflightObservation)
+    : t_EnrollmentPreflightDecision =
+  match
+    enrollment_preflight_spec_rejection obs
+    <:
+    Core_models.Option.t_Option t_EnrollmentPreflightRejection
+  with
+  | Core_models.Option.Option_Some reason ->
+    EnrollmentPreflightDecision_Reject reason <: t_EnrollmentPreflightDecision
+  | Core_models.Option.Option_None  ->
+    match obs.f_grant <: Core_models.Option.t_Option t_EnrollmentGrantFacts with
+    | Core_models.Option.Option_Some grant ->
+      EnrollmentPreflightDecision_Ready
+      ({ f_epoch = grant.f_epoch; f_possession = grant.f_possession } <: t_ReadyToConsume)
+      <:
+      t_EnrollmentPreflightDecision
+    | Core_models.Option.Option_None  ->
+      EnrollmentPreflightDecision_Reject
+      (EnrollmentPreflightRejection_GrantUnavailable <: t_EnrollmentPreflightRejection)
+      <:
+      t_EnrollmentPreflightDecision
+
 /// Structural reason equality, kept explicit so the extracted kernel does not
 /// depend on a derived `PartialEq` instance (hax would emit a trusted
 /// declaration for that instance).
@@ -950,25 +1249,25 @@ let enrollment_preflight_is_ready (obs: t_EnrollmentPreflightObservation) : bool
   | Core_models.Option.Option_None  -> true
   | Core_models.Option.Option_Some _ -> false
 
-let enrollment_preflight_decision_matches_spec
+let enrollment_preflight_decisions_match (actual expected: t_EnrollmentPreflightDecision) : bool =
+  match actual, expected <: (t_EnrollmentPreflightDecision & t_EnrollmentPreflightDecision) with
+  | EnrollmentPreflightDecision_Ready actual, EnrollmentPreflightDecision_Ready expected ->
+    (impl_ReadyToConsume__epoch actual <: i64) =. (impl_ReadyToConsume__epoch expected <: i64) &&
+    (impl_ReadyToConsume__possession actual <: bool) =.
+    (impl_ReadyToConsume__possession expected <: bool)
+  | EnrollmentPreflightDecision_Reject actual, EnrollmentPreflightDecision_Reject expected ->
+    enrollment_preflight_rejection_matches actual expected
+  | _ -> false
+
+/// The production decision must agree with the independent table/fold
+/// specification, including the permit's epoch and possession fields. This is
+/// deliberately *not* stated in terms of the production rejection predicate.
+let enrollment_preflight_decision_matches_independent_spec
       (obs: t_EnrollmentPreflightObservation)
       (decision: t_EnrollmentPreflightDecision)
     : bool =
-  match decision <: t_EnrollmentPreflightDecision with
-  | EnrollmentPreflightDecision_Ready permit ->
-    enrollment_preflight_is_ready obs &&
-    (match obs.f_grant <: Core_models.Option.t_Option t_EnrollmentGrantFacts with
-      | Core_models.Option.Option_Some grant ->
-        permit.f_epoch =. grant.f_epoch && permit.f_possession =. grant.f_possession
-      | Core_models.Option.Option_None  -> false)
-  | EnrollmentPreflightDecision_Reject reason ->
-    match
-      enrollment_preflight_rejection obs
-      <:
-      Core_models.Option.t_Option t_EnrollmentPreflightRejection
-    with
-    | Core_models.Option.Option_Some actual -> enrollment_preflight_rejection_matches actual reason
-    | Core_models.Option.Option_None  -> false
+  enrollment_preflight_decisions_match decision
+    (enrollment_preflight_spec_decision obs <: t_EnrollmentPreflightDecision)
 
 /// Decide whether the handler may attempt to consume the grant, and why not
 /// otherwise. This function has no effect and cannot observe consumption.
@@ -978,7 +1277,7 @@ let plan_enrollment_preflight (obs: t_EnrollmentPreflightObservation)
       (ensures
         fun decision ->
           let decision:t_EnrollmentPreflightDecision = decision in
-          enrollment_preflight_decision_matches_spec obs decision) =
+          enrollment_preflight_decision_matches_independent_spec obs decision) =
   match
     enrollment_preflight_rejection obs <: Core_models.Option.t_Option t_EnrollmentPreflightRejection
   with
@@ -996,6 +1295,275 @@ let plan_enrollment_preflight (obs: t_EnrollmentPreflightObservation)
       (EnrollmentPreflightRejection_GrantUnavailable <: t_EnrollmentPreflightRejection)
       <:
       t_EnrollmentPreflightDecision
+
+let enrollment_preflight_rejection_is_first_applicable (obs: t_EnrollmentPreflightObservation)
+    : bool =
+  match
+    enrollment_preflight_rejection obs <: Core_models.Option.t_Option t_EnrollmentPreflightRejection
+  with
+  | Core_models.Option.Option_Some actual ->
+    (match
+        enrollment_preflight_spec_rejection obs
+        <:
+        Core_models.Option.t_Option t_EnrollmentPreflightRejection
+      with
+      | Core_models.Option.Option_Some expected ->
+        enrollment_preflight_rejection_matches actual expected
+      | Core_models.Option.Option_None  -> false)
+  | Core_models.Option.Option_None  ->
+    match
+      enrollment_preflight_spec_rejection obs
+      <:
+      Core_models.Option.t_Option t_EnrollmentPreflightRejection
+    with
+    | Core_models.Option.Option_None  -> true
+    | Core_models.Option.Option_Some _ -> false
+
+/// Universal checked lemma: for every observation, the production rejection is
+/// exactly the first applicable entry of the independent ranked table.
+let enrollment_preflight_ordering_is_checked (obs: t_EnrollmentPreflightObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. true) = enrollment_preflight_rejection_is_first_applicable obs
+
+let enrollment_preflight_ready_permit_matches_guards (obs: t_EnrollmentPreflightObservation) : bool =
+  match plan_enrollment_preflight obs <: t_EnrollmentPreflightDecision with
+  | EnrollmentPreflightDecision_Ready permit ->
+    (match obs.f_grant <: Core_models.Option.t_Option t_EnrollmentGrantFacts with
+      | Core_models.Option.Option_Some grant ->
+        let readiness:t_EnrollmentPreflightReadiness = enrollment_preflight_readiness obs in
+        readiness.f_grant_present && readiness.f_account_observed && readiness.f_epoch_matches &&
+        readiness.f_rotation_active &&
+        readiness.f_authority_present &&
+        (impl_ReadyToConsume__epoch permit <: i64) =. grant.f_epoch &&
+        (impl_ReadyToConsume__possession permit <: bool) =. grant.f_possession
+      | Core_models.Option.Option_None  -> false)
+  | EnrollmentPreflightDecision_Reject _ -> true
+
+/// Universal checked lemma: a `Ready` decision implies every positive
+/// readiness guard and the observed grant\'s epoch/possession fields.
+let ready_preflight_implies_guards_and_fields (obs: t_EnrollmentPreflightObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. true) = enrollment_preflight_ready_permit_matches_guards obs
+
+let enrollment_preflight_guards_imply_ready (obs: t_EnrollmentPreflightObservation) : bool =
+  let readiness:t_EnrollmentPreflightReadiness = enrollment_preflight_readiness obs in
+  if
+    readiness.f_grant_present && readiness.f_account_observed && readiness.f_epoch_matches &&
+    readiness.f_rotation_active &&
+    readiness.f_authority_present
+  then
+    match obs.f_grant <: Core_models.Option.t_Option t_EnrollmentGrantFacts with
+    | Core_models.Option.Option_Some grant ->
+      (match plan_enrollment_preflight obs <: t_EnrollmentPreflightDecision with
+        | EnrollmentPreflightDecision_Ready permit ->
+          (impl_ReadyToConsume__epoch permit <: i64) =. grant.f_epoch &&
+          (impl_ReadyToConsume__possession permit <: bool) =. grant.f_possession
+        | EnrollmentPreflightDecision_Reject _ -> false)
+    | Core_models.Option.Option_None  -> false
+  else true
+
+/// Universal checked converse: the conjunction of every positive readiness
+/// guard implies a `Ready` permit carrying the observed grant\'s fields.
+let all_applicable_guards_imply_ready (obs: t_EnrollmentPreflightObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. true) = enrollment_preflight_guards_imply_ready obs
+
+let enrollment_preflight_ready_matches_independent_readiness (obs: t_EnrollmentPreflightObservation)
+    : bool =
+  let readiness:t_EnrollmentPreflightReadiness = enrollment_preflight_readiness obs in
+  (enrollment_preflight_is_ready obs <: bool) =.
+  (readiness.f_grant_present && readiness.f_account_observed && readiness.f_epoch_matches &&
+  readiness.f_rotation_active &&
+  readiness.f_authority_present)
+
+/// Universal checked lemma connecting the production readiness predicate to
+/// the independent positive guards.
+let ready_preflight_matches_independent_readiness (obs: t_EnrollmentPreflightObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. true) = enrollment_preflight_ready_matches_independent_readiness obs
+
+let enrollment_preflight_present_observation
+      (grant: t_EnrollmentGrantFacts)
+      (account: t_EnrollmentAccountFacts)
+    : t_EnrollmentPreflightObservation =
+  {
+    f_grant
+    =
+    Core_models.Option.Option_Some grant <: Core_models.Option.t_Option t_EnrollmentGrantFacts;
+    f_account = EnrollmentAccountObservation_Present account <: t_EnrollmentAccountObservation
+  }
+  <:
+  t_EnrollmentPreflightObservation
+
+let enrollment_preflight_rejects_as
+      (obs: t_EnrollmentPreflightObservation)
+      (expected: t_EnrollmentPreflightRejection)
+    : bool =
+  match
+    enrollment_preflight_rejection obs <: Core_models.Option.t_Option t_EnrollmentPreflightRejection
+  with
+  | Core_models.Option.Option_Some actual -> enrollment_preflight_rejection_matches actual expected
+  | Core_models.Option.Option_None  -> false
+
+/// Parametric adjacent-precedence lemma: whenever the epoch guard and the
+/// rotation guard both apply, the production predicate reports `EpochMismatch`.
+let epoch_mismatch_precedes_rotation_paused
+      (grant: t_EnrollmentGrantFacts)
+      (account: t_EnrollmentAccountFacts)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. true) =
+  let obs:t_EnrollmentPreflightObservation =
+    enrollment_preflight_present_observation grant account
+  in
+  let guards:t_EnrollmentPreflightGuards = enrollment_preflight_guards obs in
+  if guards.f_epoch_mismatch && guards.f_rotation_paused
+  then
+    enrollment_preflight_rejects_as obs
+      (EnrollmentPreflightRejection_EpochMismatch <: t_EnrollmentPreflightRejection)
+  else true
+
+/// Parametric overlap lemma: an epoch mismatch outranks a missing commitment.
+let epoch_mismatch_precedes_commitment_missing
+      (grant: t_EnrollmentGrantFacts)
+      (account: t_EnrollmentAccountFacts)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. true) =
+  let obs:t_EnrollmentPreflightObservation =
+    enrollment_preflight_present_observation grant account
+  in
+  let guards:t_EnrollmentPreflightGuards = enrollment_preflight_guards obs in
+  if guards.f_epoch_mismatch && guards.f_commitment_missing
+  then
+    enrollment_preflight_rejects_as obs
+      (EnrollmentPreflightRejection_EpochMismatch <: t_EnrollmentPreflightRejection)
+  else true
+
+/// Parametric overlap lemma: an epoch mismatch outranks a replaced credential.
+let epoch_mismatch_precedes_credential_replaced
+      (grant: t_EnrollmentGrantFacts)
+      (account: t_EnrollmentAccountFacts)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. true) =
+  let obs:t_EnrollmentPreflightObservation =
+    enrollment_preflight_present_observation grant account
+  in
+  let guards:t_EnrollmentPreflightGuards = enrollment_preflight_guards obs in
+  if guards.f_epoch_mismatch && guards.f_credential_replaced
+  then
+    enrollment_preflight_rejects_as obs
+      (EnrollmentPreflightRejection_EpochMismatch <: t_EnrollmentPreflightRejection)
+  else true
+
+/// Parametric adjacent-precedence lemma: whenever the rotation guard and the
+/// commitment guard both apply and the earlier epoch guard does not, the
+/// production predicate reports `RotationPaused`.
+let rotation_paused_precedes_commitment_missing
+      (grant: t_EnrollmentGrantFacts)
+      (account: t_EnrollmentAccountFacts)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. true) =
+  let obs:t_EnrollmentPreflightObservation =
+    enrollment_preflight_present_observation grant account
+  in
+  let guards:t_EnrollmentPreflightGuards = enrollment_preflight_guards obs in
+  if guards.f_rotation_paused && guards.f_commitment_missing && ~.guards.f_epoch_mismatch
+  then
+    enrollment_preflight_rejects_as obs
+      (EnrollmentPreflightRejection_RotationPaused <: t_EnrollmentPreflightRejection)
+  else true
+
+/// Parametric adjacent-precedence lemma: whenever the rotation guard and the
+/// replaced-credential guard both apply and the earlier epoch guard does not,
+/// the production predicate reports `RotationPaused`.
+let rotation_paused_precedes_credential_replaced
+      (grant: t_EnrollmentGrantFacts)
+      (account: t_EnrollmentAccountFacts)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. true) =
+  let obs:t_EnrollmentPreflightObservation =
+    enrollment_preflight_present_observation grant account
+  in
+  let guards:t_EnrollmentPreflightGuards = enrollment_preflight_guards obs in
+  if guards.f_rotation_paused && guards.f_credential_replaced && ~.guards.f_epoch_mismatch
+  then
+    enrollment_preflight_rejects_as obs
+      (EnrollmentPreflightRejection_RotationPaused <: t_EnrollmentPreflightRejection)
+  else true
+
+/// Parametric disjointness lemma: a possession grant\'s commitment guard and a
+/// WebAuthn grant\'s credential guard can never both apply, so their adjacent
+/// order in the table is immaterial (the README records this explicitly).
+let commitment_missing_and_credential_replaced_are_disjoint
+      (grant: t_EnrollmentGrantFacts)
+      (account: t_EnrollmentAccountFacts)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. true) =
+  let obs:t_EnrollmentPreflightObservation =
+    enrollment_preflight_present_observation grant account
+  in
+  let guards:t_EnrollmentPreflightGuards = enrollment_preflight_guards obs in
+  ~.(guards.f_commitment_missing && guards.f_credential_replaced)
+
+/// Parametric privacy-precedence lemma: for every possible account observation,
+/// a missing grant is rejected as `GrantUnavailable` before any account state
+/// is considered.
+let missing_grant_precedes_account_rejection (account: t_EnrollmentAccountObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. true) =
+  let obs:t_EnrollmentPreflightObservation =
+    {
+      f_grant = Core_models.Option.Option_None <: Core_models.Option.t_Option t_EnrollmentGrantFacts;
+      f_account = account
+    }
+    <:
+    t_EnrollmentPreflightObservation
+  in
+  enrollment_preflight_rejects_as obs
+    (EnrollmentPreflightRejection_GrantUnavailable <: t_EnrollmentPreflightRejection)
 
 let missing_preflight_grant_can_be_ready (obs: t_EnrollmentPreflightObservation)
     : Prims.Pure bool

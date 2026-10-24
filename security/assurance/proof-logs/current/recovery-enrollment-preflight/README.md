@@ -1,35 +1,59 @@
 # Recovery enrollment preflight: local evidence
 
-Delegated increment on baseline `350cd57` in worktree `t3-751c3edd`. It adds a
-production-used verified preflight/sequencing kernel for
-`serverVELA/vela-server/src/recovery/enroll_device.rs` and wires the real
-handler through it. The delegated run made no push, PR, global assurance, correspondence or
-manifest edit. Parent integration updates those inventories separately.
+Review-correction increment on baseline `5361406` in worktree `t3-5a8ac7d5`.
+The original increment added a production-used verified preflight/sequencing
+kernel and wired `serverVELA/vela-server/src/recovery/enroll_device.rs` through
+it. This correction changes only the policy crate's source/tests/proof runner
+and this evidence: no handler, server test, push, PR, global assurance,
+correspondence or manifest edit was made.
 
 ## Artifact and contracts
 
-- Selectors in `serverVELA/vela-recovery-policy/verify-fstar.sh`: **79**
-- `ensures` postconditions in the generated extraction: **79**
+- Selectors in `serverVELA/vela-recovery-policy/verify-fstar.sh`: **90**
+- `ensures` postconditions in the generated extraction: **90**
 - Local `assume`/`admit`/`--lax` declarations: **0**
 - Fresh artifact (exact, not hand-edited):
   [`Vela_recovery_policy.fst`](Vela_recovery_policy.fst)
-- SHA-256: `c3a4d03995c24ec0739da16f483c458d8714b2666df6e52d1ce0bdad90f7c828`
+- SHA-256: `eaf1148be9567b8d8d6dbca8ceca3a4369df8b3c3856f19afc2de9eeee070327`
 - The checked-in extraction
   `serverVELA/vela-recovery-policy/proofs/fstar/extraction/Vela_recovery_policy.fst`
   is the same file.
 
-Eight contracts are new:
+Eleven checked ordering/readiness lemmas are new in this correction:
 
-1. `plan_enrollment_preflight`
-2. `missing_preflight_grant_can_be_ready`
-3. `unqueried_preflight_account_can_be_ready`
-4. `absent_preflight_account_can_be_ready`
-5. `epoch_mismatched_preflight_account_can_be_ready`
-6. `rekeying_preflight_account_can_be_ready`
-7. `replaced_preflight_credential_can_be_ready`
-8. `commitmentless_preflight_possession_can_be_ready`
+1. `enrollment_preflight_ordering_is_checked`
+2. `ready_preflight_implies_guards_and_fields`
+3. `all_applicable_guards_imply_ready`
+4. `ready_preflight_matches_independent_readiness`
+5. `epoch_mismatch_precedes_rotation_paused`
+6. `epoch_mismatch_precedes_commitment_missing`
+7. `epoch_mismatch_precedes_credential_replaced`
+8. `rotation_paused_precedes_commitment_missing`
+9. `rotation_paused_precedes_credential_replaced`
+10. `commitment_missing_and_credential_replaced_are_disjoint`
+11. `missing_grant_precedes_account_rejection`
+
+They join the prior eight preflight contracts (the decision plus seven
+rejection/unknown negative witnesses), giving 90/90.
 
 `delegated/fstar.log` ends with `All verification conditions discharged successfully`.
+
+## Independent ordering specification
+
+The production predicate remains the nested status/message if-chain. Separately,
+`enrollment_preflight_guards` states seven raw guard formulas and
+`enrollment_preflight_spec_table` places them in rank order; the
+`enrollment_preflight_first_applicable` first-true fold selects the earliest.
+The production predicate is not built from that table. The universal checked
+lemma `enrollment_preflight_ordering_is_checked` proves, for every observation,
+that the production rejection equals the first applicable table entry.
+`EnrollmentPreflightReadiness` independently states the positive readiness
+guards; `ready_preflight_implies_guards_and_fields` proves `Ready` implies every
+guard and exactly the observed grant's epoch/possession, and
+`all_applicable_guards_imply_ready` proves the converse. The parametric lemmas
+prove adjacent precedence for arbitrary grant/account values (not fixed
+constant witnesses), and the disjointness lemma proves the commitment and
+credential guards cannot both apply.
 
 ## What the kernel decides
 
@@ -48,6 +72,11 @@ historical status/message precedence:
 6. `CommitmentMissing` -> 401 (`... recovery setup deletion or rotation`)
 7. `CredentialReplaced` -> 401 (`... credential replacement`)
 
+The commitment guard applies only to possession grants and the credential guard
+only to WebAuthn grants, so ranks 6 and 7 are disjoint; the table orders
+commitment before credential only to make the total order explicit. The checked
+disjointness lemma records this.
+
 The handler deliberately passes `NotQueried` when the non-consuming grant
 lookup misses, so the 401 precedes any account query (privacy). Key decoding
 and length validation still precede the grant lookup and return 400. The
@@ -65,11 +94,15 @@ Run under `~/.local/opt/vela-tools/bin/vela-heavy` (global lock, 3 GiB, no swap,
 one worker), pinned hax 0.3.7 / F★ 2025.10.06 / Z3 4.13.3, with the warm parent
 `t3-700776df/target` reused through `CARGO_TARGET_DIR`:
 
-- `delegated/fstar.log`: fresh extraction and full F★ check (79/79).
-- `delegated/policy-tests.log`: 7 unit tests + 8 observation-enumeration tests.
-- `delegated/integration-tests.log`: 63/63 server integration tests.
-- `delegated/server-lib-tests.log`: 57/57 server library tests.
-- `delegated/lifecycle-model-tests.log`: 3/3 bounded M14 checks.
+- `delegated/fstar.log`: fresh extraction and full F★ check (90/90), including
+  the crate's 7 unit tests and 8 observation-enumeration tests.
+- `delegated/policy-tests.log`: the same 7 unit tests + 8
+  observation-enumeration tests, whose oracle is an independent ranked
+  table/fold rather than a copy of the production if-chain.
+- `delegated/integration-tests.log`: 63/63 server integration tests from
+  baseline `5361406`; no handler/server test changed in this correction.
+- `delegated/server-lib-tests.log`: 57/57 server library tests from `5361406`.
+- `delegated/lifecycle-model-tests.log`: 3/3 bounded M14 checks from `5361406`.
 
 New integration coverage:
 
@@ -87,25 +120,34 @@ New integration coverage:
   missing commitment rejects without consuming; re-staging a *different*
   non-empty commitment revives the same grant.
 
-The policy enumeration exercises the full grant/account/epoch/rotation/
-credential/commitment grid. Its oracle mirrors the implementation's ordering;
-it is a regression, not an independent formal specification. The checked
-plan postcondition refines that shared rejection predicate. A separate proof
-against independently stated ordering is still required. The post-insert race
-recheck historically prioritizes authority revocation before rotation, unlike
-preflight; those concurrent effects remain outside this kernel.
+The policy enumeration checks every rejection reason and its precedence over
+the full grant/account/epoch/rotation/credential/commitment grid. Its expected
+value comes from a local ranked table/fold oracle, not from the crate's
+production predicate or specification function. The same enumeration also
+exercises every parametric precedence/disjointness lemma and checks that
+`Ready`/permit fields, readiness guards and the independent specification agree.
+
+The post-insert race recheck historically prioritizes authority revocation
+before rotation, unlike preflight. Those effects remain outside this kernel.
 
 ## Remaining correspondence and limits
 
-- At delegated-run time the parent inventory was 212/219 and recovery 71.
-  Parent integration updates it to 220 postconditions / 227 selections and
-  recovery 79. Hosted reproduction of this increment remains pending.
-- The kernel proves conditional decisions and permit construction, not the
-  handler's SQL/store effects, the atomic `get_del`, the guarded insert, or the
-  mapping from status/message to HTTP. Those remain inspected glue.
+- The baseline at parent `ba2f486` has 220 postconditions / 227 selections
+  and 79 recovery contracts. This correction adds eleven, giving **231 / 238**
+  and **90 recovery contracts**. Parent integration updates the global gate,
+  correspondence and manifest. Hosted reproduction remains pending.
+- The extracted kernel contains no derived-`Eq`/`PartialEq` assume-val: reason
+  equality is the explicit `enrollment_preflight_rejection_matches` matcher and
+  all comparisons in checked functions are on booleans, integers or enums.
+- The kernel proves conditional decisions, permit construction and the
+  independent ordering/readiness specification, not the handler's SQL/store
+  effects, the atomic `get_del`, the guarded insert, or the mapping from
+  status/message to HTTP. Those remain inspected glue. Trust in the OS,
+  compiler, hax, F★, Z3 and Rust primitives does not prove those effects either.
 - The stored grant embeds no user id, commitment digest/generation or split id.
   `user_matches` is the `(user_id, grant)` store-key binding, not an independent
-  identity comparison.
+  identity comparison. The commitment guard is presence-only, not an exact
+  commitment/generation binding.
 - Early credential/commitment rejection runs before consumption. The same grant
   can therefore be redeemed within TTL if the old credential is restored or any
   non-empty commitment is restaged. This is characterized by tests; it is not a
@@ -117,7 +159,7 @@ preflight; those concurrent effects remain outside this kernel.
   clocks, WebAuthn/proof verifiers, rate limits) remain trusted.
 - No full handler/I/O, native, protocol or whole-system theorem is claimed.
 
-## Parent reproduction
+## Historical parent reproduction (79-contract snapshot)
 
 `parent-fstar.log` records fresh extraction and full checking in the parent
 `t3-700776df` checkout after integration as `5361406`. The generated extraction is
