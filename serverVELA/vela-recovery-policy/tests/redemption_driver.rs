@@ -320,19 +320,26 @@ fn insert_success_is_terminal_and_no_later_event_restores_or_succeeds_again() {
 }
 
 #[test]
-fn insert_error_instructs_restoration_but_does_not_claim_the_insert_did_not_commit() {
+fn insert_error_is_terminal_and_never_restores_the_grant() {
     let (driver, effect) = advance(
         to_insert(false),
         &[RedemptionEvent::Insert(InsertObservation::Failed)],
     );
+    // The INSERT may have committed before the error surfaced, so the grant
+    // stays consumed: restoring it would let a second request enroll another
+    // device with the same grant.
     assert_eq!(
         effect,
-        RedemptionEffect::RestoreAndFail(RedemptionFailure::InsertStorage)
+        RedemptionEffect::Fail(RedemptionFailure::InsertStorage)
     );
-    assert!(driver.restored);
+    assert!(!driver.restored);
     assert!(!driver.insert_succeeded);
-    // The driver observed `Failed`; it cannot distinguish a rolled-back insert
-    // from an ambiguous commit. Tests pin only the decision, not SQL outcome.
+    assert_eq!(driver.stage, RedemptionStage::Done);
+    for event in all_events() {
+        let (after, effect) = advance(driver, &[event]);
+        assert_eq!(effect, RedemptionEffect::Idle, "{event:?}");
+        assert_eq!(after, driver, "{event:?}");
+    }
 }
 
 #[test]
@@ -446,37 +453,6 @@ fn every_stage_ignores_every_out_of_order_event() {
             }
         }
     }
-}
-
-#[test]
-fn failed_insert_then_a_fresh_redemption_can_succeed_if_the_grant_is_restored() {
-    // Decision-level characterization of the retry/ambiguity issue: the failed
-    // insert observation only instructs a restore. Nothing in the driver
-    // (or in the handler's error path) establishes that the INSERT did not
-    // commit before returning the error, so a fresh driver instance fed the
-    // restored grant can reach Complete. The single-use store `get_del` blocks
-    // ordinary concurrent double consumption, but the unconditional restore
-    // after an ambiguous commit can re-arm the same grant for a second insert.
-    let (first, first_effect) = advance(
-        to_insert(false),
-        &[RedemptionEvent::Insert(InsertObservation::Failed)],
-    );
-    assert_eq!(
-        first_effect,
-        RedemptionEffect::RestoreAndFail(RedemptionFailure::InsertStorage)
-    );
-    assert!(first.restored && !first.insert_succeeded);
-
-    let (second, second_effect) = advance(
-        begin_redemption(credential_ready()).driver,
-        &[
-            RedemptionEvent::Consumed(matched_consumption(false)),
-            RedemptionEvent::FinalPolicy(permitted_final_policy(false)),
-            RedemptionEvent::Insert(InsertObservation::Inserted),
-        ],
-    );
-    assert_eq!(second_effect, RedemptionEffect::Complete);
-    assert!(second.insert_succeeded);
 }
 
 #[test]

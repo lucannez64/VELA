@@ -100,22 +100,31 @@ arbitrary `list t_RedemptionEvent`:
     restoration.
 13. `redemption_trace_theorem` — final soundness, success implies no restore,
     restore implies no success, and success count ≤ 1.
-14-19. Reachability witnesses: success, insert-error restoration, terminal
+14. `step_after_done` — a finished driver is inert for every event.
+15. `done_suffix_inert` — every unbounded suffix after `Done` is inert and has
+    zero successes.
+16. `insert_stage_never_restores` — no insert outcome emits a restoration;
+    the recheck stage (the only later restore source) is reached only by
+    `Skipped`.
+17. `failed_insert_is_final` — `Failed` yields `Fail(InsertStorage)`, no
+    restore, and every later suffix is inert.
+18-23. Reachability witnesses: success, terminal insert error, terminal
     credential revocation, policy denial, retryable rotation restoration, and a
     possession-permit insert that has not yet succeeded.
 
 `Complete`, `Fail` etc. are observed effects/decisions. The proof does **not**
 claim that SQL/store operations have their intended effects, nor that a
-`RestoreAndFail` restoration succeeded, nor that `InsertObservation::Failed`
-means the INSERT did not commit.
+`RestoreAndFail` restoration succeeded. `InsertObservation::Failed` may hide a
+committed INSERT, which is why it is terminal.
 
 ## Tests vs proof
 
 `cargo-test-recovery-policy.log` covers 7 unit tests, 8 existing fact tests and
-13 new exhaustive driver tests (stage × event coverage, out-of-order inertness,
+12 new exhaustive driver tests (stage × event coverage, out-of-order inertness,
 BFS reachable-state invariant checks, one-success-per-instance, no restore after
 success, missing/replaced/matched consumption, policy/rekey denial, insert
-zero/error/success, every recheck outcome, and the restore-then-retry path).
+zero/error/success, every recheck outcome, and the terminal insert error
+with an inert suffix).
 
 `cargo-test-server-integration.log` is the full 64-test HTTP integration suite
 after the handler rewiring; it includes the existing enrollment grant
@@ -129,35 +138,26 @@ handler/database trace model (depth 4, 60s).
 extraction/F* check followed by the focused driver gate. Tests and proof are
 separate evidence; neither substitutes for the other.
 
-## Concrete restore/ambiguity issue (not assumed away)
+## Restore/ambiguity issue: found and fixed
 
 Atomic `Store::get_del` (`Tree::remove` linearization) prevents two ordinary
-concurrent requests from both consuming one live grant. However,
-`restore_enroll_grant` is an unconditional `set_ex` with a fresh full TTL, and
-`insert_recovered_device` returns an error if the database call fails without
-establishing whether the `INSERT ... WHERE EXISTS` committed.
-
-Concrete duplicate path:
+concurrent requests from both consuming one live grant. The first version of
+this driver, however, restored the grant after any insert error, and
+`insert_recovered_device` can return an error after the `INSERT ... WHERE
+EXISTS` committed (lost response). That gave a duplicate path:
 
 1. Request A consumes grant G.
-2. A's guarded INSERT commits device D1, but the database call surfaces an
-   error (ambiguous commit / lost response).
-3. The handler observes `InsertObservation::Failed`, restores G unconditionally
-   and returns 500.
-4. Request B consumes the restored G, the guard passes, and the INSERT commits
-   device D2.
+2. A's guarded INSERT commits device D1, but the call surfaces an error.
+3. The handler restored G and returned 500.
+4. Request B consumes the restored G and the INSERT commits device D2.
 
-One single-use grant therefore yields two device rows in that failure mode.
-The driver models the decision (`Failed` → `RestoreAndFail(InsertStorage)`) and
-the crate test `failed_insert_then_a_fresh_redemption_can_succeed_if_the_grant_is_restored`
-characterizes it; the SQL ambiguity itself is inspected, not tested.
-
-A safe policy would need one of: an idempotency/grant id in the device insert
-with a uniqueness constraint; a compare-and-swap restoration generation so a
-restore cannot re-arm a grant after a possibly-committed insert; or treating
-ambiguous insert errors as terminal and reconciling by device id. This
-increment does not silently strengthen the grant binding or claim the issue is
-fixed.
+One single-use grant could therefore yield two device rows. The fix makes
+`InsertObservation::Failed` terminal (`Fail(InsertStorage)`, still rendered as
+500 with the database error): the grant stays consumed and the user restarts
+recovery. Restoration now only follows paths where nothing was inserted.
+Lemmas 16-17 and the test `insert_error_is_terminal_and_never_restores_the_grant`
+check the decision; that the handler performs no restore on that branch is
+inspected code, and the SQL ambiguity itself is not tested.
 
 ## Scope and open obligations
 
@@ -165,12 +165,12 @@ fixed.
   requests, does not prove `get_del` atomicity, SQL row/guard semantics, the
   live recheck query, store TTL/restore success, or crash/retry behavior.
 - The preflight kernel is unchanged and remains a separate checked decision.
-- `InsertObservation::Failed` is an observation; no proof that the insert
-  rolled back.
-- Restoration remains unconditional `set_ex`; no permanent-revocation or exact
-  commitment binding claim.
-- No full F-2 closure is claimed. Handler effect traces and the concurrent
-  single-grant duplication above remain open.
+- `InsertObservation::Failed` is an observation; it is treated as possibly
+  committed and is terminal.
+- Restoration remains unconditional `set_ex` on the no-insert paths; no
+  permanent-revocation or exact commitment binding claim.
+- No full F-2 closure is claimed. Handler effect traces and concurrent
+  single-grant composition remain open.
 - The historical 90-contract extraction is byte-identical after the focused
   gate (`git status` on `proofs/fstar/extraction/` is clean).
 

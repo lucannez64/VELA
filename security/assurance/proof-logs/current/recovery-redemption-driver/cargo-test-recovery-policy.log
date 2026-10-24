@@ -1,6 +1,5 @@
-   Compiling vela-recovery-policy v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-66a444da/serverVELA/vela-recovery-policy)
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.54s
-     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-recovery-policy/a0457367b9592201/out/vela_recovery_policy-a0457367b9592201)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.14s
+     Running unittests src/lib.rs (../target/debug/build/vela-recovery-policy/a0457367b9592201/out/vela_recovery_policy-a0457367b9592201)
 
 running 7 tests
 test tests::enrollment_requires_an_exact_live_epoch_grant ... ok
@@ -13,7 +12,7 @@ test tests::recovery_requires_the_current_credential_and_one_shot_challenge ... 
 
 test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
-     Running tests/fact_construction.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-recovery-policy/6539ca1396ad42f7/out/fact_construction-6539ca1396ad42f7)
+     Running tests/fact_construction.rs (../target/debug/build/vela-recovery-policy/6539ca1396ad42f7/out/fact_construction-6539ca1396ad42f7)
 
 running 8 tests
 test credential_update_facts_are_exactly_the_assertion_and_metadata_observations ... ok
@@ -25,16 +24,15 @@ test preflight_decides_each_rejection_reason_in_handler_precedence_order ... ok
 test proof_initiate_facts_are_exactly_the_decoded_account_share_commitment_and_store_observations ... ok
 test recover_facts_are_exactly_the_attempt_assertion_and_row_observations ... ok
 
-test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
-     Running tests/redemption_driver.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-recovery-policy/eaab74a13f6ffda6/out/redemption_driver-eaab74a13f6ffda6)
+     Running tests/redemption_driver.rs (../target/debug/build/vela-recovery-policy/eaab74a13f6ffda6/out/redemption_driver-eaab74a13f6ffda6)
 
-running 13 tests
+running 12 tests
 test begin_requests_consumption_and_carries_the_preflight_epoch_and_type ... ok
 test every_stage_ignores_every_out_of_order_event ... ok
-test failed_insert_then_a_fresh_redemption_can_succeed_if_the_grant_is_restored ... ok
 test final_policy_denial_is_terminal_and_does_not_restore ... ok
-test insert_error_instructs_restoration_but_does_not_claim_the_insert_did_not_commit ... ok
+test insert_error_is_terminal_and_never_restores_the_grant ... ok
 test insert_success_is_terminal_and_no_later_event_restores_or_succeeds_again ... ok
 test matched_consumption_alone_does_not_authorize_an_insert ... ok
 test matching_enrollment_and_rekey_permits_issue_the_exact_insert_authority ... ok
@@ -44,7 +42,7 @@ test rekey_rejection_or_epoch_mismatch_restores ... ok
 test replaced_or_mismatched_consumption_restores_the_grant ... ok
 test zero_row_insert_requires_the_live_recheck_in_historical_precedence ... ok
 
-test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
    Doc-tests vela_recovery_policy
 

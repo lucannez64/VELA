@@ -74,8 +74,8 @@ The exact F* argv is printed in `fstar-full-verify.log`.
 See `source-hashes.txt`. The focused checked modules are:
 
 - `Vela_recovery_policy.Driver.fst`
-  `cf79d4bb4e691e95e6dc9f14734d3b8e512ad8af1136eda1319be8bd45f86841`
+  `1fe6d317eb20bba515092dc7d3181900968b5c64b65387195d58904db4fd1fe1`
 - `Vela_recovery_policy.fst` (focused partial root)
   `fe2380cc9ccb38178ccd064abc79c0a5e3e33d2df2ef3670b5a07813feaac545`
 - `Vela_recovery_policy_driver_lemmas.fst`
-  `c84df84a3ea61c1bae18c60c939fac29723442956c9c4f51ca41926b374b9542`
+  `074776c05b07a71af48c3fa39048f6e8220f8169ec3ab702b81a270a0aedb022`

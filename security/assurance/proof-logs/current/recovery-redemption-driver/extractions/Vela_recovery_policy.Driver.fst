@@ -350,7 +350,7 @@ let on_insert (driver: t_RedemptionDriver) (observation: t_InsertObservation)
         t_RedemptionDriver)
       (RedemptionEffect_Recheck <: t_RedemptionEffect)
   | InsertObservation_Failed  ->
-    restore_then_fail driver (RedemptionFailure_InsertStorage <: t_RedemptionFailure)
+    terminal driver (RedemptionFailure_InsertStorage <: t_RedemptionFailure)
 
 let on_recheck (driver: t_RedemptionDriver) (observation: t_AuthorityRecheckObservation)
     : t_RedemptionTransition =

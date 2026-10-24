@@ -430,6 +430,11 @@ pub async fn post_enroll_device(
                 body.recovery_grant,
                 &consumed_grant,
             )?;
+            return Err(redemption_failure_error(failure));
+        }
+        // An insert error may hide a committed row, so the grant stays
+        // consumed; the user restarts recovery instead of reusing it.
+        RedemptionEffect::Fail(failure) => {
             return Err(match (failure, insert_error) {
                 (RedemptionFailure::InsertStorage, Some(error)) => {
                     AppError::Internal(error.to_string())
@@ -437,7 +442,6 @@ pub async fn post_enroll_device(
                 _ => redemption_failure_error(failure),
             });
         }
-        RedemptionEffect::Fail(failure) => return Err(redemption_failure_error(failure)),
         _ => {
             return Err(AppError::Internal(
                 "redemption driver produced an unexpected insert effect".into(),

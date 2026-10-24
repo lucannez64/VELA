@@ -58,22 +58,24 @@ proves, per driver instance:
 - no restoration effect is emitted after a success;
 - `Complete` is only emitted in response to an `Inserted` observation, never
   `Skipped` or `Failed`;
-- reachable witnesses exercise success, insert-error restoration, terminal
+- no insert outcome restores the grant: restoration after an insert attempt
+  happens only from the recheck stage, which only a definite zero-row
+  (`Skipped`) insert reaches;
+- an insert error (`Failed`) is final: it fails without restoration and every
+  later event, of any number, is inert;
+- reachable witnesses exercise success, terminal insert error, terminal
   credential revocation, policy denial and the retryable rotation conflict.
 
 These are per-request properties over *observations*. They are not a theorem
 about two concurrent requests sharing one grant, and they do not prove that
-the atomic `get_del`, the guarded SQL insert, the live recheck query or the
-unconditional `restore_enroll_grant` have their intended effects. In
-particular `InsertObservation::Failed` records only the observed error: an
-ambiguous commit is compatible with it. The current handler restores the grant
-on that error, so if the INSERT did commit before the error surfaced, a second
-redemption of the restored grant can insert a second device row. The store's
-atomic `get_del` prevents two ordinary concurrent requests from both consuming
-a live grant, but it does not disambiguate that committed-but-errored insert.
-This is a concrete open issue, not assumed away. A safe restoration policy
-needs an idempotency key/grant id on the device insert or a compare-and-swap
-restoration generation that does not re-arm on ambiguous outcomes.
+the atomic `get_del`, the guarded SQL insert, the live recheck query or
+`restore_enroll_grant` have their intended effects.
+
+An earlier version of this driver restored the grant after an insert error.
+Because an error can hide a committed INSERT, a second redemption of the
+restored grant could then insert a second device row. The driver now treats
+the error as terminal: the grant stays consumed and the user restarts recovery.
+The restore on a definite zero-row insert remains, because no row was written.
 
 ## Run
 
@@ -185,11 +187,9 @@ historical revocation-before-rotation priority are modeled by
 `driver::on_recheck`, but the query's rows, the SQL guard's authority and the
 store effects remain outside the policy proof.
 
-`restore_enroll_grant` is an unconditional `set_ex` with a fresh full TTL. If a
-guarded INSERT commits but the database call surfaces an error (ambiguous
-commit), the handler still takes the `InsertObservation::Failed` restoration
-path and re-arms the grant. A later redemption can then insert a second device
-row. Atomic `get_del` prevents two ordinary concurrent requests from both
-consuming a live grant, but it does not disambiguate a committed-but-errored
-insert. This increment documents the issue; it does not prove absence of
-duplicate redemption across that failure mode.
+`restore_enroll_grant` is an unconditional `set_ex` with a fresh full TTL. It
+now runs only on paths where nothing was inserted: a consumed grant that does
+not match the preflight, a rekey rejection, or a definite zero-row insert
+followed by an absent account, a failed recheck query or an ongoing rotation.
+An insert error is terminal and never restores (the committed-but-errored
+duplicate path is closed). The store effects themselves remain unproved.

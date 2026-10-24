@@ -19,7 +19,7 @@ The newer local mobile/journal candidate is not part of that hosted result.
 
 The [fdee2bc hosted baseline](hosted-fdee2bc/README.md) covers the mobile/epoch
 and stronger encoded journal increments, with all fifteen checks passing.
-Subsequent recovery-redemption work needs separate proof and hosted evidence.
+The later [recovery-redemption driver](recovery-redemption-driver/README.md) is checked locally and awaits hosted reproduction.
 
 Recent increments (see the hosted baseline above for snapshot coverage):
 

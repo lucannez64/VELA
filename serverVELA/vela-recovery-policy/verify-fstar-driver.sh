@@ -89,5 +89,5 @@ printf ' %q' "${fstar_args[@]}"
 printf '\n'
 fstar.exe "${fstar_args[@]}"
 
-echo "driver proof: 6 focused Rust contracts, 19 hand-written trace lemmas/witnesses checked"
+echo "driver proof: 6 focused Rust contracts, 23 hand-written trace lemmas/witnesses checked"
 sha256sum "${proof_files[@]}" "${lemma_files[@]}" src/driver.rs

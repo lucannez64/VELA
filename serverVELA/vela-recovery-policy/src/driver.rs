@@ -12,8 +12,9 @@
 //! requests and it does not observe the SQL/store state itself. Every input is
 //! an observation produced by the handler. In particular a `RestoreAndFail`
 //! decision records what the handler is instructed to do, not whether the
-//! store restoration succeeded, and `InsertObservation::Failed` is compatible
-//! with an INSERT that actually committed before the error surfaced.
+//! store restoration succeeded. `InsertObservation::Failed` is compatible
+//! with an INSERT that actually committed before the error surfaced, so it is
+//! terminal: the grant is restored only after a definite zero-row insert.
 //!
 //! The transition relation is deliberately total. Invalid or out-of-order
 //! events are ignored (`RedemptionEffect::Idle`), which makes the unbounded
@@ -129,7 +130,7 @@ pub enum RedemptionFailure {
     GrantChanged,
     /// The final enrollment policy rejected the actual consumption. Terminal.
     PolicyRejected,
-    /// The insert returned an error. Restore (ambiguous commit documented).
+    /// The insert returned an error. Terminal: the row may have committed.
     InsertStorage,
     /// The live-recheck query returned an error. Restore.
     RecheckStorage,
@@ -422,7 +423,10 @@ fn on_insert(driver: RedemptionDriver, observation: InsertObservation) -> Redemp
             },
             RedemptionEffect::Recheck,
         ),
-        InsertObservation::Failed => restore_then_fail(driver, RedemptionFailure::InsertStorage),
+        // An INSERT error is ambiguous: the row may have committed before the
+        // error surfaced. Restoring the grant would let a second request
+        // enroll another device with it, so the failure is terminal.
+        InsertObservation::Failed => terminal(driver, RedemptionFailure::InsertStorage),
     }
 }
 

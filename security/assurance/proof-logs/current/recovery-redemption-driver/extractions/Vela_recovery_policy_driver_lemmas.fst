@@ -5,8 +5,8 @@ module Vela_recovery_policy_driver_lemmas
 ///
 /// Scope: one `RedemptionDriver` value, i.e. one HTTP request. The theorem
 /// does not claim anything about two concurrent requests redeeming the same
-/// grant; the single-use store `get_del`, the guarded SQL insert, the
-/// restoration effect and its ambiguous-commit behaviour remain effectful glue
+/// grant; the single-use store `get_del`, the guarded SQL insert and the
+/// restoration effect remain effectful glue
 /// outside this module. The driver's SQL/store inputs are observations, never
 /// verified origins.
 ///
@@ -353,6 +353,76 @@ let redemption_trace_theorem
   complete_count_le_one (begin_redemption ready).f_driver events;
   ()
 
+/// A finished driver is inert for every event.
+let step_after_done (d: t_RedemptionDriver) (e: t_RedemptionEvent)
+  : Lemma
+    (requires (trace_sound d /\ is_done d))
+    (ensures (
+      (step d e).f_driver = d /\
+      (step d e).f_effect = RedemptionEffect_Idle)) =
+  trace_sound_matches_rust d;
+  match e <: t_RedemptionEvent with
+  | RedemptionEvent_Consumed _ -> ()
+  | RedemptionEvent_FinalPolicy _ -> ()
+  | RedemptionEvent_Insert _ -> ()
+  | RedemptionEvent_Recheck _ -> ()
+
+let rec done_suffix_inert (d: t_RedemptionDriver) (events: list t_RedemptionEvent)
+  : Lemma
+    (requires (trace_sound d /\ is_done d))
+    (ensures (run d events = d /\ count_complete d events = 0))
+    (decreases events) =
+  match events with
+  | [] -> ()
+  | e :: rest ->
+      step_after_done d e;
+      done_suffix_inert d rest
+
+/// (5) No insert outcome restores the grant. Restoration after an insert
+/// attempt is only possible from the recheck stage, which is reached only by
+/// a definite zero-row (`Skipped`) observation.
+let insert_stage_never_restores (d: t_RedemptionDriver) (e: t_RedemptionEvent)
+  : Lemma
+    (requires (trace_sound d /\ is_insert d))
+    (ensures (
+      (match (step d e).f_effect <: t_RedemptionEffect with
+       | RedemptionEffect_RestoreAndFail _ -> False
+       | _ -> True) /\
+      not (step d e).f_driver.f_restored /\
+      (is_recheck (step d e).f_driver ==>
+        (match e <: t_RedemptionEvent with
+         | RedemptionEvent_Insert InsertObservation_Skipped -> True
+         | _ -> False)))) =
+  match e <: t_RedemptionEvent with
+  | RedemptionEvent_Consumed _ -> ()
+  | RedemptionEvent_FinalPolicy _ -> ()
+  | RedemptionEvent_Insert obs ->
+      (match obs <: t_InsertObservation with
+       | InsertObservation_Inserted -> ()
+       | InsertObservation_Skipped -> ()
+       | InsertObservation_Failed -> ())
+  | RedemptionEvent_Recheck _ -> ()
+
+/// (6) An ambiguous insert error is final for the whole trace: it fails
+/// without restoration and every later event, of any number, is inert, so the
+/// grant consumed by this request is never re-armed and no success follows.
+let failed_insert_is_final
+      (d: t_RedemptionDriver)
+      (suffix: list t_RedemptionEvent)
+  : Lemma
+    (requires (trace_sound d /\ is_insert d))
+    (ensures (
+      let t = step d (RedemptionEvent_Insert InsertObservation_Failed) in
+      t.f_effect = RedemptionEffect_Fail RedemptionFailure_InsertStorage /\
+      is_done t.f_driver /\
+      not t.f_driver.f_restored /\
+      not t.f_driver.f_insert_succeeded /\
+      run t.f_driver suffix = t.f_driver /\
+      count_complete t.f_driver suffix = 0)) =
+  let t = step d (RedemptionEvent_Insert InsertObservation_Failed) in
+  step_sound d (RedemptionEvent_Insert InsertObservation_Failed);
+  done_suffix_inert t.f_driver suffix
+
 // ── Reachability witnesses ──────────────────────────────────────────────────
 
 let ready_credential : t_ReadyToConsume =
@@ -425,14 +495,14 @@ let success_is_reachable ()
       count_complete_from_ready ready_credential success_events = 1) =
   ()
 
-/// A failed insert observation is reachable and instructs a restoration
-/// without claiming the SQL insert did not commit.
+/// A failed insert observation is reachable and is terminal: the grant is
+/// not restored, because the INSERT may have committed before the error.
 let insert_failure_is_reachable ()
   : Lemma (
       let d = run_from_ready ready_credential insert_failed_events in
-      d.f_insert_succeeded = false /\ d.f_restored = true /\
+      d.f_insert_succeeded = false /\ d.f_restored = false /\ is_done d /\
       last_effect_from_ready ready_credential insert_failed_events =
-        RedemptionEffect_RestoreAndFail RedemptionFailure_InsertStorage) =
+        RedemptionEffect_Fail RedemptionFailure_InsertStorage) =
   ()
 
 /// A zero-row insert followed by credential replacement is terminal without

@@ -24,16 +24,15 @@ test preflight_decides_each_rejection_reason_in_handler_precedence_order ... ok
 test proof_initiate_facts_are_exactly_the_decoded_account_share_commitment_and_store_observations ... ok
 test recover_facts_are_exactly_the_attempt_assertion_and_row_observations ... ok
 
-test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
      Running tests/redemption_driver.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-recovery-policy/eaab74a13f6ffda6/out/redemption_driver-eaab74a13f6ffda6)
 
-running 13 tests
+running 12 tests
 test begin_requests_consumption_and_carries_the_preflight_epoch_and_type ... ok
 test every_stage_ignores_every_out_of_order_event ... ok
-test failed_insert_then_a_fresh_redemption_can_succeed_if_the_grant_is_restored ... ok
 test final_policy_denial_is_terminal_and_does_not_restore ... ok
-test insert_error_instructs_restoration_but_does_not_claim_the_insert_did_not_commit ... ok
+test insert_error_is_terminal_and_never_restores_the_grant ... ok
 test insert_success_is_terminal_and_no_later_event_restores_or_succeeds_again ... ok
 test matched_consumption_alone_does_not_authorize_an_insert ... ok
 test matching_enrollment_and_rekey_permits_issue_the_exact_insert_authority ... ok
@@ -43,7 +42,7 @@ test rekey_rejection_or_epoch_mismatch_restores ... ok
 test replaced_or_mismatched_consumption_restores_the_grant ... ok
 test zero_row_insert_requires_the_live_recheck_in_historical_precedence ... ok
 
-test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
    Doc-tests vela_recovery_policy
 
@@ -51,7 +50,7 @@ running 0 tests
 
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.09s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
 [1m[94minfo[0m: [1mhax: unchanged file ./proofs/fstar/extraction/Vela_recovery_policy.fst[0m
 * Warning 241 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti(0,0-0,0):
   - Unable to load
@@ -112,8 +111,8 @@ Verified module: Vela_recovery_policy
 Verified module: Vela_recovery_policy.Driver
 Verified module: Vela_recovery_policy_driver_lemmas
 All verification conditions discharged successfully
-driver proof: 6 focused Rust contracts, 19 hand-written trace lemmas/witnesses checked
-cf79d4bb4e691e95e6dc9f14734d3b8e512ad8af1136eda1319be8bd45f86841  proofs/fstar/extraction-driver/Vela_recovery_policy.Driver.fst
+driver proof: 6 focused Rust contracts, 23 hand-written trace lemmas/witnesses checked
+1fe6d317eb20bba515092dc7d3181900968b5c64b65387195d58904db4fd1fe1  proofs/fstar/extraction-driver/Vela_recovery_policy.Driver.fst
 fe2380cc9ccb38178ccd064abc79c0a5e3e33d2df2ef3670b5a07813feaac545  proofs/fstar/extraction-driver/Vela_recovery_policy.fst
-c84df84a3ea61c1bae18c60c939fac29723442956c9c4f51ca41926b374b9542  proofs/fstar/driver-lemmas/Vela_recovery_policy_driver_lemmas.fst
-4ed6cbc2e291122958c9bc100d218cf5065bd56d7802ed3679d0715bb3939442  src/driver.rs
+074776c05b07a71af48c3fa39048f6e8220f8169ec3ab702b81a270a0aedb022  proofs/fstar/driver-lemmas/Vela_recovery_policy_driver_lemmas.fst
+42078d422125fb26e77098cc0cd7cd29c3e1c316727ef8786774777761babcfe  src/driver.rs
