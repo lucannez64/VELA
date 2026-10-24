@@ -194,6 +194,7 @@ jobs:
           cargo test --manifest-path serverVELA/Cargo.toml --test recovery_lifecycle_model
           cargo test --manifest-path serverVELA/Cargo.toml --test share_channel_model
           cargo test --manifest-path serverVELA/Cargo.toml --test recovery_possession_model
+          cargo test --manifest-path serverVELA/Cargo.toml --test challenge_single_use_model
           cargo test --manifest-path serverVELA/Cargo.toml -p vela-recovery-policy --test redemption_driver
           cargo test --manifest-path serverVELA/Cargo.toml --test integration \
             recovery_publication_finalizes_exactly_the_current_staged_split
