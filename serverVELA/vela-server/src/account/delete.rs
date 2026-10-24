@@ -30,11 +30,20 @@ pub async fn delete_account(
     // Kill web sessions: revoke every issued RW token (device_id == session_id)
     // for the maximum possible remaining lifetime, drop tracked JTIs, then
     // delete the rows.
+    //
+    // Pending sessions started from a browser have `user_id = NULL` and only
+    // name the account in `approver_user_id` (POST /web-session/start is
+    // unauthenticated). They can never be granted once the account is gone, so
+    // they are part of the account's footprint too — otherwise a deleted user
+    // id lingers in the table for the pending TTL.
     let ws_rows = state
         .sqldb
         .query(
-            "SELECT id FROM web_sessions WHERE user_id = ?",
-            vec![TursoValue::Text(session.user_id.to_string())],
+            "SELECT id FROM web_sessions WHERE user_id = ? OR approver_user_id = ?",
+            vec![
+                TursoValue::Text(session.user_id.to_string()),
+                TursoValue::Text(session.user_id.to_string()),
+            ],
         )
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
@@ -52,8 +61,11 @@ pub async fn delete_account(
     state
         .sqldb
         .execute(
-            "DELETE FROM web_sessions WHERE user_id = ?",
-            vec![TursoValue::Text(session.user_id.to_string())],
+            "DELETE FROM web_sessions WHERE user_id = ? OR approver_user_id = ?",
+            vec![
+                TursoValue::Text(session.user_id.to_string()),
+                TursoValue::Text(session.user_id.to_string()),
+            ],
         )
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
@@ -78,6 +90,19 @@ pub async fn delete_account(
                 TursoValue::Text(session.user_id.to_string()),
                 TursoValue::Text(session.user_id.to_string()),
             ],
+        )
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    // One-off send links belong to the account that created them. They are
+    // fetched anonymously by unguessable id, so leaving the rows behind would
+    // keep the deleted account's ciphertext readable by anyone holding the
+    // link until its TTL (up to 30 days) expired.
+    state
+        .sqldb
+        .execute(
+            "DELETE FROM sends WHERE owner_user_id = ?",
+            vec![TursoValue::Text(session.user_id.to_string())],
         )
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
