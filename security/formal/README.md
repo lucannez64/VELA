@@ -435,11 +435,14 @@ Same runner as above: **4 + 6 Tamarin lemmas verified**.
 
 ### M28: recoverable share journal
 
-`run-share-journal-proofs.sh` checks all seven named verdicts and rejects
-warnings, timeouts or incomplete analysis. `run-all.sh` includes it. This is a
+`run-share-journal-proofs.sh` checks all ten M28 named verdicts, eleven M29
+verdicts and the handwritten F★ encoded equivalence/all-pairs/witness module;
+it rejects warnings, timeouts or incomplete analysis. `run-all.sh` includes it. This is a
 conditional filesystem abstraction, not a Rust refinement theorem. See
 [`../assurance/08-formalization-status.md`](../assurance/08-formalization-status.md)
-for the exact boundary, including stronger all-pairs goals not proved.
+for the exact boundary: encoded all-pairs goals and concrete witnesses are
+checked, while the actual Tamarin source embeddings and Rust/filesystem
+refinement remain open.
 
 ### M29: composed dual-signature sharing and durable commit
 

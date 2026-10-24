@@ -10,7 +10,7 @@ cite them.
 |---|---|---|
 | **U-1** | **End-to-end secrecy of the RMS and vault plaintext against a malicious server** (CONF-1, CONF-2) | No theory models the whole system with the server as attacker. Secrecy is argued from the architecture. Individual theories either model the server as an honest enforcer (M11–M21, M26) or make capsule contents opaque by assumption (M19b, M21) |
 | **U-2** | **Device authentication beyond the challenge proof** | M27 locally proves signature provenance, challenge single use and registered-user binding. PASETO parsing, TTL, JTI revocation, device-revocation cascade and concurrent issuance remain unproved. An in-flight request can pass lookup before revocation and mint later. |
-| **U-3** | **Computational security of the complete constructions**, including AEAD AAD encodings, BLAKE3 contexts, Shamir share tags, link-key/passphrase mixing and possession proofs | Scoped exceptions: CryptoVerif proofs exist for the idealized v2 KEM combiner, modular KEM-DEM and hybrid AND signatures under the [listed assumptions](../formal/cryptoverif/README.md). The other constructions, concrete Rust correspondence and full composition remain unproved. See [Q-1](06-engaging-researchers.md#priority-questions) |
+| **U-3** | **Computational security of the complete constructions**, including AEAD AAD encodings, BLAKE3 contexts, Shamir share tags, link-key/passphrase mixing and possession proofs | Scoped exceptions: CryptoVerif models cover the v2 KEM combiner, modular KEM-DEM, AND signatures, v2 RMS possession proofs and authenticated Shamir reconstruction under the [listed assumptions](../formal/cryptoverif/README.md), including ideal KDF/tag abstractions. Concrete hash/context/encoding correspondence, other constructions and full composition remain unproved. See [Q-1](06-engaging-researchers.md#priority-questions) |
 | **U-4** | **Enrollment beyond both-key fingerprint binding** | M13b locally proves secrecy against key substitution under an ideal authentic human comparison. It does not prove primary-to-joiner authentication, correct adoption, human behavior, finite fingerprint collision resistance, or full composition with M13. |
 | **U-5** | **Recovery with a network adversary** | M14 is ordering-only. M15 and M18 add adversarial cloud storage and contact responses, but WebAuthn is an idealised honest rule |
 | **U-6** | **Long-term key compromise and post-compromise security** | M8/M10 model local client-key corruption; new M19c/M27 model device-key reveals and M19c models recipient decryption-key reveal. RMS compromise followed by rotation and cross-protocol compromise composition remain unproved. |
@@ -31,9 +31,11 @@ full-system theorem.
 
 The M28 all-pairs pin/generation results are checked for rules instrumented
 with linear `Chain` ghost state. F★ now checks lifting/projection between two
-typed single-slot encodings. Their [source bridge](../formal/share-journal-correspondence.md#ghost-state-correspondence-manual-source-bridge)
+typed single-slot encodings and now directly proves their all-pairs goals,
+with a checked concrete order/two-commit witness. Their [source bridge](../formal/share-journal-correspondence.md#ghost-state-correspondence-manual-source-bridge)
 to actual Tamarin traces remains a manual argument with two unproved embedding
-obligations; the transfer schema does not discharge the encoded safety goals.
+obligations; the direct encoded safety proofs do not discharge those source
+obligations or instantiate the full Tamarin term algebra.
 Neither source equivalence nor Rust/filesystem refinement is machine-checked.
 
 ## Trusted components

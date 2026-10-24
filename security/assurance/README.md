@@ -113,7 +113,7 @@ correctness is not a consequence of the pure-policy proofs.
   properties and M29 adds eleven composed authentication/journal properties.
   Combined evidence is **297 verified / five intended falsifications**; it is
   not a new whole-corpus CI result.
-- Computational models: six positive CryptoVerif game results and one explicitly
+- Computational models: nine positive CryptoVerif game results and one explicitly
   unproved legacy baseline, with a random-oracle boundary and uniform/nonuniform GDH abstractions.
   The [review corrections](proof-logs/current/computational-review-corrections/README.md)
   add leaked-key KEM correctness and clarify assumptions; hosted reproduction

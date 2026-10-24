@@ -1177,8 +1177,10 @@ let two_commits_lift_journal_goal
 
 (* Concrete non-vacuity: the witness has two journals at timepoints 2 and 6
    with generations GS G0 and GS (GS G0), and two clears at timepoints 4 and
-   8 whose pins strictly increase.  Both the core and lifted all-pairs
-   theorems are instantiated on this reachable trace. *)
+   8 whose pins strictly increase. The pin theorems are instantiated at
+   distinct indices 4 < 8. The journal uniqueness theorems are instantiated
+   reflexively at 2 = 2: the two distinct journals have different generations,
+   and a same-generation pair at distinct indices is forbidden. *)
 let two_commits_ordered (u:unit)
   : Lemma
       (term_order.lt (TSucc TInit) (TSucc (TSucc TInit)) = true
@@ -1204,6 +1206,10 @@ let two_commits_ordered (u:unit)
     reach_core_journal_depth #term #nat #nat subterm TInit 0 w_t9 w_c8
       two_commits_reach 6 1 (GS (GS G0)) (TSucc TInit)
       (TSucc (TSucc TInit)) 2;
+    two_commits_journal_goal 2 2 0 0 (GS G0)
+      TInit TInit (TSucc TInit) (TSucc TInit) 1 1;
+    two_commits_lift_journal_goal 2 2 0 0 (GS G0)
+      TInit TInit (TSucc TInit) (TSucc TInit) 1 1;
     reach_core_clear_pins_strict #term #nat #nat term_order TInit 0 w_t9 w_c8
       two_commits_reach
       4 8 0 1 (GS G0) (GS (GS G0)) (TSucc TInit) (TSucc (TSucc TInit));

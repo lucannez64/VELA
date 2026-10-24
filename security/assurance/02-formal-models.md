@@ -1,7 +1,7 @@
 # 2. Formal models
 
 All models live in [`security/formal/`](../formal/). There are 37 Tamarin
-theories (`.spthy`), 3 ProVerif models (`.pv`) and 7 CryptoVerif games (`.ocv`). Each theory's header
+theories (`.spthy`), 3 ProVerif models (`.pv`) and 10 CryptoVerif games (`.ocv`). Each theory's header
 comment states its scope. This document collects those scopes in one place
 and makes the adversary in each model explicit, because the models differ
 a lot in how much adversary they include.
@@ -17,9 +17,10 @@ signatures, hashes and encryption, or uninterpreted/private functions. Some
 models abstract a hybrid as one primitive; M29 represents the two signature
 checks separately. These models do not prove primitive implementation security.
 
-**Computational exceptions are scoped.** Seven CryptoVerif games cover the
-idealized v2 KEM combiner, modular KEM-DEM encryption and the AND signature
-construction, plus an explicitly unproved legacy baseline. They use named
+**Computational exceptions are scoped.** Ten CryptoVerif games cover the
+idealized v2 KEM combiner, modular KEM-DEM encryption, AND signatures, v2 RMS
+possession proofs and authenticated Shamir reconstruction, plus an explicitly
+unproved legacy baseline. They use named
 primitive assumptions and a random oracle, not a complete Rust construction
 refinement. The uniform prime-order DH model does not establish concrete
 X25519 clamping/cofactor correspondence. See
@@ -258,7 +259,11 @@ checks event-preserving step/trace lifting and projection between two typed,
 initialized, single-slot encodings, with and without Chain. This is a checked
 sub-step of the correspondence argument; it does not import the Tamarin
 verdicts. Its transfer theorem takes the encoded trace property as a proof
-argument, and the two all-pairs goals are not proved in that artifact.
+argument. Separate direct inductions now prove the all-pairs goals for
+encoded core/lift traces, with an explicit strict-order argument for pins and
+no order requirement for generation uniqueness. A concrete unary order and
+checked two-commit trace establish non-vacuity only for the encoding, not the
+Tamarin source. The full source term/subterm interpretation remains open.
 
 Two source obligations remain unproved: original Tamarin traces must embed
 into the core encoding, and their encoded lifts must correspond to admissible

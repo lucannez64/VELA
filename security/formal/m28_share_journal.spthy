@@ -12,7 +12,8 @@ begin
 
    Chain(slot, generation, pin) is proof instrumentation. Its pair follows
    the durable phase and advances at PersistJournal. A separate F* development
-   checks equivalence of two typed, initialized, single-slot encodings.
+   checks equivalence and all-pairs goals in typed, initialized, single-slot
+   encodings, with a concrete encoded order and two-commit witness.
    It does not prove the Tamarin-to-F* embeddings or discharge its generic
    transfer predicate from the Tamarin verdicts. See m28-trace-equivalence.
    The original-rule direct Tamarin proof did not finish within 600 seconds;

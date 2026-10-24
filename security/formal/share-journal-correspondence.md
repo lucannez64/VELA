@@ -54,9 +54,14 @@ crashes preserve the invariant. Fresh slots separate independent instances.
 The checked F* module
 [`M28TraceEquivalence.fst`](m28-trace-equivalence/M28TraceEquivalence.fst)
 proves step/trace equivalence and the Chain invariant **for two typed,
-initialized single-slot encodings**. Its transfer functions are generic schemas:
-they require a proof of the supplied event-trace predicate. This module does
-not define/prove the all-pairs properties or import Tamarin's verdicts.
+initialized single-slot encodings**. It now also proves the two all-pairs
+properties directly on those encodings: earlier clear pins strictly increase
+under a supplied strict order, and a journal generation occurs at one index.
+The lifted results use projection, not the generic hp transfer argument.
+A checked unary proper-subterm instance and nine-event two-commit witness
+establish encoded non-vacuity. That instance is not the full Tamarin term
+algebra. No actual Tamarin verdict is imported into the encoding or transferred
+to the original source by these proofs.
 
 The [mapping and residual obligations](m28-trace-equivalence/README.md) separate
 the checked kernel from the manual source bridge. In particular, applying an

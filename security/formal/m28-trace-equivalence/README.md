@@ -60,9 +60,12 @@ through the checked `reach_core_lifts` map. `two_commits_ordered` records the
 indices (journals 2 and 6, clears 4 and 8), the generations `GS G0` and
 `GS (GS G0)` with depths 1 and 2, and the strict pin increase from
 `TSucc TInit` to `TSucc (TSucc TInit)`. The witness is an inhabited encoded
-trace, not merely initialization, and it instantiates the all-pairs theorems
-on the core and lifted encodings. It is F* non-vacuity for this encoding; it
-is **not** a Tamarin witness and does not establish source reachability.
+trace, not merely initialization. The pin theorem is instantiated at 4 < 8
+on both encodings. Journal uniqueness is instantiated reflexively at 2 = 2;
+the journals at 2 and 6 have different generations and do not satisfy a
+same-generation antecedent at distinct indices. Such a pair is exactly what
+the theorem forbids. This witness is encoded non-vacuity, **not** a Tamarin
+witness or a source reachability result.
 
 `two_commits_clear_goal` and `two_commits_journal_goal` (and the
 `two_commits_lift_clear_goal` / `two_commits_lift_journal_goal` versions) are

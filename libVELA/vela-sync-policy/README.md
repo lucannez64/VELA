@@ -41,6 +41,11 @@ postconditions to the global Rust contract census. Evidence and run provenance a
 
 ## Integer-epoch kernel and mobile callers
 
+The local runtime candidate is held for the token-header, missing-pin and
+RMS-snapshot review corrections described in the assurance candidate note.
+The kernel proofs do not close those pending implementation issues.
+
+
 A focused extraction checks four additional Rust postconditions for
 `plan_sync_epoch_match` and its witnesses. Six handwritten lemmas characterize
 acceptance exactly as equality of two positive integer inputs. It is verified

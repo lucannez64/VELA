@@ -159,7 +159,7 @@ or Ed25519 assumption, with the other secret key leaked, under the documented
 independent-key and fixed-length encoding assumptions in the model README. The X25519
 cofactor, correspondence to the actual clamped scalar distribution, SHA-256 step and multi-user
 security are open, as listed in
-[the model README](../formal/cryptoverif/README.md). CI expects six proved models and one explicitly unproved legacy baseline;
+[the model README](../formal/cryptoverif/README.md). CI expects nine proved models and one explicitly unproved legacy baseline;
 the repaired runner rejects process errors/timeouts and missing verdicts.
 
 The nonuniform GDH companion now exposes collision and rerandomization losses
@@ -218,7 +218,7 @@ and complete handler traces remain open.
 
 | Area | Status | Required to close |
 |---|---|---|
-| F-1: handler facts | Partial: hosted enrollment/recovery baseline; local web-session, share and additional recovery constructors | Re-extract and check the share observation constructors in CI; maintain the checked contracts; verify the observation producers (SQL rows, store lookups, signature verifier, session ids) themselves; complete UTF-8/object and authenticated-open composition after the checked byte-frame parser; prove independent context origins; cover remaining token, epoch, recovery and handler fact construction |
+| F-1: handler facts | Partial: hosted enrollment/recovery baseline; local web-session, share and additional recovery constructors | Maintain the sharing contracts reproduced on 5d8c366; verify the observation producers (SQL rows, store lookups, signature verifier, session ids) themselves; complete UTF-8/object and authenticated-open composition after the checked byte-frame parser; prove independent context origins; cover remaining token, epoch, recovery and handler fact construction |
 | F-2: state transitions | Partial: preflight ordering/readiness checked against an independent specification; sharing handlers: every sequence up to depth 3 (CI) / 4 (local) matches the M19b/M21 state machine against the real router and database, with mutation checks; possession-proof recovery handlers: every sequence up to depth 4 (CI) matches the M18/M26a chain, with mutation checks (WebAuthn path not driven) | Machine-check concrete handler/database transitions against protocol transitions, including exceptions, cancellation and concurrency |
 | F-3: persistence/recovery | Partial: M28 and composed M29 | Prove the actual journal implementation refines M28; formalize collection equality and filesystem outcomes; compose local edits/deletions and RMS migration; cover or explicitly exclude independent processes |
 | F-4: construction security | Partial: CryptoVerif proofs for idealized v2 KEM games, modular KEM-DEM, AND-signature, v2 possession-proof and authenticated-share games under the explicit assumptions | Close the combiner gaps listed in `security/formal/cryptoverif/README.md` (concrete X25519 clamping/cofactor/encoding correspondence after conditional nonuniform distribution accounting, SHA-256 step, quantum-query and multi-user composition; KEM-DEM is proved modularly); computational games and reductions for envelope framing and KDF use beyond the random-oracle model, under named primitive assumptions (share tags and the v2 possession proof are now proved in CryptoVerif with KDFs as random oracles; legacy v1 possession commitments are not covered); verify application randomness/error/erasure handling. Primitive internals and leakage resistance are trusted under the selected boundary |
@@ -262,12 +262,18 @@ initialized, single-slot machines. It is not an equivalence proof of the
 encoding, and their lifts must still yield admissible instrumented Tamarin
 traces. Input derivability, global freshness, term representation and slot
 projection remain source-bridge obligations. The generic F★ transfer theorem
-requires the encoded safety property as a proof argument; it does not prove
-the two all-pairs goals or import their Tamarin verdicts. The actual verdicts
-are therefore for the instrumented model. The handwritten proof adds no Rust
-postconditions. [Local evidence](proof-logs/current/journal-encoding-equivalence/README.md)
-records a fresh check with caching disabled, pinned tool version, argv and
-module hash; it was reproduced in the [368bcc0 hosted workflow](proof-logs/current/hosted-368bcc0/README.md).
+requires a safety proof argument. New direct encoded inductions now establish
+both all-pairs goals without using that hp argument; lifted results follow by
+projection. Pin increase requires a supplied strict-order record, while journal
+generation uniqueness is order-independent. A checked unary free-term order
+and nine-event two-commit core/lift witness establish encoded non-vacuity.
+This unary instance does not formalize Tamarin's full strict-subterm algebra.
+No source embedding or actual Tamarin theorem is obtained. The handwritten
+proof adds zero Rust postconditions and does not change the ten/eleven Tamarin
+verdicts. The previous [encoding equivalence evidence](proof-logs/current/journal-encoding-equivalence/README.md)
+was reproduced on 368bcc0; the new all-pairs/order/witness check needs its own
+hosted result. See the [new proof](../formal/m28-trace-equivalence/README.md) and
+[parent reproduction](proof-logs/current/journal-encoded-goals/README.md).
 
 The journal runner first runs `check-action-atoms.py` on M28 and M29. It strips
 comments and string literals, collects each rule's action name/arity, and

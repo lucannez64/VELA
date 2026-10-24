@@ -12,8 +12,8 @@ mkdir -p "$out"
 bash "$root/tests/run-action-atom-guard.sh"
 python3 -m unittest discover -s "$root/tests" -p test_m28_semantic_guard.py
 
-# Check lifting/projection inside two typed single-slot F* encodings.
-# Their source embeddings and the all-pairs safety goals are not checked here.
+# Check lifting/projection, encoded all-pairs goals and a two-commit witness.
+# Their source embeddings to actual Tamarin traces are not checked here.
 # The Tamarin rules are mapped explicitly in
 # m28-trace-equivalence/README.md.
 fstar_log="$out/m28-trace-equivalence.log"

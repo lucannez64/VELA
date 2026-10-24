@@ -16,6 +16,7 @@ REQUIRED = {
     'term_order', 'subterm_trans', 'subterm_irrefl',
     'two_commits_reach', 'two_commits_reach_lift',
     'two_commits_clear_goal', 'two_commits_journal_goal',
+    'two_commits_lift_clear_goal', 'two_commits_lift_journal_goal',
     'two_commits_ordered',
 }
 

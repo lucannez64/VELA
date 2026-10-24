@@ -33,6 +33,10 @@ Recent increments (see the hosted baseline above for snapshot coverage):
   handwritten lemmas over the historical eleven-contract extraction, integrated
   independently of mobile runtime changes. Rust contract counts are unchanged.
 
+- [Encoded journal goals](journal-encoded-goals/README.md): all-pairs pin and
+  generation properties, a concrete unary order and two-commit core/lift
+  witness, freshly checked locally. Tamarin source embeddings remain open.
+
 Other recent scoped evidence:
 
 - [Journal all-pairs](journal-all-pairs/README.md): ten M28 and eleven M29

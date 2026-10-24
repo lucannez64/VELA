@@ -56,6 +56,11 @@ class SemanticGuardTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'missing proof definitions'):
             self.check(SOURCE.replace('let two_commits_reach :', 'let renamed_witness :'))
 
+    def test_missing_lifted_goal_wrappers_fail(self):
+        for name in ('two_commits_lift_clear_goal', 'two_commits_lift_journal_goal'):
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, 'missing proof definitions'):
+                self.check(SOURCE.replace('let ' + name, 'let renamed'))
+
     def test_unterminated_comment_fails(self):
         with self.assertRaises(ValueError):
             self.check(SOURCE + '(* unfinished')
