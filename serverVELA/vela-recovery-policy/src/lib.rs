@@ -6,6 +6,8 @@
 //! a share, rotate a stored credential, or enroll a device only from the
 //! private permits constructed here. hax extracts these exact decisions to F*.
 
+pub mod driver;
+
 pub const INITIAL_EPOCH: i64 = 1;
 pub const HYBRID_EK_LEN: usize = 1568 + 32;
 pub const HYBRID_VK_LEN: usize = 2592 + 32;

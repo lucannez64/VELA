@@ -1,0 +1,81 @@
+# Exact heavy commands (run inside /home/hirew/.t3/worktrees/VELA/t3-66a444da)
+
+All heavy commands go through the global lock/wrapper:
+`~/.local/opt/vela-tools/bin/vela-heavy`
+
+Common normal-cargo target:
+`CARGO_TARGET_DIR=/home/hirew/.t3/worktrees/VELA/t3-700776df/target`
+
+Common hax/F* environment:
+```
+CARGO_HOME=/tmp/vela-hax-cargo
+OPAMROOT=$HOME/.local/opt/vela-tools/opam
+PATH=/tmp/vela-fstar-prebuilt/fstar/bin:$HOME/.local/opt/vela-tools/bin:$HOME/.local/opt/vela-tools/opam/vela-hax/bin:$PATH
+```
+
+## Tests (cargo)
+
+```
+cd serverVELA
+CARGO_TARGET_DIR=/home/hirew/.t3/worktrees/VELA/t3-700776df/target \
+  ~/.local/opt/vela-tools/bin/vela-heavy cargo test -p vela-recovery-policy
+# -> cargo-test-recovery-policy.log
+
+CARGO_TARGET_DIR=/home/hirew/.t3/worktrees/VELA/t3-700776df/target \
+  ~/.local/opt/vela-tools/bin/vela-heavy cargo test -p vela-server --test integration
+# -> cargo-test-server-integration.log (64 passed)
+
+CARGO_TARGET_DIR=/home/hirew/.t3/worktrees/VELA/t3-700776df/target \
+  ~/.local/opt/vela-tools/bin/vela-heavy cargo test -p vela-server --test recovery_possession_model
+# -> cargo-test-recovery-possession-model.log
+```
+
+## Historical + focused proof
+
+```
+cd serverVELA/vela-recovery-policy
+export CARGO_HOME=... OPAMROOT=... PATH=... CARGO_TARGET_DIR=...
+~/.local/opt/vela-tools/bin/vela-heavy ./verify-fstar.sh
+# -> fstar-full-verify.log
+```
+
+`verify-fstar.sh` first runs `cargo test`, re-extracts the historical 90
+selected functions into `proofs/fstar/extraction/`, checks them with F*, then
+calls `verify-fstar-driver.sh`, which:
+
+```
+rm -rf proofs/fstar/extraction-driver
+cargo hax into --output-dir proofs/fstar/extraction-driver \
+  -i '-** +vela_recovery_policy::driver::begin_redemption \
+       +vela_recovery_policy::driver::step \
+       +vela_recovery_policy::driver::on_grant_consumed \
+       +vela_recovery_policy::driver::on_final_policy_observed \
+       +vela_recovery_policy::driver::on_insert_completed \
+       +vela_recovery_policy::driver::on_authority_rechecked' \
+  fstar --z3rlimit 500
+# textual proof-escape guard (no assume/admit/--lax)
+fstar.exe --cmi --cache_off --warn_error -331 --z3rlimit 4000 \
+  --z3version 4.13.3 \
+  --already_cached '+Prims+FStar+LowStar+C+Spec.Loops+TestLib' \
+  --include "$hax_lib_root/proof-libs/fstar/core" \
+  --include "$hax_lib_root/proof-libs/fstar/rust_primitives" \
+  --include "$hax_lib_root/proofs/fstar/extraction" \
+  --include proofs/fstar/extraction-driver \
+  --include proofs/fstar/driver-lemmas \
+  proofs/fstar/extraction-driver/Vela_recovery_policy.Driver.fst \
+  proofs/fstar/extraction-driver/Vela_recovery_policy.fst \
+  proofs/fstar/driver-lemmas/Vela_recovery_policy_driver_lemmas.fst
+```
+
+The exact F* argv is printed in `fstar-full-verify.log`.
+
+## Checked artifact hashes
+
+See `source-hashes.txt`. The focused checked modules are:
+
+- `Vela_recovery_policy.Driver.fst`
+  `cf79d4bb4e691e95e6dc9f14734d3b8e512ad8af1136eda1319be8bd45f86841`
+- `Vela_recovery_policy.fst` (focused partial root)
+  `fe2380cc9ccb38178ccd064abc79c0a5e3e33d2df2ef3670b5a07813feaac545`
+- `Vela_recovery_policy_driver_lemmas.fst`
+  `c84df84a3ea61c1bae18c60c939fac29723442956c9c4f51ca41926b374b9542`
