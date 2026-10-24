@@ -38,6 +38,12 @@ Final-policy and recheck observations are arbitrary.
 90-contract check, the per-request driver gate and this module. No `admit`,
 `assume` or `--lax` is used.
 
+## Hosted reproduction
+
+The [edaee5a security workflow](https://github.com/lucannez64/VELA/actions/runs/40128270041) checked this module; all fifteen PR checks
+passed. `hosted-edaee5a.log` is the job's summary, and its hashes equal
+`source-hashes.txt`.
+
 ## Assumptions and open obligations
 
 - `get_del` is linearizable and the handler performs exactly the effect the

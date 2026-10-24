@@ -20,7 +20,7 @@ The newer local mobile/journal candidate is not part of that hosted result.
 The [fdee2bc hosted baseline](hosted-fdee2bc/README.md) covers the mobile/epoch
 and stronger encoded journal increments, with all fifteen checks passing.
 The later [recovery-redemption driver](recovery-redemption-driver/README.md) passed hosted CI on aaf708f (all fifteen checks).
-Its [concurrent composition](recovery-redemption-composition/README.md) is checked locally.
+Its [concurrent composition](recovery-redemption-composition/README.md) passed hosted CI on edaee5a.
 
 Recent increments (see the hosted baseline above for snapshot coverage):
 
