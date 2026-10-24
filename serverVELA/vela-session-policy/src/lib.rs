@@ -148,6 +148,190 @@ pub struct WebTokenFacts {
     pub signature_valid: bool,
 }
 
+/// Decoded observations from the session row and authenticated grant request.
+/// UUID parsing, nonce comparison and row loading remain caller obligations;
+/// account equality and nonce-length enforcement are computed here.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GrantObservation {
+    pub phase: SessionPhase,
+    pub mode: SessionMode,
+    pub approver_user: Option<u128>,
+    pub authenticated_user: u128,
+    pub nonce_length: usize,
+    pub nonce_equal: bool,
+    pub has_web_vk: bool,
+    pub declared_epoch: i64,
+}
+
+fn observed_approver_matches(expected: Option<u128>, actual: u128) -> bool {
+    match expected {
+        Some(user) => user == actual,
+        None => false,
+    }
+}
+
+fn observed_users_match(user: Option<u128>, approver: Option<u128>) -> bool {
+    match (user, approver) {
+        (Some(user), Some(approver)) => user == approver,
+        _ => false,
+    }
+}
+
+pub fn grant_facts_match_observation(o: GrantObservation, f: GrantFacts) -> bool {
+    same_session_phase(f.phase, o.phase)
+        && same_session_mode(f.mode, o.mode)
+        && f.approver_matches == observed_approver_matches(o.approver_user, o.authenticated_user)
+        && f.nonce_matches == (o.nonce_length == 32 && o.nonce_equal)
+        && f.has_web_vk == o.has_web_vk
+        && f.declared_epoch == o.declared_epoch
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|facts| grant_facts_match_observation(observation, facts)))]
+pub fn grant_facts(observation: GrantObservation) -> GrantFacts {
+    GrantFacts {
+        phase: observation.phase,
+        mode: observation.mode,
+        approver_matches: observed_approver_matches(
+            observation.approver_user,
+            observation.authenticated_user,
+        ),
+        nonce_matches: observation.nonce_length == 32 && observation.nonce_equal,
+        has_web_vk: observation.has_web_vk,
+        declared_epoch: observation.declared_epoch,
+    }
+}
+
+/// Observations after the actual challenge take and signature verification.
+/// Absent accounts never establish a binding, including the (None, None) case.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WebTokenObservation {
+    pub phase: SessionPhase,
+    pub mode: SessionMode,
+    pub granted_user: Option<u128>,
+    pub approver_user: Option<u128>,
+    pub nonce_present: bool,
+    pub challenge_consumed: bool,
+    pub signature_valid: bool,
+}
+
+pub fn web_facts_match_observation(o: WebTokenObservation, f: WebTokenFacts) -> bool {
+    same_session_phase(f.phase, o.phase)
+        && same_session_mode(f.mode, o.mode)
+        && f.approver_bound == observed_users_match(o.granted_user, o.approver_user)
+        && f.nonce_bound == o.nonce_present
+        && f.challenge_consumed == o.challenge_consumed
+        && f.signature_valid == o.signature_valid
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|facts| web_facts_match_observation(observation, facts)))]
+pub fn web_token_facts(observation: WebTokenObservation) -> WebTokenFacts {
+    WebTokenFacts {
+        phase: observation.phase,
+        mode: observation.mode,
+        approver_bound: observed_users_match(observation.granted_user, observation.approver_user),
+        nonce_bound: observation.nonce_present,
+        challenge_consumed: observation.challenge_consumed,
+        signature_valid: observation.signature_valid,
+    }
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|decision| {
+    grant_decision_matches_spec(grant_facts(observation), decision)
+}))]
+pub fn plan_observed_grant(observation: GrantObservation) -> GrantDecision {
+    plan_grant(grant_facts(observation))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|decision| {
+    web_decision_matches_spec(web_token_facts(observation), now, hard_cap, epoch, decision)
+}))]
+pub fn plan_observed_web_token(
+    observation: WebTokenObservation,
+    now: i64,
+    hard_cap: i64,
+    epoch: i64,
+) -> TokenDecision {
+    plan_web_session_token(web_token_facts(observation), now, hard_cap, epoch)
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn missing_approver_observation_can_grant(mut observation: GrantObservation) -> bool {
+    observation.approver_user = None;
+    matches!(plan_observed_grant(observation), GrantDecision::Grant(_))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn wrong_nonce_length_observation_can_grant(mut observation: GrantObservation) -> bool {
+    if observation.nonce_length == 32 {
+        return false;
+    }
+    observation.nonce_equal = true;
+    matches!(plan_observed_grant(observation), GrantDecision::Grant(_))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn cross_account_observation_can_issue(
+    mut observation: WebTokenObservation,
+    user: u128,
+    approver: u128,
+    now: i64,
+    hard_cap: i64,
+    epoch: i64,
+) -> bool {
+    if user == approver {
+        return false;
+    }
+    observation.granted_user = Some(user);
+    observation.approver_user = Some(approver);
+    matches!(
+        plan_observed_web_token(observation, now, hard_cap, epoch),
+        TokenDecision::Issue(_)
+    )
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn missing_accounts_observation_can_issue(
+    mut observation: WebTokenObservation,
+    now: i64,
+    hard_cap: i64,
+    epoch: i64,
+) -> bool {
+    observation.granted_user = None;
+    observation.approver_user = None;
+    matches!(
+        plan_observed_web_token(observation, now, hard_cap, epoch),
+        TokenDecision::Issue(_)
+    )
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn unconsumed_challenge_observation_can_issue(
+    mut observation: WebTokenObservation,
+    now: i64,
+    hard_cap: i64,
+    epoch: i64,
+) -> bool {
+    observation.challenge_consumed = false;
+    matches!(
+        plan_observed_web_token(observation, now, hard_cap, epoch),
+        TokenDecision::Issue(_)
+    )
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn invalid_signature_observation_can_issue(
+    mut observation: WebTokenObservation,
+    now: i64,
+    hard_cap: i64,
+    epoch: i64,
+) -> bool {
+    observation.signature_valid = false;
+    matches!(
+        plan_observed_web_token(observation, now, hard_cap, epoch),
+        TokenDecision::Issue(_)
+    )
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TokenClaims {
     pub scope: CapabilityScope,
@@ -778,4 +962,14 @@ mod structural_equality_tests {
             }
         }
     }
+}
+
+fn same_session_phase(a: SessionPhase, b: SessionPhase) -> bool {
+    matches!(
+        (a, b),
+        (SessionPhase::Pending, SessionPhase::Pending)
+            | (SessionPhase::Granted, SessionPhase::Granted)
+            | (SessionPhase::Revoked, SessionPhase::Revoked)
+            | (SessionPhase::Expired, SessionPhase::Expired)
+    )
 }

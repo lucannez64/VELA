@@ -60,7 +60,7 @@ turn any open obligation below into a proved result.
 - **Reduced assumption boundary.** Structural Rust matches replaced the 18
   opaque derived-enum equality uses. Fresh checking of all eight policy crates
   succeeded with zero local assume val declarations. The inventory now has
-  **173 explicit postconditions / 180 selected functions** in eleven Rust modules,
+  **183 explicit postconditions / 190 selected functions** in eleven Rust modules,
   plus defined String and Vec compatibility models. Seven selected functions have
   no explicit ensures. Imported library assumptions and proof tools remain
   trusted; the drift checker is not a proof checker.
@@ -154,6 +154,18 @@ proof. SQL/store/WebAuthn origins, early-return paths and complete state effects
 remain open. [Hosted CI on `b8221e7`](https://github.com/lucannez64/VELA/actions/runs/40046015273)
 reproduced all 173 postconditions, including these 21 recovery additions.
 
+## Web-session observation increment
+
+The [web-session refinement](14-session-observation-refinement.md) adds ten
+locally checked contracts: constructors compute account bindings from optional
+u128 identities, enforce grant nonce length, preserve the other observations,
+and compose with the existing policies. Six rejection theorems cover absent
+accounts, cross-account exchange, wrong nonce length and unsuccessful challenge/
+signature observations. Handlers call the compositions and use the actual
+verifier Result. The corpus is now 183/190; source decoding, actual SQL/store
+semantics and complete handler traces remain open. Hosted reproduction of this
+increment is pending.
+
 ## Remaining obligations for the six requested areas
 
 | Area | Status | Required to close |
@@ -188,7 +200,7 @@ crash/recovery witness remains reachable.
 
 The [local proof evidence](proof-logs/current/journal-all-pairs/README.md)
 retains complete proof trees and records the rejected, vacuous predecessor.
-Hosted reproduction of this journal increment is pending.
+Hosted reproduction of this journal increment passed on [5fa4e9f](https://github.com/lucannez64/VELA/actions/runs/40065136343).
 
 The proofs use a linear `Chain(slot, generation, pin)` ghost fact added to
 `Initialize`, `PersistJournal` and `ClearJournal`. Chain is functionally

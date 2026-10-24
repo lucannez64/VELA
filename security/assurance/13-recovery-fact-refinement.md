@@ -49,7 +49,7 @@ regression is not a proof of every concurrent handler/database trace.
 Fresh extraction and F★ checking use the pinned hax 0.3.7, Rust
 nightly-2025-11-08, F★ 2025.10.06 and Z3 4.13.3, through the shared heavy-command
 lock and 3 GiB/no-swap/one-worker cap. The generated module was not hand-edited.
-The inventory is now 173 postconditions / 180 selected functions, retaining
+At this recovery increment, the inventory was 173 postconditions / 180 selected functions, retaining
 seven selected spec/comparison functions without ensures and zero local
 assume val declarations. Imported models and the toolchain remain trusted.
 

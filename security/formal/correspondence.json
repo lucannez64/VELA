@@ -71,7 +71,7 @@
         "serverVELA/vela-enrollment-policy/src/lib.rs": "24fd425d557bae739f3ea35986ebb3257d90d1a8c596c39326898ca627ed6c3e",
         "serverVELA/vela-recovery-policy/src/lib.rs": "f50d103dbcd5aa93b89c6f0e5409786395d5aa761eac7690904cf300aa98dc2a",
         "serverVELA/vela-rekey-policy/src/lib.rs": "4ce4d9604cd924f12d05b5ec62f2b40d9917194e7baa20fde348dd27a81b0dfb",
-        "serverVELA/vela-session-policy/src/lib.rs": "be8502054a5af0d425e2837ad9e23525e225c904fec87d5cbfe9ae3b7d78d117",
+        "serverVELA/vela-session-policy/src/lib.rs": "3befdaca67cc99334e7e3ebac343ba0b6d1ac2a08afa95bee7542045b2fb44b4",
         "serverVELA/vela-share-policy/src/lib.rs": "7e4b4f907db343dccc3bf5a1ee2a10feb6ee00bd88bc97162cbf514c39c1208c"
       }
     },
@@ -83,7 +83,7 @@
         "libVELA/vela-crypto/proofs/fstar/extraction/Vela_crypto.Wire.fst": "fea6b864fc5821891d2647dc6ff374a85bc368b7e4c011d39c3f611eac7a45b8",
         "libVELA/vela-crypto/verify-share-facts-fstar.sh": "a34a1d189f72a46f2c34ce5fe97db0a315f5f077ba82579b1c0262b25929756d",
         "security/assurance/10-signature-reduction.md": "ca201b11224ffcdc3dcb817d006244371b36d523062f8ae628cc295c5a4f8779",
-        "security/assurance/11-parser-refinement.md": "ea705b83f97fc246a3ba88a5053796c8fcc6d44b2d819213b28927b1c0ba6377",
+        "security/assurance/11-parser-refinement.md": "8b3600d56aed22f16d6a3b7b3996b0b34748f7eae814ecb689cd6829da8ea279",
         "libVELA/vela-crypto/proofs/fstar/extraction/Vela_crypto.Share_envelope.fst": "47e61d7acb26f06f80d92d6a524e9ea5711b19affb41eaee32564b124ec9def1",
         "libVELA/vela-crypto/proofs/fstar/extraction/Vela_crypto.Signing.fst": "d6b62ebffa9ca4ce5cd61b4c2969d26c0f3979be0409b3cbc5a9827c8dc6834b",
         "libVELA/vela-apple-bridge/src/lib.rs": "0325d227a6c0ce2536cc0a1c95fad491498e20ee8327715f3f3323e0749b976c",
@@ -151,7 +151,18 @@
         "serverVELA/vela-server/src/recovery/initiate.rs": "d4eface969dee6902e22908ce5f3d965d0282d4b553d58088e40844a8904f465",
         "serverVELA/vela-server/src/recovery/recover.rs": "7d8b2dcfab11b348811b1a1e87864c2068f6ad0a2466d99425741b79c7a6df8b",
         "serverVELA/vela-server/tests/integration.rs": "b984716bbbedde6d408e586383a772daf4d749a6fb3ddaea08ce301315da31ea",
-        "security/assurance/13-recovery-fact-refinement.md": "836e418b24d1208fd87ab1d0b75959b700befda2be28c4be9686a28cf539ad03"
+        "security/assurance/13-recovery-fact-refinement.md": "54983373c02096200e3c7a420c8ae2a4528de637267dd58681cf5dbbd7d3ef18"
+      }
+    },
+    {
+      "boundary": "web-session observation construction and policy composition (SQL/store/verifier sources, UUID conversion and full handler effects remain open)",
+      "artifacts": {
+        "serverVELA/vela-session-policy/src/lib.rs": "3befdaca67cc99334e7e3ebac343ba0b6d1ac2a08afa95bee7542045b2fb44b4",
+        "serverVELA/vela-session-policy/README.md": "c1ef435c7827dbbc64b94c4df5b5a38ed1b36af7249b5c99e50c74f1e2f7e7b9",
+        "serverVELA/vela-session-policy/verify-fstar.sh": "dabf84dcea875b794201f235f1a877a3894dc649034ccbce3d506e805ac6efdd",
+        "serverVELA/vela-session-policy/proofs/fstar/extraction/Vela_session_policy.fst": "f558711ac3d165952846d03d1d7b2b91186fa3ff1925a0780b35fdf824f2dd1d",
+        "serverVELA/vela-server/src/web_session/mod.rs": "9be9bbfa52509c1ef59e01a65d4369b5897a8a391c53d783b46f8e32b1e600ef",
+        "security/assurance/14-session-observation-refinement.md": "c74f023d7c35463a45993678dff95af2b0c2ae5e841b7358f3d0e688fb65d940"
       }
     }
   ]

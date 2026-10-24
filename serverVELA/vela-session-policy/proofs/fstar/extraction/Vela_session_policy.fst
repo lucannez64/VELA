@@ -99,6 +99,42 @@ type t_WebTokenFacts = {
   f_signature_valid:bool
 }
 
+/// Decoded observations from the session row and authenticated grant request.
+/// UUID parsing, nonce comparison and row loading remain caller obligations;
+/// account equality and nonce-length enforcement are computed here.
+type t_GrantObservation = {
+  f_phase:t_SessionPhase;
+  f_mode:t_SessionMode;
+  f_approver_user:Core_models.Option.t_Option u128;
+  f_authenticated_user:u128;
+  f_nonce_length:usize;
+  f_nonce_equal:bool;
+  f_has_web_vk:bool;
+  f_declared_epoch:i64
+}
+
+let observed_approver_matches (expected: Core_models.Option.t_Option u128) (actual: u128) : bool =
+  match expected <: Core_models.Option.t_Option u128 with
+  | Core_models.Option.Option_Some user -> user =. actual
+  | Core_models.Option.Option_None  -> false
+
+let observed_users_match (user approver: Core_models.Option.t_Option u128) : bool =
+  match user, approver <: (Core_models.Option.t_Option u128 & Core_models.Option.t_Option u128) with
+  | Core_models.Option.Option_Some user, Core_models.Option.Option_Some approver -> user =. approver
+  | _ -> false
+
+/// Observations after the actual challenge take and signature verification.
+/// Absent accounts never establish a binding, including the (None, None) case.
+type t_WebTokenObservation = {
+  f_phase:t_SessionPhase;
+  f_mode:t_SessionMode;
+  f_granted_user:Core_models.Option.t_Option u128;
+  f_approver_user:Core_models.Option.t_Option u128;
+  f_nonce_present:bool;
+  f_challenge_consumed:bool;
+  f_signature_valid:bool
+}
+
 type t_TokenClaims = {
   f_scope:t_CapabilityScope;
   f_key_epoch:Core_models.Option.t_Option i64;
@@ -520,3 +556,218 @@ let authorize_route (scope: t_CapabilityScope) (v_class: t_RouteClass)
   if route_is_authorized scope v_class
   then RouteDecision_Allow ({ f_class = v_class } <: t_RoutePermit) <: t_RouteDecision
   else RouteDecision_Reject <: t_RouteDecision
+
+let same_session_phase (a b: t_SessionPhase) : bool =
+  match a, b <: (t_SessionPhase & t_SessionPhase) with
+  | SessionPhase_Pending , SessionPhase_Pending
+  | SessionPhase_Granted , SessionPhase_Granted
+  | SessionPhase_Revoked , SessionPhase_Revoked
+  | SessionPhase_Expired , SessionPhase_Expired  -> true
+  | _ -> false
+
+let grant_facts_match_observation (o: t_GrantObservation) (f: t_GrantFacts) : bool =
+  same_session_phase f.f_phase o.f_phase && same_session_mode f.f_mode o.f_mode &&
+  f.f_approver_matches =.
+  (observed_approver_matches o.f_approver_user o.f_authenticated_user <: bool) &&
+  f.f_nonce_matches =. ((o.f_nonce_length =. mk_usize 32 <: bool) && o.f_nonce_equal) &&
+  f.f_has_web_vk =. o.f_has_web_vk &&
+  f.f_declared_epoch =. o.f_declared_epoch
+
+let grant_facts (observation: t_GrantObservation)
+    : Prims.Pure t_GrantFacts
+      Prims.l_True
+      (ensures
+        fun facts ->
+          let facts:t_GrantFacts = facts in
+          grant_facts_match_observation observation facts) =
+  {
+    f_phase = observation.f_phase;
+    f_mode = observation.f_mode;
+    f_approver_matches
+    =
+    observed_approver_matches observation.f_approver_user observation.f_authenticated_user;
+    f_nonce_matches = observation.f_nonce_length =. mk_usize 32 && observation.f_nonce_equal;
+    f_has_web_vk = observation.f_has_web_vk;
+    f_declared_epoch = observation.f_declared_epoch
+  }
+  <:
+  t_GrantFacts
+
+let web_facts_match_observation (o: t_WebTokenObservation) (f: t_WebTokenFacts) : bool =
+  same_session_phase f.f_phase o.f_phase && same_session_mode f.f_mode o.f_mode &&
+  f.f_approver_bound =. (observed_users_match o.f_granted_user o.f_approver_user <: bool) &&
+  f.f_nonce_bound =. o.f_nonce_present &&
+  f.f_challenge_consumed =. o.f_challenge_consumed &&
+  f.f_signature_valid =. o.f_signature_valid
+
+let web_token_facts (observation: t_WebTokenObservation)
+    : Prims.Pure t_WebTokenFacts
+      Prims.l_True
+      (ensures
+        fun facts ->
+          let facts:t_WebTokenFacts = facts in
+          web_facts_match_observation observation facts) =
+  {
+    f_phase = observation.f_phase;
+    f_mode = observation.f_mode;
+    f_approver_bound = observed_users_match observation.f_granted_user observation.f_approver_user;
+    f_nonce_bound = observation.f_nonce_present;
+    f_challenge_consumed = observation.f_challenge_consumed;
+    f_signature_valid = observation.f_signature_valid
+  }
+  <:
+  t_WebTokenFacts
+
+let plan_observed_grant (observation: t_GrantObservation)
+    : Prims.Pure t_GrantDecision
+      Prims.l_True
+      (ensures
+        fun decision ->
+          let decision:t_GrantDecision = decision in
+          grant_decision_matches_spec (grant_facts observation <: t_GrantFacts) decision) =
+  plan_grant (grant_facts observation <: t_GrantFacts)
+
+let plan_observed_web_token (observation: t_WebTokenObservation) (now hard_cap epoch: i64)
+    : Prims.Pure t_TokenDecision
+      Prims.l_True
+      (ensures
+        fun decision ->
+          let decision:t_TokenDecision = decision in
+          web_decision_matches_spec (web_token_facts observation <: t_WebTokenFacts)
+            now
+            hard_cap
+            epoch
+            decision) =
+  plan_web_session_token (web_token_facts observation <: t_WebTokenFacts) now hard_cap epoch
+
+let missing_approver_observation_can_grant (observation: t_GrantObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let observation:t_GrantObservation =
+    {
+      observation with
+      f_approver_user = Core_models.Option.Option_None <: Core_models.Option.t_Option u128
+    }
+    <:
+    t_GrantObservation
+  in
+  match plan_observed_grant observation <: t_GrantDecision with
+  | GrantDecision_Grant _ -> true
+  | _ -> false
+
+let wrong_nonce_length_observation_can_grant (observation: t_GrantObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  if observation.f_nonce_length =. mk_usize 32
+  then false
+  else
+    let observation:t_GrantObservation =
+      { observation with f_nonce_equal = true } <: t_GrantObservation
+    in
+    match plan_observed_grant observation <: t_GrantDecision with
+    | GrantDecision_Grant _ -> true
+    | _ -> false
+
+let cross_account_observation_can_issue
+      (observation: t_WebTokenObservation)
+      (user approver: u128)
+      (now hard_cap epoch: i64)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  if user =. approver
+  then false
+  else
+    let observation:t_WebTokenObservation =
+      {
+        observation with
+        f_granted_user = Core_models.Option.Option_Some user <: Core_models.Option.t_Option u128
+      }
+      <:
+      t_WebTokenObservation
+    in
+    let observation:t_WebTokenObservation =
+      {
+        observation with
+        f_approver_user
+        =
+        Core_models.Option.Option_Some approver <: Core_models.Option.t_Option u128
+      }
+      <:
+      t_WebTokenObservation
+    in
+    match plan_observed_web_token observation now hard_cap epoch <: t_TokenDecision with
+    | TokenDecision_Issue _ -> true
+    | _ -> false
+
+let missing_accounts_observation_can_issue
+      (observation: t_WebTokenObservation)
+      (now hard_cap epoch: i64)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let observation:t_WebTokenObservation =
+    {
+      observation with
+      f_granted_user = Core_models.Option.Option_None <: Core_models.Option.t_Option u128
+    }
+    <:
+    t_WebTokenObservation
+  in
+  let observation:t_WebTokenObservation =
+    {
+      observation with
+      f_approver_user = Core_models.Option.Option_None <: Core_models.Option.t_Option u128
+    }
+    <:
+    t_WebTokenObservation
+  in
+  match plan_observed_web_token observation now hard_cap epoch <: t_TokenDecision with
+  | TokenDecision_Issue _ -> true
+  | _ -> false
+
+let unconsumed_challenge_observation_can_issue
+      (observation: t_WebTokenObservation)
+      (now hard_cap epoch: i64)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let observation:t_WebTokenObservation =
+    { observation with f_challenge_consumed = false } <: t_WebTokenObservation
+  in
+  match plan_observed_web_token observation now hard_cap epoch <: t_TokenDecision with
+  | TokenDecision_Issue _ -> true
+  | _ -> false
+
+let invalid_signature_observation_can_issue
+      (observation: t_WebTokenObservation)
+      (now hard_cap epoch: i64)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let observation:t_WebTokenObservation =
+    { observation with f_signature_valid = false } <: t_WebTokenObservation
+  in
+  match plan_observed_web_token observation now hard_cap epoch <: t_TokenDecision with
+  | TokenDecision_Issue _ -> true
+  | _ -> false

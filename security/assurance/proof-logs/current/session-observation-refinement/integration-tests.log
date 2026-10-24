@@ -1,0 +1,72 @@
+   Compiling vela-session-policy v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-700776df/serverVELA/vela-session-policy)
+   Compiling vela-server v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-700776df/serverVELA/vela-server)
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> vela-server/src/sqldb.rs:76:5
+   |
+76 |     async fn query(&self, sql: &str, params: Vec<turso::Value>) -> anyhow::Result<Vec<VelaRow>>;
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+   = note: `#[warn(async_fn_in_trait)]` on by default
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+76 -     async fn query(&self, sql: &str, params: Vec<turso::Value>) -> anyhow::Result<Vec<VelaRow>>;
+76 +     fn query(&self, sql: &str, params: Vec<turso::Value>) -> impl std::future::Future<Output = anyhow::Result<Vec<VelaRow>>> + Send;
+   |
+
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> vela-server/src/sqldb.rs:78:5
+   |
+78 |     async fn execute(&self, sql: &str, params: Vec<turso::Value>) -> anyhow::Result<u64>;
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+78 -     async fn execute(&self, sql: &str, params: Vec<turso::Value>) -> anyhow::Result<u64>;
+78 +     fn execute(&self, sql: &str, params: Vec<turso::Value>) -> impl std::future::Future<Output = anyhow::Result<u64>> + Send;
+   |
+
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> vela-server/src/sqldb.rs:80:5
+   |
+80 |     async fn execute_batch(&self, sql: &str) -> anyhow::Result<()>;
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+80 -     async fn execute_batch(&self, sql: &str) -> anyhow::Result<()>;
+80 +     fn execute_batch(&self, sql: &str) -> impl std::future::Future<Output = anyhow::Result<()>> + Send;
+   |
+
+warning: `vela-server` (lib) generated 3 warnings
+warning: unused import: `vela_server::auth::token::TokenScope`
+    --> vela-server/tests/integration.rs:2078:9
+     |
+2078 |     use vela_server::auth::token::TokenScope;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `vela-server` (test "integration") generated 1 warning (run `cargo fix --test "integration" -p vela-server` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 19.64s
+     Running tests/integration.rs (/home/hirew/.t3/worktrees/VELA/t3-fbd571eb/target/debug/build/vela-server/394368a09aff0e4c/out/integration-394368a09aff0e4c)
+
+running 13 tests
+test extracted_web_session_cannot_mutate_after_a_concurrent_epoch_commit ... ok
+test renewing_a_web_session_token_keeps_it_a_web_session_token ... ok
+test web_session_grant_rejects_a_capsule_from_an_old_key_epoch ... ok
+test web_session_grant_rejects_wrong_link_nonce ... ok
+test web_session_grant_requires_auth ... ok
+test web_session_is_bound_to_the_committed_approver ... ok
+test web_session_poll_requires_the_browsers_secret ... ok
+test web_session_start_and_poll_pending ... ok
+test web_session_start_rejects_bad_key_length ... ok
+test web_session_start_requires_an_approver_account ... ok
+test web_session_token_budget_cannot_be_burned_by_an_onlooker ... ok
+test web_session_token_is_refused_on_permanent_power_routes ... ok
+test web_session_token_still_reaches_the_vault ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 46 filtered out; finished in 0.09s
+

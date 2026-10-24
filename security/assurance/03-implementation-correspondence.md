@@ -62,14 +62,14 @@ Each crate follows the same pattern:
   }
   ```
 
-### Crate inventory (149 policy postconditions / 152 selected policy functions)
+### Crate inventory (159 policy postconditions / 162 selected policy functions)
 
 | Crate | Entry points | Models | Production call sites |
 |---|---:|---|---|
 | `serverVELA/vela-rekey-policy` | 12: `next_epoch`, `resolve_write_epoch`, `plan_start`, `authorize_attempt`, `authorize_shadow`, `plan_commit`, `plan_abort`, `plan_timeout`, `authorize_commit_replay`, `plan_active_mutation`, `authorize_active_mutation`, `stale_permit_authorizes_successor` | M11, M11c | `vault/rekey.rs`, `middleware.rs`, `device/enroll.rs`, `device/rendezvous.rs`, `recovery/mod.rs`, `recovery/enroll_device.rs` |
-| `serverVELA/vela-session-policy` | 11: `parse_scope_claim`, `plan_grant`, `plan_device_token`, `plan_web_session_token`, `plan_renewal`, `authorize_route`, `clamp_web_ttl`, `web_session_expired`, plus 3 negative theorems | M12, M20 | `middleware.rs` (`DeviceSession` extractor), `auth/token.rs`, `web_session/mod.rs` |
+| `serverVELA/vela-session-policy` | 21: two observation constructors, two observation/decision compositions, six new negative theorems, and the prior 11: `parse_scope_claim`, `plan_grant`, `plan_device_token`, `plan_web_session_token`, `plan_renewal`, `authorize_route`, `clamp_web_ttl`, `web_session_expired`, plus 3 negative theorems | M12, M20 | `middleware.rs` (`DeviceSession` extractor), `auth/token.rs`, `web_session/mod.rs` |
 | `serverVELA/vela-enrollment-policy` | 29 checked in hosted F★: 5 decisions, 5 fact constructors and 19 negative theorems | M13 | `device/rendezvous.rs` |
-| `serverVELA/vela-recovery-policy` | 42: the previous 21 plus 21 observation/epoch/composition/rejection contracts, locally checked; hosted reproduction pending | M14, M16, M18 (server side) | `recovery/{initiate,recover,possess,webauthn,enroll_device,mod}.rs` |
+| `serverVELA/vela-recovery-policy` | 42: the previous 21 plus 21 observation/epoch/composition/rejection contracts, checked in hosted F★ on 5fa4e9f | M14, M16, M18 (server side) | `recovery/{initiate,recover,possess,webauthn,enroll_device,mod}.rs` |
 | `serverVELA/vela-share-policy` | 10: `plan_ek_registration`, `plan_send`, `plan_link_mutation`, `timestamp_format_plausible`, plus 6 negative theorems | M19b, M21 | `share/mod.rs` |
 | `libVELA/vela-client-recovery-policy` | 18: `plan_reconstruction`, `plan_adoption`, `plan_publication_resume`, `plan_contact_delivery`, plus 14 negative theorems | M15, M17, M18 (client side) | `vela-crypto/src/recovery.rs`, `desktopVELA/vela-desktop-core/src/recovery.rs`, Android and Apple bridges |
 | `libVELA/vela-sync-policy` | 11: `plan_epoch_adoption`, `plan_chunk_download`, `classify_merge_action`, plus 8 negative theorems | M23 | `desktopVELA/vela-desktop-core/src/sync.rs` **only** |
@@ -90,12 +90,12 @@ All eight policy crates were freshly extracted and checked after replacing
 derived-enum equality uses with structural matches. No local `assume val`
 declarations remain. The [current evidence](proof-logs/current/trusted-boundary/README.md)
 and [crypto contract boundary](../../libVELA/vela-crypto/proofs/fstar/README.md)
-record their assumptions. Current code has 180 selected functions and 173
+record their assumptions. Current code has 190 selected functions and 183
 explicit postconditions; selected functions and predicates are different counts.
 The enrollment fact-construction increment adds five observation-to-fact
 constructors and fifteen negative theorems (twenty selected entry points) that
 passed hosted extraction and F★ checking on fbe35c0. The earlier hosted 159/152 counts include
-them; the local recovery increment extends the inventory to 180/173. The [exact CI evidence](proof-logs/current/hosted-enrollment-40039992434/README.md)
+them; recovery extended the inventory to 180/173, reproduced in hosted CI on 5fa4e9f. The local web-session increment extends this to 190/183. The [exact CI evidence](proof-logs/current/hosted-enrollment-40039992434/README.md)
 preserves the regenerated enrollment artifact without editing its body.
 
 The CI `refinement` job installs pinned tools, runs all eight crates and the constructor,
@@ -103,9 +103,7 @@ retaining logs. The complete [security workflow](https://github.com/lucannez64/V
 passed on `e690dfc` for the preceding 119-postcondition snapshot. The parser/transcript and enrollment increments subsequently passed the hosted
 refinement job on fbe35c0; its full security workflow failed before computational
 proof execution because of the runner's executable bit.
-The repair subsequently passed the complete workflow on 40c9f30. The newer
-computational-model correction and local 173-postcondition recovery inventory
-still require hosted reproduction.
+The repair subsequently passed the complete workflow on 40c9f30. The computational corrections, 173-postcondition recovery inventory and journal increment passed hosted CI on 5fa4e9f. The new [web-session observation increment](14-session-observation-refinement.md) is checked locally and awaits hosted reproduction.
 
 Every crate has a `verify-fstar.sh` runner, and most have a README that
 states its proof boundary (for example
@@ -139,7 +137,7 @@ Its fresh crypto checking log supersedes the earlier parser snapshot. The
 defined Vec subset exposes checked sequence-concatenation refinements;
 correspondence to Rust std remains trusted.
 Always re-extract after changing Rust sources. `check-proof-boundary.py` records
-173 explicit postconditions; seven selected functions have no `ensures`. It
+183 explicit postconditions; seven selected functions have no `ensures`. It
 detects added extraction assumptions, not semantic correspondence.
 
 ## 3.3 Executable refinement evidence (CI-gated)

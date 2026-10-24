@@ -84,20 +84,21 @@ correctness is not a consequence of the pure-policy proofs.
 - Current network-boundary run: **17/17 verified** in five theories, including
   explicit attack witnesses for the old share and enrollment designs.
   Full logs: [`proof-logs/current/`](proof-logs/current/).
-- Corpus inventory: **37 Tamarin theories / 299 lemmas**, plus three ProVerif
-  models. The earlier full run covers 35 theories; M28 adds seven journal
+- Corpus inventory: **37 Tamarin theories / 302 lemmas**, plus three ProVerif
+  models. The earlier full run covers 35 theories; M28 adds ten journal
   properties and M29 adds eleven composed authentication/journal properties.
-  Combined evidence is **294 verified / five intended falsifications**; it is
+  Combined evidence is **297 verified / five intended falsifications**; it is
   not a new whole-corpus CI result.
 - Computational models: five positive CryptoVerif game results and one explicitly
   unproved legacy baseline, with a random-oracle and uniform-group boundary.
   The [review corrections](proof-logs/current/computational-review-corrections/README.md)
   add leaked-key KEM correctness and clarify assumptions; hosted reproduction
-  is pending. These results do not establish full Rust or quantum-adversary
+  passed on 5fa4e9f. These results do not establish full Rust or quantum-adversary
   construction correspondence.
 - Current hax/F*: the [local recovery increment](proof-logs/current/recovery-fact-refinement/README.md)
   extends the earlier [hosted enrollment baseline](proof-logs/current/hosted-enrollment-40039992434/README.md)
-  to **180 selected functions / 173 explicit postconditions** across eight policy crates and the sharing/signature kernels.
+  to the hosted 180/173 snapshot. The [web-session observation increment](14-session-observation-refinement.md) extends this locally
+  to **190 selected functions / 183 explicit postconditions** across eight policy crates and the sharing/signature kernels.
   All **18 local enum-equality assumptions were removed** through structural
   Rust comparisons; current generated modules contain zero local `assume val`
   declarations. Imported proof libraries, the String/Vec models and tools remain

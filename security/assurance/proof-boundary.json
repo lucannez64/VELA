@@ -38,7 +38,7 @@
     },
     {
       "artifact": "serverVELA/vela-session-policy/proofs/fstar/extraction/Vela_session_policy.fst",
-      "selected_postconditions": 9,
+      "selected_postconditions": 19,
       "allowed_assume_val": []
     },
     {
