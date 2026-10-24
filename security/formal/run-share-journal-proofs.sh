@@ -28,4 +28,26 @@ if ('summary of summaries:' not in text or re.search(r'WARNING:|falsified|analys
 print(f'{model.stem}: {len(expected)} verified, 0 falsified, 0 warnings')
 PY
 done
+
+# Machine-checked Chain correspondence.  This checks the F* development of
+# the original and instrumented transition systems; it does not re-check the
+# Tamarin rules, which are mapped explicitly in
+# m28-trace-equivalence/README.md.
+fstar_log="$out/m28-trace-equivalence.log"
+if grep -Eiq '\b(assume|admit|axiom|Admitted|sorry|magic)\b' \
+     "$root/m28-trace-equivalence/M28TraceEquivalence.fst"; then
+  echo "m28-trace-equivalence: source contains an unsound escape" >&2
+  exit 1
+fi
+VELA_PROOF_TIMEOUT=${VELA_PROOF_TIMEOUT:-600} \
+  "$root/../assurance/bounded.sh" "$root/fstar-bounded.sh" \
+  --z3rlimit 100 "$root/m28-trace-equivalence/M28TraceEquivalence.fst" \
+  >"$fstar_log" 2>&1
+if ! grep -q 'All verification conditions discharged successfully' "$fstar_log" \
+   || grep -Eiq 'warning|assume|admit|axiom|sorry|magic|error' "$fstar_log"; then
+  echo "m28-trace-equivalence: FAIL; inspect $fstar_log" >&2
+  exit 1
+fi
+printf 'm28-trace-equivalence: F* verified, 0 warnings, 0 assumes\n'
+
 printf 'Full proof logs: %s\n' "$out"

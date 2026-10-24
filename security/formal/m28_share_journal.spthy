@@ -13,15 +13,16 @@ begin
    The linear Chain(slot, generation, pin) fact is proof instrumentation, not
    protocol state: it is the committed (generation, revision) pair, advanced
    only by PersistJournal and carried unchanged by ClearJournal. It is
-   functionally determined by the two durable files, so every trace of the
-   original rules has a unique Chain lift and deleting Chain from any lifted
-   trace yields an original trace with the same observable actions. The two
-   all-pairs lemmas at the end are proved in this conservative extension; the
-   projection/lifting argument is a manual refinement step, not a machine
-   checked equivalence. No restriction or guard was changed; the only rule
-   change is the Chain ghost-thread in Initialize, PersistJournal and
-   ClearJournal, and the original transitions are recovered by projection.
-   The recovery witness remains reachable.
+   functionally determined by the two durable files. The projection/lifting
+   step is machine-checked in F* (security/formal/m28-trace-equivalence):
+   every reachable lifted event trace projects to a reachable original trace
+   with the same events, and every reachable original trace lifts with the
+   same events, for an arbitrary increasing guard. No restriction or guard
+   was changed; the only rule change is the Chain ghost-thread in Initialize,
+   PersistJournal and ClearJournal. The direct Tamarin proof on the original
+   rules did not finish within the 600 s bound; the F* module is the checked
+   correspondence, not a claim that these two lemmas were re-proved in
+   Tamarin without Chain. The recovery witness remains reachable.
 */
 functions: successor/1
 
