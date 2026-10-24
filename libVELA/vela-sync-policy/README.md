@@ -41,9 +41,9 @@ postconditions to the global Rust contract census. Evidence and run provenance a
 
 ## Integer-epoch kernel and mobile callers
 
-The local runtime candidate is held for the token-header, missing-pin and
-RMS-snapshot review corrections described in the assurance candidate note.
-The kernel proofs do not close those pending implementation issues.
+The local runtime candidate includes the token-header, missing-pin and
+RMS-snapshot corrections and is held for final review and hosted validation.
+The kernel proofs do not establish those implementation traces.
 
 
 A focused extraction checks four additional Rust postconditions for

@@ -24,17 +24,23 @@ within one writer process. A second process could overwrite whole maps,
 lowering floors and erasing other contexts; that configuration is not supported
 by the current guarantee.
 
-## Pending runtime review corrections
+## Runtime review status
 
-This candidate is not published with the independent chunk-proof increment.
-Static review confirmed namespace pinning on the ordinary recoverable-401 path
-but found that a rejected auth result's token header can still be saved by a
-finally block. It also found asynchronous identity-pin persistence and an empty-
-account fallback when a pin is missing, plus an unsynchronized RMS copy/zeroize
-race. Those paths require corrections and tests before runtime publication.
-Pure IdentityBinding tests alone do not establish production auth ordering.
-Recovery's prior-pin replacement and platform atomic-move behavior are further
-review obligations. Do not infer that the policy lemmas close these gaps.
+The fail-closed correction implements the token-header, missing-pin and RMS-
+snapshot fixes found by prior review. The production retry controller accepts
+collected headers only after its operation/retry succeeds and clears them on
+failure; API/SSE collectors ignore non-2xx headers. Identity records commit
+synchronously; missing account pins refuse sync before requests and cannot
+become an empty namespace. A shared RMS monitor makes copy/replace/zeroize
+coherent. Recovery preflights a different existing pin before enrollment/writes.
+
+The parent JVM run passes159 tests, including production retry/auth components
+with a fake HTTP transport. It does not execute real HTTPS, JNI, Keystore or
+physical filesystem failure. A renewed independent final review is pending.
+Bootstrap authentication/share-key setup may save a validated token before the
+retry controller; its guarantee is scoped to the controller's operation.
+Concurrent explicit account reset/replacement during network requests remains
+a review question. No end-to-end auth/storage trace theorem is claimed.
 
 ## Persistence and compatibility limits
 

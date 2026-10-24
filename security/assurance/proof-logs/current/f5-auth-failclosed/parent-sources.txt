@@ -1,0 +1,20 @@
+Parent candidate after92c6c92; comments narrowed after JVM run, no behavior change.
+4a57a7bbb66c555ab73f9295cfff7eaa2fdb0db118ae005de2a90564201ce3a2  androidVELA/app/src/main/java/com/vela/android/core/LocalVaultRepository.kt
+5332f60eddbad97ba914deae75f402f0a260653db11efd4c82de63b0cb85f460  androidVELA/app/src/main/java/com/vela/android/security/EncryptedVaultStore.kt
+29fb815d86901da3de69763059668efb9624d9c9b440bccf705b7c76ace164c5  androidVELA/app/src/main/java/com/vela/android/security/RmsHolder.kt
+366d85d6d016288b2f5ac1c7795eaebf440addc1b97af50a76988225f55e87ba  androidVELA/app/src/main/java/com/vela/android/security/SecureVaultManager.kt
+6ae78126b370cc6bc2a1be6d7274435043e1fa3911acf12e82d2cc1cf315822f  androidVELA/app/src/main/java/com/vela/android/sync/AccountAuthenticator.kt
+9bf0a20bcfa1b253b87cdca958050ea20a53b9c1375b7d2b964c60bb8d277664  androidVELA/app/src/main/java/com/vela/android/sync/AndroidVelaApiClient.kt
+27fe69b1e9e1c09de6ac359f51dbc9f3ce9fecc78dd3a26e3e15bdf68726ebd8  androidVELA/app/src/main/java/com/vela/android/sync/IdentityBinding.kt
+b244b0d6654a12b4ba9fe46cd1a372d7584de4779314580eb616abdc52f99428  androidVELA/app/src/main/java/com/vela/android/sync/RecoveryAccountBinding.kt
+eecd6fdb1366e4091d2691218498c31b79ffc933d43e9a0d33da5c89cf489bd9  androidVELA/app/src/main/java/com/vela/android/sync/ServerIdentityRecord.kt
+dbe7578dd82e2061f2b9a02bcc2c5f94e01dffa5313b04a7edc291cba96bdc11  androidVELA/app/src/main/java/com/vela/android/sync/ServerIdentityStore.kt
+81689f4262559b24a65ca18910e9cd53fc07bff4ca85b5cb7cfb0e1e93118ae9  androidVELA/app/src/main/java/com/vela/android/sync/SyncAuthController.kt
+a57b7469a518889d98c303e5aa8cdf37921e33c75dc1615cfb8866c6eb75f478  androidVELA/app/src/main/java/com/vela/android/sync/SyncSettingsStore.kt
+402a50cc67b39aa71d4b596d6a0b842f00944914afa4879ea7d22fc5cc9d6000  androidVELA/app/src/main/java/com/vela/android/sync/VaultEventStream.kt
+ff755d27143e553d893ce3b64550f17d4ccb7352054a82398bb9457bcea16eeb  androidVELA/app/src/main/java/com/vela/android/sync/VaultSyncManager.kt
+35bd05a9a51de9bed58a6f8a912d18f57b9dbc52ee405a00119cddc942181516  androidVELA/app/src/test/java/com/vela/android/security/RmsHolderTest.kt
+e549cce0f955b72ff12acd2057fc18ea667435a837375b0f88b453878da0c6b2  androidVELA/app/src/test/java/com/vela/android/sync/IdentityFailClosedTest.kt
+227cf9a4bc026d5b225d5fdc5dad94331bc7d20482c7daea7aa5e3c9bbb64c40  androidVELA/app/src/test/java/com/vela/android/sync/RecoveryAccountBindingTest.kt
+aaf0b1001fdfeab730e730d595ff6fbe3baaab6d07f6ffe79cf0fc377f009120  androidVELA/app/src/test/java/com/vela/android/sync/SyncAuthControllerTest.kt
+98b4595e84a870b498a1fad2bcfa7ae304c79a822a955e6d25e2d05541e6ddaf  androidVELA/app/src/test/java/com/vela/android/sync/VaultEventStreamParserTest.kt

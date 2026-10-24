@@ -68,8 +68,8 @@ class LocalVaultRepository(
 
     /**
      * Replace the vault for a path that has already accepted untrusted remote
-     * bytes, and require the replacement to be durably written before any
-     * rollback baseline may advance.
+     * bytes, and require a successful save before any rollback baseline may
+     * advance. Power-loss durability is not established by this method.
      *
      * The normal [replaceAll] intentionally tolerates a concurrent AutoLock by
      * leaving the in-memory value ahead of disk (other UI callers rely on the
@@ -77,7 +77,9 @@ class LocalVaultRepository(
      * silently dropping the write and then recording the admitted clocks would
      * let a retry look like a rollback. [afterPersist] runs only after
      * [EncryptedVaultStore.save] succeeded, so a locked or failing store leaves
-     * the baselines untouched.
+     * the baselines untouched when unavailable at the key snapshot or when
+     * save fails. A coherent snapshot captured before a later lock may finish;
+     * lock does not cancel in-flight I/O.
      */
     fun <T> replaceAllAdmitted(candidate: VaultStore, afterPersist: () -> T): T =
         persistVaultThenRecord(

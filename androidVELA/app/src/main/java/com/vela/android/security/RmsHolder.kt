@@ -16,9 +16,9 @@ import java.util.Arrays
  * - A snapshot already returned may be used after [clear]. `lock()` therefore
  *   does not cancel in-flight I/O (vault save, chunk decrypt, upload); it only
  *   prevents *new* snapshots. A captured operation may still finish with the
- *   old key. Callers that must refuse a locked session check
- *   [SecureVaultManager.session] before persisting, as the admitted-sync path
- *   already does.
+ *   old key. The admitted-sync path samples this holder at persistence start:
+ *   no key then means refusal; a copy captured before a later lock may finish.
+ *   The UI session StateFlow is not an atomic cancellation lease.
  * - No asynchronous I/O is performed while the monitor is held.
  */
 internal class RmsHolder {

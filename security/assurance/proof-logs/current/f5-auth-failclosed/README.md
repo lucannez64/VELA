@@ -200,3 +200,23 @@ Android Kotlin + JVM unit tests only.
   pin-before-write ordering helper is tested.
 - Parent-owned global proof census, correspondence, `MANIFEST.sha256` and CI
   wiring are intentionally untouched.
+
+## Parent integration
+
+Integrated as92c6c92. The parent full JVM run passes159 tests across24 JUnit
+reports, with no failures/errors/skips; see parent-jvm.log and parent-counts.txt.
+No Rust/F★/Swift changed in this auth correction, so the earlier bridge and
+kernel checks remain separate evidence. Parent comment-only corrections make
+key-snapshot timing precise: a lock before snapshot prevents a write; a coherent
+snapshot already captured may finish. UI StateFlow is not a cancellation lease.
+
+The first delegated final review failed because the Go subscription was not
+active. The user renewed it, and an independent review was restarted. It is
+pending. Parent self-review confirms retry-controller failures clear collected
+headers before token commit and that auth/store callbacks are used in the
+production manager. Bootstrap authentication/share-key setup can persist a
+validated token before entering that controller; the controller's whole-
+operation guarantee does not describe that earlier setup. Concurrent explicit
+account reset/replacement during network requests remains a review question,
+particularly validation against the current identity inside targeted writes.
+The159-test result does not establish full auth/reset trace refinement.
