@@ -1,0 +1,32 @@
+# Excerpt of CI job 'static-scan', workflow 'security', run 39864715971
+# https://github.com/lucannez64/VELA/actions/runs/39864715971/job/120123900847
+# Commit 5a3b72e7f6d2081cc91b9610adc62a54981f0857, 2026-10-22. Step: Run static scan (hard gate)
+
+^[[36;1m./security/run-scan.sh^[[0m
+== semgrep — extension JS rules (bin) ==
+  findings: 0
+
+== scan.py — Rust rules ==
+VELA security scan: clean (0 findings)
+== cargo-audit — serverVELA ==
+  clean (no advisories)
+== cargo-audit — vela-crypto ==
+  clean (no advisories)
+== cargo-audit — vela-android-bridge ==
+  clean (no advisories)
+== cargo-audit — vela-wasm-bridge ==
+  clean (no advisories)
+== cargo-audit — vela-core ==
+  clean (no advisories)
+== cargo-deny — serverVELA ==
+  clean (bans + licenses ok)
+== cargo-deny — vela-crypto ==
+  clean (bans + licenses ok)
+== cargo-deny — vela-android-bridge ==
+  clean (bans + licenses ok)
+== cargo-deny — vela-wasm-bridge ==
+  clean (bans + licenses ok)
+== cargo-deny — vela-core ==
+  clean (bans + licenses ok)
+
+VELA security scan: PASS

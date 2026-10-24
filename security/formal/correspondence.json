@@ -1,0 +1,208 @@
+{
+  "description": "Reviewed artifact snapshots; drift detection only, not semantic equivalence. See network-boundary-correspondence.md.",
+  "pairs": [
+    {
+      "boundary": "share admission",
+      "artifacts": {
+        "libVELA/vela-crypto/src/share_envelope.rs": "332b8a1ccd3324dda61262c6254c63f0286c16a814851b491c23ce23687bdf21",
+        "libVELA/vela-client-share-policy/src/lib.rs": "97a94c6af11d40b6eafa4930940212d62d2cb5393d6940c7457bb9ce12e9a261",
+        "desktopVELA/vela-desktop-core/src/sharing.rs": "2c6b8ac1e82d1858e92937a874fa7c971b0821de22bce368eb17165c9b7db0f3",
+        "security/formal/m19c_share_sender_authentication.spthy": "7cb3e243ec013165a20fa9988ef65f5697cb71e564eb8853e8d6d0113f291935",
+        "security/formal/m19c_share_v1_baseline.spthy": "5e42bb07a3c6bfddeb4467736edbab9c8d89d12f8795907dbdefdcf82fed9b57",
+        "desktopVELA/vela-desktop-core/src/lib.rs": "fc669ad646ca899e39cff2891e06d2f0d4d47d3332b610464ee9aecff7caa856",
+        "desktopVELA/vela-desktop-core/src/store.rs": "b6de27f088698a5f37e1754bc81691260d8222545686d78fc0cc1d94d5234324",
+        "desktopVELA/Cargo.lock": "5f0cdf3264326468553c5e5571fecc48f48416727937f0d4f06382ea8b709f55"
+      }
+    },
+    {
+      "boundary": "enrollment key binding",
+      "artifacts": {
+        "libVELA/vela-crypto/src/verification.rs": "c9c140ffb2d35176bb7194bad83a31fb8176a086b84ecb7e49a06374fa6e5c36",
+        "desktopVELA/vela-desktop-core/src/commands/enrollment_v3.rs": "3762aa2081c96760a52963c9a2b54e9533715af8a9ac261757a2394090c41063",
+        "security/formal/m13b_enrollment_key_binding.spthy": "0a99ec7e4c091495bfd142d37fd58460ba5a653edb104488d0cd7b50b81a8a4b",
+        "security/formal/m13b_enrollment_v3_baseline.spthy": "9d70827875322d752d4480becc1767f29070ae5efa488aa633f6c2eea8264152"
+      }
+    },
+    {
+      "boundary": "device challenge authentication",
+      "artifacts": {
+        "libVELA/vela-crypto/src/signing.rs": "82c9e2f3f9882d62cad5707cd8287b1299b373b10629eff912477f519249150b",
+        "serverVELA/vela-server/src/auth/challenge.rs": "7d1039e9094fb46aa7e2044bd38a35551f3c032cfca711df592e717d301436ee",
+        "serverVELA/vela-server/src/auth/verify.rs": "60b09e41b127a79c2dd51edc6ea9b09ab63d344e1acd4a92c661fa647789831c",
+        "security/formal/m27_device_authentication.spthy": "e935fe68bc6872ab11599af50f67ca96aee296139b02c4bb2b9ab76e91dbfcbc"
+      }
+    },
+    {
+      "boundary": "KEM idealization",
+      "artifacts": {
+        "libVELA/vela-crypto/src/kem.rs": "c9a17b26b6624f65ad4539b0d3449e10b36236cd6a015be7a4546c4b56457885",
+        "security/formal/m19c_share_sender_authentication.spthy": "7cb3e243ec013165a20fa9988ef65f5697cb71e564eb8853e8d6d0113f291935",
+        "security/formal/m13b_enrollment_key_binding.spthy": "0a99ec7e4c091495bfd142d37fd58460ba5a653edb104488d0cd7b50b81a8a4b"
+      }
+    },
+    {
+      "boundary": "recoverable share journal and fact construction (typed F* lifting/projection checked; Tamarin source embeddings and Rust/filesystem refinement remain manual/open)",
+      "artifacts": {
+        "security/formal/m28_share_journal.spthy": "5cd14f975aa2b357f37b2221b68438f9fb4ee551dc05072783f7c9555ef9ac11",
+        "security/formal/share-journal-correspondence.md": "e639180eee5228752407f2055329592b164276a686db7e88dbb878110cc318ac",
+        "libVELA/vela-client-share-policy/src/lib.rs": "97a94c6af11d40b6eafa4930940212d62d2cb5393d6940c7457bb9ce12e9a261",
+        "libVELA/vela-crypto/src/share_envelope.rs": "332b8a1ccd3324dda61262c6254c63f0286c16a814851b491c23ce23687bdf21",
+        "libVELA/vela-crypto/verify-share-facts-fstar.sh": "a34a1d189f72a46f2c34ce5fe97db0a315f5f077ba82579b1c0262b25929756d",
+        "libVELA/vela-crypto/proofs/fstar/models/Alloc.String.fst": "ebb0c20ed7755594351ea238964573d1c0987427570839bf5a4cf11d5bc3864d",
+        "desktopVELA/vela-desktop-core/src/sharing.rs": "2c6b8ac1e82d1858e92937a874fa7c971b0821de22bce368eb17165c9b7db0f3",
+        "desktopVELA/vela-desktop-core/src/store.rs": "b6de27f088698a5f37e1754bc81691260d8222545686d78fc0cc1d94d5234324",
+        "desktopVELA/vela-desktop-core/src/lib.rs": "fc669ad646ca899e39cff2891e06d2f0d4d47d3332b610464ee9aecff7caa856",
+        "desktopVELA/vela-desktop-core/Cargo.toml": "f11230efa0ab9356d741a0a73a5ef9962bcce6711177a6cf4ba59f94557109fd",
+        "desktopVELA/Cargo.lock": "5f0cdf3264326468553c5e5571fecc48f48416727937f0d4f06382ea8b709f55",
+        "security/formal/m28-trace-equivalence/M28TraceEquivalence.fst": "d06cd03016eecd1ce7c0420f5b78017bb843dd030542ed3d04d8873dbb37504d",
+        "security/formal/m28-trace-equivalence/README.md": "8dce263fc631f1062e71efe004b03c4f0c40e70df3ca21b0fc793e354f1a095c",
+        "security/formal/m28-trace-equivalence/verify.sh": "1f604c9529c0a131ab316a9327f365777c91d898b07983cfeda05b36c8466578",
+        "security/formal/fstar-bounded.sh": "0d1738e9e4aab789076ad85feca20485df99353a04ff085b58f1fe9313a7fa4c",
+        "security/formal/check-m28-semantic-proof.py": "c96f01ed1848f57ad2f2f45540a335347c5a5ec136b9220c031a3cc904e6ce37",
+        "security/formal/tests/test_m28_semantic_guard.py": "1a8744f889b8617121920b9467709bdc4251cab79a4704ae21d05537f837bfea",
+        "security/formal/run-share-journal-proofs.sh": "62d9a929bf6e6ea76dae62b5244a4345da6ed0d509b3a6d150bcfdf771f87e36",
+        "security/assurance/install-formal-fstar.sh": "5d576f39327ec3d45590e8e4bc0882b004c6d74835a414152a07cc637331f0dc"
+      }
+    },
+    {
+      "boundary": "signed sharing composition and structural policy comparisons (conditional; manual Rust trace refinement)",
+      "artifacts": {
+        "libVELA/vela-client-recovery-policy/src/lib.rs": "787d421ea62a246aa66cd55d320cf17b2193ea2466180afaeefb2e1fa670cdc7",
+        "libVELA/vela-client-share-policy/src/lib.rs": "97a94c6af11d40b6eafa4930940212d62d2cb5393d6940c7457bb9ce12e9a261",
+        "libVELA/vela-client-share-policy/verify-fstar.sh": "4268a7d2c8db86028962f32b1ce9a9f9d93cd1ec302e9d1ab920f1ec68256d15",
+        "libVELA/vela-crypto/src/share_envelope.rs": "332b8a1ccd3324dda61262c6254c63f0286c16a814851b491c23ce23687bdf21",
+        "libVELA/vela-crypto/src/signing.rs": "82c9e2f3f9882d62cad5707cd8287b1299b373b10629eff912477f519249150b",
+        "libVELA/vela-crypto/verify-share-facts-fstar.sh": "a34a1d189f72a46f2c34ce5fe97db0a315f5f077ba82579b1c0262b25929756d",
+        "libVELA/vela-sync-policy/src/lib.rs": "6f7e4eff2087e03fc5d337a238abacc0d69777aece0dc4b7acd017e4fa997618",
+        "security/formal/m29_signed_share_commit.spthy": "1b57cbec760120c4ac42267ab277a3d17db6439f425f0cddee65a22d32bdd08c",
+        "security/formal/signed-share-commit-correspondence.md": "8b1a5ae7bc8dbedd8c83c6a979fd82470706c87703d73503cc1f70ea6f582822",
+        "serverVELA/vela-enrollment-policy/src/lib.rs": "24fd425d557bae739f3ea35986ebb3257d90d1a8c596c39326898ca627ed6c3e",
+        "serverVELA/vela-recovery-policy/src/lib.rs": "e392228715468d36c4a547e80f96e703a6d439be4f2a4bb74cf78d41925d3855",
+        "serverVELA/vela-rekey-policy/src/lib.rs": "4ce4d9604cd924f12d05b5ec62f2b40d9917194e7baa20fde348dd27a81b0dfb",
+        "serverVELA/vela-session-policy/src/lib.rs": "3befdaca67cc99334e7e3ebac343ba0b6d1ac2a08afa95bee7542045b2fb44b4",
+        "serverVELA/vela-share-policy/src/lib.rs": "7e4b4f907db343dccc3bf5a1ee2a10feb6ee00bd88bc97162cbf514c39c1208c"
+      }
+    },
+    {
+      "boundary": "share wire arithmetic, concrete byte-frame parsing and received-byte transcripts (crypto/context/I/O composition remains open)",
+      "artifacts": {
+        "libVELA/vela-crypto/src/wire.rs": "f0f8eb5ef9d7a58a27baec6b3ab302bc32bc2b334b516589318db50f47d645ec",
+        "libVELA/vela-crypto/src/share_envelope.rs": "332b8a1ccd3324dda61262c6254c63f0286c16a814851b491c23ce23687bdf21",
+        "libVELA/vela-crypto/proofs/fstar/extraction/Vela_crypto.Wire.fst": "fea6b864fc5821891d2647dc6ff374a85bc368b7e4c011d39c3f611eac7a45b8",
+        "libVELA/vela-crypto/verify-share-facts-fstar.sh": "a34a1d189f72a46f2c34ce5fe97db0a315f5f077ba82579b1c0262b25929756d",
+        "security/assurance/10-signature-reduction.md": "ca201b11224ffcdc3dcb817d006244371b36d523062f8ae628cc295c5a4f8779",
+        "security/assurance/11-parser-refinement.md": "8b3600d56aed22f16d6a3b7b3996b0b34748f7eae814ecb689cd6829da8ea279",
+        "libVELA/vela-crypto/proofs/fstar/extraction/Vela_crypto.Share_envelope.fst": "47e61d7acb26f06f80d92d6a524e9ea5711b19affb41eaee32564b124ec9def1",
+        "libVELA/vela-crypto/proofs/fstar/extraction/Vela_crypto.Signing.fst": "d6b62ebffa9ca4ce5cd61b4c2969d26c0f3979be0409b3cbc5a9827c8dc6834b",
+        "libVELA/vela-apple-bridge/src/lib.rs": "0325d227a6c0ce2536cc0a1c95fad491498e20ee8327715f3f3323e0749b976c",
+        "libVELA/vela-android-bridge/src/lib.rs": "b351b0f475e48d90007710e90d55ff15bb242a2ed958a3e2e75c4a46f353534c",
+        "libVELA/vela-crypto/proofs/fstar/models/Alloc.Vec.fst": "e67ad0f23c2e21d3175dc8cacd62c0496c6c09f53b144ff6e113df669cb34982",
+        "security/assurance/12-authenticated-transcript.md": "81e96b0a7a9bbc8990803ddeddc272b53df7d83cb69430436e34e9175e795334"
+      }
+    },
+    {
+      "boundary": "hybrid KEM combiner",
+      "artifacts": {
+        "libVELA/vela-crypto/src/kem.rs": "c9a17b26b6624f65ad4539b0d3449e10b36236cd6a015be7a4546c4b56457885",
+        "security/formal/cryptoverif/kem_v2_x25519_gdh.ocv": "fc5f9fa9beb55117e6a4ff9a0496a8f5b5287f2d2b8724a7608f434848e96777",
+        "security/formal/cryptoverif/kem_v2_mlkem_cca.ocv": "0aee82cc577eb7fa26b6525bbed79a1f08e2ce738edca8f2228b2ea946c01b5e",
+        "security/formal/cryptoverif/kem_v1_x25519_baseline.ocv": "cf5b6b780c01cd8bca5749723f4f083b7deb29c09dac3ef6a3e94e30a06e39cb",
+        "libVELA/vela-crypto/src/aead.rs": "7840cd68b6b510284e3fba940ced84712af0ecd7914f2833fc1bbc8cccb2e46f",
+        "security/formal/cryptoverif/kem_dem_seal_share.ocv": "e3748c7aae82802d9a088e221ba0f4babb9e7165ed054dd6ad687a2c5e445725",
+        "security/formal/cryptoverif/kem_v2_x25519_gdh_nonuniform.ocv": "d85cef886c776209a68a430ad51007e3c1caa3a07e03bc5833eb9094370c5726",
+        "security/formal/cryptoverif/HPKE-LICENSE.txt": "590b84bda61a1562c260501aac68769dd751ca077d61dd634797ea858981eeec"
+      }
+    },
+    {
+      "boundary": "hybrid signature",
+      "artifacts": {
+        "libVELA/vela-crypto/src/signing.rs": "82c9e2f3f9882d62cad5707cd8287b1299b373b10629eff912477f519249150b",
+        "security/formal/cryptoverif/hybrid_sig_mldsa_euf.ocv": "835dec5e6880fa6aa669ea65b55312b804a4787f0ad861fea05d4fd992970287",
+        "security/formal/cryptoverif/hybrid_sig_ed25519_euf.ocv": "89fdf3ca41a6ac0638f5818f689a18d99835f58740c1f549194ce4a37c8ca03f",
+        "security/assurance/10-signature-reduction.md": "ca201b11224ffcdc3dcb817d006244371b36d523062f8ae628cc295c5a4f8779"
+      }
+    },
+    {
+      "boundary": "enrollment observation-to-fact construction (observation provenance and handler/database trace refinement remain open)",
+      "artifacts": {
+        "serverVELA/vela-enrollment-policy/src/lib.rs": "24fd425d557bae739f3ea35986ebb3257d90d1a8c596c39326898ca627ed6c3e",
+        "serverVELA/vela-enrollment-policy/verify-fstar.sh": "c0f1d3c0d1c91ad6c61f2dc06c064b2d0636bac47b6656aeb220544582aad2c9",
+        "serverVELA/vela-enrollment-policy/proofs/fstar/extraction/Vela_enrollment_policy.fst": "be5fbb7f35bb2d5124f36546c76ef40bc87ef7b89e9e0ae9b73d15f7e4f53f03",
+        "serverVELA/vela-enrollment-policy/tests/fact_construction.rs": "ca84b5b6a4e11089242ec0ba393937837efddfcdf2aec5a5e3c411dbdc071f53",
+        "serverVELA/vela-server/src/device/rendezvous.rs": "dac8cfb3a79dafb745ea1e9cbb6969bd3cf0f6a70bd7c8f7f325212e20002c70"
+      }
+    },
+    {
+      "boundary": "computational games and reviewed manual Rust mapping (RO/uniform-group/perfect-correctness assumptions; concrete scalar/hash/encoding/composition bridges remain open)",
+      "artifacts": {
+        "security/formal/cryptoverif/hybrid_sig_ed25519_euf.ocv": "89fdf3ca41a6ac0638f5818f689a18d99835f58740c1f549194ce4a37c8ca03f",
+        "security/formal/cryptoverif/hybrid_sig_mldsa_euf.ocv": "835dec5e6880fa6aa669ea65b55312b804a4787f0ad861fea05d4fd992970287",
+        "security/formal/cryptoverif/kem_dem_seal_share.ocv": "e3748c7aae82802d9a088e221ba0f4babb9e7165ed054dd6ad687a2c5e445725",
+        "security/formal/cryptoverif/kem_v1_x25519_baseline.ocv": "cf5b6b780c01cd8bca5749723f4f083b7deb29c09dac3ef6a3e94e30a06e39cb",
+        "security/formal/cryptoverif/kem_v2_mlkem_cca.ocv": "0aee82cc577eb7fa26b6525bbed79a1f08e2ce738edca8f2228b2ea946c01b5e",
+        "security/formal/cryptoverif/kem_v2_x25519_gdh.ocv": "fc5f9fa9beb55117e6a4ff9a0496a8f5b5287f2d2b8724a7608f434848e96777",
+        "security/formal/cryptoverif/README.md": "f24c94e18e0d63c32be2042f884cc7fec59b8b5c0b3200c940b30cf205641fe3",
+        "security/formal/run-cryptoverif-proofs.sh": "f0557b2842d940bcab19e75c4ad70696c0e04c3a7bdb084c3e478e102d67bb79",
+        "security/formal/check-cryptoverif-boundary.py": "3e79da3d7b3ecb9b88aa435ee6fd0c2cebd3d0b41fad322643193879915158cd",
+        "security/formal/tests/test_cryptoverif_runner.py": "596eb2c5e8b3fa78d158cb4c0b2a9df52c7d125dae53c0b016e9bcd95d00c01d",
+        "libVELA/vela-crypto/src/kem.rs": "c9a17b26b6624f65ad4539b0d3449e10b36236cd6a015be7a4546c4b56457885",
+        "libVELA/vela-crypto/src/signing.rs": "82c9e2f3f9882d62cad5707cd8287b1299b373b10629eff912477f519249150b",
+        "libVELA/vela-crypto/src/aead.rs": "7840cd68b6b510284e3fba940ced84712af0ecd7914f2833fc1bbc8cccb2e46f",
+        "security/formal/cryptoverif/kem_v2_x25519_gdh_nonuniform.ocv": "d85cef886c776209a68a430ad51007e3c1caa3a07e03bc5833eb9094370c5726",
+        "security/formal/cryptoverif/HPKE-LICENSE.txt": "590b84bda61a1562c260501aac68769dd751ca077d61dd634797ea858981eeec",
+        "security/formal/check-cryptoverif-bound.py": "6ce6ff75912a92d1eac0d49a3eb4b85bb5783fa23a7010cc6fbea6fa855ccfcd"
+      }
+    },
+    {
+      "boundary": "recovery observation constructors and atomic challenge insertion (SQL/store/WebAuthn origins and full handler/I/O trace refinement remain open)",
+      "artifacts": {
+        "serverVELA/vela-recovery-policy/src/lib.rs": "e392228715468d36c4a547e80f96e703a6d439be4f2a4bb74cf78d41925d3855",
+        "serverVELA/vela-recovery-policy/README.md": "6e76c57e1a85ee093be6f9fd49b8fc28b4a60d21b8d5452c7e243aef6de6745f",
+        "serverVELA/vela-recovery-policy/verify-fstar.sh": "275c58a9adde367d072b51b509c69f640aa73ef206fa6303e755c2564c0f28a4",
+        "serverVELA/vela-recovery-policy/tests/fact_construction.rs": "bb6d6ae116788d757220dec521b094613d33d7f60d0896d9ed96491d24f3b471",
+        "serverVELA/vela-recovery-policy/proofs/fstar/extraction/Vela_recovery_policy.fst": "eaf1148be9567b8d8d6dbca8ceca3a4369df8b3c3856f19afc2de9eeee070327",
+        "serverVELA/vela-server/src/recovery/initiate.rs": "d4eface969dee6902e22908ce5f3d965d0282d4b553d58088e40844a8904f465",
+        "serverVELA/vela-server/src/recovery/recover.rs": "301291045074be0dc11fe6ad76c257fe9b044324a79804e1a2e28959c7d4241c",
+        "serverVELA/vela-server/tests/integration.rs": "491e44c62b30a728d5877aaf657b4da3f7ec86a58435b03d772cc283d31c3d4b",
+        "security/assurance/13-recovery-fact-refinement.md": "fd64f81ba6bff10f0a73c621c419464990d0c968a1790a3a2641d1186028eab0"
+      }
+    },
+    {
+      "boundary": "web-session observation construction and policy composition (SQL/store/verifier sources, UUID conversion and full handler effects remain open)",
+      "artifacts": {
+        "serverVELA/vela-session-policy/src/lib.rs": "3befdaca67cc99334e7e3ebac343ba0b6d1ac2a08afa95bee7542045b2fb44b4",
+        "serverVELA/vela-session-policy/README.md": "dbaa70084826078289f019de974d5fe7d3d654e4787348165c0974d4e6117fe4",
+        "serverVELA/vela-session-policy/verify-fstar.sh": "dabf84dcea875b794201f235f1a877a3894dc649034ccbce3d506e805ac6efdd",
+        "serverVELA/vela-session-policy/proofs/fstar/extraction/Vela_session_policy.fst": "f558711ac3d165952846d03d1d7b2b91186fa3ff1925a0780b35fdf824f2dd1d",
+        "serverVELA/vela-server/src/web_session/mod.rs": "9be9bbfa52509c1ef59e01a65d4369b5897a8a391c53d783b46f8e32b1e600ef",
+        "security/assurance/14-session-observation-refinement.md": "f910e98ded01e1641eaacb534ab9a1668628eabd0e60836342803068c21239d4"
+      }
+    },
+    {
+      "boundary": "possession recovery, enrollment observations and preflight sequencing (grant-key binding, verifier/SQL/store origins and full handler traces remain open)",
+      "artifacts": {
+        "serverVELA/vela-recovery-policy/src/lib.rs": "e392228715468d36c4a547e80f96e703a6d439be4f2a4bb74cf78d41925d3855",
+        "serverVELA/vela-recovery-policy/README.md": "6e76c57e1a85ee093be6f9fd49b8fc28b4a60d21b8d5452c7e243aef6de6745f",
+        "serverVELA/vela-recovery-policy/verify-fstar.sh": "275c58a9adde367d072b51b509c69f640aa73ef206fa6303e755c2564c0f28a4",
+        "serverVELA/vela-recovery-policy/proofs/fstar/extraction/Vela_recovery_policy.fst": "eaf1148be9567b8d8d6dbca8ceca3a4369df8b3c3856f19afc2de9eeee070327",
+        "serverVELA/vela-recovery-policy/tests/fact_construction.rs": "bb6d6ae116788d757220dec521b094613d33d7f60d0896d9ed96491d24f3b471",
+        "serverVELA/vela-server/src/recovery/possess.rs": "7e815f1b7487dcae44cf5605561861b01be7978276e6f3b539847bf232d83a8c",
+        "serverVELA/vela-server/src/recovery/enroll_device.rs": "72a5591c0886128487668dbad48023a16c9150b60c994e714c33537c9ceaca19",
+        "serverVELA/vela-server/src/recovery/recover.rs": "301291045074be0dc11fe6ad76c257fe9b044324a79804e1a2e28959c7d4241c",
+        "serverVELA/vela-server/tests/integration.rs": "491e44c62b30a728d5877aaf657b4da3f7ec86a58435b03d772cc283d31c3d4b",
+        "security/assurance/15-recovery-possession-enrollment.md": "b311b885bc4910000bddcfca8ccfba081d720b5dc2ee502262743c5d716ff3f1",
+        "security/assurance/16-enrollment-preflight.md": "2d8f5aeb5031f5fafc5f7be30a900de2bf87f91b6191d705437430feb88d41e3"
+      }
+    },
+    {
+      "boundary": "recovery constructions (computational)",
+      "artifacts": {
+        "libVELA/vela-crypto/src/recovery.rs": "3d0b22da72d150671ae11de0d4b3fe37d921d91c76be88b75343948ba0cec96a",
+        "libVELA/vela-crypto/src/shamir.rs": "8f12b12d755f539756bfd4e1f9c8fb40d23b8831a20f6694960f6d593db9df76",
+        "security/formal/cryptoverif/possession_proof_mldsa.ocv": "80a66316485738eb11af5378da0f02e2c41be9ae879d08924783ec32a17c66cf",
+        "security/formal/cryptoverif/possession_proof_ed25519.ocv": "f6c8d3137ff46598f95f8fd19fa200a0ec993d678a3b2bed4451073291c560f6",
+        "security/formal/cryptoverif/shamir_share_tags.ocv": "c5e8645e43dfc6208e5bb81047f78eea77d35f9d579224d24bdc64807bcc2fb2"
+      }
+    }
+  ]
+}

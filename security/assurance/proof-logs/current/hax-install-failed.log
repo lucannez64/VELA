@@ -1,0 +1,72 @@
+  Installing hax-engine-names-extract v0.3.7 (/home/hirew/.local/opt/vela-tools/src/hax-0.3.7/engine/names/extract)
+    Updating crates.io index
+   Compiling libc v0.2.178
+   Compiling proc-macro2 v1.0.101
+   Compiling unicode-ident v1.0.18
+   Compiling cfg-if v1.0.3
+   Compiling quote v1.0.40
+   Compiling libcrux-platform v0.0.2-pre.2
+   Compiling jobserver v0.1.34
+   Compiling shlex v1.3.0
+   Compiling cc v1.2.34
+   Compiling syn v2.0.106
+   Compiling serde_core v1.0.228
+   Compiling getrandom v0.3.3
+   Compiling zerocopy v0.8.26
+   Compiling serde v1.0.228
+   Compiling autocfg v1.5.0
+   Compiling num-traits v0.2.19
+   Compiling serde_derive v1.0.228
+   Compiling getrandom v0.2.16
+   Compiling serde_json v1.0.143
+   Compiling rand_core v0.6.4
+   Compiling ppv-lite86 v0.2.21
+   Compiling libjade-sys v0.0.2-pre.2
+   Compiling libcrux-hacl v0.0.2-pre.2
+   Compiling itoa v1.0.15
+   Compiling memchr v2.7.5
+   Compiling ryu v1.0.20
+   Compiling rand_chacha v0.3.1
+   Compiling uuid v1.18.0
+   Compiling libcrux v0.0.2-pre.2
+   Compiling proc-macro-error-attr2 v2.0.0
+   Compiling proc-macro-error2 v2.0.1
+   Compiling hax-lib-macros-types v0.3.7 (/home/hirew/.local/opt/vela-tools/src/hax-0.3.7/hax-lib/macros/types)
+   Compiling rand v0.8.5
+   Compiling num-integer v0.1.46
+   Compiling syn v1.0.109
+   Compiling hax-lib v0.3.7 (/home/hirew/.local/opt/vela-tools/src/hax-0.3.7/hax-lib)
+   Compiling rustix v1.0.8
+   Compiling num-bigint v0.4.6
+   Compiling hax-lib-macros v0.3.7 (/home/hirew/.local/opt/vela-tools/src/hax-0.3.7/hax-lib/macros)
+   Compiling bitflags v2.9.3
+   Compiling either v1.15.0
+   Compiling linux-raw-sys v0.9.4
+   Compiling itertools v0.11.0
+   Compiling hax-lib-protocol v0.3.7 (/home/hirew/.local/opt/vela-tools/src/hax-0.3.7/hax-lib-protocol)
+   Compiling fastrand v2.3.0
+   Compiling once_cell v1.21.3
+   Compiling tempfile v3.21.0
+   Compiling hax-adt-into v0.3.7 (/home/hirew/.local/opt/vela-tools/src/hax-0.3.7/frontend/exporter/adt-into)
+   Compiling hax-engine-names v0.3.7 (/home/hirew/.local/opt/vela-tools/src/hax-0.3.7/engine/names)
+   Compiling hax-engine-names-extract v0.3.7 (/home/hirew/.local/opt/vela-tools/src/hax-0.3.7/engine/names/extract)
+error: failed to run custom build command for `hax-engine-names-extract v0.3.7 (/home/hirew/.local/opt/vela-tools/src/hax-0.3.7/engine/names/extract)`
+
+Caused by:
+  process didn't exit successfully: `/home/hirew/.local/opt/vela-tools/src/hax-0.3.7/target/release/build/hax-engine-names-extract-5917543776305584/build-script-build` (exit status: 101)
+  --- stderr
+     Compiling libc v0.2.178
+  error: failed to find a `codegen-backends` folder in the sysroot candidates:
+         * /home/hirew/.rustup/toolchains/nightly-2025-11-08-x86_64-unknown-linux-gnu
+
+  error: could not compile `libc` (build script) due to 1 previous error
+  warning: hax: running `cargo build` was not successful, continuing anyway.
+
+
+  thread 'main' (563993) panicked at engine/names/extract/build.rs:143:19:
+  error while parsing JSON: EOF while parsing a value at line 1 column 0
+
+  String was: 
+  note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: failed to compile `hax-engine-names-extract v0.3.7 (/home/hirew/.local/opt/vela-tools/src/hax-0.3.7/engine/names/extract)`, intermediate artifacts can be found at `/home/hirew/.local/opt/vela-tools/src/hax-0.3.7/target`.
+To reuse those artifacts with a future compilation, set the environment variable `CARGO_TARGET_DIR` to that path.

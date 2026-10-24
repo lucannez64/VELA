@@ -6,7 +6,7 @@ cryptographic primitives for production vault encryption.
 Current production primitives:
 
 - Vault and chunk AEAD: `chacha20poly1305` `0.10.1` using XChaCha20-Poly1305.
-- Hybrid KEM: `ml-kem` `0.3.0` plus X25519, combined with HKDF-SHA256.
+- Hybrid KEM: `ml-kem` `0.3.2` plus X25519, combined with HKDF-SHA256.
 - Signing: `fips204` ML-DSA-87 plus Ed25519.
 - KDF: BLAKE3 derive-key mode with domain-separated context strings.
 

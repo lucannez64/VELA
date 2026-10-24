@@ -26,13 +26,6 @@ type t_AdoptionDecision =
   | AdoptionDecision_Adopt : t_EpochAdoptionPermit -> t_AdoptionDecision
   | AdoptionDecision_Reject : t_AdoptionDecision
 
-[@@ FStar.Tactics.Typeclasses.tcinstance]
-assume
-val impl_13': Core_models.Cmp.t_PartialEq t_AdoptionDecision t_AdoptionDecision
-
-unfold
-let impl_13 = impl_13'
-
 let impl_EpochAdoptionPermit__epoch (self: t_EpochAdoptionPermit) : i64 = self.f_epoch
 
 let impl_EpochAdoptionPermit__binds_capsule_epoch (self: t_EpochAdoptionPermit) : bool =
@@ -46,40 +39,52 @@ let epoch_adoption_is_authorized (facts: t_EpochAdoptionFacts) : bool =
   facts.f_local_epoch >=. v_INITIAL_EPOCH &&
   facts.f_server_epoch >. facts.f_local_epoch &&
   facts.f_server_epoch_is_next &&
-  facts.f_capsule_epoch_matches ==. Core_models.Option.Option_Some true &&
-  facts.f_rotation_id_present ==. Core_models.Option.Option_Some true
+  facts.f_capsule_epoch_matches =.
+  (Core_models.Option.Option_Some true <: Core_models.Option.t_Option bool) &&
+  facts.f_rotation_id_present =.
+  (Core_models.Option.Option_Some true <: Core_models.Option.t_Option bool)
 
 /// A sequential advance whose capsule has not been fetched yet (fact fields
 /// `None`) asks the caller to fetch it; every other unauthorized shape is a
 /// plain rejection.
 let epoch_adoption_is_fetch_pending (facts: t_EpochAdoptionFacts) : bool =
-  let fetch_pending_or_present (o: Core_models.Option.t_Option bool) : bool =
-    match o <: Core_models.Option.t_Option bool with
-    | Core_models.Option.Option_None -> true
-    | Core_models.Option.Option_Some _ -> false
-  in
   facts.f_server_epoch_is_next &&
-  (fetch_pending_or_present facts.f_capsule_epoch_matches ||
-    fetch_pending_or_present facts.f_rotation_id_present)
+  (Core_models.Option.impl__is_none #bool facts.f_capsule_epoch_matches ||
+  Core_models.Option.impl__is_none #bool facts.f_rotation_id_present)
 
 let epoch_adoption_decision_matches_spec
       (facts: t_EpochAdoptionFacts)
       (decision: t_AdoptionDecision)
     : bool =
   if ~.facts.f_rotation_state_active
-  then decision =. (AdoptionDecision_Reject <: t_AdoptionDecision)
+  then
+    match decision <: t_AdoptionDecision with
+    | AdoptionDecision_Reject  -> true
+    | _ -> false
   else
     if facts.f_server_epoch <. v_INITIAL_EPOCH || facts.f_local_epoch <. v_INITIAL_EPOCH
-    then decision =. (AdoptionDecision_Reject <: t_AdoptionDecision)
+    then
+      match decision <: t_AdoptionDecision with
+      | AdoptionDecision_Reject  -> true
+      | _ -> false
     else
       if facts.f_server_epoch =. facts.f_local_epoch
-      then decision =. (AdoptionDecision_Keep <: t_AdoptionDecision)
+      then
+        match decision <: t_AdoptionDecision with
+        | AdoptionDecision_Keep  -> true
+        | _ -> false
       else
         if ~.facts.f_server_epoch_is_next
-        then decision =. (AdoptionDecision_Reject <: t_AdoptionDecision)
+        then
+          match decision <: t_AdoptionDecision with
+          | AdoptionDecision_Reject  -> true
+          | _ -> false
         else
           if epoch_adoption_is_fetch_pending facts
-          then decision =. (AdoptionDecision_FetchCapsule <: t_AdoptionDecision)
+          then
+            match decision <: t_AdoptionDecision with
+            | AdoptionDecision_FetchCapsule  -> true
+            | _ -> false
           else
             if epoch_adoption_is_authorized facts
             then
@@ -92,7 +97,8 @@ let epoch_adoption_decision_matches_spec
                         <:
                         bool
                       with
-                      | true -> Core_models.Option.Option_Some true <: Core_models.Option.t_Option bool
+                      | true ->
+                        Core_models.Option.Option_Some true <: Core_models.Option.t_Option bool
                       | _ -> Core_models.Option.Option_None <: Core_models.Option.t_Option bool)
                   | _ -> Core_models.Option.Option_None <: Core_models.Option.t_Option bool)
                 <:
@@ -100,7 +106,10 @@ let epoch_adoption_decision_matches_spec
               with
               | Core_models.Option.Option_Some x -> x
               | Core_models.Option.Option_None  -> false
-            else decision =. (AdoptionDecision_Reject <: t_AdoptionDecision)
+            else
+              match decision <: t_AdoptionDecision with
+              | AdoptionDecision_Reject  -> true
+              | _ -> false
 
 let plan_epoch_adoption (facts: t_EpochAdoptionFacts)
     : Prims.Pure t_AdoptionDecision
@@ -124,8 +133,9 @@ let plan_epoch_adoption (facts: t_EpochAdoptionFacts)
           if epoch_adoption_is_authorized facts
           then
             AdoptionDecision_Adopt
-            ({ f_epoch = facts.f_server_epoch; f_binds_capsule_epoch = true } <: t_EpochAdoptionPermit
-            )
+            ({ f_epoch = facts.f_server_epoch; f_binds_capsule_epoch = true }
+              <:
+              t_EpochAdoptionPermit)
             <:
             t_AdoptionDecision
           else
@@ -188,7 +198,8 @@ let fforeign_capsule_can_adopt (facts: t_EpochAdoptionFacts)
   let facts:t_EpochAdoptionFacts =
     {
       facts with
-      f_capsule_epoch_matches =
+      f_capsule_epoch_matches
+      =
       Core_models.Option.Option_Some false <: Core_models.Option.t_Option bool
     }
     <:
@@ -305,12 +316,13 @@ type t_MergeAction =
   | MergeAction_Conflict : t_MergeAction
   | MergeAction_KeepLocal : t_MergeAction
 
-[@@ FStar.Tactics.Typeclasses.tcinstance]
-assume
-val impl_49': Core_models.Cmp.t_PartialEq t_MergeAction t_MergeAction
-
-unfold
-let impl_49 = impl_49'
+let same_merge_action (a b: t_MergeAction) : bool =
+  match a, b <: (t_MergeAction & t_MergeAction) with
+  | MergeAction_StayDeleted , MergeAction_StayDeleted
+  | MergeAction_AcceptServer , MergeAction_AcceptServer
+  | MergeAction_Conflict , MergeAction_Conflict
+  | MergeAction_KeepLocal , MergeAction_KeepLocal  -> true
+  | _ -> false
 
 let merge_action_matches_spec (facts: t_ItemMergeFacts) (action: t_MergeAction) : bool =
   let expected:t_MergeAction =
@@ -327,7 +339,7 @@ let merge_action_matches_spec (facts: t_ItemMergeFacts) (action: t_MergeAction) 
           else MergeAction_AcceptServer <: t_MergeAction
       else MergeAction_KeepLocal <: t_MergeAction
   in
-  action =. expected
+  same_merge_action action expected
 
 let classify_merge_action (facts: t_ItemMergeFacts)
     : Prims.Pure t_MergeAction

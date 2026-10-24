@@ -443,7 +443,10 @@ impl Store {
 
         if !vault_path.exists() {
             tracing::info!("No vault file found, returning empty vault");
-            return Ok(VaultStore::new());
+            let mut vault = VaultStore::new();
+            crate::sharing::recover_share_commit(self, crypto, &mut vault)
+                .map_err(anyhow::Error::msg)?;
+            return Ok(vault);
         }
 
         let ciphertext = fs::read(&vault_path)?;
@@ -452,7 +455,9 @@ impl Store {
         }
 
         let plaintext = crypto.decrypt_vault(&ciphertext)?;
-        let vault: VaultStore = serde_json::from_slice(&plaintext)?;
+        let mut vault: VaultStore = serde_json::from_slice(&plaintext)?;
+        crate::sharing::recover_share_commit(self, crypto, &mut vault)
+            .map_err(anyhow::Error::msg)?;
         Ok(vault)
     }
 
@@ -688,14 +693,36 @@ pub fn write_secret_file(path: &PathBuf, bytes: &[u8]) -> anyhow::Result<()> {
         fs::create_dir_all(parent)?;
         restrict_directory(parent)?;
     }
-    // Atomic write: tmp file + rename, so a crash mid-write can never leave a
-    // truncated secret file behind.
-    let tmp_path = path.with_extension("tmp");
-    fs::write(&tmp_path, bytes)?;
-    restrict_file(&tmp_path)?;
-    fs::rename(&tmp_path, path)?;
-    restrict_file(path)?;
-    Ok(())
+    // Unique, private temp files avoid concurrent writers sharing a .tmp path.
+    // Sync contents before rename, then the directory entry (Unix) before
+    // acknowledging the commit. Failures before rename leave the old file intact;
+    // an error after rename is an uncertain commit and callers must allow replay.
+    use std::io::Write;
+    let tmp_path = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
+    let result = (|| -> anyhow::Result<()> {
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&tmp_path)?;
+        restrict_file(&tmp_path)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(&tmp_path, path)?;
+        #[cfg(unix)]
+        if let Some(parent) = path.parent() {
+            fs::File::open(parent)?.sync_all()?;
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp_path);
+    }
+    result
 }
 
 fn restrict_directory(path: &Path) -> anyhow::Result<()> {
@@ -896,10 +923,10 @@ mod tests {
             .unwrap();
 
         let raw = fs::read(store.store_path().join(IDENTITY_KEYS_FILE)).unwrap();
-        assert_ne!(
-            raw.first(),
-            Some(&b'{'),
-            "identity keys must not be plaintext"
+        // A random AEAD nonce can start with '{'; inspect the complete file.
+        assert!(
+            serde_json::from_slice::<IdentityKeysStore>(&raw).is_err(),
+            "identity keys must not be plaintext JSON"
         );
 
         let loaded = store.load_identity_keys(&crypto).unwrap().unwrap();

@@ -136,7 +136,12 @@ fn bound_share_facts<'a>(
 
 // ── Authenticated, recipient-bound trusted-contact envelopes ────────────────
 
-const CONTACT_ENVELOPE_VERSION: u8 = 1;
+/// Envelope version 2 uses the transcript-binding KEM combiner (`kem`
+/// combiner v2). Version 1 used the legacy combiner; contacts may hold such
+/// delivery envelopes for years, so they still open, but nothing writes them
+/// and a recovery *response* (always fresh) must be version 2.
+const CONTACT_ENVELOPE_VERSION: u8 = 2;
+const CONTACT_ENVELOPE_VERSION_LEGACY_KEM: u8 = 1;
 /// Setup → contact handoff. Only the recorded recipient can open it.
 const CONTACT_DELIVERY_DOMAIN: &[u8] = b"vela contact-share delivery v1";
 /// Contact → recovering-device response. The direction domains are distinct so
@@ -220,14 +225,18 @@ fn open_for_recipient(
             "contact envelope too short".into(),
         ));
     }
-    if blob[0] != CONTACT_ENVELOPE_VERSION {
-        return Err(VelaError::InvalidParameter(format!(
-            "unsupported contact envelope version {}",
-            blob[0]
-        )));
-    }
     let capsule = crate::kem::HybridCapsule::from_bytes(&blob[1..header])?;
-    let shared_secret = crate::kem::decapsulate(recipient_sk, &capsule)?;
+    let shared_secret = match blob[0] {
+        CONTACT_ENVELOPE_VERSION => crate::kem::decapsulate(recipient_sk, &capsule)?,
+        CONTACT_ENVELOPE_VERSION_LEGACY_KEM if domain == CONTACT_DELIVERY_DOMAIN => {
+            crate::kem::decapsulate_legacy_v1(recipient_sk, &capsule)?
+        }
+        version => {
+            return Err(VelaError::InvalidParameter(format!(
+                "unsupported contact envelope version {version}"
+            )))
+        }
+    };
     let plaintext = crate::aead::open(
         shared_secret.as_bytes(),
         &blob[header..],
@@ -758,6 +767,45 @@ mod tests {
         let last = corrupt.len() - 1;
         corrupt[last] ^= 0x01;
         assert!(open_contact_share(&contact_sk, &context, &corrupt).is_err());
+    }
+
+    /// A contact may hold a delivery envelope written before KEM combiner v2.
+    /// It must still open; a recovery response under the legacy combiner must
+    /// not (responses are always fresh, so there is no legacy to honour).
+    #[test]
+    fn legacy_kem_envelopes_open_only_as_held_deliveries() {
+        let shares = shamir::split(&[13u8; 32], 2, 3).unwrap();
+        let (pk, sk) = crate::kem::generate_keypair();
+        let context = ContactShareContext {
+            account_id: ACCOUNT,
+            key_epoch: 4,
+            split_id: Some(SPLIT),
+            coordinate: shares[2].x,
+        };
+        let legacy_envelope = |domain: &[u8]| {
+            let (capsule, secret) = crate::kem::encapsulate_legacy_v1(&pk).unwrap();
+            let ciphertext = crate::aead::seal(
+                secret.as_bytes(),
+                &shares[2].to_bytes(),
+                &context.to_aad(domain),
+            )
+            .unwrap();
+            let mut out = vec![CONTACT_ENVELOPE_VERSION_LEGACY_KEM];
+            out.extend_from_slice(&capsule.to_bytes());
+            out.extend_from_slice(&ciphertext);
+            out
+        };
+
+        let held = legacy_envelope(CONTACT_DELIVERY_DOMAIN);
+        let opened = open_contact_share(&sk, &context, &held).unwrap();
+        assert_eq!(opened.y, shares[2].y);
+
+        let response = legacy_envelope(CONTACT_RESPONSE_DOMAIN);
+        assert!(open_contact_share_response(&sk, &context, &response).is_err());
+
+        // New envelopes are always written as version 2.
+        let fresh = seal_contact_share(&pk, &context, &shares[2]).unwrap();
+        assert_eq!(fresh[0], CONTACT_ENVELOPE_VERSION);
     }
 
     #[test]

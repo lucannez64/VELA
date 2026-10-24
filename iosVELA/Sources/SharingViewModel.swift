@@ -3,7 +3,9 @@ import SwiftUI
 
 /// Drives the sharing screen: received inbox (accept/decline) and sent linked
 /// shares (revoke). Mirrors the Android SharingRepository — capsules are
-/// decrypted with the recipient's own RMS (shows "Shared item" when it can't).
+/// opened with this device's share key and admitted only when they are signed
+/// v2 envelopes addressed to this account by the sender the server reports
+/// (shows "Unverified share", which cannot be accepted, otherwise).
 @MainActor
 final class SharingViewModel: ObservableObject {
     struct ReceivedShare: Identifiable {
@@ -12,6 +14,8 @@ final class SharingViewModel: ObservableObject {
         let itemName: String
         let itemType: String
         let item: VaultItem?
+        /// Fingerprint of the sending device's key, for out-of-band comparison.
+        let senderFingerprint: String?
     }
     struct SentShare: Identifiable {
         let id: String
@@ -42,13 +46,17 @@ final class SharingViewModel: ObservableObject {
             let linked = try await client.linkedShares()
             await account.adoptToken(from: client)
 
-            received = inbox.items.map { item in
-                let decoded = openCapsule(item.capsule, identityHandle: identityHandle)
-                return ReceivedShare(id: item.id, from: item.sender_user_id,
-                                     itemName: decoded?.name ?? "Shared item",
-                                     itemType: decoded?.kind.displayName ?? "Item", item: decoded)
-            }
             let myUserID = account.account?.userID ?? ""
+            received = inbox.items.map { item in
+                let admitted = VelaCoreFFI.identityAdmitShare(
+                    handle: identityHandle, capsuleBase64: item.capsule,
+                    recipientUserID: myUserID, attributedSenderUserID: item.sender_user_id)
+                let decoded = admitted.flatMap { decodeItem($0.itemJSON) }
+                return ReceivedShare(id: item.id, from: item.sender_user_id,
+                                     itemName: decoded?.name ?? "Unverified share",
+                                     itemType: decoded?.kind.displayName ?? "Item", item: decoded,
+                                     senderFingerprint: admitted?.senderFingerprint)
+            }
             sent = linked
                 .filter { $0.sender_user_id == myUserID }
                 .map { share in SentShare(id: share.id, to: share.recipient_user_id, itemName: "Shared item") }
@@ -59,7 +67,9 @@ final class SharingViewModel: ObservableObject {
     func accept(_ share: ReceivedShare) {
         run("Accepting") { [self] in
             guard let client = account.makeClient() else { throw Fail("register first") }
-            guard let item = share.item else { throw Fail("couldn't decrypt this share") }
+            guard let item = share.item else {
+                throw Fail("this share is not a signed envelope from its sender and cannot be added")
+            }
             vault.add(item)
             try await client.deleteInboxItem(share.id)
             await account.adoptToken(from: client)
@@ -91,10 +101,8 @@ final class SharingViewModel: ObservableObject {
         }
     }
 
-    private func openCapsule(_ capsule: String, identityHandle: UInt64) -> VaultItem? {
-        guard let itemJSON = VelaCoreFFI.identityOpenShare(handle: identityHandle, capsuleBase64: capsule) else { return nil }
-        let data = Data(itemJSON.utf8)
-        return try? JSONDecoder().decode(VaultItem.self, from: data)
+    private func decodeItem(_ itemJSON: String) -> VaultItem? {
+        try? JSONDecoder().decode(VaultItem.self, from: Data(itemJSON.utf8))
     }
 
     private func run(_ label: String, _ work: @escaping () async throws -> String) {

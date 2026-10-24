@@ -469,6 +469,28 @@ pub unsafe extern "C" fn vela_ffi_identity_open_share_json(
     json_result(|| identity_open_share_impl(c_str(request_json)?))
 }
 
+/// Sign and seal a shared item (share envelope v2).
+///
+/// # Safety
+/// `request_json` must be a valid NUL-terminated UTF-8 C string or null.
+#[no_mangle]
+pub unsafe extern "C" fn vela_ffi_identity_seal_signed_share_json(
+    request_json: *const c_char,
+) -> *mut c_char {
+    json_result(|| identity_seal_signed_share_impl(c_str(request_json)?))
+}
+
+/// Open a received share envelope and run the verified admission policy.
+///
+/// # Safety
+/// `request_json` must be a valid NUL-terminated UTF-8 C string or null.
+#[no_mangle]
+pub unsafe extern "C" fn vela_ffi_identity_admit_share_json(
+    request_json: *const c_char,
+) -> *mut c_char {
+    json_result(|| identity_admit_share_impl(c_str(request_json)?))
+}
+
 // ── Enrollment v3 (audit P-1) ───────────────────────────────────────────────
 
 /// # Safety
@@ -869,6 +891,98 @@ fn identity_sign_share_ek_impl(request_json: &str) -> FfiResult<AuthSignatureRes
     })?;
     Ok(AuthSignatureResponse {
         signature_b64: B64.encode(signature),
+    })
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct SharePinJson {
+    sender_user_id: String,
+    sender_vk_b64: String,
+    lineage_id: String,
+    revision: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct AdmitShareResponse {
+    item_json: String,
+    first_contact: bool,
+    pin: SharePinJson,
+    /// Fingerprint of the sending device's key, for out-of-band comparison.
+    sender_fingerprint: String,
+}
+
+fn identity_seal_signed_share_impl(request_json: &str) -> FfiResult<SealShareResponse> {
+    #[derive(Deserialize)]
+    struct Request {
+        handle: u64,
+        sender_user_id: String,
+        sender_device_id: String,
+        recipient_user_id: String,
+        recipient_share_ek_b64: String,
+        lineage_id: String,
+        revision: u64,
+        item_json: String,
+    }
+    let req: Request = serde_json::from_str(request_json)?;
+    let recipient_ek = B64.decode(req.recipient_share_ek_b64.as_bytes())?;
+    let capsule = vela_crypto::identity::with_identity(req.handle, |identity| {
+        identity.seal_signed_share(
+            &req.sender_user_id,
+            &req.sender_device_id,
+            &req.recipient_user_id,
+            &recipient_ek,
+            &req.lineage_id,
+            req.revision,
+            req.item_json.as_bytes(),
+        )
+    })?;
+    Ok(SealShareResponse {
+        capsule_b64: B64.encode(capsule),
+    })
+}
+
+fn identity_admit_share_impl(request_json: &str) -> FfiResult<AdmitShareResponse> {
+    use vela_crypto::share_envelope::{AdmissionContext, SharePin};
+    #[derive(Deserialize)]
+    struct Request {
+        handle: u64,
+        capsule_b64: String,
+        recipient_user_id: String,
+        attributed_sender_user_id: String,
+        #[serde(default)]
+        pin: Option<SharePinJson>,
+    }
+    let req: Request = serde_json::from_str(request_json)?;
+    let capsule = B64.decode(req.capsule_b64.as_bytes())?;
+    let pin = match &req.pin {
+        Some(p) => Some(SharePin {
+            sender_user_id: p.sender_user_id.clone(),
+            sender_vk: B64.decode(p.sender_vk_b64.as_bytes())?,
+            lineage_id: p.lineage_id.clone(),
+            revision: p.revision,
+        }),
+        None => None,
+    };
+    let admitted = vela_crypto::identity::with_identity(req.handle, |identity| {
+        identity.admit_share(
+            &capsule,
+            AdmissionContext {
+                recipient_user_id: &req.recipient_user_id,
+                attributed_sender_user_id: &req.attributed_sender_user_id,
+                pin: pin.as_ref(),
+            },
+        )
+    })?;
+    Ok(AdmitShareResponse {
+        item_json: String::from_utf8(admitted.opened.into_item())?,
+        first_contact: admitted.first_contact,
+        sender_fingerprint: vela_crypto::verification::signing_key_fingerprint(&admitted.pin.sender_vk),
+        pin: SharePinJson {
+            sender_user_id: admitted.pin.sender_user_id,
+            sender_vk_b64: B64.encode(&admitted.pin.sender_vk),
+            lineage_id: admitted.pin.lineage_id,
+            revision: admitted.pin.revision,
+        },
     })
 }
 
@@ -1515,8 +1629,8 @@ mod tests {
         let fp: IdentityFingerprintResponse = serde_json::from_str(&fp).unwrap();
         assert_eq!(
             fp.fingerprint,
-            vela_crypto::verification::enrollment_fingerprint(&hybrid_vk),
-            "the two sides must agree about the same key"
+            vela_crypto::verification::enrollment_fingerprint(&hybrid_vk, &hybrid_ek),
+            "the two sides must agree about the same keys"
         );
 
         // The result signature proves possession of the claimed key.
@@ -1589,6 +1703,49 @@ mod tests {
 
     /// Audit C-1: the identity is created behind a handle. The response carries
     /// public halves and a sealed blob; nothing the app can read is a key.
+    /// Share envelope v2 through the C FFI JSON surface.
+    #[test]
+    fn signed_shares_round_trip_and_forged_updates_are_refused() {
+        let alice = identity_create_impl(&[1u8; 32]).unwrap();
+        let mallory = identity_create_impl(&[2u8; 32]).unwrap();
+        let bob = identity_create_impl(&[3u8; 32]).unwrap();
+        let seal = |sender: u64, revision: u64, item: &str| {
+            identity_seal_signed_share_impl(
+                &serde_json::json!({
+                    "handle": sender,
+                    "sender_user_id": "alice",
+                    "sender_device_id": "alice-iphone",
+                    "recipient_user_id": "bob",
+                    "recipient_share_ek_b64": bob.share_ek_b64,
+                    "lineage_id": "lineage-1",
+                    "revision": revision,
+                    "item_json": item,
+                })
+                .to_string(),
+            )
+            .unwrap()
+            .capsule_b64
+        };
+        let admit = |capsule: &str, pin: Option<&SharePinJson>| {
+            identity_admit_share_impl(
+                &serde_json::json!({
+                    "handle": bob.handle,
+                    "capsule_b64": capsule,
+                    "recipient_user_id": "bob",
+                    "attributed_sender_user_id": "alice",
+                    "pin": pin,
+                })
+                .to_string(),
+            )
+        };
+        let first = admit(&seal(alice.handle, 1, "{}"), None).unwrap();
+        assert!(first.first_contact);
+        let update = admit(&seal(alice.handle, 2, "{}"), Some(&first.pin)).unwrap();
+        assert!(!update.first_contact);
+        assert!(admit(&seal(mallory.handle, 3, "{}"), Some(&update.pin)).is_err());
+        assert!(admit(&seal(alice.handle, 2, "{}"), Some(&update.pin)).is_err());
+    }
+
     #[test]
     fn identity_handle_signs_and_reveals_no_private_key() {
         let seal_key = [4u8; 32];

@@ -31,8 +31,8 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64URL, Engine as _};
 use ciborium::value::Value as Cbor;
 use p256::ecdsa::signature::Signer;
 use p256::ecdsa::{Signature, SigningKey, VerifyingKey};
-use p256::elliptic_curve::rand_core::OsRng;
-use p256::elliptic_curve::sec1::ToEncodedPoint;
+use p256::elliptic_curve::sec1::ToSec1Point;
+use p256::elliptic_curve::Generate;
 use p256::SecretKey;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -85,7 +85,8 @@ pub fn keygen(request: &KeygenRequest) -> Result<KeygenResponse, String> {
         return Err("this site does not accept ES256".to_string());
     }
 
-    let secret = SecretKey::random(&mut OsRng);
+    let secret =
+        SecretKey::try_generate().map_err(|e| format!("OS random source unavailable: {e}"))?;
     let signing = SigningKey::from(&secret);
     let mut scalar = [0u8; 32];
     scalar.copy_from_slice(&secret.to_bytes());
@@ -95,9 +96,11 @@ pub fn keygen(request: &KeygenRequest) -> Result<KeygenResponse, String> {
         .map_err(|e| format!("OS random source unavailable: {e}"))?;
 
     let verifying: &VerifyingKey = signing.as_ref();
-    let point = verifying.as_affine().to_encoded_point(false);
+    let point = verifying.as_affine().to_sec1_point(false);
     let x = point.x().expect("P-256 point always has an X coordinate");
-    let y = point.y().expect("uncompressed P-256 point always has a Y coordinate");
+    let y = point
+        .y()
+        .expect("uncompressed P-256 point always has a Y coordinate");
     let (x, y) = (x.as_slice(), y.as_slice());
 
     let cose = cose_key_es256(x, y);
@@ -366,8 +369,14 @@ mod tests {
         assert_eq!(spki.len(), 91);
         assert_eq!(&spki[..2], &[0x30, 0x59]); // SEQUENCE, 89 bytes
         assert_eq!(&spki[2..4], &[0x30, 0x13]); // AlgorithmIdentifier
-        assert_eq!(&spki[4..13], &[0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01]);
-        assert_eq!(&spki[13..23], &[0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07]);
+        assert_eq!(
+            &spki[4..13],
+            &[0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01]
+        );
+        assert_eq!(
+            &spki[13..23],
+            &[0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07]
+        );
         assert_eq!(&spki[23..26], &[0x03, 0x42, 0x00]); // BIT STRING
         assert_eq!(spki[26], 0x04); // uncompressed point
     }

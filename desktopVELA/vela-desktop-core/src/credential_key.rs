@@ -28,9 +28,9 @@
 
 use p256::ecdsa::signature::Signer;
 use p256::ecdsa::{Signature, SigningKey, VerifyingKey};
-use p256::elliptic_curve::sec1::ToEncodedPoint;
+use p256::elliptic_curve::sec1::ToSec1Point;
+use p256::elliptic_curve::Generate;
 use p256::SecretKey;
-use p256::elliptic_curve::rand_core::OsRng;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// COSE algorithm identifier for ECDSA w/ SHA-256, as a relying party expects
@@ -67,7 +67,8 @@ pub struct CredentialKey {
 impl CredentialKey {
     /// Generate a fresh credential keypair from the OS CSPRNG.
     pub fn generate() -> Result<Self, String> {
-        let secret = SecretKey::random(&mut OsRng);
+        let secret =
+            SecretKey::try_generate().map_err(|e| format!("OS random source unavailable: {e}"))?;
         Self::from_secret(secret)
     }
 
@@ -79,8 +80,8 @@ impl CredentialKey {
                 bytes.len()
             ));
         }
-        let secret = SecretKey::from_slice(bytes)
-            .map_err(|e| format!("P-256 secret key decode: {e}"))?;
+        let secret =
+            SecretKey::from_slice(bytes).map_err(|e| format!("P-256 secret key decode: {e}"))?;
         Self::from_secret(secret)
     }
 
@@ -118,10 +119,12 @@ impl CredentialKey {
     /// and verifies against on every subsequent assertion.
     pub fn public_key_cose(&self) -> Vec<u8> {
         let verifying: &VerifyingKey = self.signing.as_ref();
-        let point = verifying.as_affine().to_encoded_point(false);
+        let point = verifying.as_affine().to_sec1_point(false);
         // Uncompressed SEC1: 0x04 ‖ X (32) ‖ Y (32).
         let x = point.x().expect("P-256 point always has an X coordinate");
-        let y = point.y().expect("uncompressed P-256 point always has a Y coordinate");
+        let y = point
+            .y()
+            .expect("uncompressed P-256 point always has a Y coordinate");
         cose_key_es256(x.as_slice(), y.as_slice())
     }
 }
@@ -171,7 +174,11 @@ pub fn generate_credential_id() -> Result<[u8; CREDENTIAL_ID_LEN], String> {
 ///
 /// Present so tests can check an assertion the way a relying party would,
 /// rather than trusting the signer to agree with itself.
-pub fn verify_der(cose_public_key: &[u8], message: &[u8], signature_der: &[u8]) -> Result<bool, String> {
+pub fn verify_der(
+    cose_public_key: &[u8],
+    message: &[u8],
+    signature_der: &[u8],
+) -> Result<bool, String> {
     use p256::ecdsa::signature::Verifier;
 
     let (x, y) = parse_cose_key_es256(cose_public_key)?;
@@ -210,6 +217,44 @@ impl Zeroize for CredentialKey {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stored_scalar_and_signature_match_rfc6979_p256_vector() {
+        // RFC 6979 A.2.5, SHA-256 / "sample": pin interoperability across
+        // dependency upgrades independently of a newly generated keypair.
+        // https://www.rfc-editor.org/rfc/rfc6979.html#appendix-A.2.5
+        let scalar =
+            hex::decode("C9AFA9D845BA75166B5C215767B1D6934E50C3DB36E89B127B8A622B120F6721")
+                .unwrap();
+        let x = hex::decode("60FED4BA255A9D31C961EB74C6356D68C049B8923B61FA6CE669622E60F29FB6")
+            .unwrap();
+        let y = hex::decode("7903FE1008B8BC99A41AE9E95628BC64F2F1B20C2D7E9F5177A3C294D4462299")
+            .unwrap();
+        let signature = Signature::from_slice(
+            &hex::decode(concat!(
+                "EFD48B2AACB6A8FD1140DD9CD45E81D69D2C877B56AAF991C34D0EA84EAF3716",
+                "F7CB1C942D657C41D436C7A1B6E29F65F3E900DBB9AFF4064DC4AB2F843ACDA8"
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        let key = CredentialKey::from_scalar(&scalar).unwrap();
+        assert_eq!(key.to_scalar_bytes().as_slice(), scalar);
+        assert_eq!(key.public_key_cose(), cose_key_es256(&x, &y));
+        assert_eq!(key.sign_der(b"sample"), signature.to_der().as_bytes());
+        assert!(verify_der(
+            &key.public_key_cose(),
+            b"sample",
+            signature.to_der().as_bytes()
+        )
+        .unwrap());
+        assert!(!verify_der(
+            &key.public_key_cose(),
+            b"changed",
+            signature.to_der().as_bytes()
+        )
+        .unwrap());
+    }
 
     #[test]
     fn sign_verifies_like_a_relying_party_would() {
@@ -251,7 +296,12 @@ mod tests {
         let restored = CredentialKey::from_scalar(&original.to_scalar_bytes()).unwrap();
 
         assert_eq!(original.public_key_cose(), restored.public_key_cose());
-        assert!(verify_der(&original.public_key_cose(), message, &restored.sign_der(message)).unwrap());
+        assert!(verify_der(
+            &original.public_key_cose(),
+            message,
+            &restored.sign_der(message)
+        )
+        .unwrap());
     }
 
     #[test]

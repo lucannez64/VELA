@@ -1,6 +1,7 @@
 
 # Rust build outputs
 **/target/
+/target-lib/
 /desktopVELA/target
 
 # iOS bridge build outputs
@@ -59,6 +60,8 @@ androidVELA/.kotlin/
 
 # Logs
 **/*.log
+# Reviewed proof output is part of the researcher assurance package.
+!security/assurance/proof-logs/**/*.log
 
 # pnpm lock files (use bun.lock instead)
 **/pnpm-lock.yaml

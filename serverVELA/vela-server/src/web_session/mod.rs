@@ -28,8 +28,8 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use uuid::Uuid;
 use vela_session_policy::{
-    GrantDecision, GrantFacts, SessionMode as PolicyMode, SessionPhase as PolicyPhase,
-    TokenDecision, WebTokenFacts,
+    GrantDecision, GrantObservation, SessionMode as PolicyMode, SessionPhase as PolicyPhase,
+    TokenDecision, WebTokenObservation,
 };
 
 use crate::{
@@ -530,7 +530,7 @@ pub async fn post_grant(
         ));
     }
 
-    let grant_decision = vela_session_policy::plan_grant(GrantFacts {
+    let grant_decision = vela_session_policy::plan_observed_grant(GrantObservation {
         phase: match existing.status.as_str() {
             "pending" => PolicyPhase::Pending,
             "granted" => PolicyPhase::Granted,
@@ -542,8 +542,10 @@ pub async fn post_grant(
         } else {
             PolicyMode::ReadOnly
         },
-        approver_matches: existing.approver_user_id == Some(session.user_id),
-        nonce_matches: ct_eq(&given_nonce, &stored_nonce),
+        approver_user: existing.approver_user_id.map(|user| user.as_u128()),
+        authenticated_user: session.user_id.as_u128(),
+        nonce_length: given_nonce.len(),
+        nonce_equal: ct_eq(&given_nonce, &stored_nonce),
         has_web_vk: existing.web_vk.is_some(),
         declared_epoch: body.key_epoch,
     });
@@ -683,9 +685,10 @@ pub async fn post_token(
         .decode(&body.challenge)
         .map_err(|_| AppError::BadRequest("invalid challenge encoding".into()))?;
 
-    if let Err(e) =
-        verify_auth_signature(&web_vk, &challenge_bytes, &id.to_string(), &body.signature)
-    {
+    let signature_result =
+        verify_auth_signature(&web_vk, &challenge_bytes, &id.to_string(), &body.signature);
+    let signature_valid = signature_result.is_ok();
+    if let Err(e) = signature_result {
         rate_limit::record_backoff_failure(&state.store, &backoff_scope)?;
         return Err(e);
     }
@@ -705,8 +708,8 @@ pub async fn post_token(
     // grant redeemed after commit masquerade as current.
     let key_epoch = session.key_epoch.unwrap_or(1);
     let now = Utc::now();
-    let decision = vela_session_policy::plan_web_session_token(
-        WebTokenFacts {
+    let decision = vela_session_policy::plan_observed_web_token(
+        WebTokenObservation {
             phase: match session.status.as_str() {
                 "pending" => PolicyPhase::Pending,
                 "granted" => PolicyPhase::Granted,
@@ -717,11 +720,11 @@ pub async fn post_token(
                 Some("rw") => PolicyMode::ReadWrite,
                 _ => PolicyMode::ReadOnly,
             },
-            approver_bound: session.user_id.is_some()
-                && session.user_id == session.approver_user_id,
-            nonce_bound: session.link_nonce.is_some(),
+            granted_user: session.user_id.map(|user| user.as_u128()),
+            approver_user: session.approver_user_id.map(|user| user.as_u128()),
+            nonce_present: session.link_nonce.is_some(),
             challenge_consumed: consumed.is_some(),
-            signature_valid: true,
+            signature_valid,
         },
         now.timestamp(),
         expires_at.timestamp(),

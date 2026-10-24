@@ -1,0 +1,11 @@
+test_baseline_requires_a_recognized_verdict (test_cryptoverif_runner.RunnerTests.test_baseline_requires_a_recognized_verdict) ... ok
+test_baseline_timeout_is_not_an_expected_nonproof (test_cryptoverif_runner.RunnerTests.test_baseline_timeout_is_not_an_expected_nonproof) ... ok
+test_complete_expected_verdicts_pass (test_cryptoverif_runner.RunnerTests.test_complete_expected_verdicts_pass) ... ok
+test_error_banner_cannot_count_as_expected_nonproof (test_cryptoverif_runner.RunnerTests.test_error_banner_cannot_count_as_expected_nonproof) ... ok
+test_git_records_an_executable_runner (test_cryptoverif_runner.RunnerTests.test_git_records_an_executable_runner) ... ok
+test_proved_banner_cannot_hide_a_process_failure (test_cryptoverif_runner.RunnerTests.test_proved_banner_cannot_hide_a_process_failure) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 0.435s
+
+OK

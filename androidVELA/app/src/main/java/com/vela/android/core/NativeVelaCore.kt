@@ -319,6 +319,59 @@ object NativeVelaCore {
         response.getString("item_json")
     }
 
+    /// Sign and seal a shared item for one recipient (share envelope v2).
+    /// The signing key stays native; the envelope names this device's key.
+    fun identitySealSignedShare(
+        handle: Long,
+        senderUserId: String,
+        senderDeviceId: String,
+        recipientUserId: String,
+        recipientShareEkB64: String,
+        lineageId: String,
+        revision: Long,
+        itemJson: String,
+    ): String? = callNative {
+        val request = JSONObject()
+            .put("handle", handle)
+            .put("sender_user_id", senderUserId)
+            .put("sender_device_id", senderDeviceId)
+            .put("recipient_user_id", recipientUserId)
+            .put("recipient_share_ek_b64", recipientShareEkB64)
+            .put("lineage_id", lineageId)
+            .put("revision", revision)
+            .put("item_json", itemJson)
+            .toString()
+        val response = JSONObject(nativeIdentitySealSignedShareJson(request))
+        response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
+        response.getString("capsule_b64")
+    }
+
+    /// Open a received share envelope, verify its signature and recipient
+    /// binding, and run the verified admission policy. Throws when the share
+    /// is rejected (unsigned, forged, misaddressed, or not newer than [pin]).
+    fun identityAdmitShare(
+        handle: Long,
+        capsuleB64: String,
+        recipientUserId: String,
+        attributedSenderUserId: String,
+        pin: SharePin? = null,
+    ): AdmittedShare? = callNative {
+        val request = JSONObject()
+            .put("handle", handle)
+            .put("capsule_b64", capsuleB64)
+            .put("recipient_user_id", recipientUserId)
+            .put("attributed_sender_user_id", attributedSenderUserId)
+        pin?.let { request.put("pin", it.toJson()) }
+        val response = JSONObject(nativeIdentityAdmitShareJson(request.toString()))
+        response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
+        AdmittedShare(
+            itemJson = response.getString("item_json"),
+            firstContact = response.getBoolean("first_contact"),
+            pin = SharePin.fromJson(response.getJSONObject("pin")),
+            senderFingerprint = response.getString("sender_fingerprint"),
+        )
+    }
+
     /// Replace the share keypair; returns the new public half and sealed blob.
     fun identityRotateShareKey(sealKey: ByteArray, handle: Long): Pair<String, String>? = callNative {
         val request = JSONObject().put("handle", handle).toString()
@@ -544,6 +597,8 @@ object NativeVelaCore {
     private external fun nativeIdentitySignJson(requestJson: String): String
     private external fun nativeIdentitySignShareEkJson(requestJson: String): String
     private external fun nativeIdentityOpenShareJson(requestJson: String): String
+    private external fun nativeIdentitySealSignedShareJson(requestJson: String): String
+    private external fun nativeIdentityAdmitShareJson(requestJson: String): String
     private external fun nativeIdentityEnrollmentFingerprintJson(requestJson: String): String
     private external fun nativeIdentitySignEnrollmentResultJson(requestJson: String): String
     private external fun nativeIdentityOpenEnrollmentCapsuleJson(requestJson: String): String
@@ -559,3 +614,33 @@ object NativeVelaCore {
     private external fun nativePasskeyAttestationObjectJson(requestJson: String): String
     private external fun nativePasskeySignJson(requestJson: String): String
 }
+
+/// What a recipient remembers about an accepted share (share envelope v2).
+data class SharePin(
+    val senderUserId: String,
+    val senderVkB64: String,
+    val lineageId: String,
+    val revision: Long,
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("sender_user_id", senderUserId)
+        .put("sender_vk_b64", senderVkB64)
+        .put("lineage_id", lineageId)
+        .put("revision", revision)
+
+    companion object {
+        fun fromJson(json: JSONObject) = SharePin(
+            senderUserId = json.getString("sender_user_id"),
+            senderVkB64 = json.getString("sender_vk_b64"),
+            lineageId = json.getString("lineage_id"),
+            revision = json.getLong("revision"),
+        )
+    }
+}
+
+data class AdmittedShare(
+    val itemJson: String,
+    val firstContact: Boolean,
+    val pin: SharePin,
+    val senderFingerprint: String,
+)

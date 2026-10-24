@@ -100,9 +100,10 @@ fn every_bounded_recovered_device_enrollment_matches_m14() {
     for phase in PHASES {
         for grant_epoch in EPOCHS {
             for account_epoch in EPOCHS {
-                for mask in 0..256 {
+                for mask in 0..512 {
                     let facts = EnrollmentFacts {
                         phase,
+                        account_present: bit(mask, 8),
                         user_matches: bit(mask, 0),
                         grant_live: bit(mask, 1),
                         grant_consumed: bit(mask, 2),

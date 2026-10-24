@@ -52,7 +52,7 @@ begin
 // registered at the site), and the site's credential-reset policy.
 rule Setup:
     [ Fr(~cred) ]
-  --[ Secret(~cred, $O), SiteMode($O, $P) ]->
+  --[ Secret(~cred, $O), SiteModeSelected($O, $P) ]->
     [ !Vault(~cred, $O), !SiteStore(~cred, $O), !SiteMode($O, $P) ]
 
 // Human approves this login (DE gate, M6-consistent): one grant per login.
@@ -119,7 +119,7 @@ lemma session_expiry_is_effective:
 lemma no_takeover_at_hardened_sites:
   "All O #i.
      AccountTakenOver(O) @ i
-     ==> Ex #j. SiteMode(O, 'selfserve') @ j"
+     ==> Ex #j. SiteModeSelected(O, 'selfserve') @ j"
 
 // ---- Existence ----------------------------------------------------------------
 

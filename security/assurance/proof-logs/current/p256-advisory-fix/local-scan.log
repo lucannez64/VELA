@@ -1,0 +1,26 @@
+== semgrep: not found, skipping (install via pipx or use security/venv) ==
+
+== scan.py — Rust rules ==
+VELA security scan: clean (0 findings)
+== cargo-audit — serverVELA ==
+  clean (no advisories)
+== cargo-audit — vela-crypto ==
+  clean (no advisories)
+== cargo-audit — vela-android-bridge ==
+  clean (no advisories)
+== cargo-audit — vela-wasm-bridge ==
+  clean (no advisories)
+== cargo-audit — vela-core ==
+  clean (no advisories)
+== cargo-deny — serverVELA ==
+  clean (bans + licenses ok)
+== cargo-deny — vela-crypto ==
+  clean (bans + licenses ok)
+== cargo-deny — vela-android-bridge ==
+  clean (bans + licenses ok)
+== cargo-deny — vela-wasm-bridge ==
+  clean (bans + licenses ok)
+== cargo-deny — vela-core ==
+  clean (bans + licenses ok)
+
+VELA security scan: PASS

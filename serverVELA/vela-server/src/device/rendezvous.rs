@@ -48,8 +48,10 @@ use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use uuid::Uuid;
 use vela_enrollment_policy::{
-    CeremonyPhase, ClaimDecision, ClaimFacts, CompletionDecision, CompletionFacts, InspectDecision,
-    InspectFacts, OpenDecision, OpenFacts, ResultDecision, ResultFacts, ResultKind,
+    claim_facts, completion_facts, inspect_facts, open_facts, result_facts, ClaimDecision,
+    ClaimKeySource, ClaimObservation, CompletionDecision, CompletionObservation, InspectDecision,
+    InspectObservation, OpenDecision, OpenObservation, ResultDecision, ResultKind,
+    ResultObservation, ResultSource, HYBRID_EK_LEN, HYBRID_VK_LEN,
 };
 use vela_rekey_policy::{
     MutationAuthority, MutationDecision, MutationKind, MutationRequest, Phase as PolicyPhase,
@@ -69,8 +71,6 @@ use crate::{
 /// minute is time an intercepted code stays useful.
 const GRANT_TTL_SECS: u64 = 5 * 60;
 
-const HYBRID_EK_LEN: usize = 1568 + 32;
-const HYBRID_VK_LEN: usize = 2592 + 32;
 const HYBRID_SIG_LEN: usize = 4627 + 64;
 
 fn grant_key(id: &str) -> String {
@@ -136,12 +136,12 @@ pub async fn post_grant(
 ) -> Result<(HeaderMap, Json<CreateGrantResponse>)> {
     rate_limit::enrollment_grant_by_user(&state.store, &session.user_id.to_string())?;
 
-    let _permit = match vela_enrollment_policy::plan_open(OpenFacts {
-        device_scope: true,
-        user_bound: true,
-        opener_bound: true,
-        ttl_positive: GRANT_TTL_SECS > 0,
-    }) {
+    let _permit = match vela_enrollment_policy::plan_open(open_facts(OpenObservation {
+        scope_is_device: matches!(session.scope, crate::auth::token::TokenScope::Device),
+        user_id_present: !session.user_id.is_nil(),
+        device_id_present: !session.device_id.is_nil(),
+        ttl_secs: GRANT_TTL_SECS,
+    })) {
         OpenDecision::Open(permit) => permit,
         OpenDecision::Reject => {
             return Err(AppError::Internal(
@@ -205,22 +205,30 @@ pub async fn post_claim(
         ));
     }
 
-    let ek = decode_exact(&body.hybrid_ek, HYBRID_EK_LEN, "hybrid_ek")?;
-    let vk = decode_exact(&body.hybrid_vk, HYBRID_VK_LEN, "hybrid_vk")?;
+    let ek = decode_base64_field(&body.hybrid_ek, "hybrid_ek")?;
+    let vk = decode_base64_field(&body.hybrid_vk, "hybrid_vk")?;
 
-    let no_existing_claim = !state.store.exists(&claim_key(grant_id))?;
-    let _permit = match vela_enrollment_policy::plan_claim(ClaimFacts {
-        phase: if no_existing_claim {
-            CeremonyPhase::Open
-        } else {
-            CeremonyPhase::Claimed
-        },
+    let claim_exists = state.store.exists(&claim_key(grant_id))?;
+    let _permit = match vela_enrollment_policy::plan_claim(claim_facts(ClaimObservation {
         grant_live,
-        no_existing_claim,
-        public_keys_valid: ek.len() == HYBRID_EK_LEN && vk.len() == HYBRID_VK_LEN,
-    }) {
+        claim_exists,
+        hybrid_ek_len: ek.len(),
+        hybrid_vk_len: vk.len(),
+    })) {
         ClaimDecision::Claim(permit) => permit,
-        ClaimDecision::Reject if !no_existing_claim => {
+        // Preserve the original per-field length errors even though the
+        // decision now comes from the verified fact constructor.
+        ClaimDecision::Reject if ek.len() != HYBRID_EK_LEN => {
+            return Err(AppError::BadRequest(format!(
+                "hybrid_ek must be {HYBRID_EK_LEN} bytes"
+            )));
+        }
+        ClaimDecision::Reject if vk.len() != HYBRID_VK_LEN => {
+            return Err(AppError::BadRequest(format!(
+                "hybrid_vk must be {HYBRID_VK_LEN} bytes"
+            )));
+        }
+        ClaimDecision::Reject if claim_exists => {
             return Err(AppError::Conflict(
                 "this enrollment code has already been used by another device".into(),
             ));
@@ -285,21 +293,27 @@ pub async fn get_claim(
     let grant_id = crate::ids::validate_id("grant_id", &grant_id)?;
     let (grant, _) = authorize_grant(&state, grant_id, &session)?;
 
-    let claim = load_claim(&state, grant_id)?
-        .ok_or_else(|| AppError::NotFound("no device has claimed this code yet".into()))?;
-    let _permit = match vela_enrollment_policy::authorize_inspection(InspectFacts {
-        phase: CeremonyPhase::Claimed,
-        user_matches: grant.user_id == session.user_id.to_string(),
-        opener_matches: grant.device_id == session.device_id.to_string(),
-        claim_present: true,
-    }) {
-        InspectDecision::Inspect(permit) => permit,
-        InspectDecision::Reject => {
-            return Err(AppError::NotFound(
-                "enrollment grant not found or expired".into(),
-            ));
-        }
-    };
+    let claim = load_claim(&state, grant_id)?;
+    let claim_present = claim.is_some();
+    let _permit =
+        match vela_enrollment_policy::authorize_inspection(inspect_facts(InspectObservation {
+            claim_present,
+            user_matches: grant.user_id == session.user_id.to_string(),
+            opener_matches: grant.device_id == session.device_id.to_string(),
+        })) {
+            InspectDecision::Inspect(permit) => permit,
+            InspectDecision::Reject if !claim_present => {
+                return Err(AppError::NotFound(
+                    "no device has claimed this code yet".into(),
+                ));
+            }
+            InspectDecision::Reject => {
+                return Err(AppError::NotFound(
+                    "enrollment grant not found or expired".into(),
+                ));
+            }
+        };
+    let claim = claim.expect("inspection policy admits only a present claim");
 
     let mut headers = HeaderMap::new();
     maybe_append_new_token(&mut headers, &session);
@@ -376,62 +390,114 @@ pub async fn post_complete(
             PolicyPhase::Active
         },
     };
-    if vela_rekey_policy::authorize_active_mutation(observed_state, permit) != ShadowDecision::Allow
-    {
-        return Err(AppError::Conflict(
-            "device enrollment key epoch changed or rotation is in progress".into(),
-        ));
-    }
+    // The enum decision below is kept as an observation; the rejection is
+    // reported after the verified enrollment policy has seen the same facts.
+    let account_epoch_active = vela_rekey_policy::authorize_active_mutation(observed_state, permit)
+        == ShadowDecision::Allow;
 
     // Read without consuming first. Invalid signatures must not let an
-    // unauthenticated or corrupted request burn a legitimate ceremony.
-    let expected_claim_bytes = state
-        .store
-        .get(&claim_key(grant_id))?
-        .ok_or_else(|| AppError::NotFound("no device has claimed this code yet".into()))?;
-
-    let claim: Claim = serde_json::from_slice(&expected_claim_bytes)
-        .map_err(|e| AppError::Internal(format!("stored claim is unreadable: {e}")))?;
-
-    // The keys enrolled below come from `claim` — what the joining device
-    // presented and what the user's fingerprint comparison was about — and never
-    // from the request body. There is deliberately no field in which the primary
-    // could name a different key than the one displayed.
-    let hybrid_ek = crate::db::decode_b64(&claim.hybrid_ek)?;
-    let hybrid_vk = crate::db::decode_b64(&claim.hybrid_vk)?;
-    let rms_capsule = decode_any(&body.rms_capsule, "rms_capsule")?;
-    let signature = decode_exact(&body.signature, HYBRID_SIG_LEN, "signature")?;
-
-    let primary_vk = load_primary_vk(&state, &grant).await?;
-    super::enroll::verify_enrollment_signature(
-        &primary_vk,
-        &hybrid_ek,
-        &hybrid_vk,
-        &rms_capsule,
-        &signature,
-    )?;
-
-    let ceremony_permit = match vela_enrollment_policy::plan_completion(CompletionFacts {
-        phase: CeremonyPhase::Claimed,
-        user_matches: grant.user_id == session.user_id.to_string(),
-        opener_matches: grant.device_id == session.device_id.to_string(),
-        opener_active: true,
-        claim_present: true,
-        // The view and insertion both deserialize the same immutable claim
-        // record; there is no request field that can substitute either key.
-        displayed_claim_is_stored_claim: true,
-        // The verifier above covers stored EK || stored VK || capsule.
-        signature_covers_stored_claim: true,
-        account_epoch_active: true,
-    }) {
-        CompletionDecision::Complete(permit) => permit,
-        CompletionDecision::Reject => {
-            return Err(AppError::Unauthorized(
-                "device enrollment completion is not authorized".into(),
-            ));
-        }
+    // unauthenticated or corrupted request burn a legitimate ceremony. Every
+    // fallible observation is retained so the enrollment policy receives the
+    // real value and the original error precedence is preserved.
+    let expected_claim_bytes_opt = state.store.get(&claim_key(grant_id))?;
+    let claim_present = expected_claim_bytes_opt.is_some();
+    let claim_materials: Result<(Claim, Vec<u8>, Vec<u8>)> = match &expected_claim_bytes_opt {
+        Some(bytes) => serde_json::from_slice::<Claim>(bytes)
+            .map_err(|e| AppError::Internal(format!("stored claim is unreadable: {e}")))
+            .and_then(|claim| {
+                // The keys enrolled below come from `claim` — what the joining
+                // device presented and what the user's fingerprint comparison
+                // was about — and never from the request body.
+                let hybrid_ek = crate::db::decode_b64(&claim.hybrid_ek)?;
+                let hybrid_vk = crate::db::decode_b64(&claim.hybrid_vk)?;
+                Ok((claim, hybrid_ek, hybrid_vk))
+            }),
+        None => Err(AppError::NotFound(
+            "no device has claimed this code yet".into(),
+        )),
     };
+    let rms_capsule_result = decode_any(&body.rms_capsule, "rms_capsule");
+    let signature_decode_result = decode_exact(&body.signature, HYBRID_SIG_LEN, "signature");
+    let opener_result = load_primary_key(&state, &grant).await;
+    let (primary_vk, opener_active) = match &opener_result {
+        Ok((Some(vk), active)) => (Some(vk.as_slice()), *active),
+        _ => (None, false),
+    };
+
+    let signature_result = match (
+        &claim_materials,
+        &rms_capsule_result,
+        &signature_decode_result,
+        primary_vk,
+    ) {
+        (Ok((_, hybrid_ek, hybrid_vk)), Ok(rms_capsule), Ok(signature), Some(primary_vk)) => {
+            super::enroll::verify_enrollment_signature(
+                primary_vk,
+                hybrid_ek,
+                hybrid_vk,
+                rms_capsule,
+                signature,
+            )
+        }
+        _ => Err(AppError::Unauthorized(
+            "enrolling device not found or revoked".into(),
+        )),
+    };
+    let signature_verified = signature_result.is_ok();
+
+    let ceremony_permit =
+        match vela_enrollment_policy::plan_completion(completion_facts(CompletionObservation {
+            claim_present,
+            user_matches: grant.user_id == session.user_id.to_string(),
+            opener_matches: grant.device_id == session.device_id.to_string(),
+            opener_active,
+            signature_verified,
+            // The view and insertion both deserialize the same immutable claim
+            // record; there is no request field that can substitute either key.
+            claim_key_source: ClaimKeySource::StoredClaim,
+            account_epoch: current_epoch.unwrap_or(0),
+            declared_epoch: body.key_epoch,
+            rotation_in_progress: rotation_state.is_some(),
+        })) {
+            CompletionDecision::Complete(permit) => permit,
+            CompletionDecision::Reject => {
+                // Report the same failure the old early returns produced, in the
+                // same order, but only after the verified policy has seen the real
+                // observations.
+                if !account_epoch_active {
+                    return Err(AppError::Conflict(
+                        "device enrollment key epoch changed or rotation is in progress".into(),
+                    ));
+                }
+                if !claim_present {
+                    return Err(AppError::NotFound(
+                        "no device has claimed this code yet".into(),
+                    ));
+                }
+                let (_claim, _hybrid_ek, _hybrid_vk) = claim_materials?;
+                let _rms_capsule = rms_capsule_result?;
+                let _signature = signature_decode_result?;
+                let _opener = opener_result?;
+                if !opener_active {
+                    return Err(AppError::Unauthorized(
+                        "enrolling device not found or revoked".into(),
+                    ));
+                }
+                signature_result?;
+                return Err(AppError::Unauthorized(
+                    "device enrollment completion is not authorized".into(),
+                ));
+            }
+        };
     debug_assert!(ceremony_permit.consumes_grant_and_claim());
+
+    let (claim, hybrid_ek, hybrid_vk) = claim_materials?;
+    let rms_capsule = rms_capsule_result?;
+    let _signature = signature_decode_result?;
+    let _opener = opener_result?;
+    signature_result?;
+    let expected_claim_bytes =
+        expected_claim_bytes_opt.expect("completion policy authorizes only a present stored claim");
 
     // This sled transaction is the ceremony's linearization point. Exactly one
     // racing/replayed completion gets both records; every loser gets neither.
@@ -595,19 +661,24 @@ pub async fn post_result(
         let result: EnrollmentResult = serde_json::from_slice(&bytes)
             .map_err(|e| AppError::Internal(format!("stored result is unreadable: {e}")))?;
         let vk = crate::db::decode_b64(&result.hybrid_vk)?;
-        verify_result_signature(&vk, grant_id, &signature)?;
-        let permit = match vela_enrollment_policy::authorize_result(ResultFacts {
-            phase: CeremonyPhase::Completed,
-            claimed_key_present: true,
-            claimed_key_proof_valid: true,
-        }) {
-            ResultDecision::Return(permit) => permit,
-            ResultDecision::Reject => {
-                return Err(AppError::Unauthorized(
-                    "enrollment result is not authorized".into(),
-                ));
-            }
-        };
+        let signature_result = verify_result_signature(&vk, grant_id, &signature);
+        let permit =
+            match vela_enrollment_policy::authorize_result(result_facts(ResultObservation {
+                source: ResultSource::CompletedResult,
+                claimed_key_len: vk.len(),
+                signature_verified: signature_result.is_ok(),
+            })) {
+                ResultDecision::Return(permit) => permit,
+                ResultDecision::Reject => {
+                    // Preserve the signature verifier's own error, if any, before
+                    // the policy's generic refusal.
+                    signature_result?;
+                    return Err(AppError::Unauthorized(
+                        "enrollment result is not authorized".into(),
+                    ));
+                }
+            };
+        signature_result?;
         debug_assert_eq!(permit.kind(), ResultKind::Enrolled);
         return Ok(Json(ResultResponse::Enrolled {
             device_id: result.device_id,
@@ -618,23 +689,33 @@ pub async fn post_result(
     // not an answer an interceptor can get.
     if let Some(claim) = load_claim(&state, grant_id)? {
         let vk = crate::db::decode_b64(&claim.hybrid_vk)?;
-        verify_result_signature(&vk, grant_id, &signature)?;
-        let permit = match vela_enrollment_policy::authorize_result(ResultFacts {
-            phase: CeremonyPhase::Claimed,
-            claimed_key_present: true,
-            claimed_key_proof_valid: true,
-        }) {
-            ResultDecision::Return(permit) => permit,
-            ResultDecision::Reject => {
-                return Err(AppError::Unauthorized(
-                    "enrollment result is not authorized".into(),
-                ));
-            }
-        };
+        let signature_result = verify_result_signature(&vk, grant_id, &signature);
+        let permit =
+            match vela_enrollment_policy::authorize_result(result_facts(ResultObservation {
+                source: ResultSource::ClaimedClaim,
+                claimed_key_len: vk.len(),
+                signature_verified: signature_result.is_ok(),
+            })) {
+                ResultDecision::Return(permit) => permit,
+                ResultDecision::Reject => {
+                    signature_result?;
+                    return Err(AppError::Unauthorized(
+                        "enrollment result is not authorized".into(),
+                    ));
+                }
+            };
+        signature_result?;
         debug_assert_eq!(permit.kind(), ResultKind::Pending);
         return Ok(Json(ResultResponse::Pending));
     }
 
+    // Neither a result nor a claim exists. The verified policy still sees that
+    // absence rather than being skipped.
+    let _ = vela_enrollment_policy::authorize_result(result_facts(ResultObservation {
+        source: ResultSource::NoRecord,
+        claimed_key_len: 0,
+        signature_verified: false,
+    }));
     Err(AppError::NotFound(
         "enrollment grant not found or expired".into(),
     ))
@@ -701,11 +782,17 @@ fn load_claim(state: &AppState, grant_id: &str) -> Result<Option<Claim>> {
     }
 }
 
-async fn load_primary_vk(state: &AppState, grant: &Grant) -> Result<Vec<u8>> {
+/// Load the opener's verification key and activity.
+///
+/// A missing or revoked row is returned as `(None, false)` rather than an
+/// error: the handler still runs the verified completion policy on that
+/// observation, then reports the original "not found or revoked" rejection.
+/// Only a database failure or an unreadable active key is an error.
+async fn load_primary_key(state: &AppState, grant: &Grant) -> Result<(Option<Vec<u8>>, bool)> {
     let rows = state
         .sqldb
         .query(
-            "SELECT hybrid_vk FROM devices WHERE id = ? AND user_id = ? AND revoked = 0",
+            "SELECT hybrid_vk, revoked FROM devices WHERE id = ? AND user_id = ?",
             vec![
                 TursoValue::Text(grant.device_id.clone()),
                 TursoValue::Text(grant.user_id.clone()),
@@ -713,11 +800,27 @@ async fn load_primary_vk(state: &AppState, grant: &Grant) -> Result<Vec<u8>> {
         )
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
-    let vk_b64 = rows
-        .first()
-        .and_then(|r| r.text(0))
+    let Some(row) = rows.first() else {
+        return Ok((None, false));
+    };
+    // Mirror the SQL `revoked = 0` predicate exactly: NULL or any other value
+    // counts as revoked.
+    let revoked = !matches!(row.get(1), Some(TursoValue::Integer(0))) && row.text(1) != Some("0");
+    if revoked {
+        return Ok((None, false));
+    }
+    let vk_b64 = row
+        .text(0)
         .ok_or_else(|| AppError::Unauthorized("enrolling device not found or revoked".into()))?;
-    crate::db::decode_b64(vk_b64)
+    Ok((Some(crate::db::decode_b64(vk_b64)?), true))
+}
+
+/// Decode base64 without imposing a length. The verified claim policy decides
+/// whether the decoded length is the protocol's exact key length, so the
+/// public-key fact is not decided by a separate early return.
+fn decode_base64_field(value: &str, what: &str) -> Result<Vec<u8>> {
+    B64.decode(value)
+        .map_err(|_| AppError::BadRequest(format!("{what} is not valid base64")))
 }
 
 fn decode_exact(value: &str, expected: usize, what: &str) -> Result<Vec<u8>> {

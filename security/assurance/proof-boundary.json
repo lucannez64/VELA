@@ -1,0 +1,70 @@
+{
+  "description": "Current extracted Rust modules contain no local assume val declarations. Imported libraries and proof tools remain trusted. This gate detects declaration/postcondition drift and is not a proof checker.",
+  "artifacts": [
+    {
+      "artifact": "libVELA/vela-client-recovery-policy/proofs/fstar/extraction/Vela_client_recovery_policy.fst",
+      "selected_postconditions": 18,
+      "allowed_assume_val": []
+    },
+    {
+      "artifact": "libVELA/vela-client-share-policy/proofs/fstar/extraction/Vela_client_share_policy.fst",
+      "selected_postconditions": 19,
+      "allowed_assume_val": []
+    },
+    {
+      "artifact": "libVELA/vela-crypto/proofs/fstar/extraction/Vela_crypto.Share_envelope.fst",
+      "selected_postconditions": 8,
+      "allowed_assume_val": []
+    },
+    {
+      "artifact": "libVELA/vela-sync-policy/proofs/fstar/extraction/Vela_sync_policy.fst",
+      "selected_postconditions": 11,
+      "allowed_assume_val": []
+    },
+    {
+      "artifact": "serverVELA/vela-enrollment-policy/proofs/fstar/extraction/Vela_enrollment_policy.fst",
+      "selected_postconditions": 29,
+      "allowed_assume_val": []
+    },
+    {
+      "artifact": "serverVELA/vela-recovery-policy/proofs/fstar/extraction/Vela_recovery_policy.fst",
+      "selected_postconditions": 90,
+      "allowed_assume_val": []
+    },
+    {
+      "artifact": "serverVELA/vela-rekey-policy/proofs/fstar/extraction/Vela_rekey_policy.fst",
+      "selected_postconditions": 12,
+      "allowed_assume_val": []
+    },
+    {
+      "artifact": "serverVELA/vela-session-policy/proofs/fstar/extraction/Vela_session_policy.fst",
+      "selected_postconditions": 19,
+      "allowed_assume_val": []
+    },
+    {
+      "artifact": "serverVELA/vela-share-policy/proofs/fstar/extraction/Vela_share_policy.fst",
+      "selected_postconditions": 9,
+      "allowed_assume_val": []
+    },
+    {
+      "artifact": "libVELA/vela-crypto/proofs/fstar/models/Alloc.String.fst",
+      "selected_postconditions": 0,
+      "allowed_assume_val": []
+    },
+    {
+      "artifact": "libVELA/vela-crypto/proofs/fstar/extraction/Vela_crypto.Signing.fst",
+      "selected_postconditions": 3,
+      "allowed_assume_val": []
+    },
+    {
+      "artifact": "libVELA/vela-crypto/proofs/fstar/extraction/Vela_crypto.Wire.fst",
+      "selected_postconditions": 13,
+      "allowed_assume_val": []
+    },
+    {
+      "artifact": "libVELA/vela-crypto/proofs/fstar/models/Alloc.Vec.fst",
+      "selected_postconditions": 0,
+      "allowed_assume_val": []
+    }
+  ]
+}

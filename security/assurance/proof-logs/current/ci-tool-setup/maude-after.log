@@ -1,0 +1,14 @@
+maude tool: 'maude'
+ checking version: tamarin-prover 1.12.0, (C) David Basin, Cas Cremers, Jannik Dreier, Simon Meier, Ralf Sasse, Benedikt Schmidt, 2010-2023
+
+This program comes with ABSOLUTELY NO WARRANTY. It is free software, and you
+are welcome to redistribute it according to its LICENSE, see
+'https://github.com/tamarin-prover/tamarin-prover/blob/master/LICENSE'.
+
+3.5.1. OK.
+ checking installation: OK.
+Generated from:
+Tamarin version 1.12.0
+Maude version 3.5.1
+Git revision: 82780bbaf3328a45f624ddb41e51bf75425f851c (with uncommited changes), branch: master
+Compiled at: 2026-03-07 14:22:39.174278293 UTC

@@ -1,0 +1,82 @@
+(* VELA RMS possession proof (v2): unforgeable without the RMS, from ML-DSA-87
+   alone, even with the Ed25519 component's derived seed leaked.
+
+   Code: libVELA/vela-crypto/src/recovery.rs (possession_keys,
+   rms_possession_commitment, rms_possession_sign, rms_possession_verify).
+
+     ml_seed = KDF("vela rms possession ml-dsa v1", rms)
+     ed_seed = KDF("vela rms possession ed25519 v1", rms)
+     commitment = (ml_vk(ml_seed), ed_vk(ed_seed))           -- staged on the server
+     proof      = hybrid_sign(<"vela recovery possession proof v2", user,
+                               recovery_id, challenge, epoch>)
+
+   Assumptions:
+   - BLAKE3 derive_key with these two contexts: a random oracle (one per
+     context; distinct contexts give independent oracles).
+   - ML-DSA-87 key generation from the derived seed (through the
+     KdfStreamRng stream) yields an ordinary key pair for that seed, and
+     ML-DSA-87 is EUF-CMA (UF_CMA_proba_signature).
+   - Ed25519: NO assumption. Its derived seed is handed to the adversary.
+   - The message encoding is injective (length-prefixed fields); modelled as
+     an opaque message the adversary chooses.
+
+   Game: a random RMS; the adversary sees the public commitment and the
+   leaked Ed25519 seed, obtains Qs genuine proofs on messages of its choice
+   (honest recoveries it observes), and must output a valid proof on a
+   message never proved by the client (event forge). The server's
+   single-use challenges and rate limits are separate (Tamarin M14/M18,
+   policy crates) and are not needed for unforgeability.
+
+   Expected: "All queries proved."
+*)
+
+param Qs.
+
+type rms_t [large,fixed].
+type msg [bounded].
+
+(* ML-DSA-87: EUF-CMA, keys from a seed *)
+type mldsa_seed [large,fixed].
+type mldsa_pk [bounded].
+type mldsa_sk [bounded].
+type mldsa_sig [bounded].
+proba Pmldsa.
+proba Pmldsacoll.
+expand UF_CMA_proba_signature(mldsa_seed, mldsa_pk, mldsa_sk, msg, mldsa_sig,
+                              mldsa_skgen, mldsa_pkgen, mldsa_sign, mldsa_check, Pmldsa, Pmldsacoll).
+
+(* Ed25519: arbitrary *)
+type ed_seed [large,fixed].
+type ed_pk [bounded].
+type ed_sig [bounded].
+fun ed_pkgen(ed_seed): ed_pk.
+fun ed_sign(msg, ed_seed): ed_sig.
+fun ed_check(msg, ed_pk, ed_sig): bool.
+
+(* The two KDF contexts, each a random oracle keyed by the RMS *)
+type hashkey [fixed].
+expand ROM_hash_1(hashkey, rms_t, mldsa_seed, kdf_ml, kdf_ml_oracle, qKml).
+expand ROM_hash_1(hashkey, rms_t, ed_seed, kdf_ed, kdf_ed_oracle, qKed).
+
+event forge.
+query event(forge) ==> false.
+
+process
+  Ostart() :=
+    hk1 <-R hashkey;
+    hk2 <-R hashkey;
+    rms <-R rms_t;
+    ms: mldsa_seed <- kdf_ml(hk1, rms);
+    es: ed_seed <- kdf_ed(hk2, rms);
+    (* commitment (both public keys) plus the leaked Ed25519 seed *)
+    return(mldsa_pkgen(ms), ed_pkgen(es), es);
+    ((
+      foreach is <= Qs do
+      Oprove(m: msg) :=
+        return(mldsa_sign(m, mldsa_skgen(ms)), ed_sign(m, es))
+    ) | (
+      Oforge(m': msg, s1: mldsa_sig, s2: ed_sig) :=
+        if mldsa_check(m', mldsa_pkgen(ms), s1) && ed_check(m', ed_pkgen(es), s2) then
+        find u <= Qs suchthat defined(m[u]) && m' = m[u] then yield else
+        event forge
+    ) | run kdf_ml_oracle(hk1) | run kdf_ed_oracle(hk2))

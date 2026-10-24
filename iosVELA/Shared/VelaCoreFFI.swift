@@ -197,6 +197,76 @@ enum VelaCoreFFI {
         return field(response, "item_json")
     }
 
+    // ── Share envelope v2 (signed, recipient-bound shared items) ────────────
+
+    /// What a recipient remembers about an accepted share.
+    struct SharePin: Codable, Equatable {
+        let senderUserID: String
+        let senderVKBase64: String
+        let lineageID: String
+        let revision: UInt64
+
+        fileprivate var json: [String: Any] {
+            ["sender_user_id": senderUserID, "sender_vk_b64": senderVKBase64,
+             "lineage_id": lineageID, "revision": revision]
+        }
+    }
+
+    struct AdmittedShare {
+        let itemJSON: String
+        let firstContact: Bool
+        let pin: SharePin
+        /// Fingerprint of the sending device's key, for out-of-band comparison.
+        let senderFingerprint: String
+    }
+
+    /// Sign and seal a shared item for one recipient. The signing key stays
+    /// native; the envelope names this device's key.
+    static func identitySealSignedShare(
+        handle: UInt64, senderUserID: String, senderDeviceID: String,
+        recipientUserID: String, recipientShareEKBase64: String,
+        lineageID: String, revision: UInt64, itemJSON: String
+    ) -> String? {
+        let request = json([
+            "handle": handle, "sender_user_id": senderUserID, "sender_device_id": senderDeviceID,
+            "recipient_user_id": recipientUserID, "recipient_share_ek_b64": recipientShareEKBase64,
+            "lineage_id": lineageID, "revision": revision, "item_json": itemJSON,
+        ])
+        let response = request.withCString { consume(vela_ffi_identity_seal_signed_share_json($0)) }
+        return field(response, "capsule_b64")
+    }
+
+    /// Open a received share envelope, verify its signature and recipient
+    /// binding, and run the verified admission policy. Returns nil when the
+    /// share is rejected (unsigned, forged, misaddressed, or not newer than `pin`).
+    static func identityAdmitShare(
+        handle: UInt64, capsuleBase64: String, recipientUserID: String,
+        attributedSenderUserID: String, pin: SharePin? = nil
+    ) -> AdmittedShare? {
+        var object: [String: Any] = [
+            "handle": handle, "capsule_b64": capsuleBase64,
+            "recipient_user_id": recipientUserID, "attributed_sender_user_id": attributedSenderUserID,
+        ]
+        if let pin { object["pin"] = pin.json }
+        let response = json(object).withCString { consume(vela_ffi_identity_admit_share_json($0)) }
+        guard let data = response.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let itemJSON = obj["item_json"] as? String,
+              let firstContact = obj["first_contact"] as? Bool,
+              let fingerprint = obj["sender_fingerprint"] as? String,
+              let pinObj = obj["pin"] as? [String: Any],
+              let senderUserID = pinObj["sender_user_id"] as? String,
+              let senderVK = pinObj["sender_vk_b64"] as? String,
+              let lineageID = pinObj["lineage_id"] as? String,
+              let revision = (pinObj["revision"] as? NSNumber)?.uint64Value
+        else { return nil }
+        return AdmittedShare(
+            itemJSON: itemJSON, firstContact: firstContact,
+            pin: SharePin(senderUserID: senderUserID, senderVKBase64: senderVK,
+                          lineageID: lineageID, revision: revision),
+            senderFingerprint: fingerprint)
+    }
+
     // ── Enrollment v3 (audit P-1) ───────────────────────────────────────────
 
     /// This device's own enrollment fingerprint.

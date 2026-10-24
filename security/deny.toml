@@ -72,6 +72,11 @@ skip = [
   # allow, matching the other skip entries above.
   "allocator-api2", "fastbloom", "itertools", "linux-raw-sys", "pastey",
   "rand_chacha", "rand_pcg", "rustix", "shlex", "unicode-width",
+  # P-256 0.14 requires the new RustCrypto digest/signature families to reach
+  # crypto-bigint 0.7.6 (RUSTSEC-2026-0387). HKDF/Ed25519 still require these
+  # older, incompatible APIs. Exempt only the resolved old versions from
+  # duplicate detection; advisories remain enforced for both versions.
+  "hmac@0.12.1", "sha2@0.10.9", "signature@2.2.0",
 ]
 deny = []
 

@@ -1,0 +1,10 @@
+refinement	Verify production share-fact construction and audit extraction assumptions	2026-10-24T12:15:46.4420908Z 13 checked module artifacts: 212 selected postconditions, 0 explicitly reviewed assume val declarations.
+formal-rekey	Prove the hybrid KEM combiner in the computational model (CryptoVerif 2.12)	2026-10-24T11:29:18.2819388Z kem_v2_x25519_gdh: proved (as expected)
+formal-rekey	Prove the hybrid KEM combiner in the computational model (CryptoVerif 2.12)	2026-10-24T11:29:18.4013169Z kem_v2_x25519_gdh_nonuniform: proved (as expected)
+formal-rekey	Prove the hybrid KEM combiner in the computational model (CryptoVerif 2.12)	2026-10-24T11:29:18.5413361Z kem_v2_mlkem_cca: proved (as expected)
+formal-rekey	Prove the hybrid KEM combiner in the computational model (CryptoVerif 2.12)	2026-10-24T11:29:18.6341750Z kem_v1_x25519_baseline: unproved (as expected)
+formal-rekey	Prove the hybrid KEM combiner in the computational model (CryptoVerif 2.12)	2026-10-24T11:29:18.7101798Z kem_dem_seal_share: proved (as expected)
+formal-rekey	Prove the hybrid KEM combiner in the computational model (CryptoVerif 2.12)	2026-10-24T11:29:18.7754397Z hybrid_sig_mldsa_euf: proved (as expected)
+formal-rekey	Prove the hybrid KEM combiner in the computational model (CryptoVerif 2.12)	2026-10-24T11:29:18.8450723Z hybrid_sig_ed25519_euf: proved (as expected)
+formal-rekey	Run every assurance model, including the credential-release ladder	2026-10-24T11:36:11.3293495Z   share-journal                                PASS
+static-scan	UNKNOWN STEP	2026-10-24T11:24:10.8587815Z VELA security scan: PASS

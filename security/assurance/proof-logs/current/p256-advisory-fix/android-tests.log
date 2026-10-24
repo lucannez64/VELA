@@ -1,0 +1,51 @@
+warning: function `first_uri` is never used
+   --> /home/hirew/.t3/worktrees/VELA/t3-700776df/libVELA/vela-import/src/lib.rs:470:4
+    |
+470 | fn first_uri(login: &Value) -> String {
+    |    ^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `vela-import` (lib) generated 1 warning
+   Compiling vela-android-bridge v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-700776df/libVELA/vela-android-bridge)
+warning: struct `Response` is never constructed
+   --> src/lib.rs:497:12
+    |
+497 |     struct Response { rms_b64: String }
+    |            ^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `vela-android-bridge` (lib test) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.47s
+     Running unittests src/lib.rs (target/debug/build/vela-android-bridge/e0b1aaa1aac83da2/out/vela_android_bridge-e0b1aaa1aac83da2)
+
+running 25 tests
+test passkey::tests::a_short_scalar_is_refused_rather_than_padded ... ok
+test passkey::tests::a_signature_does_not_verify_for_a_different_message ... ok
+test passkey::tests::attestation_object_carries_none_attestation ... ok
+test passkey::tests::authenticator_data_matches_the_webauthn_layout ... ok
+test passkey::tests::credential_ids_do_not_repeat ... ok
+test passkey::tests::keygen_refuses_a_relying_party_without_es256 ... ok
+test passkey::tests::keygen_round_trips_through_the_stored_scalar ... ok
+test passkey::tests::registration_data_embeds_attested_credential_data ... ok
+test passkey::tests::spki_der_layout_is_canonical ... ok
+test passkey::tests::the_spki_der_matches_the_cose_key_point ... ok
+test tests::a_sealed_identity_reopens_as_the_same_device ... ok
+test tests::android_accepts_legacy_chunks_only_at_epoch_one ... ok
+test tests::android_chunk_crypto_binds_and_enforces_rotated_epochs ... ok
+test tests::bound_recovery_rejects_cross_account_and_mixed_epoch_inputs ... ok
+test tests::byte_array_paths_round_trip_without_key_material_in_json ... ok
+test tests::byte_buffers_survive_a_round_trip_with_spare_capacity ... ok
+test tests::combine_recovery_rejects_single_share ... ok
+test tests::encrypt_decrypt_vault_json_round_trips_through_crypto ... ok
+test tests::enrollment_v3_fingerprint_is_over_the_devices_own_key_and_the_capsule_opens ... ok
+test tests::identity_handle_returns_server_sized_public_keys_and_no_secrets ... ok
+test tests::password_strength_bridge_returns_json ... ok
+test tests::recovered_rms_is_returned_as_raw_bytes ... ok
+test tests::signed_shares_round_trip_and_forged_updates_are_refused ... ok
+test tests::split_then_combine_recovery_reconstructs_rms ... ok
+test tests::verified_publication_planner_advances_and_retires_exact_journals ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.52s
+

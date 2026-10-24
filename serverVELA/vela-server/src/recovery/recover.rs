@@ -7,7 +7,9 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use vela_recovery_policy::{
-    CredentialUpdateDecision, CredentialUpdateFacts, RecoverDecision, RecoverFacts, RecoveryPhase,
+    credential_update_facts, plan_credential_update, plan_recovery, recover_facts,
+    CredentialUpdateDecision, CredentialUpdateObservation, RecoverDecision, RecoverObservation,
+    RecoveryAttemptSource,
 };
 use webauthn_rs::prelude::PublicKeyCredential;
 
@@ -77,20 +79,37 @@ pub async fn post_recover(
     let recovery_id = body.recovery_id.ok_or_else(|| {
         AppError::BadRequest("recovery_id from /recovery/initiate is required".into())
     })?;
-    let auth_state = crate::recovery::initiate::take_auth_state(&state, body.user_id, recovery_id)?;
+    let taken = crate::recovery::initiate::take_auth_state(&state, body.user_id, recovery_id)?;
+    let attempt_source = if taken.is_some() {
+        RecoveryAttemptSource::Consumed
+    } else {
+        RecoveryAttemptSource::Missing
+    };
+    let auth_state = taken
+        .ok_or_else(|| AppError::BadRequest("recovery challenge expired or already used".into()))?;
     let current_credential_id = B64.encode(passkey.cred_id().as_slice());
-    if current_credential_id != auth_state.credential_id {
+    let challenge_credential_matches_current = current_credential_id == auth_state.credential_id;
+    if !challenge_credential_matches_current {
         return Err(AppError::Unauthorized(
             "recovery credential was replaced after this challenge was issued".into(),
         ));
     }
 
-    let auth_result = state
+    let assertion_result = state
         .webauthn
-        .finish_passkey_authentication(&body.credential, &auth_state.auth_state)
-        .map_err(|e| AppError::Unauthorized(format!("WebAuthn recovery failed: {e:?}")))?;
+        .finish_passkey_authentication(&body.credential, &auth_state.auth_state);
+    let assertion_valid = assertion_result.is_ok();
+    let auth_result = match assertion_result {
+        Ok(result) => result,
+        Err(e) => {
+            return Err(AppError::Unauthorized(format!(
+                "WebAuthn recovery failed: {e:?}"
+            )));
+        }
+    };
 
-    if !auth_result.user_verified() {
+    let user_verified = auth_result.user_verified();
+    if !user_verified {
         return Err(AppError::Unauthorized(
             "WebAuthn recovery requires user verification".into(),
         ));
@@ -98,11 +117,12 @@ pub async fn post_recover(
 
     let assertion_credential_matches =
         B64.encode(auth_result.cred_id().as_slice()) == auth_state.credential_id;
-    let update_decision = vela_recovery_policy::plan_credential_update(CredentialUpdateFacts {
-        assertion_valid: true,
-        credential_matches_current: assertion_credential_matches,
-        needs_update: auth_result.needs_update(),
-    });
+    let update_decision =
+        plan_credential_update(credential_update_facts(CredentialUpdateObservation {
+            assertion_valid,
+            credential_matches_current: assertion_credential_matches,
+            needs_update: auth_result.needs_update(),
+        }));
     match update_decision {
         CredentialUpdateDecision::Reject => {
             return Err(AppError::Unauthorized(
@@ -138,39 +158,54 @@ pub async fn post_recover(
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    let row = rows.first().ok_or_else(|| {
-        AppError::NotFound(crate::recovery::initiate::RECOVERY_UNAVAILABLE.into())
-    })?;
-    if row.text(2).is_some() {
-        return Err(AppError::Conflict(
-            "account recovery is paused during vault key rotation".into(),
-        ));
-    }
-    if row.text(3) != Some(auth_state.credential_id.as_str()) {
-        return Err(AppError::Unauthorized(
-            "recovery credential changed while authenticating".into(),
-        ));
-    }
-    let share_b64 = row.text(0).map(String::from).ok_or_else(|| {
-        AppError::NotFound(crate::recovery::initiate::RECOVERY_UNAVAILABLE.into())
-    })?;
-    let share_bytes = crate::db::decode_b64(&share_b64)?;
-    let key_epoch = row.i64(1).unwrap_or(1).max(1);
-    let split_id = row.text(4).map(String::from);
+    // Retain every row observation so the policy, not a hard-coded fact,
+    // decides release and the handler can still return the original error.
+    let row = rows.first();
+    let row_present = row.is_some();
+    let account_epoch_active = row.map(|row| row.text(2).is_none()).unwrap_or(false);
+    let stored_credential_matches_attempt = row
+        .map(|row| row.text(3) == Some(auth_state.credential_id.as_str()))
+        .unwrap_or(false);
+    let share_present = row.map(|row| row.text(0).is_some()).unwrap_or(false);
+    let stored_epoch = row.and_then(|row| row.i64(1));
+    let credential_matches_current = challenge_credential_matches_current
+        && assertion_credential_matches
+        && stored_credential_matches_attempt;
 
-    let release_permit = match vela_recovery_policy::plan_recovery(RecoverFacts {
-        phase: RecoveryPhase::ChallengePending,
+    let release_permit = match plan_recovery(recover_facts(RecoverObservation {
+        attempt_source,
         user_matches: auth_state.user_id == body.user_id,
         attempt_matches: auth_state.recovery_id == recovery_id,
-        challenge_consumed: true,
-        credential_matches_current: true,
-        assertion_valid: true,
-        user_verified: auth_result.user_verified(),
-        share_present: true,
-        account_epoch_active: row.text(2).is_none(),
-        epoch: key_epoch,
-    }) {
+        credential_matches_current,
+        assertion_valid,
+        user_verified,
+        share_present,
+        account_epoch_active,
+        stored_epoch,
+    })) {
         RecoverDecision::Release(permit) => permit,
+        // Preserve the original status classes, messages and precedence now
+        // that the policy sees every observation instead of hard-coded facts.
+        RecoverDecision::Reject if !row_present => {
+            return Err(AppError::NotFound(
+                crate::recovery::initiate::RECOVERY_UNAVAILABLE.into(),
+            ));
+        }
+        RecoverDecision::Reject if !account_epoch_active => {
+            return Err(AppError::Conflict(
+                "account recovery is paused during vault key rotation".into(),
+            ));
+        }
+        RecoverDecision::Reject if !stored_credential_matches_attempt => {
+            return Err(AppError::Unauthorized(
+                "recovery credential changed while authenticating".into(),
+            ));
+        }
+        RecoverDecision::Reject if !share_present => {
+            return Err(AppError::NotFound(
+                crate::recovery::initiate::RECOVERY_UNAVAILABLE.into(),
+            ));
+        }
         RecoverDecision::Reject => {
             return Err(AppError::Unauthorized(
                 "verified recovery policy rejected share release".into(),
@@ -178,6 +213,13 @@ pub async fn post_recover(
         }
     };
     debug_assert!(release_permit.issues_single_use_grant());
+
+    let row = row.expect("release policy admits only a present share row");
+    let share_b64 = row.text(0).map(String::from).ok_or_else(|| {
+        AppError::NotFound(crate::recovery::initiate::RECOVERY_UNAVAILABLE.into())
+    })?;
+    let share_bytes = crate::db::decode_b64(&share_b64)?;
+    let split_id = row.text(4).map(String::from);
 
     let recovery_grant = Uuid::new_v4();
     store_credential_grant(
@@ -251,9 +293,13 @@ fn store_enroll_grant(
     grant: Uuid,
     value: &RecoveryEnrollGrant,
 ) -> Result<()> {
-    let bytes =
-        serde_json::to_vec(value).map_err(|e| AppError::Internal(format!("failed to serialize recovery grant: {e}")))?;
-    state.store.set_ex(&enroll_grant_key(user_id, grant), &bytes, ENROLL_GRANT_TTL_SECS)
+    let bytes = serde_json::to_vec(value)
+        .map_err(|e| AppError::Internal(format!("failed to serialize recovery grant: {e}")))?;
+    state.store.set_ex(
+        &enroll_grant_key(user_id, grant),
+        &bytes,
+        ENROLL_GRANT_TTL_SECS,
+    )
 }
 
 /// Grant issued after a WebAuthn-gated share release.
@@ -288,32 +334,31 @@ pub(crate) fn store_possession_grant(
     )
 }
 
-/// Read the epoch without consuming the grant, so callers can reject rotation
-/// state without spending a valid same-epoch recovery ceremony.
-pub(crate) fn load_enroll_grant(
+/// Read the grant without consuming it, so callers can reject rotation state
+/// without spending a valid same-epoch recovery ceremony. `None` means the
+/// key is absent; a decoded-invalid grant remains an error.
+pub(crate) fn observe_enroll_grant(
     state: &AppState,
     user_id: Uuid,
     grant: Uuid,
-) -> Result<RecoveryEnrollGrant> {
-    let value = state
-        .store
-        .get(&enroll_grant_key(user_id, grant))?
-        .ok_or_else(|| AppError::Unauthorized("recovery grant expired or already used".into()))?;
-    decode_enroll_grant(&value)
+) -> Result<Option<RecoveryEnrollGrant>> {
+    let Some(value) = state.store.get(&enroll_grant_key(user_id, grant))? else {
+        return Ok(None);
+    };
+    decode_enroll_grant(&value).map(Some)
 }
 
-/// Consume a grant issued by `post_recover`. Returns an error if it's missing,
-/// expired, or already redeemed — grants are single-use.
-pub(crate) fn take_enroll_grant(
+/// Consume a grant issued by `post_recover`. `None` means it was missing,
+/// expired or already redeemed; grants are single-use.
+pub(crate) fn take_enroll_grant_observed(
     state: &AppState,
     user_id: Uuid,
     grant: Uuid,
-) -> Result<RecoveryEnrollGrant> {
-    let value = state
-        .store
-        .get_del(&enroll_grant_key(user_id, grant))?
-        .ok_or_else(|| AppError::Unauthorized("recovery grant expired or already used".into()))?;
-    decode_enroll_grant(&value)
+) -> Result<Option<RecoveryEnrollGrant>> {
+    let Some(value) = state.store.get_del(&enroll_grant_key(user_id, grant))? else {
+        return Ok(None);
+    };
+    decode_enroll_grant(&value).map(Some)
 }
 
 pub(crate) fn restore_enroll_grant(

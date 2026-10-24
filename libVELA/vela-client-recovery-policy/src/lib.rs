@@ -65,22 +65,22 @@ pub fn publication_is_current(facts: PublicationFacts) -> bool {
 
 pub fn publication_plan_matches_spec(facts: PublicationFacts, action: PublicationAction) -> bool {
     if !publication_journal_is_bound(facts) {
-        action == PublicationAction::Reject
+        matches!(action, PublicationAction::Reject)
     } else if facts.current_epoch < INITIAL_EPOCH
         || facts.journal_epoch != facts.current_epoch
         || !facts.account_epoch_active
     {
-        action == PublicationAction::Retire
+        matches!(action, PublicationAction::Retire)
     } else if facts.cloud_active {
-        action == PublicationAction::Complete
+        matches!(action, PublicationAction::Complete)
     } else if facts.server_finalized {
-        action == PublicationAction::PromoteCloudActive
+        matches!(action, PublicationAction::PromoteCloudActive)
     } else if !facts.server_staged {
-        action == PublicationAction::StageServer
+        matches!(action, PublicationAction::StageServer)
     } else if !facts.cloud_candidate_durable {
-        action == PublicationAction::UploadCloudCandidate
+        matches!(action, PublicationAction::UploadCloudCandidate)
     } else {
-        action == PublicationAction::FinalizeServer
+        matches!(action, PublicationAction::FinalizeServer)
     }
 }
 
@@ -237,7 +237,7 @@ pub fn reconstruction_is_authorized(facts: ReconstructionFacts) -> bool {
         && first.account_matches
         && second.account_matches
         // Two shares from the same channel are one custodian speaking twice.
-        && first.channel != second.channel
+        && !same_recovery_channel(first.channel, second.channel)
         && first.epoch >= INITIAL_EPOCH
         && first.epoch == second.epoch
         && ((!first.split_id_present && !second.split_id_present)
@@ -246,8 +246,8 @@ pub fn reconstruction_is_authorized(facts: ReconstructionFacts) -> bool {
         && second.share_authenticated
         // Only a share opened out of an authenticated envelope addressed to
         // this exact recipient may enter on the trusted-contact channel.
-        && (first.channel != RecoveryChannel::TrustedContact || first.recipient_bound)
-        && (second.channel != RecoveryChannel::TrustedContact || second.recipient_bound)
+        && (!matches!(first.channel, RecoveryChannel::TrustedContact) || first.recipient_bound)
+        && (!matches!(second.channel, RecoveryChannel::TrustedContact) || second.recipient_bound)
         && first.coordinate != second.coordinate
 }
 
@@ -445,13 +445,13 @@ pub fn contact_delivery_plan_matches_spec(
     action: ContactDeliveryAction,
 ) -> bool {
     if !facts.journal_bound {
-        action == ContactDeliveryAction::Reject
+        matches!(action, ContactDeliveryAction::Reject)
     } else if !facts.journal_is_current || !facts.share_present {
-        action == ContactDeliveryAction::Retire
+        matches!(action, ContactDeliveryAction::Retire)
     } else if facts.split_id_present && facts.recipient_key_present {
-        action == ContactDeliveryAction::Seal
+        matches!(action, ContactDeliveryAction::Seal)
     } else {
-        action == ContactDeliveryAction::Reject
+        matches!(action, ContactDeliveryAction::Reject)
     }
 }
 
@@ -573,14 +573,10 @@ mod tests {
             Box::new(|f: &mut ReconstructionFacts| f.requested_account_present = false),
             Box::new(|f: &mut ReconstructionFacts| f.first.account_matches = false),
             Box::new(|f: &mut ReconstructionFacts| f.second.account_matches = false),
-            Box::new(|f: &mut ReconstructionFacts| {
-                f.second.channel = f.first.channel
-            }),
+            Box::new(|f: &mut ReconstructionFacts| f.second.channel = f.first.channel),
             Box::new(|f: &mut ReconstructionFacts| f.first.epoch = 0),
             Box::new(|f: &mut ReconstructionFacts| f.second.epoch += 1),
-            Box::new(|f: &mut ReconstructionFacts| {
-                f.split_ids_match = false
-            }),
+            Box::new(|f: &mut ReconstructionFacts| f.split_ids_match = false),
             Box::new(|f: &mut ReconstructionFacts| f.first.split_id_present = false),
             Box::new(|f: &mut ReconstructionFacts| f.second.share_authenticated = false),
             Box::new(|f: &mut ReconstructionFacts| f.second.coordinate = f.first.coordinate),
@@ -643,5 +639,37 @@ mod tests {
         );
         assert!(!rotated_contact_journal_can_seal(rotated));
         assert!(!keyless_contact_delivery_can_seal(keyless));
+    }
+}
+
+fn same_recovery_channel(a: RecoveryChannel, b: RecoveryChannel) -> bool {
+    matches!(
+        (a, b),
+        (RecoveryChannel::Cloud, RecoveryChannel::Cloud)
+            | (RecoveryChannel::Server, RecoveryChannel::Server)
+            | (
+                RecoveryChannel::TrustedContact,
+                RecoveryChannel::TrustedContact
+            )
+    )
+}
+#[cfg(test)]
+mod structural_equality_tests {
+    use super::*;
+    #[test]
+    fn structural_channel_equality_matches_derived_equality_exhaustively() {
+        for a in [
+            RecoveryChannel::Cloud,
+            RecoveryChannel::Server,
+            RecoveryChannel::TrustedContact,
+        ] {
+            for b in [
+                RecoveryChannel::Cloud,
+                RecoveryChannel::Server,
+                RecoveryChannel::TrustedContact,
+            ] {
+                assert_eq!(same_recovery_channel(a, b), a == b);
+            }
+        }
     }
 }

@@ -1,0 +1,80 @@
+   Compiling libc v0.2.186
+   Compiling typenum v1.20.1
+   Compiling cfg-if v1.0.4
+   Compiling version_check v0.9.5
+   Compiling generic-array v0.14.7
+   Compiling getrandom v0.2.17
+   Compiling rand_core v0.6.4
+   Compiling crypto-common v0.1.7
+   Compiling proc-macro2 v1.0.106
+   Compiling unicode-ident v1.0.24
+   Compiling subtle v2.6.1
+   Compiling quote v1.0.45
+   Compiling syn v2.0.117
+   Compiling block-buffer v0.10.4
+   Compiling digest v0.10.7
+   Compiling cmov v0.5.4
+   Compiling ctutils v0.4.4
+   Compiling cpufeatures v0.2.17
+   Compiling hybrid-array v0.4.12
+   Compiling zeroize_derive v1.4.3
+   Compiling getrandom v0.4.2
+   Compiling zeroize v1.8.2
+   Compiling rand_core v0.10.1
+   Compiling semver v1.0.28
+   Compiling rustc_version v0.4.1
+   Compiling crypto-common v0.2.2
+   Compiling autocfg v1.5.1
+   Compiling num-traits v0.2.19
+   Compiling curve25519-dalek v4.1.3
+   Compiling block-buffer v0.12.1
+   Compiling find-msvc-tools v0.1.9
+   Compiling shlex v2.0.1
+   Compiling cc v1.2.63
+   Compiling digest v0.11.3
+   Compiling curve25519-dalek-derive v0.1.1
+   Compiling inout v0.1.4
+   Compiling cipher v0.4.4
+   Compiling blake3 v1.8.5
+   Compiling sha2 v0.10.9
+   Compiling universal-hash v0.5.1
+   Compiling keccak v0.2.0
+   Compiling thiserror v1.0.69
+   Compiling signature v2.2.0
+   Compiling keccak v0.1.6
+   Compiling base64ct v1.8.3
+   Compiling opaque-debug v0.3.1
+   Compiling poly1305 v0.8.0
+   Compiling password-hash v0.5.0
+   Compiling sha3 v0.10.9
+   Compiling ed25519 v2.2.3
+   Compiling sha3 v0.11.0
+   Compiling module-lattice v0.2.3
+   Compiling chacha20 v0.9.1
+   Compiling kem v0.3.0
+   Compiling blake2 v0.10.6
+   Compiling hmac v0.12.1
+   Compiling thiserror-impl v1.0.69
+   Compiling aead v0.5.2
+   Compiling cpufeatures v0.3.0
+   Compiling arrayref v0.3.9
+   Compiling constant_time_eq v0.4.2
+   Compiling arrayvec v0.7.6
+   Compiling chacha20poly1305 v0.10.1
+   Compiling hkdf v0.12.4
+   Compiling argon2 v0.5.3
+   Compiling ml-kem v0.3.2
+   Compiling ed25519-dalek v2.2.0
+   Compiling fips204 v0.4.6
+   Compiling x25519-dalek v2.0.1
+   Compiling vela-crypto v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-700776df/libVELA/vela-crypto)
+   Compiling hex v0.4.3
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 22.02s
+   Doc-tests vela_crypto
+
+running 2 tests
+test src/share_envelope.rs - share_envelope::OpenedShare (line 71) - compile fail ... ok
+test src/share_envelope.rs - share_envelope::OpenedShare (line 78) - compile fail ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+

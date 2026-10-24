@@ -1,0 +1,796 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.01s
+     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-client-share-policy/72dc38bb898b28d9/out/vela_client_share_policy-72dc38bb898b28d9)
+
+running 3 tests
+test tests::first_contact_pins_the_signed_revision ... ok
+test tests::revision_zero_is_never_admitted ... ok
+test tests::update_requires_pin_lineage_and_a_newer_revision ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/exhaustive.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-client-share-policy/5e3c237e822fafcd/out/exhaustive-5e3c237e822fafcd)
+
+running 2 tests
+test decisions_match_the_spec_everywhere ... ok
+test negative_theorems_hold_everywhere ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests vela_client_share_policy
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.02s
+[1m[94minfo[0m: [1mhax: unchanged file ./proofs/fstar/extraction/Vela_client_share_policy.fst[0m
+* Warning 241 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti(0,0-0,0):
+  - Unable to load
+    /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti.checked
+    since checked file
+    /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti.checked
+    does not exist; will recheck
+    /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti
+    (suppressing this warning for further modules)
+
+* Warning 239 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+Verified module: Vela_client_share_policy
+All verification conditions discharged successfully
+   Compiling typenum v1.20.1
+   Compiling libc v0.2.186
+   Compiling cfg-if v1.0.4
+   Compiling version_check v0.9.5
+   Compiling generic-array v0.14.7
+   Compiling getrandom v0.2.17
+   Compiling rand_core v0.6.4
+   Compiling crypto-common v0.1.7
+   Compiling proc-macro2 v1.0.106
+   Compiling quote v1.0.45
+   Compiling subtle v2.6.1
+   Compiling unicode-ident v1.0.24
+   Compiling syn v2.0.117
+   Compiling block-buffer v0.10.4
+   Compiling digest v0.10.7
+   Compiling cmov v0.5.4
+   Compiling ctutils v0.4.4
+   Compiling cpufeatures v0.2.17
+   Compiling hybrid-array v0.4.12
+   Compiling zeroize_derive v1.4.3
+   Compiling getrandom v0.4.2
+   Compiling zeroize v1.8.2
+   Compiling rand_core v0.10.1
+   Compiling semver v1.0.28
+   Compiling rustc_version v0.4.1
+   Compiling crypto-common v0.2.2
+   Compiling autocfg v1.5.1
+   Compiling num-traits v0.2.19
+   Compiling curve25519-dalek v4.1.3
+   Compiling block-buffer v0.12.1
+   Compiling find-msvc-tools v0.1.9
+   Compiling shlex v2.0.1
+   Compiling cc v1.2.63
+   Compiling digest v0.11.3
+   Compiling curve25519-dalek-derive v0.1.1
+   Compiling inout v0.1.4
+   Compiling cipher v0.4.4
+   Compiling blake3 v1.8.5
+   Compiling sha2 v0.10.9
+   Compiling universal-hash v0.5.1
+   Compiling keccak v0.2.0
+   Compiling base64ct v1.8.3
+   Compiling keccak v0.1.6
+   Compiling opaque-debug v0.3.1
+   Compiling signature v2.2.0
+   Compiling thiserror v1.0.69
+   Compiling ed25519 v2.2.3
+   Compiling poly1305 v0.8.0
+   Compiling sha3 v0.10.9
+   Compiling password-hash v0.5.0
+   Compiling sha3 v0.11.0
+   Compiling module-lattice v0.2.3
+   Compiling chacha20 v0.9.1
+   Compiling kem v0.3.0
+   Compiling blake2 v0.10.6
+   Compiling hmac v0.12.1
+   Compiling thiserror-impl v1.0.69
+   Compiling aead v0.5.2
+   Compiling arrayref v0.3.9
+   Compiling arrayvec v0.7.6
+   Compiling cpufeatures v0.3.0
+   Compiling constant_time_eq v0.4.2
+   Compiling chacha20poly1305 v0.10.1
+   Compiling hkdf v0.12.4
+   Compiling argon2 v0.5.3
+   Compiling ml-kem v0.3.2
+   Compiling fips204 v0.4.6
+   Compiling ed25519-dalek v2.2.0
+   Compiling x25519-dalek v2.0.1
+   Compiling hex v0.4.3
+   Compiling vela-crypto v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-700776df/libVELA/vela-crypto)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 20.39s
+     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-crypto/108e3c8628414200/out/vela_crypto-108e3c8628414200)
+
+running 8 tests
+test share_envelope::tests::a_forged_update_from_another_key_is_rejected_after_pinning ... ok
+test share_envelope::tests::an_envelope_cannot_be_forwarded_to_another_recipient ... ok
+test share_envelope::tests::first_contact_then_newer_update_is_admitted ... ok
+test share_envelope::tests::misaddressed_and_misattributed_envelopes_are_rejected ... ok
+test share_envelope::tests::reader_prefix_failure_preserves_input_and_success_consumes_exactly ... ok
+test share_envelope::tests::sealing_refuses_mismatched_headers ... ok
+test share_envelope::tests::tampering_with_any_signed_field_breaks_the_signature ... ok
+test share_envelope::tests::v1_unsigned_capsules_are_rejected ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 115 filtered out; finished in 0.83s
+
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+[1m[94minfo[0m: [1mhax: wrote file ./proofs/fstar/extraction/Vela_crypto.Share_envelope.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file ./proofs/fstar/extraction/Vela_crypto.Signing.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file ./proofs/fstar/extraction/Vela_crypto.Wire.fst[0m
+* Warning 241 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti(0,0-0,0):
+  - Unable to load
+    /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti.checked
+    since checked file
+    /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti.checked
+    does not exist; will recheck
+    /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti
+    (suppressing this warning for further modules)
+
+* Warning 239 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+(Vela_client_share_policy.fst(7,0-7,38))	Query-stats splitting query because --split_queries is always
+Creating new z3proc (cmd=[("/tmp/vela-fstar-prebuilt/fstar/lib/fstar/z3-4.13.3/bin/z3", ["-smt2", "-in"])], version=["4.13.3"])
+(Vela_client_share_policy.fst(7,0-7,38))	Query-stats (Vela_client_share_policy.v_INITIAL_REVISION, 1)	succeeded in 58 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.029)
+(Vela_client_share_policy.fst(10,0-19,1))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(10,0-19,1))	Query-stats (Vela_client_share_policy.t_ShareAdmissionFacts, 1)	succeeded in 5 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.011)
+(Vela_client_share_policy.fst(10,0-19,1))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(10,0-19,1))	Query-stats (Vela_client_share_policy.t_ShareAdmissionFacts, 2)	succeeded in 1 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.011)
+(Vela_client_share_policy.fst(23,0-23,42))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(23,0-23,42))	Query-stats (Vela_client_share_policy.t_SharePinPermit, 1)	succeeded in 3 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.009)
+(Vela_client_share_policy.fst(31,41-31,58))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(31,41-31,58))	Query-stats (Vela_client_share_policy.share_permit_revision, 1)	succeeded in 3 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.009)
+(Vela_client_share_policy.fst(31,41-31,58))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(31,41-31,58))	Query-stats (Vela_client_share_policy.share_permit_revision, 2)	succeeded in 3 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.013)
+(Vela_client_share_policy.fst(33,0-36,60))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(33,0-36,60))	Query-stats (Vela_client_share_policy.t_ShareAdmissionDecision, 1)	succeeded in 1 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.001)
+(Vela_client_share_policy.fst(33,0-36,60))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(33,0-36,60))	Query-stats (Vela_client_share_policy.t_ShareAdmissionDecision, 2)	succeeded in 0 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.001)
+(dummy(0,0-0,0))	Query-stats splitting query because --split_queries is always
+(dummy(0,0-0,0))	Query-stats (Vela_client_share_policy.__proj__ShareAdmissionDecision_AcceptFirstContact__item___0, 1)	succeeded in 5 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.010)
+(dummy(0,0-0,0))	Query-stats splitting query because --split_queries is always
+(dummy(0,0-0,0))	Query-stats (Vela_client_share_policy.__proj__ShareAdmissionDecision_ApplyUpdate__item___0, 1)	succeeded in 3 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.010)
+(Vela_client_share_policy.fst(54,2-60,91))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(54,2-60,91))	Query-stats (Vela_client_share_policy.admission_matches_spec, 1)	succeeded in 4 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.017)
+(Vela_client_share_policy.fst(54,2-60,91))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(54,2-60,91))	Query-stats (Vela_client_share_policy.admission_matches_spec, 2)	succeeded in 5 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.014)
+(Vela_client_share_policy.fst(54,2-60,91))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(54,2-60,91))	Query-stats (Vela_client_share_policy.admission_matches_spec, 3)	succeeded in 4 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.015)
+(Vela_client_share_policy.fst(70,2-83,66))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(70,2-83,66))	Query-stats (Vela_client_share_policy.plan_share_admission, 1)	succeeded in 7 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.032)
+(Vela_client_share_policy.fst(70,2-83,66))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(70,2-83,66))	Query-stats (Vela_client_share_policy.plan_share_admission, 2)	succeeded in 10 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.050)
+(Vela_client_share_policy.fst(70,2-83,66))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(70,2-83,66))	Query-stats (Vela_client_share_policy.plan_share_admission, 3)	succeeded in 11 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.052)
+(Vela_client_share_policy.fst(98,28-102,70))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(98,28-102,70))	Query-stats (Vela_client_share_policy.unauthenticated_share_can_be_admitted, 1)	succeeded in 10 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.047)
+(Vela_client_share_policy.fst(112,28-116,70))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(112,28-116,70))	Query-stats (Vela_client_share_policy.misaddressed_share_can_be_admitted, 1)	succeeded in 8 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.047)
+(Vela_client_share_policy.fst(126,28-130,70))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(126,28-130,70))	Query-stats (Vela_client_share_policy.misattributed_share_can_be_admitted, 1)	succeeded in 8 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.047)
+(Vela_client_share_policy.fst(140,28-145,70))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(140,28-145,70))	Query-stats (Vela_client_share_policy.fforeign_signer_update_can_be_applied, 1)	succeeded in 9 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.049)
+(Vela_client_share_policy.fst(155,28-160,70))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(155,28-160,70))	Query-stats (Vela_client_share_policy.cross_lineage_update_can_be_applied, 1)	succeeded in 9 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.049)
+(Vela_client_share_policy.fst(169,28-180,70))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(169,28-180,70))	Query-stats (Vela_client_share_policy.stale_revision_update_can_be_applied, 1)	succeeded in 12 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.057)
+(Vela_client_share_policy.fst(169,28-180,70))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(169,28-180,70))	Query-stats (Vela_client_share_policy.stale_revision_update_can_be_applied, 2)	succeeded in 13 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.054)
+(Vela_client_share_policy.fst(190,28-194,14))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(190,28-194,14))	Query-stats (Vela_client_share_policy.pinned_share_can_restart_as_first_contact, 1)	succeeded in 7 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.040)
+(Vela_client_share_policy.fst(190,28-194,14))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(190,28-194,14))	Query-stats (Vela_client_share_policy.pinned_share_can_restart_as_first_contact, 2)	succeeded in 6 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.033)
+(Vela_client_share_policy.fst(203,2-203,40))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(203,2-203,40))	Query-stats (Vela_client_share_policy.initial_acceptance_is_authorized, 1)	succeeded in 4 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.018)
+(Vela_client_share_policy.fst(210,2-216,79))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(210,2-216,79))	Query-stats (Vela_client_share_policy.store_generation_matches_spec, 1)	succeeded in 6 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.027)
+(Vela_client_share_policy.fst(210,2-216,79))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(210,2-216,79))	Query-stats (Vela_client_share_policy.store_generation_matches_spec, 2)	succeeded in 3 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.014)
+(Vela_client_share_policy.fst(210,2-216,79))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(210,2-216,79))	Query-stats (Vela_client_share_policy.store_generation_matches_spec, 3)	succeeded in 3 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.017)
+(Vela_client_share_policy.fst(210,2-216,79))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(210,2-216,79))	Query-stats (Vela_client_share_policy.store_generation_matches_spec, 4)	succeeded in 6 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.038)
+(Vela_client_share_policy.fst(210,2-216,79))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(210,2-216,79))	Query-stats (Vela_client_share_policy.store_generation_matches_spec, 5)	succeeded in 7 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.043)
+(Vela_client_share_policy.fst(210,2-216,79))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(210,2-216,79))	Query-stats (Vela_client_share_policy.store_generation_matches_spec, 6)	succeeded in 3 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.014)
+(Vela_client_share_policy.fst(210,2-216,79))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(210,2-216,79))	Query-stats (Vela_client_share_policy.store_generation_matches_spec, 7)	succeeded in 3 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.015)
+(Vela_client_share_policy.fst(225,2-227,94))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(225,2-227,94))	Query-stats (Vela_client_share_policy.next_store_generation, 1)	succeeded in 3 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.014)
+(Vela_client_share_policy.fst(225,2-227,94))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(225,2-227,94))	Query-stats (Vela_client_share_policy.next_store_generation, 2)	succeeded in 3 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.014)
+(Vela_client_share_policy.fst(225,2-227,94))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(225,2-227,94))	Query-stats (Vela_client_share_policy.next_store_generation, 3)	succeeded in 7 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.035)
+(Vela_client_share_policy.fst(225,2-227,94))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(225,2-227,94))	Query-stats (Vela_client_share_policy.next_store_generation, 4)	succeeded in 6 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.035)
+(Vela_client_share_policy.fst(225,2-227,94))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(225,2-227,94))	Query-stats (Vela_client_share_policy.next_store_generation, 5)	succeeded in 10 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.059)
+(Vela_client_share_policy.fst(225,2-227,94))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(225,2-227,94))	Query-stats (Vela_client_share_policy.next_store_generation, 6)	succeeded in 12 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.073)
+(Vela_client_share_policy.fst(236,2-241,46))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(236,2-241,46))	Query-stats (Vela_client_share_policy.stale_snapshot_can_commit, 1)	succeeded in 3 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.013)
+(Vela_client_share_policy.fst(236,2-241,46))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(236,2-241,46))	Query-stats (Vela_client_share_policy.stale_snapshot_can_commit, 2)	succeeded in 5 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.023)
+(Vela_client_share_policy.fst(236,2-241,46))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(236,2-241,46))	Query-stats (Vela_client_share_policy.stale_snapshot_can_commit, 3)	succeeded in 6 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.029)
+(Vela_client_share_policy.fst(236,2-241,46))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(236,2-241,46))	Query-stats (Vela_client_share_policy.stale_snapshot_can_commit, 4)	succeeded in 8 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.048)
+(Vela_client_share_policy.fst(236,2-241,46))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(236,2-241,46))	Query-stats (Vela_client_share_policy.stale_snapshot_can_commit, 5)	succeeded in 8 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.042)
+(Vela_client_share_policy.fst(250,2-252,44))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(250,2-252,44))	Query-stats (Vela_client_share_policy.pending_commit_can_be_overwritten, 1)	succeeded in 5 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.025)
+(Vela_client_share_policy.fst(250,2-252,44))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(250,2-252,44))	Query-stats (Vela_client_share_policy.pending_commit_can_be_overwritten, 2)	succeeded in 6 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.036)
+(Vela_client_share_policy.fst(250,2-252,44))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(250,2-252,44))	Query-stats (Vela_client_share_policy.pending_commit_can_be_overwritten, 3)	succeeded in 6 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.037)
+(Vela_client_share_policy.fst(261,2-267,44))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(261,2-267,44))	Query-stats (Vela_client_share_policy.exhausted_generation_can_commit, 1)	succeeded in 4 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.024)
+(Vela_client_share_policy.fst(261,2-267,44))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(261,2-267,44))	Query-stats (Vela_client_share_policy.exhausted_generation_can_commit, 2)	succeeded in 5 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.032)
+(Vela_client_share_policy.fst(261,2-267,44))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(261,2-267,44))	Query-stats (Vela_client_share_policy.exhausted_generation_can_commit, 3)	succeeded in 6 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.030)
+(Vela_client_share_policy.fst(276,2-276,53))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(276,2-276,53))	Query-stats (Vela_client_share_policy.recovery_should_apply, 1)	succeeded in 4 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.020)
+(Vela_client_share_policy.fst(284,29-284,83))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(284,29-284,83))	Query-stats (Vela_client_share_policy.local_edit_can_be_overwritten, 1)	succeeded in 4 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.020)
+(Vela_client_share_policy.fst(292,29-292,76))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(292,29-292,76))	Query-stats (Vela_client_share_policy.deleted_item_can_be_restored, 1)	succeeded in 4 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.023)
+(Vela_client_share_policy.fst(300,29-300,87))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(300,29-300,87))	Query-stats (Vela_client_share_policy.existing_pin_can_restart_acceptance, 1)	succeeded in 5 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.025)
+(Vela_client_share_policy.fst(308,29-308,84))	Query-stats splitting query because --split_queries is always
+(Vela_client_share_policy.fst(308,29-308,84))	Query-stats (Vela_client_share_policy.missing_payload_can_be_accepted, 1)	succeeded in 4 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.023)
+Killing old z3proc (ask_count=54, old_cmd=[("/tmp/vela-fstar-prebuilt/fstar/lib/fstar/z3-4.13.3/bin/z3", ["-smt2", "-in"])])
+(Vela_crypto.Share_envelope.fst(7,0-15,1))	Query-stats splitting query because --split_queries is always
+Creating new z3proc (cmd=[("/tmp/vela-fstar-prebuilt/fstar/lib/fstar/z3-4.13.3/bin/z3", ["-smt2", "-in"])], version=["4.13.3"])
+(Vela_crypto.Share_envelope.fst(7,0-15,1))	Query-stats (Vela_crypto.Share_envelope.t_ShareHeader, 1)	succeeded in 55 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.048)
+(Vela_crypto.Share_envelope.fst(7,0-15,1))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(7,0-15,1))	Query-stats (Vela_crypto.Share_envelope.t_ShareHeader, 2)	succeeded in 9 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.046)
+(Vela_crypto.Share_envelope.fst(7,0-15,1))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(7,0-15,1))	Query-stats (Vela_crypto.Share_envelope.t_ShareHeader, 3)	succeeded in 4 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.026)
+(Vela_crypto.Share_envelope.fst(7,0-15,1))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(7,0-15,1))	Query-stats (Vela_crypto.Share_envelope.t_ShareHeader, 4)	succeeded in 5 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.030)
+(Vela_crypto.Share_envelope.fst(7,0-15,1))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(7,0-15,1))	Query-stats (Vela_crypto.Share_envelope.t_ShareHeader, 5)	succeeded in 1 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.001)
+(Vela_crypto.Share_envelope.fst(7,0-15,1))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(7,0-15,1))	Query-stats (Vela_crypto.Share_envelope.t_ShareHeader, 6)	succeeded in 0 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.001)
+(Vela_crypto.Share_envelope.fst(7,0-15,1))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(7,0-15,1))	Query-stats (Vela_crypto.Share_envelope.t_ShareHeader, 7)	succeeded in 2 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.015)
+(Vela_crypto.Share_envelope.fst(7,0-15,1))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(7,0-15,1))	Query-stats (Vela_crypto.Share_envelope.t_ShareHeader, 8)	succeeded in 0 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.001)
+(Vela_crypto.Share_envelope.fst(7,0-15,1))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(7,0-15,1))	Query-stats (Vela_crypto.Share_envelope.t_ShareHeader, 9)	succeeded in 2 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.018)
+(Vela_crypto.Share_envelope.fst(7,0-15,1))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(7,0-15,1))	Query-stats (Vela_crypto.Share_envelope.t_ShareHeader, 10)	succeeded in 0 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.001)
+(Vela_crypto.Share_envelope.fst(7,0-15,1))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(7,0-15,1))	Query-stats (Vela_crypto.Share_envelope.t_ShareHeader, 11)	succeeded in 2 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.014)
+(Vela_crypto.Share_envelope.fst(12,2-12,23))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(12,2-12,23))	Query-stats (Vela_crypto.Share_envelope.__proj__Mkt_ShareHeader__item__f_recipient_ek_digest, 1)	succeeded in 23 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.061)
+(Vela_crypto.Share_envelope.fst(12,2-12,23))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(12,2-12,23))	Query-stats (Vela_crypto.Share_envelope.__proj__Mkt_ShareHeader__item__f_recipient_ek_digest, 2)	succeeded in 9 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.064)
+(Vela_crypto.Share_envelope.fst(12,2-12,23))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(12,2-12,23))	Query-stats (Vela_crypto.Share_envelope.__proj__Mkt_ShareHeader__item__f_recipient_ek_digest, 3)	succeeded in 13 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.085)
+(Vela_crypto.Share_envelope.fst(19,0-22,1))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(19,0-22,1))	Query-stats (Vela_crypto.Share_envelope.t_OpenedShare, 1)	succeeded in 1 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.001)
+(Vela_crypto.Share_envelope.fst(19,0-22,1))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(19,0-22,1))	Query-stats (Vela_crypto.Share_envelope.t_OpenedShare, 2)	succeeded in 2 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.013)
+(Vela_crypto.Share_envelope.fst(25,0-30,1))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(25,0-30,1))	Query-stats (Vela_crypto.Share_envelope.t_SharePin, 1)	succeeded in 2 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.001)
+(Vela_crypto.Share_envelope.fst(25,0-30,1))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(25,0-30,1))	Query-stats (Vela_crypto.Share_envelope.t_SharePin, 2)	succeeded in 3 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.014)
+(Vela_crypto.Share_envelope.fst(25,0-30,1))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(25,0-30,1))	Query-stats (Vela_crypto.Share_envelope.t_SharePin, 3)	succeeded in 1 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.001)
+(Vela_crypto.Share_envelope.fst(25,0-30,1))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(25,0-30,1))	Query-stats (Vela_crypto.Share_envelope.t_SharePin, 4)	succeeded in 2 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.013)
+(Vela_crypto.Share_envelope.fst(33,0-37,1))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(33,0-37,1))	Query-stats (Vela_crypto.Share_envelope.t_AdmissionContext, 1)	succeeded in 4 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.010)
+(Vela_crypto.Share_envelope.fst(63,2-72,57))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(63,2-72,57))	Query-stats (Vela_crypto.Share_envelope.split_envelope_prefix, 1)	succeeded in 6 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.025)
+(Vela_crypto.Share_envelope.fst(63,2-72,57))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(63,2-72,57))	Query-stats (Vela_crypto.Share_envelope.split_envelope_prefix, 2)	succeeded in 4 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.021)
+(Vela_crypto.Share_envelope.fst(63,2-72,57))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(63,2-72,57))	Query-stats (Vela_crypto.Share_envelope.split_envelope_prefix, 3)	succeeded in 12 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.033)
+(Vela_crypto.Share_envelope.fst(63,2-72,57))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(63,2-72,57))	Query-stats (Vela_crypto.Share_envelope.split_envelope_prefix, 4)	succeeded in 9 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.028)
+(Vela_crypto.Share_envelope.fst(63,2-72,57))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(63,2-72,57))	Query-stats (Vela_crypto.Share_envelope.split_envelope_prefix, 5)	succeeded in 9 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.041)
+(Vela_crypto.Share_envelope.fst(63,2-72,57))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(63,2-72,57))	Query-stats (Vela_crypto.Share_envelope.split_envelope_prefix, 6)	succeeded in 8 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.046)
+(Vela_crypto.Share_envelope.fst(63,2-72,57))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(63,2-72,57))	Query-stats (Vela_crypto.Share_envelope.split_envelope_prefix, 7)	succeeded in 12 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.066)
+(Vela_crypto.Share_envelope.fst(63,2-72,57))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(63,2-72,57))	Query-stats (Vela_crypto.Share_envelope.split_envelope_prefix, 8)	succeeded in 11 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.063)
+(Vela_crypto.Share_envelope.fst(63,2-72,57))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(63,2-72,57))	Query-stats (Vela_crypto.Share_envelope.split_envelope_prefix, 9)	succeeded in 22 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.119)
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats (Vela_crypto.Share_envelope.admission_facts, 1)	succeeded in 7 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.020)
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats (Vela_crypto.Share_envelope.admission_facts, 2)	succeeded in 6 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.016)
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats (Vela_crypto.Share_envelope.admission_facts, 3)	succeeded in 9 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.045)
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats (Vela_crypto.Share_envelope.admission_facts, 4)	succeeded in 9 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.025)
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats (Vela_crypto.Share_envelope.admission_facts, 5)	succeeded in 7 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.019)
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats (Vela_crypto.Share_envelope.admission_facts, 6)	succeeded in 10 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.046)
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats (Vela_crypto.Share_envelope.admission_facts, 7)	succeeded in 9 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.043)
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats (Vela_crypto.Share_envelope.admission_facts, 8)	succeeded in 9 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.022)
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats (Vela_crypto.Share_envelope.admission_facts, 9)	succeeded in 9 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.034)
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats (Vela_crypto.Share_envelope.admission_facts, 10)	succeeded in 3 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.004)
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats (Vela_crypto.Share_envelope.admission_facts, 11)	succeeded in 9 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.023)
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats (Vela_crypto.Share_envelope.admission_facts, 12)	succeeded in 4 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.004)
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats (Vela_crypto.Share_envelope.admission_facts, 13)	succeeded in 10 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.020)
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats (Vela_crypto.Share_envelope.admission_facts, 14)	succeeded in 11 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.030)
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats (Vela_crypto.Share_envelope.admission_facts, 15)	succeeded in 5 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.003)
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats (Vela_crypto.Share_envelope.admission_facts, 16)	succeeded in 10 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.021)
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats (Vela_crypto.Share_envelope.admission_facts, 17)	succeeded in 6 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.003)
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats (Vela_crypto.Share_envelope.admission_facts, 18)	succeeded in 9 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.022)
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats (Vela_crypto.Share_envelope.admission_facts, 19)	succeeded in 15 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.053)
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats (Vela_crypto.Share_envelope.admission_facts, 20)	succeeded in 19 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.100)
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats (Vela_crypto.Share_envelope.admission_facts, 21)	succeeded in 8 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.020)
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats (Vela_crypto.Share_envelope.admission_facts, 22)	succeeded in 16 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.048)
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats (Vela_crypto.Share_envelope.admission_facts, 23)	succeeded in 15 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.049)
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(146,2-216,50))	Query-stats (Vela_crypto.Share_envelope.admission_facts, 24)	succeeded in 20 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.081)
+(Vela_crypto.Share_envelope.fst(225,2-258,16))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(225,2-258,16))	Query-stats (Vela_crypto.Share_envelope.observed_admission_matches_spec, 1)	succeeded in 20 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.100)
+(Vela_crypto.Share_envelope.fst(225,2-258,16))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(225,2-258,16))	Query-stats (Vela_crypto.Share_envelope.observed_admission_matches_spec, 2)	succeeded in 8 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.040)
+(Vela_crypto.Share_envelope.fst(225,2-258,16))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(225,2-258,16))	Query-stats (Vela_crypto.Share_envelope.observed_admission_matches_spec, 3)	succeeded in 8 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.030)
+(Vela_crypto.Share_envelope.fst(225,2-258,16))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(225,2-258,16))	Query-stats (Vela_crypto.Share_envelope.observed_admission_matches_spec, 4)	succeeded in 15 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.061)
+(Vela_crypto.Share_envelope.fst(225,2-258,16))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(225,2-258,16))	Query-stats (Vela_crypto.Share_envelope.observed_admission_matches_spec, 5)	succeeded in 2 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.004)
+(Vela_crypto.Share_envelope.fst(225,2-258,16))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(225,2-258,16))	Query-stats (Vela_crypto.Share_envelope.observed_admission_matches_spec, 6)	succeeded in 7 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.032)
+(Vela_crypto.Share_envelope.fst(225,2-258,16))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(225,2-258,16))	Query-stats (Vela_crypto.Share_envelope.observed_admission_matches_spec, 7)	succeeded in 2 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.004)
+(Vela_crypto.Share_envelope.fst(225,2-258,16))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(225,2-258,16))	Query-stats (Vela_crypto.Share_envelope.observed_admission_matches_spec, 8)	succeeded in 9 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.034)
+(Vela_crypto.Share_envelope.fst(225,2-258,16))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(225,2-258,16))	Query-stats (Vela_crypto.Share_envelope.observed_admission_matches_spec, 9)	succeeded in 12 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.065)
+(Vela_crypto.Share_envelope.fst(225,2-258,16))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(225,2-258,16))	Query-stats (Vela_crypto.Share_envelope.observed_admission_matches_spec, 10)	succeeded in 3 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.003)
+(Vela_crypto.Share_envelope.fst(225,2-258,16))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(225,2-258,16))	Query-stats (Vela_crypto.Share_envelope.observed_admission_matches_spec, 11)	succeeded in 8 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.028)
+(Vela_crypto.Share_envelope.fst(225,2-258,16))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(225,2-258,16))	Query-stats (Vela_crypto.Share_envelope.observed_admission_matches_spec, 12)	succeeded in 3 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.004)
+(Vela_crypto.Share_envelope.fst(270,2-272,53))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Share_envelope.fst(270,2-272,53))	Query-stats (Vela_crypto.Share_envelope.plan_observed_share, 1)	succeeded in 44 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.198)
+Killing old z3proc (ask_count=66, old_cmd=[("/tmp/vela-fstar-prebuilt/fstar/lib/fstar/z3-4.13.3/bin/z3", ["-smt2", "-in"])])
+(Vela_crypto.Signing.fst(14,49-14,72))	Query-stats splitting query because --split_queries is always
+Creating new z3proc (cmd=[("/tmp/vela-fstar-prebuilt/fstar/lib/fstar/z3-4.13.3/bin/z3", ["-smt2", "-in"])], version=["4.13.3"])
+(Vela_crypto.Signing.fst(14,49-14,72))	Query-stats (Vela_crypto.Signing.hybrid_components_verify, 1)	succeeded in 46 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.007)
+(Vela_crypto.Signing.fst(22,29-22,70))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Signing.fst(22,29-22,70))	Query-stats (Vela_crypto.Signing.invalid_ml_component_can_authenticate, 1)	succeeded in 2 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.008)
+(Vela_crypto.Signing.fst(30,29-30,69))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Signing.fst(30,29-30,69))	Query-stats (Vela_crypto.Signing.invalid_ed_component_can_authenticate, 1)	succeeded in 2 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.008)
+Killing old z3proc (ask_count=2, old_cmd=[("/tmp/vela-fstar-prebuilt/fstar/lib/fstar/z3-4.13.3/bin/z3", ["-smt2", "-in"])])
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+Creating new z3proc (cmd=[("/tmp/vela-fstar-prebuilt/fstar/lib/fstar/z3-4.13.3/bin/z3", ["-smt2", "-in"])], version=["4.13.3"])
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 1)	succeeded in 53 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.013)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 2)	succeeded in 12 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.075)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 3)	succeeded in 4 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.022)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 4)	succeeded in 9 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.036)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 5)	succeeded in 8 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.036)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 6)	succeeded in 24 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.103)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 7)	succeeded in 28 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.122)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 8)	succeeded in 16 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.058)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 9)	succeeded in 12 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.060)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 10)	succeeded in 16 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.081)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 11)	succeeded in 16 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.070)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 12)	succeeded in 19 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.096)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 13)	succeeded in 32 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.145)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 14)	succeeded in 32 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.155)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 15)	succeeded in 18 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.087)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 16)	succeeded in 18 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.090)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 17)	succeeded in 22 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.121)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 18)	succeeded in 20 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.104)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 19)	succeeded in 25 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.136)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 20)	succeeded in 39 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.187)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 21)	succeeded in 120 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.240)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 22)	succeeded in 24 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.117)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 23)	succeeded in 25 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.120)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 24)	succeeded in 30 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.159)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 25)	succeeded in 27 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.136)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 26)	succeeded in 45 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.175)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 27)	succeeded in 51 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.255)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 28)	succeeded in 166 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.259)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 29)	succeeded in 30 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.146)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 30)	succeeded in 33 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.149)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 31)	succeeded in 36 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.198)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 32)	succeeded in 34 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.168)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 33)	succeeded in 41 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.218)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 34)	succeeded in 59 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.301)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 35)	succeeded in 125 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.319)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 36)	succeeded in 42 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.180)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 37)	succeeded in 39 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.183)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 38)	succeeded in 53 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.242)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 39)	succeeded in 38 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.206)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 40)	succeeded in 48 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.258)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 41)	succeeded in 67 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.319)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 42)	succeeded in 325 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.584)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 43)	succeeded in 50 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.211)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 44)	succeeded in 74 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.214)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 45)	succeeded in 69 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.282)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 46)	succeeded in 50 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.239)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 47)	succeeded in 58 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.298)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 48)	succeeded in 74 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.392)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 49)	succeeded in 598 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.505)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 50)	succeeded in 45 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.241)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 51)	succeeded in 43 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.244)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 52)	succeeded in 54 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.322)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 53)	succeeded in 54 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.273)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 54)	succeeded in 265 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.482)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 55)	succeeded in 15 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.060)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 56)	succeeded in 7 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.028)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 57)	succeeded in 9 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.038)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 58)	succeeded in 8 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.039)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 59)	succeeded in 277 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 1.374)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 60)	succeeded in 479 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 2.141)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 61)	succeeded in 14 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.059)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 62)	succeeded in 13 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.061)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 63)	succeeded in 17 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.080)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 64)	succeeded in 14 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.071)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 65)	succeeded in 355 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 1.661)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 66)	succeeded in 18 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.078)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 67)	succeeded in 496 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 1.884)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 68)	succeeded in 20 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.087)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 69)	succeeded in 19 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.089)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 70)	succeeded in 22 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.117)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 71)	succeeded in 19 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.103)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 72)	succeeded in 343 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 1.567)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 73)	succeeded in 23 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.106)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 74)	succeeded in 463 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 2.059)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 75)	succeeded in 23 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.116)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 76)	succeeded in 23 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.118)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 77)	succeeded in 28 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.153)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 78)	succeeded in 26 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.134)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 79)	succeeded in 504 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 1.988)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 80)	succeeded in 26 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.134)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 81)	succeeded in 457 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 2.115)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 82)	succeeded in 32 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.144)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 83)	succeeded in 30 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.146)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 84)	succeeded in 37 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.189)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 85)	succeeded in 31 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.165)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 86)	succeeded in 548 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 1.910)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 87)	succeeded in 32 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.167)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 88)	succeeded in 489 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 2.034)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 89)	succeeded in 35 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.177)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 90)	succeeded in 37 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.180)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 91)	succeeded in 44 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.231)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 92)	succeeded in 37 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.201)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 93)	succeeded in 471 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 1.752)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 94)	succeeded in 40 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.197)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 95)	succeeded in 500 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 1.965)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 96)	succeeded in 40 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.207)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 97)	succeeded in 41 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.210)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 98)	succeeded in 49 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.270)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 99)	succeeded in 44 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.235)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 100)	succeeded in 487 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 1.704)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 101)	succeeded in 44 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.227)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 102)	succeeded in 953 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 2.141)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 103)	succeeded in 49 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.237)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 104)	succeeded in 52 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.240)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 105)	succeeded in 61 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.307)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 106)	succeeded in 80 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.267)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 107)	succeeded in 550 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 1.421)
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(35,19-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 108)	succeeded in 97 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.412)
+(Vela_crypto.Wire.fst(6,0-43,72))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(6,0-43,72))	Query-stats (Vela_crypto.Wire.decode_u64_be, 109)	succeeded in 14 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.050)
+(Vela_crypto.Wire.fst(55,2-55,64))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(55,2-55,64))	Query-stats (Vela_crypto.Wire.split_low_byte, 1)	succeeded in 5 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.014)
+(Vela_crypto.Wire.fst(55,2-55,64))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(55,2-55,64))	Query-stats (Vela_crypto.Wire.split_low_byte, 2)	succeeded in 10 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.040)
+(Vela_crypto.Wire.fst(55,2-55,64))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(55,2-55,64))	Query-stats (Vela_crypto.Wire.split_low_byte, 3)	succeeded in 6 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.022)
+(Vela_crypto.Wire.fst(55,2-55,64))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(55,2-55,64))	Query-stats (Vela_crypto.Wire.split_low_byte, 4)	succeeded in 5 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.019)
+(Vela_crypto.Wire.fst(55,2-55,64))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(55,2-55,64))	Query-stats (Vela_crypto.Wire.split_low_byte, 5)	succeeded in 5 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.016)
+(Vela_crypto.Wire.fst(55,2-55,64))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(55,2-55,64))	Query-stats (Vela_crypto.Wire.split_low_byte, 6)	succeeded in 12 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.051)
+(Vela_crypto.Wire.fst(55,2-55,64))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(55,2-55,64))	Query-stats (Vela_crypto.Wire.split_low_byte, 7)	succeeded in 5 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.024)
+(Vela_crypto.Wire.fst(55,2-55,64))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(55,2-55,64))	Query-stats (Vela_crypto.Wire.split_low_byte, 8)	succeeded in 6 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.018)
+(Vela_crypto.Wire.fst(55,2-55,64))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(55,2-55,64))	Query-stats (Vela_crypto.Wire.split_low_byte, 9)	succeeded in 20 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.071)
+(Vela_crypto.Wire.fst(55,2-55,64))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(55,2-55,64))	Query-stats (Vela_crypto.Wire.split_low_byte, 10)	succeeded in 17 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.072)
+(Vela_crypto.Wire.fst(55,2-55,64))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(55,2-55,64))	Query-stats (Vela_crypto.Wire.split_low_byte, 11)	succeeded in 13 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.062)
+(Vela_crypto.Wire.fst(55,2-55,64))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(55,2-55,64))	Query-stats (Vela_crypto.Wire.split_low_byte, 12)	succeeded in 11 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.041)
+(Vela_crypto.Wire.fst(55,2-55,64))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(55,2-55,64))	Query-stats (Vela_crypto.Wire.split_low_byte, 13)	succeeded in 7 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.024)
+(Vela_crypto.Wire.fst(55,2-55,64))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(55,2-55,64))	Query-stats (Vela_crypto.Wire.split_low_byte, 14)	succeeded in 6 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.020)
+(Vela_crypto.Wire.fst(55,2-55,64))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(55,2-55,64))	Query-stats (Vela_crypto.Wire.split_low_byte, 15)	succeeded in 10 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.034)
+(Vela_crypto.Wire.fst(55,2-55,64))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(55,2-55,64))	Query-stats (Vela_crypto.Wire.split_low_byte, 16)	succeeded in 7 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.022)
+(Vela_crypto.Wire.fst(55,2-55,64))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(55,2-55,64))	Query-stats (Vela_crypto.Wire.split_low_byte, 17)	succeeded in 50 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.199)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 1)	succeeded in 14 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.069)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 2)	succeeded in 7 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.028)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 3)	succeeded in 7 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.029)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 4)	succeeded in 4 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.017)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 5)	succeeded in 7 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.031)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 6)	succeeded in 8 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.033)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 7)	succeeded in 11 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.045)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 8)	succeeded in 9 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.045)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 9)	succeeded in 10 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.048)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 10)	succeeded in 10 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.051)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 11)	succeeded in 13 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.066)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 12)	succeeded in 11 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.058)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 13)	succeeded in 13 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.060)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 14)	succeeded in 12 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.062)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 15)	succeeded in 16 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.084)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 16)	succeeded in 14 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.073)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 17)	succeeded in 15 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.073)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 18)	succeeded in 15 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.075)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 19)	succeeded in 20 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.100)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 20)	succeeded in 17 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.086)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 21)	succeeded in 17 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.084)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 22)	succeeded in 17 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.087)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 23)	succeeded in 21 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.117)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 24)	succeeded in 18 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.100)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 25)	succeeded in 19 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.096)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 26)	succeeded in 20 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.098)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 27)	succeeded in 25 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.133)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 28)	succeeded in 21 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.114)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 29)	succeeded in 19 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.108)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 30)	succeeded in 20 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.110)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 31)	succeeded in 27 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.150)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 32)	succeeded in 22 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.128)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 33)	succeeded in 23 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.120)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 34)	succeeded in 22 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.122)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 35)	succeeded in 28 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.167)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 36)	succeeded in 25 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.145)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 37)	succeeded in 40 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.238)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 38)	succeeded in 19 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.061)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 39)	succeeded in 34 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.148)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 40)	succeeded in 40 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.185)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 41)	succeeded in 46 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.213)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 42)	succeeded in 59 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.265)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 43)	succeeded in 70 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.303)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 44)	succeeded in 91 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.346)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 45)	succeeded in 97 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.387)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 46)	succeeded in 148 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.483)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 47)	succeeded in 10 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.036)
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(79,18-89,42))	Query-stats (Vela_crypto.Wire.encode_u64_be, 48)	succeeded in 12235 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 27.161)
+(Vela_crypto.Wire.fst(92,2-92,82))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(92,2-92,82))	Query-stats (Vela_crypto.Wire.u64_wire_round_trip, 1)	succeeded in 11 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.016)
+(Vela_crypto.Wire.fst(92,2-92,82))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(92,2-92,82))	Query-stats (Vela_crypto.Wire.u64_wire_round_trip, 2)	succeeded in 17 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.073)
+(Vela_crypto.Wire.fst(92,2-92,82))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(92,2-92,82))	Query-stats (Vela_crypto.Wire.u64_wire_round_trip, 3)	succeeded in 8126 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 22.345)
+(Vela_crypto.Wire.fst(95,67-100,15))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(95,67-100,15))	Query-stats (Vela_crypto.Wire.u64_wire_encoding_is_injective, 1)	succeeded in 4930 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 13.094)
+(Vela_crypto.Wire.fst(95,67-100,15))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(95,67-100,15))	Query-stats (Vela_crypto.Wire.u64_wire_encoding_is_injective, 2)	succeeded in 15 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.028)
+(Vela_crypto.Wire.fst(95,67-100,15))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(95,67-100,15))	Query-stats (Vela_crypto.Wire.u64_wire_encoding_is_injective, 3)	succeeded in 29 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.102)
+(Vela_crypto.Wire.fst(95,67-100,15))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(95,67-100,15))	Query-stats (Vela_crypto.Wire.u64_wire_encoding_is_injective, 4)	succeeded in 49 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.162)
+(Vela_crypto.Wire.fst(95,67-100,15))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(95,67-100,15))	Query-stats (Vela_crypto.Wire.u64_wire_encoding_is_injective, 5)	succeeded in 10 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.018)
+(Vela_crypto.Wire.fst(95,67-100,15))	Query-stats splitting query because --split_queries is always
+(Vela_crypto.Wire.fst(95,67-100,15))	Query-stats (Vela_crypto.Wire.u64_wire_encoding_is_injective, 6)	succeeded in 28 milliseconds with fuel 0 and ifuel 1 and rlimit 100 (used rlimit 0.083)
+Killing old z3proc (ask_count=182, old_cmd=[("/tmp/vela-fstar-prebuilt/fstar/lib/fstar/z3-4.13.3/bin/z3", ["-smt2", "-in"])])
+Verified module: Vela_client_share_policy
+Verified module: Vela_crypto.Share_envelope
+Verified module: Vela_crypto.Signing
+Verified module: Vela_crypto.Wire
+All verification conditions discharged successfully
+TOTAL TIME 57285 ms: fstar.exe --cmi --query_stats --split_queries always --warn_error -331 --z3rlimit 100 --already_cached +Prims+FStar+LowStar+C+Spec.Loops+TestLib --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/core --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proofs/fstar/extraction --include ../vela-client-share-policy/proofs/fstar/extraction --include proofs/fstar/extraction --include proofs/fstar/models ../vela-client-share-policy/proofs/fstar/extraction/Vela_client_share_policy.fst proofs/fstar/extraction/Vela_crypto.Share_envelope.fst proofs/fstar/extraction/Vela_crypto.Signing.fst proofs/fstar/extraction/Vela_crypto.Wire.fst

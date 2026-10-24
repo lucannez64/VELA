@@ -1,0 +1,12 @@
+maude tool: 'maude'
+ checking version: 3.5.1. OK.
+ checking installation: OK.
+[Theory M12_WebSessionCapability] Theory loaded
+[Theory M12_WebSessionCapability] Theory translated
+[Theory M12_WebSessionCapability] Derivation checks started
+[Theory M12_WebSessionCapability] Derivation checks ended
+[Theory M12_WebSessionCapability] Theory closed
+[Saturating Sources] Step 1 (Max 5)
+[Saturating Sources] Done
+m12_web_session_capability: 14 verified
+session formal proof gate: 14 verified, 0 falsified, 0 warnings

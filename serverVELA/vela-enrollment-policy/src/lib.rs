@@ -6,6 +6,12 @@
 //! sensitive transition only through a decision whose exact predicate hax
 //! extracts and F* verifies.
 
+/// Decoded length of a hybrid encapsulation key (`X25519` + `ML-KEM`).
+pub const HYBRID_EK_LEN: usize = 1568 + 32;
+
+/// Decoded length of a hybrid verification key (`Ed25519` + `ML-DSA`).
+pub const HYBRID_VK_LEN: usize = 2592 + 32;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CeremonyPhase {
     Open,
@@ -13,6 +19,19 @@ pub enum CeremonyPhase {
     Completed,
     Revoked,
     Expired,
+}
+
+/// Raw observations from the authenticated grant-opening request.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OpenObservation {
+    /// The authenticated session is a permanent device token, not a web session.
+    pub scope_is_device: bool,
+    /// The session names a user id.
+    pub user_id_present: bool,
+    /// The session names a device id.
+    pub device_id_present: bool,
+    /// Requested grant lifetime in seconds.
+    pub ttl_secs: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -38,6 +57,22 @@ pub fn open_is_authorized(facts: OpenFacts) -> bool {
     facts.device_scope && facts.user_bound && facts.opener_bound && facts.ttl_positive
 }
 
+/// Turn raw session observations into the grant-opening facts.
+#[cfg_attr(hax, hax_lib::ensures(|facts| {
+    facts.device_scope == obs.scope_is_device
+        && facts.user_bound == obs.user_id_present
+        && facts.opener_bound == obs.device_id_present
+        && facts.ttl_positive == (obs.ttl_secs > 0)
+}))]
+pub fn open_facts(obs: OpenObservation) -> OpenFacts {
+    OpenFacts {
+        device_scope: obs.scope_is_device,
+        user_bound: obs.user_id_present,
+        opener_bound: obs.device_id_present,
+        ttl_positive: obs.ttl_secs > 0,
+    }
+}
+
 pub fn open_decision_matches_spec(facts: OpenFacts, decision: OpenDecision) -> bool {
     match decision {
         OpenDecision::Open(permit) => open_is_authorized(facts) && permit.authorized,
@@ -54,6 +89,19 @@ pub fn plan_open(facts: OpenFacts) -> OpenDecision {
     } else {
         OpenDecision::Reject
     }
+}
+
+/// Raw observations from the unauthenticated claim request and the store.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ClaimObservation {
+    /// The grant key still exists (it is live and unconsumed).
+    pub grant_live: bool,
+    /// A claim record already exists for this grant.
+    pub claim_exists: bool,
+    /// Decoded byte length of the presented `hybrid_ek`.
+    pub hybrid_ek_len: usize,
+    /// Decoded byte length of the presented `hybrid_vk`.
+    pub hybrid_vk_len: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -76,10 +124,32 @@ pub enum ClaimDecision {
 }
 
 pub fn claim_is_authorized(facts: ClaimFacts) -> bool {
-    facts.phase == CeremonyPhase::Open
+    matches!(facts.phase, CeremonyPhase::Open)
         && facts.grant_live
         && facts.no_existing_claim
         && facts.public_keys_valid
+}
+
+/// Turn raw grant/claim/store observations into the claim facts.
+#[cfg_attr(hax, hax_lib::ensures(|facts| {
+    (matches!(facts.phase, CeremonyPhase::Claimed) == obs.claim_exists)
+        && (matches!(facts.phase, CeremonyPhase::Open) == !obs.claim_exists)
+        && facts.grant_live == obs.grant_live
+        && facts.no_existing_claim == !obs.claim_exists
+        && facts.public_keys_valid
+            == (obs.hybrid_ek_len == HYBRID_EK_LEN && obs.hybrid_vk_len == HYBRID_VK_LEN)
+}))]
+pub fn claim_facts(obs: ClaimObservation) -> ClaimFacts {
+    ClaimFacts {
+        phase: if obs.claim_exists {
+            CeremonyPhase::Claimed
+        } else {
+            CeremonyPhase::Open
+        },
+        grant_live: obs.grant_live,
+        no_existing_claim: !obs.claim_exists,
+        public_keys_valid: obs.hybrid_ek_len == HYBRID_EK_LEN && obs.hybrid_vk_len == HYBRID_VK_LEN,
+    }
 }
 
 pub fn claim_decision_matches_spec(facts: ClaimFacts, decision: ClaimDecision) -> bool {
@@ -98,6 +168,17 @@ pub fn plan_claim(facts: ClaimFacts) -> ClaimDecision {
     } else {
         ClaimDecision::Reject
     }
+}
+
+/// Raw observations from the claim-inspection request.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InspectObservation {
+    /// A claim record exists for this grant.
+    pub claim_present: bool,
+    /// The session user id equals the grant's user id.
+    pub user_matches: bool,
+    /// The session device id equals the grant's opener device id.
+    pub opener_matches: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -120,10 +201,31 @@ pub enum InspectDecision {
 }
 
 pub fn inspection_is_authorized(facts: InspectFacts) -> bool {
-    facts.phase == CeremonyPhase::Claimed
+    matches!(facts.phase, CeremonyPhase::Claimed)
         && facts.user_matches
         && facts.opener_matches
         && facts.claim_present
+}
+
+/// Turn raw claim/store/session observations into the inspection facts.
+#[cfg_attr(hax, hax_lib::ensures(|facts| {
+    (matches!(facts.phase, CeremonyPhase::Claimed) == obs.claim_present)
+        && (matches!(facts.phase, CeremonyPhase::Open) == !obs.claim_present)
+        && facts.user_matches == obs.user_matches
+        && facts.opener_matches == obs.opener_matches
+        && facts.claim_present == obs.claim_present
+}))]
+pub fn inspect_facts(obs: InspectObservation) -> InspectFacts {
+    InspectFacts {
+        phase: if obs.claim_present {
+            CeremonyPhase::Claimed
+        } else {
+            CeremonyPhase::Open
+        },
+        user_matches: obs.user_matches,
+        opener_matches: obs.opener_matches,
+        claim_present: obs.claim_present,
+    }
 }
 
 pub fn inspection_decision_matches_spec(facts: InspectFacts, decision: InspectDecision) -> bool {
@@ -142,6 +244,39 @@ pub fn authorize_inspection(facts: InspectFacts) -> InspectDecision {
     } else {
         InspectDecision::Reject
     }
+}
+
+/// Where the completion path obtained the key material it verified and enrolled.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ClaimKeySource {
+    /// The immutable claim record read from the store under the grant id.
+    StoredClaim,
+    /// Keys supplied by the completion request body.
+    RequestSupplied,
+}
+
+/// Raw observations from the completion request, the store, SQL and the
+/// primary's hybrid signature check.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CompletionObservation {
+    /// A claim record exists for this grant.
+    pub claim_present: bool,
+    /// The session user id equals the grant's user id.
+    pub user_matches: bool,
+    /// The session device id equals the grant's opener device id.
+    pub opener_matches: bool,
+    /// The opener's `devices.revoked` column is clear.
+    pub opener_active: bool,
+    /// The primary's signature over the stored keys and capsule verified.
+    pub signature_verified: bool,
+    /// Provenance of the keys used for verification and enrollment.
+    pub claim_key_source: ClaimKeySource,
+    /// `users.key_epoch` observed for the grant's user (0 when no row).
+    pub account_epoch: i64,
+    /// Epoch named by the completion request.
+    pub declared_epoch: i64,
+    /// `users.rekey_state` is set.
+    pub rotation_in_progress: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -174,7 +309,7 @@ pub enum CompletionDecision {
 }
 
 pub fn completion_is_authorized(facts: CompletionFacts) -> bool {
-    facts.phase == CeremonyPhase::Claimed
+    matches!(facts.phase, CeremonyPhase::Claimed)
         && facts.user_matches
         && facts.opener_matches
         && facts.opener_active
@@ -182,6 +317,48 @@ pub fn completion_is_authorized(facts: CompletionFacts) -> bool {
         && facts.displayed_claim_is_stored_claim
         && facts.signature_covers_stored_claim
         && facts.account_epoch_active
+}
+
+/// Turn raw completion observations into the completion facts.
+#[cfg_attr(hax, hax_lib::ensures(|facts| {
+    (matches!(facts.phase, CeremonyPhase::Claimed) == obs.claim_present)
+        && (matches!(facts.phase, CeremonyPhase::Open) == !obs.claim_present)
+        && facts.user_matches == obs.user_matches
+        && facts.opener_matches == obs.opener_matches
+        && facts.opener_active == obs.opener_active
+        && facts.claim_present == obs.claim_present
+        && facts.displayed_claim_is_stored_claim
+            == (obs.claim_present
+                && matches!(obs.claim_key_source, ClaimKeySource::StoredClaim))
+        && facts.signature_covers_stored_claim
+            == (obs.signature_verified
+                && obs.claim_present
+                && matches!(obs.claim_key_source, ClaimKeySource::StoredClaim))
+        && facts.account_epoch_active
+            == (obs.declared_epoch >= 1
+                && obs.account_epoch == obs.declared_epoch
+                && !obs.rotation_in_progress)
+}))]
+pub fn completion_facts(obs: CompletionObservation) -> CompletionFacts {
+    CompletionFacts {
+        phase: if obs.claim_present {
+            CeremonyPhase::Claimed
+        } else {
+            CeremonyPhase::Open
+        },
+        user_matches: obs.user_matches,
+        opener_matches: obs.opener_matches,
+        opener_active: obs.opener_active,
+        claim_present: obs.claim_present,
+        displayed_claim_is_stored_claim: obs.claim_present
+            && matches!(obs.claim_key_source, ClaimKeySource::StoredClaim),
+        signature_covers_stored_claim: obs.signature_verified
+            && obs.claim_present
+            && matches!(obs.claim_key_source, ClaimKeySource::StoredClaim),
+        account_epoch_active: obs.declared_epoch >= 1
+            && obs.account_epoch == obs.declared_epoch
+            && !obs.rotation_in_progress,
+    }
 }
 
 pub fn completion_decision_matches_spec(
@@ -207,6 +384,27 @@ pub fn plan_completion(facts: CompletionFacts) -> CompletionDecision {
     } else {
         CompletionDecision::Reject
     }
+}
+
+/// Where the result request found the ceremony.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ResultSource {
+    /// A completed result record carrying the joining device's public key.
+    CompletedResult,
+    /// A live claim awaiting completion.
+    ClaimedClaim,
+    /// Neither a result nor a claim exists (the grant is gone or expired).
+    NoRecord,
+}
+
+/// Raw observations from the result request and the store.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ResultObservation {
+    pub source: ResultSource,
+    /// Decoded byte length of the stored claimed verification key (0 if none).
+    pub claimed_key_len: usize,
+    /// The collector's signature verified under the claimed key.
+    pub signature_verified: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -240,21 +438,45 @@ pub enum ResultDecision {
 }
 
 pub fn result_is_authorized(facts: ResultFacts) -> bool {
-    (facts.phase == CeremonyPhase::Claimed || facts.phase == CeremonyPhase::Completed)
+    (matches!(facts.phase, CeremonyPhase::Claimed)
+        || matches!(facts.phase, CeremonyPhase::Completed))
         && facts.claimed_key_present
         && facts.claimed_key_proof_valid
+}
+
+/// Turn raw result/store/signature observations into the result facts.
+#[cfg_attr(hax, hax_lib::ensures(|facts| {
+    (matches!(facts.phase, CeremonyPhase::Completed)
+        == matches!(obs.source, ResultSource::CompletedResult))
+        && (matches!(facts.phase, CeremonyPhase::Claimed)
+            == matches!(obs.source, ResultSource::ClaimedClaim))
+        && (matches!(facts.phase, CeremonyPhase::Expired)
+            == matches!(obs.source, ResultSource::NoRecord))
+        && facts.claimed_key_present == (obs.claimed_key_len > 0)
+        && facts.claimed_key_proof_valid
+            == (obs.claimed_key_len > 0 && obs.signature_verified)
+}))]
+pub fn result_facts(obs: ResultObservation) -> ResultFacts {
+    ResultFacts {
+        phase: match obs.source {
+            ResultSource::CompletedResult => CeremonyPhase::Completed,
+            ResultSource::ClaimedClaim => CeremonyPhase::Claimed,
+            ResultSource::NoRecord => CeremonyPhase::Expired,
+        },
+        claimed_key_present: obs.claimed_key_len > 0,
+        claimed_key_proof_valid: obs.claimed_key_len > 0 && obs.signature_verified,
+    }
 }
 
 pub fn result_decision_matches_spec(facts: ResultFacts, decision: ResultDecision) -> bool {
     match decision {
         ResultDecision::Return(permit) => {
             result_is_authorized(facts)
-                && permit.kind
-                    == if facts.phase == CeremonyPhase::Claimed {
-                        ResultKind::Pending
-                    } else {
-                        ResultKind::Enrolled
-                    }
+                && if matches!(facts.phase, CeremonyPhase::Claimed) {
+                    matches!(permit.kind, ResultKind::Pending)
+                } else {
+                    matches!(permit.kind, ResultKind::Enrolled)
+                }
         }
         ResultDecision::Reject => !result_is_authorized(facts),
     }
@@ -267,7 +489,7 @@ pub fn authorize_result(facts: ResultFacts) -> ResultDecision {
     if !result_is_authorized(facts) {
         return ResultDecision::Reject;
     }
-    let kind = if facts.phase == CeremonyPhase::Claimed {
+    let kind = if matches!(facts.phase, CeremonyPhase::Claimed) {
         ResultKind::Pending
     } else {
         ResultKind::Enrolled
@@ -297,6 +519,99 @@ pub fn substituted_claim_can_complete(mut facts: CompletionFacts) -> bool {
 pub fn result_without_claimed_key_proof(mut facts: ResultFacts) -> bool {
     facts.claimed_key_proof_valid = false;
     result_is_authorized(facts)
+}
+
+// ── Negative theorems over the real observation constructors ───────────────
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn web_session_can_open_enrollment_grant(mut obs: OpenObservation) -> bool {
+    obs.scope_is_device = false;
+    open_is_authorized(open_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn expired_grant_can_open(mut obs: OpenObservation) -> bool {
+    obs.ttl_secs = 0;
+    open_is_authorized(open_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn missing_grant_can_be_claimed(mut obs: ClaimObservation) -> bool {
+    obs.grant_live = false;
+    claim_is_authorized(claim_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn invalid_public_key_length_can_be_claimed(mut obs: ClaimObservation) -> bool {
+    obs.hybrid_ek_len = 0;
+    claim_is_authorized(claim_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn missing_claim_can_be_inspected(mut obs: InspectObservation) -> bool {
+    obs.claim_present = false;
+    inspection_is_authorized(inspect_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn other_device_can_inspect_observed_claim(mut obs: InspectObservation) -> bool {
+    obs.opener_matches = false;
+    inspection_is_authorized(inspect_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn revoked_opener_can_complete(mut obs: CompletionObservation) -> bool {
+    obs.opener_active = false;
+    completion_is_authorized(completion_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn foreign_device_can_complete_observed_ceremony(mut obs: CompletionObservation) -> bool {
+    obs.opener_matches = false;
+    completion_is_authorized(completion_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn unverified_signature_can_complete(mut obs: CompletionObservation) -> bool {
+    obs.signature_verified = false;
+    completion_is_authorized(completion_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn missing_claim_can_complete_observed_ceremony(mut obs: CompletionObservation) -> bool {
+    obs.claim_present = false;
+    completion_is_authorized(completion_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn request_supplied_claim_can_complete(mut obs: CompletionObservation) -> bool {
+    obs.claim_key_source = ClaimKeySource::RequestSupplied;
+    completion_is_authorized(completion_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn stale_epoch_can_complete(mut obs: CompletionObservation) -> bool {
+    obs.declared_epoch = 1;
+    obs.account_epoch = 0;
+    completion_is_authorized(completion_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn invalid_result_signature_can_return_result(mut obs: ResultObservation) -> bool {
+    obs.signature_verified = false;
+    result_is_authorized(result_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn missing_claimed_key_can_return_result(mut obs: ResultObservation) -> bool {
+    obs.claimed_key_len = 0;
+    result_is_authorized(result_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn unclaimed_ceremony_can_return_result(mut obs: ResultObservation) -> bool {
+    obs.source = ResultSource::NoRecord;
+    result_is_authorized(result_facts(obs))
 }
 
 #[cfg(test)]
@@ -335,7 +650,7 @@ mod tests {
         };
         assert!(matches!(
             authorize_result(facts),
-            ResultDecision::Return(permit) if permit.kind() == ResultKind::Enrolled
+            ResultDecision::Return(permit) if matches!(permit.kind(), ResultKind::Enrolled)
         ));
         assert!(!result_without_claimed_key_proof(facts));
     }

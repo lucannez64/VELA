@@ -10,6 +10,7 @@
 //! - [`shamir`] — Shamir's Secret Sharing over GF(2^8)
 //! - [`oram`]   — Path ORAM client state machine
 //! - [`rekey`]  — RMS rotation (vault re-keying) primitives
+//! - [`share_envelope`] — signed, recipient-bound envelopes for shared items
 //! - [`verification`] — Out-of-band short verification codes (device enrollment)
 
 pub mod aead;
@@ -23,7 +24,9 @@ pub mod password_kdf;
 pub mod recovery;
 pub mod rekey;
 pub mod shamir;
+pub mod share_envelope;
 pub mod signing;
 pub mod verification;
+pub mod wire;
 
 pub use error::{Result, VelaError};

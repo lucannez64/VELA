@@ -1,0 +1,235 @@
+warning[unmatched-skip-root]: skip tree root was not found in the dependency graph
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:46:4
+   │
+46 │   "tokio",
+   │    ━━━━━ no crate matched these criteria
+
+warning[unmatched-skip-root]: skip tree root was not found in the dependency graph
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:47:4
+   │
+47 │   "hyper",
+   │    ━━━━━ no crate matched these criteria
+
+warning[unmatched-skip-root]: skip tree root was not found in the dependency graph
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:48:4
+   │
+48 │   "tower",
+   │    ━━━━━ no crate matched these criteria
+
+warning[license-not-encountered]: license was not encountered
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:92:4
+   │
+92 │   "CDLA-Permissive-2.0",  # webpki-root-certs
+   │    ━━━━━━━━━━━━━━━━━━━ unmatched license allowance
+
+warning[license-not-encountered]: license was not encountered
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:84:4
+   │
+84 │   "ISC",
+   │    ━━━ unmatched license allowance
+
+warning[license-not-encountered]: license was not encountered
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:85:4
+   │
+85 │   "MPL-2.0",
+   │    ━━━━━━━ unmatched license allowance
+
+warning[license-not-encountered]: license was not encountered
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:88:4
+   │
+88 │   "Unicode-DFS-2016",
+   │    ━━━━━━━━━━━━━━━━ unmatched license allowance
+
+warning[unnecessary-skip]: skip 'base64' applied to a crate with only one version
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:54:4
+   │
+54 │   "base64", "block-buffer", "chacha20", "cpufeatures", "crypto-common",
+   │    ━━━━━━ unnecessary skip configuration
+
+warning[unnecessary-skip]: skip 'chacha20' applied to a crate with only one version
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:54:30
+   │
+54 │   "base64", "block-buffer", "chacha20", "cpufeatures", "crypto-common",
+   │                              ━━━━━━━━ unnecessary skip configuration
+
+warning[unnecessary-skip]: skip 'fiat-crypto' applied to a crate with only one version
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:55:14
+   │
+55 │   "digest", "fiat-crypto", "getrandom", "hashbrown", "keccak", "rand",
+   │              ━━━━━━━━━━━ unnecessary skip configuration
+
+warning[unnecessary-skip]: skip 'hashbrown' applied to a crate with only one version
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:55:42
+   │
+55 │   "digest", "fiat-crypto", "getrandom", "hashbrown", "keccak", "rand",
+   │                                          ━━━━━━━━━ unnecessary skip configuration
+
+warning[unmatched-skip]: skipped crate 'rand' was not encountered
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:55:65
+   │
+55 │   "digest", "fiat-crypto", "getrandom", "hashbrown", "keccak", "rand",
+   │                                                                 ━━━━ unmatched skip configuration
+
+warning[unnecessary-skip]: skip 'r-efi' applied to a crate with only one version
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:56:17
+   │
+56 │   "rand_core", "r-efi", "rustc-hash", "sha3", "thiserror", "thiserror-impl",
+   │                 ━━━━━ unnecessary skip configuration
+
+warning[unmatched-skip]: skipped crate 'rustc-hash' was not encountered
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:56:26
+   │
+56 │   "rand_core", "r-efi", "rustc-hash", "sha3", "thiserror", "thiserror-impl",
+   │                          ━━━━━━━━━━ unmatched skip configuration
+
+warning[unnecessary-skip]: skip 'thiserror' applied to a crate with only one version
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:56:48
+   │
+56 │   "rand_core", "r-efi", "rustc-hash", "sha3", "thiserror", "thiserror-impl",
+   │                                                ━━━━━━━━━ unnecessary skip configuration
+
+warning[unnecessary-skip]: skip 'thiserror-impl' applied to a crate with only one version
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:56:61
+   │
+56 │   "rand_core", "r-efi", "rustc-hash", "sha3", "thiserror", "thiserror-impl",
+   │                                                             ━━━━━━━━━━━━━━ unnecessary skip configuration
+
+warning[unmatched-skip]: skipped crate 'num-bigint-dig' was not encountered
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:61:4
+   │
+61 │   "num-bigint-dig",
+   │    ━━━━━━━━━━━━━━ unmatched skip configuration
+
+warning[unnecessary-skip]: skip 'windows-targets' applied to a crate with only one version
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:65:4
+   │
+65 │   "windows-targets", "windows_aarch64_gnullvm", "windows_aarch64_msvc",
+   │    ━━━━━━━━━━━━━━━ unnecessary skip configuration
+
+warning[unnecessary-skip]: skip 'windows_aarch64_gnullvm' applied to a crate with only one version
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:65:23
+   │
+65 │   "windows-targets", "windows_aarch64_gnullvm", "windows_aarch64_msvc",
+   │                       ━━━━━━━━━━━━━━━━━━━━━━━ unnecessary skip configuration
+
+warning[unnecessary-skip]: skip 'windows_aarch64_msvc' applied to a crate with only one version
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:65:50
+   │
+65 │   "windows-targets", "windows_aarch64_gnullvm", "windows_aarch64_msvc",
+   │                                                  ━━━━━━━━━━━━━━━━━━━━ unnecessary skip configuration
+
+warning[unnecessary-skip]: skip 'windows_i686_gnu' applied to a crate with only one version
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:66:4
+   │
+66 │   "windows_i686_gnu", "windows_i686_gnullvm", "windows_i686_msvc",
+   │    ━━━━━━━━━━━━━━━━ unnecessary skip configuration
+
+warning[unmatched-skip]: skipped crate 'windows_i686_gnullvm' was not encountered
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:66:24
+   │
+66 │   "windows_i686_gnu", "windows_i686_gnullvm", "windows_i686_msvc",
+   │                        ━━━━━━━━━━━━━━━━━━━━ unmatched skip configuration
+
+warning[unnecessary-skip]: skip 'windows_i686_msvc' applied to a crate with only one version
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:66:48
+   │
+66 │   "windows_i686_gnu", "windows_i686_gnullvm", "windows_i686_msvc",
+   │                                                ━━━━━━━━━━━━━━━━━ unnecessary skip configuration
+
+warning[unnecessary-skip]: skip 'windows_x86_64_gnu' applied to a crate with only one version
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:67:4
+   │
+67 │   "windows_x86_64_gnu", "windows_x86_64_gnullvm", "windows_x86_64_msvc",
+   │    ━━━━━━━━━━━━━━━━━━ unnecessary skip configuration
+
+warning[unnecessary-skip]: skip 'windows_x86_64_gnullvm' applied to a crate with only one version
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:67:26
+   │
+67 │   "windows_x86_64_gnu", "windows_x86_64_gnullvm", "windows_x86_64_msvc",
+   │                          ━━━━━━━━━━━━━━━━━━━━━━ unnecessary skip configuration
+
+warning[unnecessary-skip]: skip 'windows_x86_64_msvc' applied to a crate with only one version
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:67:52
+   │
+67 │   "windows_x86_64_gnu", "windows_x86_64_gnullvm", "windows_x86_64_msvc",
+   │                                                    ━━━━━━━━━━━━━━━━━━━ unnecessary skip configuration
+
+warning[unmatched-skip]: skipped crate 'allocator-api2' was not encountered
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:73:4
+   │
+73 │   "allocator-api2", "fastbloom", "itertools", "linux-raw-sys", "pastey",
+   │    ━━━━━━━━━━━━━━ unmatched skip configuration
+
+warning[unmatched-skip]: skipped crate 'fastbloom' was not encountered
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:73:22
+   │
+73 │   "allocator-api2", "fastbloom", "itertools", "linux-raw-sys", "pastey",
+   │                      ━━━━━━━━━ unmatched skip configuration
+
+warning[unmatched-skip]: skipped crate 'itertools' was not encountered
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:73:35
+   │
+73 │   "allocator-api2", "fastbloom", "itertools", "linux-raw-sys", "pastey",
+   │                                   ━━━━━━━━━ unmatched skip configuration
+
+warning[unmatched-skip]: skipped crate 'linux-raw-sys' was not encountered
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:73:48
+   │
+73 │   "allocator-api2", "fastbloom", "itertools", "linux-raw-sys", "pastey",
+   │                                                ━━━━━━━━━━━━━ unmatched skip configuration
+
+warning[unmatched-skip]: skipped crate 'pastey' was not encountered
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:73:65
+   │
+73 │   "allocator-api2", "fastbloom", "itertools", "linux-raw-sys", "pastey",
+   │                                                                 ━━━━━━ unmatched skip configuration
+
+warning[unmatched-skip]: skipped crate 'rand_chacha' was not encountered
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:74:4
+   │
+74 │   "rand_chacha", "rand_pcg", "rustix", "shlex", "unicode-width",
+   │    ━━━━━━━━━━━ unmatched skip configuration
+
+warning[unmatched-skip]: skipped crate 'rand_pcg' was not encountered
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:74:19
+   │
+74 │   "rand_chacha", "rand_pcg", "rustix", "shlex", "unicode-width",
+   │                   ━━━━━━━━ unmatched skip configuration
+
+warning[unmatched-skip]: skipped crate 'rustix' was not encountered
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:74:31
+   │
+74 │   "rand_chacha", "rand_pcg", "rustix", "shlex", "unicode-width",
+   │                               ━━━━━━ unmatched skip configuration
+
+warning[unnecessary-skip]: skip 'shlex' applied to a crate with only one version
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:74:41
+   │
+74 │   "rand_chacha", "rand_pcg", "rustix", "shlex", "unicode-width",
+   │                                         ━━━━━ unnecessary skip configuration
+
+warning[unmatched-skip]: skipped crate 'unicode-width' was not encountered
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:74:50
+   │
+74 │   "rand_chacha", "rand_pcg", "rustix", "shlex", "unicode-width",
+   │                                                  ━━━━━━━━━━━━━ unmatched skip configuration
+
+warning[advisory-not-detected]: advisory was not encountered
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:33:4
+   │
+33 │   "RUSTSEC-2023-0071",
+   │    ━━━━━━━━━━━━━━━━━ no crate matched advisory criteria
+
+warning[advisory-not-detected]: advisory was not encountered
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:22:4
+   │
+22 │   "RUSTSEC-2024-0384",
+   │    ━━━━━━━━━━━━━━━━━ no crate matched advisory criteria
+
+warning[advisory-not-detected]: advisory was not encountered
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:25:4
+   │
+25 │   "RUSTSEC-2025-0057",
+   │    ━━━━━━━━━━━━━━━━━ no crate matched advisory criteria
+
+advisories ok, bans ok, licenses ok, sources ok

@@ -1,0 +1,63 @@
+(* VELA hybrid signature (ML-DSA-87 AND Ed25519): EUF-CMA when ML-DSA-87 is
+   EUF-CMA, even if the Ed25519 secret key is given to the adversary.
+
+   Code: libVELA/vela-crypto/src/signing.rs (sign, verify): a hybrid
+   signature is the ordered pair of both component signatures over the same
+   bytes; verify accepts only if BOTH component verifications accept.
+   Written argument: security/assurance/10-signature-reduction.md.
+
+   Assumptions:
+   - ML-DSA-87: EUF-CMA (UF_CMA_proba_signature). ML-DSA-87 is modelled as randomised
+     (hedged signing), Ed25519 as deterministic. The ML-DSA context string
+     ("vela device identity v1") is part of the component's fixed verification
+     relation and does not appear here.
+   - Ed25519: NO assumption; the adversary receives its secret key.
+   - The two key pairs are generated independently.
+   - Parsing a hybrid signature into its two fixed-length components is a
+     bijection (modelled as a pair).
+
+   Game: one key pair, Qs adaptive signing queries; the adversary wins if it
+   outputs a message never submitted to the signing oracle together with a
+   signature both components accept (event forge).
+
+   Expected: "All queries proved."
+*)
+
+param Qs.
+
+type msg [bounded].
+type mldsa_seed [large,fixed].
+type mldsa_pk [bounded].
+type mldsa_sk [bounded].
+type mldsa_sig [bounded].
+proba Pmldsa.
+proba Pmldsacoll.
+expand UF_CMA_proba_signature(mldsa_seed, mldsa_pk, mldsa_sk, msg, mldsa_sig,
+                              mldsa_skgen, mldsa_pkgen, mldsa_sign, mldsa_check, Pmldsa, Pmldsacoll).
+
+type ed_sk [bounded].
+type ed_pk [bounded].
+type ed_sig [bounded].
+fun ed_pkgen(ed_sk): ed_pk.
+fun ed_sign(msg, ed_sk): ed_sig.
+fun ed_check(msg, ed_pk, ed_sig): bool.
+
+event forge.
+query event(forge) ==> false.
+
+process
+  Ostart() :=
+    ms <-R mldsa_seed;
+    esk <-R ed_sk;
+    (* the Ed25519 secret key is handed to the adversary *)
+    return(mldsa_pkgen(ms), esk);
+    ((
+      foreach is <= Qs do
+      Osign(m: msg) :=
+        return(mldsa_sign(m, mldsa_skgen(ms)), ed_sign(m, esk))
+    ) | (
+      Oforge(m': msg, s1: mldsa_sig, s2: ed_sig) :=
+        if mldsa_check(m', mldsa_pkgen(ms), s1) && ed_check(m', ed_pkgen(esk), s2) then
+        find u <= Qs suchthat defined(m[u]) && m' = m[u] then yield else
+        event forge
+    ))

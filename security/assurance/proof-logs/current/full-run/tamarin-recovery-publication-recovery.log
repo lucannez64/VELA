@@ -1,0 +1,12 @@
+maude tool: 'maude'
+ checking version: 3.5.1. OK.
+ checking installation: OK.
+[Theory M17_RecoveryPublicationRecovery] Theory loaded
+[Theory M17_RecoveryPublicationRecovery] Theory translated
+[Theory M17_RecoveryPublicationRecovery] Derivation checks started
+[Theory M17_RecoveryPublicationRecovery] Derivation checks ended
+[Theory M17_RecoveryPublicationRecovery] Theory closed
+[Saturating Sources] Step 1 (Max 5)
+[Saturating Sources] Done
+m17_recovery_publication_recovery: 14 verified
+recovery publication recovery proof gate: 14 verified, 0 falsified, 0 warnings

@@ -32,7 +32,7 @@ export PATH="$(opam var bin --switch vela-hax):$(opam var bin --switch vela-fsta
 ./verify-fstar.sh
 ```
 
-The runner tests the crate, extracts eight production/theorem entry points, and
+The runner tests the crate, extracts 21 production/theorem entry points, and
 asks F* to discharge every postcondition without `--lax`.
 
 Run the protocol model separately:
@@ -43,3 +43,23 @@ cd ../../security/formal
 ```
 
 Expected: **14 verified, 0 falsified, 0 warnings**.
+
+## Observation construction
+
+`grant_facts` computes the approver comparison from optional account IDs and
+requires both a 32-byte nonce and a successful nonce comparison. `web_token_facts`
+computes account binding from two present, equal account IDs: `(None, None)`
+never grants authority. Both preserve every other supplied observation exactly.
+`plan_observed_grant` and `plan_observed_web_token` compose these constructors
+with the existing decisions and are called by the production web-session
+handlers. Six negative theorems cover absent approvers, wrong nonce length,
+cross-account exchange, missing accounts, unconsumed challenges and invalid
+signatures. The signature observation comes from the actual verifier result.
+
+The current runner selects 21 functions with 19 explicit postconditions. Two
+previously selected TTL/expiry helpers have no direct `ensures`; this increment
+adds ten postconditions. Source observations (SQL rows, parsed UUID-to-u128
+conversion, status/mode decoding, nonce comparison, signature verification,
+clocks and sled challenge consumption) and actual SQL/token effects remain
+outside these pure proofs. Rejection paths that return before construction
+remain Rust glue; the new constructors do not prove complete handler traces.

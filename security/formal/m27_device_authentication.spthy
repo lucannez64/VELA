@@ -1,0 +1,150 @@
+theory M27_DeviceAuthentication
+begin
+
+/*
+  Device authentication: GET /auth/challenge + POST /auth/verify.
+
+  Code: serverVELA/vela-server/src/auth/{challenge,verify}.rs
+        libVELA/vela-crypto/src/signing.rs (auth_message, contexts)
+        libVELA/vela-crypto/src/identity.rs (sign_auth, other signing uses)
+
+  Adversary: full Dolev-Yao network. TLS is NOT assumed, so the adversary
+  sees and can replay every challenge, signature and token. The server is
+  honest here: it is the party doing the authenticating. Device signing keys
+  can be revealed.
+
+  The device is also a signing oracle for the other contexts listed below
+  (share-key binding, enrollment result, enrollment payload, share envelope),
+  with adversary-chosen inputs. This is a selected oracle set, not exhaustive cross-protocol composition.
+  The lemmas depend on the code's
+  domain separation: an auth transcript must never equal a transcript signed
+  for another purpose.
+
+  Correspondence:
+    challenge          = 32 fresh bytes, stored "challenge:<b64>" 60 s   (get_challenge)
+    consumed once      = store.get_del(challenge_key)                    (post_verify)
+    auth transcript    = <'vela auth challenge v1', device_id, challenge> (signing::auth_message)
+    device lookup      = devices WHERE id = ? AND revoked = 0
+    session            = PASETO v4 with user_id, device_id, fresh jti      (TokenService::issue)
+  The 60-second TTL is not modelled: expiry only removes challenges.
+  Lookup and token issuance are separate steps, as in the async handler. A
+  revocation can race after lookup; no atomic revocation/issuance claim is made.
+
+  Expected verdict: all lemmas VERIFIED.
+*/
+
+builtins: signing
+
+/* ── Setup ────────────────────────────────────────────────────────────────── */
+
+rule Server_Key:
+    [ Fr(~paseto) ]
+  -->
+    [ !ServerKey(~paseto), Out(pk(~paseto)) ]
+
+// Enrollment (any path) registers a device's verifying key under a user.
+rule Register_Device:
+    [ Fr(~sk), Fr(~dev) ]
+  --[ Registered($U, ~dev, pk(~sk)) ]->
+    [ !DeviceSecret($U, ~dev, ~sk), !DeviceRow($U, ~dev, pk(~sk)),
+      DeviceActive(~dev), Out(<~dev, pk(~sk)>) ]
+
+rule Revoke_Device:
+    [ DeviceActive(dev) ]
+  --[ Revoked(dev) ]->
+    [ ]
+
+rule Reveal_DeviceKey:
+    [ !DeviceSecret(U, dev, sk) ]
+  --[ DeviceKeyRevealed(dev) ]->
+    [ Out(sk) ]
+
+/* ── The protocol ─────────────────────────────────────────────────────────── */
+
+rule Server_Challenge:
+    [ Fr(~ch) ]
+  --[ ChallengeIssued(~ch) ]->
+    [ Challenge(~ch), Out(~ch) ]
+
+// The device signs whatever challenge reaches it (the network chooses).
+rule Device_SignAuth:
+    [ !DeviceSecret(U, dev, sk), In(ch) ]
+  --[ DeviceSignedAuth(dev, ch) ]->
+    [ Out(<dev, ch, sign(<'vela auth challenge v1', dev, ch>, sk)>) ]
+
+rule Server_Lookup:
+    [ !DeviceRow(U, dev, vk), DeviceActive(dev), Fr(~request) ]
+  --[ ActiveDeviceLookup(~request, dev) ]->
+    [ DeviceActive(dev), LookupResult(~request, U, dev, vk) ]
+
+rule Server_Verify:
+    [ In(<dev, ch, sig>), Challenge(ch), LookupResult(request, U, dev, vk),
+      !ServerKey(paseto), Fr(~jti) ]
+  --[ Verified(verify(sig, <'vela auth challenge v1', dev, ch>, vk)),
+      SessionIssued(U, dev, ch, ~jti), SessionFromLookup(~jti, request, dev) ]->
+    [
+      Out(sign(<'paseto v4', U, dev, ~jti>, paseto)) ]
+
+restriction SignatureVerifies:
+  "All x #i. Verified(x) @ #i ==> x = true"
+
+/* ── Other contexts the same key signs in (signing oracles) ─────────────── */
+
+rule Device_SignShareEkBinding:
+    [ !DeviceSecret(U, dev, sk), In(<ek, signed_at>) ]
+  -->
+    [ Out(sign(<'vela share-ek binding v1', ek, signed_at>, sk)) ]
+
+rule Device_SignEnrollmentResult:
+    [ !DeviceSecret(U, dev, sk), In(grant) ]
+  -->
+    [ Out(sign(<'vela enrollment result v3', grant>, sk)) ]
+
+rule Device_SignEnrollmentPayload:
+    [ !DeviceSecret(U, dev, sk), In(<ek, vk, capsule>) ]
+  -->
+    [ Out(sign(<'vela device enrollment v1', ek, vk, capsule>, sk)) ]
+
+rule Device_SignShareItem:
+    [ !DeviceSecret(U, dev, sk), In(<header, item>) ]
+  -->
+    [ Out(sign(<'vela share item v2', header, item>, sk)) ]
+
+/* ── Lemmas ───────────────────────────────────────────────────────────────── */
+
+// Every session was preceded by the registered device signing that exact
+// challenge for that exact device id (or its key was revealed). Signatures
+// made for any other purpose are useless here.
+lemma sessions_require_a_device_signature_on_the_challenge:
+  "All U dev ch jti #i. SessionIssued(U, dev, ch, jti) @ #i
+   ==> (Ex #j. DeviceSignedAuth(dev, ch) @ #j & #j < #i)
+     | (Ex #k. DeviceKeyRevealed(dev) @ #k & #k < #i)"
+
+// A challenge yields at most one session (injectivity: no replay).
+lemma a_challenge_yields_at_most_one_session:
+  "All U U2 dev dev2 ch jti jti2 #i #j.
+     SessionIssued(U, dev, ch, jti) @ #i & SessionIssued(U2, dev2, ch, jti2) @ #j
+   ==> #i = #j"
+
+// Only challenges the server issued are accepted.
+lemma sessions_use_server_issued_challenges:
+  "All U dev ch jti #i. SessionIssued(U, dev, ch, jti) @ #i
+   ==> Ex #j. ChallengeIssued(ch) @ #j & #j < #i"
+
+// No fresh active lookup occurs after revocation. An already-running
+// request may still issue a token, matching the production TOCTOU boundary.
+lemma revoked_devices_get_no_fresh_lookup [use_induction]:
+  "All request dev #i #r. ActiveDeviceLookup(request, dev) @ #i & Revoked(dev) @ #r
+   ==> #i < #r"
+
+// Sessions are issued for the user the device is registered under.
+lemma sessions_carry_the_registered_user:
+  "All U dev ch jti #i. SessionIssued(U, dev, ch, jti) @ #i
+   ==> Ex vk #j. Registered(U, dev, vk) @ #j"
+
+lemma honest_login_is_reachable:
+  exists-trace
+  "Ex U dev ch jti #i. SessionIssued(U, dev, ch, jti) @ #i
+     & not (Ex d #k. DeviceKeyRevealed(d) @ #k)"
+
+end
