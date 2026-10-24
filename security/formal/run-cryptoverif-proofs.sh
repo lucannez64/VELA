@@ -8,6 +8,9 @@
 #   kem_dem_seal_share    must prove: seal_share (KEM + XChaCha20-Poly1305) is IND-CCA2 PKE
 #   hybrid_sig_mldsa_euf  must prove: AND signature EUF-CMA from ML-DSA alone (Ed25519 key leaked)
 #   hybrid_sig_ed25519_euf must prove: AND signature EUF-CMA from Ed25519 alone (ML-DSA key leaked)
+#   possession_proof_mldsa must prove: RMS possession proof unforgeable from ML-DSA alone (Ed25519 seed leaked)
+#   possession_proof_ed25519 must prove: same from Ed25519 alone (ML-DSA seed leaked)
+#   shamir_share_tags     must prove: a substituted tagged share never reconstructs a different secret
 # Needs `cryptoverif` on PATH (or CRYPTOVERIF=/path/to/cryptoverif) and its
 # library `default.ocvl` next to the binary (or CRYPTOVERIF_LIB=/path/to/default).
 set -euo pipefail
@@ -55,4 +58,7 @@ run kem_v1_x25519_baseline unproved 'bit secrecy of b'
 run kem_dem_seal_share proved 'bit secrecy of b'
 run hybrid_sig_mldsa_euf proved 'event(forge) ==> false'
 run hybrid_sig_ed25519_euf proved 'event(forge) ==> false'
+run possession_proof_mldsa proved 'event(forge) ==> false'
+run possession_proof_ed25519 proved 'event(forge) ==> false'
+run shamir_share_tags proved 'event(accepted_wrong_secret) ==> false'
 printf 'Full CryptoVerif logs: %s\n' "$out"

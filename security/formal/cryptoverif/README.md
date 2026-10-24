@@ -16,6 +16,9 @@ ss = HKDF-SHA256(ss_mlkem ‖ ss_x25519 ‖ x25519_epk ‖ x25519_pk ‖ SHA-256
 | `kem_dem_seal_share.ocv` | proved | Modular IND-CCA2 public-key encryption for an abstract IND-CCA2 KEM plus IND-CPA/INT-CTXT AEAD and a fresh random nonce. The bound includes `2·Pkem`, `2·Pencctxt`, two separate `2·Penc` terms and `10·Qd·Pctxtcoll`; full time/message-length arguments are in the log |
 | `hybrid_sig_mldsa_euf.ocv` | proved | AND-signature EUF-CMA under the ML-DSA-87 assumption, with the Ed25519 secret key disclosed. Bound: `Pmldsa(t, Qs)` |
 | `hybrid_sig_ed25519_euf.ocv` | proved | AND-signature EUF-CMA under the Ed25519 assumption, with the ML-DSA secret key disclosed. Bound: `Ped(t, Qs)` |
+| `possession_proof_mldsa.ocv` | proved | The RMS possession proof (`recovery.rs`: hybrid key derived from the RMS by two BLAKE3 contexts; public commitment staged on the server) is **unforgeable without the RMS from ML-DSA-87 alone**; the Ed25519 derived seed is leaked. KDF as random oracles. Bound: `Pmldsa(t, Qs) + (qKml + qKed)/|rms|` |
+| `possession_proof_ed25519.ocv` | proved | Same, **from Ed25519 alone**; the ML-DSA derived seed is leaked. Bound: `Ped(t, Qs) + (qKml + qKed)/|rms|`. The legacy 32-byte v1 commitment (accepted only while `allow_legacy_v1`) is not covered |
+| `shamir_share_tags.ocv` | proved | Authenticated Shamir shares (`shamir.rs`, audit C-3): with an honest tagged share and an adversarial one, reconstruction **never accepts a secret different from the original**, even when the adversary knows the secret and the honest share. Shamir abstracted as interpolation injective in the second share; KDF and keyed BLAKE3 tag as random oracles. Bound: `(qK + qM + 2)/|mackey| + (qM + 2)/|tag|` (16-byte tags) |
 | `kem_v1_x25519_baseline.ocv` | explicitly unproved | Legacy combiner without transcript binding. An unproved-query control, not a CryptoVerif attack trace |
 
 The KEM games support a model-level surviving-component claim subject to all
