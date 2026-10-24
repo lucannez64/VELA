@@ -187,7 +187,8 @@ parent strengthened enrollment to derive key validity from actual decoded
 lengths (1600/2624) inside the verified constructor. Possession state insertion
 uses atomic insert-if-absent, and empty commitments fail unavailable. Fresh
 F★ checking and handler regressions pass locally. The observation snapshot was
-reproduced on `350cd57`; the later preflight/ordering increment remains pending.
+reproduced on `350cd57`; the later preflight/ordering increment passed in the
+[368bcc0 hosted workflow](proof-logs/current/hosted-368bcc0/README.md).
 Grant store-key user binding, decoders, verifiers, storage effects, restoration
 and complete handler traces remain open.
 
@@ -244,7 +245,7 @@ the two all-pairs goals or import their Tamarin verdicts. The actual verdicts
 are therefore for the instrumented model. The handwritten proof adds no Rust
 postconditions. [Local evidence](proof-logs/current/journal-encoding-equivalence/README.md)
 records a fresh check with caching disabled, pinned tool version, argv and
-module hash; hosted reproduction of this new step is pending.
+module hash; it was reproduced in the [368bcc0 hosted workflow](proof-logs/current/hosted-368bcc0/README.md).
 
 The journal runner first runs `check-action-atoms.py` on M28 and M29. It strips
 comments and string literals, collects each rule's action name/arity, and

@@ -3,8 +3,8 @@
 The [hosted baseline on 350cd57](hosted-350cd57/README.md) passed all security
 jobs, including 212 F★ postconditions, seven computational games and the
 instrumented journal gate. It predates the handwritten journal encoding and
-preflight/ordering increments. The current local corpus is 231 postconditions /
-238 selected functions and still needs hosted reproduction.
+preflight/ordering increments. The [hosted baseline on 368bcc0](hosted-368bcc0/README.md) reproduces the
+current 231-postcondition / 238-function corpus and the journal encoding check.
 
 Recent increments (see the hosted baseline above for snapshot coverage):
 

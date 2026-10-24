@@ -20,8 +20,8 @@ The [refinement job passed on `b27dcd6`](proof-logs/current/hosted-refinement-40
 The later complete [security workflow](https://github.com/lucannez64/VELA/actions/runs/40089709666)
 passed on `350cd57`, including the 212-postcondition snapshot, seven
 computational games and instrumented journal gate. [Hosted evidence](proof-logs/current/hosted-350cd57/README.md)
-records that exact head. The current 231-postcondition inventory and typed
-journal encoding proof await hosted reproduction.
+records that exact head. The later [368bcc0 hosted workflow](proof-logs/current/hosted-368bcc0/README.md)
+reproduces the 231-postcondition inventory and the typed journal encoding proof.
 
 ## Contents
 
@@ -76,7 +76,7 @@ correctness is not a consequence of the pure-policy proofs.
 
 | Tag | Meaning |
 |---|---|
-| **[SYM]** | Symbolic proof witnessed in the linked historical CI run; check baseline before applying it to newer code |
+| **[SYM]** | Symbolic proof (Tamarin/ProVerif) gated in CI; last witnessed in the [368bcc0 hosted workflow](proof-logs/current/hosted-368bcc0/README.md). Re-check against newer code |
 | **[SYM-local]** | Symbolic result from local runs; current CI configuration may gate it, but a successful new CI run is still needed |
 | **[REF]** | Fresh local hax extraction and F* checking of selected Rust functions; no whole-handler correctness implication |
 | **[EXEC]** | Executable model or test; distinguish linked historical CI results from current local logs |
