@@ -603,29 +603,40 @@ final class Phase4Tests: XCTestCase {
         XCTAssertEqual(try engine.recordedManifestClock(), iterations)
     }
 
-    /// A cryptographically admitted chunk whose plaintext is not a vault must
-    /// not advance any baseline: the batch never reached local persistence, so
-    /// a retry must be allowed to re-fetch it. This pins the ordering
-    /// admit -> decode -> merge -> persist -> record.
+    /// Individually valid sealed chunks can form an invalid assembled document.
+    /// Decode failure must occur after admission and before persistence/floors.
     func testFailedDecodeDoesNotAdvanceBaseline() async throws {
         SyncEngine.clearBaselines()
         defer { SyncEngine.clearBaselines() }
         let rms = Data(repeating: 9, count: 32)
-        let chunkID = "vault-data-000000"
-        guard let ciphertext = VelaCoreFFI.encryptVaultChunk(
-            rms: rms, chunkID: chunkID, vaultJSON: "not-a-vault-store",
-            lamportClock: 4, keyEpoch: 1),
-              let raw = Data(base64Encoded: ciphertext) else {
-            return XCTFail("seal failed")
+        let chunkIDs = ["vault-data-000000", "vault-data-000001"]
+        let vaultJSON = "{\"items\":[],\"tombstones\":[]}"
+        var rawChunks: [String: Data] = [:]
+        for chunkID in chunkIDs {
+            // The production sealing API validates VaultStore input. Seal two
+            // complete stores; concatenating them is not one JSON document.
+            let ciphertext = try XCTUnwrap(VelaCoreFFI.encryptVaultChunk(
+                rms: rms, chunkID: chunkID, vaultJSON: vaultJSON,
+                lamportClock: 4, keyEpoch: 1))
+            rawChunks[chunkID] = try XCTUnwrap(Data(base64Encoded: ciphertext))
+            let admitted = try VelaCoreFFI.decryptVaultChunkAdmittedOrThrow(
+                rms: rms, chunkID: chunkID, ciphertextBase64: ciphertext,
+                lamportClock: 4, keyEpoch: 1, localKeyEpoch: 1,
+                lastSeenLamport: nil)
+            XCTAssertEqual(admitted.vaultJSON, vaultJSON)
+            XCTAssertEqual(admitted.lamportClock, 4)
         }
+        let responses = rawChunks
         MockURLProtocol.handler = { req in
             switch req.url?.path ?? "" {
             case "/vault/sync":
                 let body = """
-                {"epoch":1,"chunks":[{"chunk_id":"vault-data-000000","version":1,"lamport_clock":4,"last_writer":null}]}
+                {"epoch":1,"chunks":[{"chunk_id":"vault-data-000000","version":1,"lamport_clock":4,"last_writer":null},{"chunk_id":"vault-data-000001","version":1,"lamport_clock":4,"last_writer":null}]}
                 """
                 return (Self.ok(req), Data(body.utf8))
-            case "/vault/chunk/vault-data-000000":
+            case let path where path.hasPrefix("/vault/chunk/"):
+                let chunkID = String(path.dropFirst("/vault/chunk/".count))
+                let raw = try XCTUnwrap(responses[chunkID])
                 let response = HTTPURLResponse(
                     url: req.url!, statusCode: 200, httpVersion: nil,
                     headerFields: ["X-Chunk-Version": "1", "X-Lamport-Clock": "4"])!
@@ -642,11 +653,15 @@ final class Phase4Tests: XCTestCase {
         do {
             _ = try await engine.sync(
                 rms: rms, localStore: VaultStore(items: []))
-            XCTFail("expected the non-vault plaintext to fail decoding")
+            XCTFail("expected the assembled document to fail decoding")
+        } catch is DecodingError {
+            // Only the intended decode failure qualifies, not failed admission.
         } catch {
-            // Expected: the decode failure aborts before persistence.
+            XCTFail("expected DecodingError, got \(error)")
         }
-        XCTAssertNil(try engine.recordedSeenClock(for: chunkID))
+        for chunkID in chunkIDs {
+            XCTAssertNil(try engine.recordedSeenClock(for: chunkID))
+        }
         XCTAssertNil(try engine.recordedManifestClock())
     }
 

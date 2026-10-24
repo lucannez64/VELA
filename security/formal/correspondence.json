@@ -241,7 +241,7 @@
         "iosVELA/Shared/VelaCoreFFI.swift": "d74d1b29ff9a697ae4d4fa6b9a292900c16a1c8131431844aa789bbacdb7fe95",
         "iosVELA/Sources/AccountViewModel.swift": "a7cef9587b3ba9bc8b8c2623198f2aa398cfbb6ff51d4b7bc35c39403d8872e6",
         "iosVELA/Sources/VaultViewModel.swift": "52995eb00768e9a5f8e7e9b0d2dd3c5538926c3ec2da2409e82328b03b90ae6a",
-        "iosVELA/Tests/Phase4Tests.swift": "a1c00de995ecedd187a28074fdef25c8b6f82b4bc7ec4b02d7353f6704dabf4e",
+        "iosVELA/Tests/Phase4Tests.swift": "01d4e994f04ef5500fda0859c5c9030079bae4d2a14d56b560e5a87ffac11d36",
         "libVELA/vela-android-bridge/Cargo.lock": "37934a79beec1b201b8862ffb12f0c2356570a84ddfee2a7738349ddeb234de0",
         "libVELA/vela-android-bridge/Cargo.toml": "8c6d0764f0e39b60587c905807fdb2b64ffb4f719449723b79013f6488904d4a",
         "libVELA/vela-android-bridge/src/lib.rs": "4d5070638e5dde9110954a080690c82e6b522dbc08f34909bba749dd71f29e34",
