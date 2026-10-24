@@ -80,6 +80,24 @@ verifier, session ids) remain unverified glue; `claim_key_source: StoredClaim`
 records the structural fact that the handler never accepts claim keys from the
 request body.
 
+The sharing handlers now compute `plan_send`, `plan_ek_registration` and
+`plan_link_mutation` facts through three pure constructors (`send_facts`,
+`ek_registration_facts`, `link_mutation_facts`) with hax postconditions, plus
+eleven observation-based negative theorems. Send records the session user-id
+presence, the recipient share-key row, the decoded capsule length and the inbox
+byte total. EK registration records the selected device row, an explicit
+comparison of that row's user id with the caller, the `revoked` column, whether
+a binding already exists, the bytewise freshness result and the hybrid verifier
+outcome. Linked update/revocation records the stored sender and tombstone state;
+both handlers now call the verified mutation policy instead of relying only on
+the SQL predicate. These fourteen selected entry points are listed in
+`serverVELA/vela-share-policy/verify-fstar.sh` but are **not** in the 231/238
+checked snapshot until hosted extraction checks them. Rate limiting, base64
+decoding and the recipient/capsule/quota/timestamp upper-bound returns still
+happen before the policy runs, and the SQL/session/verifier observations remain
+unverified glue. `identical_timestamp_can_be_fresher` stays outside the selected
+set, as before this increment.
+
 [Current evidence](proof-logs/current/trusted-boundary/README.md) supersedes
 prior extraction snapshots for all eight policy crates. CI includes the new
 checks. The [hosted refinement job](proof-logs/current/hosted-refinement-40002230354/README.md)
@@ -196,7 +214,7 @@ and complete handler traces remain open.
 
 | Area | Status | Required to close |
 |---|---|---|
-| F-1: handler facts | Partial: hosted enrollment/recovery baseline; local web-session and additional recovery constructors | Maintain the checked contracts; verify the observation producers (SQL rows, store lookups, signature verifier, session ids) themselves; complete UTF-8/object and authenticated-open composition after the checked byte-frame parser; prove independent context origins; cover remaining token, epoch, recovery and handler fact construction |
+| F-1: handler facts | Partial: hosted enrollment/recovery baseline; local web-session, share and additional recovery constructors | Re-extract and check the share observation constructors in CI; maintain the checked contracts; verify the observation producers (SQL rows, store lookups, signature verifier, session ids) themselves; complete UTF-8/object and authenticated-open composition after the checked byte-frame parser; prove independent context origins; cover remaining token, epoch, recovery and handler fact construction |
 | F-2: state transitions | Partial: preflight ordering/readiness checked against an independent specification; sharing handlers: every sequence up to depth 3 (CI) / 4 (local) matches the M19b/M21 state machine against the real router and database, with mutation checks; possession-proof recovery handlers: every sequence up to depth 4 (CI) matches the M18/M26a chain, with mutation checks (WebAuthn path not driven) | Machine-check concrete handler/database transitions against protocol transitions, including exceptions, cancellation and concurrency |
 | F-3: persistence/recovery | Partial: M28 and composed M29 | Prove the actual journal implementation refines M28; formalize collection equality and filesystem outcomes; compose local edits/deletions and RMS migration; cover or explicitly exclude independent processes |
 | F-4: construction security | Partial: CryptoVerif proofs for idealized v2 KEM games, modular KEM-DEM, AND-signature, v2 possession-proof and authenticated-share games under the explicit assumptions | Close the combiner gaps listed in `security/formal/cryptoverif/README.md` (concrete X25519 clamping/cofactor/encoding correspondence after conditional nonuniform distribution accounting, SHA-256 step, quantum-query and multi-user composition; KEM-DEM is proved modularly); computational games and reductions for envelope framing and KDF use beyond the random-oracle model, under named primitive assumptions (share tags and the v2 possession proof are now proved in CryptoVerif with KDFs as random oracles; legacy v1 possession commitments are not covered); verify application randomness/error/erasure handling. Primitive internals and leakage resistance are trusted under the selected boundary |

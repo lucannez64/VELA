@@ -17,14 +17,14 @@ use crate::{
     state::AppState,
 };
 
-const MAX_CAPSULE_BYTES: usize = 1024 * 1024;
+const MAX_CAPSULE_BYTES: i64 = vela_share_policy::MAX_CAPSULE_BYTES;
 const DEFAULT_INBOX_LIMIT: i64 = 50;
 const MAX_INBOX_LIMIT: i64 = 200;
 const MAX_INBOX_ITEMS_PER_USER: i64 = 500;
 /// Max pending bytes one sender may push to a single recipient.
 const MAX_SENDER_TO_RECIPIENT_BYTES: i64 = 8 * 1024 * 1024;
 /// Max total pending bytes in a recipient's inbox.
-const MAX_RECIPIENT_INBOX_BYTES: i64 = 32 * 1024 * 1024;
+const MAX_RECIPIENT_INBOX_BYTES: i64 = vela_share_policy::MAX_RECIPIENT_INBOX_BYTES;
 
 pub const INBOX_TTL_SECS: i64 = 30 * 24 * 60 * 60;
 
@@ -77,7 +77,7 @@ pub async fn post_send(
         .decode(&body.capsule)
         .map_err(|_| AppError::BadRequest("capsule is not valid base64".into()))?;
 
-    if capsule_bytes.len() > MAX_CAPSULE_BYTES {
+    if capsule_bytes.len() as i64 > MAX_CAPSULE_BYTES {
         return Err(AppError::BadRequest(format!(
             "capsule exceeds maximum size of {MAX_CAPSULE_BYTES} bytes"
         )));
@@ -138,20 +138,21 @@ pub async fn post_send(
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
     let total_bytes = total_rows.first().and_then(|r| r.i64(0)).unwrap_or(0);
-    let inbox_has_capacity = total_bytes + capsule_bytes.len() as i64 <= MAX_RECIPIENT_INBOX_BYTES;
-    if !inbox_has_capacity {
+    // Verified send gate (M19). Every fact comes from the real session,
+    // recipient row, decoded capsule and inbox quota observations; the
+    // constructor states those equalities to F*.
+    let send_facts = vela_share_policy::send_facts(vela_share_policy::SendObservation {
+        session_user_id_present: !session.user_id.is_nil(),
+        recipient_has_share_ek: recipient_can_receive,
+        capsule_len: capsule_bytes.len() as i64,
+        existing_inbox_bytes: total_bytes,
+    });
+    if !send_facts.inbox_has_capacity {
         return Err(AppError::PayloadTooLarge(format!(
             "recipient inbox exceeds {MAX_RECIPIENT_INBOX_BYTES} bytes"
         )));
     }
-    // Verified send gate (M19): authenticated sender, registered recipient,
-    // bounded capsule, capacity left.
-    match vela_share_policy::plan_send(vela_share_policy::SendCapsuleFacts {
-        sender_authenticated: true,
-        recipient_registered: true,
-        capsule_size_valid: !capsule_bytes.is_empty(),
-        inbox_has_capacity,
-    }) {
+    match vela_share_policy::plan_send(send_facts) {
         vela_share_policy::SendDecision::Deliver => {}
         vela_share_policy::SendDecision::Reject => {
             return Err(AppError::BadRequest(
@@ -189,9 +190,9 @@ pub async fn post_send(
     .await
     .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    tx.commit()
-        .await
-        .map_err(|e| AppError::Conflict(format!("share send raced with a concurrent request: {e}")))?;
+    tx.commit().await.map_err(|e| {
+        AppError::Conflict(format!("share send raced with a concurrent request: {e}"))
+    })?;
 
     tracing::info!(
         inbox_id  = %inbox_id,
@@ -444,10 +445,20 @@ pub async fn put_linked_item(
         .decode(&body.capsule)
         .map_err(|_| AppError::BadRequest("capsule is not valid base64".into()))?;
 
-    if capsule_bytes.len() > MAX_CAPSULE_BYTES {
+    if capsule_bytes.len() as i64 > MAX_CAPSULE_BYTES {
         return Err(AppError::BadRequest(format!(
             "capsule exceeds maximum size of {MAX_CAPSULE_BYTES} bytes"
         )));
+    }
+
+    // Verified linked-item mutation gate (M21): the caller is the original
+    // sender and the row is a live item, observed from the stored row.
+    let observed = observe_link_mutation(&state, id, session.user_id).await?;
+    match vela_share_policy::plan_link_mutation(vela_share_policy::link_mutation_facts(observed)) {
+        vela_share_policy::LinkMutationDecision::Apply => {}
+        vela_share_policy::LinkMutationDecision::Reject => {
+            return Err(AppError::NotFound(format!("linked share {id} not found")));
+        }
     }
 
     let n = state
@@ -480,6 +491,16 @@ pub async fn delete_linked_item(
     Path(id): Path<Uuid>,
     session: AuthSession,
 ) -> Result<(HeaderMap, Json<serde_json::Value>)> {
+    // Verified linked-item mutation gate (M21): the caller is the original
+    // sender and the row is a live item, observed from the stored row.
+    let observed = observe_link_mutation(&state, id, session.user_id).await?;
+    match vela_share_policy::plan_link_mutation(vela_share_policy::link_mutation_facts(observed)) {
+        vela_share_policy::LinkMutationDecision::Apply => {}
+        vela_share_policy::LinkMutationDecision::Reject => {
+            return Err(AppError::NotFound(format!("linked share {id} not found")));
+        }
+    }
+
     let n = state
         .sqldb
         .execute(
@@ -510,6 +531,42 @@ pub async fn delete_linked_item(
     let mut headers = HeaderMap::new();
     maybe_append_new_token(&mut headers, &session);
     Ok((headers, Json(serde_json::json!({ "deleted": true }))))
+}
+
+/// Observe the linked-share row that a mutation is about to touch.
+///
+/// A missing row, a row owned by another sender and a revoked row all leave the
+/// verified policy in the same rejecting state, so the handler keeps one
+/// indistinguishable "not found" response.
+async fn observe_link_mutation(
+    state: &AppState,
+    id: Uuid,
+    user_id: Uuid,
+) -> Result<vela_share_policy::LinkMutationObservation> {
+    let caller = user_id.to_string();
+    let rows = state
+        .sqldb
+        .query(
+            "SELECT sender_user_id, revoked FROM shared_items WHERE id = ?",
+            vec![TursoValue::Text(id.to_string())],
+        )
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    let Some(row) = rows.first() else {
+        return Ok(vela_share_policy::LinkMutationObservation {
+            item_present: false,
+            caller_matches_sender: false,
+            item_not_revoked: false,
+        });
+    };
+
+    Ok(vela_share_policy::LinkMutationObservation {
+        item_present: true,
+        caller_matches_sender: row.text(0) == Some(caller.as_str()),
+        // Mirror the SQL `revoked = 0` predicate: only a zero cell is live.
+        item_not_revoked: row.i64(1) == Some(0),
+    })
 }
 
 /// Return the share encapsulation key registered by a given user.
@@ -552,8 +609,8 @@ pub async fn get_recipient_ek(
     ))
 }
 
-/// ML-KEM-1024 EK (1568) + X25519 PK (32). Matches `account::SHARE_EK_LEN`.
-const SHARE_EK_LEN: usize = 1568 + 32;
+/// ML-KEM-1024 EK (1568) + X25519 PK (32). Shared with the verified policy.
+const SHARE_EK_LEN: usize = vela_share_policy::SHARE_EK_LEN;
 
 #[derive(Deserialize)]
 pub struct PutShareEkRequest {
@@ -586,7 +643,7 @@ async fn authorize_ek_binding(
     request: &PutShareEkRequest,
 ) -> Result<(Uuid, String)> {
     use crate::device::enroll::verify_hybrid_signature;
-    use vela_share_policy::EkRegistrationFacts;
+    use vela_share_policy::{ek_registration_facts, EkRegistrationObservation};
 
     let ek_bytes = B64
         .decode(&request.share_ek)
@@ -609,13 +666,10 @@ async fn authorize_ek_binding(
             "signed_at must be a canonical RFC 3339 UTC timestamp (YYYY-MM-DDTHH:MM:SSZ)".into(),
         ));
     }
-    let parsed_signed_at =
-        chrono::DateTime::parse_from_rfc3339(&request.signed_at).map_err(|_| {
-            AppError::BadRequest("signed_at must be an RFC 3339 timestamp".into())
-        })?;
+    let parsed_signed_at = chrono::DateTime::parse_from_rfc3339(&request.signed_at)
+        .map_err(|_| AppError::BadRequest("signed_at must be an RFC 3339 timestamp".into()))?;
     const MAX_FUTURE_SKEW_SECS: i64 = 300;
-    let skew_secs =
-        parsed_signed_at.timestamp() - chrono::Utc::now().timestamp();
+    let skew_secs = parsed_signed_at.timestamp() - chrono::Utc::now().timestamp();
     if skew_secs > MAX_FUTURE_SKEW_SECS {
         return Err(AppError::BadRequest(
             "signed_at is too far in the future".into(),
@@ -623,11 +677,14 @@ async fn authorize_ek_binding(
     }
     let canonical_signed_at = request.signed_at.clone();
 
-    // The signing device must exist, belong to the caller, and be live.
+    // The signing device must exist, belong to the caller, and be live. The
+    // query is ownership-scoped, and the returned `d.user_id` is compared to
+    // the caller rather than assuming the join did the work.
+    let caller = user_id.to_string();
     let rows = state
         .sqldb
         .query(
-            "SELECT d.hybrid_vk, d.revoked, u.share_ek_since
+            "SELECT d.hybrid_vk, d.revoked, u.share_ek_since, d.user_id
              FROM devices d JOIN users u ON u.id = d.user_id
              WHERE d.id = ? AND d.user_id = ?",
             vec![
@@ -637,47 +694,77 @@ async fn authorize_ek_binding(
         )
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
-    let row = rows.first().ok_or_else(|| {
-        AppError::BadRequest("signing device is not enrolled for this account".into())
-    })?;
-    let hybrid_vk = row.text(0).ok_or_else(|| {
-        AppError::BadRequest("signing device has no identity public key".into())
-    })?;
-    let device_active = !matches!(row.get(1), Some(TursoValue::Integer(1)))
-        && row.text(1) != Some("1");
-    let current_since = row.text(2);
-    let seq = if current_since.is_some() { 2 } else { 1 };
+    let row = rows.first();
+    let device_row_present = row.is_some();
+    let device_user_matches = row
+        .and_then(|r| r.text(3))
+        .is_some_and(|owner| owner == caller.as_str());
+    let device_active = row
+        .map(|r| !matches!(r.get(1), Some(TursoValue::Integer(1))) && r.text(1) != Some("1"))
+        .unwrap_or(false);
+    let current_since = row.and_then(|r| r.text(2));
+    let binding_exists = current_since.is_some();
+    let hybrid_vk = row.and_then(|r| r.text(0));
 
     let message = vela_crypto::signing::share_ek_binding_message(&ek_bytes, &canonical_signed_at);
-    let signature_verified = verify_hybrid_signature(
-        &crate::db::decode_b64(hybrid_vk)?,
-        &message,
-        &B64.decode(&request.signature)
-            .map_err(|_| AppError::BadRequest("signature is not valid base64".into()))?,
-        "share-key binding signature invalid",
-    )
-    .is_ok();
+    // Retain the original decode errors so the rejecting branch can reproduce
+    // them in the same order, after the verified policy has seen the real
+    // observations.
+    let stored_vk_result = match hybrid_vk {
+        Some(vk) => crate::db::decode_b64(vk),
+        None => Err(AppError::BadRequest(
+            "signing device has no identity public key".into(),
+        )),
+    };
+    let signature_bytes_result = B64
+        .decode(&request.signature)
+        .map_err(|_| AppError::BadRequest("signature is not valid base64".into()));
+    let signature_verified = match (&stored_vk_result, &signature_bytes_result) {
+        (Ok(vk), Ok(signature)) => verify_hybrid_signature(
+            vk.as_slice(),
+            &message,
+            signature.as_slice(),
+            "share-key binding signature invalid",
+        )
+        .is_ok(),
+        _ => false,
+    };
 
-    // M25: the freshness relation lives in the verified policy layer.
+    // M25: the freshness relation lives in the verified policy layer. The
+    // observation records that bytewise comparison unchanged.
     let signed_at_is_fresher = vela_share_policy::timestamp_is_fresher(
         canonical_signed_at.as_bytes(),
         current_since.as_deref().map(|c| c.as_bytes()),
     );
 
-    match vela_share_policy::plan_ek_registration(EkRegistrationFacts {
-        ek_size_valid,
-        signature_verified,
-        device_owned_by_caller: true,
-        device_active,
-        signed_at_is_fresher,
-        seq,
-    }) {
+    match vela_share_policy::plan_ek_registration(ek_registration_facts(
+        EkRegistrationObservation {
+            ek_len: ek_bytes.len(),
+            signature_verified,
+            device_row_present,
+            device_user_matches,
+            device_active,
+            signed_at_is_fresher,
+            binding_exists,
+        },
+    )) {
         vela_share_policy::EkRegistrationDecision::Register(_) => {
             Ok((request.device_id, canonical_signed_at))
         }
-        vela_share_policy::EkRegistrationDecision::Reject => Err(AppError::Unauthorized(
-            "verified sharing policy rejected the share-key registration".into(),
-        )),
+        vela_share_policy::EkRegistrationDecision::Reject => {
+            // Preserve the original early-return errors and their order now
+            // that the verified policy has seen the same facts.
+            if !device_row_present || !device_user_matches {
+                return Err(AppError::BadRequest(
+                    "signing device is not enrolled for this account".into(),
+                ));
+            }
+            stored_vk_result?;
+            signature_bytes_result?;
+            Err(AppError::Unauthorized(
+                "verified sharing policy rejected the share-key registration".into(),
+            ))
+        }
     }
 }
 
@@ -693,8 +780,7 @@ pub async fn put_my_ek(
     session: DeviceSession,
     Json(body): Json<PutShareEkRequest>,
 ) -> Result<(HeaderMap, Json<serde_json::Value>)> {
-    let (bound_device_id, signed_at) =
-        authorize_ek_binding(&state, session.user_id, &body).await?;
+    let (bound_device_id, signed_at) = authorize_ek_binding(&state, session.user_id, &body).await?;
 
     let n = state
         .sqldb
