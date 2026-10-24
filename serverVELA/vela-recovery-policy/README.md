@@ -23,6 +23,7 @@ Rust decisions to F* and checks their postconditions for every input.
 | `plan_enrollment` | A recovered device requires the actual consumed grant to match the preflight-observed grant, loaded under the request's user/grant store key, current credential (or staged commitment for possession grants), valid keys, and exact active grant/account epoch. |
 | `plan_publication_stage` | A server share is staged only for the current active account epoch with a nonempty share and split id. |
 | `plan_publication_finalize` | First promotion requires an empty active slot plus the exact pending epoch, split id, and stored share; an exact already-active retry is handled idempotently by the server. |
+| `driver::begin_redemption` / `driver::step` | The post-preflight redemption flow is a pure total transition driver. Its Rust postconditions keep every driver state sound and make every emitted effect agree with the state it produces. An `Insert` effect is emitted only after a matched consumption observation and a matching real `plan_enrollment` + rekey permit; `Complete` only from an `Inserted` observation; restoration never follows success. |
 | theorem helpers | Replaced credentials, challenge/grant replay, cross-user grants, rotated grants and epochs, competing splits, retired epochs, unproven possession claims, stale commitments, commitment-less possession grants and accounts, unassigned grants, concurrent grant replacement, invalid key lengths and absent user rows cannot authorize recovery authority. Observation theorems additionally reject missing shares/credentials, colliding attempt ids, expired initiation TTLs, unverified assertions, missing/replayed attempts, cross-user observations and rekeying accounts. |
 
 The proof boundary excludes WebAuthn cryptography, HTTP, clocks, SQL, sled, and
@@ -37,6 +38,42 @@ one-shot artifacts, and guards device insertion by epoch and credential id
 (possession grants instead require the staged RMS commitment to still exist).
 Challenge and proof-state insertion now use insert-if-absent, so an observed
 free slot is never authorization to overwrite a concurrent winner.
+
+### Post-preflight redemption driver
+
+The handler's post-preflight control flow now goes through the pure
+`driver` module: consumption observation, final enrollment/rekey permit,
+guarded insert observation, live authority recheck, restoration/terminal
+outcome and success. The extracted `driver::step` is the object of the
+hand-written unbounded trace induction in
+[`proofs/fstar/driver-lemmas`](proofs/fstar/driver-lemmas/Vela_recovery_policy_driver_lemmas.fst).
+The induction is over every event list, not just handler-shaped prefixes. It
+proves, per driver instance:
+
+- an `Insert` effect is emitted only when the driver recorded a matched
+  consumption observation and a real `plan_enrollment` permit plus a rekey
+  permit at the same epoch;
+- at most one insert success (`Complete`) can occur, and after a success every
+  later event is inert;
+- no restoration effect is emitted after a success;
+- `Complete` is only emitted in response to an `Inserted` observation, never
+  `Skipped` or `Failed`;
+- reachable witnesses exercise success, insert-error restoration, terminal
+  credential revocation, policy denial and the retryable rotation conflict.
+
+These are per-request properties over *observations*. They are not a theorem
+about two concurrent requests sharing one grant, and they do not prove that
+the atomic `get_del`, the guarded SQL insert, the live recheck query or the
+unconditional `restore_enroll_grant` have their intended effects. In
+particular `InsertObservation::Failed` records only the observed error: an
+ambiguous commit is compatible with it. The current handler restores the grant
+on that error, so if the INSERT did commit before the error surfaced, a second
+redemption of the restored grant can insert a second device row. The store's
+atomic `get_del` prevents two ordinary concurrent requests from both consuming
+a live grant, but it does not disambiguate that committed-but-errored insert.
+This is a concrete open issue, not assumed away. A safe restoration policy
+needs an idempotency key/grant id on the device insert or a compare-and-swap
+restoration generation that does not re-arm on ambiguous outcomes.
 
 ## Run
 
@@ -58,6 +95,14 @@ lemmas connect the preflight decision to an independent ranked table/fold and
 to positive readiness guards, and prove parametric adjacent precedence and
 disjointness facts. They sit alongside the preflight decision and seven
 rejection/unknown negative theorems.
+
+`verify-fstar.sh` also invokes `verify-fstar-driver.sh`, which re-extracts the
+six focused driver entry points into `proofs/fstar/extraction-driver/` (same F*
+module name as the historical artifact, therefore a separate checker
+invocation) and checks them together with the nineteen hand-written
+trace/reachability lemmas. The historical `proofs/fstar/extraction/` artifact
+is not modified by that gate.
+
 
 One fail-closed tightening accompanies the decoded commitment observation: a
 row whose `recovery_auth_hash` decodes to zero bytes no longer yields a
@@ -135,6 +180,16 @@ invokes another release API; that absence is inspected, not formally refined.
 
 The independent ordering theorem concerns supplied observations. The handler
 skips account lookup for missing grants by inspected control flow; this is not
-an SQL trace theorem. The post-insert concurrent recheck uses its historical
-revocation-before-rotation priority; that handler trace is outside the policy
-proof.
+an SQL trace theorem. The post-insert concurrent recheck decision and its
+historical revocation-before-rotation priority are modeled by
+`driver::on_recheck`, but the query's rows, the SQL guard's authority and the
+store effects remain outside the policy proof.
+
+`restore_enroll_grant` is an unconditional `set_ex` with a fresh full TTL. If a
+guarded INSERT commits but the database call surfaces an error (ambiguous
+commit), the handler still takes the `InsertObservation::Failed` restoration
+path and re-arms the grant. A later redemption can then insert a second device
+row. Atomic `get_del` prevents two ordinary concurrent requests from both
+consuming a live grant, but it does not disambiguate a committed-but-errored
+insert. This increment documents the issue; it does not prove absence of
+duplicate redemption across that failure mode.
