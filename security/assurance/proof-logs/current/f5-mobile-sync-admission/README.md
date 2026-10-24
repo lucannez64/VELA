@@ -39,18 +39,39 @@ parent-owned and are untouched here.
   - the whole-manifest floor is namespaced the same way;
   - only a deliberate sign-out (iOS) / local-security reset (both) clears
     baselines. Routine `updateServer` for the same context does not.
-- **Concurrency (review 5).** Android now funnels every settings mutation
-  through one synchronized read-modify-write and commits synchronously
-  (`commit`, not `apply`) before publishing, so a concurrent token refresh and
-  baseline advance cannot lose each other. iOS wraps its baseline
-  read-modify-write in a process-wide `NSLock`. Cross-process app/extension
-  writes remain unsynchronized in `UserDefaults`; that is documented as a
-  residual (a missed advance, never a lowered baseline).
+- **Account pin (review 1).** Android validates the server-verified `user_id`
+  against the id already stored on the device before persisting the identity or
+  storing/returning a token, on both `/account/register` and `/auth/verify`.
+  First registration/enrollment/recovery may pin a previously unknown id;
+  automatic re-authentication (including the recoverable-401 retry path) may
+  only confirm the existing pin. A hostile server that answers 401 and then
+  returns a different id is refused with the stored identity, token and
+  baseline namespace unchanged. `IdentityBinding.kt` holds the shared,
+  unit-tested decision used by production.
+- **Concurrency (review 5).** Android funnels every settings mutation through
+  one synchronized read-modify-write, commits synchronously (`commit`, not
+  `apply`), and publishes the new `StateFlow` value **inside the same lock**
+  after the commit. A slow older writer therefore cannot publish its stale
+  snapshot over a newer one. iOS wraps its baseline read-modify-write in a
+  process-wide `NSLock`. That is a single-syncing-writer-process guarantee
+  only (today the app's `AccountViewModel`; the AutoFill extension does not
+  sync). App Group `UserDefaults` has no cross-process transaction: a second
+  writer process could interleave whole-map get/set and **lower** a clock or
+  **erase other chunks/contexts**. No "never lower" or "re-admit once"
+  guarantee is claimed for that unsupported configuration.
 - **Baseline ordering and corruption (review 6).** Baselines are recorded only
-  after the admitted plaintext was decoded, merged and durably persisted
-  locally (`vault.replaceAll` / `repo.save`), and uploads only after every write
-  succeeded. A failed/partial batch records nothing. Unreadable baseline JSON
-  now fails closed and the original bytes are preserved on unrelated writes, so
+  after the admitted plaintext was decoded, merged and explicitly persisted
+  locally (`vault.replaceAllAdmitted` / `repo.save`), and uploads only after
+  every write succeeded. `replaceAllAdmitted` requires an unlocked RMS and a
+  successful write before it publishes or runs the baseline recorder; a lock
+  race (AutoLock during a background sync) or storage failure therefore leaves
+  the floors unchanged instead of advancing without a persistent vault.
+  `EncryptedVaultStore.save` now writes a temp file, syncs its data, and
+  atomically renames it over `vault.enc`. The parent-directory entry is not
+  fsynced (the Java/Android File API cannot), so power-loss durability of the
+  rename itself is an OS/filesystem guarantee we rely on, not one this change
+  proves. A failed/partial batch records nothing. Unreadable baseline JSON
+  fails closed and the original bytes are preserved on unrelated writes, so
   corruption cannot be laundered into an empty baseline; only an explicit reset
   clears it.
 - **Permit clock used (review 9).** Both bridges return the Lamport clock the
@@ -95,11 +116,16 @@ Gradle worker). Cargo reused the parent worktree's cache via
 | `existing-policy-proof.log` | `./verify-fstar.sh` (also runs the focused script) | **11 postconditions** unchanged, then 4 + 6 verified |
 | `android-bridge-tests.log` | `cargo test --locked --offline` in `libVELA/vela-android-bridge` | **28 passed, 0 failed** |
 | `apple-bridge-tests.log` | `cargo test --locked --offline` in `libVELA/vela-apple-bridge` | **18 passed, 0 failed** |
-| `android-kotlin-tests.log` | `sh ./gradlew --no-daemon --offline -Dorg.gradle.jvmargs=-Xmx1536m --max-workers=1 :app:testDebugUnitTest --tests 'com.vela.android.sync.*'` | **BUILD SUCCESSFUL; 26 tests, 0 failures** (`EpochSyncContractTest`: 7) |
+| `android-kotlin-tests.log` | `sh ./gradlew --no-daemon --offline -Dorg.gradle.jvmargs=-Xmx1536m --max-workers=1 :app:testDebugUnitTest` (full JVM unit suite) | **BUILD SUCCESSFUL; 139 tests, 0 failures** (`android-kotlin-tests.log` lists every class) |
 
 The Android count is from
-`app/build/test-results/testDebugUnitTest/*.xml` (`tests=26`,
-`failures=0`, `errors=0`), not from the bare `BUILD SUCCESSFUL` line.
+`app/build/test-results/testDebugUnitTest/*.xml` (`tests=139`,
+`failures=0`, `errors=0`), not from the bare `BUILD SUCCESSFUL` line. The
+focused sync/security/core subset alone is 69 tests; the earlier increment's
+sync-only count was 26. The Rust bridge and F* logs above are unchanged from
+`57d8bf6`: this correction does not edit `libVELA/vela-sync-policy`,
+`vela-android-bridge`, `vela-apple-bridge`, or the proof kernels, and they were
+not re-run here.
 
 New production-path tests cover: valid forward download and equal-clock
 redelivery; rollback against a recorded per-chunk clock; relabelled-clock and
@@ -112,28 +138,53 @@ epoch-1 chunk/clock binding; baseline namespacing, first-contact, epoch
 adoption restart, malformed-JSON fail-closed, and concurrent token/baseline
 writers in the Android JVM tests.
 
+The review-correction tests added here are:
+`IdentityBindingTest` (hostile `/auth/verify` returns a different user id after
+a 401: automatic re-auth is refused, first pin only for registration/recovery,
+stored pin and baseline unchanged on failure); `SyncSettingsPublicationTest`
+(controlled T1/T2 interleaving through the real `StateFlow` publication path,
+failed commit publishes nothing, 8 concurrent token/baseline writers);
+`LocalVaultAdmissionTest` (locked RMS and storage failure leave the baseline
+recorder uncalled); `EncryptedVaultStoreTest.saveReplacesThroughATemporaryFile…`
+(atomic replacement leaves no temp copy); and `AdmittedChunkFailureTest`
+(legacy-unsealed refusal maps to an actionable migration error, rollback
+refusals are not relabelled).
+
 ## Open (not claimed)
 
 - **Swift could not be compiled or executed on this Linux host** (neither
   `swift` nor `swiftc` is installed). Caller-level Swift tests were updated and
   added (admitted-chunk policy, per-context namespacing/switching back,
   concurrent baseline writers, failed-decode-before-persist ordering) but are
-  unrun here. Only the Apple Rust C-ABI bridge was executed.
+  unrun here. The new iOS `legacyChunkNeedsMigration` error path and the
+  throwing FFI wrapper are also unrun. Only the Apple Rust C-ABI bridge was
+  executed.
 - Rust JSON envelope parsing, JNI/C buffer handling, Kotlin/Swift language
   semantics and the exact FFI glue remain implementation-correspondence gaps.
-- Crash atomicity between local vault persistence and baseline commit is not
-  proved: a crash in the window re-admits one revision, it cannot lower a
-  baseline. Android `EncryptedSharedPreferences` durability beyond a successful
-  `commit()` is an OS guarantee taken as trusted.
-- iOS cross-process (app vs. share extension) baseline writes are not
-  serialized; App Group `UserDefaults` has no cross-process transaction. The
-  failure direction is a missed advance, documented in `SyncEngine`.
+  Nothing in this increment proves what the Swift compiler, JNI marshalling,
+  Keystore/Keychain, or the filesystem actually do; those remain trusted
+  OS/compiler/primitives boundaries.
+- Local vault persistence is now temp-file + fd sync + same-directory atomic
+  rename, with a check that refuses a filesystem that cannot rename atomically.
+  The parent directory is not fsynced, so the rename's survival across sudden
+  power loss is an OS/filesystem guarantee taken as trusted. The Android
+  `EncryptedSharedPreferences.commit()` durability boundary is likewise an OS
+  guarantee, and the crash window between a successful vault persist and the
+  baseline commit can still re-admit one revision (it cannot lower a baseline).
+- iOS cross-process baseline writes are **not** serialized: the `NSLock` only
+  covers one writer process. If a second process ever synced, its whole-map
+  `UserDefaults` read-modify-write could lower a clock and erase other
+  chunks/contexts. The code and this evidence make no "never lower" or
+  "re-admit once" claim under that configuration; an App Group file lock or a
+  transactional store would be required.
 - Pre-C-2 **unsealed/clock-0** blobs must be re-sealed through an explicit
   migration path (trusted client, current epoch); they cannot be admitted
-  as-is. That migration path is **not implemented in this increment**: the
-  low-level readers remain for it, but a legacy unsealed server blob now fails
-  the mobile sync closed (visible error, no automatic downgrade of the gate).
-  No rollback-protection claim is made for such data.
+  as-is. The bridge still refuses them, and the Android and iOS production
+  callers now surface a distinct "legacy unsealed chunk needs explicit
+  migration" error instead of a generic unreadable/rollback failure. That
+  migration path is **not implemented in this increment**; no
+  rollback-protection claim is made for such data, and the gate was not
+  weakened.
 - Legacy un-namespaced baseline keys are deliberately not migrated (they cannot
   be attributed to a context after the fact): the first sync after upgrading is
   an explicit first contact, and reset removes the old keys. On Android this
@@ -143,6 +194,10 @@ writers in the Android JVM tests.
   mis-attributing a foreign context's clock. On iOS the old per-chunk keys are
   likewise ignored. This trade is deliberate; server-side whole-vault
   enforcement is unaffected.
+- Sign-out (iOS) / local-security reset (Android) currently clear **all**
+  baseline contexts because an install holds one account. If multi-account
+  support lands, clearing must become account-scoped; otherwise signing out
+  one account would erase another account's rollback floors.
 - The caller-supplied `EpochAdoptionFacts::server_epoch_is_next` transition flag
   on the existing adoption path is unchanged and remains outside the verified
   decision for clients that adopt rotations.

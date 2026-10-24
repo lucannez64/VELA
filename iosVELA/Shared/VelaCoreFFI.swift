@@ -409,7 +409,18 @@ enum VelaCoreFFI {
         let lamportClock: Int64
     }
 
-    static func decryptVaultChunkAdmitted(
+    enum AdmissionError: Error {
+        /// The Rust bridge refused admission. The string is the bridge's own
+        /// message (never a value supplied by the server response body).
+        case refused(String)
+    }
+
+    /// Production variant that preserves the refusal reason so the caller can
+    /// distinguish a legacy-unsealed chunk (needs explicit migration) from a
+    /// rollback/auth failure. The optional-returning
+    /// `decryptVaultChunkAdmitted` remains for existing callers/tests and is a
+    /// thin `try?` wrapper.
+    static func decryptVaultChunkAdmittedOrThrow(
         rms: Data,
         chunkID: String,
         ciphertextBase64: String,
@@ -417,7 +428,7 @@ enum VelaCoreFFI {
         keyEpoch: Int,
         localKeyEpoch: Int,
         lastSeenLamport: Int64?
-    ) -> AdmittedChunk? {
+    ) throws -> AdmittedChunk {
         var request: [String: Any] = [
             "chunk_id": chunkID,
             "ciphertext_b64": ciphertextBase64,
@@ -433,11 +444,38 @@ enum VelaCoreFFI {
                 consume(vela_ffi_decrypt_admitted_vault_chunk_json(rmsPtr, rmsLen, req))
             }
         }
-        guard let vaultJSON = field(response, "vault_json") else { return nil }
         guard let data = response.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let clock = object["lamport_clock"] as? NSNumber else { return nil }
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw AdmissionError.refused("empty admission response")
+        }
+        if let error = object["error"] as? String {
+            throw AdmissionError.refused(error)
+        }
+        guard let vaultJSON = object["vault_json"] as? String,
+              let clock = object["lamport_clock"] as? NSNumber else {
+            throw AdmissionError.refused("malformed admission response")
+        }
         return AdmittedChunk(vaultJSON: vaultJSON, lamportClock: clock.int64Value)
+    }
+
+    static func decryptVaultChunkAdmitted(
+        rms: Data,
+        chunkID: String,
+        ciphertextBase64: String,
+        lamportClock: Int64,
+        keyEpoch: Int,
+        localKeyEpoch: Int,
+        lastSeenLamport: Int64?
+    ) -> AdmittedChunk? {
+        try? decryptVaultChunkAdmittedOrThrow(
+            rms: rms,
+            chunkID: chunkID,
+            ciphertextBase64: ciphertextBase64,
+            lamportClock: lamportClock,
+            keyEpoch: keyEpoch,
+            localKeyEpoch: localKeyEpoch,
+            lastSeenLamport: lastSeenLamport
+        )
     }
 
     // MARK: - Web sessions

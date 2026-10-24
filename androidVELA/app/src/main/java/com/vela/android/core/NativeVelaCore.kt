@@ -157,21 +157,29 @@ object NativeVelaCore {
         localKeyEpoch: Long,
         lastSeenLamport: Long?,
     ): AdmittedChunk? {
-        return callNative {
-            val request = JSONObject()
-                .put("chunk_id", chunkId)
-                .put("ciphertext_b64", Base64.getEncoder().encodeToString(ciphertext))
-                .put("lamport_clock", lamportClock)
-                .put("key_epoch", keyEpoch)
-                .put("local_key_epoch", localKeyEpoch)
-                .apply { lastSeenLamport?.let { put("last_seen_lamport", it) } }
-                .toString()
-            val response = JSONObject(nativeDecryptAdmittedVaultChunkJson(rms, request))
-            response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
-            AdmittedChunk(
-                vaultJson = response.getString("vault_json"),
-                lamportClock = response.getLong("lamport_clock"),
-            )
+        return try {
+            callNative {
+                val request = JSONObject()
+                    .put("chunk_id", chunkId)
+                    .put("ciphertext_b64", Base64.getEncoder().encodeToString(ciphertext))
+                    .put("lamport_clock", lamportClock)
+                    .put("key_epoch", keyEpoch)
+                    .put("local_key_epoch", localKeyEpoch)
+                    .apply { lastSeenLamport?.let { put("last_seen_lamport", it) } }
+                    .toString()
+                val response = JSONObject(nativeDecryptAdmittedVaultChunkJson(rms, request))
+                response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
+                AdmittedChunk(
+                    vaultJson = response.getString("vault_json"),
+                    lamportClock = response.getLong("lamport_clock"),
+                )
+            }
+        } catch (e: Throwable) {
+            // Surface the one legacy case with an actionable message. The Rust
+            // bridge still refuses it (the gate is not weakened); this only
+            // stops the production caller from reporting it as a generic
+            // unreadable/rollback chunk.
+            throw mapAdmittedChunkFailure(e)
         }
     }
 
@@ -688,3 +696,33 @@ data class AdmittedShare(
     val pin: SharePin,
     val senderFingerprint: String,
 )
+
+/**
+ * The server supplied a pre-C-2 unsealed chunk. Admission is deliberately
+ * refused because that ciphertext binds neither the chunk id nor the clock, so
+ * no rollback decision about it would mean anything. This is distinct from a
+ * generic decrypt/rollback refusal: the user needs the explicit migration path
+ * (re-seal on a trusted client), not a "sync again" retry.
+ */
+class VaultChunkNeedsMigrationException(message: String) : IllegalStateException(message)
+
+/**
+ * Map the native bridge's generic failure into the actionable legacy-migration
+ * error when that is what Rust refused. Exact text match is intentional: the
+ * Rust bridge is the authority that made the decision and this code must not
+ * infer it from the ciphertext shape (and must not weaken the gate). Keep in
+ * sync with `open_admitted_fleet_chunk` in the Android bridge.
+ */
+internal fun mapAdmittedChunkFailure(cause: Throwable): Throwable {
+    val detail = cause.message.orEmpty()
+    if (!detail.contains(LEGACY_UNSEALED_REFUSAL_MARKER)) return cause
+    return VaultChunkNeedsMigrationException(
+        "The server returned a legacy unsealed vault chunk, which binds neither its chunk " +
+            "id nor its revision. VELA cannot apply rollback protection to it and refuses " +
+            "to admit it. Re-seal the vault through the explicit migration path on a " +
+            "trusted client before syncing."
+    )
+}
+
+private const val LEGACY_UNSEALED_REFUSAL_MARKER =
+    "legacy unsealed chunk ciphertext cannot be admitted"

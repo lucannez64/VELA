@@ -66,6 +66,30 @@ class LocalVaultRepository(
         persistIfUnlocked()
     }
 
+    /**
+     * Replace the vault for a path that has already accepted untrusted remote
+     * bytes, and require the replacement to be durably written before any
+     * rollback baseline may advance.
+     *
+     * The normal [replaceAll] intentionally tolerates a concurrent AutoLock by
+     * leaving the in-memory value ahead of disk (other UI callers rely on the
+     * no-op). An admitted sync must not: if the RMS disappeared mid-download,
+     * silently dropping the write and then recording the admitted clocks would
+     * let a retry look like a rollback. [afterPersist] runs only after
+     * [EncryptedVaultStore.save] succeeded, so a locked or failing store leaves
+     * the baselines untouched.
+     */
+    fun <T> replaceAllAdmitted(candidate: VaultStore, afterPersist: () -> T): T =
+        persistVaultThenRecord(
+            rms = secureVaultManager.currentRmsCopy(),
+            save = { rms -> encryptedVaultStore.save(rms, candidate) },
+            afterPersist = {
+                store = candidate
+                publish()
+                afterPersist()
+            },
+        )
+
     fun encryptSnapshotForSync(
         rms: ByteArray,
         chunkId: String,
@@ -493,6 +517,33 @@ class LocalVaultRepository(
             rms.fill(0)
         }
     }
+}
+
+/**
+ * Persist an admitted replacement before running [afterPersist], which is where
+ * rollback baselines are recorded.
+ *
+ * Kept outside [LocalVaultRepository] so it can be unit-tested without an
+ * Android context: a missing RMS (AutoLock raced the sync) or a storage
+ * failure must throw before [afterPersist] runs, leaving the baseline
+ * untouched. Android's SharedPreferences/keystore durability guarantees are
+ * taken as trusted OS behavior, not proved here.
+ */
+internal fun <T> persistVaultThenRecord(
+    rms: ByteArray?,
+    save: (ByteArray) -> Unit,
+    afterPersist: () -> T,
+): T {
+    val unlockedRms = rms ?: error(
+        "The vault locked while downloaded data was being applied. Unlock VELA and " +
+            "sync again; no rollback baseline was advanced."
+    )
+    try {
+        save(unlockedRms)
+    } finally {
+        unlockedRms.fill(0)
+    }
+    return afterPersist()
 }
 
 object VelaRepositories {

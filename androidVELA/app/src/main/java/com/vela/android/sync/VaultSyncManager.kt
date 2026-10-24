@@ -83,9 +83,12 @@ class VaultSyncManager(
             block(client, token)
         } catch (e: ServerUnauthorizedException) {
             if (!e.isRecoverableTokenFailure() || settings.bearerToken.isBlank()) throw e
-            settingsStore.updateBearerToken("")
             client.clearLatestSessionToken()
-            val freshToken = authenticatedToken(client, "")
+            // Re-authentication may not change the already-pinned account. If
+            // the server answers with a different user id this throws before
+            // the stored identity or token is touched, so the baseline
+            // namespace cannot move to a fresh, empty set of counters.
+            val freshToken = authenticatedToken(client, "", IdentityBindingMode.EXISTING)
             settingsStore.updateBearerToken(freshToken)
             block(client, freshToken)
         } finally {
@@ -118,7 +121,7 @@ class VaultSyncManager(
             hybridVkB64 = payload.hybridVkB64
         )
 
-        val token = authenticateOrRegister(client)
+        val token = authenticateOrRegister(client, IdentityBindingMode.INITIAL)
         val capsule = client.getCapsule(token)
         val rms = NativeVelaCore.decryptRmsCapsule(payload.transferKeyB64, capsule.capsuleB64)
             ?: error("Native VELA bridge could not decrypt enrollment capsule")
@@ -185,7 +188,7 @@ class VaultSyncManager(
         identityStore.save(identity.copy(deviceId = deviceId))
 
         val client = AndroidVelaApiClient(settingsStore.settings.value.serverUrl, context)
-        val token = authenticateOrRegister(client)
+        val token = authenticateOrRegister(client, IdentityBindingMode.INITIAL)
         val capsule = client.getCapsule(token)
 
         val handle = identityStore.handle() ?: error("This device has no identity")
@@ -496,7 +499,7 @@ class VaultSyncManager(
 
         identityStore.save(identity.copy(userId = userId, deviceId = deviceId))
 
-        val token = authenticateOrRegister(client)
+        val token = authenticateOrRegister(client, IdentityBindingMode.INITIAL)
         adoptRmsAtCurrentEpoch(
             client = client,
             token = token,
@@ -560,10 +563,12 @@ class VaultSyncManager(
                 val scope = baselineScope()
                 val remoteResult = downloadRemoteVault(
                     client, token, rms, downloadChunkIds, manifest, settings.keyEpoch, scope)
-                vault.replaceAll(remoteResult.vault)
-                // Only after the bytes are durably in the local vault.
-                settingsStore.recordAdmittedBaselines(
-                    scope, remoteResult.admittedClocks, remoteResult.manifestLamport)
+                // Persist before recording: a lock or storage failure throws
+                // here and leaves the rollback floors unchanged.
+                vault.replaceAllAdmitted(remoteResult.vault) {
+                    settingsStore.recordAdmittedBaselines(
+                        scope, remoteResult.admittedClocks, remoteResult.manifestLamport)
+                }
                 markSynced(remoteResult.token, remoteResult.version, remoteResult.lamportClock, null)
             }
         } catch (e: Exception) {
@@ -639,9 +644,10 @@ class VaultSyncManager(
             val remoteResult = downloadRemoteVault(
                 client, token, rms, downloadChunkIds, manifest, settings.keyEpoch, scope)
             token = remoteResult.token
-            vault.replaceAll(remoteResult.vault)
-            settingsStore.recordAdmittedBaselines(
-                scope, remoteResult.admittedClocks, remoteResult.manifestLamport)
+            vault.replaceAllAdmitted(remoteResult.vault) {
+                settingsStore.recordAdmittedBaselines(
+                    scope, remoteResult.admittedClocks, remoteResult.manifestLamport)
+            }
             return markSynced(
                 token = token,
                 version = remoteResult.version,
@@ -655,9 +661,10 @@ class VaultSyncManager(
                 client, token, rms, downloadChunkIds, manifest, settings.keyEpoch, scope)
             token = remoteResult.token
             val mergedVault = mergeVaultStores(localSnapshot, remoteResult.vault)
-            vault.replaceAll(mergedVault)
-            settingsStore.recordAdmittedBaselines(
-                scope, remoteResult.admittedClocks, remoteResult.manifestLamport)
+            vault.replaceAllAdmitted(mergedVault) {
+                settingsStore.recordAdmittedBaselines(
+                    scope, remoteResult.admittedClocks, remoteResult.manifestLamport)
+            }
 
             val nextLamport = maxOf(settings.lamportClock, remoteResult.lamportClock) + 1
             val uploaded = uploadVaultChunks(
@@ -676,9 +683,10 @@ class VaultSyncManager(
                 client, token, rms, downloadChunkIds, manifest, settings.keyEpoch, scope)
             token = remoteResult.token
             val mergedVault = mergeVaultStores(localSnapshot, remoteResult.vault)
-            vault.replaceAll(mergedVault)
-            settingsStore.recordAdmittedBaselines(
-                scope, remoteResult.admittedClocks, remoteResult.manifestLamport)
+            vault.replaceAllAdmitted(mergedVault) {
+                settingsStore.recordAdmittedBaselines(
+                    scope, remoteResult.admittedClocks, remoteResult.manifestLamport)
+            }
             val nextLamport = maxOf(settings.lamportClock, remoteResult.lamportClock) + 1
             val uploaded = uploadVaultChunks(
                 client = client,
@@ -706,9 +714,10 @@ class VaultSyncManager(
             val remoteResult = downloadRemoteVault(
                 client, token, rms, downloadChunkIds, manifest, settings.keyEpoch, scope)
             token = remoteResult.token
-            vault.replaceAll(mergeVaultStores(localSnapshot, remoteResult.vault))
-            settingsStore.recordAdmittedBaselines(
-                scope, remoteResult.admittedClocks, remoteResult.manifestLamport)
+            vault.replaceAllAdmitted(mergeVaultStores(localSnapshot, remoteResult.vault)) {
+                settingsStore.recordAdmittedBaselines(
+                    scope, remoteResult.admittedClocks, remoteResult.manifestLamport)
+            }
             val nextLamport = maxOf(settings.lamportClock, remoteResult.lamportClock) + 1
             val uploaded = uploadVaultChunks(
                 client = client,
@@ -743,8 +752,11 @@ class VaultSyncManager(
             ManifestDownload(manifest = manifest, token = startToken, newToken = newToken)
         } catch (e: ServerUnauthorizedException) {
             if (!e.isRecoverableTokenFailure() || settings.bearerToken.isBlank()) throw e
-            settingsStore.updateBearerToken("")
-            val freshToken = authenticatedToken(client, "")
+            // Same rule as withAuthenticatedClient: the retry is an automatic
+            // re-authentication and may not switch the pinned account or move
+            // the baseline namespace. The stored token is left unchanged when
+            // the server contradicts the pin.
+            val freshToken = authenticatedToken(client, "", IdentityBindingMode.EXISTING)
             settingsStore.updateBearerToken(freshToken)
             val (manifest, newToken) = client.getSyncManifest(freshToken)
             ManifestDownload(manifest = manifest, token = freshToken, newToken = newToken)
@@ -797,14 +809,48 @@ class VaultSyncManager(
             registration.getOrNull()
         }
 
-    private fun authenticateOrRegister(client: AndroidVelaApiClient): String {
-        var identity = identityStore.getOrCreate()
+    /**
+     * Register or re-authenticate this device.
+     *
+     * [binding] distinguishes a deliberate first pin (registration, enrollment,
+     * recovery) from automatic re-authentication. Both paths validate the
+     * server's user id *before* persisting it or returning a token: the caller
+     * that then writes that token must never be able to move the per-account
+     * rollback baseline namespace just because a hostile server answered 401
+     * and returned someone else's id.
+     */
+    private fun authenticateOrRegister(
+        client: AndroidVelaApiClient,
+        binding: IdentityBindingMode,
+    ): String {
+        // Automatic re-authentication must not even create/replace an identity:
+        // if nothing is stored, there is no pin to confirm and the baseline
+        // namespace is already unknown.
+        var identity = if (binding == IdentityBindingMode.EXISTING) {
+            identityStore.load() ?: throw IdentityBindingException(
+                "This device has no stored identity, so it cannot re-authenticate " +
+                    "automatically. Enroll or sign in again."
+            )
+        } else {
+            identityStore.getOrCreate()
+        }
         if (identity.deviceId.isNullOrBlank()) {
+            if (binding == IdentityBindingMode.EXISTING) {
+                throw IdentityBindingException(
+                    "This device has no registered identity, so it cannot re-authenticate " +
+                        "automatically. Enroll or sign in again."
+                )
+            }
             val registered = client.registerAccount(identity)
-            identity = identity.copy(userId = registered.userId, deviceId = registered.deviceId)
-            identityStore.save(identity)
+            val pinnedUserId = bindVerifiedUserId(binding, identity.userId, registered.userId)
+            val registeredIdentity = identity.copy(
+                userId = pinnedUserId,
+                deviceId = registered.deviceId,
+            )
+            identityStore.save(registeredIdentity)
             settingsStore.updateKeyEpoch(1)
             registered.token?.takeIf { it.isNotBlank() }?.let { return it }
+            identity = registeredIdentity
         }
 
         val deviceId = identity.deviceId ?: error("Server identity has no device id")
@@ -823,7 +869,10 @@ class VaultSyncManager(
             challengeB64 = challenge.challengeB64,
             signature = signature
         )
-        identityStore.save(identity.copy(userId = verified.userId))
+        // Validate before saving the identity and before the caller can persist
+        // the returned token. On a mismatch this throws with both untouched.
+        val pinnedUserId = bindVerifiedUserId(binding, identity.userId, verified.userId)
+        identityStore.save(identity.copy(userId = pinnedUserId))
         return verified.token
     }
 
@@ -852,8 +901,11 @@ class VaultSyncManager(
         }
     }
 
-    private fun authenticatedToken(client: AndroidVelaApiClient, cachedToken: String): String =
-        cachedToken.ifBlank { authenticateOrRegister(client) }
+    private fun authenticatedToken(
+        client: AndroidVelaApiClient,
+        cachedToken: String,
+        binding: IdentityBindingMode = IdentityBindingMode.INITIAL,
+    ): String = cachedToken.ifBlank { authenticateOrRegister(client, binding) }
 
     /**
      * Refuse a manifest that puts every chunk behind the revision this device

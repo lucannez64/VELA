@@ -85,12 +85,13 @@ class SyncSettingsStore(context: Context) {
     private val prefs = EncryptedPrefs.open(context, "vela_sync")
 
     // Every mutation, from whichever thread (UI, token renewal, sync), runs
-    // through one serialized cell and commits synchronously. See
-    // [SerializedSettings]: that is what stops a concurrent token refresh from
-    // persisting a snapshot taken before a baseline update (or vice versa).
-    private val state = SerializedSettings(read()) { persist(it) }
-    private val _settings = MutableStateFlow(state.current)
-    val settings: StateFlow<SyncSettings> = _settings
+    // through one serialized cell and commits synchronously. The published
+    // `StateFlow` value is updated by [SyncSettingsState] while that same lock
+    // is still held: see [SerializedSettings]. Publishing after releasing the
+    // lock would let a slow T1 overwrite the flow with its older snapshot
+    // after a newer T2 had already published, leaving memory behind disk.
+    private val state = SyncSettingsState(read(), ::persist)
+    val settings: StateFlow<SyncSettings> = state.settings
 
     fun updateServer(serverUrl: String, bearerToken: String) {
         update {
@@ -192,6 +193,11 @@ class SyncSettingsStore(context: Context) {
      * Deliberate context transition only: sign-out / local-security reset. This
      * is the recovery action the rollback error message points at — normal
      * server updates and epoch adoption must never call it.
+     *
+     * Today an install stores a single account, so clearing every context is
+     * the same as clearing this account's contexts. If multi-account support
+     * lands, this must become account-scoped: signing out one account must not
+     * erase another account's rollback floors.
      */
     fun clearBaselines() {
         update {
@@ -205,9 +211,8 @@ class SyncSettingsStore(context: Context) {
         }
     }
 
-    private fun update(transform: (SyncSettings) -> SyncSettings) {
-        _settings.value = state.update(transform)
-    }
+    private fun update(transform: (SyncSettings) -> SyncSettings): SyncSettings =
+        state.update(transform)
 
     private fun read(): SyncSettings {
         val rawSeen = prefs.getString(KEY_SEEN_LAMPORTS, null)
@@ -326,6 +331,32 @@ internal fun normalizeSyncServerUrl(url: String): String {
 }
 
 /**
+ * The in-memory/persisted sync-settings cell used by [SyncSettingsStore].
+ *
+ * Extracted from that Android-backed store so tests can drive the exact
+ * production publication path (a real [StateFlow] plus the same serialized
+ * commit) under controlled interleavings. [persist] is responsible for the
+ * platform write and must be synchronous.
+ */
+internal class SyncSettingsState(
+    initial: SyncSettings,
+    persist: (SyncSettings) -> SyncSettings,
+) {
+    private val _settings = MutableStateFlow(initial)
+    val settings: StateFlow<SyncSettings> = _settings
+    private val cell = SerializedSettings(initial, persist) { published ->
+        // Called from inside SerializedSettings' lock, after the durable
+        // commit and before that lock is released.
+        _settings.value = published
+    }
+
+    val current: SyncSettings get() = cell.current
+
+    fun update(transform: (SyncSettings) -> SyncSettings): SyncSettings =
+        cell.update(transform)
+}
+
+/**
  * Serializes one read-modify-write cell.
  *
  * The store used to build `_settings.value.copy(...)` outside any lock and
@@ -333,10 +364,16 @@ internal fun normalizeSyncServerUrl(url: String): String {
  * commit — could read the same snapshot, and whichever `apply()` landed last
  * would resurrect the older field (a lost update that can silently lower the
  * rollback baseline or drop a renewed token). Here every mutation runs under a
- * single lock, [persist] must commit synchronously, and only then is the new
- * value published, so each writer transforms the latest committed state.
+ * single lock, [persist] must commit synchronously, and [publish] runs *before
+ * the lock is released*, so a slower older writer cannot overwrite a newer
+ * value in the StateFlow after its own commit. If [persist] throws, neither the
+ * cell nor the published value changes.
  */
-internal class SerializedSettings<S>(initial: S, private val persist: (S) -> S) {
+internal class SerializedSettings<S>(
+    initial: S,
+    private val persist: (S) -> S,
+    private val publish: (S) -> Unit = {},
+) {
     private val lock = Any()
 
     @Volatile
@@ -348,6 +385,7 @@ internal class SerializedSettings<S>(initial: S, private val persist: (S) -> S) 
     fun update(transform: (S) -> S): S = synchronized(lock) {
         val next = persist(transform(state))
         state = next
+        publish(next)
         next
     }
 }

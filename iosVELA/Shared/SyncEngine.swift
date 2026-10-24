@@ -35,6 +35,11 @@ struct SyncEngine {
         /// silently drop rollback protection for every chunk, so sync refuses
         /// until the user performs a deliberate reset.
         case baselineCorrupt
+        /// A pre-C-2 unsealed chunk cannot be admitted: it binds neither chunk
+        /// id nor clock, so the rollback decision would be meaningless. This is
+        /// distinct from a generic unreadable chunk because it needs the
+        /// explicit migration path, not a retry.
+        case legacyChunkNeedsMigration(chunkID: String)
 
         var errorDescription: String? {
             switch self {
@@ -57,6 +62,12 @@ struct SyncEngine {
                 return "The saved sync rollback baseline is unreadable, so VELA "
                     + "cannot tell a replay from a new revision. Sign out and back "
                     + "in (or reset local security) to start a fresh baseline."
+            case let .legacyChunkNeedsMigration(chunkID):
+                return "The server returned a legacy unsealed vault chunk "
+                    + "(\(chunkID)) that carries no chunk or revision binding, so "
+                    + "VELA cannot detect a rollback. Sync was refused. Re-seal the "
+                    + "vault through the explicit migration path on a trusted "
+                    + "device before syncing again."
             }
         }
     }
@@ -82,12 +93,21 @@ struct SyncEngine {
     /// user-triggered sync and the periodic one) cannot lose each other's
     /// advances: every update re-reads the latest committed JSON under the lock.
     ///
-    /// It does **not** serialize the app against the share extension. App Group
-    /// `UserDefaults` has no cross-process transaction, so a write racing
-    /// across processes can still lose the other side's most recent advance.
-    /// That failure direction is a missed baseline (one chunk can be
-    /// re-admitted once), never a lowered one; it is a documented residual, not
-    /// a claim of atomicity.
+    /// This is a **single-syncing-writer-process** guarantee only. Today the
+    /// app's `AccountViewModel` is the only sync writer; the AutoFill extension
+    /// reads the vault but does not run sync. App Group `UserDefaults` has no
+    /// cross-process transaction, so if a second process ever writes these
+    /// whole-map keys, its get/set can interleave with this one and:
+    ///
+    /// - lower a recorded chunk or manifest clock (a stale map replaces a newer
+    ///   one), and
+    /// - erase baselines for other chunks or sync contexts that were added
+    ///   between its read and write.
+    ///
+    /// No "never lower" or "re-admit once" property is claimed under that
+    /// unsupported second-writer configuration. Cross-process safety requires
+    /// an App Group file lock or a transactional store, neither of which is
+    /// implemented here.
     private static let baselineLock = NSLock()
 
     private static func sharedDefaults() -> UserDefaults {
@@ -154,7 +174,8 @@ struct SyncEngine {
     /// Commit baselines for this context. Callers must invoke this only after
     /// the bytes are durably persisted locally; a failed or partial batch must
     /// record nothing, or a retry would look like a rollback. Merges (max),
-    /// never replaces, so a stale writer cannot lower a baseline.
+    /// never replaces, so a stale writer **within this process** cannot lower a
+    /// baseline. This is not a cross-process guarantee; see `baselineLock`.
     func recordAdmitted(chunks: [(id: String, clock: Int)], manifestClock: Int) throws {
         guard !chunks.isEmpty || manifestClock > 0 else { return }
         try Self.withBaselineLock {
@@ -186,6 +207,12 @@ struct SyncEngine {
     /// Deliberate sign-out / local-security reset only. This is the recovery
     /// action the rollback message points at; routine server changes and epoch
     /// adoption must never call it.
+    ///
+    /// Today each install holds one account, so clearing every context is the
+    /// same as clearing the signing-out account's contexts. If multi-account
+    /// support lands, sign-out must clear only the departing account's
+    /// namespace; otherwise signing out one account would erase another
+    /// account's rollback floors.
     static func clearBaselines() {
         withBaselineLock {
             let defaults = sharedDefaults()
@@ -279,14 +306,22 @@ struct SyncEngine {
         for id in readIDs {
             let fetched = try await client.getChunk(id)
             let serverClock = Int64(byID[id]?.lamport_clock ?? 0)
-            guard let piece = VelaCoreFFI.decryptVaultChunkAdmitted(
-                rms: rms,
-                chunkID: id,
-                ciphertextBase64: fetched.ciphertextBase64,
-                lamportClock: serverClock,
-                keyEpoch: manifest.epoch,
-                localKeyEpoch: keyEpoch,
-                lastSeenLamport: try recordedSeenClock(for: id)) else {
+            let piece: VelaCoreFFI.AdmittedChunk
+            do {
+                piece = try VelaCoreFFI.decryptVaultChunkAdmittedOrThrow(
+                    rms: rms,
+                    chunkID: id,
+                    ciphertextBase64: fetched.ciphertextBase64,
+                    lamportClock: serverClock,
+                    keyEpoch: manifest.epoch,
+                    localKeyEpoch: keyEpoch,
+                    lastSeenLamport: try recordedSeenClock(for: id))
+            } catch VelaCoreFFI.AdmissionError.refused(let reason) where reason.contains("legacy unsealed chunk ciphertext cannot be admitted") {
+                // The bridge still refuses admission (the gate is unchanged);
+                // only the caller's error becomes actionable: this needs the
+                // explicit migration path, not a sync retry.
+                throw SyncError.legacyChunkNeedsMigration(chunkID: id)
+            } catch {
                 // A failed decrypt or a refused rollback used to be skipped
                 // silently; the truncated merge was then pushed back, making
                 // the loss durable. Fail the sync instead — the local vault

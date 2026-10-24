@@ -122,7 +122,7 @@ class EpochSyncContractTest {
         // writers against the serialized cell and requires every update to
         // survive.
         val initial = SerializedProbeState("token-0", emptyMap())
-        val cell = SerializedSettings(initial) { it }
+        val cell = SerializedSettings(initial, persist = { it })
         val writers = 8
         val iterations = 200
         val start = CountDownLatch(1)

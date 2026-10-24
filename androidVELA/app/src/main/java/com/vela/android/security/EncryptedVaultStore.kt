@@ -3,9 +3,15 @@ package com.vela.android.security
 import com.vela.android.core.NativeVelaCore
 import com.vela.android.core.VaultJson
 import com.vela.android.core.VaultStore
+import java.io.BufferedOutputStream
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.File
+import java.io.FileOutputStream
+import java.io.IOException
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.security.SecureRandom
 import javax.crypto.Cipher
@@ -103,8 +109,7 @@ class EncryptedVaultStore(private val storeDir: File) {
     }
 
     private fun writeKotlinBlob(iv: ByteArray, ciphertext: ByteArray) {
-        storeDir.mkdirs()
-        DataOutputStream(vaultFile.outputStream()).use { out ->
+        writeAtomically { out ->
             out.writeInt(VERSION_KOTLIN)
             out.writeInt(iv.size)
             out.write(iv)
@@ -114,11 +119,57 @@ class EncryptedVaultStore(private val storeDir: File) {
     }
 
     private fun writeNativeBlob(payload: ByteArray) {
-        storeDir.mkdirs()
-        DataOutputStream(vaultFile.outputStream()).use { out ->
+        writeAtomically { out ->
             out.writeInt(VERSION_NATIVE)
             out.writeInt(payload.size)
             out.write(payload)
+        }
+    }
+
+    /**
+     * Write to a fresh file, flush it to the storage layer, then rename it over
+     * `vault.enc`.
+     *
+     * This replaces the previous in-place `vaultFile.outputStream()`, which
+     * truncates the live file before the new bytes are written: a crash,
+     * storage failure, or a second writer could leave a partial vault with no
+     * valid copy. A same-directory rename is atomic with respect to readers
+     * on Android/Linux, so `load` sees either the old complete file or the new
+     * complete file.
+     *
+     * Honest durability boundary: `FileDescriptor.sync()` flushes the temp
+     * file's data before the rename. The parent directory entry itself is not
+     * fsynced (the Java/Android File API cannot open a directory descriptor
+     * here), so the rename's survival across sudden power loss is an OS
+     * filesystem guarantee we rely on, not something this code proves.
+     */
+    private fun writeAtomically(write: (DataOutputStream) -> Unit) {
+        storeDir.mkdirs()
+        val temporary = File.createTempFile("vault", ".enc.tmp", storeDir)
+        try {
+            FileOutputStream(temporary).use { fileOut ->
+                val out = DataOutputStream(BufferedOutputStream(fileOut))
+                write(out)
+                out.flush()
+                fileOut.fd.sync()
+            }
+            try {
+                Files.move(
+                    temporary.toPath(),
+                    vaultFile.toPath(),
+                    StandardCopyOption.ATOMIC_MOVE,
+                    StandardCopyOption.REPLACE_EXISTING,
+                )
+            } catch (e: AtomicMoveNotSupportedException) {
+                throw IOException(
+                    "The vault filesystem cannot replace vault.enc atomically; refusing " +
+                        "to leave a partially written vault.",
+                    e,
+                )
+            }
+        } catch (e: Throwable) {
+            temporary.delete()
+            throw e
         }
     }
 
