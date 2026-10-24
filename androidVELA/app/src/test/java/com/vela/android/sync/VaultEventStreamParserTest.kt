@@ -54,6 +54,15 @@ class VaultEventStreamParserTest {
     }
 
     @Test
+    fun `token rotation header is only accepted from a successful stream response`() {
+        assertEquals("rotated", eventStreamNewToken(200, "rotated"))
+        assertNull(eventStreamNewToken(401, "hostile"))
+        assertNull(eventStreamNewToken(403, "hostile"))
+        assertNull(eventStreamNewToken(500, "hostile"))
+        assertNull(eventStreamNewToken(204, " "))
+    }
+
+    @Test
     fun `parse event maps the server payload`() {
         val event = VaultEventStream.parseEvent(
             "{\"revision\":12,\"writer\":\"abc\",\"epoch\":3,\"kind\":\"oram\"}"

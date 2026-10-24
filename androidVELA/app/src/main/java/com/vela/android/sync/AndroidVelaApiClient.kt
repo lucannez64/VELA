@@ -156,7 +156,9 @@ interface VelaHttpTransport {
 
 class AndroidVelaApiClient(
     private val baseUrl: String,
-    context: Context? = null
+    context: Context? = null,
+    private val injectedTransport: VelaHttpTransport? = null,
+    private val deviceLabel: String? = null,
 ) {
     private val fallbackTransport = UrlConnectionTransport()
     private val h3Transport = if (baseUrl.startsWith("https://") && context != null) {
@@ -173,11 +175,18 @@ class AndroidVelaApiClient(
         latestNewToken = null
     }
 
+    /**
+     * Production builds read the model name from Android; tests inject a
+     * label so the real client can be exercised on a plain JVM without
+     * touching the unmocked Android framework.
+     */
+    private fun deviceName(): String = deviceLabel ?: android.os.Build.MODEL ?: "Android"
+
     fun registerAccount(identity: ServerIdentity): RegisterAccountResponse {
         val bodyObj = JSONObject()
             .put("hybrid_ek", identity.hybridEkB64)
             .put("hybrid_vk", identity.hybridVkB64)
-            .put("device_name", android.os.Build.MODEL ?: "Android")
+            .put("device_name", deviceName())
             .put("device_type", "android")
         if (identity.shareEkB64.isNotBlank() && !identity.shareEkSignature.isNullOrBlank()) {
             // M19: the initial share key must arrive device-signed.
@@ -207,7 +216,7 @@ class AndroidVelaApiClient(
             .put("device_id", deviceId)
             .put("challenge", challengeB64)
             .put("signature", signature)
-            .put("device_name", android.os.Build.MODEL ?: "Android")
+            .put("device_name", deviceName())
             .put("device_type", "android")
             .toString()
             .toByteArray(Charsets.UTF_8)
@@ -722,11 +731,16 @@ class AndroidVelaApiClient(
                 throw e
             }
         }
-        response.newToken?.takeIf { it.isNotBlank() }?.let { latestNewToken = it }
+        // A token refresh is only meaningful for a successful response. A 401
+        // can carry an attacker-chosen X-New-Token; never even collect it.
+        if (response.code in 200..299) {
+            response.newToken?.takeIf { it.isNotBlank() }?.let { latestNewToken = it }
+        }
         return response
     }
 
     private fun selectTransport(): VelaHttpTransport {
+        injectedTransport?.let { return it }
         selectedTransport?.let { return it }
         val candidate = h3Transport
         if (candidate != null) {

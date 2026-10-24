@@ -59,3 +59,50 @@ internal fun bindVerifiedUserId(
     }
     return verified
 }
+
+/**
+ * The account component of a rollback baseline namespace.
+ *
+ * A missing pin is not "the empty account". Treating it as one would create a
+ * fresh, empty namespace, so every previously recorded floor would be
+ * bypassed — exactly the failure a durable token with a lost/corrupt identity
+ * record would otherwise cause. Callers must fail closed and require an
+ * explicit re-enrollment or local reset instead.
+ */
+internal fun requireBaselineAccountId(pinnedUserId: String?): String {
+    val accountId = pinnedUserId?.trim().orEmpty()
+    if (accountId.isEmpty()) {
+        throw IdentityBindingException(
+            "This device has no readable account pin, so its rollback baseline namespace " +
+                "is unknown. Refusing to sync. Sign in or enroll again; if local " +
+                "security state is corrupt, reset local security deliberately."
+        )
+    }
+    return accountId
+}
+
+/**
+ * Reject sync requests before any network call when a durable bearer token
+ * exists but the identity record no longer yields an account id (corruption,
+ * interrupted write, or a truncated migration).
+ *
+ * A blank token is allowed: that is the fresh-install path that deliberately
+ * registers/enrolls and then pins the first account via
+ * [IdentityBindingMode.INITIAL]. Automatic re-authentication is always
+ * [IdentityBindingMode.EXISTING] and may never create a pin.
+ */
+internal fun requireSyncBaselineAccount(
+    hasDurableToken: Boolean,
+    pinnedUserId: String?,
+): String? {
+    val accountId = pinnedUserId?.trim()?.takeIf { it.isNotEmpty() }
+    if (hasDurableToken && accountId == null) {
+        throw IdentityBindingException(
+            "This device has a stored sync token but no readable account pin. Refusing to " +
+                "contact the server or use rollback baselines whose account context is " +
+                "unknown. Sign in or enroll again; if local security state is corrupt, " +
+                "reset local security deliberately."
+        )
+    }
+    return accountId
+}

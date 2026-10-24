@@ -140,8 +140,16 @@ class EncryptedVaultStore(private val storeDir: File) {
      * Honest durability boundary: `FileDescriptor.sync()` flushes the temp
      * file's data before the rename. The parent directory entry itself is not
      * fsynced (the Java/Android File API cannot open a directory descriptor
-     * here), so the rename's survival across sudden power loss is an OS
-     * filesystem guarantee we rely on, not something this code proves.
+     * here), so survival of the rename across sudden power loss is **not**
+     * ensured by this code. Depending on the filesystem, power loss can lose
+     * the replacement (and, in principle, leave the old file unreferenced).
+     * What is claimed is only reader atomicity: no reader sees a partial
+     * vault. `StandardCopyOption.ATOMIC_MOVE` requires API 26, which is this
+     * app's `minSdk`.
+     *
+     * Tests exercise this path on the Linux JVM; they do not prove what the
+     * Android filesystem or native crypto do on a real device or across a
+     * power cut.
      */
     private fun writeAtomically(write: (DataOutputStream) -> Unit) {
         storeDir.mkdirs()

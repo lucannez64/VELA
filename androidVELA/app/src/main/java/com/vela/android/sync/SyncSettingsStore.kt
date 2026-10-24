@@ -75,7 +75,9 @@ internal fun syncBaselineScope(
     keyEpoch: Long,
 ): SyncBaselineScope = SyncBaselineScope(
     serverUrl = normalizeSyncServerUrl(serverUrl),
-    accountId = accountId?.trim().orEmpty(),
+    // Never fall back to the empty account: that would silently start a fresh
+    // rollback namespace when the identity pin is missing or corrupt.
+    accountId = requireBaselineAccountId(accountId),
     keyEpoch = keyEpoch,
 )
 
