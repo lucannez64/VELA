@@ -313,6 +313,15 @@
         "serverVELA/vela-server/src/account/delete.rs": "2eecbb128e1022cf77c11e5309d94f76ab07ff38ae923e25f2c91a9c6ec63316",
         "serverVELA/vela-server/src/db.rs": "efca7cdb094c2165643ce2374f825a28a043b0c1d9e10dc7b753bb3006ba3503"
       }
+    },
+    {
+      "boundary": "bounded device revocation/logout conformance (depth 3) plus sentinel race projection; no cascade to approved web sessions; token crypto, real concurrency, TTL and multi-node stores not covered",
+      "artifacts": {
+        "serverVELA/vela-server/tests/device_revocation_model.rs": "76e711a9b4124ecb30a90cb49d1f2f74d2b892674774369863532fa069161060",
+        "serverVELA/vela-server/src/device/revoke.rs": "60bc411b9e464c2bfaf9c03fe2a8887423e4a990137cff641cecf205251cba4c",
+        "serverVELA/vela-server/src/auth/logout.rs": "f8c66c4910bb5f3096ef483d29040640c7850b05b1ab1b1d5dc945848073912b",
+        "serverVELA/vela-server/src/middleware.rs": "df390276cdb4adc43f5d323856b2869a5bfc1140024ccee19cf3a212482e308c"
+      }
     }
   ]
 }
