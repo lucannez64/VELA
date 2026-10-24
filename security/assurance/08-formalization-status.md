@@ -60,7 +60,7 @@ turn any open obligation below into a proved result.
 - **Reduced assumption boundary.** Structural Rust matches replaced the 18
   opaque derived-enum equality uses. Fresh checking of all eight policy crates
   succeeded with zero local assume val declarations. The inventory now has
-  **220 explicit postconditions / 227 selected functions** in eleven Rust modules,
+  **231 explicit postconditions / 238 selected functions** in eleven Rust modules,
   plus defined String and Vec compatibility models. Seven selected functions have
   no explicit ensures. Imported library assumptions and proof tools remain
   trusted; the drift checker is not a proof checker.
@@ -144,7 +144,7 @@ The nonuniform GDH companion now exposes collision and rerandomization losses
 in a separate checked game. It assumes an unspecified nonuniform exponent
 distribution; the conditional HPKE/Curve25519 constants are documented, not a
 machine proof of the Rust clamp, subgroup handling or wire encoding. Its full
-seven-model gate passes locally; hosted reproduction of the new game is pending.
+seven-model gate passed locally and in the [350cd57 hosted workflow](proof-logs/current/hosted-350cd57/README.md).
 The [collision-side-condition note](proof-logs/current/x25519-nonuniform-gdh/COLLISION-SIDE-CONDITIONS.md)
 separates pre-challenge freshness charges from post-challenge GDH queries; it
 is a paper explanation alongside the retained tool debug trace.
@@ -173,18 +173,21 @@ accounts, cross-account exchange, wrong nonce length and unsuccessful challenge/
 signature observations. Handlers call the compositions and use the actual
 verifier Result. The corpus is now 183/190; source decoding, actual SQL/store
 semantics and complete handler traces remain open. Hosted reproduction of this
-increment is pending.
+increment passed in the [350cd57 hosted workflow](proof-logs/current/hosted-350cd57/README.md).
 
 ## Possession and enrollment observation increment
 
 The [remaining recovery constructors](15-recovery-possession-enrollment.md)
 added 29 checked contracts: recovery reached 71 and the corpus 212/219.
 The [enrollment preflight increment](16-enrollment-preflight.md) adds eight
-contracts, bringing recovery to 79 and the corpus to 220/227. The
+contracts, initially bringing recovery to 79 and the corpus to 220/227.
+Eleven additional independent ordering/readiness contracts now bring recovery
+to 90 and the corpus to 231/238. The
 parent strengthened enrollment to derive key validity from actual decoded
 lengths (1600/2624) inside the verified constructor. Possession state insertion
 uses atomic insert-if-absent, and empty commitments fail unavailable. Fresh
-F★ checking and handler regressions pass locally; hosted reproduction is pending.
+F★ checking and handler regressions pass locally. The observation snapshot was
+reproduced on `350cd57`; the later preflight/ordering increment remains pending.
 Grant store-key user binding, decoders, verifiers, storage effects, restoration
 and complete handler traces remain open.
 
@@ -193,7 +196,7 @@ and complete handler traces remain open.
 | Area | Status | Required to close |
 |---|---|---|
 | F-1: handler facts | Partial: hosted enrollment/recovery baseline; local web-session and additional recovery constructors | Maintain the checked contracts; verify the observation producers (SQL rows, store lookups, signature verifier, session ids) themselves; complete UTF-8/object and authenticated-open composition after the checked byte-frame parser; prove independent context origins; cover remaining token, epoch, recovery and handler fact construction |
-| F-2: state transitions | Partial: checked preflight plan/shared-predicate relation | Prove the preflight ordering against an independent specification; machine-check concrete handler/database transitions against protocol transitions, including exceptions, cancellation and concurrency |
+| F-2: state transitions | Partial: preflight ordering/readiness checked against an independent specification | Machine-check concrete handler/database transitions against protocol transitions, including exceptions, cancellation and concurrency |
 | F-3: persistence/recovery | Partial: M28 and composed M29 | Prove the actual journal implementation refines M28; formalize collection equality and filesystem outcomes; compose local edits/deletions and RMS migration; cover or explicitly exclude independent processes |
 | F-4: construction security | Partial: CryptoVerif proofs for idealized v2 KEM games, modular KEM-DEM and AND-signature games under the explicit assumptions | Close the combiner gaps listed in `security/formal/cryptoverif/README.md` (concrete X25519 clamping/cofactor/encoding correspondence after conditional nonuniform distribution accounting, SHA-256 step, quantum-query and multi-user composition; KEM-DEM is proved modularly); computational games and reductions for envelope framing, share tags, possession proofs and KDFs under named primitive assumptions; verify application randomness/error/erasure handling. Primitive internals and leakage resistance are trusted under the selected boundary |
 | F-5: native clients/composition | Open beyond scoped tests/models | Verify Kotlin/Swift callers, persistence and FFI; formalize enrollment UI trust; compose recovery, enrollment, sync, sharing and revocation in one argument |

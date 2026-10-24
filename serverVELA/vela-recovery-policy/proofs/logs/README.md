@@ -21,9 +21,11 @@ contracts. The exact generated artifact is
 it was not hand-edited.
 
 The crate's 7 unit tests and 8 observation-enumeration tests passed. The server
-integration/logs from `5361406` remain the applicable evidence because no
-handler or server test changed; this correction only reruns the policy crate and
-the 90-contract F* check. Raw output is preserved under
+integration logs describe the earlier 63-test handler snapshot. Parent `ba2f486`
+then added the malformed-storage ordering fix and two targeted HTTP tests
+(current inventory: 64 tests); see the parent evidence directory. This ordering
+correction changes no handler or server test and reruns only the policy crate
+and the 90-contract F★ check. Raw output is preserved under
 [`security/assurance/proof-logs/current/recovery-enrollment-preflight/delegated/`](../../../../security/assurance/proof-logs/current/recovery-enrollment-preflight/delegated/).
 
 ## Prior integrated preflight run (baseline `350cd57`)

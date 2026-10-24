@@ -163,7 +163,8 @@ before rotation, unlike preflight. Those effects remain outside this kernel.
 
 `parent-fstar.log` records fresh extraction and full checking in the parent
 `t3-700776df` checkout after integration as `5361406`. The generated extraction is
-byte-identical to the archived artifact (SHA-256 above): 79 contracts,
+byte-identical to the [historical 79-contract artifact](historical-79/Vela_recovery_policy.fst)
+(SHA-256 `c3a4d03995c24ec0739da16f483c458d8714b2666df6e52d1ce0bdad90f7c828`): 79 contracts,
 7 unit and 8 observation tests. Warnings originate in the pinned imported
 hax library; all selected module verification conditions are discharged.
 The command used pinned hax/F★ paths and `CARGO_HOME=/tmp/vela-hax-cargo`
@@ -183,10 +184,27 @@ lookup, a stored grant for a missing account (404), and rotation combined with
 credential replacement and malformed commitment storage (409, grant intact).
 The test inventory is now 64 integration tests; the delegated full-suite run
 was the preceding 63-test snapshot. The parent ran these two targeted tests,
-not a second full integration suite. `parent-sources.txt` pins the integrated
+not a second full integration suite. `parent-sources.txt` pins the historical 79-contract integrated
 sources; formatting-only changes do not alter these scenarios.
 
 Internal review found no well-formed-path authorization bypass. Its remaining
 ordering-specification concern and the historical post-insert race priority
 are documented above and in the global preflight note. This review did not
 independently run the proof tools and is not an external audit.
+
+## Parent independent-ordering reproduction
+
+`parent-ordering-fstar.log` records fresh extraction and checking in the parent
+checkout after integration as `44b97bf`: 90 contracts, 7 unit tests and
+8 enumeration tests. The live and archived generated artifacts both have
+SHA-256 `eaf1148be9567b8d8d6dbca8ceca3a4369df8b3c3856f19afc2de9eeee070327`.
+The command uses the same pinned hax/F★ environment and serialized `vela-heavy`
+wrapper as the historical parent run. Imported hax-library warnings remain;
+all module verification conditions are discharged. No handler or server test
+changed in this ordering increment, so the preceding targeted parent HTTP logs
+remain applicable. The current proof contract replaces the earlier shared-
+predicate postcondition; earlier run counts are historical snapshots.
+
+`historical-79/` retains the previous generated artifact and delegated proof/
+policy logs from `ba2f486`, before the independent-ordering correction.
+`parent-ordering-sources.txt` pins the current policy/extraction source files.

@@ -1,6 +1,6 @@
 # Recovery observation-to-fact refinement
 
-At this increment, recovery had 42 checked postconditions (then 71, now 79; see
+At this increment, recovery had 42 checked postconditions (then 71, now 90; see
 [the later increment](15-recovery-possession-enrollment.md)), including
 21 new contracts for initiation, credential metadata update, share release and
 epoch normalization. The actual handlers call the checked fact constructors.

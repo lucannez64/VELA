@@ -1,18 +1,29 @@
 # Recovery enrollment preflight sequencing
 
-Recovery now has 79 selected functions with 79 postconditions; the extracted
-Rust corpus has 220 postconditions over 227 selections. Eight new contracts
-cover preflight decision construction and missing/unknown/invalid observations.
+Recovery now has 90 selected functions with 90 postconditions; the extracted
+Rust corpus has 231 postconditions over 238 selections. The initial eight
+preflight contracts cover decision construction and rejection witnesses;
+eleven additional contracts establish independent ordering/readiness properties.
 This is a scoped implementation increment, not a full handler/I/O theorem.
 
 Previously, unverified handler early returns checked every enrollment
 conjunct before calling the policy. The final checked decision confirmed facts
 that the caller already accepted. The production handler now obtains the
 account/epoch/rotation/credential/commitment rejection reason from
-`plan_enrollment_preflight`. Its current postcondition relates the plan to
-the same rejection predicate used by its implementation and checks permit
-fields. The predicate's guard order is inspected and regression-tested; an
-independent formal specification of that ordering remains an obligation.
+`plan_enrollment_preflight`. Its postcondition now compares the decision with
+a separately defined ranked table and first-applicable fold. The production
+rejection if-chain is unchanged and does not call that specification.
+`enrollment_preflight_ordering_is_checked` universally equates the production
+rejection with the first applicable table entry. Separate universal lemmas
+establish that `Ready` implies all positive readiness guards and the observed
+grant's epoch/type, and that those guards imply `Ready`. Parametric overlap
+lemmas establish epoch-before-rotation/authority and rotation-before-authority;
+commitment and credential guards are proved disjoint by grant type.
+
+The test oracle has its own ranked table/fold rather than mirroring the
+production if-chain. These proofs establish agreement with the stated
+specification; selecting that specification to express the intended security
+policy remains a review obligation. They do not establish effectful call order.
 
 | Observation | Preflight result |
 |---|---|
@@ -44,7 +55,8 @@ the actual consumption observations. The guarded SQL insert remains the
 concurrent authority check. After an insert race, the historical recheck
 prioritizes credential/commitment revocation before the rotation conflict;
 this differs from preflight when both change concurrently. That race ordering
-and its interleavings are not covered by the preflight theorem. Terminal policy denial leaves a grant consumed;
+and its interleavings are not covered by the preflight theorem. Terminal
+policy denial leaves a grant consumed;
 existing retryable storage/rotation paths restore it. Their effects, atomicity
 and crash behavior remain unproved.
 

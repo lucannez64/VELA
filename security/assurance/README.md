@@ -17,10 +17,11 @@ The older [CI run #39864715971](https://github.com/lucannez64/VELA/actions/runs/
 passed on `5a3b72e7f6d2081cc91b9610adc62a54981f0857`. Its logs are historical
 baseline evidence. They do not validate the subsequent protocol changes.
 The [refinement job passed on `b27dcd6`](proof-logs/current/hosted-refinement-40002230354/README.md).
-The later complete [security workflow](https://github.com/lucannez64/VELA/actions/runs/40065136343)
-passed on `5fa4e9f`, including the 173-postcondition snapshot and instrumented
-journal proofs. The current 220-postcondition inventory and typed journal
-encoding proof await hosted reproduction; local evidence is indexed below.
+The later complete [security workflow](https://github.com/lucannez64/VELA/actions/runs/40089709666)
+passed on `350cd57`, including the 212-postcondition snapshot, seven
+computational games and instrumented journal gate. [Hosted evidence](proof-logs/current/hosted-350cd57/README.md)
+records that exact head. The current 231-postcondition inventory and typed
+journal encoding proof await hosted reproduction.
 
 ## Contents
 
@@ -110,7 +111,7 @@ correctness is not a consequence of the pure-policy proofs.
   extends the earlier [hosted enrollment baseline](proof-logs/current/hosted-enrollment-40039992434/README.md)
   to the hosted 180/173 snapshot. The [web-session observation increment](14-session-observation-refinement.md) extends this locally
   to 190/183; the [possession/enrollment constructors](15-recovery-possession-enrollment.md) bring the current local inventory
-  to **227 selected functions / 220 explicit postconditions** across eight policy crates and the sharing/signature kernels.
+  to **238 selected functions / 231 explicit postconditions** across eight policy crates and the sharing/signature kernels.
   All **18 local enum-equality assumptions were removed** through structural
   Rust comparisons; current generated modules contain zero local `assume val`
   declarations. Imported proof libraries, the String/Vec models and tools remain
