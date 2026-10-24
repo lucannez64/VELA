@@ -226,10 +226,10 @@
         "androidVELA/app/src/main/java/com/vela/android/core/LocalVaultRepository.kt": "4a57a7bbb66c555ab73f9295cfff7eaa2fdb0db118ae005de2a90564201ce3a2",
         "androidVELA/app/src/main/java/com/vela/android/core/NativeVelaCore.kt": "916ce75ad81351e5be93de276e2f0f699bd061dfeb2b31a3a3da92218a7aa1a9",
         "androidVELA/app/src/main/java/com/vela/android/security/EncryptedVaultStore.kt": "5332f60eddbad97ba914deae75f402f0a260653db11efd4c82de63b0cb85f460",
-        "androidVELA/app/src/main/java/com/vela/android/sync/IdentityBinding.kt": "27fe69b1e9e1c09de6ac359f51dbc9f3ce9fecc78dd3a26e3e15bdf68726ebd8",
+        "androidVELA/app/src/main/java/com/vela/android/sync/IdentityBinding.kt": "65090bf53387762ac4bbc59a2928ae8bdf7a38b190d0ca0135e2745b5bc1bbd2",
         "androidVELA/app/src/main/java/com/vela/android/sync/ServerIdentityStore.kt": "dbe7578dd82e2061f2b9a02bcc2c5f94e01dffa5313b04a7edc291cba96bdc11",
         "androidVELA/app/src/main/java/com/vela/android/sync/SyncSettingsStore.kt": "a57b7469a518889d98c303e5aa8cdf37921e33c75dc1615cfb8866c6eb75f478",
-        "androidVELA/app/src/main/java/com/vela/android/sync/VaultSyncManager.kt": "ff755d27143e553d893ce3b64550f17d4ccb7352054a82398bb9457bcea16eeb",
+        "androidVELA/app/src/main/java/com/vela/android/sync/VaultSyncManager.kt": "5df4a70176b56a449be83aa746ea6edc5ae7fdad713ab57a432a71abdf28f794",
         "androidVELA/app/src/test/java/com/vela/android/core/AdmittedChunkFailureTest.kt": "195f445ec527f09b06b753eabd9a5373befd02b6e6ec2bb09a77ddace1b73833",
         "androidVELA/app/src/test/java/com/vela/android/core/LocalVaultAdmissionTest.kt": "4c7525c0075f0019e10be8e5fbecc9c0ac8fb4984ca4445f204a86f5d527814e",
         "androidVELA/app/src/test/java/com/vela/android/security/EncryptedVaultStoreTest.kt": "3bcb81314c68c915459eb560b484948a199949c38583b3a3cb107429c7acaff9",
@@ -256,7 +256,7 @@
         "libVELA/vela-sync-policy/verify-fstar-chunk.sh": "7fa8980be900ac65b19f344a75ec65b68a4040b5a96f279b6704e4cca231a7a0",
         "libVELA/vela-sync-policy/verify-fstar-epoch.sh": "7281e299bf1cdfd05873601134651084ee96e8a8067cd87e319da616eb44e3fb",
         "libVELA/vela-sync-policy/verify-fstar.sh": "cb7ebeab02302a5e9b698d3f2453f90bbdc1cb5081fde029bf8ed1edf89b1703",
-        "security/assurance/18-mobile-sync-admission.md": "d62a332661dd470287ae83d77939709bcbc04b1f387b240141401f60858adddc",
+        "security/assurance/18-mobile-sync-admission.md": "28ab650e1f08ae38e8cfdaab01cb8dcefd87b0e6ac53170dec67a7e15453de58",
         "security/formal/check-sync-chunk-proof.py": "52f717ba328ada95de482234daf56dd8a99ca5b04083b449965427c3d62696a2",
         "security/formal/tests/test_sync_chunk_guard.py": "3bc8a630a152cfc62669c6d59e6149a1b47b4268a79f2bd137009013437a286b",
         "androidVELA/app/src/main/java/com/vela/android/sync/AndroidVelaApiClient.kt": "9bf0a20bcfa1b253b87cdca958050ea20a53b9c1375b7d2b964c60bb8d277664",
@@ -265,13 +265,14 @@
         "androidVELA/app/src/test/java/com/vela/android/sync/RecoveryAccountBindingTest.kt": "227cf9a4bc026d5b225d5fdc5dad94331bc7d20482c7daea7aa5e3c9bbb64c40",
         "androidVELA/app/src/main/java/com/vela/android/security/RmsHolder.kt": "29fb815d86901da3de69763059668efb9624d9c9b440bccf705b7c76ace164c5",
         "androidVELA/app/src/main/java/com/vela/android/sync/VaultEventStream.kt": "402a50cc67b39aa71d4b596d6a0b842f00944914afa4879ea7d22fc5cc9d6000",
-        "androidVELA/app/src/main/java/com/vela/android/sync/AccountAuthenticator.kt": "6ae78126b370cc6bc2a1be6d7274435043e1fa3911acf12e82d2cc1cf315822f",
-        "androidVELA/app/src/main/java/com/vela/android/sync/SyncAuthController.kt": "81689f4262559b24a65ca18910e9cd53fc07bff4ca85b5cb7cfb0e1e93118ae9",
+        "androidVELA/app/src/main/java/com/vela/android/sync/AccountAuthenticator.kt": "6abcea217e2586237dc98b462672b2041a47964d7db9c7f717ffe11d1c128e99",
+        "androidVELA/app/src/main/java/com/vela/android/sync/SyncAuthController.kt": "575d1fb9695e101a1b53dc423fe201fda4d4be3cfca1652c8ee486821b64cb12",
         "androidVELA/app/src/test/java/com/vela/android/sync/IdentityFailClosedTest.kt": "e549cce0f955b72ff12acd2057fc18ea667435a837375b0f88b453878da0c6b2",
         "androidVELA/app/src/test/java/com/vela/android/sync/SyncAuthControllerTest.kt": "aaf0b1001fdfeab730e730d595ff6fbe3baaab6d07f6ffe79cf0fc377f009120",
         "androidVELA/app/src/main/java/com/vela/android/sync/ServerIdentityRecord.kt": "eecd6fdb1366e4091d2691218498c31b79ffc933d43e9a0d33da5c89cf489bd9",
         "androidVELA/app/src/test/java/com/vela/android/security/RmsHolderTest.kt": "35bd05a9a51de9bed58a6f8a912d18f57b9dbc52ee405a00119cddc942181516",
-        "androidVELA/app/src/main/java/com/vela/android/sync/RecoveryAccountBinding.kt": "b244b0d6654a12b4ba9fe46cd1a372d7584de4779314580eb616abdc52f99428"
+        "androidVELA/app/src/main/java/com/vela/android/sync/RecoveryAccountBinding.kt": "2eedf8f74b535fdfc30e001f5e15f6244caead68e2bd664f35739f364c1ec314",
+        "androidVELA/app/src/test/java/com/vela/android/sync/AuthenticationReplacementTest.kt": "b51fe736463ea7cc1a76e970496007a295672d2a6f5b8a9479c9cd96829f6ce7"
       }
     }
   ]

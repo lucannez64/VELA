@@ -62,18 +62,12 @@ internal class AccountAuthenticator(
             }
             val registered = registerAccount(identity)
             val pinnedUserId = bindVerifiedUserId(binding, identity.userId, registered.userId)
-            val registeredIdentity = identity.copy(
-                userId = pinnedUserId,
-                deviceId = registered.deviceId,
-            )
-            // A targeted update cannot clobber a concurrent share-key
-            // rotation; the save is only a fallback for a store that
-            // disappeared between load and write (there is then nothing to
-            // clobber).
-            persistAccountPin(pinnedUserId, registered.deviceId, registeredIdentity)
+            identity = updateIdentity { current ->
+                requireUnchangedAuthenticationIdentity(identity, current)
+                current.copy(userId = pinnedUserId, deviceId = registered.deviceId)
+            } ?: throw IdentityBindingException("Identity disappeared during registration; token refused.")
             updateKeyEpoch(1)
             registered.token?.takeIf { it.isNotBlank() }?.let { return it }
-            identity = registeredIdentity
         }
 
         val deviceId = identity.deviceId ?: error("Server identity has no device id")
@@ -86,7 +80,10 @@ internal class AccountAuthenticator(
         // persist the returned token. On a mismatch this throws with both
         // untouched.
         val pinnedUserId = bindVerifiedUserId(binding, identity.userId, verified.userId)
-        updateIdentity { it.copy(userId = pinnedUserId) }
+        updateIdentity { current ->
+            requireUnchangedAuthenticationIdentity(identity, current)
+            current.copy(userId = pinnedUserId)
+        }
             ?: throw IdentityBindingException(
                 "This device's identity disappeared while verifying its account pin; " +
                     "the token was not accepted. Sign in or enroll again."
@@ -94,20 +91,4 @@ internal class AccountAuthenticator(
         return verified.token
     }
 
-    private fun persistAccountPin(
-        pinnedUserId: String,
-        deviceId: String,
-        fallback: ServerIdentity,
-    ) {
-        val updated = updateIdentity {
-            it.copy(userId = pinnedUserId, deviceId = deviceId)
-        }
-        if (updated == null) {
-            // Fresh-identity creation is a whole new record; there is no
-            // concurrent older record to clobber in this branch beyond the
-            // identity just created. Keep registration usable for a store
-            // that reports a missing current record.
-            saveIdentity(fallback)
-        }
-    }
 }

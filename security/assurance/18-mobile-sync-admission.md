@@ -67,3 +67,14 @@ The existing adoption flag server_epoch_is_next remains caller-supplied.
 [Evidence](proof-logs/current/f5-mobile-sync-admission/README.md) retains the
 delegated snapshot separately from parent integration checks. Pending auth
 corrections have their own evidence rather than retroactively relabelling tests.
+
+
+The renewed internal review confirmed the core controller fixes and requested
+claim corrections and a missing publication guard. The follow-up checks identity
+snapshot consistency inside authentication/recovery writes, refuses vanished
+registration records and blank re-auth tokens, and guards publication epoch HTTP
+requests. The controller's token guarantee excludes bootstrap and explicit
+intermediate rotations. A captured RMS may finish persistence after lock; there
+is no session cancellation lease. SSE has no missing-pin guard and does not touch
+rollback floors. Helper tests do not execute full manager/recovery lifecycles.
+The correction awaits focused independent review and hosted validation.

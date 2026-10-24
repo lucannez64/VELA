@@ -33,10 +33,10 @@ Fixes:
 - The `finally` acceptance is gone. The retry/token-acceptance decision is now
   the production `SyncAuthController` used by both `withAuthenticatedClient` and
   `getManifestWithTokenRetry`.
-- A token is committed only after the **whole** operation (including a
-  recoverable-401 re-authentication and its retry) succeeds. On any failure the
-  controller clears the client's collector and commits nothing. A fresh token
-  from a successful re-auth is committed only if the retry succeeds.
+- Tokens collected by `SyncAuthController` from operation/retry responses are
+  committed only after that controller operation succeeds. Bootstrap authentication
+  and explicit intermediate rotations are separate and may be persisted earlier.
+  A fresh re-authentication token is committed only if the retry succeeds.
 - `AccountAuthenticator` (extracted production auth state machine) validates the
   verified `user_id` before the identity write and before returning a token.
   `EXISTING` re-authentication refuses a missing/empty pin before any request.
@@ -108,8 +108,10 @@ Fixes:
 - `SecureVaultManager` uses the holder for unlock/adopt/lock/session/RMS copy.
 - Exact semantics are documented in `RmsHolder`: a snapshot already returned is
   a coherent detached key and **may finish after `lock()`**. Lock does not
-  cancel in-flight vault/chunk I/O; it prevents new snapshots. Admitted
-  persistence still re-checks the unlocked session before recording floors.
+  cancel in-flight vault/chunk I/O; it prevents new snapshots. A lock before
+  the snapshot prevents persistence and floor advancement; a captured coherent
+  snapshot may finish persistence and advance floors after lock. There is no
+  additional session check or cancellation lease.
 
 Tests (`RmsHolderTest`) verify a pre-lock snapshot survives and is not a view
 into the zeroized key, and run a concurrent replace/clear vs copy race asserting
@@ -183,7 +185,8 @@ All heavy work ran through `~/.local/opt/vela-tools/bin/vela-heavy` (global
 | `diff-stat.txt` | `git diff --stat` at evidence capture | — |
 
 New tests: 20 (6 `SyncAuthControllerTest`, 7 `IdentityFailClosedTest`,
-4 `RecoveryAccountBindingTest`, 2 `RmsHolderTest`). Parent suite was 139.
+4 `RecoveryAccountBindingTest`, 2 `RmsHolderTest`, and 1 added
+`VaultEventStreamParserTest`). Parent suite was 139.
 
 No `cargo`, F*, Swift, Gradle build-script, `libVELA` bridge, global assurance,
 correspondence, `MANIFEST.sha256` or CI commands were run; this correction is
@@ -220,3 +223,28 @@ operation guarantee does not describe that earlier setup. Concurrent explicit
 account reset/replacement during network requests remains a review question,
 particularly validation against the current identity inside targeted writes.
 The159-test result does not establish full auth/reset trace refinement.
+
+
+### Renewed review corrections
+
+The renewed review inspected production manager wiring but did not execute the
+manager itself. Controller/client tests use fake HTTP; recovery binder tests
+cannot exercise the manager's earlier token clearing. Assertions about untouched
+token/baseline fixtures in those binder tests are helper-level evidence only.
+
+Authentication and recovery now validate the current identity inside the atomic
+record update against the identity used for the request (pin, device, long-term
+public keys and sealed identity). Replacement or disappearance refuses the result;
+registration no longer recreates a vanished record. Metadata-only updates remain
+preserved. A changed sealed record also requires a retry, including when a rotation
+changed it. The publication epoch check now runs the missing-pin guard before
+network access. SSE still accepts a cached token without this account guard; it
+does not read or advance rollback floors, and its headers require a 2xx response.
+Blank re-authentication tokens are refused before retry.
+
+`AuthenticationReplacementTest` drives both real authenticator branches with a
+replacement or disappearance during HTTP, recovery replacement during enrollment,
+and metadata-only changes. Full manager lifecycle, SSE transport, Android storage,
+and native instrumentation remain outside these JVM tests.
+
+Parent correction run: 162 JVM tests, 25 classes, zero failures/errors/skips; see `review-corrections-jvm.log` and `review-corrections-counts.txt`. This supersedes the 159-test snapshot for current runtime validation.

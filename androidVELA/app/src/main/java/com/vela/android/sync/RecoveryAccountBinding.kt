@@ -36,6 +36,7 @@ internal class RecoveryAccountBinder(
         )
         val deviceId = enrollDevice(identity, deviceName)
         return updateIdentity { current ->
+            requireUnchangedAuthenticationIdentity(identity, current)
             current.copy(userId = pinnedUserId, deviceId = deviceId)
         } ?: throw IdentityBindingException(
             "This device's identity disappeared during recovery; its account pin was not " +

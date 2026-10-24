@@ -20,7 +20,8 @@ internal fun ServerUnauthorizedException.isRecoverableTokenFailure(): Boolean {
  * Token acceptance rule: a response's `X-New-Token` is accepted only when the
  * *entire* operation (including a recoverable-401 re-authentication and its
  * retry) succeeded. On any failure the client's collected token is cleared and
- * nothing is committed. A hostile server can therefore answer 401, return a
+ * this controller commits nothing. Bootstrap authentication and explicit
+ * intermediate rotations outside this controller may persist earlier. A hostile server can therefore answer 401, return a
  * different `user_id` plus an `X-New-Token` on the verification response, and
  * the pin check aborts the operation without leaving that token durable.
  */
@@ -46,7 +47,8 @@ internal class SyncAuthController(
                 // The 401's header token is not a success. Forget it before
                 // re-authentication so a failure cannot inherit it.
                 clearResponseToken()
-                token = reauthenticate()
+                token = reauthenticate().takeIf { it.isNotBlank() }
+                    ?: throw IdentityBindingException("Re-authentication returned an empty token.")
                 reauthenticated = true
                 // Only the retried, authenticated operation's response may
                 // contribute a header token. In particular, an unauthenticated

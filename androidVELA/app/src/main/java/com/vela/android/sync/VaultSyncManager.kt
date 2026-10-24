@@ -406,6 +406,7 @@ class VaultSyncManager(
 
     private fun validateCurrentPublicationEpoch(keyEpoch: Long) {
         val settings = settingsStore.settings.value
+        requireBoundAccountForSync(settings)
         val client = AndroidVelaApiClient(settings.serverUrl, context)
         val token = authenticatedToken(client, settings.bearerToken)
         if (token != settings.bearerToken) settingsStore.updateBearerToken(token)

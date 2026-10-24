@@ -106,3 +106,17 @@ internal fun requireSyncBaselineAccount(
     }
     return accountId
 }
+
+/** Check under the identity-record monitor before applying an HTTP result. */
+internal fun requireUnchangedAuthenticationIdentity(
+    expected: ServerIdentity,
+    current: ServerIdentity,
+) {
+    if (expected.userId != current.userId || expected.deviceId != current.deviceId ||
+        expected.hybridEkB64 != current.hybridEkB64 ||
+        expected.hybridVkB64 != current.hybridVkB64 || expected.sealedB64 != current.sealedB64) {
+        throw IdentityBindingException(
+            "This device's identity changed during authentication; the response was not accepted. Retry."
+        )
+    }
+}
