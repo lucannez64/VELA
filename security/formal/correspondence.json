@@ -73,7 +73,7 @@
         "libVELA/vela-crypto/src/share_envelope.rs": "332b8a1ccd3324dda61262c6254c63f0286c16a814851b491c23ce23687bdf21",
         "libVELA/vela-crypto/src/signing.rs": "82c9e2f3f9882d62cad5707cd8287b1299b373b10629eff912477f519249150b",
         "libVELA/vela-crypto/verify-share-facts-fstar.sh": "a34a1d189f72a46f2c34ce5fe97db0a315f5f077ba82579b1c0262b25929756d",
-        "libVELA/vela-sync-policy/src/lib.rs": "6f7e4eff2087e03fc5d337a238abacc0d69777aece0dc4b7acd017e4fa997618",
+        "libVELA/vela-sync-policy/src/lib.rs": "97198bc89b8c257ec3f734d36f66ac229e6b8a7edd1c3a557b0219ff4567f109",
         "security/formal/m29_signed_share_commit.spthy": "1b57cbec760120c4ac42267ab277a3d17db6439f425f0cddee65a22d32bdd08c",
         "security/formal/signed-share-commit-correspondence.md": "8b1a5ae7bc8dbedd8c83c6a979fd82470706c87703d73503cc1f70ea6f582822",
         "serverVELA/vela-enrollment-policy/src/lib.rs": "24fd425d557bae739f3ea35986ebb3257d90d1a8c596c39326898ca627ed6c3e",
@@ -202,6 +202,20 @@
         "security/formal/cryptoverif/possession_proof_mldsa.ocv": "80a66316485738eb11af5378da0f02e2c41be9ae879d08924783ec32a17c66cf",
         "security/formal/cryptoverif/possession_proof_ed25519.ocv": "f6c8d3137ff46598f95f8fd19fa200a0ec993d678a3b2bed4451073291c560f6",
         "security/formal/cryptoverif/shamir_share_tags.ocv": "c5e8645e43dfc6208e5bb81047f78eea77d35f9d579224d24bdc64807bcc2fb2"
+      }
+    },
+    {
+      "boundary": "universal extracted sync chunk-admission predicate and witnesses (handwritten F*; AAD/epoch flags, raw epoch origins, context/storage/native correspondence remain conditional/open)",
+      "artifacts": {
+        "libVELA/vela-sync-policy/src/lib.rs": "97198bc89b8c257ec3f734d36f66ac229e6b8a7edd1c3a557b0219ff4567f109",
+        "libVELA/vela-sync-policy/verify-fstar.sh": "0a3569c4494fa2ddcfeab20216be52f66bc6b5e5dae8cdaad8ad6b7089ab23b2",
+        "libVELA/vela-sync-policy/verify-fstar-chunk.sh": "cc681958363b24f5eaa9f86cd6362e672362b0ba7ffc3974356c8907a4def53f",
+        "libVELA/vela-sync-policy/proofs/fstar/extraction/Vela_sync_policy.fst": "e23bc7556ebb25eaf091ae5f8dd3718f490330e7efd9ea9245714655b1f14add",
+        "libVELA/vela-sync-policy/proofs/fstar/chunk-lemmas/Vela_sync_policy_chunk_lemmas.fst": "b6aa6204fc78dc1cdb7a389d453d6a71ba97b25a03c553d88a5d4f928121eb84",
+        "security/formal/check-sync-chunk-proof.py": "dc4309c7729ac2526c58c604c0d8cc39f48ba0ffa6f405da32ec536a5a66623a",
+        "security/formal/tests/test_sync_chunk_guard.py": "4acd7746d57f6b7d94de7793ae2e88824d967b840af4ee86b0c234ae1a8fdcb4",
+        "libVELA/vela-sync-policy/README.md": "98b5884261764dc6d2a84647e9cfb1093fbbfbb1aefe82758fd35da250f35a6d",
+        "security/assurance/17-universal-chunk-admission.md": "26962b638275cfe12a42cfdeeec120899b04facde94aa388d78dc462b6fe7e22"
       }
     }
   ]

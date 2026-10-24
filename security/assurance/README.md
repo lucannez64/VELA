@@ -72,6 +72,10 @@ correctness is not a consequence of the pure-policy proofs.
 16. [Enrollment preflight](16-enrollment-preflight.md): checked rejection
     sequencing before real single-use grant redemption.
 
+17. [Universal chunk admission](17-universal-chunk-admission.md): twenty
+    supplemental handwritten lemmas over the unchanged Rust extraction;
+    caller flags and native/storage correspondence remain conditional.
+
 ## Evidence levels
 
 | Tag | Meaning |

@@ -27,6 +27,10 @@ Recent increments (see the hosted baseline above for snapshot coverage):
   with full per-model logs. Collision/distribution and Rust correspondence
   assumptions are documented; an internal review is not an external audit.
 
+- [Universal chunk admission](f5-universal-chunk-admission/README.md): twenty
+  handwritten lemmas over the historical eleven-contract extraction, integrated
+  independently of mobile runtime changes. Rust contract counts are unchanged.
+
 Other recent scoped evidence:
 
 - [Journal all-pairs](journal-all-pairs/README.md): ten M28 and eleven M29

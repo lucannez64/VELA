@@ -72,7 +72,7 @@ Each crate follows the same pattern:
 | `serverVELA/vela-recovery-policy` | 90: the prior 42, 29 possession/enrollment observation contracts, 8 preflight contracts and 11 independent ordering/readiness contracts | M14, M16, M18 (server side) | `recovery/{initiate,recover,possess,webauthn,enroll_device,mod}.rs` |
 | `serverVELA/vela-share-policy` | 23 locally checked postconditions: three observation constructors (`ek_registration_facts`, `send_facts`, `link_mutation_facts`), three decisions and seventeen negative theorems (24 selected entry points) | M19b, M21 | `share/mod.rs` |
 | `libVELA/vela-client-recovery-policy` | 18: `plan_reconstruction`, `plan_adoption`, `plan_publication_resume`, `plan_contact_delivery`, plus 14 negative theorems | M15, M17, M18 (client side) | `vela-crypto/src/recovery.rs`, `desktopVELA/vela-desktop-core/src/recovery.rs`, Android and Apple bridges |
-| `libVELA/vela-sync-policy` | 11: `plan_epoch_adoption`, `plan_chunk_download`, `classify_merge_action`, plus 8 negative theorems | M23 | `desktopVELA/vela-desktop-core/src/sync.rs` **only** |
+| `libVELA/vela-sync-policy` | 11 Rust postconditions plus [20 supplemental handwritten lemmas](17-universal-chunk-admission.md) (not in the Rust count): `plan_epoch_adoption`, `plan_chunk_download`, `classify_merge_action`, plus 8 negative theorems | M23 | `desktopVELA/vela-desktop-core/src/sync.rs` **only** |
 
 The eighth crate, `libVELA/vela-client-share-policy`, selects 19 postconditions:
 share admission, ten transaction/recovery functions/theorems, and the actual

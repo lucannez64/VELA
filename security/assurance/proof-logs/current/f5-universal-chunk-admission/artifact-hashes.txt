@@ -1,0 +1,18 @@
+e23bc7556ebb25eaf091ae5f8dd3718f490330e7efd9ea9245714655b1f14add  libVELA/vela-sync-policy/proofs/fstar/extraction/Vela_sync_policy.fst
+0b7febd0c062d955831133476fba4afc8d9616b83e6be49b63d6ba10fe404393  libVELA/vela-sync-policy/proofs/fstar/extraction-epoch/Vela_sync_policy.fst
+81843c5aa65b9e1269bcd865ba5fcc957286d72de18311e48a725dfc90ee174b  libVELA/vela-sync-policy/proofs/fstar/epoch-lemmas/Vela_sync_policy_epoch_lemmas.fst
+f56e4efeca9ae5867ca03ea6e52d203c7645e7fbfd0e3a988e7c39fe1561ca8f  libVELA/vela-sync-policy/proofs/fstar/chunk-lemmas/Vela_sync_policy_chunk_lemmas.fst
+e9736844cac63e611cb4dda8feeafe7c83458054fe281cc92bd90686ac9d8a4c  libVELA/vela-sync-policy/verify-fstar.sh
+c98a616203b4b2aa403414ec067fab1d3f8a09436e7767dff7850f2cf0753618  libVELA/vela-sync-policy/verify-fstar-epoch.sh
+ccc77f79f2b9ced84a75bf1000193a48ec3ca46cb3e35c3917ba647eb9efa62e  libVELA/vela-sync-policy/verify-fstar-chunk.sh
+66a983da454039bf18ca2b42c0134692055c7717118c0606cfb142b6a5d96c33  libVELA/vela-sync-policy/src/lib.rs
+36f56125c35087ea39795ff3b8b1dec0009689ed84e5210c2424bda33e65d968  libVELA/vela-sync-policy/README.md
+source-patch sha256: 3812c2405234e81887c0289a53e6f7ebc41c8e919972e458f682be28f8644d27
+755 libVELA/vela-sync-policy/verify-fstar.sh
+755 libVELA/vela-sync-policy/verify-fstar-epoch.sh
+755 libVELA/vela-sync-policy/verify-fstar-chunk.sh
+
+git ls-files modes:
+100755 7cc5dd32cfe5a70bf893b93ecc2b58779aa9f03a 0	libVELA/vela-sync-policy/verify-fstar-chunk.sh
+100755 2dcb2b24804c6e598c15ed27b9c70452eda5d64d 0	libVELA/vela-sync-policy/verify-fstar-epoch.sh
+100755 c8c3a9cb6143b18eb8d4e424918b20009efae401 0	libVELA/vela-sync-policy/verify-fstar.sh

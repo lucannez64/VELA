@@ -362,6 +362,7 @@ jobs:
           path: |
             serverVELA/vela-*-policy/proofs/fstar/extraction/*.fst
             libVELA/vela-*-policy/proofs/fstar/extraction/*.fst
+            libVELA/vela-sync-policy/proofs/fstar/chunk-lemmas/*.fst
             libVELA/vela-crypto/proofs/fstar/extraction/*.fst
 
   static-scan:
