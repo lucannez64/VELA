@@ -1921,6 +1921,148 @@ async fn web_session_grant_rejects_a_capsule_from_an_old_key_epoch() {
     );
 }
 
+async fn insert_device_for(state: &vela_server::state::AppState, user_id: Uuid) -> Uuid {
+    use vela_server::sqldb::{Db as _, TursoValue};
+    let device_id = Uuid::new_v4();
+    state.sqldb.execute(
+        "INSERT INTO devices
+         (id, user_id, hybrid_ek, hybrid_vk, enrolled_by, rms_capsule, revoked, revoked_at, revoked_by, created_at)
+         VALUES (?, ?, ?, ?, NULL, NULL, 0, NULL, NULL, ?)",
+        vec![
+            TursoValue::Text(device_id.to_string()),
+            TursoValue::Text(user_id.to_string()),
+            TursoValue::Text(B64.encode(vec![0u8; 1600])),
+            TursoValue::Text(B64.encode(vec![0u8; 2624])),
+            TursoValue::Text(chrono::Utc::now().to_rfc3339()),
+        ],
+    ).await.unwrap();
+    device_id
+}
+
+/// Start a browser session for `user_id` and grant it with `token`.
+async fn start_and_grant(app: &axum::Router, user_id: Uuid, token: &str) -> (String, StatusCode) {
+    let link_nonce = B64.encode(vec![7u8; 32]);
+    let resp = app
+        .clone()
+        .oneshot(web_session_start_req(user_id, &link_nonce))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let session_id = body["session_id"].as_str().unwrap().to_string();
+    let grant = Request::builder()
+        .method("POST")
+        .uri(format!("/web-session/{session_id}/grant"))
+        .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {token}"))
+        .body(Body::from(
+            json!({
+                "mode": "rw",
+                "capsule": B64.encode(vec![0u8; 64]),
+                "link_nonce": link_nonce,
+                "key_epoch": 1,
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let status = app.clone().oneshot(grant).await.unwrap().status();
+    (session_id, status)
+}
+
+async fn session_status(app: &axum::Router, session_id: &str) -> String {
+    let resp = app
+        .clone()
+        .oneshot(web_session_poll_req(session_id))
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(resp.into_body(), 64 * 1024).await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    body["status"].as_str().unwrap_or_default().to_string()
+}
+
+async fn vault_status(app: &axum::Router, token: &str) -> StatusCode {
+    app.clone()
+        .oneshot(
+            Request::builder()
+                .uri("/vault/sync")
+                .header("Authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+        .status()
+}
+
+/// U-18: revoking a device ends the browser sessions it approved. A thief who
+/// approved a session from a stolen phone loses it when the phone is revoked;
+/// sessions approved by other devices are untouched.
+#[tokio::test]
+async fn revoking_a_device_revokes_the_web_sessions_it_approved() {
+    use vela_server::auth::token::TokenScope;
+    use vela_server::sqldb::{Db as _, TursoValue};
+
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
+    let user_id = Uuid::new_v4();
+    insert_user(&state, user_id).await;
+    let phone = insert_device_for(&state, user_id).await;
+    let laptop = insert_device_for(&state, user_id).await;
+    let phone_token = issue_token(&state, user_id, phone);
+    let laptop_token = issue_token(&state, user_id, laptop);
+
+    let (by_phone, status) = start_and_grant(&app, user_id, &phone_token).await;
+    assert_eq!(status, StatusCode::OK);
+    let (by_laptop, status) = start_and_grant(&app, user_id, &laptop_token).await;
+    assert_eq!(status, StatusCode::OK);
+    let phone_web = token_for(&state, user_id, by_phone.parse().unwrap(), TokenScope::WebSession);
+    let laptop_web = token_for(&state, user_id, by_laptop.parse().unwrap(), TokenScope::WebSession);
+    assert_eq!(vault_status(&app, &phone_web).await, StatusCode::OK);
+    assert_eq!(vault_status(&app, &laptop_web).await, StatusCode::OK);
+
+    let revoke = |target: Uuid| {
+        Request::builder()
+            .method("POST")
+            .uri("/device/revoke")
+            .header("content-type", "application/json")
+            .header("authorization", format!("Bearer {laptop_token}"))
+            .body(Body::from(json!({ "target_device_id": target }).to_string()))
+            .unwrap()
+    };
+    assert_eq!(app.clone().oneshot(revoke(phone)).await.unwrap().status(), StatusCode::OK);
+
+    assert_eq!(session_status(&app, &by_phone).await, "revoked");
+    assert_eq!(
+        vault_status(&app, &phone_web).await,
+        StatusCode::UNAUTHORIZED,
+        "a session approved by the revoked phone must lose its token"
+    );
+    assert_eq!(session_status(&app, &by_laptop).await, "granted");
+    assert_eq!(vault_status(&app, &laptop_web).await, StatusCode::OK);
+
+    // Repeating the revoke is refused but stays harmless.
+    assert_eq!(
+        app.clone().oneshot(revoke(phone)).await.unwrap().status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(session_status(&app, &by_laptop).await, "granted");
+
+    // A grant cannot land after the approving device's row is revoked, even
+    // if its token is still accepted (the window before middleware sees it).
+    state
+        .sqldb
+        .execute(
+            "UPDATE devices SET revoked = 1 WHERE id = ?",
+            vec![TursoValue::Text(laptop.to_string())],
+        )
+        .await
+        .unwrap();
+    let (late, status) = start_and_grant(&app, user_id, &laptop_token).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(session_status(&app, &late).await, "pending");
+}
+
 /// Audit S-1/S-4: the session is bound to the account the browser named at
 /// `start`. Another authenticated user who knows the whole QR (session id +
 /// link nonce) must not be able to read the browser's keys or grant the session.

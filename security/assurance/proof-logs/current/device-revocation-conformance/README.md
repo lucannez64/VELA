@@ -212,14 +212,14 @@ unauthenticated and therefore not gated by device revocation:
 - Recovery: `POST /recovery/initiate|recover|recover/proof|initiate-proof`
   (their own proof material), `GET /health`.
 
-Observation, not exercised here: a web-session token carries
-`device_id = web_session_id`, and `revoke_all_device_jtis` enumerates
-`device:jtis:{device_id}`, so revoking the approving **device** does not revoke
-a granted `web_sessions` row or the token minted from it
-(`src/web_session/mod.rs`, `src/device/revoke.rs`). That capability has its own
-lifecycle and its own model (M12); whether revocation should cascade to sessions
-a device approved is a product decision, not a device-token conformance fact.
-The M12 model and `challenge_single_use_model.rs` cover the session path.
+Update (after this test was written): revoking a device now also revokes
+every web session it approved (`web_sessions.approved_by`): their tokens are
+rejected via the `device:revoked:{session_id}` sentinel and the rows become
+`revoked` with no capsule. A grant also requires the approving device row to
+be unrevoked, so a grant racing the revocation cannot survive it. The
+regression test is `revoking_a_device_revokes_the_web_sessions_it_approved`
+in `tests/integration.rs` (mutation-checked for both parts); this bounded
+model does not drive web sessions.
 
 ## Not covered
 

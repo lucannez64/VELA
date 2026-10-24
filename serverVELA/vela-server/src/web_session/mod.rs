@@ -575,6 +575,12 @@ pub async fn post_grant(
                AND EXISTS (
                    SELECT 1 FROM users
                    WHERE id = ? AND rekey_state IS NULL AND key_epoch = ?
+               )
+               -- A device being revoked cannot slip a grant past the
+               -- revocation cascade (see device::revoke).
+               AND EXISTS (
+                   SELECT 1 FROM devices
+                   WHERE id = ? AND user_id = ? AND revoked = 0
                )",
             vec![
                 TursoValue::Text(session.user_id.to_string()),
@@ -587,13 +593,15 @@ pub async fn post_grant(
                 TursoValue::Text(session.user_id.to_string()),
                 TursoValue::Text(session.user_id.to_string()),
                 TursoValue::Integer(grant_permit.epoch()),
+                TursoValue::Text(session.device_id.to_string()),
+                TursoValue::Text(session.user_id.to_string()),
             ],
         )
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
     if n == 0 {
         return Err(AppError::Conflict(
-            "web session was not pending or its vault key epoch changed".into(),
+            "web session was not pending, its vault key epoch changed, or the approving device was revoked".into(),
         ));
     }
 

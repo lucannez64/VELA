@@ -52,6 +52,9 @@ pub async fn post_revoke(
         ));
     }
     if target.revoked {
+        // Repeat the web-session cascade so a revoke whose cascade failed
+        // part-way is finished by a retry.
+        revoke_web_sessions_approved_by(&state, session.user_id, body.target_device_id).await?;
         return Err(AppError::BadRequest("device is already revoked".into()));
     }
 
@@ -88,6 +91,12 @@ pub async fn post_revoke(
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
+    // Browser sessions this device approved inherit its trust, so they end
+    // with it. This runs after the SQL row says revoked: a concurrent grant
+    // by the device either committed before that (and is found here) or is
+    // refused by the grant's `revoked = 0` guard.
+    revoke_web_sessions_approved_by(&state, session.user_id, body.target_device_id).await?;
+
     tracing::info!(
         target_device = %body.target_device_id,
         revoked_by    = %session.device_id,
@@ -98,4 +107,56 @@ pub async fn post_revoke(
     Ok(Json(RevokeResponse {
         revoked: body.target_device_id,
     }))
+}
+
+/// End every live web session that `device_id` approved: reject its issued
+/// RW tokens first (sled sentinel, as `DELETE /web-session/:id` does), then
+/// mark the rows revoked and drop their capsules.
+async fn revoke_web_sessions_approved_by(
+    state: &AppState,
+    user_id: Uuid,
+    device_id: Uuid,
+) -> Result<()> {
+    let rows = state
+        .sqldb
+        .query(
+            "SELECT id FROM web_sessions
+             WHERE approved_by = ? AND user_id = ? AND status != 'revoked'",
+            vec![
+                TursoValue::Text(device_id.to_string()),
+                TursoValue::Text(user_id.to_string()),
+            ],
+        )
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    for row in &rows {
+        if let Some(id) = row.text(0) {
+            state.store.set_ex(
+                &format!("device:revoked:{id}"),
+                &[1u8],
+                crate::web_session::MAX_TTL_SECS as u64,
+            )?;
+            rate_limit::revoke_all_device_jtis(&state.store, id)?;
+        }
+    }
+    state
+        .sqldb
+        .execute(
+            "UPDATE web_sessions SET status = 'revoked', capsule = NULL
+             WHERE approved_by = ? AND user_id = ? AND status != 'revoked'",
+            vec![
+                TursoValue::Text(device_id.to_string()),
+                TursoValue::Text(user_id.to_string()),
+            ],
+        )
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    if !rows.is_empty() {
+        tracing::info!(
+            approving_device = %device_id,
+            sessions = rows.len(),
+            "web sessions revoked with their approving device"
+        );
+    }
+    Ok(())
 }
