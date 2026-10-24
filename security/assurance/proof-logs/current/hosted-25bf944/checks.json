@@ -1,0 +1,152 @@
+{
+  "head": "25bf9445d5e57d4c68c987c441318356178b56e5",
+  "checks": [
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T16:21:57Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/lucannez64/VELA/actions/runs/40110664430/job/120921511378",
+      "name": "build-and-verify",
+      "startedAt": "2026-10-24T16:14:56Z",
+      "status": "COMPLETED",
+      "workflowName": "desktop-macos"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T16:26:18Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/lucannez64/VELA/actions/runs/40110664487/job/120921511240",
+      "name": "build-and-screenshot",
+      "startedAt": "2026-10-24T16:14:55Z",
+      "status": "COMPLETED",
+      "workflowName": "ios-app"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T16:17:19Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/lucannez64/VELA/actions/runs/40110664455/job/120921511236",
+      "name": "build-and-verify",
+      "startedAt": "2026-10-24T16:14:57Z",
+      "status": "COMPLETED",
+      "workflowName": "ios-core"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T16:24:38Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/lucannez64/VELA/actions/runs/40110664490/job/120921511568",
+      "name": "build-windows",
+      "startedAt": "2026-10-24T16:14:55Z",
+      "status": "COMPLETED",
+      "workflowName": "release-desktop"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T16:25:44Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/lucannez64/VELA/actions/runs/40110664470/job/120921511181",
+      "name": "formal-rekey",
+      "startedAt": "2026-10-24T16:14:54Z",
+      "status": "COMPLETED",
+      "workflowName": "security"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T16:26:16Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/lucannez64/VELA/actions/runs/40110664449/job/120921511200",
+      "name": "build",
+      "startedAt": "2026-10-24T16:14:55Z",
+      "status": "COMPLETED",
+      "workflowName": "verify-android"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T16:15:21Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/lucannez64/VELA/actions/runs/40110664434/job/120921510949",
+      "name": "build",
+      "startedAt": "2026-10-24T16:14:54Z",
+      "status": "COMPLETED",
+      "workflowName": "verify-server"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T16:21:59Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/lucannez64/VELA/actions/runs/40110664430/job/120921511202",
+      "name": "GPUI macOS preview",
+      "startedAt": "2026-10-24T16:14:54Z",
+      "status": "COMPLETED",
+      "workflowName": "desktop-macos"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T16:20:43Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/lucannez64/VELA/actions/runs/40110664490/job/120921511313",
+      "name": "build-linux",
+      "startedAt": "2026-10-24T16:14:55Z",
+      "status": "COMPLETED",
+      "workflowName": "release-desktop"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T16:16:05Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/lucannez64/VELA/actions/runs/40110664470/job/120921511334",
+      "name": "sharing-boundaries",
+      "startedAt": "2026-10-24T16:14:54Z",
+      "status": "COMPLETED",
+      "workflowName": "security"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T16:24:38Z",
+      "conclusion": "SKIPPED",
+      "detailsUrl": "https://github.com/lucannez64/VELA/actions/runs/40110664490/job/120923790007",
+      "name": "update-aur",
+      "startedAt": "2026-10-24T16:24:39Z",
+      "status": "COMPLETED",
+      "workflowName": "release-desktop"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T17:08:39Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/lucannez64/VELA/actions/runs/40110664470/job/120921511496",
+      "name": "refinement",
+      "startedAt": "2026-10-24T16:14:55Z",
+      "status": "COMPLETED",
+      "workflowName": "security"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T16:15:41Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/lucannez64/VELA/actions/runs/40110664470/job/120921511332",
+      "name": "static-scan",
+      "startedAt": "2026-10-24T16:14:55Z",
+      "status": "COMPLETED",
+      "workflowName": "security"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T16:22:48Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/lucannez64/VELA/actions/runs/40110664470/job/120921511364",
+      "name": "regression",
+      "startedAt": "2026-10-24T16:14:54Z",
+      "status": "COMPLETED",
+      "workflowName": "security"
+    },
+    {
+      "__typename": "StatusContext",
+      "context": "CodeRabbit",
+      "startedAt": "2026-10-24T16:14:54Z",
+      "state": "SUCCESS",
+      "targetUrl": ""
+    }
+  ]
+}

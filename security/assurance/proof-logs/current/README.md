@@ -13,6 +13,10 @@ The [sharing arithmetic correction](share-inbox-arithmetic/README.md) checks
 the fourteen new sharing contracts after fixing a universal i64 overflow
 obligation. Hosted reproduction of that correction passed in the [5d8c366 snapshot](hosted-5d8c366/README.md).
 
+The [25bf944 hosted snapshot](hosted-25bf944/README.md) passed all 15 checks,
+including the universal chunk-admission lemmas with the 245-contract census.
+The newer local mobile/journal candidate is not part of that hosted result.
+
 Recent increments (see the hosted baseline above for snapshot coverage):
 
 - [Web-session observations](session-observation-refinement/README.md): ten
