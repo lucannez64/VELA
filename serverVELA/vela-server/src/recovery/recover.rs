@@ -293,9 +293,13 @@ fn store_enroll_grant(
     grant: Uuid,
     value: &RecoveryEnrollGrant,
 ) -> Result<()> {
-    let bytes =
-        serde_json::to_vec(value).map_err(|e| AppError::Internal(format!("failed to serialize recovery grant: {e}")))?;
-    state.store.set_ex(&enroll_grant_key(user_id, grant), &bytes, ENROLL_GRANT_TTL_SECS)
+    let bytes = serde_json::to_vec(value)
+        .map_err(|e| AppError::Internal(format!("failed to serialize recovery grant: {e}")))?;
+    state.store.set_ex(
+        &enroll_grant_key(user_id, grant),
+        &bytes,
+        ENROLL_GRANT_TTL_SECS,
+    )
 }
 
 /// Grant issued after a WebAuthn-gated share release.

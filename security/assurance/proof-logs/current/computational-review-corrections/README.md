@@ -15,8 +15,11 @@ challenge's ML-KEM secret too. It is an explicit perfect-correctness assumption,
 not a proof of ML-KEM implementation correctness. No ML-KEM secrecy assumption
 is introduced. The snapshots in `models/` preserve all six exact model sources.
 
-`correctness-runner.log` and the six model logs record CryptoVerif 2.12 with
-five proved queries and the explicit legacy non-proof. The strengthened GDH
+`runner.log` and the six model logs record the final hardened CryptoVerif 2.12
+run with five proved queries and the explicit legacy non-proof.
+`correctness-runner.log` is the summary of an earlier run immediately after the
+correctness-equation change; its temporary output directory differs, and the
+six retained model logs belong to the final run. The strengthened GDH
 bound is unchanged: `4*pDistRerandom + 2*pGDH(t,2*qH) + (2*Qd+2*qH)/|Z|`.
 The ML-KEM-survives bound retains its collision and finite-domain terms.
 The legacy result is not a counterexample: the conditional hand argument also
@@ -53,5 +56,7 @@ The final hardened gate also exited zero: `runner.log` records all five expected
 proved query results and the explicit legacy non-proof, after the local source
 guard passed. The six model logs above are from that final run.
 `negative-gates.log` records eleven passing synthetic runner/source-guard tests;
-they are not computational proofs. The second internal review round remains
-pending and is not counted as an external audit or completed proof.
+they are not computational proofs. The second internal review round inspected 4cc4dd6 and found no new game
+soundness error. It confirmed the equation and unchanged bound; subsequent
+wording/provenance edits address its residual comments. It did not rerun the
+prover and is not an independent external audit or an additional proof.

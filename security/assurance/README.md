@@ -57,6 +57,9 @@ correctness is not a consequence of the pure-policy proofs.
 12. [Received-byte transcript](12-authenticated-transcript.md): exact body and
     domain concatenation, compatibility model and remaining opening obligations.
 
+13. [Recovery fact refinement](13-recovery-fact-refinement.md): checked observation
+    constructors, epoch normalization, atomic insertion and remaining boundaries.
+
 ## Evidence levels
 
 | Tag | Meaning |
@@ -92,8 +95,9 @@ correctness is not a consequence of the pure-policy proofs.
   add leaked-key KEM correctness and clarify assumptions; hosted reproduction
   is pending. These results do not establish full Rust or quantum-adversary
   construction correspondence.
-- Current hax/F*: [hosted policy and enrollment checks](proof-logs/current/hosted-enrollment-40039992434/README.md) cover **159 selected functions / 152 explicit
-  postconditions** across eight policy crates and the sharing/signature kernels.
+- Current hax/F*: the [local recovery increment](proof-logs/current/recovery-fact-refinement/README.md)
+  extends the earlier [hosted enrollment baseline](proof-logs/current/hosted-enrollment-40039992434/README.md)
+  to **180 selected functions / 173 explicit postconditions** across eight policy crates and the sharing/signature kernels.
   All **18 local enum-equality assumptions were removed** through structural
   Rust comparisons; current generated modules contain zero local `assume val`
   declarations. Imported proof libraries, the String/Vec models and tools remain

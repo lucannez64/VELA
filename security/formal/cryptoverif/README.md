@@ -69,12 +69,15 @@ reproduction is a separate result; a configured gate is not evidence it passed.
   instantiating it with a combiner theorem is a manual composition step. The
   model uses no AAD. Signed share-envelope and contact-envelope/AAD encodings
   above this transport are not covered by that encryption theorem.
-- **Legacy attack argument needs an extra capability.** If an attacker can
+- **One model-scoped legacy attack argument needs an extra capability.** If an attacker can
   find a different ML-KEM ciphertext decapsulating to the challenge ML-KEM
   secret, keeping its DH ephemeral key breaks the unbound v1 combiner. Secret
   key disclosure alone does not grant that ciphertext-collision/second-preimage
   capability. The baseline has correctness but does not supply such an
-  algorithm, and its failed proof is not evidence of that attack.
+  algorithm, and its failed proof is not evidence of that attack. This hand
+  argument is not an exhaustive classification of concrete legacy-wire attacks;
+  X25519 encoding aliases and other representation bridges are separate open
+  correspondence questions.
 - **Legacy handling remains separate.** `decapsulate_legacy_v1` supports old
   trusted-contact envelopes in `recovery.rs`; the v2 result does not cover it.
 - Primitive implementations remain trusted under

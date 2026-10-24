@@ -83,7 +83,9 @@ now establishes a raw grammar boundary. Encoder inverse, UTF-8/transcript
 reconstruction and all-domain composition remain open. M29's selected
 other-domain abstraction does not close them.
 
-The KEM/HKDF construction requires its own IND-CCA game and reduction. This
-signature argument supplies no KEM, confidentiality, KDF, recovery or
-whole-system theorem. In particular, transcript binding alone is not a
+The [KEM games](../formal/cryptoverif/README.md) provide separate idealized
+IND-CCA results. Their instantiation of the modular KEM-DEM theorem remains
+manual, and concrete HKDF/curve/hash/encoding correspondence is open. This
+signature argument supplies no KEM, confidentiality, recovery or whole-system
+theorem. In particular, transcript binding alone is not a
 computational proof of a robust hybrid KEM combiner.

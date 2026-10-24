@@ -187,6 +187,16 @@ type t_RecoveryPhase =
   | RecoveryPhase_Revoked : t_RecoveryPhase
   | RecoveryPhase_Expired : t_RecoveryPhase
 
+/// Raw observations from the recovery-initiation request, the `users` row and
+/// the store slot that will hold the new attempt.
+type t_InitiateObservation = {
+  f_account_present:bool;
+  f_share_present:bool;
+  f_credential_present:bool;
+  f_attempt_id_fresh:bool;
+  f_ttl_secs:u64
+}
+
 type t_InitiateFacts = {
   f_phase:t_RecoveryPhase;
   f_account_exists:bool;
@@ -211,6 +221,45 @@ let initiation_is_authorized (facts: t_InitiateFacts) : bool =
   facts.f_credential_present &&
   facts.f_attempt_id_fresh &&
   facts.f_ttl_positive
+
+/// Turn raw account/share/credential/store observations into the initiation
+/// facts. The phase names exactly the observed availability of an account,
+/// its recovery share and its recovery credential; it is not supplied by the
+/// caller.
+let initiate_facts (obs: t_InitiateObservation)
+    : Prims.Pure t_InitiateFacts
+      Prims.l_True
+      (ensures
+        fun facts ->
+          let facts:t_InitiateFacts = facts in
+          (match facts.f_phase <: t_RecoveryPhase with
+            | RecoveryPhase_Ready  -> true
+            | _ -> false) =.
+          (obs.f_account_present && obs.f_share_present && obs.f_credential_present) &&
+          (match facts.f_phase <: t_RecoveryPhase with
+            | RecoveryPhase_Unavailable  -> true
+            | _ -> false) =.
+          (~.(obs.f_account_present && obs.f_share_present && obs.f_credential_present) <: bool) &&
+          facts.f_account_exists =. obs.f_account_present &&
+          facts.f_share_present =. obs.f_share_present &&
+          facts.f_credential_present =. obs.f_credential_present &&
+          facts.f_attempt_id_fresh =. obs.f_attempt_id_fresh &&
+          facts.f_ttl_positive =. (obs.f_ttl_secs >. mk_u64 0 <: bool)) =
+  let available:bool = obs.f_account_present && obs.f_share_present && obs.f_credential_present in
+  {
+    f_phase
+    =
+    if available
+    then RecoveryPhase_Ready <: t_RecoveryPhase
+    else RecoveryPhase_Unavailable <: t_RecoveryPhase;
+    f_account_exists = obs.f_account_present;
+    f_share_present = obs.f_share_present;
+    f_credential_present = obs.f_credential_present;
+    f_attempt_id_fresh = obs.f_attempt_id_fresh;
+    f_ttl_positive = obs.f_ttl_secs >. mk_u64 0
+  }
+  <:
+  t_InitiateFacts
 
 let initiation_decision_matches_spec (facts: t_InitiateFacts) (decision: t_InitiateDecision) : bool =
   match decision <: t_InitiateDecision with
@@ -275,6 +324,25 @@ let plan_registration (facts: t_RegistrationFacts)
     t_RegistrationDecision
   else RegistrationDecision_Reject <: t_RegistrationDecision
 
+/// Where a `/recovery/recover` request found the stored challenge state.
+type t_RecoveryAttemptSource =
+  | RecoveryAttemptSource_Missing : t_RecoveryAttemptSource
+  | RecoveryAttemptSource_Consumed : t_RecoveryAttemptSource
+
+/// Raw observations from `/recovery/recover`, the consumed challenge state,
+/// the WebAuthn assertion and the `users` row.
+type t_RecoverObservation = {
+  f_attempt_source:t_RecoveryAttemptSource;
+  f_user_matches:bool;
+  f_attempt_matches:bool;
+  f_credential_matches_current:bool;
+  f_assertion_valid:bool;
+  f_user_verified:bool;
+  f_share_present:bool;
+  f_account_epoch_active:bool;
+  f_stored_epoch:Core_models.Option.t_Option i64
+}
+
 type t_RecoverFacts = {
   f_phase:t_RecoveryPhase;
   f_user_matches:bool;
@@ -310,6 +378,81 @@ let recovery_is_authorized (facts: t_RecoverFacts) : bool =
   facts.f_share_present &&
   facts.f_account_epoch_active &&
   facts.f_epoch >=. v_INITIAL_EPOCH
+
+/// Normalize a stored recovery epoch the same way the handler does: a missing
+/// or non-positive column falls back to the initial epoch.
+let observed_recovery_epoch (stored_epoch: Core_models.Option.t_Option i64)
+    : Prims.Pure i64
+      Prims.l_True
+      (ensures
+        fun epoch ->
+          let epoch:i64 = epoch in
+          epoch =.
+          (match stored_epoch <: Core_models.Option.t_Option i64 with
+            | Core_models.Option.Option_None  -> v_INITIAL_EPOCH
+            | Core_models.Option.Option_Some value ->
+              if value <. v_INITIAL_EPOCH <: bool then v_INITIAL_EPOCH else value)) =
+  match stored_epoch <: Core_models.Option.t_Option i64 with
+  | Core_models.Option.Option_None  -> v_INITIAL_EPOCH
+  | Core_models.Option.Option_Some value ->
+    if value <. v_INITIAL_EPOCH then v_INITIAL_EPOCH else value
+
+/// Turn the consumed-attempt, assertion, credential and row observations into
+/// the share-release facts. The phase and one-shot flag come from whether the
+/// store actually returned (and removed) the exact challenge.
+let recover_facts (obs: t_RecoverObservation)
+    : Prims.Pure t_RecoverFacts
+      Prims.l_True
+      (ensures
+        fun facts ->
+          let facts:t_RecoverFacts = facts in
+          (match facts.f_phase <: t_RecoveryPhase with
+            | RecoveryPhase_ChallengePending  -> true
+            | _ -> false) =.
+          (match obs.f_attempt_source <: t_RecoveryAttemptSource with
+            | RecoveryAttemptSource_Consumed  -> true
+            | _ -> false) &&
+          (match facts.f_phase <: t_RecoveryPhase with
+            | RecoveryPhase_Expired  -> true
+            | _ -> false) =.
+          (match obs.f_attempt_source <: t_RecoveryAttemptSource with
+            | RecoveryAttemptSource_Missing  -> true
+            | _ -> false) &&
+          facts.f_user_matches =. obs.f_user_matches &&
+          facts.f_attempt_matches =. obs.f_attempt_matches &&
+          facts.f_challenge_consumed =.
+          (match obs.f_attempt_source <: t_RecoveryAttemptSource with
+            | RecoveryAttemptSource_Consumed  -> true
+            | _ -> false) &&
+          facts.f_credential_matches_current =. obs.f_credential_matches_current &&
+          facts.f_assertion_valid =. obs.f_assertion_valid &&
+          facts.f_user_verified =. obs.f_user_verified &&
+          facts.f_share_present =. obs.f_share_present &&
+          facts.f_account_epoch_active =. obs.f_account_epoch_active &&
+          facts.f_epoch =. (observed_recovery_epoch obs.f_stored_epoch <: i64)) =
+  let challenge_consumed:bool =
+    match obs.f_attempt_source <: t_RecoveryAttemptSource with
+    | RecoveryAttemptSource_Consumed  -> true
+    | _ -> false
+  in
+  {
+    f_phase
+    =
+    if challenge_consumed
+    then RecoveryPhase_ChallengePending <: t_RecoveryPhase
+    else RecoveryPhase_Expired <: t_RecoveryPhase;
+    f_user_matches = obs.f_user_matches;
+    f_attempt_matches = obs.f_attempt_matches;
+    f_challenge_consumed = challenge_consumed;
+    f_credential_matches_current = obs.f_credential_matches_current;
+    f_assertion_valid = obs.f_assertion_valid;
+    f_user_verified = obs.f_user_verified;
+    f_share_present = obs.f_share_present;
+    f_account_epoch_active = obs.f_account_epoch_active;
+    f_epoch = observed_recovery_epoch obs.f_stored_epoch
+  }
+  <:
+  t_RecoverFacts
 
 let recovery_decision_matches_spec (facts: t_RecoverFacts) (decision: t_RecoverDecision) : bool =
   match decision <: t_RecoverDecision with
@@ -460,6 +603,13 @@ let stale_commitment_can_recover (facts: t_PossessionRecoverFacts)
   in
   possession_recovery_is_authorized facts
 
+/// Raw observations from the WebAuthn assertion and the live credential.
+type t_CredentialUpdateObservation = {
+  f_assertion_valid:bool;
+  f_credential_matches_current:bool;
+  f_needs_update:bool
+}
+
 type t_CredentialUpdateFacts = {
   f_assertion_valid:bool;
   f_credential_matches_current:bool;
@@ -470,6 +620,25 @@ type t_CredentialUpdateDecision =
   | CredentialUpdateDecision_Update : t_CredentialUpdateDecision
   | CredentialUpdateDecision_Keep : t_CredentialUpdateDecision
   | CredentialUpdateDecision_Reject : t_CredentialUpdateDecision
+
+/// Turn the assertion result and stored-credential comparison into the
+/// metadata-update facts.
+let credential_update_facts (obs: t_CredentialUpdateObservation)
+    : Prims.Pure t_CredentialUpdateFacts
+      Prims.l_True
+      (ensures
+        fun facts ->
+          let facts:t_CredentialUpdateFacts = facts in
+          facts.f_assertion_valid =. obs.f_assertion_valid &&
+          facts.f_credential_matches_current =. obs.f_credential_matches_current &&
+          facts.f_needs_update =. obs.f_needs_update) =
+  {
+    f_assertion_valid = obs.f_assertion_valid;
+    f_credential_matches_current = obs.f_credential_matches_current;
+    f_needs_update = obs.f_needs_update
+  }
+  <:
+  t_CredentialUpdateFacts
 
 let credential_update_decision_matches_spec
       (facts: t_CredentialUpdateFacts)
@@ -661,3 +830,219 @@ let consumed_grant_can_enroll_again (facts: t_EnrollmentFacts)
     { facts with f_phase = RecoveryPhase_Completed <: t_RecoveryPhase } <: t_EnrollmentFacts
   in
   enrollment_is_authorized facts
+
+/// The initiation policy over the real observation is exactly the conjunction
+/// of the observed availability and freshness values.
+let initiate_facts_authorize (obs: t_InitiateObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =.
+          (obs.f_account_present && obs.f_share_present && obs.f_credential_present &&
+          obs.f_attempt_id_fresh &&
+          (obs.f_ttl_secs >. mk_u64 0 <: bool))) =
+  initiation_is_authorized (initiate_facts obs <: t_InitiateFacts)
+
+let missing_recovery_share_can_initiate (obs: t_InitiateObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_InitiateObservation = { obs with f_share_present = false } <: t_InitiateObservation in
+  initiation_is_authorized (initiate_facts obs <: t_InitiateFacts)
+
+let credentialless_account_can_initiate (obs: t_InitiateObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_InitiateObservation =
+    { obs with f_credential_present = false } <: t_InitiateObservation
+  in
+  initiation_is_authorized (initiate_facts obs <: t_InitiateFacts)
+
+/// A generated attempt id that already occupies stored state is not fresh.
+let colliding_attempt_id_can_initiate (obs: t_InitiateObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_InitiateObservation =
+    { obs with f_attempt_id_fresh = false } <: t_InitiateObservation
+  in
+  initiation_is_authorized (initiate_facts obs <: t_InitiateFacts)
+
+let expired_initiate_ttl_can_start (obs: t_InitiateObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_InitiateObservation = { obs with f_ttl_secs = mk_u64 0 } <: t_InitiateObservation in
+  initiation_is_authorized (initiate_facts obs <: t_InitiateFacts)
+
+let unverified_assertion_can_update_credential (obs: t_CredentialUpdateObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_CredentialUpdateObservation =
+    { obs with f_assertion_valid = false } <: t_CredentialUpdateObservation
+  in
+  match
+    plan_credential_update (credential_update_facts obs <: t_CredentialUpdateFacts)
+    <:
+    t_CredentialUpdateDecision
+  with
+  | CredentialUpdateDecision_Update  -> true
+  | _ -> false
+
+let stale_assertion_credential_can_update (obs: t_CredentialUpdateObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_CredentialUpdateObservation =
+    { obs with f_credential_matches_current = false } <: t_CredentialUpdateObservation
+  in
+  match
+    plan_credential_update (credential_update_facts obs <: t_CredentialUpdateFacts)
+    <:
+    t_CredentialUpdateDecision
+  with
+  | CredentialUpdateDecision_Update  -> true
+  | _ -> false
+
+/// Normalization can never produce an epoch below the initial epoch, so the
+/// epoch guard in `recovery_is_authorized` is implied for every observation.
+let observed_recovery_epoch_is_active (stored_epoch: Core_models.Option.t_Option i64)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. true) = (observed_recovery_epoch stored_epoch <: i64) >=. v_INITIAL_EPOCH
+
+/// Share release over the real observation is exactly the conjunction of the
+/// consumed exact attempt, the assertion and credential bindings, the row
+/// observations and an active normalized epoch.
+let recover_facts_authorize (obs: t_RecoverObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =.
+          ((match obs.f_attempt_source <: t_RecoveryAttemptSource with
+            | RecoveryAttemptSource_Consumed  -> true
+            | _ -> false) &&
+          obs.f_user_matches &&
+          obs.f_attempt_matches &&
+          obs.f_credential_matches_current &&
+          obs.f_assertion_valid &&
+          obs.f_user_verified &&
+          obs.f_share_present &&
+          obs.f_account_epoch_active &&
+          ((observed_recovery_epoch obs.f_stored_epoch <: i64) >=. v_INITIAL_EPOCH <: bool))) =
+  recovery_is_authorized (recover_facts obs <: t_RecoverFacts)
+
+let missing_attempt_can_release (obs: t_RecoverObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_RecoverObservation =
+    { obs with f_attempt_source = RecoveryAttemptSource_Missing <: t_RecoveryAttemptSource }
+    <:
+    t_RecoverObservation
+  in
+  recovery_is_authorized (recover_facts obs <: t_RecoverFacts)
+
+let cross_user_recover_observation_can_release (obs: t_RecoverObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_RecoverObservation = { obs with f_user_matches = false } <: t_RecoverObservation in
+  recovery_is_authorized (recover_facts obs <: t_RecoverFacts)
+
+let mismatched_attempt_observation_can_release (obs: t_RecoverObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_RecoverObservation = { obs with f_attempt_matches = false } <: t_RecoverObservation in
+  recovery_is_authorized (recover_facts obs <: t_RecoverFacts)
+
+let replaced_observed_credential_can_release (obs: t_RecoverObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_RecoverObservation =
+    { obs with f_credential_matches_current = false } <: t_RecoverObservation
+  in
+  recovery_is_authorized (recover_facts obs <: t_RecoverFacts)
+
+let unverified_observed_assertion_can_release (obs: t_RecoverObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_RecoverObservation = { obs with f_assertion_valid = false } <: t_RecoverObservation in
+  recovery_is_authorized (recover_facts obs <: t_RecoverFacts)
+
+let unverified_observation_user_can_release (obs: t_RecoverObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_RecoverObservation = { obs with f_user_verified = false } <: t_RecoverObservation in
+  recovery_is_authorized (recover_facts obs <: t_RecoverFacts)
+
+let missing_observed_share_can_release (obs: t_RecoverObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_RecoverObservation = { obs with f_share_present = false } <: t_RecoverObservation in
+  recovery_is_authorized (recover_facts obs <: t_RecoverFacts)
+
+let rekeying_observed_account_can_release (obs: t_RecoverObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_RecoverObservation =
+    { obs with f_account_epoch_active = false } <: t_RecoverObservation
+  in
+  recovery_is_authorized (recover_facts obs <: t_RecoverFacts)

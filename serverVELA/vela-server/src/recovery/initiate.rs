@@ -83,9 +83,8 @@ pub async fn post_initiate(
         .map_err(|e| AppError::BadRequest(format!("failed to start WebAuthn recovery: {e:?}")))?;
 
     let recovery_id = Uuid::new_v4();
-    // The generated id is fresh only if the store has no attempt state under
-    // it. This is a real store observation; a collision fails closed instead
-    // of silently overwriting another attempt.
+    // Observe freshness for the policy. Storage checks it atomically again:
+    // another insertion may win after this preflight observation.
     let attempt_id_fresh = !state
         .store
         .exists(&auth_state_key(body.user_id, recovery_id))?;
@@ -97,6 +96,11 @@ pub async fn post_initiate(
         ttl_secs: AUTH_STATE_TTL_SECS,
     })) {
         InitiateDecision::Start(permit) => permit,
+        InitiateDecision::Reject if !attempt_id_fresh => {
+            return Err(AppError::Conflict(
+                "recovery challenge id is already in use".into(),
+            ));
+        }
         InitiateDecision::Reject => {
             return Err(AppError::Internal(
                 "verified recovery policy rejected a valid initiation".into(),
@@ -168,11 +172,28 @@ fn auth_state_key(user_id: Uuid, recovery_id: Uuid) -> String {
 pub(crate) fn store_auth_state(state: &AppState, envelope: &RecoveryAuthState) -> Result<()> {
     let bytes = serde_json::to_vec(envelope)
         .map_err(|e| AppError::Internal(format!("failed to serialize WebAuthn auth state: {e}")))?;
-    state.store.set_ex(
-        &auth_state_key(envelope.user_id, envelope.recovery_id),
-        &bytes,
+    store_auth_state_bytes(&state.store, envelope.user_id, envelope.recovery_id, &bytes)
+}
+
+/// Commit only while this exact user/attempt slot is free. The earlier
+/// observation is not an authorization to overwrite a concurrent insertion.
+fn store_auth_state_bytes(
+    store: &crate::store::Store,
+    user_id: Uuid,
+    recovery_id: Uuid,
+    bytes: &[u8],
+) -> Result<()> {
+    if store.set_ex_nx(
+        &auth_state_key(user_id, recovery_id),
+        bytes,
         AUTH_STATE_TTL_SECS,
-    )
+    )? {
+        Ok(())
+    } else {
+        Err(AppError::Conflict(
+            "recovery challenge id is already in use".into(),
+        ))
+    }
 }
 
 /// Consume the exact attempt state once. `Ok(None)` means no state matched;
@@ -197,4 +218,26 @@ pub(crate) fn take_auth_state(
         ));
     }
     Ok(Some(envelope))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stale_freshness_observations_cannot_replace_the_winning_challenge() {
+        let store = crate::store::Store::open_temp().unwrap();
+        let user_id = Uuid::new_v4();
+        let recovery_id = Uuid::new_v4();
+        let key = auth_state_key(user_id, recovery_id);
+        // Two requests may both see an empty slot before either writes.
+        assert!(!store.exists(&key).unwrap());
+        assert!(!store.exists(&key).unwrap());
+        store_auth_state_bytes(&store, user_id, recovery_id, b"original challenge").unwrap();
+        assert!(matches!(
+            store_auth_state_bytes(&store, user_id, recovery_id, b"replacement challenge"),
+            Err(AppError::Conflict(_))
+        ));
+        assert_eq!(store.get(&key).unwrap().unwrap(), b"original challenge");
+    }
 }

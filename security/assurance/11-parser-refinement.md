@@ -71,7 +71,7 @@ constructor bypass or mutable accessor is provided.
 
 ## Proof/evidence boundary
 
-The inventory now has 159 directly selected functions and 152 explicit
+The inventory now has 180 directly selected functions and 173 explicit
 postconditions. Seven selected specification/comparison functions have no
 explicit ensures. All reviewed extracted postconditions have trivial
 preconditions; there are zero local assume val declarations. Imported models,
