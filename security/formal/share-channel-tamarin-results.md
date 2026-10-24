@@ -62,8 +62,10 @@ Reproduce with:
 ```
 
 The Rust counterpart is the hax-extracted `vela-share-policy`
-(`plan_ek_registration`, `plan_send`, `plan_link_mutation`), enforced by
-`serverVELA/vela-server/src/share/mod.rs` and `src/account/mod.rs`.
+(`plan_ek_registration`, `plan_send`, `plan_link_mutation`). The server calls
+`plan_ek_registration` and `plan_send`; linked updates and revocations are
+enforced by SQL guards instead of `plan_link_mutation`. Handler conformance:
+`serverVELA/vela-server/tests/share_channel_model.rs`.
 
 ## Post-review revision (2026-08-26/27)
 
