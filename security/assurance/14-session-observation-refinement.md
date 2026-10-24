@@ -3,7 +3,9 @@
 This increment verifies the Rust constructors used by web-session grant and
 RW token-exchange handlers. It adds ten checked postconditions; the session
 crate now has 19 postconditions over 21 directly selected functions, and the
-corpus has 183 postconditions / 190 directly selected functions. Hosted
+corpus reached 183 postconditions / 190 directly selected functions at this
+increment. The [later recovery increment](15-recovery-possession-enrollment.md)
+extends the inventory further. Hosted
 reproduction of this increment is pending. The preceding 173-postcondition
 corpus passed on `5fa4e9f`.
 

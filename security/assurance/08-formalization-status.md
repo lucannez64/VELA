@@ -60,7 +60,7 @@ turn any open obligation below into a proved result.
 - **Reduced assumption boundary.** Structural Rust matches replaced the 18
   opaque derived-enum equality uses. Fresh checking of all eight policy crates
   succeeded with zero local assume val declarations. The inventory now has
-  **183 explicit postconditions / 190 selected functions** in eleven Rust modules,
+  **212 explicit postconditions / 219 selected functions** in eleven Rust modules,
   plus defined String and Vec compatibility models. Seven selected functions have
   no explicit ensures. Imported library assumptions and proof tools remain
   trusted; the drift checker is not a proof checker.
@@ -145,6 +145,9 @@ in a separate checked game. It assumes an unspecified nonuniform exponent
 distribution; the conditional HPKE/Curve25519 constants are documented, not a
 machine proof of the Rust clamp, subgroup handling or wire encoding. Its full
 seven-model gate passes locally; hosted reproduction of the new game is pending.
+The [collision-side-condition note](proof-logs/current/x25519-nonuniform-gdh/COLLISION-SIDE-CONDITIONS.md)
+separates pre-challenge freshness charges from post-challenge GDH queries; it
+is a paper explanation alongside the retained tool debug trace.
 
 ## Recovery observation increment
 
@@ -172,11 +175,22 @@ verifier Result. The corpus is now 183/190; source decoding, actual SQL/store
 semantics and complete handler traces remain open. Hosted reproduction of this
 increment is pending.
 
+## Possession and enrollment observation increment
+
+The [remaining recovery constructors](15-recovery-possession-enrollment.md)
+add 29 checked contracts: recovery now has 71, and the corpus 212/219. The
+parent strengthened enrollment to derive key validity from actual decoded
+lengths (1600/2624) inside the verified constructor. Possession state insertion
+uses atomic insert-if-absent, and empty commitments fail unavailable. Fresh
+F★ checking and handler regressions pass locally; hosted reproduction is pending.
+Grant store-key user binding, decoders, verifiers, storage effects, restoration
+and complete handler traces remain open.
+
 ## Remaining obligations for the six requested areas
 
 | Area | Status | Required to close |
 |---|---|---|
-| F-1: handler facts | Partial: enrollment and recovery constructors checked in hosted F* | Maintain the checked contracts; verify the observation producers (SQL rows, store lookups, signature verifier, session ids) themselves; complete UTF-8/object and authenticated-open composition after the checked byte-frame parser; prove independent context origins; cover remaining token, epoch, recovery and handler fact construction |
+| F-1: handler facts | Partial: hosted enrollment/recovery baseline; local web-session and additional recovery constructors | Maintain the checked contracts; verify the observation producers (SQL rows, store lookups, signature verifier, session ids) themselves; complete UTF-8/object and authenticated-open composition after the checked byte-frame parser; prove independent context origins; cover remaining token, epoch, recovery and handler fact construction |
 | F-2: state transitions | Partial | Machine-check concrete handler/database transitions against protocol transitions, including exceptions, cancellation and concurrency |
 | F-3: persistence/recovery | Partial: M28 and composed M29 | Prove the actual journal implementation refines M28; formalize collection equality and filesystem outcomes; compose local edits/deletions and RMS migration; cover or explicitly exclude independent processes |
 | F-4: construction security | Partial: CryptoVerif proofs for idealized v2 KEM games, modular KEM-DEM and AND-signature games under the explicit assumptions | Close the combiner gaps listed in `security/formal/cryptoverif/README.md` (X25519 cofactor and clamped/nonuniform scalars vs uniform prime-order group, SHA-256 step, quantum-query and multi-user composition; KEM-DEM is proved modularly); computational games and reductions for envelope framing, share tags, possession proofs and KDFs under named primitive assumptions; verify application randomness/error/erasure handling. Primitive internals and leakage resistance are trusted under the selected boundary |

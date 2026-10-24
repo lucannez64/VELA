@@ -33,8 +33,8 @@ use crate::{
     state::AppState,
 };
 
-const HYBRID_EK_LEN: usize = 1568 + 32;
-const HYBRID_VK_LEN: usize = 2592 + 32;
+const HYBRID_EK_LEN: usize = vela_recovery_policy::HYBRID_EK_LEN;
+const HYBRID_VK_LEN: usize = vela_recovery_policy::HYBRID_VK_LEN;
 #[derive(Deserialize)]
 pub struct EnrollDeviceRequest {
     pub user_id: Uuid,
@@ -179,7 +179,6 @@ pub async fn post_enroll_device(
         ));
     }
     let consumed_epoch = consumed_grant.key_epoch;
-    let public_keys_valid = hybrid_ek.len() == HYBRID_EK_LEN && hybrid_vk.len() == HYBRID_VK_LEN;
     // The policy consumes the same decoded grant/row values the checks above
     // observed: single-use consumption, credential or commitment authority,
     // decoded key lengths, the rekey column and the normalized epochs.
@@ -195,7 +194,8 @@ pub async fn post_enroll_device(
             account_epoch_active,
             credential_id_matches,
             commitment_len,
-            public_keys_valid,
+            hybrid_ek_len: hybrid_ek.len(),
+            hybrid_vk_len: hybrid_vk.len(),
         })) {
             EnrollmentDecision::Enroll(permit) => permit,
             EnrollmentDecision::Reject => {

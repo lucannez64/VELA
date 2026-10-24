@@ -7,6 +7,8 @@
 //! private permits constructed here. hax extracts these exact decisions to F*.
 
 pub const INITIAL_EPOCH: i64 = 1;
+pub const HYBRID_EK_LEN: usize = 1568 + 32;
+pub const HYBRID_VK_LEN: usize = 2592 + 32;
 
 // ── Recovery-share publication (M16) ───────────────────────────────────────
 
@@ -936,8 +938,9 @@ pub struct EnrollmentObservation {
     /// Decoded byte length of `users.recovery_auth_hash`; zero means the
     /// possession commitment is absent or empty.
     pub commitment_len: usize,
-    /// Both decoded public-key lengths equal the hybrid key sizes.
-    pub public_keys_valid: bool,
+    /// Lengths of the actual base64-decoded hybrid public keys.
+    pub hybrid_ek_len: usize,
+    pub hybrid_vk_len: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1024,7 +1027,8 @@ pub fn plan_enrollment(facts: EnrollmentFacts) -> EnrollmentDecision {
         && facts.credential_matches_current == obs.credential_id_matches
         && facts.possession_grant == obs.grant_possession
         && facts.possession_hash_present == (obs.commitment_len > 0)
-        && facts.public_keys_valid == obs.public_keys_valid
+        && facts.public_keys_valid
+            == (obs.hybrid_ek_len == HYBRID_EK_LEN && obs.hybrid_vk_len == HYBRID_VK_LEN)
         && facts.account_epoch_active == obs.account_epoch_active
         && facts.grant_epoch == obs.grant_epoch
         && facts.account_epoch == observed_recovery_epoch(obs.stored_epoch)
@@ -1046,7 +1050,7 @@ pub fn enrollment_facts(obs: EnrollmentObservation) -> EnrollmentFacts {
         credential_matches_current: obs.credential_id_matches,
         possession_grant: obs.grant_possession,
         possession_hash_present: obs.commitment_len > 0,
-        public_keys_valid: obs.public_keys_valid,
+        public_keys_valid: obs.hybrid_ek_len == HYBRID_EK_LEN && obs.hybrid_vk_len == HYBRID_VK_LEN,
         account_epoch_active: obs.account_epoch_active,
         grant_epoch: obs.grant_epoch,
         account_epoch: observed_recovery_epoch(obs.stored_epoch),
@@ -1389,7 +1393,8 @@ pub fn rotated_commitment_observation_can_recover(mut obs: PossessionRecoverObse
         } else {
             obs.credential_id_matches
         })
-        && obs.public_keys_valid
+        && obs.hybrid_ek_len == HYBRID_EK_LEN
+        && obs.hybrid_vk_len == HYBRID_VK_LEN
         && obs.account_epoch_active
         && obs.grant_epoch >= INITIAL_EPOCH
         && obs.grant_epoch == observed_recovery_epoch(obs.stored_epoch))
@@ -1457,8 +1462,10 @@ pub fn rotated_enrollment_observation_can_enroll(mut obs: EnrollmentObservation)
 }
 
 #[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
-pub fn invalid_public_keys_observation_can_enroll(mut obs: EnrollmentObservation) -> bool {
-    obs.public_keys_valid = false;
+pub fn invalid_public_keys_observation_can_enroll(obs: EnrollmentObservation) -> bool {
+    if obs.hybrid_ek_len == HYBRID_EK_LEN && obs.hybrid_vk_len == HYBRID_VK_LEN {
+        return false;
+    }
     enrollment_is_authorized(enrollment_facts(obs))
 }
 
@@ -1669,7 +1676,8 @@ mod tests {
             account_epoch_active: true,
             credential_id_matches: false,
             commitment_len: 2624,
-            public_keys_valid: true,
+            hybrid_ek_len: 1600,
+            hybrid_vk_len: 2624,
         };
         assert!(matches!(
             plan_enrollment(enrollment_facts(enrollment_obs)),

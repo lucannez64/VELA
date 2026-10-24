@@ -67,3 +67,9 @@ cd ../../security/formal
 ./run-recovery-publication-proofs.sh
 ./run-pair-selection-proofs.sh
 ```
+
+The enrollment constructor accepts the two decoded public-key lengths and
+computes their exact 1600/2624-byte validity inside the checked kernel. The
+server's preliminary checks share these policy constants. It does not accept
+a caller-supplied `public_keys_valid` boolean as an observation. The policy
+still proves no cryptographic validity of correctly sized key bytes.

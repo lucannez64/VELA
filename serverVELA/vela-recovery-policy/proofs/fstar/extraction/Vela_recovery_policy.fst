@@ -5,6 +5,10 @@ open Core_models
 
 let v_INITIAL_EPOCH: i64 = mk_i64 1
 
+let v_HYBRID_EK_LEN: usize = mk_usize 1568 +! mk_usize 32
+
+let v_HYBRID_VK_LEN: usize = mk_usize 2592 +! mk_usize 32
+
 type t_PublicationStageRequest = {
   f_declared_epoch:i64;
   f_split_id_present:bool;
@@ -840,7 +844,8 @@ type t_EnrollmentObservation = {
   f_account_epoch_active:bool;
   f_credential_id_matches:bool;
   f_commitment_len:usize;
-  f_public_keys_valid:bool
+  f_hybrid_ek_len:usize;
+  f_hybrid_vk_len:usize
 }
 
 type t_EnrollmentPermit = { f_epoch:i64 }
@@ -920,7 +925,9 @@ let enrollment_facts (obs: t_EnrollmentObservation)
           facts.f_credential_matches_current =. obs.f_credential_id_matches &&
           facts.f_possession_grant =. obs.f_grant_possession &&
           facts.f_possession_hash_present =. (obs.f_commitment_len >. mk_usize 0 <: bool) &&
-          facts.f_public_keys_valid =. obs.f_public_keys_valid &&
+          facts.f_public_keys_valid =.
+          ((obs.f_hybrid_ek_len =. v_HYBRID_EK_LEN <: bool) &&
+          (obs.f_hybrid_vk_len =. v_HYBRID_VK_LEN <: bool)) &&
           facts.f_account_epoch_active =. obs.f_account_epoch_active &&
           facts.f_grant_epoch =. obs.f_grant_epoch &&
           facts.f_account_epoch =. (observed_recovery_epoch obs.f_stored_epoch <: i64)) =
@@ -941,7 +948,9 @@ let enrollment_facts (obs: t_EnrollmentObservation)
     f_credential_matches_current = obs.f_credential_id_matches;
     f_possession_grant = obs.f_grant_possession;
     f_possession_hash_present = obs.f_commitment_len >. mk_usize 0;
-    f_public_keys_valid = obs.f_public_keys_valid;
+    f_public_keys_valid
+    =
+    obs.f_hybrid_ek_len =. v_HYBRID_EK_LEN && obs.f_hybrid_vk_len =. v_HYBRID_VK_LEN;
     f_account_epoch_active = obs.f_account_epoch_active;
     f_grant_epoch = obs.f_grant_epoch;
     f_account_epoch = observed_recovery_epoch obs.f_stored_epoch
@@ -1507,7 +1516,8 @@ let enrollment_facts_authorize (obs: t_EnrollmentObservation)
           (if obs.f_grant_possession
             then obs.f_commitment_len >. mk_usize 0 <: bool
             else obs.f_credential_id_matches) &&
-          obs.f_public_keys_valid &&
+          (obs.f_hybrid_ek_len =. v_HYBRID_EK_LEN <: bool) &&
+          (obs.f_hybrid_vk_len =. v_HYBRID_VK_LEN <: bool) &&
           obs.f_account_epoch_active &&
           (obs.f_grant_epoch >=. v_INITIAL_EPOCH <: bool) &&
           (obs.f_grant_epoch =. (observed_recovery_epoch obs.f_stored_epoch <: i64) <: bool))) =
@@ -1635,7 +1645,6 @@ let invalid_public_keys_observation_can_enroll (obs: t_EnrollmentObservation)
         fun result ->
           let result:bool = result in
           result =. false) =
-  let obs:t_EnrollmentObservation =
-    { obs with f_public_keys_valid = false } <: t_EnrollmentObservation
-  in
-  enrollment_is_authorized (enrollment_facts obs <: t_EnrollmentFacts)
+  if obs.f_hybrid_ek_len =. v_HYBRID_EK_LEN && obs.f_hybrid_vk_len =. v_HYBRID_VK_LEN
+  then false
+  else enrollment_is_authorized (enrollment_facts obs <: t_EnrollmentFacts)

@@ -1,9 +1,12 @@
 # Possession and enrollment fact-construction increment
 
-Local evidence for the commit based on `5fa4e9f`. The checked-in
-`../fstar/extraction/Vela_recovery_policy.fst` is the exact output of this run
+Local evidence for the commit based on `5fa4e9f`. The archived
+[`Vela_recovery_policy.fst`](../../../../security/assurance/proof-logs/current/recovery-possession-enrollment/delegated/Vela_recovery_policy.fst) is the exact output of this delegated run
 (sha256 `ae460bda3a59d2662f79aa39bfaa8093e70654385b4967f508cf590055dfcb1f`)
-and was not hand-edited.
+and was not hand-edited. The parent subsequently changed the enrollment
+observation to carry actual decoded key lengths and re-extracted/rechecked all
+71 contracts. The live extraction is that newer artifact; see the parent
+[evidence](../../../../security/assurance/proof-logs/current/recovery-possession-enrollment/README.md).
 
 ## Toolchain and limits
 

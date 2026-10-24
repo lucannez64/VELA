@@ -4852,3 +4852,45 @@ async fn possession_grant_enrolls_only_while_its_commitment_is_staged() {
         "an authority revocation must not spend the grant"
     );
 }
+
+#[tokio::test]
+async fn possession_initiation_rejects_an_empty_decoded_commitment() {
+    use vela_server::sqldb::{Db as _, TursoValue};
+    let state = helpers::test_state().await;
+    let user_id = Uuid::new_v4();
+    insert_user(&state, user_id).await;
+    state
+        .sqldb
+        .execute(
+            "UPDATE users SET recovery_share = ?, recovery_auth_hash = '' WHERE id = ?",
+            vec![
+                TursoValue::Text(crate_b64(&[1u8; 8])),
+                TursoValue::Text(user_id.to_string()),
+            ],
+        )
+        .await
+        .unwrap();
+    let response = vela_server::routes::build(state)
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/recovery/initiate-proof")
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"user_id": user_id}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let body: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        body["message"],
+        "recovery is not available for this account"
+    );
+    assert!(body.get("challenge_b64").is_none());
+}

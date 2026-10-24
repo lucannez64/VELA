@@ -403,7 +403,16 @@ fn enrollment_facts_are_exactly_the_grant_consumption_credential_commitment_and_
                                                     account_epoch_active,
                                                     credential_id_matches,
                                                     commitment_len,
-                                                    public_keys_valid,
+                                                    hybrid_ek_len: if public_keys_valid {
+                                                        1600
+                                                    } else {
+                                                        0
+                                                    },
+                                                    hybrid_vk_len: if public_keys_valid {
+                                                        2624
+                                                    } else {
+                                                        0
+                                                    },
                                                 };
                                                 let facts = enrollment_facts(obs);
                                                 let consumed =
@@ -535,6 +544,40 @@ fn enrollment_facts_are_exactly_the_grant_consumption_credential_commitment_and_
                     }
                 }
             }
+        }
+    }
+}
+
+#[test]
+fn enrollment_checks_each_decoded_key_length() {
+    let valid = EnrollmentObservation {
+        grant_present: true,
+        grant_consumed: true,
+        consumed_matches_observed: true,
+        account_present: true,
+        grant_possession: true,
+        grant_epoch: 4,
+        stored_epoch: Some(4),
+        account_epoch_active: true,
+        credential_id_matches: false,
+        commitment_len: 2624,
+        hybrid_ek_len: 1600,
+        hybrid_vk_len: 2624,
+    };
+    for ek_len in [0, 1599, 1600, 1601] {
+        for vk_len in [0, 2623, 2624, 2625] {
+            let obs = EnrollmentObservation {
+                hybrid_ek_len: ek_len,
+                hybrid_vk_len: vk_len,
+                ..valid
+            };
+            assert_eq!(
+                matches!(
+                    plan_enrollment(enrollment_facts(obs)),
+                    EnrollmentDecision::Enroll(_)
+                ),
+                ek_len == 1600 && vk_len == 2624
+            );
         }
     }
 }

@@ -28,7 +28,7 @@
     },
     {
       "artifact": "serverVELA/vela-recovery-policy/proofs/fstar/extraction/Vela_recovery_policy.fst",
-      "selected_postconditions": 42,
+      "selected_postconditions": 71,
       "allowed_assume_val": []
     },
     {

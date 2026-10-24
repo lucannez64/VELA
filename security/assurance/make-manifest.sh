@@ -19,6 +19,7 @@ patterns = [
     '*/vela-*-policy/src/*.rs', '*/vela-*-policy/verify-fstar.sh',
     '*/vela-*-policy/README.md', '*/vela-*-policy/Cargo.toml', '*/vela-*-policy/Cargo.lock',
     '*/vela-*-policy/proofs/fstar/extraction/*.fst',
+    '*/vela-*-policy/proofs/logs/*.log', '*/vela-*-policy/proofs/logs/*.md',
     'libVELA/vela-crypto/proofs/proverif/extraction/*.pvl',
     'libVELA/vela-crypto/proofs/fstar/extraction/*.fst',
     'libVELA/vela-crypto/proofs/fstar/models/*.fst',
