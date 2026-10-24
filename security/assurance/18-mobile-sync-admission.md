@@ -77,8 +77,7 @@ requests. The controller's token guarantee excludes bootstrap and explicit
 intermediate rotations. A captured RMS may finish persistence after lock; there
 is no session cancellation lease. SSE has no missing-pin guard and does not touch
 rollback floors. Helper tests do not execute full manager/recovery lifecycles.
-The focused internal review found no code blockers; hosted validation remains
-pending for this increment. It was a static review, not an external audit.
+The focused internal review found no code blockers; hosted validation passed on fdee2bc for this increment. It was a static review, not an external audit.
 
 
 Residual coverage: JVM tests do not execute manager-level auth/recovery ordering,

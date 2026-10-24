@@ -2,8 +2,9 @@
 
 The existing extracted `plan_chunk_download` is now checked against a separately
 stated predicate in twenty handwritten F★ lemmas. This is a supplemental kernel
-proof, not twenty new Rust postconditions: the Rust corpus remains 245 explicit
-postconditions over 252 selected functions, and its historical eleven-contract
+proof, not twenty new Rust postconditions: at this standalone increment the corpus
+had 245 explicit postconditions over 252 selected functions (now 249/256 after
+the separate epoch increment), and its historical eleven-contract
 sync artifact is byte-identical.
 
 For arbitrary facts and a permit, the actual planner returns `Accept(permit)`
@@ -27,7 +28,7 @@ that an integer epoch established the epoch flag. The permit has only a clock.
 Context/account/server binding, authenticated-open composition, baseline
 persistence and native/desktop callers remain outside this theorem. A caller
 providing an incorrect flag is not made safe by a correct policy kernel.
-The unmerged mobile-runtime and focused integer-epoch work is separate.
+The mobile-runtime and focused integer-epoch work is separate from this theorem.
 
 `verify-fstar.sh` regenerates the historical extraction and then calls the new
 lemma verifier separately, using only that extraction directory. A focused
@@ -39,4 +40,4 @@ count/name and source-escape guards detect drift, not semantic adequacy.
 the delegated mobile-dependent snapshot from the standalone parent result.
 The parent check passes eleven existing contracts, twenty handwritten lemmas,
 five Rust tests and six source-guard tests. Hosted reproduction of the added
-lemma gate is pending. No full-system or external-audit claim follows.
+lemma gate passed on 25bf944 and fdee2bc; see the [current hosted baseline](proof-logs/current/hosted-fdee2bc/README.md). No full-system or external-audit claim follows.

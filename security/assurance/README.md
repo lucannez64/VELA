@@ -24,8 +24,10 @@ records that exact head. The later [368bcc0 hosted workflow](proof-logs/current/
 reproduces the 231-postcondition inventory and the typed journal encoding proof.
 The [5d8c366 snapshot](proof-logs/current/hosted-5d8c366/README.md) then passes
 all fifteen PR checks with 245 Rust postconditions, including the corrected
-sharing constructor. The twenty chunk lemmas and the local 249-contract mobile
-candidate are later increments with separate validation status.
+sharing constructor. The [fdee2bc hosted baseline](proof-logs/current/hosted-fdee2bc/README.md)
+now covers the 249-contract mobile increment, twenty chunk lemmas, six epoch
+lemmas and stronger encoded journal proofs, with all fifteen checks passing.
+The next recovery-redemption refinement is not part of that snapshot.
 
 ## Contents
 
@@ -117,7 +119,7 @@ correctness is not a consequence of the pure-policy proofs.
   unproved legacy baseline, with a random-oracle boundary and uniform/nonuniform GDH abstractions.
   The [review corrections](proof-logs/current/computational-review-corrections/README.md)
   add leaked-key KEM correctness and clarify assumptions; hosted reproduction
-  passed on 5fa4e9f for the previous six-game snapshot; the new seventh game awaits hosted reproduction. These results do not establish full Rust or quantum-adversary
+  passed for all ten games on fdee2bc. These results do not establish full Rust or quantum-adversary
   construction correspondence.
 - Current hax/F*: the [local recovery increment](proof-logs/current/recovery-fact-refinement/README.md)
   extends the earlier [hosted enrollment baseline](proof-logs/current/hosted-enrollment-40039992434/README.md)
@@ -134,7 +136,8 @@ correctness is not a consequence of the pure-policy proofs.
   commands used 3 GiB caps without swap; no engine rebuild was needed.
 - CI now defines all-model and eight-crate refinement gates and log artifacts.
   Hosted refinement passed on fbe35c0; its full workflow failed before
-  CryptoVerif ran. The executable/failure-handling repair awaits hosted checking.
+  CryptoVerif ran. The repair and later computational games have since passed
+  in the fdee2bc hosted security workflow.
   Toolchain installation in the dedicated CI job has a separate 6 GiB cap;
   local runners default to 3 GiB.
 

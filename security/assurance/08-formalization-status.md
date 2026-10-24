@@ -13,6 +13,17 @@ compiler internals is excluded; VELA's hybrid combiners, encodings, handler
 logic and native caller behavior remain in scope. This selection does not
 turn any open obligation below into a proved result.
 
+## Current hosted baseline
+
+[All fifteen checks passed on fdee2bc](proof-logs/current/hosted-fdee2bc/README.md).
+That snapshot checks 249 Rust postconditions /256 selections across fourteen
+artifacts, twenty handwritten chunk lemmas, six epoch lemmas and the encoded
+journal development. The iOS job reports success after correcting its decode-
+failure test fixture; the downloaded console log is incomplete, so no fresh
+per-test count is inferred. Historical evidence below retains snapshot counts.
+The recovery-redemption lifecycle refinement is subsequent work, not covered by
+this baseline.
+
 ## Additional checked results
 
 - **Ten production transaction/recovery postconditions.** Desktop sharing now
@@ -95,7 +106,7 @@ the SQL predicate. These fourteen selected entry points are listed in
 bringing the corpus to 245/252. Hosted checking exposed an unrestricted i64
 inbox-sum overflow; the corrected constructor uses guarded subtraction and a
 widened mathematical-sum postcondition, rejecting negative counts. Hosted
-reproduction of that correction remains pending. See the
+reproduction passed on 5d8c366 and the later fdee2bc baseline. See the
 [local evidence](proof-logs/current/share-inbox-arithmetic/README.md). Rate limiting, base64
 decoding and the recipient/capsule/quota/timestamp upper-bound returns still
 happen before the policy runs, and the SQL/session/verifier observations remain
@@ -112,8 +123,8 @@ of its runner permission error; a successful refinement job is not a successful
 whole-workflow result.
 The subsequent [complete security workflow](https://github.com/lucannez64/VELA/actions/runs/40041986647)
 passed on 40c9f30 for that earlier 152-postcondition/pre-correction-model snapshot.
-The strengthened computational games and the 21 new recovery contracts require
-their own hosted reproduction.
+Those later computational and recovery increments now have hosted reproduction
+on fdee2bc; see the current baseline above. Their semantic scope is unchanged.
 
 The I/O-contract review also found and fixed an uncertain-write recovery gap:
 readable pending metadata now receives a successful durability re-arm before
@@ -218,11 +229,11 @@ and complete handler traces remain open.
 
 | Area | Status | Required to close |
 |---|---|---|
-| F-1: handler facts | Partial: hosted enrollment/recovery baseline; local web-session, share and additional recovery constructors | Maintain the sharing contracts reproduced on 5d8c366; verify the observation producers (SQL rows, store lookups, signature verifier, session ids) themselves; complete UTF-8/object and authenticated-open composition after the checked byte-frame parser; prove independent context origins; cover remaining token, epoch, recovery and handler fact construction |
+| F-1: handler facts | Partial: observation constructors and policy checks hosted on fdee2bc; origins and full handlers remain open | Maintain the sharing contracts reproduced on 5d8c366; verify the observation producers (SQL rows, store lookups, signature verifier, session ids) themselves; complete UTF-8/object and authenticated-open composition after the checked byte-frame parser; prove independent context origins; cover remaining token, epoch, recovery and handler fact construction |
 | F-2: state transitions | Partial: preflight ordering/readiness checked against an independent specification; sharing handlers: every sequence up to depth 3 (CI) / 4 (local) matches the M19b/M21 state machine against the real router and database, with mutation checks; possession-proof recovery handlers: every sequence up to depth 4 (CI) matches the M18/M26a chain, with mutation checks (WebAuthn path not driven) | Machine-check concrete handler/database transitions against protocol transitions, including exceptions, cancellation and concurrency |
 | F-3: persistence/recovery | Partial: M28 and composed M29 | Prove the actual journal implementation refines M28; formalize collection equality and filesystem outcomes; compose local edits/deletions and RMS migration; cover or explicitly exclude independent processes |
 | F-4: construction security | Partial: CryptoVerif proofs for idealized v2 KEM games, modular KEM-DEM, AND-signature, v2 possession-proof and authenticated-share games under the explicit assumptions | Close the combiner gaps listed in `security/formal/cryptoverif/README.md` (concrete X25519 clamping/cofactor/encoding correspondence after conditional nonuniform distribution accounting, SHA-256 step, quantum-query and multi-user composition; KEM-DEM is proved modularly); computational games and reductions for envelope framing and KDF use beyond the random-oracle model, under named primitive assumptions (share tags and the v2 possession proof are now proved in CryptoVerif with KDFs as random oracles; legacy v1 possession commitments are not covered); verify application randomness/error/erasure handling. Primitive internals and leakage resistance are trusted under the selected boundary |
-| F-5: native clients/composition | [Shared chunk kernel](17-universal-chunk-admission.md) and [integer-epoch kernel](18-mobile-sync-admission.md) checked; mobile runtime candidate held for auth/persistence corrections | Verify Kotlin/Swift callers, persistence and FFI; formalize enrollment UI trust; compose recovery, enrollment, sync, sharing and revocation in one argument |
+| F-5: native clients/composition | [Shared chunk kernel](17-universal-chunk-admission.md) and [integer-epoch kernel](18-mobile-sync-admission.md) checked; mobile runtime fixes internally reviewed and hosted on fdee2bc; native trace refinement remains open | Verify Kotlin/Swift callers, persistence and FFI; formalize enrollment UI trust; compose recovery, enrollment, sync, sharing and revocation in one argument |
 | F-6: trusted base | Partial | Maintain zero local extraction assumptions and review imported model contracts; verify/review std/hax model correspondence and the String/Vec models; retain extraction/compiler correctness explicitly as trusted under the chosen boundary; review solver/library/OS interface assumptions; reproduce in CI and obtain independent review |
 
 Every complete scoped proof must still choose a logic/kernel, machine model

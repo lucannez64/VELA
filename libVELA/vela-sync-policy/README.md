@@ -42,7 +42,7 @@ postconditions to the global Rust contract census. Evidence and run provenance a
 ## Integer-epoch kernel and mobile callers
 
 The local runtime candidate includes the token-header, missing-pin and
-RMS-snapshot corrections and passed focused internal review and awaits hosted validation.
+RMS-snapshot corrections, passed focused internal review, and was hosted on fdee2bc.
 The kernel proofs do not establish those implementation traces.
 
 
@@ -78,6 +78,6 @@ commit durability and filesystem effects are trusted interfaces, not proved.
 
 The iOS NSLock serializes a single syncing writer process only. A second
 process's stale whole-map write could lower floors and erase other contexts;
-there is no cross-process guarantee. Swift compilation/tests remain pending
+there is no cross-process guarantee. Swift compilation/tests passed in the hosted fdee2bc job; local Swift execution remains unavailable
 on this Linux host. JNI/C/JSON glue, OS storage, origin of AAD/epoch facts,
 `server_epoch_is_next` on adoption and complete client traces remain open.

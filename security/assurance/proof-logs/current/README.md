@@ -8,7 +8,7 @@ preflight/ordering increments. The [hosted baseline on 368bcc0](hosted-368bcc0/R
 
 The published sharing correction has 245 postconditions / 252 selected functions;
 the local mobile candidate adds four, giving 249 / 256. Runtime publication
-passed focused internal review; hosted validation remains pending.
+passed focused internal review and hosted validation on fdee2bc.
 The [sharing arithmetic correction](share-inbox-arithmetic/README.md) checks
 the fourteen new sharing contracts after fixing a universal i64 overflow
 obligation. Hosted reproduction of that correction passed in the [5d8c366 snapshot](hosted-5d8c366/README.md).
@@ -16,6 +16,10 @@ obligation. Hosted reproduction of that correction passed in the [5d8c366 snapsh
 The [25bf944 hosted snapshot](hosted-25bf944/README.md) passed all 15 checks,
 including the universal chunk-admission lemmas with the 245-contract census.
 The newer local mobile/journal candidate is not part of that hosted result.
+
+The [fdee2bc hosted baseline](hosted-fdee2bc/README.md) covers the mobile/epoch
+and stronger encoded journal increments, with all fifteen checks passing.
+Subsequent recovery-redemption work needs separate proof and hosted evidence.
 
 Recent increments (see the hosted baseline above for snapshot coverage):
 

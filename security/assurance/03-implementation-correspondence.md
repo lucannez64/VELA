@@ -72,7 +72,7 @@ Each crate follows the same pattern:
 | `serverVELA/vela-recovery-policy` | 90: the prior 42, 29 possession/enrollment observation contracts, 8 preflight contracts and 11 independent ordering/readiness contracts | M14, M16, M18 (server side) | `recovery/{initiate,recover,possess,webauthn,enroll_device,mod}.rs` |
 | `serverVELA/vela-share-policy` | 23 locally checked postconditions: three observation constructors (`ek_registration_facts`, `send_facts`, `link_mutation_facts`), three decisions and seventeen negative theorems (24 selected entry points) | M19b, M21 | `share/mod.rs` |
 | `libVELA/vela-client-recovery-policy` | 18: `plan_reconstruction`, `plan_adoption`, `plan_publication_resume`, `plan_contact_delivery`, plus 14 negative theorems | M15, M17, M18 (client side) | `vela-crypto/src/recovery.rs`, `desktopVELA/vela-desktop-core/src/recovery.rs`, Android and Apple bridges |
-| `libVELA/vela-sync-policy` | 15 Rust postconditions (11 historical plus 4 focused epoch contracts), [20 chunk lemmas](17-universal-chunk-admission.md) and [6 epoch lemmas](18-mobile-sync-admission.md) counted separately: `plan_epoch_adoption`, `plan_chunk_download`, `classify_merge_action`, plus 8 negative theorems | M23 | `desktopVELA/vela-desktop-core/src/sync.rs`; local mobile candidate uses admitted Rust bridge paths (runtime corrections pending) |
+| `libVELA/vela-sync-policy` | 15 Rust postconditions (11 historical plus 4 focused epoch contracts), [20 chunk lemmas](17-universal-chunk-admission.md) and [6 epoch lemmas](18-mobile-sync-admission.md) counted separately: `plan_epoch_adoption`, `plan_chunk_download`, `classify_merge_action`, plus 8 negative theorems | M23 | `desktopVELA/vela-desktop-core/src/sync.rs`; mobile downloads use admitted Rust bridge paths; runtime fixes tested/reviewed and hosted on fdee2bc, native trace refinement open |
 
 The eighth crate, `libVELA/vela-client-share-policy`, selects 19 postconditions:
 share admission, ten transaction/recovery functions/theorems, and the actual
@@ -103,7 +103,7 @@ eleven observation-based negative theorems (fourteen postconditions). It brings
 `serverVELA/vela-share-policy/verify-fstar.sh` to 24 selected entry points and,
 after the local inbox-arithmetic correction, the corpus to 252 selected functions
 and 245 explicit postconditions. The corrected constructors were freshly
-extracted and F★-checked locally; hosted reproduction remains pending. `identical_timestamp_can_be_fresher` remains
+extracted and F★-checked locally, then reproduced in hosted CI on fdee2bc. `identical_timestamp_can_be_fresher` remains
 outside the selected set, as before this increment.
 
 The CI `refinement` job installs pinned tools, runs all eight crates and the constructor,
