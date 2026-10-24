@@ -115,6 +115,9 @@ object NativeVelaCore {
     /// verified for ciphertexts sealed with associated data and ignored for the
     /// older unbound ones, so this reads both while the fleet upgrades
     /// (audit C-2, rollout step 2).
+    ///
+    /// Low-level decrypt only: this makes **no** rollback/epoch admission
+    /// decision. Production sync must call [decryptAdmittedVaultChunkJson].
     fun decryptVaultChunkJson(
         rms: ByteArray,
         chunkId: String,
@@ -134,6 +137,46 @@ object NativeVelaCore {
             response.getString("vault_json")
         }
     }
+
+    /// Production sync download. Rust authenticates the chunk, verifies the
+    /// manifest epoch equals this device's authenticated epoch, and applies the
+    /// verified rollback policy against [lastSeenLamport] before returning any
+    /// plaintext. The request carries raw integers only — the AAD-binding fact
+    /// is derived from the actual AEAD open in Rust, never from Kotlin.
+    ///
+    /// Returns the revision the verified policy actually admitted. Callers must
+    /// record *that* clock, not the manifest entry they asked for: the two
+    /// differ only if a bug lets the request and the opened blob disagree, and
+    /// trusting the request would then baseline a revision nobody authenticated.
+    fun decryptAdmittedVaultChunkJson(
+        rms: ByteArray,
+        chunkId: String,
+        ciphertext: ByteArray,
+        lamportClock: Long,
+        keyEpoch: Long,
+        localKeyEpoch: Long,
+        lastSeenLamport: Long?,
+    ): AdmittedChunk? {
+        return callNative {
+            val request = JSONObject()
+                .put("chunk_id", chunkId)
+                .put("ciphertext_b64", Base64.getEncoder().encodeToString(ciphertext))
+                .put("lamport_clock", lamportClock)
+                .put("key_epoch", keyEpoch)
+                .put("local_key_epoch", localKeyEpoch)
+                .apply { lastSeenLamport?.let { put("last_seen_lamport", it) } }
+                .toString()
+            val response = JSONObject(nativeDecryptAdmittedVaultChunkJson(rms, request))
+            response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
+            AdmittedChunk(
+                vaultJson = response.getString("vault_json"),
+                lamportClock = response.getLong("lamport_clock"),
+            )
+        }
+    }
+
+    /** A chunk the Rust admission gate accepted, with the revision it admitted. */
+    data class AdmittedChunk(val vaultJson: String, val lamportClock: Long)
 
     /// Short out-of-band verification code for an enrollment code string.
     /// Compute this right after scanning/pasting an enrollment code and show
@@ -587,6 +630,7 @@ object NativeVelaCore {
     private external fun nativeDecryptVaultJson(rms: ByteArray, requestJson: String): String
     private external fun nativeEncryptVaultChunkJson(rms: ByteArray, requestJson: String): String
     private external fun nativeDecryptVaultChunkJson(rms: ByteArray, requestJson: String): String
+    private external fun nativeDecryptAdmittedVaultChunkJson(rms: ByteArray, requestJson: String): String
     private external fun nativeDecryptRmsCapsuleJson(requestJson: String, rmsOut: ByteArray): String
     private external fun nativeDecryptEnrollmentPackageJson(requestJson: String): String
     private external fun nativeWebSessionChunkKeysJson(rms: ByteArray, requestJson: String): String

@@ -365,6 +365,9 @@ enum VelaCoreFFI {
     /// verified for ciphertexts sealed with associated data and ignored for the
     /// older unbound ones, so this reads both while the fleet upgrades
     /// (audit C-2, rollout step 2).
+    ///
+    /// Low-level decrypt only: this makes **no** rollback/epoch admission
+    /// decision. Production sync must call `decryptVaultChunkAdmitted`.
     static func decryptVaultChunk(
         rms: Data,
         chunkID: String,
@@ -388,6 +391,53 @@ enum VelaCoreFFI {
             }
         }
         return field(response, "vault_json")
+    }
+
+    /// Production sync download: the Rust side authenticates the chunk, checks
+    /// that the manifest epoch is exactly this device's authenticated epoch, and
+    /// applies the verified rollback policy against the supplied per-chunk
+    /// baseline. Plaintext is returned only when all three succeed.
+    ///
+    /// The request carries raw integers only — the AAD-binding fact is derived
+    /// from the actual AEAD open in Rust, never from a Swift boolean.
+    ///
+    /// Returns the revision the verified policy actually admitted. Callers must
+    /// record *that* clock, not the manifest entry they asked for: trusting the
+    /// request would baseline a revision nobody authenticated.
+    struct AdmittedChunk {
+        let vaultJSON: String
+        let lamportClock: Int64
+    }
+
+    static func decryptVaultChunkAdmitted(
+        rms: Data,
+        chunkID: String,
+        ciphertextBase64: String,
+        lamportClock: Int64,
+        keyEpoch: Int,
+        localKeyEpoch: Int,
+        lastSeenLamport: Int64?
+    ) -> AdmittedChunk? {
+        var request: [String: Any] = [
+            "chunk_id": chunkID,
+            "ciphertext_b64": ciphertextBase64,
+            "lamport_clock": lamportClock,
+            "key_epoch": keyEpoch,
+            "local_key_epoch": localKeyEpoch,
+        ]
+        if let lastSeenLamport {
+            request["last_seen_lamport"] = lastSeenLamport
+        }
+        let response = json(request).withCString { req in
+            withRmsBytes(rms) { rmsPtr, rmsLen in
+                consume(vela_ffi_decrypt_admitted_vault_chunk_json(rmsPtr, rmsLen, req))
+            }
+        }
+        guard let vaultJSON = field(response, "vault_json") else { return nil }
+        guard let data = response.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let clock = object["lamport_clock"] as? NSNumber else { return nil }
+        return AdmittedChunk(vaultJSON: vaultJSON, lamportClock: clock.int64Value)
     }
 
     // MARK: - Web sessions

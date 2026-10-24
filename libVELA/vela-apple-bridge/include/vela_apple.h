@@ -64,6 +64,17 @@ char *vela_ffi_web_session_chunk_keys_json(const uint8_t *rms, size_t rms_len,
                                            const char *request_json);
 char *vela_ffi_decrypt_vault_chunk_json(const uint8_t *rms, size_t rms_len,
                                         const char *request_json);
+/* Production download admission (M23/F-5). Request:
+ * { chunk_id, ciphertext_b64, lamport_clock, key_epoch, local_key_epoch,
+ *   last_seen_lamport? } -> { vault_json, lamport_clock } or { error }.
+ * Requires a self-describing sealed blob (`VAE1`), decrypts/authenticates it
+ * first, then applies the checked rollback policy; plaintext is returned only
+ * when admitted. Legacy *unsealed* ciphertext is refused here — it binds
+ * neither chunk nor clock — and must use the explicit pre-C-2 migration path.
+ * `lamport_clock` in the response is the revision the policy admitted; callers
+ * must baseline that value. */
+char *vela_ffi_decrypt_admitted_vault_chunk_json(const uint8_t *rms, size_t rms_len,
+                                                 const char *request_json);
 char *vela_ffi_decrypt_rms_capsule_json(const char *request_json);
 char *vela_ffi_decrypt_enrollment_package_json(const char *request_json);
 char *vela_ffi_split_recovery_json(const uint8_t *rms, size_t rms_len,

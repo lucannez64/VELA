@@ -16,15 +16,25 @@ struct SyncEngine {
     let repo: VaultRepository
     /// Epoch authenticated by the RMS supplied to `sync`.
     let keyEpoch: Int
+    /// Server user id this device authenticated as. Part of the baseline
+    /// namespace, so two accounts on one server never share counters.
+    let accountID: String
 
     enum SyncError: LocalizedError {
         case crypto
         case rollback(serverClock: Int, lastSeen: Int)
+        /// The manifest advertises an epoch this device has not authenticated.
+        /// Mobile sync deliberately refuses to adopt automatically.
+        case epochMismatch(serverEpoch: Int, localEpoch: Int)
         /// A chunk the server served could not be decrypted/verified against
         /// its sealed clock. Aborting beats proceeding with a truncated vault:
         /// the partial result would otherwise be pushed back and make the loss
         /// durable on every device.
         case unreadableChunk(chunkID: String)
+        /// The persisted rollback baseline cannot be decoded. Continuing would
+        /// silently drop rollback protection for every chunk, so sync refuses
+        /// until the user performs a deliberate reset.
+        case baselineCorrupt
 
         var errorDescription: String? {
             switch self {
@@ -35,84 +45,179 @@ struct SyncEngine {
                     + "(clock \(serverClock), last seen \(lastSeen)). Refusing to "
                     + "overwrite newer local data. If you reset this vault on "
                     + "another device, sign out and back in here."
+            case let .epochMismatch(serverEpoch, localEpoch):
+                return "This device has vault key epoch \(localEpoch), but the sync "
+                    + "manifest is for epoch \(serverEpoch); adopt the current vault "
+                    + "key before syncing."
             case let .unreadableChunk(chunkID):
                 return "The server returned a chunk that could not be decrypted "
                     + "(\(chunkID)). The sync was aborted rather than continue "
                     + "with incomplete vault data."
+            case .baselineCorrupt:
+                return "The saved sync rollback baseline is unreadable, so VELA "
+                    + "cannot tell a replay from a new revision. Sign out and back "
+                    + "in (or reset local security) to start a fresh baseline."
             }
         }
     }
 
-    /// Highest chunk revision this device has accepted, kept in the App Group so
-    /// the extension shares the same baseline.
-    private static let lastSeenClockKey = "vela.sync.lastSeenLamport"
-    /// Highest revision accepted *per chunk id* — JSON `{chunk_id: clock}`. A
-    /// manifest-max check alone lets a hostile server roll back individual
-    /// chunks as long as one other chunk stays ahead.
-    private static let lastSeenByChunkKey = "vela.sync.lastSeenLamportByChunk"
+    // ── Baselines ───────────────────────────────────────────────────────────
+    //
+    // Every recorded clock is namespaced by the sync context
+    // (`server ‖ account ‖ epoch`). Switching servers/accounts, or adopting a
+    // rotated epoch, therefore starts a genuinely fresh counter instead of
+    // inheriting (or destroying) another context's baseline — and switching
+    // back preserves the baseline that context had recorded.
+    //
+    // The previous un-namespaced keys cannot be attributed to a context after
+    // the fact, so they are ignored (first contact is explicit) and removed on
+    // the deliberate reset below rather than guessed into the current context.
+
+    private static let baselineByContextKey = "vela.sync.baselinesByContext.v2"
+    private static let manifestLamportByContextKey = "vela.sync.manifestLamportByContext.v2"
+    private static let legacyLastSeenClockKey = "vela.sync.lastSeenLamport"
+    private static let legacyLastSeenByChunkKey = "vela.sync.lastSeenLamportByChunk"
+
+    /// Serializes this process's read-modify-write cycles, so two engines (a
+    /// user-triggered sync and the periodic one) cannot lose each other's
+    /// advances: every update re-reads the latest committed JSON under the lock.
+    ///
+    /// It does **not** serialize the app against the share extension. App Group
+    /// `UserDefaults` has no cross-process transaction, so a write racing
+    /// across processes can still lose the other side's most recent advance.
+    /// That failure direction is a missed baseline (one chunk can be
+    /// re-admitted once), never a lowered one; it is a documented residual, not
+    /// a claim of atomicity.
+    private static let baselineLock = NSLock()
 
     private static func sharedDefaults() -> UserDefaults {
         UserDefaults(suiteName: AppGroup.identifier) ?? .standard
     }
 
-    /// Refuse a manifest that puts the whole vault behind the revision this
-    /// device already synced.
-    ///
-    /// The sync server is untrusted, and replaying older ciphertexts used to be
-    /// invisible: deleted credentials reappear and rotated passwords revert
-    /// (audit C-2). Lamport clocks only ever increase, so a maximum below the
-    /// recorded one is a rollback, not a stale read. A vault reset and
-    /// re-created elsewhere legitimately restarts its clocks, which is why the
-    /// message says how to clear the local baseline.
-    private func rejectRollback(manifest: VelaClient.SyncManifest) throws {
-        let defaults = Self.sharedDefaults()
-        let lastSeen = defaults.integer(forKey: Self.lastSeenClockKey)
-        guard lastSeen > 0 else { return }
-        let serverMax = manifest.chunks.map { $0.lamport_clock }.max() ?? 0
-        if serverMax < lastSeen {
-            throw SyncError.rollback(serverClock: serverMax, lastSeen: lastSeen)
-        }
+    private static func withBaselineLock<T>(_ body: () throws -> T) rethrows -> T {
+        baselineLock.lock()
+        defer { baselineLock.unlock() }
+        return try body()
+    }
 
-        // Per-chunk baseline: one stale chunk must not hide behind a fresh one.
-        // Legacy single-chunk layouts predate this tracking; only chunks we have
-        // actually recorded are checked.
-        guard let stored = defaults.string(forKey: Self.lastSeenByChunkKey),
-              let recorded = try? JSONDecoder().decode([String: Int].self, from: Data(stored.utf8)),
-              !recorded.isEmpty else { return }
-        for chunk in manifest.chunks {
-            if let seen = recorded[chunk.chunk_id], chunk.lamport_clock < seen {
-                throw SyncError.rollback(serverClock: chunk.lamport_clock,
-                                         lastSeen: seen)
+    /// Internal so tests can build the exact persisted namespace.
+    var baselineContext: String {
+        let url = client.baseURL
+        let scheme = (url.scheme ?? "https").lowercased()
+        let host = (url.host ?? "").lowercased()
+        let port = url.port.map { ":\($0)" } ?? ""
+        var path = url.path
+        while path.hasSuffix("/") { path.removeLast() }
+        return ["\(scheme)://\(host)\(port)\(path)", accountID, String(keyEpoch)]
+            .joined(separator: "\u{1F}")
+    }
+
+    private static func decodeChunkBaselines() throws -> [String: [String: Int]] {
+        let defaults = sharedDefaults()
+        guard let stored = defaults.string(forKey: baselineByContextKey), !stored.isEmpty else {
+            return [:]
+        }
+        guard let data = stored.data(using: .utf8),
+              let decoded = try? JSONDecoder().decode([String: [String: Int]].self, from: data) else {
+            throw SyncError.baselineCorrupt
+        }
+        return decoded
+    }
+
+    private static func decodeManifestBaselines() throws -> [String: Int] {
+        let defaults = sharedDefaults()
+        guard let stored = defaults.string(forKey: manifestLamportByContextKey), !stored.isEmpty else {
+            return [:]
+        }
+        guard let data = stored.data(using: .utf8),
+              let decoded = try? JSONDecoder().decode([String: Int].self, from: data) else {
+            throw SyncError.baselineCorrupt
+        }
+        return decoded
+    }
+
+    /// Last revision this device admitted for a specific chunk **in this
+    /// context**, if it has recorded one. `nil` is first contact and is passed
+    /// to the native gate explicitly rather than being turned into clock 0.
+    func recordedSeenClock(for chunkID: String) throws -> Int64? {
+        guard let recorded = try Self.decodeChunkBaselines()[baselineContext]?[chunkID] else {
+            return nil
+        }
+        return Int64(recorded)
+    }
+
+    /// Highest manifest clock this context has seen, if any.
+    func recordedManifestClock() throws -> Int? {
+        try Self.decodeManifestBaselines()[baselineContext]
+    }
+
+    /// Commit baselines for this context. Callers must invoke this only after
+    /// the bytes are durably persisted locally; a failed or partial batch must
+    /// record nothing, or a retry would look like a rollback. Merges (max),
+    /// never replaces, so a stale writer cannot lower a baseline.
+    func recordAdmitted(chunks: [(id: String, clock: Int)], manifestClock: Int) throws {
+        guard !chunks.isEmpty || manifestClock > 0 else { return }
+        try Self.withBaselineLock {
+            let defaults = Self.sharedDefaults()
+            if !chunks.isEmpty {
+                var byContext = try Self.decodeChunkBaselines()
+                var recorded = byContext[baselineContext] ?? [:]
+                for entry in chunks where entry.clock > (recorded[entry.id] ?? 0) {
+                    recorded[entry.id] = entry.clock
+                }
+                if !recorded.isEmpty {
+                    byContext[baselineContext] = recorded
+                    let data = try JSONEncoder().encode(byContext)
+                    defaults.set(String(decoding: data, as: UTF8.self),
+                                 forKey: Self.baselineByContextKey)
+                }
+            }
+            if manifestClock > 0 {
+                var byContext = try Self.decodeManifestBaselines()
+                byContext[baselineContext] =
+                    max(byContext[baselineContext] ?? 0, manifestClock)
+                let data = try JSONEncoder().encode(byContext)
+                defaults.set(String(decoding: data, as: UTF8.self),
+                             forKey: Self.manifestLamportByContextKey)
             }
         }
     }
 
-    private func recordSeenClock(_ clock: Int) {
-        let defaults = Self.sharedDefaults()
-        if clock > defaults.integer(forKey: Self.lastSeenClockKey) {
-            defaults.set(clock, forKey: Self.lastSeenClockKey)
+    /// Deliberate sign-out / local-security reset only. This is the recovery
+    /// action the rollback message points at; routine server changes and epoch
+    /// adoption must never call it.
+    static func clearBaselines() {
+        withBaselineLock {
+            let defaults = sharedDefaults()
+            defaults.removeObject(forKey: baselineByContextKey)
+            defaults.removeObject(forKey: manifestLamportByContextKey)
+            defaults.removeObject(forKey: legacyLastSeenClockKey)
+            defaults.removeObject(forKey: legacyLastSeenByChunkKey)
         }
     }
 
-    /// Record every chunk's current revision after it has been read or written.
-    private func recordSeenClocks(_ chunks: [VelaClient.ChunkMeta]) {
-        guard !chunks.isEmpty else { return }
-        recordWrittenChunks(chunks.map { (id: $0.chunk_id, clock: $0.lamport_clock) })
-    }
+    /// Refuse a manifest that puts the whole vault behind the revision this
+    /// device already synced in this context.
+    ///
+    /// The sync server is untrusted, and replaying older ciphertexts used to be
+    /// invisible: deleted credentials reappear and rotated passwords revert
+    /// (audit C-2). Lamport clocks only ever increase inside a context, so a
+    /// maximum below the recorded one is a rollback, not a stale read.
+    private func rejectRollback(manifest: VelaClient.SyncManifest) throws {
+        let lastSeen = try recordedManifestClock() ?? 0
+        let serverMax = manifest.chunks.map { $0.lamport_clock }.max() ?? 0
+        if lastSeen > 0, serverMax < lastSeen {
+            throw SyncError.rollback(serverClock: serverMax, lastSeen: lastSeen)
+        }
 
-    private func recordWrittenChunks(_ written: [(id: String, clock: Int)]) {
-        guard !written.isEmpty else { return }
-        let defaults = Self.sharedDefaults()
-        var recorded: [String: Int] = [:]
-        if let stored = defaults.string(forKey: Self.lastSeenByChunkKey),
-           let existing = try? JSONDecoder().decode([String: Int].self, from: Data(stored.utf8)) {
-            recorded = existing
-        }
-        for entry in written where entry.clock > (recorded[entry.id] ?? 0) {
-            recorded[entry.id] = entry.clock
-        }
-        if let data = try? JSONEncoder().encode(recorded) {
-            defaults.set(String(decoding: data, as: UTF8.self), forKey: Self.lastSeenByChunkKey)
+        // Per-chunk baseline: one stale chunk must not hide behind a fresh one.
+        // Legacy single-chunk layouts predate this tracking; only chunks this
+        // context actually recorded are checked.
+        let recorded = try Self.decodeChunkBaselines()[baselineContext] ?? [:]
+        for chunk in manifest.chunks {
+            if let seen = recorded[chunk.chunk_id], chunk.lamport_clock < seen {
+                throw SyncError.rollback(serverClock: chunk.lamport_clock, lastSeen: seen)
+            }
         }
     }
 
@@ -160,26 +265,37 @@ struct SyncEngine {
             readIDs = []
         }
 
+        // The manifest epoch is a server claim. It must equal the epoch this
+        // device authenticated before any chunk is read; the native admission
+        // gate repeats the integer comparison on every chunk.
+        guard manifest.epoch >= 1, manifest.epoch == keyEpoch else {
+            throw SyncError.epochMismatch(
+                serverEpoch: manifest.epoch, localEpoch: keyEpoch)
+        }
         try rejectRollback(manifest: manifest)
-        recordSeenClock(manifest.chunks.map { $0.lamport_clock }.max() ?? 0)
 
         var remoteJSON = ""
+        var admitted: [(id: String, clock: Int)] = []
         for id in readIDs {
             let fetched = try await client.getChunk(id)
-            guard let piece = VelaCoreFFI.decryptVaultChunk(
+            let serverClock = Int64(byID[id]?.lamport_clock ?? 0)
+            guard let piece = VelaCoreFFI.decryptVaultChunkAdmitted(
                 rms: rms,
                 chunkID: id,
                 ciphertextBase64: fetched.ciphertextBase64,
-                lamportClock: Int64(byID[id]?.lamport_clock ?? 0),
-                keyEpoch: keyEpoch) else {
-                // A failed decrypt used to be skipped silently; the truncated
-                // merge was then pushed back, making the loss durable. Fail the
-                // sync instead — the local vault stays intact and usable.
+                lamportClock: serverClock,
+                keyEpoch: manifest.epoch,
+                localKeyEpoch: keyEpoch,
+                lastSeenLamport: try recordedSeenClock(for: id)) else {
+                // A failed decrypt or a refused rollback used to be skipped
+                // silently; the truncated merge was then pushed back, making
+                // the loss durable. Fail the sync instead — the local vault
+                // stays intact and usable.
                 throw SyncError.unreadableChunk(chunkID: id)
             }
-            remoteJSON += piece
+            remoteJSON += piece.vaultJSON
+            admitted.append((id: id, clock: Int(piece.lamportClock)))
         }
-        recordSeenClocks(manifest.chunks.filter { readIDs.contains($0.chunk_id) })
         var remoteStore = VaultStore(items: [])
         if !remoteJSON.isEmpty {
             remoteStore = try JSONDecoder().decode(VaultStore.self, from: Data(remoteJSON.utf8))
@@ -188,6 +304,11 @@ struct SyncEngine {
         // ── 2. Merge (tombstone-aware) and persist locally.
         let merged = try VaultMerge.mergeStores(local: localStore, remote: remoteStore)
         try repo.save(merged, rms: rms)
+
+        // Only after the decoded bytes are durably in the local vault do we
+        // baseline the revisions the verified gate admitted. A decode/merge/
+        // persist failure above therefore records nothing.
+        try recordAdmitted(chunks: admitted, manifestClock: admitted.map { $0.clock }.max() ?? 0)
 
         // ── 3. Push when the vault changed, or to migrate off a legacy layout.
         let alreadyDataLayout = !dataIDs.isEmpty
@@ -217,10 +338,9 @@ struct SyncEngine {
                     lamportClock: lamport, keyEpoch: keyEpoch)
                 written.append((id: id, clock: lamport))
             }
-            recordSeenClock(lamport)
             // Baseline what we wrote per chunk too — otherwise a rollback to
             // this push's *predecessor* would pass the recorded baseline.
-            recordWrittenChunks(written)
+            try recordAdmitted(chunks: written, manifestClock: lamport)
 
             // Drop stale data chunks (vault shrank) and any legacy single chunks.
             for chunk in manifest.chunks {

@@ -144,6 +144,11 @@ class MainActivity : FragmentActivity() {
                     },
                     onReset = {
                         VelaRepositories.security.resetLocalSecurity()
+                        // A deliberate wipe is the documented way to clear a
+                        // rollback baseline (e.g. the vault was re-created
+                        // elsewhere). Routine server updates and epoch
+                        // adoption must never do this.
+                        VelaRepositories.syncSettings.clearBaselines()
                         VelaRepositories.vault.clearMemory()
                         cancelBackgroundSync()
                     },

@@ -169,7 +169,7 @@ final class AccountViewModel: ObservableObject {
         }
         run("Syncing") { [self] in
             guard let rms = vault.currentRMS else { throw Failure("unlock the vault first") }
-            guard account != nil else { throw Failure("register first") }
+            guard let account = account else { throw Failure("register first") }
             let client = client()
             let localEpoch = try authenticatedLocalEpoch(rms: rms)
             let epoch = try await client.vaultEpoch()
@@ -181,7 +181,8 @@ final class AccountViewModel: ObservableObject {
             }
             await ensureShareKey(client: client)
             let engine = SyncEngine(
-                client: client, repo: VaultRepository(), keyEpoch: localEpoch)
+                client: client, repo: VaultRepository(), keyEpoch: localEpoch,
+                accountID: account.userID)
             // Checked and read in one synchronous step on the main actor.
             guard vault.hasLoadedVault else { throw Failure("open VELA to sync") }
             let localStore = vault.currentStore
@@ -669,7 +670,8 @@ final class AccountViewModel: ObservableObject {
             guard vault.hasLoadedVault else { throw Failure("open VELA to finish syncing") }
             let localStore = vault.currentStore
             let merged = try await SyncEngine(
-                client: client, repo: VaultRepository(), keyEpoch: recoverResp.keyEpoch
+                client: client, repo: VaultRepository(), keyEpoch: recoverResp.keyEpoch,
+                accountID: verified.user_id
             ).sync(rms: rms, localStore: localStore)
             await persistRenewedToken(from: client)
             vault.applyMergedStore(merged)
@@ -739,7 +741,8 @@ final class AccountViewModel: ObservableObject {
             guard vault.hasLoadedVault else { throw Failure("open VELA to finish syncing") }
             let localStore = vault.currentStore
             let merged = try await SyncEngine(
-                client: client, repo: VaultRepository(), keyEpoch: epochAfterCapsule.epoch
+                client: client, repo: VaultRepository(), keyEpoch: epochAfterCapsule.epoch,
+                accountID: verified.user_id
             ).sync(rms: rms, localStore: localStore)
             await persistRenewedToken(from: client)
             vault.applyMergedStore(merged)
@@ -964,6 +967,11 @@ final class AccountViewModel: ObservableObject {
         recoveryJournal.clear()
         status = "Signed out"
         store.clear()
+        // Sign-out is a deliberate context transition: drop this device's
+        // rollback baselines so a vault re-created elsewhere does not collide
+        // with the previous account's counters. Switching back after signing
+        // in again starts from an explicit first contact.
+        SyncEngine.clearBaselines()
         if let loggingOut = loggingOut {
             Task { try? await loggingOut.logout() }
         }

@@ -26,5 +26,6 @@ zeroize = "1"
 vela-core = { path = "../vela-core" }
 vela-crypto = { path = "../vela-crypto", default-features = false }
 vela-client-recovery-policy = { path = "../vela-client-recovery-policy" }
+vela-sync-policy = { path = "../vela-sync-policy" }
 
 [dev-dependencies]

@@ -1378,6 +1378,8 @@ dependencies = [
  "vela-core",
  "vela-crypto",
  "vela-import",
+ "vela-sync-policy",
+ "zeroize",
 ]
 
 [[package]]
@@ -1441,6 +1443,13 @@ dependencies = [
  "serde",
  "serde_json",
  "zip",
+]
+
+[[package]]
+name = "vela-sync-policy"
+version = "0.1.0"
+dependencies = [
+ "hax-lib",
 ]
 
 [[package]]

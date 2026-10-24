@@ -166,6 +166,63 @@ pub fn foreign_capsule_can_adopt(mut facts: EpochAdoptionFacts) -> bool {
     epoch_adoption_is_authorized(facts)
 }
 
+// ── Mobile sync epoch agreement ────────────────────────────────────────────
+
+/// Epoch observations for a client that deliberately does **not** adopt a
+/// rotated RMS automatically. The two integers are the epoch the server's
+/// manifest advertises and the epoch this device authenticated from its local
+/// `key_epoch.enc` marker. Passing two numbers — rather than a precomputed
+/// `matches`/`is_next` boolean — keeps the comparison itself in verified code.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SyncEpochFacts {
+    pub server_epoch: i64,
+    pub local_epoch: i64,
+}
+
+/// Mobile chunk downloads require the manifest epoch and the locally
+/// authenticated epoch to be exactly equal and positive. A mismatch is a
+/// rotation this device has not adopted yet; it must refuse rather than guess.
+pub fn sync_epochs_agree_for_download(facts: SyncEpochFacts) -> bool {
+    facts.server_epoch >= INITIAL_EPOCH
+        && facts.local_epoch >= INITIAL_EPOCH
+        && facts.server_epoch == facts.local_epoch
+}
+
+pub fn sync_epoch_decision_matches_spec(facts: SyncEpochFacts, allowed: bool) -> bool {
+    allowed == sync_epochs_agree_for_download(facts)
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|allowed| {
+    sync_epoch_decision_matches_spec(facts, allowed)
+}))]
+pub fn plan_sync_epoch_match(facts: SyncEpochFacts) -> bool {
+    sync_epochs_agree_for_download(facts)
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == true))]
+pub fn equal_positive_epoch_admits_download() -> bool {
+    sync_epochs_agree_for_download(SyncEpochFacts {
+        server_epoch: 4,
+        local_epoch: 4,
+    })
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn mismatched_positive_epoch_admits_download() -> bool {
+    sync_epochs_agree_for_download(SyncEpochFacts {
+        server_epoch: 4,
+        local_epoch: 5,
+    })
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn nonpositive_epoch_admits_download() -> bool {
+    sync_epochs_agree_for_download(SyncEpochFacts {
+        server_epoch: 0,
+        local_epoch: 0,
+    })
+}
+
 // ── Chunk download admission (Lamport rollback guard) ───────────────────────
 
 /// Observations when a chunk download returns.
@@ -554,6 +611,50 @@ mod tests {
             }),
             ChunkDownloadDecision::Reject
         );
+    }
+
+    #[test]
+    fn mobile_sync_epoch_requires_exact_positive_agreement() {
+        assert!(plan_sync_epoch_match(SyncEpochFacts {
+            server_epoch: 4,
+            local_epoch: 4,
+        }));
+        // Any gap in either direction is an unadopted rotation, not a licence
+        // to guess which key to use.
+        for (server, local) in [(5, 4), (4, 5), (9, 3), (3, 9)] {
+            assert!(!plan_sync_epoch_match(SyncEpochFacts {
+                server_epoch: server,
+                local_epoch: local,
+            }));
+        }
+        // Zero and negative epochs never name a real account state.
+        for (server, local) in [(0, 0), (0, 1), (1, 0), (-1, -1), (-1, 1)] {
+            assert!(!plan_sync_epoch_match(SyncEpochFacts {
+                server_epoch: server,
+                local_epoch: local,
+            }));
+        }
+        assert!(equal_positive_epoch_admits_download());
+        assert!(!mismatched_positive_epoch_admits_download());
+        assert!(!nonpositive_epoch_admits_download());
+
+        // The same property on a grid, stated independently of the spec
+        // function: accepted exactly when both epochs are positive and equal.
+        // (The parametric proof lives in
+        // `proofs/fstar/epoch-lemmas/Vela_sync_policy_epoch_lemmas.fst`.)
+        for server in -3i64..=6 {
+            for local in -3i64..=6 {
+                let admissible = server > 0 && local > 0 && server == local;
+                assert_eq!(
+                    plan_sync_epoch_match(SyncEpochFacts {
+                        server_epoch: server,
+                        local_epoch: local,
+                    }),
+                    admissible,
+                    "epoch pair ({server}, {local}) must decide exactly as positivity + equality"
+                );
+            }
+        }
     }
 
     #[test]
