@@ -144,7 +144,7 @@
         "security/formal/cryptoverif/README.md": "f24c94e18e0d63c32be2042f884cc7fec59b8b5c0b3200c940b30cf205641fe3",
         "security/formal/run-cryptoverif-proofs.sh": "f0557b2842d940bcab19e75c4ad70696c0e04c3a7bdb084c3e478e102d67bb79",
         "security/formal/check-cryptoverif-boundary.py": "3e79da3d7b3ecb9b88aa435ee6fd0c2cebd3d0b41fad322643193879915158cd",
-        "security/formal/tests/test_cryptoverif_runner.py": "359f299d17add632ad69725e00bacc78e75bf4bde7c197de302cf6ada1cdeb93",
+        "security/formal/tests/test_cryptoverif_runner.py": "596eb2c5e8b3fa78d158cb4c0b2a9df52c7d125dae53c0b016e9bcd95d00c01d",
         "libVELA/vela-crypto/src/kem.rs": "c9a17b26b6624f65ad4539b0d3449e10b36236cd6a015be7a4546c4b56457885",
         "libVELA/vela-crypto/src/signing.rs": "82c9e2f3f9882d62cad5707cd8287b1299b373b10629eff912477f519249150b",
         "libVELA/vela-crypto/src/aead.rs": "7840cd68b6b510284e3fba940ced84712af0ecd7914f2833fc1bbc8cccb2e46f",
