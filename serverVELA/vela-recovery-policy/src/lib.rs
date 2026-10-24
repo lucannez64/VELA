@@ -884,6 +884,325 @@ pub fn plan_credential_update(facts: CredentialUpdateFacts) -> CredentialUpdateD
     }
 }
 
+// ── Pre-redemption sequencing gate ─────────────────────────────────────────
+//
+// The handler must reject account/epoch/rotation/credential/commitment
+// problems *before* it spends the single-use grant, and it must not query the
+// account at all when the unguessable grant is missing. This kernel is that
+// ordering decision. Its permit is only permission to attempt the atomic
+// `get_del`; it is not an enrollment permit and it carries no claim that
+// consumption happened.
+
+/// Decoded grant facts observed by the non-consuming lookup.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EnrollmentGrantFacts {
+    /// `key_epoch` decoded from the stored grant.
+    pub epoch: i64,
+    /// The grant was minted from an RMS-possession proof (M18).
+    pub possession: bool,
+}
+
+/// Live `users`-row facts. Constructed only after the grant lookup succeeded,
+/// so a failed grant lookup cannot disclose account state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EnrollmentAccountFacts {
+    /// `users.key_epoch` as stored; `None` means the column is absent.
+    pub stored_epoch: Option<i64>,
+    /// The row's `rekey_state` column is clear.
+    pub epoch_active: bool,
+    /// The decoded grant credential id equals the row's current recovery
+    /// credential id. Ignored for possession grants.
+    pub credential_id_matches: bool,
+    /// Decoded byte length of `users.recovery_auth_hash`; zero means the
+    /// possession commitment is absent or empty.
+    pub commitment_len: usize,
+}
+
+/// Whether the account query ran. `NotQueried` is the deliberate privacy state
+/// for a missing grant and is never treated as an observed absence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EnrollmentAccountObservation {
+    NotQueried,
+    Absent,
+    Present(EnrollmentAccountFacts),
+}
+
+/// Raw observations available before the single-use grant is redeemed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EnrollmentPreflightObservation {
+    /// The non-consuming lookup under `(user_id, grant)` returned a decoded
+    /// grant. This is a store-key binding, not an embedded user id.
+    pub grant: Option<EnrollmentGrantFacts>,
+    pub account: EnrollmentAccountObservation,
+}
+
+/// The first failed precondition, in the handler's historical status/message
+/// precedence order.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EnrollmentPreflightRejection {
+    /// No grant was stored under the request's user/grant key.
+    GrantUnavailable,
+    /// A grant was observed but the account observation was not supplied.
+    /// This is a fail-closed internal state, not an observed account absence.
+    AccountUnavailable,
+    /// The account query ran and found no row.
+    AccountAbsent,
+    /// The decoded grant epoch differs from the normalized live epoch.
+    EpochMismatch,
+    /// `users.rekey_state` is set; enrollment must wait for rotation.
+    RotationPaused,
+    /// A WebAuthn-bound grant's credential is no longer current.
+    CredentialReplaced,
+    /// A possession grant's staged commitment is absent or empty.
+    CommitmentMissing,
+}
+
+/// Permission to attempt the atomic single-use redemption. It says nothing
+/// about whether the grant was actually consumed or whether a device may be
+/// inserted; `plan_enrollment` decides the latter from the actual consumed
+/// grant and the final observations.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ReadyToConsume {
+    epoch: i64,
+    possession: bool,
+}
+
+impl ReadyToConsume {
+    pub const fn epoch(self) -> i64 {
+        self.epoch
+    }
+
+    pub const fn possession(self) -> bool {
+        self.possession
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EnrollmentPreflightDecision {
+    Ready(ReadyToConsume),
+    Reject(EnrollmentPreflightRejection),
+}
+
+/// WebAuthn grants need their exact credential; possession grants need their
+/// staged commitment. The grant value carries no commitment id or generation,
+/// so this is presence, not an exact binding.
+pub fn enrollment_preflight_authority(account: EnrollmentAccountFacts, possession: bool) -> bool {
+    if possession {
+        account.commitment_len > 0
+    } else {
+        account.credential_id_matches
+    }
+}
+
+/// The first rejection reason in status/message precedence order, or `None`
+/// when the redemption may be attempted.
+pub fn enrollment_preflight_rejection(
+    obs: EnrollmentPreflightObservation,
+) -> Option<EnrollmentPreflightRejection> {
+    match obs.grant {
+        None => Some(EnrollmentPreflightRejection::GrantUnavailable),
+        Some(grant) => match obs.account {
+            EnrollmentAccountObservation::NotQueried => {
+                Some(EnrollmentPreflightRejection::AccountUnavailable)
+            }
+            EnrollmentAccountObservation::Absent => {
+                Some(EnrollmentPreflightRejection::AccountAbsent)
+            }
+            EnrollmentAccountObservation::Present(account) => {
+                if observed_recovery_epoch(account.stored_epoch) != grant.epoch {
+                    Some(EnrollmentPreflightRejection::EpochMismatch)
+                } else if !account.epoch_active {
+                    Some(EnrollmentPreflightRejection::RotationPaused)
+                } else if grant.possession && account.commitment_len == 0 {
+                    Some(EnrollmentPreflightRejection::CommitmentMissing)
+                } else if !grant.possession && !account.credential_id_matches {
+                    Some(EnrollmentPreflightRejection::CredentialReplaced)
+                } else {
+                    None
+                }
+            }
+        },
+    }
+}
+
+/// Structural reason equality, kept explicit so the extracted kernel does not
+/// depend on a derived `PartialEq` instance (hax would emit a trusted
+/// declaration for that instance).
+pub fn enrollment_preflight_rejection_matches(
+    actual: EnrollmentPreflightRejection,
+    expected: EnrollmentPreflightRejection,
+) -> bool {
+    match (actual, expected) {
+        (
+            EnrollmentPreflightRejection::GrantUnavailable,
+            EnrollmentPreflightRejection::GrantUnavailable,
+        )
+        | (
+            EnrollmentPreflightRejection::AccountUnavailable,
+            EnrollmentPreflightRejection::AccountUnavailable,
+        )
+        | (
+            EnrollmentPreflightRejection::AccountAbsent,
+            EnrollmentPreflightRejection::AccountAbsent,
+        )
+        | (
+            EnrollmentPreflightRejection::EpochMismatch,
+            EnrollmentPreflightRejection::EpochMismatch,
+        )
+        | (
+            EnrollmentPreflightRejection::RotationPaused,
+            EnrollmentPreflightRejection::RotationPaused,
+        )
+        | (
+            EnrollmentPreflightRejection::CredentialReplaced,
+            EnrollmentPreflightRejection::CredentialReplaced,
+        )
+        | (
+            EnrollmentPreflightRejection::CommitmentMissing,
+            EnrollmentPreflightRejection::CommitmentMissing,
+        ) => true,
+        _ => false,
+    }
+}
+
+/// A preflight observation is ready exactly when no rejection reason applies.
+pub fn enrollment_preflight_is_ready(obs: EnrollmentPreflightObservation) -> bool {
+    match enrollment_preflight_rejection(obs) {
+        None => true,
+        Some(_) => false,
+    }
+}
+
+pub fn enrollment_preflight_decision_matches_spec(
+    obs: EnrollmentPreflightObservation,
+    decision: EnrollmentPreflightDecision,
+) -> bool {
+    match decision {
+        EnrollmentPreflightDecision::Ready(permit) => {
+            enrollment_preflight_is_ready(obs)
+                && match obs.grant {
+                    Some(grant) => {
+                        permit.epoch == grant.epoch && permit.possession == grant.possession
+                    }
+                    None => false,
+                }
+        }
+        EnrollmentPreflightDecision::Reject(reason) => match enrollment_preflight_rejection(obs) {
+            Some(actual) => enrollment_preflight_rejection_matches(actual, reason),
+            None => false,
+        },
+    }
+}
+
+/// Decide whether the handler may attempt to consume the grant, and why not
+/// otherwise. This function has no effect and cannot observe consumption.
+#[cfg_attr(hax, hax_lib::ensures(|decision| {
+    enrollment_preflight_decision_matches_spec(obs, decision)
+}))]
+pub fn plan_enrollment_preflight(
+    obs: EnrollmentPreflightObservation,
+) -> EnrollmentPreflightDecision {
+    match enrollment_preflight_rejection(obs) {
+        Some(reason) => EnrollmentPreflightDecision::Reject(reason),
+        None => match obs.grant {
+            Some(grant) => EnrollmentPreflightDecision::Ready(ReadyToConsume {
+                epoch: grant.epoch,
+                possession: grant.possession,
+            }),
+            // Unreachable: a missing grant always yields `GrantUnavailable`.
+            None => {
+                EnrollmentPreflightDecision::Reject(EnrollmentPreflightRejection::GrantUnavailable)
+            }
+        },
+    }
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn missing_preflight_grant_can_be_ready(mut obs: EnrollmentPreflightObservation) -> bool {
+    obs.grant = None;
+    enrollment_preflight_is_ready(obs)
+}
+
+/// A grant lookup that did not run the account query must never be treated as
+/// an observed absence, let alone as ready.
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn unqueried_preflight_account_can_be_ready(mut obs: EnrollmentPreflightObservation) -> bool {
+    obs.account = EnrollmentAccountObservation::NotQueried;
+    enrollment_preflight_is_ready(obs)
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn absent_preflight_account_can_be_ready(mut obs: EnrollmentPreflightObservation) -> bool {
+    obs.account = EnrollmentAccountObservation::Absent;
+    enrollment_preflight_is_ready(obs)
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn epoch_mismatched_preflight_account_can_be_ready(
+    mut obs: EnrollmentPreflightObservation,
+) -> bool {
+    obs.grant = Some(EnrollmentGrantFacts {
+        epoch: INITIAL_EPOCH,
+        possession: false,
+    });
+    obs.account = EnrollmentAccountObservation::Present(EnrollmentAccountFacts {
+        stored_epoch: Some(INITIAL_EPOCH + 1),
+        epoch_active: true,
+        credential_id_matches: true,
+        commitment_len: 0,
+    });
+    enrollment_preflight_is_ready(obs)
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn rekeying_preflight_account_can_be_ready(mut obs: EnrollmentPreflightObservation) -> bool {
+    obs.grant = Some(EnrollmentGrantFacts {
+        epoch: INITIAL_EPOCH,
+        possession: false,
+    });
+    obs.account = EnrollmentAccountObservation::Present(EnrollmentAccountFacts {
+        stored_epoch: Some(INITIAL_EPOCH),
+        epoch_active: false,
+        credential_id_matches: true,
+        commitment_len: 0,
+    });
+    enrollment_preflight_is_ready(obs)
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn replaced_preflight_credential_can_be_ready(mut obs: EnrollmentPreflightObservation) -> bool {
+    obs.grant = Some(EnrollmentGrantFacts {
+        epoch: INITIAL_EPOCH,
+        possession: false,
+    });
+    obs.account = EnrollmentAccountObservation::Present(EnrollmentAccountFacts {
+        stored_epoch: Some(INITIAL_EPOCH),
+        epoch_active: true,
+        credential_id_matches: false,
+        commitment_len: 0,
+    });
+    enrollment_preflight_is_ready(obs)
+}
+
+/// A possession grant whose staged commitment is absent or empty must not be
+/// consumed. The check is presence-only; it does not bind an exact commitment.
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn commitmentless_preflight_possession_can_be_ready(
+    mut obs: EnrollmentPreflightObservation,
+) -> bool {
+    obs.grant = Some(EnrollmentGrantFacts {
+        epoch: INITIAL_EPOCH,
+        possession: true,
+    });
+    obs.account = EnrollmentAccountObservation::Present(EnrollmentAccountFacts {
+        stored_epoch: Some(INITIAL_EPOCH),
+        epoch_active: true,
+        credential_id_matches: false,
+        commitment_len: 0,
+    });
+    enrollment_preflight_is_ready(obs)
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct EnrollmentFacts {
     pub phase: RecoveryPhase,
@@ -1530,6 +1849,127 @@ mod tests {
         ));
         assert!(!replaced_credential_can_recover(valid_recovery()));
         assert!(!consumed_challenge_can_recover_again(valid_recovery()));
+    }
+
+    #[test]
+    fn preflight_decides_redemption_without_claiming_consumption() {
+        let live = EnrollmentAccountFacts {
+            stored_epoch: Some(4),
+            epoch_active: true,
+            credential_id_matches: true,
+            commitment_len: 0,
+        };
+        let ready = EnrollmentPreflightObservation {
+            grant: Some(EnrollmentGrantFacts {
+                epoch: 4,
+                possession: false,
+            }),
+            account: EnrollmentAccountObservation::Present(live),
+        };
+        let EnrollmentPreflightDecision::Ready(permit) = plan_enrollment_preflight(ready) else {
+            panic!("valid preflight rejected");
+        };
+        assert_eq!(permit.epoch(), 4);
+        assert!(!permit.possession());
+        assert!(enrollment_preflight_is_ready(ready));
+        assert_eq!(enrollment_preflight_rejection(ready), None);
+
+        let missing = EnrollmentPreflightObservation {
+            grant: None,
+            account: EnrollmentAccountObservation::NotQueried,
+        };
+        assert_eq!(
+            plan_enrollment_preflight(missing),
+            EnrollmentPreflightDecision::Reject(EnrollmentPreflightRejection::GrantUnavailable)
+        );
+
+        let unqueried = EnrollmentPreflightObservation {
+            grant: ready.grant,
+            account: EnrollmentAccountObservation::NotQueried,
+        };
+        assert_eq!(
+            plan_enrollment_preflight(unqueried),
+            EnrollmentPreflightDecision::Reject(EnrollmentPreflightRejection::AccountUnavailable)
+        );
+
+        let absent = EnrollmentPreflightObservation {
+            grant: ready.grant,
+            account: EnrollmentAccountObservation::Absent,
+        };
+        assert_eq!(
+            plan_enrollment_preflight(absent),
+            EnrollmentPreflightDecision::Reject(EnrollmentPreflightRejection::AccountAbsent)
+        );
+
+        let mismatched = EnrollmentPreflightObservation {
+            grant: ready.grant,
+            account: EnrollmentAccountObservation::Present(EnrollmentAccountFacts {
+                stored_epoch: Some(5),
+                ..live
+            }),
+        };
+        assert_eq!(
+            plan_enrollment_preflight(mismatched),
+            EnrollmentPreflightDecision::Reject(EnrollmentPreflightRejection::EpochMismatch)
+        );
+
+        // Precedence: rotation outranks a stale credential.
+        let rotating = EnrollmentPreflightObservation {
+            grant: ready.grant,
+            account: EnrollmentAccountObservation::Present(EnrollmentAccountFacts {
+                epoch_active: false,
+                credential_id_matches: false,
+                ..live
+            }),
+        };
+        assert_eq!(
+            plan_enrollment_preflight(rotating),
+            EnrollmentPreflightDecision::Reject(EnrollmentPreflightRejection::RotationPaused)
+        );
+
+        let replaced = EnrollmentPreflightObservation {
+            grant: ready.grant,
+            account: EnrollmentAccountObservation::Present(EnrollmentAccountFacts {
+                credential_id_matches: false,
+                ..live
+            }),
+        };
+        assert_eq!(
+            plan_enrollment_preflight(replaced),
+            EnrollmentPreflightDecision::Reject(EnrollmentPreflightRejection::CredentialReplaced)
+        );
+
+        let commitmentless = EnrollmentPreflightObservation {
+            grant: Some(EnrollmentGrantFacts {
+                epoch: 4,
+                possession: true,
+            }),
+            account: EnrollmentAccountObservation::Present(EnrollmentAccountFacts {
+                credential_id_matches: false,
+                commitment_len: 0,
+                ..live
+            }),
+        };
+        assert_eq!(
+            plan_enrollment_preflight(commitmentless),
+            EnrollmentPreflightDecision::Reject(EnrollmentPreflightRejection::CommitmentMissing)
+        );
+
+        let possession = EnrollmentPreflightObservation {
+            grant: Some(EnrollmentGrantFacts {
+                epoch: 4,
+                possession: true,
+            }),
+            account: EnrollmentAccountObservation::Present(EnrollmentAccountFacts {
+                credential_id_matches: false,
+                commitment_len: 1,
+                ..live
+            }),
+        };
+        assert!(matches!(
+            plan_enrollment_preflight(possession),
+            EnrollmentPreflightDecision::Ready(permit) if permit.possession()
+        ));
     }
 
     #[test]

@@ -18,8 +18,9 @@ Rust decisions to F* and checks their postconditions for every input.
 | `plan_proof_initiation` (M18) | A possession-proof challenge is issued only when the share *and* a non-empty staged RMS commitment exist on a non-rotating account. |
 | `possession_recover_facts` | Phase and one-shot consumption come from whether the exact attempt key was removed; decoded envelope identity, the verification result, the rekey column, decoded commitment length/epoch and the normalized live epoch map field-by-field. |
 | `plan_possession_recovery` (M18) | An enrollment grant issues only from a consumed, attempt-bound, verified possession-proof observation with a non-empty commitment at the live epoch on an active account; its decision type grants enrollment, not share release. |
+| `plan_enrollment_preflight` | Before the single-use grant is spent, the first account/epoch/rotation/credential/commitment rejection in the handler's historical status/message precedence wins. A missing grant yields `GrantUnavailable` without querying or classifying the account; `NotQueried` and `AccountUnavailable` are explicit unknowns, never observed absence. |
 | `enrollment_facts` | Grant presence/consumption/replacement, decoded grant possession marker, decoded credential-id equality, decoded commitment length, decoded key lengths, the rekey column and the normalized grant/account epochs map field-by-field. |
-| `plan_enrollment` | A recovered device requires a consumed grant loaded under the request's user/grant store key, current credential (or staged commitment for possession grants), valid keys, and exact active grant/account epoch. |
+| `plan_enrollment` | A recovered device requires the actual consumed grant to match the preflight-observed grant, loaded under the request's user/grant store key, current credential (or staged commitment for possession grants), valid keys, and exact active grant/account epoch. |
 | `plan_publication_stage` | A server share is staged only for the current active account epoch with a nonempty share and split id. |
 | `plan_publication_finalize` | First promotion requires an empty active slot plus the exact pending epoch, split id, and stored share; an exact already-active retry is handled idempotently by the server. |
 | theorem helpers | Replaced credentials, challenge/grant replay, cross-user grants, rotated grants and epochs, competing splits, retired epochs, unproven possession claims, stale commitments, commitment-less possession grants and accounts, unassigned grants, concurrent grant replacement, invalid key lengths and absent user rows cannot authorize recovery authority. Observation theorems additionally reject missing shares/credentials, colliding attempt ids, expired initiation TTLs, unverified assertions, missing/replayed attempts, cross-user observations and rekeying accounts. |
@@ -47,12 +48,13 @@ export PATH="$(opam var bin --switch vela-hax):$(opam var bin --switch vela-fsta
 ./verify-fstar.sh
 ```
 
-The runner extracts seventy-one production/theorem entry points and asks F* to
+The runner extracts seventy-nine production/theorem entry points and asks F* to
 discharge every verification condition without `--lax`. The checked-in
 extraction is the fresh output of `verify-fstar.sh` for these sources; hosted CI
 must still re-extract and check the entry points. Every selected function has an
-explicit postcondition (71/71); the constructors cover the decoded possession
-and enrollment state rather than only the boolean facts.
+explicit postcondition (79/79); the constructors cover the decoded possession
+and enrollment state rather than only the boolean facts. The eight new contracts
+are the preflight decision plus seven rejection/unknown negative theorems.
 
 One fail-closed tightening accompanies the decoded commitment observation: a
 row whose `recovery_auth_hash` decodes to zero bytes no longer yields a
@@ -74,14 +76,43 @@ server's preliminary checks share these policy constants. It does not accept
 a caller-supplied `public_keys_valid` boolean as an observation. The policy
 still proves no cryptographic validity of correctly sized key bytes.
 
+Enrollment now runs a checked preflight kernel before redemption. It decides
+account presence, normalized epoch equality, rotation, and credential or
+commitment authority in the handler's historical status/message precedence,
+and it receives `NotQueried` for a missing grant so the handler's 401 precedes
+any account query. Its `ReadyToConsume` permit only allows attempting the
+atomic `get_del`; it never asserts that consumption occurred and it does not
+authorize the device insert. After redemption, `plan_enrollment` still requires
+the actual consumed grant to equal the preflight-observed grant and builds the
+final `EnrollmentPermit` from those actual observations. A terminal policy
+denial and an insert-time credential/commitment revocation leave the grant
+consumed; storage failures and retryable rotation races restore it as
+documented.
+
 Enrollment's `user_matches` observation is a store-key binding, not an
 independently checked identity comparison: the stored grant has no embedded
-user id. The current handler's early returns enforce every enrollment predicate
-before the final policy call; that call rechecks the observations and its
-rejection branch is unreachable at this call site today. The pure negative
-theorems therefore do not prove the early-return code or full handler traces.
-Possession initiation/recovery have live policy gates for empty commitments
-and failed proof observations.
+user id. Possession initiation/recovery have live policy gates for empty
+commitments and failed proof observations.
+
+### Grant deletion and restaging limits
+
+The stored enrollment grant carries only `key_epoch`, `credential_id` and the
+possession marker. It has no embedded user id, commitment digest/generation,
+or split id. Consequently:
+
+- `user_matches` is the binding implied by the `(user_id, grant)` store key,
+  not an independently decoded identity comparison.
+- Early authority rejections (credential replacement, or a missing possession
+  commitment) run before consumption, so the same grant remains redeemable
+  within its TTL if the expected credential or commitment is restored.
+- The possession check is presence-only. Re-staging *any* non-empty commitment
+  revives the same grant; it is not bound to the commitment that verified the
+  original proof.
+- The integration tests demonstrate both restaging cases. These are documented
+  limitations, not proofs of permanent revocation or exact commitment binding.
+  Stronger behavior would require binding the grant value to the user id,
+  commitment digest and split/epoch generation, and consuming the grant (or
+  bumping a revocation generation) on authority revocation.
 
 `PossessionGrantPermit::releases_server_share()` is false by definition of
 the enrollment-only permit. It does not prove that the effectful handler never

@@ -22,7 +22,9 @@ use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use uuid::Uuid;
 use vela_recovery_policy::{
-    enrollment_facts, observed_recovery_epoch, EnrollmentDecision, EnrollmentObservation,
+    enrollment_facts, plan_enrollment_preflight, EnrollmentAccountFacts,
+    EnrollmentAccountObservation, EnrollmentDecision, EnrollmentGrantFacts, EnrollmentObservation,
+    EnrollmentPreflightDecision, EnrollmentPreflightObservation, EnrollmentPreflightRejection,
 };
 use vela_rekey_policy::{MutationAuthority, MutationDecision, MutationKind, MutationRequest};
 
@@ -97,68 +99,84 @@ pub async fn post_enroll_device(
 
     // Do not reveal account or rotation state unless the caller possesses the
     // unguessable grant. This is only a non-consuming proof; redemption below
-    // remains atomic and single-use.
+    // remains atomic and single-use. The checked preflight kernel owns the
+    // account/epoch/rotation/credential/commitment decision and its precedence;
+    // it neither consumes the grant nor authorizes a device insert.
     let observed_grant =
         crate::recovery::recover::observe_enroll_grant(&state, body.user_id, body.recovery_grant)?;
-    let Some(grant) = observed_grant.as_ref() else {
-        return Err(AppError::Unauthorized(
-            "recovery grant expired or already used".into(),
-        ));
-    };
-    let grant_epoch = grant.key_epoch;
+    let grant_present = observed_grant.is_some();
 
     // The grant already proved `user_id` exists and completed recovery, but
     // a deleted-account race between /recovery/recover and this call is
     // still possible in principle — fail closed rather than orphan a device
-    // row under a FK that no longer resolves.
-    let user_rows = state
-        .sqldb
-        .query(
-            "SELECT key_epoch, rekey_state, recovery_webauthn_cred_id, recovery_auth_hash
-             FROM users WHERE id = ?",
-            vec![TursoValue::Text(body.user_id.to_string())],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    let user_row_present = user_rows.first().is_some();
-    let Some(user_row) = user_rows.first() else {
-        return Err(AppError::NotFound("account no longer exists".into()));
+    // row under a FK that no longer resolves. When the grant is missing this
+    // query is deliberately skipped and the policy sees `NotQueried`, so a
+    // failed grant lookup cannot probe account state.
+    let account_observation = match observed_grant.as_ref() {
+        None => EnrollmentAccountObservation::NotQueried,
+        Some(grant) => {
+            let user_rows = state
+                .sqldb
+                .query(
+                    "SELECT key_epoch, rekey_state, recovery_webauthn_cred_id, recovery_auth_hash
+                     FROM users WHERE id = ?",
+                    vec![TursoValue::Text(body.user_id.to_string())],
+                )
+                .await
+                .map_err(|e| AppError::Internal(e.to_string()))?;
+            match user_rows.first() {
+                None => EnrollmentAccountObservation::Absent,
+                Some(user_row) => {
+                    let commitment_len = match user_row.get(3) {
+                        Some(TursoValue::Text(text)) => crate::db::decode_b64(text)?.len(),
+                        _ => 0,
+                    };
+                    EnrollmentAccountObservation::Present(EnrollmentAccountFacts {
+                        stored_epoch: user_row.i64(0),
+                        epoch_active: user_row.text(1).is_none(),
+                        credential_id_matches: user_row.text(2)
+                            == Some(grant.credential_id.as_str()),
+                        commitment_len,
+                    })
+                }
+            }
+        }
     };
-    let stored_epoch = user_row.i64(0);
-    let account_epoch = observed_recovery_epoch(stored_epoch);
-    if account_epoch != grant_epoch {
-        return Err(AppError::Unauthorized(
-            "recovery grant was invalidated by vault key rotation".into(),
-        ));
-    }
-    let account_epoch_active = user_row.text(1).is_none();
-    if !account_epoch_active {
-        return Err(AppError::Conflict(
-            "device enrollment is paused during vault key rotation".into(),
-        ));
-    }
-    // Credential-bound grants die when the passkey is replaced. Possession
-    // grants (M18) are bound to no credential; they instead require the RMS
-    // commitment that verified their proof to still be staged — deleting
-    // recovery setup or rotating the RMS revokes them.
-    let commitment_len = match user_row.get(3) {
-        Some(TursoValue::Text(text)) => crate::db::decode_b64(text)?.len(),
-        _ => 0,
+    let account_present = matches!(
+        account_observation,
+        EnrollmentAccountObservation::Present(_)
+    );
+    let grant_observation = match observed_grant.as_ref() {
+        Some(grant) => Some(EnrollmentGrantFacts {
+            epoch: grant.key_epoch,
+            possession: grant.possession,
+        }),
+        None => None,
     };
-    let possession_hash_present = commitment_len > 0;
-    let credential_id_matches = user_row.text(2) == Some(grant.credential_id.as_str());
-    let credential_matches_current = if grant.possession {
-        possession_hash_present
-    } else {
-        credential_id_matches
+    let (ready, grant, account) = match (
+        plan_enrollment_preflight(EnrollmentPreflightObservation {
+            grant: grant_observation,
+            account: account_observation,
+        }),
+        observed_grant,
+        account_observation,
+    ) {
+        (
+            EnrollmentPreflightDecision::Ready(ready),
+            Some(grant),
+            EnrollmentAccountObservation::Present(account),
+        ) => (ready, grant, account),
+        (EnrollmentPreflightDecision::Reject(reason), _, _) => {
+            return Err(preflight_rejection_error(reason));
+        }
+        _ => {
+            // The policy cannot admit an unobserved account; keep this branch
+            // fail-closed if the wiring ever drifts.
+            return Err(AppError::Internal(
+                "enrollment preflight admitted an unobserved account".into(),
+            ));
+        }
     };
-    if !credential_matches_current {
-        return Err(AppError::Unauthorized(if grant.possession {
-            "recovery grant was invalidated by recovery setup deletion or rotation".into()
-        } else {
-            "recovery grant was invalidated by credential replacement".into()
-        }));
-    }
 
     // Consume only after validation and the fast rotation check. The guarded
     // insert below remains the authority for a concurrent rotation; if that
@@ -174,8 +192,14 @@ pub async fn post_enroll_device(
             "recovery grant expired or already used".into(),
         ));
     };
-    let consumed_matches_observed = consumed_grant == *grant;
-    if !consumed_matches_observed {
+    let consumed_matches_observed = consumed_grant == grant;
+    // The preflight permit only allows attempting the redemption. Require the
+    // atomically removed grant to be exactly the one that permit described
+    // before any final enrollment decision or insert.
+    let consumed_matches_preflight = consumed_matches_observed
+        && consumed_grant.key_epoch == ready.epoch()
+        && consumed_grant.possession == ready.possession();
+    if !consumed_matches_preflight {
         crate::recovery::recover::restore_enroll_grant(
             &state,
             body.user_id,
@@ -187,21 +211,22 @@ pub async fn post_enroll_device(
         ));
     }
     let consumed_epoch = consumed_grant.key_epoch;
-    // The policy consumes the same decoded grant/row values the checks above
-    // observed: single-use consumption, credential or commitment authority,
-    // decoded key lengths, the rekey column and the normalized epochs.
+    // The final permit is built only from the actual consumed/matching grant
+    // and the live observations: single-use consumption, credential or
+    // commitment authority, decoded key lengths, the rekey column and the
+    // normalized epochs. Preflight never supplies fabricated consumption.
     let recovery_permit =
         match vela_recovery_policy::plan_enrollment(enrollment_facts(EnrollmentObservation {
-            grant_present: observed_grant.is_some(),
+            grant_present,
             grant_consumed,
             consumed_matches_observed,
-            account_present: user_row_present,
-            grant_possession: grant.possession,
+            account_present,
+            grant_possession: consumed_grant.possession,
             grant_epoch: consumed_epoch,
-            stored_epoch,
-            account_epoch_active,
-            credential_id_matches,
-            commitment_len,
+            stored_epoch: account.stored_epoch,
+            account_epoch_active: account.epoch_active,
+            credential_id_matches: account.credential_id_matches,
+            commitment_len: account.commitment_len,
             hybrid_ek_len: hybrid_ek.len(),
             hybrid_vk_len: hybrid_vk.len(),
         })) {
@@ -354,6 +379,36 @@ pub async fn post_enroll_device(
     Ok(Json(EnrollDeviceResponse {
         device_id: new_device_id,
     }))
+}
+
+/// Map the checked preflight rejection to the handler's historical status and
+/// message. The kernel decides which reason wins; this function only renders it.
+fn preflight_rejection_error(reason: EnrollmentPreflightRejection) -> AppError {
+    match reason {
+        EnrollmentPreflightRejection::GrantUnavailable => {
+            AppError::Unauthorized("recovery grant expired or already used".into())
+        }
+        // Unreachable through the production wiring: the account query either
+        // errors, returns `Absent`, or returns `Present`. Keep it fail-closed.
+        EnrollmentPreflightRejection::AccountUnavailable => {
+            AppError::Internal("enrollment account was not observed".into())
+        }
+        EnrollmentPreflightRejection::AccountAbsent => {
+            AppError::NotFound("account no longer exists".into())
+        }
+        EnrollmentPreflightRejection::EpochMismatch => {
+            AppError::Unauthorized("recovery grant was invalidated by vault key rotation".into())
+        }
+        EnrollmentPreflightRejection::RotationPaused => {
+            AppError::Conflict("device enrollment is paused during vault key rotation".into())
+        }
+        EnrollmentPreflightRejection::CredentialReplaced => AppError::Unauthorized(
+            "recovery grant was invalidated by credential replacement".into(),
+        ),
+        EnrollmentPreflightRejection::CommitmentMissing => AppError::Unauthorized(
+            "recovery grant was invalidated by recovery setup deletion or rotation".into(),
+        ),
+    }
 }
 
 struct InsertRecoveredDevice<'a> {

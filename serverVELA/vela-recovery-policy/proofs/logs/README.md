@@ -1,4 +1,25 @@
-# Possession and enrollment fact-construction increment
+# Enrollment preflight and possession/enrollment fact-construction increment
+
+## Current delegated run (baseline `350cd57`)
+
+This run adds the production-used preflight/sequencing kernel in
+`src/lib.rs` and wires `vela-server/src/recovery/enroll_device.rs` through it.
+`verify-fstar.sh` now selects **79** functions; the extraction contains **79**
+`ensures` postconditions and **0** `assume`/`admit`/`--lax` declarations. Eight
+contracts are new: `plan_enrollment_preflight` plus seven rejection/unknown
+negative theorems. The exact generated artifact is
+`proofs/fstar/extraction/Vela_recovery_policy.fst`
+(sha256 `c3a4d03995c24ec0739da16f483c458d8714b2666df6e52d1ce0bdad90f7c828`);
+it was not hand-edited.
+
+The crate's 7 unit tests and 8 observation-enumeration tests passed. The
+server integration suite passed 63/63, including the missing-grant privacy
+test, the key-validation precedence test and the credential/commitment
+restaging characterizations.
+`recovery_lifecycle_model` passed 3/3. Raw output is preserved under
+[`security/assurance/proof-logs/current/recovery-enrollment-preflight/delegated/`](../../../../security/assurance/proof-logs/current/recovery-enrollment-preflight/delegated/).
+
+## Historical possession/enrollment run
 
 Local evidence for the commit based on `5fa4e9f`. The archived
 [`Vela_recovery_policy.fst`](../../../../security/assurance/proof-logs/current/recovery-possession-enrollment/delegated/Vela_recovery_policy.fst) is the exact output of this delegated run
@@ -67,12 +88,20 @@ Every other recovery status class, message and precedence is unchanged.
   decoding, UUID generation, `getrandom`, the hybrid possession verifier,
   rate limiting, clocks and TTL expiry. The policy proves the conditional
   mapping from these observations, not that they are produced correctly.
-- Several handlers still return errors before the constructor runs (missing
-  row/attempt, rotation, missing commitment, unverified assertion/proof,
-  failed grant load). Negative constructor theorems do not establish those
-  early-return traces.
+- Enrollment's account/epoch/rotation/credential/commitment rejections now go
+  through the checked preflight kernel, but the kernel proves only the decision
+  and permit construction, not the handler's SQL/store effects or the insert
+  guard. Other handlers still return errors before their constructors run
+  (missing row/attempt, rotation, missing commitment, unverified
+  assertion/proof, failed grant load). Negative constructor theorems do not
+  establish those early-return traces.
 - Enrollment `user_matches` is the store-key user binding (the grant value
   carries no user id); it is not an independent decoded identity comparison.
+- Early credential/commitment rejection leaves the grant unconsumed. The grant
+  value embeds no user id, commitment digest/generation or split id, so
+  restoring the credential or restaging any non-empty commitment revives the
+  same grant within its TTL. The policy does not prove permanent revocation or
+  exact commitment binding.
 - Commitment/credential lengths are observed decoded values; the policy does
   not validate a scheme-specific commitment size (legacy 32-byte v1 and
   2624-byte v2 both remain possible).

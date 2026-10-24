@@ -44,6 +44,11 @@ use vela_recovery_policy::{
     RecoveryPhase, INITIAL_EPOCH,
 };
 use vela_recovery_policy::{
+    enrollment_preflight_is_ready, enrollment_preflight_rejection, plan_enrollment_preflight,
+    EnrollmentAccountFacts, EnrollmentAccountObservation, EnrollmentGrantFacts,
+    EnrollmentPreflightDecision, EnrollmentPreflightObservation, EnrollmentPreflightRejection,
+};
+use vela_recovery_policy::{
     plan_enrollment, plan_possession_recovery, plan_proof_initiation, EnrollmentDecision,
     PossessionRecoverDecision, ProofInitiateDecision,
 };
@@ -542,6 +547,102 @@ fn enrollment_facts_are_exactly_the_grant_consumption_credential_commitment_and_
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn preflight_decides_each_rejection_reason_in_handler_precedence_order() {
+    let stored_epochs = [None, Some(0), Some(INITIAL_EPOCH), Some(4), Some(5)];
+    let grants = [
+        None,
+        Some(EnrollmentGrantFacts {
+            epoch: 1,
+            possession: false,
+        }),
+        Some(EnrollmentGrantFacts {
+            epoch: 1,
+            possession: true,
+        }),
+        Some(EnrollmentGrantFacts {
+            epoch: 4,
+            possession: false,
+        }),
+        Some(EnrollmentGrantFacts {
+            epoch: 4,
+            possession: true,
+        }),
+    ];
+
+    let mut accounts = vec![
+        EnrollmentAccountObservation::NotQueried,
+        EnrollmentAccountObservation::Absent,
+    ];
+    for &stored_epoch in &stored_epochs {
+        for &epoch_active in &[false, true] {
+            for &credential_id_matches in &[false, true] {
+                for &commitment_len in &[0_usize, 1, 2624] {
+                    accounts.push(EnrollmentAccountObservation::Present(
+                        EnrollmentAccountFacts {
+                            stored_epoch,
+                            epoch_active,
+                            credential_id_matches,
+                            commitment_len,
+                        },
+                    ));
+                }
+            }
+        }
+    }
+
+    for grant in grants {
+        for account in &accounts {
+            let obs = EnrollmentPreflightObservation {
+                grant,
+                account: *account,
+            };
+            let expected = match (grant, account) {
+                (None, _) => Some(EnrollmentPreflightRejection::GrantUnavailable),
+                (Some(_), EnrollmentAccountObservation::NotQueried) => {
+                    Some(EnrollmentPreflightRejection::AccountUnavailable)
+                }
+                (Some(_), EnrollmentAccountObservation::Absent) => {
+                    Some(EnrollmentPreflightRejection::AccountAbsent)
+                }
+                (Some(grant), EnrollmentAccountObservation::Present(account)) => {
+                    if expected_epoch(account.stored_epoch) != grant.epoch {
+                        Some(EnrollmentPreflightRejection::EpochMismatch)
+                    } else if !account.epoch_active {
+                        Some(EnrollmentPreflightRejection::RotationPaused)
+                    } else if grant.possession && account.commitment_len == 0 {
+                        Some(EnrollmentPreflightRejection::CommitmentMissing)
+                    } else if !grant.possession && !account.credential_id_matches {
+                        Some(EnrollmentPreflightRejection::CredentialReplaced)
+                    } else {
+                        None
+                    }
+                }
+            };
+
+            assert_eq!(enrollment_preflight_rejection(obs), expected, "{obs:?}");
+            assert_eq!(
+                enrollment_preflight_is_ready(obs),
+                expected.is_none(),
+                "{obs:?}"
+            );
+            match plan_enrollment_preflight(obs) {
+                EnrollmentPreflightDecision::Ready(permit) => {
+                    let Some(grant) = grant else {
+                        panic!("ready without a grant: {obs:?}");
+                    };
+                    assert_eq!(expected, None, "{obs:?}");
+                    assert_eq!(permit.epoch(), grant.epoch, "{obs:?}");
+                    assert_eq!(permit.possession(), grant.possession, "{obs:?}");
+                }
+                EnrollmentPreflightDecision::Reject(reason) => {
+                    assert_eq!(Some(reason), expected, "{obs:?}");
                 }
             }
         }

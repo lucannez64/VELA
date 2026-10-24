@@ -615,6 +615,141 @@ async fn enroll_device_without_grant_returns_401() {
 }
 
 #[tokio::test]
+async fn enroll_device_missing_grant_returns_401_before_account_state() {
+    use vela_server::sqldb::{Db as _, TursoValue};
+
+    let state = helpers::test_state().await;
+    let user_id = Uuid::new_v4();
+    insert_user(&state, user_id).await;
+    // If the handler inspected the account before the grant, this state would
+    // produce the rotation conflict/epoch message instead of a 401.
+    state
+        .sqldb
+        .execute(
+            "UPDATE users SET rekey_state = 'freezing',
+                recovery_webauthn_cred_id = 'test-recovery-credential'
+             WHERE id = ?",
+            vec![TursoValue::Text(user_id.to_string())],
+        )
+        .await
+        .unwrap();
+
+    let response = vela_server::routes::build(state)
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/recovery/enroll-device")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "user_id": user_id,
+                        "recovery_grant": Uuid::new_v4(),
+                        "hybrid_ek": B64.encode(vec![1u8; 1600]),
+                        "hybrid_vk": B64.encode(vec![1u8; 2624]),
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let body: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(body["message"], "recovery grant expired or already used");
+}
+
+#[tokio::test]
+async fn enroll_device_validates_keys_before_the_grant_lookup_and_consumption() {
+    use vela_server::sqldb::{Db as _, TursoValue};
+
+    let state = helpers::test_state().await;
+    let user_id = Uuid::new_v4();
+    let grant = Uuid::new_v4();
+    insert_user(&state, user_id).await;
+    state
+        .sqldb
+        .execute(
+            "UPDATE users SET recovery_webauthn_cred_id = 'test-recovery-credential'
+             WHERE id = ?",
+            vec![TursoValue::Text(user_id.to_string())],
+        )
+        .await
+        .unwrap();
+    state
+        .store
+        .set_ex(
+            &format!("recovery:enroll_grant:{user_id}:{grant}"),
+            &serde_json::to_vec(&json!({
+                "key_epoch": 1,
+                "credential_id": "test-recovery-credential",
+            }))
+            .unwrap(),
+            600,
+        )
+        .unwrap();
+
+    let app = vela_server::routes::build(state.clone());
+    let request = |user_id: Uuid, grant: Uuid, ek: Vec<u8>, vk: Vec<u8>| {
+        Request::builder()
+            .method("POST")
+            .uri("/recovery/enroll-device")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "user_id": user_id,
+                    "recovery_grant": grant,
+                    "hybrid_ek": B64.encode(ek),
+                    "hybrid_vk": B64.encode(vk),
+                })
+                .to_string(),
+            ))
+            .unwrap()
+    };
+
+    // Key decoding/length validation precedes the unguessable grant lookup,
+    // so a malformed body is a 400 even for a nonexistent grant.
+    let bad_shape = app
+        .clone()
+        .oneshot(request(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            vec![0u8; 10],
+            vec![0u8; 2624],
+        ))
+        .await
+        .unwrap();
+    assert_eq!(bad_shape.status(), StatusCode::BAD_REQUEST);
+
+    // With a real grant, a bad key still returns 400 and leaves the one-shot
+    // grant intact for a corrected retry.
+    let bad_key = app
+        .clone()
+        .oneshot(request(user_id, grant, vec![0u8; 10], vec![0u8; 2624]))
+        .await
+        .unwrap();
+    assert_eq!(bad_key.status(), StatusCode::BAD_REQUEST);
+    assert!(state
+        .store
+        .exists(&format!("recovery:enroll_grant:{user_id}:{grant}"))
+        .unwrap());
+
+    let good = app
+        .oneshot(request(user_id, grant, vec![1u8; 1600], vec![1u8; 2624]))
+        .await
+        .unwrap();
+    assert_eq!(good.status(), StatusCode::OK);
+    assert!(!state
+        .store
+        .exists(&format!("recovery:enroll_grant:{user_id}:{grant}"))
+        .unwrap());
+}
+
+#[tokio::test]
 async fn enroll_device_redeems_grant_exactly_once() {
     use vela_server::sqldb::{Db as _, TursoValue};
 
@@ -826,6 +961,13 @@ async fn recovery_enrollment_grant_is_invalid_after_key_rotation() {
         body["message"], "recovery grant was invalidated by vault key rotation",
         "the request must reach the grant-epoch check"
     );
+    assert!(
+        state
+            .store
+            .exists(&format!("recovery:enroll_grant:{user_id}:{grant}"))
+            .unwrap(),
+        "the preflight epoch check must run before the grant is consumed"
+    );
     let devices = state
         .sqldb
         .query(
@@ -838,7 +980,7 @@ async fn recovery_enrollment_grant_is_invalid_after_key_rotation() {
 }
 
 #[tokio::test]
-async fn replacing_a_recovery_credential_invalidates_its_outstanding_grants() {
+async fn replacing_a_recovery_credential_blocks_a_grant_without_consuming_it() {
     use vela_server::sqldb::{Db as _, TursoValue};
 
     let state = helpers::test_state().await;
@@ -869,25 +1011,25 @@ async fn replacing_a_recovery_credential_invalidates_its_outstanding_grants() {
         )
         .unwrap();
 
-    let response = vela_server::routes::build(state.clone())
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/recovery/enroll-device")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "user_id": user_id,
-                        "recovery_grant": grant,
-                        "hybrid_ek": B64.encode(vec![1u8; 1600]),
-                        "hybrid_vk": B64.encode(vec![1u8; 2624]),
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let app = vela_server::routes::build(state.clone());
+    let request = || {
+        Request::builder()
+            .method("POST")
+            .uri("/recovery/enroll-device")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "user_id": user_id,
+                    "recovery_grant": grant,
+                    "hybrid_ek": B64.encode(vec![1u8; 1600]),
+                    "hybrid_vk": B64.encode(vec![1u8; 2624]),
+                })
+                .to_string(),
+            ))
+            .unwrap()
+    };
+
+    let response = app.clone().oneshot(request()).await.unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     let body: serde_json::Value = serde_json::from_slice(
         &axum::body::to_bytes(response.into_body(), 1024)
@@ -899,6 +1041,13 @@ async fn replacing_a_recovery_credential_invalidates_its_outstanding_grants() {
         body["message"],
         "recovery grant was invalidated by credential replacement"
     );
+    assert!(
+        state
+            .store
+            .exists(&format!("recovery:enroll_grant:{user_id}:{grant}"))
+            .unwrap(),
+        "the preflight credential check must run before the grant is consumed"
+    );
     let devices = state
         .sqldb
         .query(
@@ -908,6 +1057,25 @@ async fn replacing_a_recovery_credential_invalidates_its_outstanding_grants() {
         .await
         .unwrap();
     assert!(devices.is_empty());
+
+    // The grant value carries no credential generation, and the early
+    // authority check leaves it unconsumed. Restoring the old credential
+    // therefore revives this same grant within its TTL. This is a documented
+    // limitation, not permanent revocation or an exact credential binding.
+    state
+        .sqldb
+        .execute(
+            "UPDATE users SET recovery_webauthn_cred_id = 'retired-credential' WHERE id = ?",
+            vec![TursoValue::Text(user_id.to_string())],
+        )
+        .await
+        .unwrap();
+    let retry = app.oneshot(request()).await.unwrap();
+    assert_eq!(retry.status(), StatusCode::OK);
+    assert!(!state
+        .store
+        .exists(&format!("recovery:enroll_grant:{user_id}:{grant}"))
+        .unwrap());
 }
 
 #[tokio::test]
@@ -4749,7 +4917,7 @@ async fn vault_events_streams_hello_then_changes() {
 /// the decoded-grant/commitment observations wired into the verified
 /// enrollment policy.
 #[tokio::test]
-async fn possession_grant_enrolls_only_while_its_commitment_is_staged() {
+async fn possession_grant_requires_a_staged_commitment_but_restaging_revives_it() {
     use vela_server::sqldb::{Db as _, TursoValue};
 
     let state = helpers::test_state().await;
@@ -4821,9 +4989,9 @@ async fn possession_grant_enrolls_only_while_its_commitment_is_staged() {
         .unwrap();
     assert_eq!(devices.len(), 1);
 
-    // Deleting recovery setup revokes outstanding possession grants. The grant
-    // check fails closed before consumption, so the caller may retry once a
-    // commitment is staged again.
+    // Deleting recovery setup blocks outstanding possession grants while the
+    // commitment is absent. The preflight check fails closed before
+    // consumption, so the grant remains stored.
     state
         .sqldb
         .execute(
@@ -4834,7 +5002,7 @@ async fn possession_grant_enrolls_only_while_its_commitment_is_staged() {
         .unwrap();
     let revoked = Uuid::new_v4();
     seed_possession_grant(revoked);
-    let resp = app.oneshot(enroll(revoked)).await.unwrap();
+    let resp = app.clone().oneshot(enroll(revoked)).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let body: serde_json::Value = serde_json::from_slice(
         &axum::body::to_bytes(resp.into_body(), 1024).await.unwrap(),
@@ -4849,8 +5017,37 @@ async fn possession_grant_enrolls_only_while_its_commitment_is_staged() {
             .store
             .exists(&format!("recovery:enroll_grant:{user_id}:{revoked}"))
             .unwrap(),
-        "an authority revocation must not spend the grant"
+        "the preflight commitment check must not spend the grant"
     );
+
+    // The grant value carries no commitment or split generation, so the
+    // presence-only check cannot distinguish the commitment that verified the
+    // original proof from a different one. Re-staging *any* non-empty
+    // commitment revives this same grant within its TTL. This is a documented
+    // limitation, not permanent revocation or an exact commitment binding.
+    let replacement = vela_crypto::recovery::rms_possession_commitment(&[7u8; 32]);
+    state
+        .sqldb
+        .execute(
+            "UPDATE users SET recovery_auth_hash = ? WHERE id = ?",
+            vec![
+                TursoValue::Text(crate_b64(&replacement)),
+                TursoValue::Text(user_id.to_string()),
+            ],
+        )
+        .await
+        .unwrap();
+    let retry = app.oneshot(enroll(revoked)).await.unwrap();
+    assert_eq!(retry.status(), StatusCode::OK);
+    let devices = state
+        .sqldb
+        .query(
+            "SELECT id FROM devices WHERE user_id = ?",
+            vec![TursoValue::Text(user_id.to_string())],
+        )
+        .await
+        .unwrap();
+    assert_eq!(devices.len(), 2);
 }
 
 #[tokio::test]
