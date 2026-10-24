@@ -8,7 +8,7 @@ preflight/ordering increments. The [hosted baseline on 368bcc0](hosted-368bcc0/R
 
 The published sharing correction has 245 postconditions / 252 selected functions;
 the local mobile candidate adds four, giving 249 / 256. Runtime publication
-remains held for final auth/persistence review and hosted validation.
+passed focused internal review; hosted validation remains pending.
 The [sharing arithmetic correction](share-inbox-arithmetic/README.md) checks
 the fourteen new sharing contracts after fixing a universal i64 overflow
 obligation. Hosted reproduction of that correction passed in the [5d8c366 snapshot](hosted-5d8c366/README.md).

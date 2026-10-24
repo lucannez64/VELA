@@ -214,12 +214,12 @@
         "libVELA/vela-sync-policy/proofs/fstar/chunk-lemmas/Vela_sync_policy_chunk_lemmas.fst": "b6aa6204fc78dc1cdb7a389d453d6a71ba97b25a03c553d88a5d4f928121eb84",
         "security/formal/check-sync-chunk-proof.py": "52f717ba328ada95de482234daf56dd8a99ca5b04083b449965427c3d62696a2",
         "security/formal/tests/test_sync_chunk_guard.py": "3bc8a630a152cfc62669c6d59e6149a1b47b4268a79f2bd137009013437a286b",
-        "libVELA/vela-sync-policy/README.md": "064af2c0fe93cb1475dfd95825dd7c4e1eda23032886cade7538a1661519360f",
+        "libVELA/vela-sync-policy/README.md": "9277649aa5d56b32f7675d36c91299ae345c7359e378c26dd440925fa85092ff",
         "security/assurance/17-universal-chunk-admission.md": "26962b638275cfe12a42cfdeeec120899b04facde94aa388d78dc462b6fe7e22"
       }
     },
     {
-      "boundary": "local mobile sync admission, epoch kernel and fail-closed auth implementation (4 Rust contracts +6 epoch lemmas; JVM-tested native auth/pin/RMS corrections await final review/hosted validation; byte/FFI/storage traces unproved)",
+      "boundary": "local mobile sync admission, epoch kernel and fail-closed auth implementation (4 Rust contracts +6 epoch lemmas; JVM-tested native auth/pin/RMS corrections passed focused internal review; hosted validation pending; byte/FFI/storage traces unproved)",
       "artifacts": {
         "androidVELA/app/build.gradle.kts": "111f1bccadb6330199eff381f16abdd8d2cbffa42098f277263739096a38a22c",
         "androidVELA/app/src/main/java/com/vela/android/MainActivity.kt": "38f332920f41ffb24cac7dc513d4933c34a9b5595147527a70921d2d4001bba1",
@@ -249,14 +249,14 @@
         "libVELA/vela-apple-bridge/Cargo.toml": "d46a41003468d361d6f42f6e987d020a59889fe40623adc6aa28ed53d9e9b316",
         "libVELA/vela-apple-bridge/include/vela_apple.h": "4af87996c92151504f2103ec989bd98d2568834bed52fdb3ea981863fdc9eacc",
         "libVELA/vela-apple-bridge/src/lib.rs": "ea6ebf2b91bb3c1b3b16c862cff2d660e8950e4ee750794412d1381a4a3f49ce",
-        "libVELA/vela-sync-policy/README.md": "064af2c0fe93cb1475dfd95825dd7c4e1eda23032886cade7538a1661519360f",
+        "libVELA/vela-sync-policy/README.md": "9277649aa5d56b32f7675d36c91299ae345c7359e378c26dd440925fa85092ff",
         "libVELA/vela-sync-policy/proofs/fstar/epoch-lemmas/Vela_sync_policy_epoch_lemmas.fst": "81843c5aa65b9e1269bcd865ba5fcc957286d72de18311e48a725dfc90ee174b",
         "libVELA/vela-sync-policy/proofs/fstar/extraction-epoch/Vela_sync_policy.fst": "0b7febd0c062d955831133476fba4afc8d9616b83e6be49b63d6ba10fe404393",
         "libVELA/vela-sync-policy/src/lib.rs": "66a983da454039bf18ca2b42c0134692055c7717118c0606cfb142b6a5d96c33",
         "libVELA/vela-sync-policy/verify-fstar-chunk.sh": "7fa8980be900ac65b19f344a75ec65b68a4040b5a96f279b6704e4cca231a7a0",
         "libVELA/vela-sync-policy/verify-fstar-epoch.sh": "7281e299bf1cdfd05873601134651084ee96e8a8067cd87e319da616eb44e3fb",
         "libVELA/vela-sync-policy/verify-fstar.sh": "cb7ebeab02302a5e9b698d3f2453f90bbdc1cb5081fde029bf8ed1edf89b1703",
-        "security/assurance/18-mobile-sync-admission.md": "28ab650e1f08ae38e8cfdaab01cb8dcefd87b0e6ac53170dec67a7e15453de58",
+        "security/assurance/18-mobile-sync-admission.md": "52117cdba86a188b0ecf9d78527d3711ede26fc8ca5050061bbc11e8fe91b358",
         "security/formal/check-sync-chunk-proof.py": "52f717ba328ada95de482234daf56dd8a99ca5b04083b449965427c3d62696a2",
         "security/formal/tests/test_sync_chunk_guard.py": "3bc8a630a152cfc62669c6d59e6149a1b47b4268a79f2bd137009013437a286b",
         "androidVELA/app/src/main/java/com/vela/android/sync/AndroidVelaApiClient.kt": "9bf0a20bcfa1b253b87cdca958050ea20a53b9c1375b7d2b964c60bb8d277664",

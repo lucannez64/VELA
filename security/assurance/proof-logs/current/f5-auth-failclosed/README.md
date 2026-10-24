@@ -185,7 +185,7 @@ All heavy work ran through `~/.local/opt/vela-tools/bin/vela-heavy` (global
 | `diff-stat.txt` | `git diff --stat` at evidence capture | — |
 
 New tests: 20 (6 `SyncAuthControllerTest`, 7 `IdentityFailClosedTest`,
-4 `RecoveryAccountBindingTest`, 2 `RmsHolderTest`, and 1 added
+4 `RecoveryAccountBindingTest`, 2 `RmsHolderTest`, and 1 added test in
 `VaultEventStreamParserTest`). Parent suite was 139.
 
 No `cargo`, F*, Swift, Gradle build-script, `libVELA` bridge, global assurance,
@@ -243,8 +243,16 @@ does not read or advance rollback floors, and its headers require a 2xx response
 Blank re-authentication tokens are refused before retry.
 
 `AuthenticationReplacementTest` drives both real authenticator branches with a
-replacement or disappearance during HTTP, recovery replacement during enrollment,
-and metadata-only changes. Full manager lifecycle, SSE transport, Android storage,
+replacement or disappearance during HTTP and recovery replacement during enrollment.
+A direct helper assertion covers metadata-only acceptance; write-path preservation
+is not exercised. Full manager lifecycle, SSE transport, Android storage,
 and native instrumentation remain outside these JVM tests.
 
 Parent correction run: 162 JVM tests, 25 classes, zero failures/errors/skips; see `review-corrections-jvm.log` and `review-corrections-counts.txt`. This supersedes the 159-test snapshot for current runtime validation.
+
+
+Final focused internal review of `a3bf997` found no code-level blockers. It did
+not rerun tests. Remaining coverage and lifecycle limits are recorded in
+[the mobile scope note](../../../18-mobile-sync-admission.md), including
+field-isolated guard tests, full manager/recovery execution, server-side retry
+idempotency and exceptional RMS cleanup. Hosted validation remains pending.

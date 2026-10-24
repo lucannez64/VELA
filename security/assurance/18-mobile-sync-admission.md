@@ -34,13 +34,13 @@ synchronously; missing account pins refuse sync before requests and cannot
 become an empty namespace. A shared RMS monitor makes copy/replace/zeroize
 coherent. Recovery preflights a different existing pin before enrollment/writes.
 
-The parent JVM run passes159 tests, including production retry/auth components
+The latest parent JVM run passes 162 tests, including production retry/auth components
 with a fake HTTP transport. It does not execute real HTTPS, JNI, Keystore or
-physical filesystem failure. A renewed independent final review is pending.
+physical filesystem failure. Focused internal review found no code blockers.
 Bootstrap authentication/share-key setup may save a validated token before the
 retry controller; its guarantee is scoped to the controller's operation.
-Concurrent explicit account reset/replacement during network requests remains
-a review question. No end-to-end auth/storage trace theorem is claimed.
+Concurrent identity replacement during a request is checked again inside the
+atomic record update; a changed or vanished snapshot refuses the result. No end-to-end auth/storage trace theorem is claimed.
 
 ## Persistence and compatibility limits
 
@@ -65,7 +65,7 @@ atomic replacement and native JNI execution are separate from Linux JVM tests.
 The existing adoption flag server_epoch_is_next remains caller-supplied.
 
 [Evidence](proof-logs/current/f5-mobile-sync-admission/README.md) retains the
-delegated snapshot separately from parent integration checks. Pending auth
+delegated snapshot separately from parent integration checks. Auth
 corrections have their own evidence rather than retroactively relabelling tests.
 
 
@@ -77,4 +77,16 @@ requests. The controller's token guarantee excludes bootstrap and explicit
 intermediate rotations. A captured RMS may finish persistence after lock; there
 is no session cancellation lease. SSE has no missing-pin guard and does not touch
 rollback floors. Helper tests do not execute full manager/recovery lifecycles.
-The correction awaits focused independent review and hosted validation.
+The focused internal review found no code blockers; hosted validation remains
+pending for this increment. It was a static review, not an external audit.
+
+
+Residual coverage: JVM tests do not execute manager-level auth/recovery ordering,
+publication HTTP guards or the actual SSE transport. The metadata-only test
+checks the snapshot helper, not write-path preservation. Field-isolated rotation
+refusal, successful registration and blank-token refusal lack dedicated tests.
+A refusal after server enrollment can leave a server-side record requiring retry;
+retry idempotency is unproved. Recovery may already have cleared its old token
+before a concurrent replacement is detected. The pre-existing recovery RMS
+cleanup on exceptional exits is also outside this increment. SSE itself does not
+advance floors; sync triggered by SSE uses the regular guarded sync path.
