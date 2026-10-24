@@ -1,0 +1,178 @@
+(* VELA hybrid KEM, combiner v2 — IND-CCA2 in a GDH model with
+   NONUNIFORM (clamped-style) X25519 exponents, the other KEM's secret key
+   disclosed, and public ML-KEM algorithms.
+
+   Code: libVELA/vela-crypto/src/kem.rs (encapsulate, decapsulate, combine_v2).
+
+     ss = H(ss_mlkem, ss_x25519, x25519_epk, x25519_pk, ct_mlkem, pk_mlkem)
+
+   Relationship to kem_v2_x25519_gdh.ocv: that model uses DH_good_group with
+   uniform prime-order exponents Z = {1,...,q-1}. This model replaces that
+   abstraction by DH_basic over a *nonuniform* exponent type, following the
+   CryptoVerif 2.12 HPKE supplementary material (examples/hpke/lib.gdh.ocvl
+   and examples/hpke/common.dhkem.ocvl):
+
+     - DH_proba_collision_minimal supplies the key-collision bound
+       Pr[exp(g,x) = Y] <= PCollKey for random x and Y independent of x.
+     - GDH_RSR_minimal supplies GDH with the rerandomization loss
+       pDistRerandom.
+     - Z is [large,bounded,nonuniform], i.e. its default distribution is an
+       unspecified nonuniform distribution on a bounded set.
+
+   Curve25519 instantiation used for the derived concrete bound (see the
+   accompanying README): honest X25519 exponents are the clamped values
+   n = 2^254 + 8r with r uniform in [0,2^251); after dividing out the
+   cofactor this is m = 2^251 + r uniform in [2^251, 2^252-1]. For that
+   distribution the HPKE material states PColl1Rand(Z) = 2^-251,
+   PCollKey = 2^-250 (because u(P) = u(-P)) and PDistRerandom = 2^-125.
+   These values are *instantiated in the derived bound*, not proved here.
+
+   What this model does NOT establish:
+   - It does not prove that the Rust implementation actually samples the
+     clamped distribution modelled by PCollKey/PDistRerandom.
+   - It does not model the cofactor-8 subgroup, non-contributory inputs, or
+     the reject check in kem.rs; G is still a prime-order abstraction.
+   - It does not model X25519 encoding aliases (non-canonical u-coordinates).
+   - It does not prove clamping correctness; only the collision and
+     rerandomization losses above are exposed.
+   - HKDF-SHA256 is still an ideal random oracle and the SHA-256 bridge over
+     ct_mlkem/pk_mlkem is still argued outside the game.
+
+   Game: one honest recipient key pair, one challenge encapsulation, Qd
+   decapsulation queries on any capsule other than the challenge capsule,
+   qH random oracle queries. The challenge pair (ctm,epk) is excluded from
+   decapsulation queries verbatim; the ML-KEM secret key is disclosed.
+
+   Expected: "All queries proved."
+*)
+
+param Qd.
+
+(* ── X25519 with nonuniform (clamped-style) exponents under GDH ── *)
+type Z [large,bounded,nonuniform].
+type G [large,bounded].
+proba pGDH.
+proba pDistRerandom.
+proba PCollKey.
+
+(* The two macros below are copied verbatim from the CryptoVerif 2.12
+   distribution's examples/hpke/lib.gdh.ocvl (Alwen, Blanchet, Hauck, Kiltz,
+   Lipp, Riepel, "Analysing the HPKE Standard", Eurocrypt 2021), so that this
+   model is self-contained with the standard library default.ocvl. *)
+
+def DH_proba_collision_minimal(G, Z, g, exp, mult, PCollKey) {
+
+expand DH_basic(G, Z, g, exp, exp', mult).
+   (* In some game transformations, exp is rewritten into exp'
+      to avoid loops. We do not do that here, so exp' is not used. *)
+
+collision x <-R Z; forall Y: G;
+  return(exp(g, x) = Y) <=(PCollKey)=> return(false) if Y independent-of x.
+
+}
+
+def GDH_RSR_minimal(G, Z, g, exp, mult, pGDH, pDistRerandom) {
+
+(* the GDH assumption
+    This equivalence says that, when exp(g,a[i]) and exp(g,b[j]) are known to the
+    adversary, the adversary can compute exp(g, mult(a[i], b[j])) only with
+    negligible probability, even in the presence of a decision DH oracle
+    DH(A,B,C) tells whether A = g^a, C = B^a for some a. *)
+
+param na, naeq, naDDH, naDDH1, naDDH2, naDDH3, naDDH4, naDDH5, naDDH6, naDDH7, naDDH8, naDH9,
+      nb, nbeq, nbDDH, nbDDH1, nbDDH2, nbDDH3, nbDDH4, nbDDH5, nbDDH6, nbDDH7, nbDDH8, nbDH9.
+
+equiv(gdh(exp))
+    foreach ia <= na do a <-R Z; (
+      OA() := return(exp(g,a)) |
+      foreach iaeq <= naeq do OAeq(m:G) := return(m = exp(g,a)) |
+         (* We put the oracle above before ODDHa1, so that ODDHa1 is not used when m' = g,
+	    which would lead to additional calls to the DDH oracle when in fact
+	    we can simply compare with the public key *)
+      foreach iaDDH1 <= naDDH1 do ODDHa1(m:G, m':G) := return(m = exp(m', a)) |
+      foreach iaDDH  <= naDDH  do ODDHa(m:G, j<=nb) [useful_change] := return(m = exp(g, mult(b[j], a))) |
+      foreach iaDDH8 <= naDDH8 do ODDHa8(m:G,j<=na) [3] := return(m = exp(g,mult(a[j], a))) |
+      foreach iaDH9 <= naDH9 do ODHa9(x:Z) [2] := return(exp(g, mult(a, x)))
+    ) |
+    foreach ib <= nb do b <-R Z; (
+      OB() := return(exp(g,b)) |
+      foreach ibeq <= nbeq do OBeq(m:G) := return(m = exp(g,b)) |
+      foreach ibDDH1 <= nbDDH1 do ODDHb1(m:G, m':G) := return(m = exp(m', b)) |
+      foreach ibDDH  <= nbDDH  do ODDHb(m:G, j<=na) := return(m = exp(g, mult(a[j], b))) |
+      foreach ibDDH8 <= nbDDH8 do ODDHb8(m:G,j<=nb) [3] := return(m = exp(g,mult(b[j], b))) |
+      foreach ibDH9 <= nbDH9 do ODHb9(x:Z) [2] := return(exp(g, mult(b, x)))
+    )
+<=(pGDH(time + (na + nb + 1 + #ODHa9 + #ODHb9) * time(exp),
+         #ODDHa + #ODDHa1 + #ODDHa8 +
+         #ODDHb + #ODDHb1 + #ODDHb8)
+      + (na + nb) * pDistRerandom)=> [computational]
+    foreach ia <= na do a <-R Z [unchanged]; (
+      OA() := return(exp(g,a)) |
+      foreach iaeq <= naeq do OAeq(m:G) := return(m = exp(g,a)) |
+      foreach iaDDH1 <= naDDH1 do ODDHa1(m:G, m':G) := return(m = exp(m', a)) |
+      foreach iaDDH <= naDDH do ODDHa(m:G, j<=nb) := return(false) |
+      foreach iaDDH8 <= naDDH8 do ODDHa8(m:G,j<=na) [3] := return(m = exp(g,mult(a[j], a))) |
+      foreach iaDH9 <= naDH9 do ODHa9(x:Z) := return(exp(g, mult(a, x)))
+    ) |
+    foreach ib <= nb do b <-R Z [unchanged]; (
+      OB() := return(exp(g,b)) |
+      foreach ibeq <= nbeq do OBeq(m:G) := return(m = exp(g,b)) |
+      foreach ibDDH1 <= nbDDH1 do ODDHb1(m:G, m':G) := return(m = exp(m', b)) |
+      foreach ibDDH <= nbDDH do ODDHb(m:G, j<=na) := return(false) |
+      foreach ibDDH8 <= nbDDH8 do ODDHb8(m:G,j<=nb) [3] := return(m = exp(g,mult(b[j], b))) |
+      foreach ibDH9 <= nbDH9 do ODHb9(x:Z) := return(exp(g, mult(b, x)))
+    ).
+
+}
+
+expand DH_proba_collision_minimal(G, Z, g, exp, mult, PCollKey).
+expand GDH_RSR_minimal(G, Z, g, exp, mult, pGDH, pDistRerandom).
+
+(* ── ML-KEM: arbitrary, adversary-controlled ── *)
+type mlsk [bounded].
+type mlpk [bounded].
+type mlseed [large,fixed].
+type mlct [bounded].
+type mlss [bounded].
+fun mlpkgen(mlsk): mlpk.
+fun mlencap_ct(mlpk, mlseed): mlct.
+fun mlencap_ss(mlpk, mlseed): mlss.
+fun mldecap(mlct, mlsk): mlss.
+
+(* Leaked-key decapsulation must recover the honest challenge secret too.
+   No confidentiality assumption is made about these ML-KEM functions. *)
+equation forall sk: mlsk, seed: mlseed;
+  mldecap(mlencap_ct(mlpkgen(sk), seed), sk) = mlencap_ss(mlpkgen(sk), seed).
+
+(* ── The combiner: HKDF-SHA256 as a random oracle ── *)
+type hashkey [fixed].
+type key [large,fixed].
+expand ROM_hash_6(hashkey, mlss, G, G, G, mlct, mlpk, key, H, Horacle, qH).
+
+query secret b [cv_bit].
+
+process
+  Ostart() :=
+    hk <-R hashkey;
+    b <-R bool;
+    skm <-R mlsk;
+    x <-R Z;
+    (* the ML-KEM secret key is handed to the adversary *)
+    return(skm, exp(g, x));
+    ((
+      Ochall() :=
+        s <-R mlseed;
+        y <-R Z;
+        pkm <- mlpkgen(skm);
+        ctm: mlct <- mlencap_ct(pkm, s);
+        ssm <- mlencap_ss(pkm, s);
+        epk: G <- exp(g, y);
+        k0 <- H(hk, ssm, exp(exp(g, x), y), epk, exp(g, x), ctm, pkm);
+        k1 <-R key;
+        return(ctm, epk, if b then k0 else k1)
+    ) | (
+      foreach id <= Qd do
+      Odecap(ctq: mlct, epkq: G) :=
+        find suchthat defined(ctm, epk) && ctq = ctm && epkq = epk then yield else
+        return(H(hk, mldecap(ctq, skm), exp(epkq, x), epkq, exp(g, x), ctq, mlpkgen(skm)))
+    ) | run Horacle(hk))

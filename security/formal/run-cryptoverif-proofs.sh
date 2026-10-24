@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Computational proofs of the hybrid KEM combiner (CryptoVerif 2.12).
 #   kem_v2_x25519_gdh     must prove: uniform-group GDH, other KEM key disclosed
+#   kem_v2_x25519_gdh_nonuniform must prove: nonuniform/clamped-style exponents,
+#                         explicit collision + rerandomization loss
 #   kem_v2_mlkem_cca      must prove: ML-KEM IND-CCA2/collision bounds, DH key disclosed
 #   kem_v1_x25519_baseline must remain explicitly unproved (not an attack trace)
 #   kem_dem_seal_share    must prove: seal_share (KEM + XChaCha20-Poly1305) is IND-CCA2 PKE
@@ -44,6 +46,7 @@ run() {
 }
 
 run kem_v2_x25519_gdh proved 'bit secrecy of b'
+run kem_v2_x25519_gdh_nonuniform proved 'bit secrecy of b'
 run kem_v2_mlkem_cca proved 'bit secrecy of b'
 run kem_v1_x25519_baseline unproved 'bit secrecy of b'
 run kem_dem_seal_share proved 'bit secrecy of b'

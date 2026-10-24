@@ -58,7 +58,8 @@ class RunnerTests(unittest.TestCase):
         result = self.invoke('complete')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('kem_v1_x25519_baseline: unproved (as expected)', result.stdout)
-        self.assertEqual(result.stdout.count('(as expected)'), 6)
+        self.assertIn('kem_v2_x25519_gdh_nonuniform: proved (as expected)', result.stdout)
+        self.assertEqual(result.stdout.count('(as expected)'), 7)
 
     def test_baseline_timeout_is_not_an_expected_nonproof(self):
         result = self.invoke('baseline_timeout')
