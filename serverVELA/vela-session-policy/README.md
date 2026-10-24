@@ -57,7 +57,7 @@ cross-account exchange, missing accounts, unconsumed challenges and invalid
 signatures. The signature observation comes from the actual verifier result.
 
 The current runner selects 21 functions with 19 explicit postconditions. Two
-previously selected comparison predicates have no `ensures`; this increment
+previously selected TTL/expiry helpers have no direct `ensures`; this increment
 adds ten postconditions. Source observations (SQL rows, parsed UUID-to-u128
 conversion, status/mode decoding, nonce comparison, signature verification,
 clocks and sled challenge consumption) and actual SQL/token effects remain

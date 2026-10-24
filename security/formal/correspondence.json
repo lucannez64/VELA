@@ -100,7 +100,9 @@
         "security/formal/cryptoverif/kem_v2_mlkem_cca.ocv": "0aee82cc577eb7fa26b6525bbed79a1f08e2ce738edca8f2228b2ea946c01b5e",
         "security/formal/cryptoverif/kem_v1_x25519_baseline.ocv": "cf5b6b780c01cd8bca5749723f4f083b7deb29c09dac3ef6a3e94e30a06e39cb",
         "libVELA/vela-crypto/src/aead.rs": "7840cd68b6b510284e3fba940ced84712af0ecd7914f2833fc1bbc8cccb2e46f",
-        "security/formal/cryptoverif/kem_dem_seal_share.ocv": "e3748c7aae82802d9a088e221ba0f4babb9e7165ed054dd6ad687a2c5e445725"
+        "security/formal/cryptoverif/kem_dem_seal_share.ocv": "e3748c7aae82802d9a088e221ba0f4babb9e7165ed054dd6ad687a2c5e445725",
+        "security/formal/cryptoverif/kem_v2_x25519_gdh_nonuniform.ocv": "d85cef886c776209a68a430ad51007e3c1caa3a07e03bc5833eb9094370c5726",
+        "security/formal/cryptoverif/HPKE-LICENSE.txt": "590b84bda61a1562c260501aac68769dd751ca077d61dd634797ea858981eeec"
       }
     },
     {
@@ -131,13 +133,15 @@
         "security/formal/cryptoverif/kem_v1_x25519_baseline.ocv": "cf5b6b780c01cd8bca5749723f4f083b7deb29c09dac3ef6a3e94e30a06e39cb",
         "security/formal/cryptoverif/kem_v2_mlkem_cca.ocv": "0aee82cc577eb7fa26b6525bbed79a1f08e2ce738edca8f2228b2ea946c01b5e",
         "security/formal/cryptoverif/kem_v2_x25519_gdh.ocv": "fc5f9fa9beb55117e6a4ff9a0496a8f5b5287f2d2b8724a7608f434848e96777",
-        "security/formal/cryptoverif/README.md": "d76c6738d5a64250ed847635e14c9488811ec2bdcad6a939f86ff1db1e9ac37b",
-        "security/formal/run-cryptoverif-proofs.sh": "afd44ac91c923b493b6fab4e6de991fbf724d46c815d7becb1e0c83cbc5d93d8",
+        "security/formal/cryptoverif/README.md": "78c044ca5afb2c83be833292502e7e1fbe8132963b19b32c92975aa0bd979521",
+        "security/formal/run-cryptoverif-proofs.sh": "3cb87557f23930847b2a7c79074f986c23055fb2528c3e7639a99a2ec6b86987",
         "security/formal/check-cryptoverif-boundary.py": "3e79da3d7b3ecb9b88aa435ee6fd0c2cebd3d0b41fad322643193879915158cd",
-        "security/formal/tests/test_cryptoverif_runner.py": "116b54637605d7bdb9496913582e20f9c170e4247b0ea7406f08e79dedf8b9de",
+        "security/formal/tests/test_cryptoverif_runner.py": "5021f709ce654ee6befc9a82afc79e7975fdea20221cc97d0905ecb8850c49bf",
         "libVELA/vela-crypto/src/kem.rs": "c9a17b26b6624f65ad4539b0d3449e10b36236cd6a015be7a4546c4b56457885",
         "libVELA/vela-crypto/src/signing.rs": "82c9e2f3f9882d62cad5707cd8287b1299b373b10629eff912477f519249150b",
-        "libVELA/vela-crypto/src/aead.rs": "7840cd68b6b510284e3fba940ced84712af0ecd7914f2833fc1bbc8cccb2e46f"
+        "libVELA/vela-crypto/src/aead.rs": "7840cd68b6b510284e3fba940ced84712af0ecd7914f2833fc1bbc8cccb2e46f",
+        "security/formal/cryptoverif/kem_v2_x25519_gdh_nonuniform.ocv": "d85cef886c776209a68a430ad51007e3c1caa3a07e03bc5833eb9094370c5726",
+        "security/formal/cryptoverif/HPKE-LICENSE.txt": "590b84bda61a1562c260501aac68769dd751ca077d61dd634797ea858981eeec"
       }
     },
     {
@@ -158,7 +162,7 @@
       "boundary": "web-session observation construction and policy composition (SQL/store/verifier sources, UUID conversion and full handler effects remain open)",
       "artifacts": {
         "serverVELA/vela-session-policy/src/lib.rs": "3befdaca67cc99334e7e3ebac343ba0b6d1ac2a08afa95bee7542045b2fb44b4",
-        "serverVELA/vela-session-policy/README.md": "c1ef435c7827dbbc64b94c4df5b5a38ed1b36af7249b5c99e50c74f1e2f7e7b9",
+        "serverVELA/vela-session-policy/README.md": "dbaa70084826078289f019de974d5fe7d3d654e4787348165c0974d4e6117fe4",
         "serverVELA/vela-session-policy/verify-fstar.sh": "dabf84dcea875b794201f235f1a877a3894dc649034ccbce3d506e805ac6efdd",
         "serverVELA/vela-session-policy/proofs/fstar/extraction/Vela_session_policy.fst": "f558711ac3d165952846d03d1d7b2b91186fa3ff1925a0780b35fdf824f2dd1d",
         "serverVELA/vela-server/src/web_session/mod.rs": "9be9bbfa52509c1ef59e01a65d4369b5897a8a391c53d783b46f8e32b1e600ef",

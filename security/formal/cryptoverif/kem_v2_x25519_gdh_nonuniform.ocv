@@ -55,10 +55,12 @@ proba pGDH.
 proba pDistRerandom.
 proba PCollKey.
 
-(* The two macros below are copied verbatim from the CryptoVerif 2.12
+(* The two macro definitions below come from CryptoVerif 2.12
    distribution's examples/hpke/lib.gdh.ocvl (Alwen, Blanchet, Hauck, Kiltz,
    Lipp, Riepel, "Analysing the HPKE Standard", Eurocrypt 2021), so that this
-   model is self-contained with the standard library default.ocvl. *)
+   model is self-contained with the standard library default.ocvl. Some
+   explanatory comments are omitted; the definitions are unchanged.
+   The upstream CeCILL-B license is retained in HPKE-LICENSE.txt. *)
 
 def DH_proba_collision_minimal(G, Z, g, exp, mult, PCollKey) {
 

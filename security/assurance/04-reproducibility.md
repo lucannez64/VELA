@@ -154,7 +154,7 @@ corrections and local evidence are in
 
 `bounded.sh` uses Linux systemd scopes with **3 GiB memory, zero swap, one
 Cargo/opam/make/test worker**, and a 30-minute whole-command timeout.
-`tamarin-bounded.sh` additionally limits each proof to 180 seconds, one GHC
+`tamarin-bounded.sh` defaults to 180 seconds (the journal runner uses 600 seconds), one GHC
 worker and a 1500 MiB GHC heap. `VELA_STEP_TIMEOUT` and `VELA_PROOF_TIMEOUT`
 can raise time limits explicitly. `VELA_MEMORY_MAX` is an explicit memory
 override; the documented toolchain installation command configures it to 6G. Without a working systemd manager the

@@ -12,4 +12,4 @@ hybrid_sig_mldsa_euf: proved (as expected)
   RESULT Proved event(forge) ==> false up to probability Pmldsa(time_1, Qs)
 hybrid_sig_ed25519_euf: proved (as expected)
   RESULT Proved event(forge) ==> false up to probability Ped(time_1, Qs)
-Full CryptoVerif logs: /tmp/vela-nonuniform/full
+Full CryptoVerif logs: /tmp/vela-parent-cv-nonuniform

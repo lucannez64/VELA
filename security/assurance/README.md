@@ -89,11 +89,11 @@ correctness is not a consequence of the pure-policy proofs.
   properties and M29 adds eleven composed authentication/journal properties.
   Combined evidence is **297 verified / five intended falsifications**; it is
   not a new whole-corpus CI result.
-- Computational models: five positive CryptoVerif game results and one explicitly
-  unproved legacy baseline, with a random-oracle and uniform-group boundary.
+- Computational models: six positive CryptoVerif game results and one explicitly
+  unproved legacy baseline, with a random-oracle boundary and uniform/nonuniform GDH abstractions.
   The [review corrections](proof-logs/current/computational-review-corrections/README.md)
   add leaked-key KEM correctness and clarify assumptions; hosted reproduction
-  passed on 5fa4e9f. These results do not establish full Rust or quantum-adversary
+  passed on 5fa4e9f for the previous six-game snapshot; the new seventh game awaits hosted reproduction. These results do not establish full Rust or quantum-adversary
   construction correspondence.
 - Current hax/F*: the [local recovery increment](proof-logs/current/recovery-fact-refinement/README.md)
   extends the earlier [hosted enrollment baseline](proof-logs/current/hosted-enrollment-40039992434/README.md)

@@ -1,7 +1,7 @@
 # 2. Formal models
 
 All models live in [`security/formal/`](../formal/). There are 37 Tamarin
-theories (`.spthy`), 3 ProVerif models (`.pv`) and 6 CryptoVerif games (`.ocv`). Each theory's header
+theories (`.spthy`), 3 ProVerif models (`.pv`) and 7 CryptoVerif games (`.ocv`). Each theory's header
 comment states its scope. This document collects those scopes in one place
 and makes the adversary in each model explicit, because the models differ
 a lot in how much adversary they include.
@@ -17,7 +17,7 @@ signatures, hashes and encryption, or uninterpreted/private functions. Some
 models abstract a hybrid as one primitive; M29 represents the two signature
 checks separately. These models do not prove primitive implementation security.
 
-**Computational exceptions are scoped.** Six CryptoVerif games cover the
+**Computational exceptions are scoped.** Seven CryptoVerif games cover the
 idealized v2 KEM combiner, modular KEM-DEM encryption and the AND signature
 construction, plus an explicitly unproved legacy baseline. They use named
 primitive assumptions and a random oracle, not a complete Rust construction

@@ -129,3 +129,16 @@ The runner rejects process failures, missing verdicts, missing expected query
 results and local manual/admitted proof syntax. The lexical source check is a
 drift guard, not a proof that every equation, collision axiom, primitive
 assumption or encoding faithfully represents the implementation.
+
+## Reused HPKE definitions
+
+The nonuniform companion includes the `DH_proba_collision_minimal` and
+`GDH_RSR_minimal` definitions from CryptoVerif 2.12's
+`examples/hpke/lib.gdh.ocvl`, with explanatory comments abridged. Credit:
+Joël Alwen, Bruno Blanchet, Eduard Hauck, Eike Kiltz, Benjamin Lipp and
+Doreen Riepel, *Analysing the HPKE Standard*, Eurocrypt 2021
+(https://eprint.iacr.org/2020/1499). The distribution's upstream license is
+retained unchanged as [HPKE-LICENSE.txt](HPKE-LICENSE.txt). The CryptoVerif
+distribution credits ENS, CNRS, INRIA, MPI-SP and Ecole Polytechnique,
+2005–2025. This reuse does not transfer HPKE's complete security argument
+to VELA; only the explicitly instantiated assumptions are used.

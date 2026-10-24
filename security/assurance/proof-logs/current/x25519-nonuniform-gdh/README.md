@@ -89,3 +89,13 @@ one modelled.
   equation, not a concrete decapsulation-failure loss.
 - One recipient, one challenge; multi-user/multi-challenge, QROM and Rust
   composition remain open.
+
+## Parent reproduction
+
+After integrating the game as `f80af64`, the parent reran the full real gate
+through `vela-heavy` with the same pinned binary/library. `runner.log` and all
+seven per-model logs now record that parent run from
+`/tmp/vela-parent-cv-nonuniform`; `delegate-runner.log` preserves the earlier
+child summary. All six positive verdicts and the expected legacy nonproof
+passed. Eleven runner/sourceguard tests also passed (`runner-tests.log`).
+Hosted reproduction of this increment remains pending.

@@ -123,7 +123,7 @@ context origins; see [the exact boundary](11-parser-refinement.md).
 
 ## Computational proof of the hybrid KEM combiner
 
-CryptoVerif 2.12 proves two idealized v2-combiner IND-CCA2 games, manually
+CryptoVerif 2.12 proves idealized v2-combiner IND-CCA2 games, manually
 mapped to `kem.rs`: from uniform prime-order GDH with ML-KEM correctness and its secret key
 disclosed, and from ML-KEM IND-CCA2 plus the library collision bounds with the
 DH secret exponent disclosed. Both use a random oracle. Together they give
@@ -135,10 +135,16 @@ IND-CPA + INT-CTXT AEAD (KEM-DEM). Two more games machine-check the hybrid
 signature reduction: the AND signature is EUF-CMA under the surviving ML-DSA-87
 or Ed25519 assumption, with the other secret key leaked, under the documented
 independent-key and fixed-length encoding assumptions in the model README. The X25519
-cofactor, clamped/nonuniform scalar distribution, SHA-256 step and multi-user
+cofactor, correspondence to the actual clamped scalar distribution, SHA-256 step and multi-user
 security are open, as listed in
-[the model README](../formal/cryptoverif/README.md). CI expects five proved models and one explicitly unproved legacy baseline;
+[the model README](../formal/cryptoverif/README.md). CI expects six proved models and one explicitly unproved legacy baseline;
 the repaired runner rejects process errors/timeouts and missing verdicts.
+
+The nonuniform GDH companion now exposes collision and rerandomization losses
+in a separate checked game. It assumes an unspecified nonuniform exponent
+distribution; the conditional HPKE/Curve25519 constants are documented, not a
+machine proof of the Rust clamp, subgroup handling or wire encoding. Its full
+seven-model gate passes locally; hosted reproduction of the new game is pending.
 
 ## Recovery observation increment
 
