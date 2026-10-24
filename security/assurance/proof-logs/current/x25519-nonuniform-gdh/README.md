@@ -48,9 +48,19 @@ RESULT time_1 = (1 + Qd) * time(mlpkgen) + time(mlencap_ct)
 All queries proved.
 ```
 
-The log shows two collision expansions, `Qd * PCollKey` (decapsulation-query
-key collision) and `qH * PCollKey` (hash-query key collision). The final
-machine-checked coefficient is `2 * Qd + 2 * qH`; no `1/|Z|` term remains.
+The proof applies the `PCollKey` collision statement twice, at
+`kem_v2_x25519_gdh_nonuniform.log:18/248` (`Qd * PCollKey`) and `:25/400`
+(`qH * PCollKey`). These are **not** blanket bounds on adaptive collisions with
+the published `epk`: the `Qd` charge covers a pre-challenge decapsulation lookup
+(freshness) plus a guard-excluded decapsulation-side lookup of the challenge
+entry, while the `qH` charge covers only pre-challenge random-oracle entries.
+The final machine-checked coefficient is
+`2 * Qd + 2 * qH`; the factor two is the bit-secrecy/advantage conversion. No
+`1/|Z|`, `PColl1Rand`, `PColl2Rand`, or `EpsRand` term remains.
+
+The case analysis and the retained debug transcript are in
+[COLLISION-SIDE-CONDITIONS.md](COLLISION-SIDE-CONDITIONS.md) and
+`kem_v2_x25519_gdh_nonuniform.debug.log`.
 
 ## Derived Curve25519 instance
 
@@ -71,9 +81,18 @@ Substitution gives:
 ```
 
 `default.ocvl` mentions `2^-126` for the rerandomization term; using `2^-125`
-is conservative. These values instantiate the distribution terms; they do not
-prove that the implementation clamps, or that the clamped distribution is the
-one modelled.
+is conservative. `PCollKey = 2^-250` instantiates the explicit collision
+parameter; it is not by itself a semantic independence assumption. The
+arithmetic domination `2^-250 >= 2^-251` is not the justification of the two
+collision applications. The `[large,nonuniform]` type-level default
+`PColl1Rand(Z) <= 2^-160` is also not used in the displayed bound. The
+game-specific justification is in
+[COLLISION-SIDE-CONDITIONS.md](COLLISION-SIDE-CONDITIONS.md).
+
+These values instantiate the distribution terms; they do not prove that the
+implementation clamps, or that the clamped distribution is the one modelled.
+The bound is conditional on the X25519 GDH assumption and on the
+single-challenge game described above.
 
 ## Remaining gaps (not closed by this run)
 
@@ -89,6 +108,13 @@ one modelled.
   equation, not a concrete decapsulation-failure loss.
 - One recipient, one challenge; multi-user/multi-challenge, QROM and Rust
   composition remain open.
+- The collision side conditions are justified by a paper-level query-order case
+  analysis for this game, not reified in CryptoVerif. The `Qd`/`qH`
+  `PCollKey` charges must not be read as an unconditional adaptive-key-collision
+  bound. Post-challenge adaptive hash inputs that also test the challenge DH
+  value are handled by the GDH/CDH term, not by `PCollKey`; multi-challenge
+  reuse of a published `epk` needs a new analysis. See
+  [COLLISION-SIDE-CONDITIONS.md](COLLISION-SIDE-CONDITIONS.md).
 
 ## Parent reproduction
 
