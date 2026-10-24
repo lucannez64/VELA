@@ -4,7 +4,12 @@ The [hosted baseline on 350cd57](hosted-350cd57/README.md) passed all security
 jobs, including 212 F★ postconditions, seven computational games and the
 instrumented journal gate. It predates the handwritten journal encoding and
 preflight/ordering increments. The [hosted baseline on 368bcc0](hosted-368bcc0/README.md) reproduces the
-current 231-postcondition / 238-function corpus and the journal encoding check.
+231-postcondition / 238-function snapshot and the journal encoding check.
+
+The current local corpus is 245 postconditions / 252 selected functions.
+The [sharing arithmetic correction](share-inbox-arithmetic/README.md) checks
+the fourteen new sharing contracts after fixing a universal i64 overflow
+obligation. Hosted reproduction of that correction remains pending.
 
 Recent increments (see the hosted baseline above for snapshot coverage):
 

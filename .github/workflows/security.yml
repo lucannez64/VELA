@@ -338,7 +338,11 @@ jobs:
             if [[ -d "$crate/proofs/fstar/extraction" ]]; then
               find "$crate/proofs/fstar/extraction" -maxdepth 1 -type f \( -name '*.fst' -o -name '*.fsti' \) -delete
             fi
-            security/assurance/bounded.sh "$crate/verify-fstar.sh" > "$RUNNER_TEMP/refinement-logs/$(basename "$crate").log" 2>&1
+            log="$RUNNER_TEMP/refinement-logs/$(basename "$crate").log"
+            if ! security/assurance/bounded.sh "$crate/verify-fstar.sh" > "$log" 2>&1; then
+              tail -n 100 "$log"
+              exit 1
+            fi
           done
       - name: Verify production share-fact construction and audit extraction assumptions
         run: |

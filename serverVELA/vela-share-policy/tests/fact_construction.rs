@@ -19,12 +19,23 @@ use vela_share_policy::{
     MAX_RECIPIENT_INBOX_BYTES, SHARE_EK_LEN,
 };
 
-const CAPSULE_LENGTHS: [i64; 4] = [0, 1, MAX_CAPSULE_BYTES, MAX_CAPSULE_BYTES + 1];
-const INBOX_BYTES: [i64; 4] = [
+const CAPSULE_LENGTHS: [i64; 7] = [
+    i64::MIN,
+    -1,
+    0,
+    1,
+    MAX_CAPSULE_BYTES,
+    MAX_CAPSULE_BYTES + 1,
+    i64::MAX,
+];
+const INBOX_BYTES: [i64; 7] = [
+    i64::MIN,
+    -1,
     0,
     1,
     MAX_RECIPIENT_INBOX_BYTES - MAX_CAPSULE_BYTES,
     MAX_RECIPIENT_INBOX_BYTES,
+    i64::MAX,
 ];
 const EK_LENGTHS: [usize; 4] = [0, SHARE_EK_LEN - 1, SHARE_EK_LEN, SHARE_EK_LEN + 1];
 
@@ -42,8 +53,10 @@ fn send_facts_are_exactly_the_session_recipient_capsule_and_inbox() {
                     };
                     let facts = send_facts(obs);
                     let capsule_size_valid = capsule_len > 0 && capsule_len <= MAX_CAPSULE_BYTES;
-                    let inbox_has_capacity =
-                        existing_inbox_bytes + capsule_len <= MAX_RECIPIENT_INBOX_BYTES;
+                    let inbox_has_capacity = existing_inbox_bytes >= 0
+                        && capsule_len >= 0
+                        && i128::from(existing_inbox_bytes) + i128::from(capsule_len)
+                            <= i128::from(MAX_RECIPIENT_INBOX_BYTES);
 
                     assert_eq!(
                         facts.sender_authenticated, session_user_id_present,

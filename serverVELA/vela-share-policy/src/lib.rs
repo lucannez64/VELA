@@ -233,14 +233,22 @@ pub fn send_is_authorized(facts: SendCapsuleFacts) -> bool {
         && facts.capsule_size_valid
             == (obs.capsule_len > 0 && obs.capsule_len <= MAX_CAPSULE_BYTES)
         && facts.inbox_has_capacity
-            == (obs.existing_inbox_bytes + obs.capsule_len <= MAX_RECIPIENT_INBOX_BYTES)
+            == (obs.existing_inbox_bytes >= 0
+                && obs.capsule_len >= 0
+                && (obs.existing_inbox_bytes as i128) + (obs.capsule_len as i128)
+                    <= MAX_RECIPIENT_INBOX_BYTES as i128)
 }))]
 pub fn send_facts(obs: SendObservation) -> SendCapsuleFacts {
     SendCapsuleFacts {
         sender_authenticated: obs.session_user_id_present,
         recipient_registered: obs.recipient_has_share_ek,
         capsule_size_valid: obs.capsule_len > 0 && obs.capsule_len <= MAX_CAPSULE_BYTES,
-        inbox_has_capacity: obs.existing_inbox_bytes + obs.capsule_len <= MAX_RECIPIENT_INBOX_BYTES,
+        // Bound the subtrahend first, so every i64 observation is safe.
+        // Negative database counters fail closed rather than adding capacity.
+        inbox_has_capacity: obs.existing_inbox_bytes >= 0
+            && obs.capsule_len >= 0
+            && obs.capsule_len <= MAX_RECIPIENT_INBOX_BYTES
+            && obs.existing_inbox_bytes <= MAX_RECIPIENT_INBOX_BYTES - obs.capsule_len,
     }
 }
 

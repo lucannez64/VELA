@@ -60,7 +60,7 @@ turn any open obligation below into a proved result.
 - **Reduced assumption boundary.** Structural Rust matches replaced the 18
   opaque derived-enum equality uses. Fresh checking of all eight policy crates
   succeeded with zero local assume val declarations. The inventory now has
-  **231 explicit postconditions / 238 selected functions** in eleven Rust modules,
+  **245 explicit postconditions / 252 selected functions** in eleven Rust modules,
   plus defined String and Vec compatibility models. Seven selected functions have
   no explicit ensures. Imported library assumptions and proof tools remain
   trusted; the drift checker is not a proof checker.
@@ -91,8 +91,12 @@ a binding already exists, the bytewise freshness result and the hybrid verifier
 outcome. Linked update/revocation records the stored sender and tombstone state;
 both handlers now call the verified mutation policy instead of relying only on
 the SQL predicate. These fourteen selected entry points are listed in
-`serverVELA/vela-share-policy/verify-fstar.sh` but are **not** in the 231/238
-checked snapshot until hosted extraction checks them. Rate limiting, base64
+`serverVELA/vela-share-policy/verify-fstar.sh` and now freshly checked locally,
+bringing the corpus to 245/252. Hosted checking exposed an unrestricted i64
+inbox-sum overflow; the corrected constructor uses guarded subtraction and a
+widened mathematical-sum postcondition, rejecting negative counts. Hosted
+reproduction of that correction remains pending. See the
+[local evidence](proof-logs/current/share-inbox-arithmetic/README.md). Rate limiting, base64
 decoding and the recipient/capsule/quota/timestamp upper-bound returns still
 happen before the policy runs, and the SQL/session/verifier observations remain
 unverified glue. `identical_timestamp_can_be_fresher` stays outside the selected

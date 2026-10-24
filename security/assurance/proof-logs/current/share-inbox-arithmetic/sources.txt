@@ -1,0 +1,6 @@
+Local parent working-tree correction after e3d994c.
+23 share ensures / 24 selected entry points; total 245 ensures / 252 selections.
+587cf3f977c52e8beac94e97ff498a99aa813e929204965770e5e0500e7c87b6  serverVELA/vela-share-policy/src/lib.rs
+40a7d01bed072ef3e1c38f01710ef74179f1f7f810cd2382dac00ef7a9ed9957  serverVELA/vela-share-policy/tests/fact_construction.rs
+a16ffe6616dbc9fb15baddd7601ae647f327c32d0574271f8981ac6f5c721e24  serverVELA/vela-share-policy/verify-fstar.sh
+2296cecee3ec34f5b1e18c0fec9de9751724c12edef152e4eabf36dd969cf555  serverVELA/vela-share-policy/proofs/fstar/extraction/Vela_share_policy.fst

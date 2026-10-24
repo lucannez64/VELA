@@ -111,7 +111,7 @@ correctness is not a consequence of the pure-policy proofs.
   extends the earlier [hosted enrollment baseline](proof-logs/current/hosted-enrollment-40039992434/README.md)
   to the hosted 180/173 snapshot. The [web-session observation increment](14-session-observation-refinement.md) extends this locally
   to 190/183; the [possession/enrollment constructors](15-recovery-possession-enrollment.md) bring the current local inventory
-  to **238 selected functions / 231 explicit postconditions** across eight policy crates and the sharing/signature kernels.
+  to **252 selected functions / 245 explicit postconditions** across eight policy crates and the sharing/signature kernels.
   All **18 local enum-equality assumptions were removed** through structural
   Rust comparisons; current generated modules contain zero local `assume val`
   declarations. Imported proof libraries, the String/Vec models and tools remain

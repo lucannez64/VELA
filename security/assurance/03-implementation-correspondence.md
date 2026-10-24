@@ -62,7 +62,7 @@ Each crate follows the same pattern:
   }
   ```
 
-### Crate inventory (207 policy postconditions / 210 selected policy functions)
+### Crate inventory (221 policy postconditions / 224 selected policy functions)
 
 | Crate | Entry points | Models | Production call sites |
 |---|---:|---|---|
@@ -70,7 +70,7 @@ Each crate follows the same pattern:
 | `serverVELA/vela-session-policy` | 21: two observation constructors, two observation/decision compositions, six new negative theorems, and the prior 11: `parse_scope_claim`, `plan_grant`, `plan_device_token`, `plan_web_session_token`, `plan_renewal`, `authorize_route`, `clamp_web_ttl`, `web_session_expired`, plus 3 negative theorems | M12, M20 | `middleware.rs` (`DeviceSession` extractor), `auth/token.rs`, `web_session/mod.rs` |
 | `serverVELA/vela-enrollment-policy` | 29 checked in hosted F★: 5 decisions, 5 fact constructors and 19 negative theorems | M13 | `device/rendezvous.rs` |
 | `serverVELA/vela-recovery-policy` | 90: the prior 42, 29 possession/enrollment observation contracts, 8 preflight contracts and 11 independent ordering/readiness contracts | M14, M16, M18 (server side) | `recovery/{initiate,recover,possess,webauthn,enroll_device,mod}.rs` |
-| `serverVELA/vela-share-policy` | 23: 9 checked postconditions plus three observation constructors (`ek_registration_facts`, `send_facts`, `link_mutation_facts`), three decisions and eighteen negative theorems; 14 postconditions await hosted extraction (24 selected entry points) | M19b, M21 | `share/mod.rs` |
+| `serverVELA/vela-share-policy` | 23 locally checked postconditions: three observation constructors (`ek_registration_facts`, `send_facts`, `link_mutation_facts`), three decisions and seventeen negative theorems (24 selected entry points) | M19b, M21 | `share/mod.rs` |
 | `libVELA/vela-client-recovery-policy` | 18: `plan_reconstruction`, `plan_adoption`, `plan_publication_resume`, `plan_contact_delivery`, plus 14 negative theorems | M15, M17, M18 (client side) | `vela-crypto/src/recovery.rs`, `desktopVELA/vela-desktop-core/src/recovery.rs`, Android and Apple bridges |
 | `libVELA/vela-sync-policy` | 11: `plan_epoch_adoption`, `plan_chunk_download`, `classify_merge_action`, plus 8 negative theorems | M23 | `desktopVELA/vela-desktop-core/src/sync.rs` **only** |
 
@@ -90,7 +90,7 @@ All eight policy crates were freshly extracted and checked after replacing
 derived-enum equality uses with structural matches. No local `assume val`
 declarations remain. The [current evidence](proof-logs/current/trusted-boundary/README.md)
 and [crypto contract boundary](../../libVELA/vela-crypto/proofs/fstar/README.md)
-record their assumptions. Current code has 238 selected functions and 231
+record their assumptions. Current code has 252 selected functions and 245
 explicit postconditions; selected functions and predicates are different counts.
 The enrollment fact-construction increment adds five observation-to-fact
 constructors and fifteen negative theorems (twenty selected entry points) that
@@ -101,9 +101,9 @@ preserves the regenerated enrollment artifact without editing its body.
 The share fact-construction increment adds three observation constructors and
 eleven observation-based negative theorems (fourteen postconditions). It brings
 `serverVELA/vela-share-policy/verify-fstar.sh` to 24 selected entry points and,
-once hosted extraction checks it, the corpus to 252 selected functions and 245
-explicit postconditions; the 238/231 counts describe the last checked snapshot
-and do not include the increment. `identical_timestamp_can_be_fresher` remains
+after the local inbox-arithmetic correction, the corpus to 252 selected functions
+and 245 explicit postconditions. The corrected constructors were freshly
+extracted and F★-checked locally; hosted reproduction remains pending. `identical_timestamp_can_be_fresher` remains
 outside the selected set, as before this increment.
 
 The CI `refinement` job installs pinned tools, runs all eight crates and the constructor,
@@ -145,7 +145,7 @@ Its fresh crypto checking log supersedes the earlier parser snapshot. The
 defined Vec subset exposes checked sequence-concatenation refinements;
 correspondence to Rust std remains trusted.
 Always re-extract after changing Rust sources. `check-proof-boundary.py` records
-231 explicit postconditions; seven selected functions have no `ensures`. It
+245 explicit postconditions; seven selected functions have no `ensures`. It
 detects added extraction assumptions, not semantic correspondence.
 
 ## 3.3 Executable refinement evidence (CI-gated)
