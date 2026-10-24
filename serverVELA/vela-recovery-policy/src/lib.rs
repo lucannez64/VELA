@@ -550,6 +550,25 @@ pub fn plan_recovery(facts: RecoverFacts) -> RecoverDecision {
 // exactly that, so the server may issue an enrollment grant *without*
 // releasing its own share or demanding a WebAuthn assertion.
 
+/// Raw observations from the possession-proof initiation request, the `users`
+/// row and the store slot for the new attempt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ProofInitiateObservation {
+    /// The `users` row exists for the requested user id.
+    pub account_present: bool,
+    /// The row's `recovery_share` column is non-null.
+    pub share_present: bool,
+    /// Decoded byte length of `users.recovery_auth_hash`; zero means the
+    /// commitment is missing or empty, so no proof can ever verify.
+    pub commitment_len: usize,
+    /// The row's `rekey_state` column is set.
+    pub rotation_active: bool,
+    /// No stored attempt state already occupies the generated attempt id.
+    pub attempt_id_fresh: bool,
+    /// Lifetime requested for the stored challenge state.
+    pub ttl_secs: u64,
+}
+
 /// Facts for starting a possession-proof recovery attempt.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProofInitiateFacts {
@@ -589,20 +608,87 @@ pub fn plan_proof_initiation(facts: ProofInitiateFacts) -> ProofInitiateDecision
     }
 }
 
+/// Turn the account, share, decoded-commitment, rotation, store-slot and TTL
+/// observations into the possession-initiation facts. `Ready` names exactly
+/// the observed availability of an account, its recovery share and a non-empty
+/// staged commitment on an account that is not rotating.
+#[cfg_attr(hax, hax_lib::ensures(|facts| {
+    (matches!(facts.phase, RecoveryPhase::Ready)
+        == (obs.account_present
+            && obs.share_present
+            && obs.commitment_len > 0
+            && !obs.rotation_active))
+        && (matches!(facts.phase, RecoveryPhase::Unavailable)
+            == !(obs.account_present
+                && obs.share_present
+                && obs.commitment_len > 0
+                && !obs.rotation_active))
+        && facts.account_exists == obs.account_present
+        && facts.share_present == obs.share_present
+        && facts.possession_hash_present == (obs.commitment_len > 0)
+        && facts.attempt_id_fresh == obs.attempt_id_fresh
+        && facts.ttl_positive == (obs.ttl_secs > 0)
+}))]
+pub fn proof_initiate_facts(obs: ProofInitiateObservation) -> ProofInitiateFacts {
+    let available =
+        obs.account_present && obs.share_present && obs.commitment_len > 0 && !obs.rotation_active;
+    ProofInitiateFacts {
+        phase: if available {
+            RecoveryPhase::Ready
+        } else {
+            RecoveryPhase::Unavailable
+        },
+        account_exists: obs.account_present,
+        share_present: obs.share_present,
+        possession_hash_present: obs.commitment_len > 0,
+        attempt_id_fresh: obs.attempt_id_fresh,
+        ttl_positive: obs.ttl_secs > 0,
+    }
+}
+
 /// Facts for redeeming one possession-proof attempt. The cryptographic
 /// comparison itself stays outside this crate; `proof_verified` carries only
 /// its authenticated outcome.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PossessionRecoverFacts {
     pub phase: RecoveryPhase,
+    /// The `users` row named by the attempt still exists.
+    pub account_present: bool,
     pub user_matches: bool,
     pub attempt_matches: bool,
     pub challenge_consumed: bool,
     pub proof_verified: bool,
     pub account_epoch_active: bool,
+    /// A non-empty staged commitment exists to verify proofs against.
+    pub commitment_present: bool,
     /// Epoch recorded with the staged commitment must equal the live epoch.
     pub commitment_epoch_matches: bool,
     pub epoch: i64,
+}
+
+/// Raw observations from the consumed possession attempt, the decoded proof
+/// state, the verification result and the live `users` row.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PossessionRecoverObservation {
+    /// Whether the exact user/attempt key was consumed by this request.
+    pub attempt_source: RecoveryAttemptSource,
+    /// The `users` row exists for the attempt's user id.
+    pub account_present: bool,
+    /// The decoded attempt envelope's user id equals the request user id.
+    pub user_matches: bool,
+    /// The decoded attempt envelope's id equals the request attempt id.
+    pub attempt_matches: bool,
+    /// The hybrid possession proof verified against the staged commitment.
+    pub proof_verified: bool,
+    /// The row's `rekey_state` column is clear.
+    pub account_epoch_active: bool,
+    /// Decoded byte length of `users.recovery_auth_hash`; zero means no
+    /// commitment is staged.
+    pub commitment_len: usize,
+    /// Epoch decoded from the consumed attempt envelope (`PossessionProofState`).
+    pub commitment_epoch: i64,
+    /// `users.key_epoch` as stored; `None` means the column is absent.
+    pub stored_epoch: Option<i64>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -635,11 +721,13 @@ impl PossessionGrantPermit {
 
 pub fn possession_recovery_is_authorized(facts: PossessionRecoverFacts) -> bool {
     matches!(facts.phase, RecoveryPhase::ChallengePending)
+        && facts.account_present
         && facts.user_matches
         && facts.attempt_matches
         && facts.challenge_consumed
         && facts.proof_verified
         && facts.account_epoch_active
+        && facts.commitment_present
         && facts.commitment_epoch_matches
         && facts.epoch >= INITIAL_EPOCH
 }
@@ -683,6 +771,49 @@ pub fn unproven_possession_claim_can_recover(mut facts: PossessionRecoverFacts) 
 pub fn stale_commitment_can_recover(mut facts: PossessionRecoverFacts) -> bool {
     facts.commitment_epoch_matches = false;
     possession_recovery_is_authorized(facts)
+}
+
+/// Turn the consumed-attempt, decoded-envelope, verification and row
+/// observations into the possession-recovery facts. The phase and one-shot
+/// flag come from whether the store actually returned (and removed) the exact
+/// attempt; commitment presence and epoch equality come from the decoded
+/// commitment length and the decoded envelope epoch.
+#[cfg_attr(hax, hax_lib::ensures(|facts| {
+    (matches!(facts.phase, RecoveryPhase::ChallengePending)
+        == matches!(obs.attempt_source, RecoveryAttemptSource::Consumed))
+        && (matches!(facts.phase, RecoveryPhase::Expired)
+            == matches!(obs.attempt_source, RecoveryAttemptSource::Missing))
+        && facts.account_present == obs.account_present
+        && facts.user_matches == obs.user_matches
+        && facts.attempt_matches == obs.attempt_matches
+        && facts.challenge_consumed
+            == matches!(obs.attempt_source, RecoveryAttemptSource::Consumed)
+        && facts.proof_verified == obs.proof_verified
+        && facts.account_epoch_active == obs.account_epoch_active
+        && facts.commitment_present == (obs.commitment_len > 0)
+        && facts.commitment_epoch_matches
+            == (obs.commitment_epoch == observed_recovery_epoch(obs.stored_epoch))
+        && facts.epoch == observed_recovery_epoch(obs.stored_epoch)
+}))]
+pub fn possession_recover_facts(obs: PossessionRecoverObservation) -> PossessionRecoverFacts {
+    let challenge_consumed = matches!(obs.attempt_source, RecoveryAttemptSource::Consumed);
+    let epoch = observed_recovery_epoch(obs.stored_epoch);
+    PossessionRecoverFacts {
+        phase: if challenge_consumed {
+            RecoveryPhase::ChallengePending
+        } else {
+            RecoveryPhase::Expired
+        },
+        account_present: obs.account_present,
+        user_matches: obs.user_matches,
+        attempt_matches: obs.attempt_matches,
+        challenge_consumed,
+        proof_verified: obs.proof_verified,
+        account_epoch_active: obs.account_epoch_active,
+        commitment_present: obs.commitment_len > 0,
+        commitment_epoch_matches: obs.commitment_epoch == epoch,
+        epoch,
+    }
 }
 
 /// Raw observations from the WebAuthn assertion and the live credential.
@@ -754,6 +885,10 @@ pub fn plan_credential_update(facts: CredentialUpdateFacts) -> CredentialUpdateD
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct EnrollmentFacts {
     pub phase: RecoveryPhase,
+    /// The `users` row named by the grant still exists.
+    pub account_present: bool,
+    /// The observed grant was loaded under the request's `(user_id, grant)`
+    /// store key, so its user binding is the request's.
     pub user_matches: bool,
     pub grant_live: bool,
     pub grant_consumed: bool,
@@ -769,6 +904,40 @@ pub struct EnrollmentFacts {
     pub account_epoch_active: bool,
     pub grant_epoch: i64,
     pub account_epoch: i64,
+}
+
+/// Raw observations from the enrollment grant store, the decoded grant and
+/// the live `users` row.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EnrollmentObservation {
+    /// A non-consuming lookup under `(user_id, grant)` returned a decoded
+    /// grant. A grant stored for any other user or id cannot produce this.
+    pub grant_present: bool,
+    /// The consuming lookup returned a grant (the single-use artifact was
+    /// actually removed by this request).
+    pub grant_consumed: bool,
+    /// The consumed grant equals the grant observed before validation; false
+    /// means a concurrent request replaced it.
+    pub consumed_matches_observed: bool,
+    /// The `users` row exists for the grant's user.
+    pub account_present: bool,
+    /// The decoded grant marks an RMS-possession grant.
+    pub grant_possession: bool,
+    /// `key_epoch` decoded from the observed grant (the initial epoch when
+    /// no grant was observed).
+    pub grant_epoch: i64,
+    /// `users.key_epoch` as stored; `None` means the column is absent.
+    pub stored_epoch: Option<i64>,
+    /// The row's `rekey_state` column is clear.
+    pub account_epoch_active: bool,
+    /// The decoded grant credential id equals the row's current recovery
+    /// credential id.
+    pub credential_id_matches: bool,
+    /// Decoded byte length of `users.recovery_auth_hash`; zero means the
+    /// possession commitment is absent or empty.
+    pub commitment_len: usize,
+    /// Both decoded public-key lengths equal the hybrid key sizes.
+    pub public_keys_valid: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -798,6 +967,7 @@ pub fn enrollment_is_authorized(facts: EnrollmentFacts) -> bool {
     };
     grant_authority_ok
         && matches!(facts.phase, RecoveryPhase::GrantIssued)
+        && facts.account_present
         && facts.user_matches
         && facts.grant_live
         && facts.grant_consumed
@@ -829,6 +999,57 @@ pub fn plan_enrollment(facts: EnrollmentFacts) -> EnrollmentDecision {
         })
     } else {
         EnrollmentDecision::Reject
+    }
+}
+
+/// Turn the grant-store, decoded-grant and `users`-row observations into the
+/// enrollment facts. The phase distinguishes a consumed grant from a missing
+/// or race-replaced one; user binding, consumption, credential/commitment
+/// authority and the normalized grant/account epoch equality are exactly the
+/// observed values.
+#[cfg_attr(hax, hax_lib::ensures(|facts| {
+    (matches!(facts.phase, RecoveryPhase::GrantIssued)
+        == (obs.grant_present
+            && obs.grant_consumed
+            && obs.consumed_matches_observed))
+        && (matches!(facts.phase, RecoveryPhase::Expired) == !obs.grant_present)
+        && (matches!(facts.phase, RecoveryPhase::Revoked)
+            == (obs.grant_present
+                && !(obs.grant_consumed && obs.consumed_matches_observed)))
+        && facts.account_present == obs.account_present
+        && facts.user_matches == obs.grant_present
+        && facts.grant_live == obs.grant_present
+        && facts.grant_consumed
+            == (obs.grant_consumed && obs.consumed_matches_observed)
+        && facts.credential_matches_current == obs.credential_id_matches
+        && facts.possession_grant == obs.grant_possession
+        && facts.possession_hash_present == (obs.commitment_len > 0)
+        && facts.public_keys_valid == obs.public_keys_valid
+        && facts.account_epoch_active == obs.account_epoch_active
+        && facts.grant_epoch == obs.grant_epoch
+        && facts.account_epoch == observed_recovery_epoch(obs.stored_epoch)
+}))]
+pub fn enrollment_facts(obs: EnrollmentObservation) -> EnrollmentFacts {
+    let consumed = obs.grant_consumed && obs.consumed_matches_observed;
+    EnrollmentFacts {
+        phase: if obs.grant_present && consumed {
+            RecoveryPhase::GrantIssued
+        } else if !obs.grant_present {
+            RecoveryPhase::Expired
+        } else {
+            RecoveryPhase::Revoked
+        },
+        account_present: obs.account_present,
+        user_matches: obs.grant_present,
+        grant_live: obs.grant_present,
+        grant_consumed: consumed,
+        credential_matches_current: obs.credential_id_matches,
+        possession_grant: obs.grant_possession,
+        possession_hash_present: obs.commitment_len > 0,
+        public_keys_valid: obs.public_keys_valid,
+        account_epoch_active: obs.account_epoch_active,
+        grant_epoch: obs.grant_epoch,
+        account_epoch: observed_recovery_epoch(obs.stored_epoch),
     }
 }
 
@@ -1014,6 +1235,233 @@ pub fn rekeying_observed_account_can_release(mut obs: RecoverObservation) -> boo
     recovery_is_authorized(recover_facts(obs))
 }
 
+/// Possession initiation is authorized exactly when the account, share and a
+/// non-empty decoded commitment are observed on a non-rotating account, the
+/// generated attempt slot is free and the requested TTL is positive.
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    result == (obs.account_present
+        && obs.share_present
+        && obs.commitment_len > 0
+        && !obs.rotation_active
+        && obs.attempt_id_fresh
+        && obs.ttl_secs > 0)
+}))]
+pub fn proof_initiate_facts_authorize(obs: ProofInitiateObservation) -> bool {
+    proof_initiation_is_authorized(proof_initiate_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn absent_account_can_start_possession_proof(mut obs: ProofInitiateObservation) -> bool {
+    obs.account_present = false;
+    proof_initiation_is_authorized(proof_initiate_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn missing_share_can_start_possession_proof(mut obs: ProofInitiateObservation) -> bool {
+    obs.share_present = false;
+    proof_initiation_is_authorized(proof_initiate_facts(obs))
+}
+
+/// A row whose commitment is absent or empty can never verify a proof, so it
+/// must not yield a challenge.
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn commitmentless_account_can_start_possession_proof(
+    mut obs: ProofInitiateObservation,
+) -> bool {
+    obs.commitment_len = 0;
+    proof_initiation_is_authorized(proof_initiate_facts(obs))
+}
+
+/// Rotation retires the share and the commitment together, so no new
+/// possession challenge may start while `rekey_state` is set.
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn rotating_account_can_start_possession_proof(mut obs: ProofInitiateObservation) -> bool {
+    obs.rotation_active = true;
+    proof_initiation_is_authorized(proof_initiate_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn colliding_possession_attempt_id_can_start(mut obs: ProofInitiateObservation) -> bool {
+    obs.attempt_id_fresh = false;
+    proof_initiation_is_authorized(proof_initiate_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn expired_possession_initiate_ttl_can_start(mut obs: ProofInitiateObservation) -> bool {
+    obs.ttl_secs = 0;
+    proof_initiation_is_authorized(proof_initiate_facts(obs))
+}
+
+/// Possession grant issuance is authorized exactly when the exact attempt was
+/// consumed, the decoded identity bindings match, the proof verified, the
+/// account row is present and not rotating, a non-empty commitment is staged
+/// at the current normalized epoch.
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    result == (matches!(obs.attempt_source, RecoveryAttemptSource::Consumed)
+        && obs.account_present
+        && obs.user_matches
+        && obs.attempt_matches
+        && obs.proof_verified
+        && obs.account_epoch_active
+        && obs.commitment_len > 0
+        && obs.commitment_epoch == observed_recovery_epoch(obs.stored_epoch)
+        && observed_recovery_epoch(obs.stored_epoch) >= INITIAL_EPOCH)
+}))]
+pub fn possession_recover_facts_authorize(obs: PossessionRecoverObservation) -> bool {
+    possession_recovery_is_authorized(possession_recover_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn missing_possession_attempt_can_recover(mut obs: PossessionRecoverObservation) -> bool {
+    obs.attempt_source = RecoveryAttemptSource::Missing;
+    possession_recovery_is_authorized(possession_recover_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn absent_possession_account_can_recover(mut obs: PossessionRecoverObservation) -> bool {
+    obs.account_present = false;
+    possession_recovery_is_authorized(possession_recover_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn cross_user_possession_observation_can_recover(
+    mut obs: PossessionRecoverObservation,
+) -> bool {
+    obs.user_matches = false;
+    possession_recovery_is_authorized(possession_recover_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn mismatched_possession_attempt_observation_can_recover(
+    mut obs: PossessionRecoverObservation,
+) -> bool {
+    obs.attempt_matches = false;
+    possession_recovery_is_authorized(possession_recover_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn unverified_possession_observation_can_recover(
+    mut obs: PossessionRecoverObservation,
+) -> bool {
+    obs.proof_verified = false;
+    possession_recovery_is_authorized(possession_recover_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn rekeying_possession_observation_can_recover(mut obs: PossessionRecoverObservation) -> bool {
+    obs.account_epoch_active = false;
+    possession_recovery_is_authorized(possession_recover_facts(obs))
+}
+
+/// Without a non-empty staged commitment there is nothing to verify a proof
+/// against, so a possession grant must not issue.
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn missing_possession_commitment_can_recover(mut obs: PossessionRecoverObservation) -> bool {
+    obs.commitment_len = 0;
+    possession_recovery_is_authorized(possession_recover_facts(obs))
+}
+
+/// A commitment decoded at a different epoch than the live normalized one is
+/// stale, so its proof must not issue a grant.
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn rotated_commitment_observation_can_recover(mut obs: PossessionRecoverObservation) -> bool {
+    let epoch = observed_recovery_epoch(obs.stored_epoch);
+    obs.commitment_epoch = if epoch == i64::MAX {
+        INITIAL_EPOCH
+    } else {
+        epoch + 1
+    };
+    possession_recovery_is_authorized(possession_recover_facts(obs))
+}
+
+/// Enrollment is authorized exactly when a live grant was consumed without a
+/// concurrent replacement, the user row is present, the credential (or the
+/// staged possession commitment for M18 grants) still authorizes, the decoded
+/// keys are valid, the account is not rotating, and the decoded grant epoch
+/// equals the normalized live account epoch.
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    result == (obs.grant_present
+        && obs.grant_consumed
+        && obs.consumed_matches_observed
+        && obs.account_present
+        && (if obs.grant_possession {
+            obs.commitment_len > 0
+        } else {
+            obs.credential_id_matches
+        })
+        && obs.public_keys_valid
+        && obs.account_epoch_active
+        && obs.grant_epoch >= INITIAL_EPOCH
+        && obs.grant_epoch == observed_recovery_epoch(obs.stored_epoch))
+}))]
+pub fn enrollment_facts_authorize(obs: EnrollmentObservation) -> bool {
+    enrollment_is_authorized(enrollment_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn missing_enrollment_grant_observation_can_enroll(mut obs: EnrollmentObservation) -> bool {
+    obs.grant_present = false;
+    enrollment_is_authorized(enrollment_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn unconsumed_enrollment_grant_observation_can_enroll(mut obs: EnrollmentObservation) -> bool {
+    obs.grant_consumed = false;
+    enrollment_is_authorized(enrollment_facts(obs))
+}
+
+/// A concurrent request that replaced the grant between the non-consuming
+/// read and the single-use redemption must not enroll.
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn replaced_enrollment_grant_observation_can_enroll(mut obs: EnrollmentObservation) -> bool {
+    obs.consumed_matches_observed = false;
+    enrollment_is_authorized(enrollment_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn absent_enrollment_account_can_enroll(mut obs: EnrollmentObservation) -> bool {
+    obs.account_present = false;
+    enrollment_is_authorized(enrollment_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn rekeying_enrollment_observation_can_enroll(mut obs: EnrollmentObservation) -> bool {
+    obs.account_epoch_active = false;
+    enrollment_is_authorized(enrollment_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn replaced_credential_observation_can_enroll(mut obs: EnrollmentObservation) -> bool {
+    obs.credential_id_matches = false;
+    obs.grant_possession = false;
+    enrollment_is_authorized(enrollment_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn commitmentless_possession_observation_can_enroll(mut obs: EnrollmentObservation) -> bool {
+    obs.grant_possession = true;
+    obs.credential_id_matches = false;
+    obs.commitment_len = 0;
+    enrollment_is_authorized(enrollment_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn rotated_enrollment_observation_can_enroll(mut obs: EnrollmentObservation) -> bool {
+    let epoch = observed_recovery_epoch(obs.stored_epoch);
+    obs.grant_epoch = if epoch == i64::MAX {
+        INITIAL_EPOCH
+    } else {
+        epoch + 1
+    };
+    enrollment_is_authorized(enrollment_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn invalid_public_keys_observation_can_enroll(mut obs: EnrollmentObservation) -> bool {
+    obs.public_keys_valid = false;
+    enrollment_is_authorized(enrollment_facts(obs))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1080,6 +1528,7 @@ mod tests {
     fn enrollment_requires_an_exact_live_epoch_grant() {
         let facts = EnrollmentFacts {
             phase: RecoveryPhase::GrantIssued,
+            account_present: true,
             user_matches: true,
             grant_live: true,
             grant_consumed: true,
@@ -1119,11 +1568,13 @@ mod tests {
     fn possession_recovery_requires_a_verified_bound_proof() {
         let facts = PossessionRecoverFacts {
             phase: RecoveryPhase::ChallengePending,
+            account_present: true,
             user_matches: true,
             attempt_matches: true,
             challenge_consumed: true,
             proof_verified: true,
             account_epoch_active: true,
+            commitment_present: true,
             commitment_epoch_matches: true,
             epoch: 4,
         };
@@ -1163,5 +1614,74 @@ mod tests {
                 ProofInitiateDecision::Reject
             );
         }
+    }
+
+    #[test]
+    fn observation_constructors_cover_decoded_possession_and_enrollment_state() {
+        let proof_obs = ProofInitiateObservation {
+            account_present: true,
+            share_present: true,
+            commitment_len: 2624,
+            rotation_active: false,
+            attempt_id_fresh: true,
+            ttl_secs: 300,
+        };
+        assert_eq!(
+            plan_proof_initiation(proof_initiate_facts(proof_obs)),
+            ProofInitiateDecision::Start
+        );
+        assert!(proof_initiate_facts_authorize(proof_obs));
+        assert!(!rotating_account_can_start_possession_proof(proof_obs));
+        assert!(!commitmentless_account_can_start_possession_proof(
+            proof_obs
+        ));
+
+        let possession_obs = PossessionRecoverObservation {
+            attempt_source: RecoveryAttemptSource::Consumed,
+            account_present: true,
+            user_matches: true,
+            attempt_matches: true,
+            proof_verified: true,
+            account_epoch_active: true,
+            commitment_len: 2624,
+            commitment_epoch: 4,
+            stored_epoch: Some(4),
+        };
+        let PossessionRecoverDecision::Grant(permit) =
+            plan_possession_recovery(possession_recover_facts(possession_obs))
+        else {
+            panic!("valid decoded possession observation rejected");
+        };
+        assert_eq!(permit.epoch(), 4);
+        assert!(!permit.releases_server_share());
+        assert!(possession_recover_facts_authorize(possession_obs));
+        assert!(!missing_possession_commitment_can_recover(possession_obs));
+        assert!(!rotated_commitment_observation_can_recover(possession_obs));
+
+        let enrollment_obs = EnrollmentObservation {
+            grant_present: true,
+            grant_consumed: true,
+            consumed_matches_observed: true,
+            account_present: true,
+            grant_possession: true,
+            grant_epoch: 4,
+            stored_epoch: Some(4),
+            account_epoch_active: true,
+            credential_id_matches: false,
+            commitment_len: 2624,
+            public_keys_valid: true,
+        };
+        assert!(matches!(
+            plan_enrollment(enrollment_facts(enrollment_obs)),
+            EnrollmentDecision::Enroll(permit) if permit.epoch() == 4
+        ));
+        assert!(enrollment_facts_authorize(enrollment_obs));
+        assert!(!commitmentless_possession_observation_can_enroll(
+            enrollment_obs
+        ));
+        assert!(!unconsumed_enrollment_grant_observation_can_enroll(
+            enrollment_obs
+        ));
+        assert!(!rotated_enrollment_observation_can_enroll(enrollment_obs));
     }
 }

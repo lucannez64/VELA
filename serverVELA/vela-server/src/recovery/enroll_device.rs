@@ -21,7 +21,9 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use uuid::Uuid;
-use vela_recovery_policy::{EnrollmentDecision, EnrollmentFacts, RecoveryPhase};
+use vela_recovery_policy::{
+    enrollment_facts, observed_recovery_epoch, EnrollmentDecision, EnrollmentObservation,
+};
 use vela_rekey_policy::{MutationAuthority, MutationDecision, MutationKind, MutationRequest};
 
 use crate::{
@@ -88,8 +90,13 @@ pub async fn post_enroll_device(
     // Do not reveal account or rotation state unless the caller possesses the
     // unguessable grant. This is only a non-consuming proof; redemption below
     // remains atomic and single-use.
-    let grant =
-        crate::recovery::recover::load_enroll_grant(&state, body.user_id, body.recovery_grant)?;
+    let observed_grant =
+        crate::recovery::recover::observe_enroll_grant(&state, body.user_id, body.recovery_grant)?;
+    let Some(grant) = observed_grant.as_ref() else {
+        return Err(AppError::Unauthorized(
+            "recovery grant expired or already used".into(),
+        ));
+    };
     let grant_epoch = grant.key_epoch;
 
     // The grant already proved `user_id` exists and completed recovery, but
@@ -105,16 +112,19 @@ pub async fn post_enroll_device(
         )
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
+    let user_row_present = user_rows.first().is_some();
     let Some(user_row) = user_rows.first() else {
         return Err(AppError::NotFound("account no longer exists".into()));
     };
-    let account_epoch = user_row.i64(0).unwrap_or(1).max(1);
+    let stored_epoch = user_row.i64(0);
+    let account_epoch = observed_recovery_epoch(stored_epoch);
     if account_epoch != grant_epoch {
         return Err(AppError::Unauthorized(
             "recovery grant was invalidated by vault key rotation".into(),
         ));
     }
-    if user_row.text(1).is_some() {
+    let account_epoch_active = user_row.text(1).is_none();
+    if !account_epoch_active {
         return Err(AppError::Conflict(
             "device enrollment is paused during vault key rotation".into(),
         ));
@@ -123,14 +133,16 @@ pub async fn post_enroll_device(
     // grants (M18) are bound to no credential; they instead require the RMS
     // commitment that verified their proof to still be staged — deleting
     // recovery setup or rotating the RMS revokes them.
-    let possession_hash_present = match user_row.get(3) {
-        Some(TursoValue::Text(text)) => !crate::db::decode_b64(text)?.is_empty(),
-        _ => false,
+    let commitment_len = match user_row.get(3) {
+        Some(TursoValue::Text(text)) => crate::db::decode_b64(text)?.len(),
+        _ => 0,
     };
+    let possession_hash_present = commitment_len > 0;
+    let credential_id_matches = user_row.text(2) == Some(grant.credential_id.as_str());
     let credential_matches_current = if grant.possession {
         possession_hash_present
     } else {
-        user_row.text(2) == Some(grant.credential_id.as_str())
+        credential_id_matches
     };
     if !credential_matches_current {
         return Err(AppError::Unauthorized(if grant.possession {
@@ -143,9 +155,19 @@ pub async fn post_enroll_device(
     // Consume only after validation and the fast rotation check. The guarded
     // insert below remains the authority for a concurrent rotation; if that
     // race is lost, the grant is restored so the user can retry afterwards.
-    let consumed_grant =
-        crate::recovery::recover::take_enroll_grant(&state, body.user_id, body.recovery_grant)?;
-    if consumed_grant != grant {
+    let consumed_observed = crate::recovery::recover::take_enroll_grant_observed(
+        &state,
+        body.user_id,
+        body.recovery_grant,
+    )?;
+    let grant_consumed = consumed_observed.is_some();
+    let Some(consumed_grant) = consumed_observed else {
+        return Err(AppError::Unauthorized(
+            "recovery grant expired or already used".into(),
+        ));
+    };
+    let consumed_matches_observed = consumed_grant == *grant;
+    if !consumed_matches_observed {
         crate::recovery::recover::restore_enroll_grant(
             &state,
             body.user_id,
@@ -157,33 +179,37 @@ pub async fn post_enroll_device(
         ));
     }
     let consumed_epoch = consumed_grant.key_epoch;
-    let recovery_permit = match vela_recovery_policy::plan_enrollment(EnrollmentFacts {
-        phase: RecoveryPhase::GrantIssued,
-        // Both ids are part of the same unguessable sled key.
-        user_matches: true,
-        grant_live: true,
-        grant_consumed: true,
-        credential_matches_current,
-        possession_grant: consumed_grant.possession,
-        possession_hash_present,
-        public_keys_valid: hybrid_ek.len() == HYBRID_EK_LEN && hybrid_vk.len() == HYBRID_VK_LEN,
-        account_epoch_active: user_row.text(1).is_none(),
-        grant_epoch: consumed_epoch,
-        account_epoch,
-    }) {
-        EnrollmentDecision::Enroll(permit) => permit,
-        EnrollmentDecision::Reject => {
-            crate::recovery::recover::restore_enroll_grant(
-                &state,
-                body.user_id,
-                body.recovery_grant,
-                &consumed_grant,
-            )?;
-            return Err(AppError::Unauthorized(
-                "verified recovery policy rejected device enrollment".into(),
-            ));
-        }
-    };
+    let public_keys_valid = hybrid_ek.len() == HYBRID_EK_LEN && hybrid_vk.len() == HYBRID_VK_LEN;
+    // The policy consumes the same decoded grant/row values the checks above
+    // observed: single-use consumption, credential or commitment authority,
+    // decoded key lengths, the rekey column and the normalized epochs.
+    let recovery_permit =
+        match vela_recovery_policy::plan_enrollment(enrollment_facts(EnrollmentObservation {
+            grant_present: observed_grant.is_some(),
+            grant_consumed,
+            consumed_matches_observed,
+            account_present: user_row_present,
+            grant_possession: grant.possession,
+            grant_epoch: consumed_epoch,
+            stored_epoch,
+            account_epoch_active,
+            credential_id_matches,
+            commitment_len,
+            public_keys_valid,
+        })) {
+            EnrollmentDecision::Enroll(permit) => permit,
+            EnrollmentDecision::Reject => {
+                crate::recovery::recover::restore_enroll_grant(
+                    &state,
+                    body.user_id,
+                    body.recovery_grant,
+                    &consumed_grant,
+                )?;
+                return Err(AppError::Unauthorized(
+                    "verified recovery policy rejected device enrollment".into(),
+                ));
+            }
+        };
     let permit = match vela_rekey_policy::plan_active_mutation(MutationRequest {
         declared_epoch: recovery_permit.epoch(),
         authority_epoch: consumed_epoch,

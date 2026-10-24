@@ -8,6 +8,27 @@
 //! F* check.
 
 use vela_recovery_policy::{
+    absent_account_can_start_possession_proof, absent_enrollment_account_can_enroll,
+    absent_possession_account_can_recover, colliding_possession_attempt_id_can_start,
+    commitmentless_account_can_start_possession_proof,
+    commitmentless_possession_observation_can_enroll,
+    cross_user_possession_observation_can_recover, enrollment_facts, enrollment_facts_authorize,
+    enrollment_is_authorized, expired_possession_initiate_ttl_can_start,
+    invalid_public_keys_observation_can_enroll,
+    mismatched_possession_attempt_observation_can_recover,
+    missing_enrollment_grant_observation_can_enroll, missing_possession_attempt_can_recover,
+    missing_possession_commitment_can_recover, missing_share_can_start_possession_proof,
+    possession_recover_facts, possession_recover_facts_authorize,
+    possession_recovery_is_authorized, proof_initiate_facts, proof_initiate_facts_authorize,
+    proof_initiation_is_authorized, rekeying_enrollment_observation_can_enroll,
+    rekeying_possession_observation_can_recover, replaced_credential_observation_can_enroll,
+    replaced_enrollment_grant_observation_can_enroll, rotated_commitment_observation_can_recover,
+    rotated_enrollment_observation_can_enroll, rotating_account_can_start_possession_proof,
+    unconsumed_enrollment_grant_observation_can_enroll,
+    unverified_possession_observation_can_recover, EnrollmentObservation,
+    PossessionRecoverObservation, ProofInitiateObservation,
+};
+use vela_recovery_policy::{
     colliding_attempt_id_can_initiate, credential_update_decision_matches_spec,
     credential_update_facts, credentialless_account_can_initiate,
     cross_user_recover_observation_can_release, expired_initiate_ttl_can_start, initiate_facts,
@@ -21,6 +42,10 @@ use vela_recovery_policy::{
     unverified_observed_assertion_can_release, CredentialUpdateDecision,
     CredentialUpdateObservation, InitiateObservation, RecoverObservation, RecoveryAttemptSource,
     RecoveryPhase, INITIAL_EPOCH,
+};
+use vela_recovery_policy::{
+    plan_enrollment, plan_possession_recovery, plan_proof_initiation, EnrollmentDecision,
+    PossessionRecoverDecision, ProofInitiateDecision,
 };
 
 fn expected_epoch(stored_epoch: Option<i64>) -> i64 {
@@ -195,6 +220,320 @@ fn recover_facts_are_exactly_the_attempt_assertion_and_row_observations() {
                 assert!(!unverified_observation_user_can_release(obs));
                 assert!(!missing_observed_share_can_release(obs));
                 assert!(!rekeying_observed_account_can_release(obs));
+            }
+        }
+    }
+}
+
+#[test]
+fn proof_initiate_facts_are_exactly_the_decoded_account_share_commitment_and_store_observations() {
+    for &account_present in &[false, true] {
+        for &share_present in &[false, true] {
+            for &commitment_len in &[0_usize, 32, 2624] {
+                for &rotation_active in &[false, true] {
+                    for &attempt_id_fresh in &[false, true] {
+                        for &ttl_secs in &[0_u64, 1, 300] {
+                            let obs = ProofInitiateObservation {
+                                account_present,
+                                share_present,
+                                commitment_len,
+                                rotation_active,
+                                attempt_id_fresh,
+                                ttl_secs,
+                            };
+                            let facts = proof_initiate_facts(obs);
+                            let available = account_present
+                                && share_present
+                                && commitment_len > 0
+                                && !rotation_active;
+
+                            assert_eq!(
+                                matches!(facts.phase, RecoveryPhase::Ready),
+                                available,
+                                "{obs:?}"
+                            );
+                            assert_eq!(
+                                matches!(facts.phase, RecoveryPhase::Unavailable),
+                                !available,
+                                "{obs:?}"
+                            );
+                            assert_eq!(facts.account_exists, account_present);
+                            assert_eq!(facts.share_present, share_present);
+                            assert_eq!(facts.possession_hash_present, commitment_len > 0);
+                            assert_eq!(facts.attempt_id_fresh, attempt_id_fresh);
+                            assert_eq!(facts.ttl_positive, ttl_secs > 0);
+
+                            let expected = available && attempt_id_fresh && ttl_secs > 0;
+                            assert_eq!(proof_initiation_is_authorized(facts), expected, "{obs:?}");
+                            assert_eq!(proof_initiate_facts_authorize(obs), expected, "{obs:?}");
+                            assert_eq!(
+                                matches!(
+                                    plan_proof_initiation(facts),
+                                    ProofInitiateDecision::Start
+                                ),
+                                expected,
+                                "{obs:?}"
+                            );
+
+                            assert!(!absent_account_can_start_possession_proof(obs));
+                            assert!(!missing_share_can_start_possession_proof(obs));
+                            assert!(!commitmentless_account_can_start_possession_proof(obs));
+                            assert!(!rotating_account_can_start_possession_proof(obs));
+                            assert!(!colliding_possession_attempt_id_can_start(obs));
+                            assert!(!expired_possession_initiate_ttl_can_start(obs));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn possession_recover_facts_are_exactly_the_attempt_identity_commitment_and_epoch_observations() {
+    let sources = [
+        RecoveryAttemptSource::Missing,
+        RecoveryAttemptSource::Consumed,
+    ];
+    let epochs = [None, Some(-1), Some(0), Some(INITIAL_EPOCH), Some(4)];
+
+    for &attempt_source in &sources {
+        for mask in 0_u8..32 {
+            for &commitment_len in &[0_usize, 32, 2624] {
+                for &commitment_epoch in &[0_i64, 1, 4, 5] {
+                    for &stored_epoch in &epochs {
+                        let obs = PossessionRecoverObservation {
+                            attempt_source,
+                            account_present: mask & 1 != 0,
+                            user_matches: mask & 2 != 0,
+                            attempt_matches: mask & 4 != 0,
+                            proof_verified: mask & 8 != 0,
+                            account_epoch_active: mask & 16 != 0,
+                            commitment_len,
+                            commitment_epoch,
+                            stored_epoch,
+                        };
+                        let facts = possession_recover_facts(obs);
+                        let consumed = matches!(attempt_source, RecoveryAttemptSource::Consumed);
+                        let epoch = expected_epoch(stored_epoch);
+
+                        assert_eq!(
+                            matches!(facts.phase, RecoveryPhase::ChallengePending),
+                            consumed,
+                            "{obs:?}"
+                        );
+                        assert_eq!(
+                            matches!(facts.phase, RecoveryPhase::Expired),
+                            !consumed,
+                            "{obs:?}"
+                        );
+                        assert_eq!(facts.account_present, obs.account_present);
+                        assert_eq!(facts.user_matches, obs.user_matches);
+                        assert_eq!(facts.attempt_matches, obs.attempt_matches);
+                        assert_eq!(facts.challenge_consumed, consumed);
+                        assert_eq!(facts.proof_verified, obs.proof_verified);
+                        assert_eq!(facts.account_epoch_active, obs.account_epoch_active);
+                        assert_eq!(facts.commitment_present, commitment_len > 0);
+                        assert_eq!(facts.commitment_epoch_matches, commitment_epoch == epoch);
+                        assert_eq!(facts.epoch, epoch);
+
+                        let expected = consumed
+                            && obs.account_present
+                            && obs.user_matches
+                            && obs.attempt_matches
+                            && obs.proof_verified
+                            && obs.account_epoch_active
+                            && commitment_len > 0
+                            && commitment_epoch == epoch
+                            && epoch >= INITIAL_EPOCH;
+                        assert_eq!(
+                            possession_recovery_is_authorized(facts),
+                            expected,
+                            "{obs:?}"
+                        );
+                        assert_eq!(possession_recover_facts_authorize(obs), expected, "{obs:?}");
+                        assert_eq!(
+                            matches!(
+                                plan_possession_recovery(facts),
+                                PossessionRecoverDecision::Grant(_)
+                            ),
+                            expected,
+                            "{obs:?}"
+                        );
+
+                        assert!(!missing_possession_attempt_can_recover(obs));
+                        assert!(!absent_possession_account_can_recover(obs));
+                        assert!(!cross_user_possession_observation_can_recover(obs));
+                        assert!(!mismatched_possession_attempt_observation_can_recover(obs));
+                        assert!(!unverified_possession_observation_can_recover(obs));
+                        assert!(!rekeying_possession_observation_can_recover(obs));
+                        assert!(!missing_possession_commitment_can_recover(obs));
+                        assert!(!rotated_commitment_observation_can_recover(obs));
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn enrollment_facts_are_exactly_the_grant_consumption_credential_commitment_and_epoch_observations()
+{
+    let epochs = [None, Some(0), Some(INITIAL_EPOCH), Some(4)];
+
+    for &grant_present in &[false, true] {
+        for &grant_consumed in &[false, true] {
+            for &consumed_matches_observed in &[false, true] {
+                for &account_present in &[false, true] {
+                    for &grant_possession in &[false, true] {
+                        for &credential_id_matches in &[false, true] {
+                            for &commitment_len in &[0_usize, 32, 2624] {
+                                for &public_keys_valid in &[false, true] {
+                                    for &account_epoch_active in &[false, true] {
+                                        for &grant_epoch in &[0_i64, 1, 4, 5] {
+                                            for &stored_epoch in &epochs {
+                                                let obs = EnrollmentObservation {
+                                                    grant_present,
+                                                    grant_consumed,
+                                                    consumed_matches_observed,
+                                                    account_present,
+                                                    grant_possession,
+                                                    grant_epoch,
+                                                    stored_epoch,
+                                                    account_epoch_active,
+                                                    credential_id_matches,
+                                                    commitment_len,
+                                                    public_keys_valid,
+                                                };
+                                                let facts = enrollment_facts(obs);
+                                                let consumed =
+                                                    grant_consumed && consumed_matches_observed;
+                                                let epoch = expected_epoch(stored_epoch);
+
+                                                assert_eq!(
+                                                    matches!(
+                                                        facts.phase,
+                                                        RecoveryPhase::GrantIssued
+                                                    ),
+                                                    grant_present && consumed,
+                                                    "{obs:?}"
+                                                );
+                                                assert_eq!(
+                                                    matches!(facts.phase, RecoveryPhase::Expired),
+                                                    !grant_present,
+                                                    "{obs:?}"
+                                                );
+                                                assert_eq!(
+                                                    matches!(facts.phase, RecoveryPhase::Revoked),
+                                                    grant_present && !consumed,
+                                                    "{obs:?}"
+                                                );
+                                                assert_eq!(facts.account_present, account_present);
+                                                assert_eq!(facts.user_matches, grant_present);
+                                                assert_eq!(facts.grant_live, grant_present);
+                                                assert_eq!(facts.grant_consumed, consumed);
+                                                assert_eq!(
+                                                    facts.credential_matches_current,
+                                                    credential_id_matches
+                                                );
+                                                assert_eq!(
+                                                    facts.possession_grant,
+                                                    grant_possession
+                                                );
+                                                assert_eq!(
+                                                    facts.possession_hash_present,
+                                                    commitment_len > 0
+                                                );
+                                                assert_eq!(
+                                                    facts.public_keys_valid,
+                                                    public_keys_valid
+                                                );
+                                                assert_eq!(
+                                                    facts.account_epoch_active,
+                                                    account_epoch_active
+                                                );
+                                                assert_eq!(facts.grant_epoch, grant_epoch);
+                                                assert_eq!(facts.account_epoch, epoch);
+
+                                                let authority = if grant_possession {
+                                                    commitment_len > 0
+                                                } else {
+                                                    credential_id_matches
+                                                };
+                                                let expected = grant_present
+                                                    && consumed
+                                                    && account_present
+                                                    && authority
+                                                    && public_keys_valid
+                                                    && account_epoch_active
+                                                    && grant_epoch >= INITIAL_EPOCH
+                                                    && grant_epoch == epoch;
+                                                assert_eq!(
+                                                    enrollment_is_authorized(facts),
+                                                    expected,
+                                                    "{obs:?}"
+                                                );
+                                                assert_eq!(
+                                                    enrollment_facts_authorize(obs),
+                                                    expected,
+                                                    "{obs:?}"
+                                                );
+                                                assert_eq!(
+                                                    matches!(
+                                                        plan_enrollment(facts),
+                                                        EnrollmentDecision::Enroll(_)
+                                                    ),
+                                                    expected,
+                                                    "{obs:?}"
+                                                );
+
+                                                assert!(
+                                                    !missing_enrollment_grant_observation_can_enroll(
+                                                        obs
+                                                    )
+                                                );
+                                                assert!(
+                                                    !unconsumed_enrollment_grant_observation_can_enroll(
+                                                        obs
+                                                    )
+                                                );
+                                                assert!(
+                                                    !replaced_enrollment_grant_observation_can_enroll(
+                                                        obs
+                                                    )
+                                                );
+                                                assert!(!absent_enrollment_account_can_enroll(obs));
+                                                assert!(
+                                                    !rekeying_enrollment_observation_can_enroll(
+                                                        obs
+                                                    )
+                                                );
+                                                assert!(
+                                                    !replaced_credential_observation_can_enroll(
+                                                        obs
+                                                    )
+                                                );
+                                                assert!(
+                                                    !commitmentless_possession_observation_can_enroll(
+                                                        obs
+                                                    )
+                                                );
+                                                assert!(
+                                                    !rotated_enrollment_observation_can_enroll(obs)
+                                                );
+                                                assert!(
+                                                    !invalid_public_keys_observation_can_enroll(
+                                                        obs
+                                                    )
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

@@ -334,32 +334,31 @@ pub(crate) fn store_possession_grant(
     )
 }
 
-/// Read the epoch without consuming the grant, so callers can reject rotation
-/// state without spending a valid same-epoch recovery ceremony.
-pub(crate) fn load_enroll_grant(
+/// Read the grant without consuming it, so callers can reject rotation state
+/// without spending a valid same-epoch recovery ceremony. `None` means the
+/// key is absent; a decoded-invalid grant remains an error.
+pub(crate) fn observe_enroll_grant(
     state: &AppState,
     user_id: Uuid,
     grant: Uuid,
-) -> Result<RecoveryEnrollGrant> {
-    let value = state
-        .store
-        .get(&enroll_grant_key(user_id, grant))?
-        .ok_or_else(|| AppError::Unauthorized("recovery grant expired or already used".into()))?;
-    decode_enroll_grant(&value)
+) -> Result<Option<RecoveryEnrollGrant>> {
+    let Some(value) = state.store.get(&enroll_grant_key(user_id, grant))? else {
+        return Ok(None);
+    };
+    decode_enroll_grant(&value).map(Some)
 }
 
-/// Consume a grant issued by `post_recover`. Returns an error if it's missing,
-/// expired, or already redeemed — grants are single-use.
-pub(crate) fn take_enroll_grant(
+/// Consume a grant issued by `post_recover`. `None` means it was missing,
+/// expired or already redeemed; grants are single-use.
+pub(crate) fn take_enroll_grant_observed(
     state: &AppState,
     user_id: Uuid,
     grant: Uuid,
-) -> Result<RecoveryEnrollGrant> {
-    let value = state
-        .store
-        .get_del(&enroll_grant_key(user_id, grant))?
-        .ok_or_else(|| AppError::Unauthorized("recovery grant expired or already used".into()))?;
-    decode_enroll_grant(&value)
+) -> Result<Option<RecoveryEnrollGrant>> {
+    let Some(value) = state.store.get_del(&enroll_grant_key(user_id, grant))? else {
+        return Ok(None);
+    };
+    decode_enroll_grant(&value).map(Some)
 }
 
 pub(crate) fn restore_enroll_grant(

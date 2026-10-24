@@ -4743,3 +4743,112 @@ async fn vault_events_streams_hello_then_changes() {
     assert!(change.contains("\"kind\":\"chunk\""), "got: {change}");
     assert!(!change.contains("user_id"), "owner id must not cross the wire");
 }
+
+/// M18 grants enroll without any WebAuthn credential, but only while the RMS
+/// commitment that verified the possession proof is still staged. Exercises
+/// the decoded-grant/commitment observations wired into the verified
+/// enrollment policy.
+#[tokio::test]
+async fn possession_grant_enrolls_only_while_its_commitment_is_staged() {
+    use vela_server::sqldb::{Db as _, TursoValue};
+
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
+    let user_id = Uuid::new_v4();
+    insert_user(&state, user_id).await;
+
+    let commitment = vela_crypto::recovery::rms_possession_commitment(&[9u8; 32]);
+    state
+        .sqldb
+        .execute(
+            "UPDATE users SET recovery_auth_hash = ?, key_epoch = 3,
+                recovery_webauthn_cred_id = NULL WHERE id = ?",
+            vec![
+                TursoValue::Text(crate_b64(&commitment)),
+                TursoValue::Text(user_id.to_string()),
+            ],
+        )
+        .await
+        .unwrap();
+
+    let seed_possession_grant = |grant: Uuid| {
+        state
+            .store
+            .set_ex(
+                &format!("recovery:enroll_grant:{user_id}:{grant}"),
+                &serde_json::to_vec(&json!({
+                    "key_epoch": 3,
+                    "credential_id": "rms-possession-v1",
+                    "possession": true,
+                }))
+                .unwrap(),
+                600,
+            )
+            .unwrap();
+    };
+    let enroll = |grant: Uuid| {
+        Request::builder()
+            .method("POST")
+            .uri("/recovery/enroll-device")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "user_id": user_id,
+                    "recovery_grant": grant,
+                    "hybrid_ek": B64.encode(vec![2u8; 1600]),
+                    "hybrid_vk": B64.encode(vec![2u8; 2624]),
+                })
+                .to_string(),
+            ))
+            .unwrap()
+    };
+
+    let grant = Uuid::new_v4();
+    seed_possession_grant(grant);
+    let resp = app.clone().oneshot(enroll(grant)).await.unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "a possession grant with a staged commitment must enroll without a credential"
+    );
+    let devices = state
+        .sqldb
+        .query(
+            "SELECT id FROM devices WHERE user_id = ?",
+            vec![TursoValue::Text(user_id.to_string())],
+        )
+        .await
+        .unwrap();
+    assert_eq!(devices.len(), 1);
+
+    // Deleting recovery setup revokes outstanding possession grants. The grant
+    // check fails closed before consumption, so the caller may retry once a
+    // commitment is staged again.
+    state
+        .sqldb
+        .execute(
+            "UPDATE users SET recovery_auth_hash = NULL WHERE id = ?",
+            vec![TursoValue::Text(user_id.to_string())],
+        )
+        .await
+        .unwrap();
+    let revoked = Uuid::new_v4();
+    seed_possession_grant(revoked);
+    let resp = app.oneshot(enroll(revoked)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    let body: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(resp.into_body(), 1024).await.unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        body["message"],
+        "recovery grant was invalidated by recovery setup deletion or rotation"
+    );
+    assert!(
+        state
+            .store
+            .exists(&format!("recovery:enroll_grant:{user_id}:{revoked}"))
+            .unwrap(),
+        "an authority revocation must not spend the grant"
+    );
+}
