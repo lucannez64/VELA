@@ -151,13 +151,14 @@ The handlers call the constructors, and challenge insertion now uses atomic
 insert-if-absent so a stale freshness observation cannot overwrite a winner.
 A real-store regression covers that interleaving; it is not an I/O refinement
 proof. SQL/store/WebAuthn origins, early-return paths and complete state effects
-remain open. Hosted reproduction of this increment is pending.
+remain open. [Hosted CI on `b8221e7`](https://github.com/lucannez64/VELA/actions/runs/40046015273)
+reproduced all 173 postconditions, including these 21 recovery additions.
 
 ## Remaining obligations for the six requested areas
 
 | Area | Status | Required to close |
 |---|---|---|
-| F-1: handler facts | Partial: enrollment checked in hosted F*; recovery constructors checked locally | Reproduce the 21 new recovery contracts in hosted CI; maintain the checked enrollment contracts; verify the observation producers (SQL rows, store lookups, signature verifier, session ids) themselves; complete UTF-8/object and authenticated-open composition after the checked byte-frame parser; prove independent context origins; cover remaining token, epoch, recovery and handler fact construction |
+| F-1: handler facts | Partial: enrollment and recovery constructors checked in hosted F* | Maintain the checked contracts; verify the observation producers (SQL rows, store lookups, signature verifier, session ids) themselves; complete UTF-8/object and authenticated-open composition after the checked byte-frame parser; prove independent context origins; cover remaining token, epoch, recovery and handler fact construction |
 | F-2: state transitions | Partial | Machine-check concrete handler/database transitions against protocol transitions, including exceptions, cancellation and concurrency |
 | F-3: persistence/recovery | Partial: M28 and composed M29 | Prove the actual journal implementation refines M28; formalize collection equality and filesystem outcomes; compose local edits/deletions and RMS migration; cover or explicitly exclude independent processes |
 | F-4: construction security | Partial: CryptoVerif proofs for idealized v2 KEM games, modular KEM-DEM and AND-signature games under the explicit assumptions | Close the combiner gaps listed in `security/formal/cryptoverif/README.md` (X25519 cofactor and clamped/nonuniform scalars vs uniform prime-order group, SHA-256 step, quantum-query and multi-user composition; KEM-DEM is proved modularly); computational games and reductions for envelope framing, share tags, possession proofs and KDFs under named primitive assumptions; verify application randomness/error/erasure handling. Primitive internals and leakage resistance are trusted under the selected boundary |
@@ -185,6 +186,10 @@ concrete generations
 a strict revision advance, so neither goal is vacuous. The existing
 crash/recovery witness remains reachable.
 
+The [local proof evidence](proof-logs/current/journal-all-pairs/README.md)
+retains complete proof trees and records the rejected, vacuous predecessor.
+Hosted reproduction of this journal increment is pending.
+
 The proofs use a linear `Chain(slot, generation, pin)` ghost fact added to
 `Initialize`, `PersistJournal` and `ClearJournal`. Chain is functionally
 determined by the two durable files: it is initialised to the initial pair,
@@ -202,7 +207,10 @@ comments and string literals, collects each rule's action name/arity, and
 rejects lemma or restriction atoms whose fact is not an emitted action. The
 regression fixture `tests/vacuous-action-atom.spthy` is rejected for
 `DiskClean/5`; the real models pass. This catches the historical vacuity shape
-but does not certify soundness.
+but does not certify soundness. Tests cover both explicit trace qualifiers
+(`all-traces` and `exists-trace`), wrong arities, comments, and malformed input.
+The default journal proof timeout is 600 seconds per model; the memory cap
+and single-worker setting are unchanged.
 
 A matching hash, finite tests, unproved annotation, ideal primitive, new axiom
 or mocked database cannot substitute for these obligations. No unsupported

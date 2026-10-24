@@ -1,0 +1,11 @@
+......
+----------------------------------------------------------------------
+Ran 6 tests in 0.002s
+
+OK
+/home/hirew/.t3/worktrees/VELA/t3-700776df/security/formal/m28_share_journal.spthy: all lemma/restriction action atoms are emitted by rules
+/home/hirew/.t3/worktrees/VELA/t3-700776df/security/formal/m29_signed_share_commit.spthy: all lemma/restriction action atoms are emitted by rules
+action-atom guard regression: real models pass, undeclared name and wrong arity rejected
+m28_share_journal: 10 verified, 0 falsified, 0 warnings
+m29_signed_share_commit: 11 verified, 0 falsified, 0 warnings
+Full proof logs: /tmp/vela-m28-parent-review

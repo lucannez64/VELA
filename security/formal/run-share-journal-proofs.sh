@@ -13,7 +13,7 @@ bash "$root/tests/run-action-atom-guard.sh"
 
 for model in m28_share_journal m29_signed_share_commit; do
   log="$out/$model.log"
-  "$root/../assurance/bounded.sh" "$root/tamarin-bounded.sh" --derivcheck-timeout=30 --prove "$root/$model.spthy" >"$log" 2>&1
+  VELA_PROOF_TIMEOUT=${VELA_PROOF_TIMEOUT:-600} "$root/../assurance/bounded.sh" "$root/tamarin-bounded.sh" --derivcheck-timeout=30 --prove "$root/$model.spthy" >"$log" 2>&1
   python3 - "$root/$model.spthy" "$log" <<'PY'
 import re, sys
 from pathlib import Path

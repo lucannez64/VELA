@@ -131,7 +131,11 @@ not run the server exploit suite or every server executable model; those have
 separate CI steps. `--with-fstar` adds all eight policy-crate runners, the production share-fact
 constructor/composition, prefix and signature gates, plus the extraction
 assumption/precondition drift gate. The default run also includes
-M28/M29's eighteen named journal/composition verdicts via `run-share-journal-proofs.sh`.
+M28/M29's 21 named journal/composition verdicts via `run-share-journal-proofs.sh`
+(ten M28, eleven M29). The M28 all-pairs increment uses documented Chain ghost
+instrumentation with a manual trace-equivalence argument. The runner checks
+emitted-action coverage and uses a 600-second default timeout per model;
+memory and worker limits remain unchanged.
 
 The computational gate is separate from `run-all.sh`. With the checksum-pinned
 CryptoVerif binary and its matching `default.ocvl` beside it, run:

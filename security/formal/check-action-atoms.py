@@ -53,7 +53,7 @@ def strip_comments(text: str) -> str:
         if text.startswith("/*", i):
             end = text.find("*/", i + 2)
             if end < 0:
-                break
+                raise ValueError("unterminated block comment")
             out.append("\n" * text.count("\n", i, end + 2))
             i = end + 2
             continue
@@ -160,7 +160,7 @@ def action_signature(item: str) -> tuple[str, int] | None:
 def collect_actions(text: str) -> dict[tuple[str, int], list[str]]:
     """Collect action signatures and the rules that emit them."""
     actions: dict[tuple[str, int], list[str]] = {}
-    for m in re.finditer(r"\brule\s+([A-Za-z_][A-Za-z0-9_]*)\s*:", text):
+    for m in re.finditer(r"^\s*rule\s+([A-Za-z_][A-Za-z0-9_]*)\s*:", text, re.M):
         rule = m.group(1)
         rest = text[m.end():]
         start = rest.find("--[")
@@ -201,18 +201,18 @@ def read_formula(text: str, start: int) -> tuple[str, int]:
 def collect_formulas(text: str) -> list[tuple[str, str, str]]:
     """Return (kind, name, formula) for lemmas and restrictions."""
     formulas: list[tuple[str, str, str]] = []
-    for m in re.finditer(r"\b(lemma|restriction)\s+([A-Za-z_][A-Za-z0-9_]*)", text):
+    for m in re.finditer(r"^\s*(lemma|restriction)\s+([A-Za-z_][A-Za-z0-9_]*)", text, re.M):
         kind, name = m.group(1), m.group(2)
         colon = text.find(":", m.end())
         if colon < 0:
-            continue
+            raise ValueError(f"{kind} {name}: missing colon")
         pos = colon + 1
         while pos < len(text) and text[pos].isspace():
             pos += 1
-        try:
-            formula, _ = read_formula(text, pos)
-        except ValueError:
-            continue
+        qualifier = re.match(r"(?:all-traces|exists-trace)\b\s*", text[pos:])
+        if qualifier:
+            pos += qualifier.end()
+        formula, _ = read_formula(text, pos)
         formulas.append((kind, name, formula))
     return formulas
 

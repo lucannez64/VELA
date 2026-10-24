@@ -26,8 +26,38 @@ Candidate revisions can be adversarial terms satisfying strict subterm increase,
 as in M19c, overapproximating the intended u64 ordering. Authentication is a
 precondition of this focused model. There is no machine-checked composition
 between M19c, M28, the crypto constructor and the desktop implementation.
-Seven exact local verdicts are in the assurance evidence. Stronger all-pairs
-goals remain unproved as recorded in the formalization ledger.
+The current M28 gate checks ten results, including all-pairs cleanup pin
+increase, generation uniqueness, and a two-successive-commit witness. These
+results use the `Chain` instrumentation described below; see the
+[formalization ledger](../assurance/08-formalization-status.md).
+
+## Ghost-state correspondence (manual argument)
+
+The checked model adds one linear `Chain(slot, generation, pin)` fact per
+initialized slot. Its value is determined by the unique durable product-state:
+
+| Durable state | Chain pair |
+|---|---|
+| `DiskClean(slot, gen, pinned, ...)` | `(gen, pinned)` |
+| `DiskPending(slot, tx, gen, next, ...)` | `(gen, next)` |
+| `DiskApplied(slot, tx, gen, pinned, ...)` | `(gen, pinned)` |
+
+Initially both pairs are `('initial', 'initial')`. `PersistJournal` consumes
+the clean pair and advances both the pending state and Chain to
+`(successor(gen), next_revision)`. `PersistVault` preserves that pair while
+changing pending to applied. `ClearJournal` consumes and reproduces the same
+Chain pair while changing applied to clean. `OpenVault`, snapshot reads and
+crashes preserve the invariant. Fresh slots separate independent instances.
+
+Thus induction on the original rules gives exactly one matching Chain fact
+whenever either instrumented rule needs it: the added premise cannot disable
+an original transition. Conversely, deleting Chain from each instrumented
+transition gives the original transition with identical action events. This
+is the manually reviewed lifting/projection argument for trace equivalence;
+it is **not machine-checked**. The Tamarin verdicts establish the properties
+of the instrumented rules. Applying them to the original model depends on
+this argument, and applying either model to Rust/filesystem execution still
+requires the separate implementation refinement.
 
 The vault revision in M28 is a provenance label, not a separate serialized
 VaultItem field. Repeated identical physical writes during recovery are

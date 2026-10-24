@@ -6,6 +6,7 @@ set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 guard="$root/check-action-atoms.py"
+python3 -m unittest discover -s "$root/tests" -p test_action_atoms.py
 
 python3 "$guard" \
   "$root/m28_share_journal.spthy" \

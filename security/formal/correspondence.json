@@ -43,8 +43,8 @@
     {
       "boundary": "recoverable share journal and fact construction (conditional; manual model refinement)",
       "artifacts": {
-        "security/formal/m28_share_journal.spthy": "e6ae320389499cba9fc49db9ec995ddf16345d033efe8e78b83b9d86541ad06f",
-        "security/formal/share-journal-correspondence.md": "ae10815e146c5a73ea6418caf20fe99df4bf9040a407d05ba5bfd5f64dbc2c53",
+        "security/formal/m28_share_journal.spthy": "89c59023b1a488634542e445d9bc667e4a046655bc8eb9d3817dee47ac14abd3",
+        "security/formal/share-journal-correspondence.md": "725ca1e69171245abf9edbdfcb5036d4c7267c4f07704683780e14659b09ce46",
         "libVELA/vela-client-share-policy/src/lib.rs": "97a94c6af11d40b6eafa4930940212d62d2cb5393d6940c7457bb9ce12e9a261",
         "libVELA/vela-crypto/src/share_envelope.rs": "332b8a1ccd3324dda61262c6254c63f0286c16a814851b491c23ce23687bdf21",
         "libVELA/vela-crypto/verify-share-facts-fstar.sh": "a34a1d189f72a46f2c34ce5fe97db0a315f5f077ba82579b1c0262b25929756d",

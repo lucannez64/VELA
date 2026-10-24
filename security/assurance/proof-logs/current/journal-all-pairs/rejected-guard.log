@@ -1,0 +1,8 @@
+/tmp/vela-m28-rejected.spthy: lemma cleared_pins_stay_below_current_clean: atom DiskClean/5 @ #i is not a rule action (no rule emits this action name)
+/tmp/vela-m28-rejected.spthy: lemma cleared_pin_below_later_applied: atom DiskApplied/7 @ #i is not a rule action (no rule emits this action name)
+/tmp/vela-m28-rejected.spthy: lemma durable_gen_below_disk_clean: atom DiskClean/5 @ #i is not a rule action (no rule emits this action name)
+/tmp/vela-m28-rejected.spthy: lemma durable_gen_below_later_disk_clean: atom DiskClean/5 @ #i is not a rule action (no rule emits this action name)
+/tmp/vela-m28-rejected.spthy: lemma durable_gen_below_later_snapshot: atom Snapshot/4 @ #i is not a rule action (no rule emits this action name)
+/tmp/vela-m28-rejected.spthy: lemma committed_pins_never_decrease: atom DiskApplied/7 @ #i is not a rule action (no rule emits this action name)
+/tmp/vela-m28-rejected.spthy: lemma a_generation_commits_at_most_once: atom DiskClean/5 @ #i is not a rule action (no rule emits this action name)
+Expected rejection exit status: 1
