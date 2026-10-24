@@ -133,8 +133,13 @@ constructor/composition, prefix and signature gates, plus the extraction
 assumption/precondition drift gate. The default run also includes
 M28/M29's 21 named journal/composition verdicts via `run-share-journal-proofs.sh`
 (ten M28, eleven M29). The M28 all-pairs increment uses documented Chain ghost
-instrumentation with a manual trace-equivalence argument. The runner checks
-emitted-action coverage and uses a 600-second default timeout per model;
+instrumentation. The runner also checks the separate typed single-slot F★
+lifting/projection development, using prebuilt F★ 2025.10.06 and Z3 4.13.3,
+`--cache_off`, version assertion and source/argv logging. The source bridge
+between those encodings and Tamarin remains unproved. The `formal-rekey` job
+caches the checksum-pinned standalone F★ release via
+`install-formal-fstar.sh`; it does not rebuild hax for this step. The runner
+checks emitted-action coverage and uses a 600-second default timeout per model;
 memory and worker limits remain unchanged.
 
 The computational gate is separate from `run-all.sh`. With the checksum-pinned

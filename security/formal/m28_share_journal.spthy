@@ -10,19 +10,15 @@ begin
    are outside this focused model. Candidate revision monotonicity is the
    verified admission-policy precondition, not a cryptographic theorem here.
 
-   The linear Chain(slot, generation, pin) fact is proof instrumentation, not
-   protocol state: it is the committed (generation, revision) pair, advanced
-   only by PersistJournal and carried unchanged by ClearJournal. It is
-   functionally determined by the two durable files. The projection/lifting
-   step is machine-checked in F* (security/formal/m28-trace-equivalence):
-   every reachable lifted event trace projects to a reachable original trace
-   with the same events, and every reachable original trace lifts with the
-   same events, for an arbitrary increasing guard. No restriction or guard
-   was changed; the only rule change is the Chain ghost-thread in Initialize,
-   PersistJournal and ClearJournal. The direct Tamarin proof on the original
-   rules did not finish within the 600 s bound; the F* module is the checked
-   correspondence, not a claim that these two lemmas were re-proved in
-   Tamarin without Chain. The recovery witness remains reachable.
+   Chain(slot, generation, pin) is proof instrumentation. Its pair follows
+   the durable phase and advances at PersistJournal. A separate F* development
+   checks equivalence of two typed, initialized, single-slot encodings.
+   It does not prove the Tamarin-to-F* embeddings or discharge its generic
+   transfer predicate from the Tamarin verdicts. See m28-trace-equivalence.
+   The original-rule direct Tamarin proof did not finish within 600 seconds;
+   the all-pairs verdicts here remain for the Chain-instrumented source.
+   No rule, guard or restriction changed beyond the existing Chain thread.
+   Rust/filesystem refinement and the source embeddings remain open.
 */
 functions: successor/1
 

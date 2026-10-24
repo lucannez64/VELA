@@ -5,8 +5,9 @@ M28 model from delegated commit `f920627` (integrated as `1983ca7`). The parent
 also corrected trace-qualifier parsing in the source guard, added six Python
 regressions, and raised only the journal wall-clock limit to 600 seconds per
 model. The shared local limit remains 3 GiB, no swap, one proof worker.
-Hosted reproduction of this increment is pending; the passing `b8221e7` run
-predates it. These are local results, not an external audit.
+Hosted reproduction of this increment passed on `5fa4e9f`
+([workflow](https://github.com/lucannez64/VELA/actions/runs/40065136343));
+that run predates the later typed F★ encoding proof. These are local results, not an external audit.
 
 Command from the repository root:
 
@@ -36,9 +37,10 @@ original M28 statements; selective proving is not the evidence used here.
 
 The model adds linear Chain ghost state. The lifting/projection argument in
 [the correspondence note](../../../../formal/share-journal-correspondence.md)
-is manual: machine checking establishes the instrumented model's properties,
-not its equivalence to the uninstrumented model or concrete Rust/filesystem
-execution. Full-system formalization and implementation refinement remain open.
+remains manual at the Tamarin source boundary. A later
+[typed F★ encoding proof](../journal-encoding-equivalence/README.md) checks
+lifting/projection inside the encodings; it does not establish the source
+embeddings or concrete Rust/filesystem execution. Full-system formalization and implementation refinement remain open.
 
 ## Rejected predecessor
 

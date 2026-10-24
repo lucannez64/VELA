@@ -29,11 +29,12 @@ remaining work across all six requested areas. New sharing contracts and M28
 reduce selected gaps; the computational model proofs above do not establish a
 full-system theorem.
 
-The new M28 all-pairs pin/generation results are checked for rules instrumented
-with linear `Chain` ghost state. Their transfer to the original rules relies
-on the [manual lifting/projection argument](../formal/share-journal-correspondence.md#ghost-state-correspondence-manual-argument).
-Neither that trace equivalence nor the Rust/filesystem refinement is
-machine-checked.
+The M28 all-pairs pin/generation results are checked for rules instrumented
+with linear `Chain` ghost state. F★ now checks lifting/projection between two
+typed single-slot encodings. Their [source bridge](../formal/share-journal-correspondence.md#ghost-state-correspondence-manual-source-bridge)
+to actual Tamarin traces remains a manual argument with two unproved embedding
+obligations; the transfer schema does not discharge the encoded safety goals.
+Neither source equivalence nor Rust/filesystem refinement is machine-checked.
 
 ## Trusted components
 

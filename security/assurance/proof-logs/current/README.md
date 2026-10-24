@@ -21,7 +21,10 @@ postconditions / 219 selected functions):
 Other recent scoped evidence:
 
 - [Journal all-pairs](journal-all-pairs/README.md): ten M28 and eleven M29
-  results; Chain trace equivalence remains a manual step.
+  results; the Tamarin source bridge remains manual.
+- [Journal encoding equivalence](journal-encoding-equivalence/README.md): fresh
+  pinned F★ lifting/projection check for typed single-slot encodings; no
+  source equivalence or Rust refinement claim.
 - [P-256 advisory repair](p256-advisory-fix/README.md): compatibility tests,
   dependency checks, and the local/hosted distinction.
 - [Recovery constructors](recovery-fact-refinement/README.md): the preceding

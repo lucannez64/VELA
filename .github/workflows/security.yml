@@ -87,7 +87,7 @@ jobs:
       - name: Install pinned Tamarin 1.12.0 and Maude 3.5.1
         run: |
           sudo apt-get update -qq
-          sudo apt-get install --yes ripgrep unzip
+          sudo apt-get install --yes ripgrep unzip libgmp10
           curl -fL -o /tmp/tamarin.tar.gz https://github.com/tamarin-prover/tamarin-prover/releases/download/1.12.0/tamarin-prover-1.12.0-linux64-ubuntu.tar.gz
           echo "201be06f469e47cff554df6ca93db8366fc2c69d70c61fcbd1370a1074b469c6  /tmp/tamarin.tar.gz" | sha256sum -c
           sudo tar -xzf /tmp/tamarin.tar.gz -C /usr/local/bin
@@ -110,6 +110,20 @@ jobs:
             exit 1
           fi
           maude --version
+
+      - name: Cache standalone pinned F* for journal correspondence
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/opt/vela-formal-fstar-2025.10.06
+          key: formal-fstar-2025.10.06-${{ runner.os }}-${{ runner.arch }}-940c187d
+
+      - name: Activate prebuilt F* and bundled Z3 for journal correspondence
+        run: |
+          set -euo pipefail
+          proof_root="$HOME/.local/opt/vela-formal-fstar-2025.10.06"
+          security/assurance/install-formal-fstar.sh "$proof_root"
+          printf 'VELA_FSTAR_BIN=%s/fstar/bin/fstar.exe\n' "$proof_root" >> "$GITHUB_ENV"
+          printf '%s/fstar/bin\n' "$proof_root" >> "$GITHUB_PATH"
 
       - name: Check reviewed model correspondence
         run: python3 security/formal/check-correspondence.py

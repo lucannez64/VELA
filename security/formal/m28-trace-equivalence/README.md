@@ -1,105 +1,92 @@
-# Machine-checked M28 Chain correspondence
+# M28 typed single-slot encoding equivalence
 
-`M28TraceEquivalence.fst` is a checked F* development of the transition
-systems on both sides of the M28 `Chain` instrumentation.  It replaces the
-manual projection/lifting paragraph that previously connected the original
-seven-rule model (`b8221e7`) to the instrumented model used by the Tamarin
-gate.
+`M28TraceEquivalence.fst` proves equivalence of two handwritten, typed,
+initialized, single-slot transition encodings, one with Chain and one without.
+**It does not machine-check the connection to `.spthy`, prove either all-pairs
+security goal, or close Rust/filesystem refinement.** It supplies a checked
+kernel within the larger, still-partial correspondence argument.
 
-The F* module is verified with `fstar.exe` (see `verify.sh`).  It contains no
-`assume`, `admit`, axiom, or external oracle.  The only inputs are the two
-rule encodings described below.
+## Checked statements
 
-## What is proved
-
-The module is polymorphic in the strict-increase guard `lt`; it never
-interprets `lt`, so the result is independent of the concrete order on
-revisions.
-
-| F* declaration | Statement |
+| Declaration | Statement within the F* encodings |
 |---|---|
-| `step_core_to_lift` | Every original rule instance has a lifted rule instance with the same event and the same non-Chain state. |
-| `step_lift_projects` | Every lifted rule instance projects to an original rule instance with the same event and the same non-Chain state. |
-| `reach_core_lifts` | Every reachable original event trace has a reachable lifted event trace with exactly the same event list. |
-| `reach_lift_projects` | Every reachable lifted event trace projects to a reachable original event trace with exactly the same event list. |
-| `reach_lift_wf` | In every reachable lifted state, `Chain` equals `chain_of_phase` of the durable phase. |
-| `lift_chain_premise_clean`, `lift_chain_premise_applied` | On a well-formed state, the `Chain = (gen,pin)` premise of the instrumented rules follows from the durable-phase equation. |
-| `transfer_lifted_to_original` | Any predicate on event traces proved for all reachable lifted traces holds for all reachable original traces. |
-| `transfer_original_to_lifted` | The converse transfer also holds. |
+| `step_core_to_lift` | Each core step lifts with identical base state and event |
+| `step_lift_projects` | Each lifted step projects with identical base state and event |
+| `reach_core_lifts` | Each initialized core trace lifts with the same encoded events |
+| `reach_lift_projects` | Each initialized lifted trace projects with the same events |
+| `reach_lift_wf` | Reachable Chain equals `chain_of_phase` |
+| `lift_chain_premise_clean`, `lift_chain_premise_applied` | The well-formed phase supplies the matching Chain pair |
+| `transfer_lifted_to_original`, `transfer_original_to_lifted` | Transfer schemas for an **input proof** of a predicate over the corresponding encoded reachable traces |
 
-The two all-pairs journal goals are predicates on the emitted action events
-(and their timepoint order).  Because the event list, including its order, is
-identical on both sides, `transfer_lifted_to_original` is the machine-checked
-step that moves the Tamarin verdicts from the instrumented model to the
-original model.
+The step correspondence is parametric in `lt`, with no order laws required.
+That is sufficient for equivalence, not for a pin-monotonicity theorem.
+`hp` in the transfer schema is an argument, not a discharged security theorem.
+No definitions of the two all-pairs goals occur here; the Tamarin proofs are
+separate results on different trace domains.
 
-## Rule mapping
+## Reviewed rule/fact mapping
 
-One slot is fixed.  This is sound because every M28 rule mentions exactly one
-slot, no rule relates two slots, and all per-slot facts are independent; a
-global trace restricted to one slot is a trace of the encoded machine.  The
-two all-pairs goals are per-slot.
+| Tamarin rule | Core / lifted encoding | Encoded event |
+|---|---|---|
+| Initialize | `init_core` / `init_lifted`, reachability initial case | `EInitialized` |
+| ReadSnapshot | `CReadSnapshot` / `LReadSnapshot` | `ESnapshotRead` |
+| PersistJournal | `CPersistJournal` / `LPersistJournal` | `EJournal` |
+| PersistVault | `CPersistVault` / `LPersistVault` | `EVault` |
+| ClearJournal | `CClearJournal` / `LClearJournal` | `EClear` |
+| Crash | `CCrash` / `LCrash` | `ECrash` |
+| OpenVault | `COpenVault` / `LOpenVault` | `EOpened` |
 
-| Tamarin M28 rule | Original F* constructor | Lifted F* constructor | Event / actions |
-|---|---|---|---|
-| `Initialize` | initial `init_core` | initial `init_lifted` | `EInitialized` / `Initialized` |
-| `ReadSnapshot` | `CReadSnapshot` | `LReadSnapshot` | `ESnapshotRead` / `SnapshotRead` |
-| `PersistJournal` | `CPersistJournal` | `LPersistJournal` | `EJournal` / `RevisionIncreases` and `JournalDurable` |
-| `PersistVault` | `CPersistVault` | `LPersistVault` | `EVault` / `VaultDurable` |
-| `ClearJournal` | `CClearJournal` | `LClearJournal` | `EClear` / `JournalCleared` |
-| `Crash` | `CCrash` | `LCrash` | `ECrash` / `Crash` |
-| `OpenVault` | `COpenVault` | `LOpenVault` | `EOpened` / `Opened` |
+`EJournal` carries the old/new revisions of the source's simultaneous
+`RevisionIncreases` and `JournalDurable` actions. Snoc order corresponds to
+within-slot event order; no source action-predicate translation is proved.
+`Clean`, `Pending` and `Applied` represent the durable product facts;
+`opened` represents Profile; `ready` represents membership in ReadyGeneration;
+`snaps` plus `split` represents linear Snapshot consumption. Ready is an
+append-only list with duplicates; only membership is read. Chain is the extra
+lifted pair. This table is a reviewed transcription, not a source parser proof.
 
-`Snoc h e` is chronological append, so list order is Tamarin's `<` on
-timepoints.  A `PersistJournal` event is one timepoint that emits both
-`RevisionIncreases` and `JournalDurable`; the event carries the same
-`old`/`next` fields.
+## Open source embeddings
 
-## State-fact mapping
+To transfer a Tamarin verdict to the original source requires both directed
+obligations, not merely equivalence of these two encodings:
 
-| Tamarin fact | F* representation |
-|---|---|
-| `DiskClean(slot,g,p,rev,payload)` | `Clean g p rev payload` |
-| `DiskPending(slot,tx,g,next,payload,vrev,vpayload)` | `Pending tx g next payload vrev vpayload` |
-| `DiskApplied(slot,tx,g,p,intended,vrev,vpayload)` | `Applied tx g p intended vrev vpayload` |
-| `!Profile(slot)` | `opened = true` |
-| `!ReadyGeneration(slot,g,p)` | `(g,p)` is in `ready` |
-| `Snapshot(slot,tx,g,p)` | `(tx,g,p)` is in `snaps`; `split` consumes one occurrence, matching linearity |
-| fresh `Fr(~tx)` in `ReadSnapshot` | `tx` is not in `used`; it is then added to `used` |
-| `Chain(slot,g,p)` | the `chain` field of `lifted` |
+1. Original Tamarin traces projected to the relevant slot embed into
+   `reach_core` with matching event order/fields.
+2. Lifting the image of each such trace produces a trace admissible in the
+   actual instrumented Tamarin system.
 
-`In`, `Out` and payload values are arbitrary inputs or non-security outputs;
-they do not guard any event used by the two goals and are omitted from the
-event vocabulary.  Revisions, payloads, item values, and transaction identifiers
-are type parameters (`rev`, `msg`, `tx`) treated opaquely.
+Both are unproved. Specific differences that must be handled:
 
-The `Increasing` restriction is the parameter `lt`.  `PersistJournal` requires
-`lt old next = true`.  The F* theorems quantify over every `lt`, so the proof
-covers any interpretation of strict increase, including strict subterm.
+- A fixed initialized slot omits global interleavings and empty/uninitialized
+  profile traces. Those are benign for the intended implication-shaped goals
+  only after a projection argument; not for arbitrary trace predicates.
+- `used` enforces transaction non-reuse within one slot. It does not model
+  global `Fr(~tx)` freshness against other slots or other message values.
+- `rev`, `tx` and `msg` are opaque type parameters, and generation is a separate
+  datatype. No erasure/embedding from Tamarin's single term domain is proved.
+- Attacker input derivability and output knowledge are omitted. Arbitrary
+  revision/payload arguments over-approximate `In`: for example the encoded
+  initial item can be supplied as a payload even though the source's fresh
+  initial item was never sent to the attacker.
+- `lt` must be instantiated with the intended strict-subterm relation, and the
+  intended action predicates/all-pairs formulae must be related to the events.
 
-## Sorts
+These are scope obligations, not local axioms added to make a theorem pass.
+No Tamarin restriction was weakened. A direct Tamarin proof on the seven
+original rules did not finish within 600 seconds. The ten M28 / eleven M29
+verdicts remain separate; their counts are not increased by this module.
 
-Transaction identifiers, revisions and payloads are distinct type parameters
-(`tx`, `rev`, `msg`).  Tamarin uses one term sort.  No M28 rule guard compares
-a value from one of these positions with a value from another: snapshots are
-matched position by position, `RevisionIncreases` compares two revisions, and
-payloads are carried opaquely.  Consequently the typed encoding neither adds
-nor removes a transition: a Tamarin trace maps to a typed trace by erasing the
-sort distinction, and a typed trace maps back by choosing distinct
-representatives for the finitely many values in each sort.  The two all-pairs
-goals compare only revisions/generations and event order, so this mapping is
-exact for them.  The mapping remains a reviewed argument, not a parser-level
-translation of the `.spthy` file.
+## Reproduction and trust
 
-## Fidelity and residual gaps
+Run `vela-heavy security/formal/m28-trace-equivalence/verify.sh` with pinned
+F* 2025.10.06 (or `VELA_FSTAR_BIN` pointing to it). The journal gate calls that
+same command. Verification disables checked-module caching, pins bundled Z3
+4.13.3, and logs version, module hash and arguments. The source guard rejects
+local proof escapes/options and requires the expected definitions; its tests
+are drift checks, not theorem or semantic-adequacy proofs.
 
-* The F* rule encodings above are a reviewed manual transcription of the
-  `.spthy` rules.  There is no parser- or semantics-level refinement from the
-  Tamarin source into F*; the table is the complete mapping used.
-* The Tamarin gate still proves the two all-pairs lemmas in the instrumented
-  model.  A direct Tamarin proof on the seven original rules was attempted and
-  did not finish inside the 600 s bound; the checked F* equivalence is the
-  allowed alternative.  The manual "delete Chain" argument is no longer used.
-* No claim is made about the Rust/filesystem implementation, the OS, the
-  compiler, or primitive security.  The concrete M28-to-code refinement remains
-  open.
+The formal CI job installs the checksum-pinned prebuilt F* release independently
+of the existing hax cache. Local heavy commands remain serialized under 3 GiB,
+no swap and one worker. F*'s logic, standard library, solver and toolchain remain
+trusted. This handwritten model proof is separate from the Rust extraction
+inventory: it adds **zero Rust postconditions**.

@@ -15,25 +15,18 @@ open FStar.Squash
    premise in PersistJournal and ClearJournal and the Chain conclusion in
    Initialize, PersistJournal and ClearJournal.
 
-   This module encodes both transition systems over the same event vocabulary
-   and proves, for an arbitrary strict-increase guard [lt]:
+   This module proves equivalence of two typed, initialized, single-slot
+   transition encodings. The parameter [lt] is arbitrary. The step and
+   reachable-trace maps preserve the same encoded event list; transfer
+   functions are schemas taking a proof of the lifted predicate as input.
+   No all-pairs security goal is defined or proved in this module.
 
-     * every reachable lifted trace projects to a reachable original trace
-       with exactly the same events (reach_lift_projects);
-     * every reachable original trace lifts to a reachable lifted trace with
-       exactly the same events (reach_core_lifts);
-     * any predicate over event traces transfers in both directions
-       (transfer_lifted_to_original and transfer_original_to_lifted).
-
-   The Chain value is a function of the durable phase, so the lift is
-   determined: chain_of_phase.  The guard lt instantiates the Tamarin
-   restriction Increasing; it is a parameter, so the result does not depend
-   on its interpretation.  The one-slot encoding is justified because every
-   M28 rule mentions exactly one slot and no rule relates two slots; a
-   global trace restricted to one slot is a trace of this machine, and the
-   two all-pairs goals are per-slot.  Freshness of the snapshot transaction
-   is tracked in [used]; other message choices (revision, payload) are
-   unconstrained inputs, as in the rules. *)
+   Source correspondence is not established here. In particular, the
+   encodings omit attacker In/Out derivability, model transaction non-reuse
+   only per slot, and do not check the untyped-term or multi-slot embeddings.
+   Applying a Tamarin verdict still needs both directed embeddings described
+   in README.md. Arbitrary revision/payload inputs over-approximate In
+   derivability; they are not asserted to be exactly the source rules. *)
 
 type gen =
   | G0
@@ -54,8 +47,8 @@ type event (rev:eqtype) (tx:eqtype) (msg:eqtype) =
   | EOpened : gen -> rev -> rev -> msg -> event rev tx msg
 
 (* A non-Chain state of the original model.  [ready] is !ReadyGeneration,
-   [snaps] is the multiset of linear Snapshot facts, [used] tracks the fresh
-   transaction identifiers consumed by ReadSnapshot, [opened] is !Profile.
+   [snaps] is the multiset of linear Snapshot facts, [used] tracks per-slot
+   transaction non-reuse (not global freshness), [opened] is !Profile.
    The durable product state is [ph]. *)
 type core (rev:eqtype) (tx:eqtype) (msg:eqtype) = {
   opened: bool;
@@ -412,11 +405,9 @@ let rec reach_lift_projects
           (reach_lift_projects lt r0 item h s rprev)
           (step_lift_projects lt s s' e st)
 
-(* Any event-trace predicate proved for the lifted system holds for the
-   original system, and conversely.  This is the machine-checked transfer
-   step that replaces the manual "projection/lifting" argument: the two
-   all-pairs lemmas are predicates over the emitted action events, and the
-   event traces are identical in both directions. *)
+(* A predicate over the encoded traces transfers given an input proof [hp].
+   This is a schema, not a proof of either all-pairs goal. No Tamarin verdict
+   or source embedding is supplied by this module. *)
 let transfer_lifted_to_original
   (#rev:eqtype) (#tx:eqtype) (#msg:eqtype)
   (lt:rev -> rev -> bool) (r0:rev) (item:msg)

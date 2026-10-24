@@ -36,8 +36,8 @@ turn any open obligation below into a proved result.
   a two-successive-commit witness. The all-pairs goals are stated over emitted
   actions only and are nonvacuous: the witness makes both antecedents
   reachable. Their proofs use a conservative `Chain` ghost fact, described
-  below; the original action trace set is preserved by a manual projection and
-  lifting argument, not a machine-checked equivalence. Atomic durable
+  below. F★ checks lifting/projection between typed single-slot encodings;
+  their bridge to actual Tamarin traces remains unproved. Atomic durable
   single-file replacement is assumed. Product-state rules write the two files
   separately; no atomic two-file write is assumed. Crashes preserve durable
   state; retained stale snapshots overapproximate volatile behavior. Local
@@ -223,16 +223,23 @@ retains complete proof trees and records the rejected, vacuous predecessor.
 Hosted reproduction of this journal increment passed on [5fa4e9f](https://github.com/lucannez64/VELA/actions/runs/40065136343).
 
 The proofs use a linear `Chain(slot, generation, pin)` ghost fact added to
-`Initialize`, `PersistJournal` and `ClearJournal`. Chain is functionally
-determined by the two durable files: it is initialised to the initial pair,
-advanced to `(successor(gen), next_revision)` when the journal becomes pending,
-and carried unchanged through cleanup. Consequently every trace of the original
-rules has a unique Chain lift, and deleting Chain yields an original trace with
-the same observable actions. This projection/lifting argument is manual, not
-machine-checked; the two all-pairs theorems are therefore established for a
-conservative extension of M28, not for a pure action-only proof on the original
-rules. No guard or restriction was changed; the only rule change is the Chain
-ghost-thread, and no security restriction was added.
+`Initialize`, `PersistJournal` and `ClearJournal`. It follows the durable
+phase, advancing when the journal becomes pending and remaining unchanged
+through cleanup. No guard or security restriction was added.
+
+The [F★ encoding proof](../formal/m28-trace-equivalence/README.md) checks
+step/trace lifting, projection and Chain well-formedness for typed,
+initialized, single-slot machines. It is not an equivalence proof of the
+`.spthy` sources: original Tamarin traces must still embed into the core
+encoding, and their lifts must still yield admissible instrumented Tamarin
+traces. Input derivability, global freshness, term representation and slot
+projection remain source-bridge obligations. The generic F★ transfer theorem
+requires the encoded safety property as a proof argument; it does not prove
+the two all-pairs goals or import their Tamarin verdicts. The actual verdicts
+are therefore for the instrumented model. The handwritten proof adds no Rust
+postconditions. [Local evidence](proof-logs/current/journal-encoding-equivalence/README.md)
+records a fresh check with caching disabled, pinned tool version, argv and
+module hash; hosted reproduction of this new step is pending.
 
 The journal runner first runs `check-action-atoms.py` on M28 and M29. It strips
 comments and string literals, collects each rule's action name/arity, and
@@ -247,5 +254,5 @@ and single-worker setting are unchanged.
 A matching hash, finite tests, unproved annotation, ideal primitive, new axiom
 or mocked database cannot substitute for these obligations. No unsupported
 computational reduction, full Rust/Kotlin/Swift refinement or whole-system
-completion claim is supplied here. In particular, the Chain
-projection/lifting step and real Rust/filesystem refinement of M28 remain open.
+completion claim is supplied here. The Tamarin↔F★ source bridge and real
+Rust/filesystem refinement of M28 remain open.

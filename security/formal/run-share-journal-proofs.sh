@@ -10,6 +10,21 @@ mkdir -p "$out"
 # vacuous.  This is a source guard, not a soundness certificate.  The
 # regression also checks that the historical DiskClean(...) @ #i shape fails.
 bash "$root/tests/run-action-atom-guard.sh"
+python3 -m unittest discover -s "$root/tests" -p test_m28_semantic_guard.py
+
+# Check lifting/projection inside two typed single-slot F* encodings.
+# Their source embeddings and the all-pairs safety goals are not checked here.
+# The Tamarin rules are mapped explicitly in
+# m28-trace-equivalence/README.md.
+fstar_log="$out/m28-trace-equivalence.log"
+"$root/m28-trace-equivalence/verify.sh" >"$fstar_log" 2>&1
+if ! grep -q 'All verification conditions discharged successfully' "$fstar_log" \
+   || grep -Eiq 'warning|assume|admit|axiom|sorry|magic|error' "$fstar_log"; then
+  echo "m28-trace-equivalence: FAIL; inspect $fstar_log" >&2
+  exit 1
+fi
+printf 'm28-trace-equivalence: F* verified, 0 warnings, 0 local assumptions\n'
+
 
 for model in m28_share_journal m29_signed_share_commit; do
   log="$out/$model.log"
@@ -28,26 +43,5 @@ if ('summary of summaries:' not in text or re.search(r'WARNING:|falsified|analys
 print(f'{model.stem}: {len(expected)} verified, 0 falsified, 0 warnings')
 PY
 done
-
-# Machine-checked Chain correspondence.  This checks the F* development of
-# the original and instrumented transition systems; it does not re-check the
-# Tamarin rules, which are mapped explicitly in
-# m28-trace-equivalence/README.md.
-fstar_log="$out/m28-trace-equivalence.log"
-if grep -Eiq '\b(assume|admit|axiom|Admitted|sorry|magic)\b' \
-     "$root/m28-trace-equivalence/M28TraceEquivalence.fst"; then
-  echo "m28-trace-equivalence: source contains an unsound escape" >&2
-  exit 1
-fi
-VELA_PROOF_TIMEOUT=${VELA_PROOF_TIMEOUT:-600} \
-  "$root/../assurance/bounded.sh" "$root/fstar-bounded.sh" \
-  --z3rlimit 100 "$root/m28-trace-equivalence/M28TraceEquivalence.fst" \
-  >"$fstar_log" 2>&1
-if ! grep -q 'All verification conditions discharged successfully' "$fstar_log" \
-   || grep -Eiq 'warning|assume|admit|axiom|sorry|magic|error' "$fstar_log"; then
-  echo "m28-trace-equivalence: FAIL; inspect $fstar_log" >&2
-  exit 1
-fi
-printf 'm28-trace-equivalence: F* verified, 0 warnings, 0 assumes\n'
 
 printf 'Full proof logs: %s\n' "$out"

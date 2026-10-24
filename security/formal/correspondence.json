@@ -41,10 +41,10 @@
       }
     },
     {
-      "boundary": "recoverable share journal and fact construction (conditional; manual model refinement)",
+      "boundary": "recoverable share journal and fact construction (typed F* lifting/projection checked; Tamarin source embeddings and Rust/filesystem refinement remain manual/open)",
       "artifacts": {
-        "security/formal/m28_share_journal.spthy": "89c59023b1a488634542e445d9bc667e4a046655bc8eb9d3817dee47ac14abd3",
-        "security/formal/share-journal-correspondence.md": "725ca1e69171245abf9edbdfcb5036d4c7267c4f07704683780e14659b09ce46",
+        "security/formal/m28_share_journal.spthy": "5cd14f975aa2b357f37b2221b68438f9fb4ee551dc05072783f7c9555ef9ac11",
+        "security/formal/share-journal-correspondence.md": "e639180eee5228752407f2055329592b164276a686db7e88dbb878110cc318ac",
         "libVELA/vela-client-share-policy/src/lib.rs": "97a94c6af11d40b6eafa4930940212d62d2cb5393d6940c7457bb9ce12e9a261",
         "libVELA/vela-crypto/src/share_envelope.rs": "332b8a1ccd3324dda61262c6254c63f0286c16a814851b491c23ce23687bdf21",
         "libVELA/vela-crypto/verify-share-facts-fstar.sh": "a34a1d189f72a46f2c34ce5fe97db0a315f5f077ba82579b1c0262b25929756d",
@@ -53,7 +53,15 @@
         "desktopVELA/vela-desktop-core/src/store.rs": "b6de27f088698a5f37e1754bc81691260d8222545686d78fc0cc1d94d5234324",
         "desktopVELA/vela-desktop-core/src/lib.rs": "fc669ad646ca899e39cff2891e06d2f0d4d47d3332b610464ee9aecff7caa856",
         "desktopVELA/vela-desktop-core/Cargo.toml": "f11230efa0ab9356d741a0a73a5ef9962bcce6711177a6cf4ba59f94557109fd",
-        "desktopVELA/Cargo.lock": "5f0cdf3264326468553c5e5571fecc48f48416727937f0d4f06382ea8b709f55"
+        "desktopVELA/Cargo.lock": "5f0cdf3264326468553c5e5571fecc48f48416727937f0d4f06382ea8b709f55",
+        "security/formal/m28-trace-equivalence/M28TraceEquivalence.fst": "d06cd03016eecd1ce7c0420f5b78017bb843dd030542ed3d04d8873dbb37504d",
+        "security/formal/m28-trace-equivalence/README.md": "8dce263fc631f1062e71efe004b03c4f0c40e70df3ca21b0fc793e354f1a095c",
+        "security/formal/m28-trace-equivalence/verify.sh": "1f604c9529c0a131ab316a9327f365777c91d898b07983cfeda05b36c8466578",
+        "security/formal/fstar-bounded.sh": "0d1738e9e4aab789076ad85feca20485df99353a04ff085b58f1fe9313a7fa4c",
+        "security/formal/check-m28-semantic-proof.py": "c96f01ed1848f57ad2f2f45540a335347c5a5ec136b9220c031a3cc904e6ce37",
+        "security/formal/tests/test_m28_semantic_guard.py": "1a8744f889b8617121920b9467709bdc4251cab79a4704ae21d05537f837bfea",
+        "security/formal/run-share-journal-proofs.sh": "62d9a929bf6e6ea76dae62b5244a4345da6ed0d509b3a6d150bcfdf771f87e36",
+        "security/assurance/install-formal-fstar.sh": "5d576f39327ec3d45590e8e4bc0882b004c6d74835a414152a07cc637331f0dc"
       }
     },
     {

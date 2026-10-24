@@ -33,7 +33,7 @@ increase, generation uniqueness, and a two-successive-commit witness. These
 results use the `Chain` instrumentation described below; see the
 [formalization ledger](../assurance/08-formalization-status.md).
 
-## Ghost-state correspondence (machine-checked)
+## Ghost-state correspondence (manual source bridge)
 
 The checked model adds one linear `Chain(slot, generation, pin)` fact per
 initialized slot. Its value is determined by the unique durable product-state:
@@ -51,35 +51,30 @@ changing pending to applied. `ClearJournal` consumes and reproduces the same
 Chain pair while changing applied to clean. `OpenVault`, snapshot reads and
 crashes preserve the invariant. Fresh slots separate independent instances.
 
-The former manual projection/lifting argument is replaced by the checked F*
-module [`m28-trace-equivalence/M28TraceEquivalence.fst`](m28-trace-equivalence/M28TraceEquivalence.fst)
-(verified by `m28-trace-equivalence/verify.sh`). It encodes the original seven
-rules and the instrumented rules with the `Chain` premise/conclusion exactly,
-for one slot and an arbitrary strict-increase guard. The main results are:
+The checked F* module
+[`M28TraceEquivalence.fst`](m28-trace-equivalence/M28TraceEquivalence.fst)
+proves step/trace equivalence and the Chain invariant **for two typed,
+initialized single-slot encodings**. Its transfer functions are generic schemas:
+they require a proof of the supplied event-trace predicate. This module does
+not define/prove the all-pairs properties or import Tamarin's verdicts.
 
-- `reach_lift_projects`: every reachable lifted event trace projects to a
-  reachable original trace with exactly the same event list, including order.
-- `reach_core_lifts`: every reachable original event trace lifts to a
-  reachable lifted trace with exactly the same event list.
-- `reach_lift_wf`: in every reachable lifted state, `Chain` is the pair
-  determined by the durable phase.
-- `transfer_lifted_to_original` and `transfer_original_to_lifted`: any
-  predicate on event traces transfers in both directions.
+The [mapping and residual obligations](m28-trace-equivalence/README.md) separate
+the checked kernel from the manual source bridge. In particular, applying an
+instrumented Tamarin theorem to the original Tamarin source still requires:
 
-The rule-by-rule and state-fact mapping, including the treatment of
-`Snapshot` linearity, `Fr(~tx)` freshness, `!Profile`, `!ReadyGeneration`, and
-the `Increasing` restriction, is written out in
-[`m28-trace-equivalence/README.md`](m28-trace-equivalence/README.md). The F*
-module contains no `assume`, `admit`, axiom, or oracle.
+1. Every original Tamarin trace, projected to the relevant initialized slot,
+   embeds as a `reach_core` trace with the corresponding events.
+2. The F* lift of each such trace is admissible in the actual instrumented
+   Tamarin system, including attacker input knowledge and global freshness.
 
-This closes the previously manual Chain correspondence, not the implementation
-refinement. The F* rule encoding is a reviewed transcription of the `.spthy`
-rules rather than a parser-level refinement. A direct Tamarin proof of the two
-all-pairs goals on the seven original rules was attempted and did not finish
-inside the 600 s bound; the gate therefore still obtains those two Tamarin
-verdicts in the instrumented model and moves them to the original model through
-the checked transfer theorem above. Real Rust/filesystem refinement of M28
-remains open.
+Neither embedding is machine-checked. Typed terms, the per-slot `used` list,
+omitted `In`/`Out` conditions, persistent-set representation and global
+interleavings remain correspondence obligations. The constructive encoded
+lift preserves its base state/events, but equivalence of those encodings alone
+does not establish safety transfer between the actual source systems.
+A direct Tamarin proof on the original rules did not finish within 600 seconds.
+The ten M28 verdicts therefore remain instrumented-model results, with a
+reviewed manual source argument. Real Rust/filesystem refinement remains open.
 
 The vault revision in M28 is a provenance label, not a separate serialized
 VaultItem field. Repeated identical physical writes during recovery are

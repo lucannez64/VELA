@@ -251,17 +251,22 @@ with a strict revision advance so both antecedents are reachable. The two
 all-pairs goals are stated over emitted action events only; no state fact
 appears in a trace formula.
 
-The all-pairs proofs use the linear `Chain(slot, generation, pin)` ghost fact:
-it is initialised by `Initialize`, advanced by `PersistJournal`, and carried
-unchanged by `ClearJournal`. It is functionally determined by the two durable
-files, so every trace of the original rules has a unique Chain lift and
-deleting Chain from a lifted trace yields an original trace with the same
-observable actions. That projection/lifting argument is manual, not a
-machine-checked equivalence: the two all-pairs theorems are proved in a
-conservative extension of the transition system, not by a pure action-only
-proof on the original rules. No guard or restriction was changed; the only
-rule change is the Chain ghost-thread in `Initialize`, `PersistJournal` and
-`ClearJournal`, and no security restriction was added.
+The all-pairs proofs use the linear `Chain(slot, generation, pin)` ghost fact,
+threaded through `Initialize`, `PersistJournal` and `ClearJournal`. No guard
+or security restriction was changed. The [F★ development](../formal/m28-trace-equivalence/README.md)
+checks event-preserving step/trace lifting and projection between two typed,
+initialized, single-slot encodings, with and without Chain. This is a checked
+sub-step of the correspondence argument; it does not import the Tamarin
+verdicts. Its transfer theorem takes the encoded trace property as a proof
+argument, and the two all-pairs goals are not proved in that artifact.
+
+Two source obligations remain unproved: original Tamarin traces must embed
+into the core encoding, and their encoded lifts must correspond to admissible
+instrumented Tamarin traces. Attacker input derivability, global freshness,
+term/sort representation, initialization and multi-slot projection require
+that bridge. Thus the actual all-pairs verdicts remain results about the
+instrumented Tamarin model. The source bridge and Rust/filesystem refinement
+remain open; the handwritten F★ artifact adds no extracted Rust contracts.
 
 The product-state facts encode separate writes to the two files. Durable
 single-file replacement is trusted; local edits, native persistence and
