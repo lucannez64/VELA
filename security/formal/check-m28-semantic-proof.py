@@ -8,6 +8,15 @@ REQUIRED = {
     'step_core_to_lift', 'step_lift_projects', 'reach_core_lifts',
     'reach_lift_projects', 'reach_lift_wf', 'transfer_lifted_to_original',
     'transfer_original_to_lifted',
+    # Encoded all-pairs goals and their core/lift proofs.
+    'journal_generation_at_most_once', 'clear_pins_strictly_increase',
+    'reach_core_journal_unique', 'reach_lift_journal_unique',
+    'reach_core_clear_pins_strict', 'reach_lift_clear_pins_strict',
+    # Concrete order instance and the two-commit non-vacuity witness.
+    'term_order', 'subterm_trans', 'subterm_irrefl',
+    'two_commits_reach', 'two_commits_reach_lift',
+    'two_commits_clear_goal', 'two_commits_journal_goal',
+    'two_commits_ordered',
 }
 
 
