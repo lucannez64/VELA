@@ -63,7 +63,7 @@ zeroize = { version = "1", features = ["derive"] }
 # WebAuthn credential keys (ES256). Kept out of vela-crypto on purpose so the
 # server, which depends on that crate and has no passkeys, does not carry an
 # ECDSA stack. See src/credential_key.rs.
-p256 = { version = "0.13", features = ["ecdsa"] }
+p256 = { version = "0.14", features = ["ecdsa", "getrandom"] }
 vela-crypto = { path = "../../libVELA/vela-crypto" }
 vela-import = { path = "../../libVELA/vela-import" }
 vela-core = { path = "../../libVELA/vela-core" }
