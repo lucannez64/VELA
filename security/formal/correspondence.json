@@ -295,6 +295,16 @@
         "serverVELA/vela-server/src/device/invitation.rs": "9586807c11101ed36b3831df4c3c3c4b5acd3edcc7f79b84a135d0f6cf0d33b2",
         "serverVELA/vela-server/src/device/rendezvous.rs": "dac8cfb3a79dafb745ea1e9cbb6969bd3cf0f6a70bd7c8f7f325212e20002c70"
       }
+    },
+    {
+      "boundary": "bounded single-use challenge conformance across verify/enroll/web-token plus concurrent race test (no purpose binding; signature security, multi-node stores, crash and real TTL not covered)",
+      "artifacts": {
+        "serverVELA/vela-server/tests/challenge_single_use_model.rs": "f062328e6971f50e2d660d265914ce710f9ded5b41260f971ace245825ecce0e",
+        "serverVELA/vela-server/src/auth/challenge.rs": "7d1039e9094fb46aa7e2044bd38a35551f3c032cfca711df592e717d301436ee",
+        "serverVELA/vela-server/src/auth/verify.rs": "60b09e41b127a79c2dd51edc6ea9b09ab63d344e1acd4a92c661fa647789831c",
+        "serverVELA/vela-server/src/device/enroll.rs": "a16742b8bc879db82ee0d9c9fe8afe8a7aafcf99c06e70e6438086463cc3c554",
+        "serverVELA/vela-server/src/web_session/mod.rs": "9be9bbfa52509c1ef59e01a65d4369b5897a8a391c53d783b46f8e32b1e600ef"
+      }
     }
   ]
 }
