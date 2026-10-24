@@ -287,6 +287,14 @@
         "serverVELA/vela-server/src/recovery/recover.rs": "301291045074be0dc11fe6ad76c257fe9b044324a79804e1a2e28959c7d4241c",
         "serverVELA/vela-recovery-policy/proofs/fstar/driver-composition/Vela_recovery_policy_driver_composition.fst": "6297a30d6f26365ee50dbd6d8f922387b4079de0958524aec1cf7644a89f1697"
       }
+    },
+    {
+      "boundary": "bounded device invitation/rendezvous handler conformance against M13 (depth 3 CI / 4 local; crypto validity, real concurrency, TTL expiry and rate limits not covered)",
+      "artifacts": {
+        "serverVELA/vela-server/tests/pairing_model.rs": "b78d0620afda029eb70835c8b780f40e16775e7c75812674948dfce42c27065f",
+        "serverVELA/vela-server/src/device/invitation.rs": "9586807c11101ed36b3831df4c3c3c4b5acd3edcc7f79b84a135d0f6cf0d33b2",
+        "serverVELA/vela-server/src/device/rendezvous.rs": "dac8cfb3a79dafb745ea1e9cbb6969bd3cf0f6a70bd7c8f7f325212e20002c70"
+      }
     }
   ]
 }
