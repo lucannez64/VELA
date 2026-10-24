@@ -14,7 +14,7 @@ done
 cargo test
 
 cargo hax into \
-  -i '-** +vela_share_policy::plan_ek_registration +vela_share_policy::forged_ek_binding_can_register +vela_share_policy::replayed_ek_binding_can_register +vela_share_policy::foreign_device_ek_can_register +vela_share_policy::revoked_device_ek_can_register +vela_share_policy::plan_send +vela_share_policy::timestamp_format_plausible +vela_share_policy::plan_link_mutation +vela_share_policy::non_sender_can_mutate_link +vela_share_policy::revoked_link_can_mutate' \
+  -i '-** +vela_share_policy::ek_registration_facts +vela_share_policy::plan_ek_registration +vela_share_policy::forged_ek_binding_can_register +vela_share_policy::replayed_ek_binding_can_register +vela_share_policy::foreign_device_ek_can_register +vela_share_policy::revoked_device_ek_can_register +vela_share_policy::send_facts +vela_share_policy::plan_send +vela_share_policy::timestamp_format_plausible +vela_share_policy::link_mutation_facts +vela_share_policy::plan_link_mutation +vela_share_policy::non_sender_can_mutate_link +vela_share_policy::revoked_link_can_mutate +vela_share_policy::unauthenticated_sender_can_send_observed +vela_share_policy::unregistered_recipient_can_receive_observed +vela_share_policy::empty_capsule_can_be_sent_observed +vela_share_policy::full_inbox_can_receive_observed +vela_share_policy::unverified_signature_can_register_observed +vela_share_policy::foreign_device_ek_can_register_observed +vela_share_policy::revoked_device_ek_can_register_observed +vela_share_policy::replayed_ek_binding_can_register_observed +vela_share_policy::non_sender_can_mutate_observed_link +vela_share_policy::revoked_link_can_mutate_observed +vela_share_policy::missing_link_can_mutate_observed' \
   fstar --z3rlimit 100
 
 mapfile -t proof_files < <(

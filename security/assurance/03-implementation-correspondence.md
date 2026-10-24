@@ -70,7 +70,7 @@ Each crate follows the same pattern:
 | `serverVELA/vela-session-policy` | 21: two observation constructors, two observation/decision compositions, six new negative theorems, and the prior 11: `parse_scope_claim`, `plan_grant`, `plan_device_token`, `plan_web_session_token`, `plan_renewal`, `authorize_route`, `clamp_web_ttl`, `web_session_expired`, plus 3 negative theorems | M12, M20 | `middleware.rs` (`DeviceSession` extractor), `auth/token.rs`, `web_session/mod.rs` |
 | `serverVELA/vela-enrollment-policy` | 29 checked in hosted F★: 5 decisions, 5 fact constructors and 19 negative theorems | M13 | `device/rendezvous.rs` |
 | `serverVELA/vela-recovery-policy` | 90: the prior 42, 29 possession/enrollment observation contracts, 8 preflight contracts and 11 independent ordering/readiness contracts | M14, M16, M18 (server side) | `recovery/{initiate,recover,possess,webauthn,enroll_device,mod}.rs` |
-| `serverVELA/vela-share-policy` | 10: `plan_ek_registration`, `plan_send`, `plan_link_mutation`, `timestamp_format_plausible`, plus 6 negative theorems | M19b, M21 | `share/mod.rs` |
+| `serverVELA/vela-share-policy` | 23: 9 checked postconditions plus three observation constructors (`ek_registration_facts`, `send_facts`, `link_mutation_facts`), three decisions and eighteen negative theorems; 14 postconditions await hosted extraction (24 selected entry points) | M19b, M21 | `share/mod.rs` |
 | `libVELA/vela-client-recovery-policy` | 18: `plan_reconstruction`, `plan_adoption`, `plan_publication_resume`, `plan_contact_delivery`, plus 14 negative theorems | M15, M17, M18 (client side) | `vela-crypto/src/recovery.rs`, `desktopVELA/vela-desktop-core/src/recovery.rs`, Android and Apple bridges |
 | `libVELA/vela-sync-policy` | 11: `plan_epoch_adoption`, `plan_chunk_download`, `classify_merge_action`, plus 8 negative theorems | M23 | `desktopVELA/vela-desktop-core/src/sync.rs` **only** |
 
@@ -97,6 +97,14 @@ constructors and fifteen negative theorems (twenty selected entry points) that
 passed hosted extraction and F★ checking on fbe35c0. The earlier hosted 159/152 counts include
 them; recovery extended the inventory to 180/173, reproduced in hosted CI on 5fa4e9f. The local web-session increment extended this to 190/183, and the [possession/enrollment increment](15-recovery-possession-enrollment.md) to 219/212. The [preflight increment](16-enrollment-preflight.md) first brought this to 227/220; the independent ordering proof brings it to 238/231. The [exact CI evidence](proof-logs/current/hosted-enrollment-40039992434/README.md)
 preserves the regenerated enrollment artifact without editing its body.
+
+The share fact-construction increment adds three observation constructors and
+eleven observation-based negative theorems (fourteen postconditions). It brings
+`serverVELA/vela-share-policy/verify-fstar.sh` to 24 selected entry points and,
+once hosted extraction checks it, the corpus to 252 selected functions and 245
+explicit postconditions; the 238/231 counts describe the last checked snapshot
+and do not include the increment. `identical_timestamp_can_be_fresher` remains
+outside the selected set, as before this increment.
 
 The CI `refinement` job installs pinned tools, runs all eight crates and the constructor,
 retaining logs. The complete [security workflow](https://github.com/lucannez64/VELA/actions/runs/40008926193)
@@ -209,15 +217,17 @@ claim across layers:
    matches `ek_registration_decision_matches_spec`, and
    `forged_/replayed_/foreign_device_/revoked_device_ek_can_register` are
    all `false`.
-3. **Glue:** `serverVELA/vela-server/src/share/mod.rs` around lines 600–680
-   computes `signature_verified` (hybrid verify over
-   `share_ek_binding_message`), `device_active` (SQL `revoked` column),
-   `device_owned_by_caller` (hard-coded `true`, justified by the
-   `d.user_id = ?` join), and `signed_at_is_fresher` (bytewise comparison).
+3. **Glue:** `serverVELA/vela-server/src/share/mod.rs` around lines 640–770
+   builds `ek_registration_facts` from the decoded share-EK length, the hybrid
+   verifier result, the selected device row (including comparing `d.user_id` to
+   the caller), the `revoked` column, whether a binding already exists, and the
+   bytewise `signed_at_is_fresher` result. The constructor's F\* postcondition
+   states each fact in terms of those observations.
 4. **Questions the proofs cannot answer:** Is the SQL join really
-   ownership-scoped? Is the signature verification hybrid-AND? Does the
-   bytewise freshness comparison match chronological order for every
-   RFC 3339 string the handler accepts? The handler stores the
-   client-supplied string as-is, while M25 assumes a canonical rendering
-   (see [Q-6](06-engaging-researchers.md#priority-questions)).
+   ownership-scoped? The policy now receives both row presence and an explicit
+   owner comparison, but the SELECT itself is still unverified glue. Is the
+   signature verification hybrid-AND? Does the bytewise freshness comparison
+   match chronological order for every RFC 3339 string the handler accepts? The
+   handler stores the client-supplied string as-is, while M25 assumes a
+   canonical rendering (see [Q-6](06-engaging-researchers.md#priority-questions)).
 5. **Executable:** exploit `test_rt5_share_ek_hijack.py`.

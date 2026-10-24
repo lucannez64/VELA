@@ -43,7 +43,7 @@
     },
     {
       "artifact": "serverVELA/vela-share-policy/proofs/fstar/extraction/Vela_share_policy.fst",
-      "selected_postconditions": 9,
+      "selected_postconditions": 23,
       "allowed_assume_val": []
     },
     {
