@@ -41,6 +41,9 @@ run() {
     exit 1
   fi
   if [[ $got != "$expect" ]]; then echo "$model: expected $expect, got $got; see $log" >&2; exit 1; fi
+  if [[ $model == kem_v2_x25519_gdh_nonuniform ]]; then
+    python3 "$root/check-cryptoverif-bound.py" "$log"
+  fi
   echo "$model: $got (as expected)"
   grep '^RESULT Proved' "$log" | sort -u | sed 's/^/  /' || true
 }

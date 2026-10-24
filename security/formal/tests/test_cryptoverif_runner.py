@@ -24,7 +24,20 @@ if model == 'kem_v1_x25519_baseline':
     sys.exit(124 if mode == 'baseline_timeout' else 0)
 if mode != 'missing_query_witness':
     query = 'event(forge) ==> false' if model.startswith('hybrid_sig_') else 'bit secrecy of b'
-    print('RESULT Proved ' + query + ' up to probability 0')
+    bound = '0'
+    if model == 'kem_v2_x25519_gdh_nonuniform':
+        bound = '4 * pDistRerandom + 2 * pGDH(time_1, 2 * qH) + (2 * Qd + 2 * qH) * PCollKey'
+        if mode == 'nonuniform_zero_bound':
+            bound = '0'
+        elif mode == 'nonuniform_uniform_bound':
+            bound = bound.replace('* PCollKey', '/ |Z|')
+        elif mode == 'nonuniform_extra_collision':
+            bound += ' + Pcoll1rand(Z)'
+        elif mode == 'nonuniform_changed_coefficient':
+            bound = bound.replace('2 * Qd', 'Qd')
+        elif mode == 'nonuniform_missing_rerandomization':
+            bound = bound.replace('4 * pDistRerandom + ', '')
+    print('RESULT Proved ' + query + ' up to probability ' + bound)
 print('All queries proved.')
 '''
 
@@ -60,6 +73,22 @@ class RunnerTests(unittest.TestCase):
         self.assertIn('kem_v1_x25519_baseline: unproved (as expected)', result.stdout)
         self.assertIn('kem_v2_x25519_gdh_nonuniform: proved (as expected)', result.stdout)
         self.assertEqual(result.stdout.count('(as expected)'), 7)
+
+    def test_nonuniform_bound_drift_is_rejected(self):
+        for mode in ('nonuniform_zero_bound', 'nonuniform_uniform_bound',
+                     'nonuniform_extra_collision', 'nonuniform_changed_coefficient',
+                     'nonuniform_missing_rerandomization'):
+            with self.subTest(mode=mode):
+                result = self.invoke(mode)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('nonuniform bound changed', result.stderr)
+
+    def test_retained_nonuniform_proof_bound_passes(self):
+        result = subprocess.run([
+            'python3', str(ROOT / 'security/formal/check-cryptoverif-bound.py'),
+            str(ROOT / 'security/assurance/proof-logs/current/x25519-nonuniform-gdh/kem_v2_x25519_gdh_nonuniform.log'),
+        ], capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_baseline_timeout_is_not_an_expected_nonproof(self):
         result = self.invoke('baseline_timeout')

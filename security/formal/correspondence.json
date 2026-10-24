@@ -133,15 +133,16 @@
         "security/formal/cryptoverif/kem_v1_x25519_baseline.ocv": "cf5b6b780c01cd8bca5749723f4f083b7deb29c09dac3ef6a3e94e30a06e39cb",
         "security/formal/cryptoverif/kem_v2_mlkem_cca.ocv": "0aee82cc577eb7fa26b6525bbed79a1f08e2ce738edca8f2228b2ea946c01b5e",
         "security/formal/cryptoverif/kem_v2_x25519_gdh.ocv": "fc5f9fa9beb55117e6a4ff9a0496a8f5b5287f2d2b8724a7608f434848e96777",
-        "security/formal/cryptoverif/README.md": "78c044ca5afb2c83be833292502e7e1fbe8132963b19b32c92975aa0bd979521",
-        "security/formal/run-cryptoverif-proofs.sh": "3cb87557f23930847b2a7c79074f986c23055fb2528c3e7639a99a2ec6b86987",
+        "security/formal/cryptoverif/README.md": "836e62bbfab20d2243f1c99b8f828c841f5a110e03d2bdfdd779dc4e94296c94",
+        "security/formal/run-cryptoverif-proofs.sh": "276e9d29f3f30dc8dd53bd63e49897fe79ffef1803d26fddc3f0e08bc94ecabd",
         "security/formal/check-cryptoverif-boundary.py": "3e79da3d7b3ecb9b88aa435ee6fd0c2cebd3d0b41fad322643193879915158cd",
-        "security/formal/tests/test_cryptoverif_runner.py": "5021f709ce654ee6befc9a82afc79e7975fdea20221cc97d0905ecb8850c49bf",
+        "security/formal/tests/test_cryptoverif_runner.py": "359f299d17add632ad69725e00bacc78e75bf4bde7c197de302cf6ada1cdeb93",
         "libVELA/vela-crypto/src/kem.rs": "c9a17b26b6624f65ad4539b0d3449e10b36236cd6a015be7a4546c4b56457885",
         "libVELA/vela-crypto/src/signing.rs": "82c9e2f3f9882d62cad5707cd8287b1299b373b10629eff912477f519249150b",
         "libVELA/vela-crypto/src/aead.rs": "7840cd68b6b510284e3fba940ced84712af0ecd7914f2833fc1bbc8cccb2e46f",
         "security/formal/cryptoverif/kem_v2_x25519_gdh_nonuniform.ocv": "d85cef886c776209a68a430ad51007e3c1caa3a07e03bc5833eb9094370c5726",
-        "security/formal/cryptoverif/HPKE-LICENSE.txt": "590b84bda61a1562c260501aac68769dd751ca077d61dd634797ea858981eeec"
+        "security/formal/cryptoverif/HPKE-LICENSE.txt": "590b84bda61a1562c260501aac68769dd751ca077d61dd634797ea858981eeec",
+        "security/formal/check-cryptoverif-bound.py": "6ce6ff75912a92d1eac0d49a3eb4b85bb5783fa23a7010cc6fbea6fa855ccfcd"
       }
     },
     {

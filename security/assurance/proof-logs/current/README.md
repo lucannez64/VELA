@@ -1,4 +1,33 @@
-# Local evidence, 2026-10-23
+# Evidence index
+
+The hosted baseline on `5fa4e9f` passed the complete security workflow,
+including 173 F★ postconditions and the instrumented journal proofs:
+https://github.com/lucannez64/VELA/actions/runs/40065136343.
+
+Newer local increments, awaiting hosted reproduction:
+
+- [Web-session observations](session-observation-refinement/README.md): ten
+  additional checked postconditions (183 in the corpus), exact extraction,
+  eight policy tests and thirteen handler integration tests.
+- [Nonuniform GDH companion](x25519-nonuniform-gdh/README.md): the seventh
+  computational game; six positive proofs plus the explicit legacy nonproof,
+  with full per-model logs. Collision/distribution and Rust correspondence
+  assumptions are documented; an internal review is not an external audit.
+
+Other recent scoped evidence:
+
+- [Journal all-pairs](journal-all-pairs/README.md): ten M28 and eleven M29
+  results; Chain trace equivalence remains a manual step.
+- [P-256 advisory repair](p256-advisory-fix/README.md): compatibility tests,
+  dependency checks, and the local/hosted distinction.
+- [Recovery constructors](recovery-fact-refinement/README.md): the preceding
+  42-contract recovery snapshot and real-store insertion regression.
+
+The snapshots below retain their original counts and provenance. They do not
+by themselves establish results for later source changes or a whole-system
+theorem. The manifest covers the current retained files.
+
+# Archived local snapshot, 2026-10-23
 
 Implementation HEAD: `148ff3261b62bd60df0d99d354e093500779fdce`, with the
 model/documentation/runner changes in the manifest's working tree. These are

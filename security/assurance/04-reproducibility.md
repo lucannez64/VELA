@@ -147,7 +147,8 @@ python3 -m unittest discover -s security/formal/tests -p 'test_cryptoverif_runne
 
 The gate requires the expected query result and rejects process failures,
 missing verdicts and local manual/admitted declarations. Its source scan is a
-lexical drift guard; it does not establish the soundness or adequacy of each
+lexical drift guard. The nonuniform companion also pins its reviewed probability
+bound through `check-cryptoverif-bound.py`; this output check does not establish the soundness or adequacy of each
 primitive assumption, equation, type or implementation mapping. Model-review
 corrections and local evidence are in
 `proof-logs/current/computational-review-corrections/`.

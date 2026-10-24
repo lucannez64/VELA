@@ -11,7 +11,7 @@ ss = HKDF-SHA256(ss_mlkem ‖ ss_x25519 ‖ x25519_epk ‖ x25519_pk ‖ SHA-256
 | Model | Local result | Statement and bound |
 |---|---|---|
 | `kem_v2_x25519_gdh.ocv` | proved | Single-recipient IND-CCA2 in a **uniform prime-order GDH model**, with public ML-KEM functions, a correctness equation and the ML-KEM secret key disclosed. No ML-KEM secrecy assumption. Bound: `4·pDistRerandom + 2·pGDH(t, 2·qH) + (2·Qd + 2·qH)/|Z|` |
-| `kem_v2_x25519_gdh_nonuniform.ocv` | proved | Single-recipient IND-CCA2 in a **nonuniform (clamped-style) exponent GDH model** (`DH_basic` + `DH_proba_collision_minimal` + `GDH_RSR_minimal`), otherwise the same game and disclosures as the uniform model. Bound: `4·pDistRerandom + 2·pGDH(t, 2·qH) + (2·Qd + 2·qH)·PCollKey`; Curve25519 instance `4·2^-125 + 2·pGDH(t, 2·qH) + (2·Qd + 2·qH)·2^-250` |
+| `kem_v2_x25519_gdh_nonuniform.ocv` | proved | Single-recipient IND-CCA2 in a **nonuniform (clamped-style) exponent GDH model** (`DH_basic` + `DH_proba_collision_minimal` + `GDH_RSR_minimal`), otherwise the same game and disclosures as the uniform model. Bound: `4·pDistRerandom + 2·pGDH(t, 2·qH) + (2·Qd + 2·qH)·PCollKey`; conditional HPKE-constant substitution `4·2^-125 + 2·pGDH(t, 2·qH) + (2·Qd + 2·qH)·2^-250` |
 | `kem_v2_mlkem_cca.ocv` | proved | Single-recipient IND-CCA2 under **ML-KEM IND-CCA2 and the library collision bounds**, with the DH secret exponent disclosed. Bound: `2·Penc(t, 1, 1, Qd) + 6·Qd·Pctxtcoll + 2·qH/|mlss| + (8·Qd + 2·qH)/|Z|` |
 | `kem_dem_seal_share.ocv` | proved | Modular IND-CCA2 public-key encryption for an abstract IND-CCA2 KEM plus IND-CPA/INT-CTXT AEAD and a fresh random nonce. The bound includes `2·Pkem`, `2·Pencctxt`, two separate `2·Penc` terms and `10·Qd·Pctxtcoll`; full time/message-length arguments are in the log |
 | `hybrid_sig_mldsa_euf.ocv` | proved | AND-signature EUF-CMA under the ML-DSA-87 assumption, with the Ed25519 secret key disclosed. Bound: `Pmldsa(t, Qs)` |
@@ -48,6 +48,14 @@ into the machine-checked bound gives the `4·2^-125 + 2·pGDH(t, 2·qH) +
 for the rerandomization term; the larger `2^-125` is conservative.) These
 values are an instantiation of the distribution terms, not a proof that the
 Rust implementation samples this distribution or that clamping is correct.
+In the abstract injective group the corresponding point-collision bound is
+`2^-251`; using `2^-250` enlarges that bound conservatively. The factor two
+for Montgomery coordinate aliases is imported as an allowance from the HPKE
+analysis, not established by this model (which has no coordinate encoding).
+The `pGDH` symbols also have different multi-instance accounting in `GDH`
+and `GDH_RSR_minimal`. Their multiplicity factors reduce to one in this
+single-pair instance; the underlying assumptions must still be read from their
+respective definitions, especially for other distributions or multi-pair extensions.
 
 The signature games machine-check the reduction described in
 [the signature note](../../assurance/10-signature-reduction.md), under independent
@@ -84,6 +92,9 @@ passed.
   exponent type with `DH_proba_collision_minimal` and `GDH_RSR_minimal`. The
   default exponent distribution is otherwise unspecified; only `PCollKey`,
   `pDistRerandom` and the type's `large`/`pcoll160` bound constrain it. The
+  latter includes the type-level hypothesis `Pcoll1rand(Z) <= 2^-160`.
+  It is compatible with the stated clamped set (`2^-251`) and is not charged
+  in the final result: that result contains no `Pcoll1rand(Z)` term. The
   Curve25519 instance above is therefore a *stated distribution-loss
   accounting*, not a machine-checked statement that real X25519 scalars are
   clamped, that clamping is correct, or that `Z` is the implementation's
@@ -142,3 +153,10 @@ retained unchanged as [HPKE-LICENSE.txt](HPKE-LICENSE.txt). The CryptoVerif
 distribution credits ENS, CNRS, INRIA, MPI-SP and Ecole Polytechnique,
 2005–2025. This reuse does not transfer HPKE's complete security argument
 to VELA; only the explicitly instantiated assumptions are used.
+
+The runner pins the reviewed nonuniform result's coefficients and probability
+terms through `check-cryptoverif-bound.py`. It rejects missing rerandomization
+loss, changed coefficients, a uniform-domain denominator, and additional
+collision terms. This is bound-output drift detection, not validation of the
+collision side conditions or primitive assumptions. The retained golden proof
+log and negative fixtures exercise the checker.
