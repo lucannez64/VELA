@@ -80,7 +80,7 @@
         "serverVELA/vela-recovery-policy/src/lib.rs": "e392228715468d36c4a547e80f96e703a6d439be4f2a4bb74cf78d41925d3855",
         "serverVELA/vela-rekey-policy/src/lib.rs": "4ce4d9604cd924f12d05b5ec62f2b40d9917194e7baa20fde348dd27a81b0dfb",
         "serverVELA/vela-session-policy/src/lib.rs": "3befdaca67cc99334e7e3ebac343ba0b6d1ac2a08afa95bee7542045b2fb44b4",
-        "serverVELA/vela-share-policy/src/lib.rs": "7e4b4f907db343dccc3bf5a1ee2a10feb6ee00bd88bc97162cbf514c39c1208c"
+        "serverVELA/vela-share-policy/src/lib.rs": "da437c2951bafafd342185bb6d436f5b48c92c73f47b1cd2064ee71e6671c007"
       }
     },
     {

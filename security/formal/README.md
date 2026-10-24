@@ -328,8 +328,8 @@ session of the sender may also revoke.
 
 Expected: **3 Tamarin lemmas verified**. The enforced rules are the SQL
 predicates in `share/mod.rs` (sender identity match for updates/deletes,
-`revoked = 0` filter); `vela-share-policy::plan_link_mutation` exists but is
-not called by these handlers, and there is no `If-Match`/ETag comparison.
+`revoked = 0` filter), with `vela-share-policy::plan_link_mutation` deciding on
+facts observed from the row first; there is no `If-Match`/ETag comparison.
 `serverVELA/vela-server/tests/share_channel_model.rs` checks the real handlers
 against the M19b/M21 state machine for every sequence up to depth 3 (CI). The shared channel's complete verified stack is
 M19 (binding integrity) + M20 (route gating) + M21 (revocation finality).

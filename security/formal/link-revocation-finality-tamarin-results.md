@@ -60,8 +60,9 @@ The enforced server-side rules are `authorize_route` (already hax-verified in
 `vela-session-policy`) and the SQL predicates in `share/mod.rs`: only the
 sender may update/delete (`DELETE` and `PUT /share/linked` require the
 session user to match `sender_user_id`), `revoked = 0` excludes revoked rows
-in `get_linked_items`. These handlers do not call
-`vela_share_policy::plan_link_mutation`, and there is no ETag comparison. They
+in `get_linked_items`. Both handlers also call
+`vela_share_policy::plan_link_mutation` on facts observed from the row; there
+is no ETag comparison. They
 take `AuthSession`, so a web session of the sender may also update or revoke.
 The formal model proves the structural exclusion these predicates enforce; the
 bounded conformance test `share_channel_model.rs` checks the real handlers

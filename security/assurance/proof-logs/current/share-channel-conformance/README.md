@@ -30,6 +30,8 @@ Executable evidence for bounded sequential traces, not a proof. Concurrency
 are not explored. The database's single-statement atomicity is trusted.
 
 Findings while writing it: the linked-share update and revoke handlers
-enforce "sender only, not revoked" in SQL and do **not** call
-`vela_share_policy::plan_link_mutation`; there is no `If-Match`/ETag check on
-updates, although earlier M21 notes described one.
+enforced "sender only, not revoked" only in SQL and did not call
+`vela_share_policy::plan_link_mutation`; they now call it on observed facts
+(commit 2a90eb1), and this test passed unchanged against the rewritten
+handlers. There is no `If-Match`/ETag check on updates, although earlier M21
+notes described one.
