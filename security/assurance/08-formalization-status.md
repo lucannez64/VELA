@@ -28,14 +28,23 @@ turn any open obligation below into a proved result.
   crypto correctness and context origins remain unproved. A local defined
   String view is manually trusted; see the
   [proof boundary](../../libVELA/vela-crypto/proofs/fstar/README.md).
-- **Seven Tamarin journal properties.** M28 checks matching content/pins on
+- **Ten Tamarin journal properties.** M28 checks matching content/pins on
   opening, journal-before-vault writes, vault-before-cleanup, snapshot-generation
   provenance, one application per transaction, strict revision advance at each
-  commit, and a crash/recovery witness. Atomic durable single-file replacement
-  is assumed. Product-state rules write the two files separately; no atomic
-  two-file write is assumed. Crashes preserve durable state; retained stale
-  snapshots overapproximate volatile behavior. Local edits/deletions and
-  independent processes are outside M28.
+  commit, a crash/recovery witness, the exact all-pairs goals
+  `committed_pins_never_decrease` and `a_generation_commits_at_most_once`, and
+  a two-successive-commit witness. The all-pairs goals are stated over emitted
+  actions only and are nonvacuous: the witness makes both antecedents
+  reachable. Their proofs use a conservative `Chain` ghost fact, described
+  below; the original action trace set is preserved by a manual projection and
+  lifting argument, not a machine-checked equivalence. Atomic durable
+  single-file replacement is assumed. Product-state rules write the two files
+  separately; no atomic two-file write is assumed. Crashes preserve durable
+  state; retained stale snapshots overapproximate volatile behavior. Local
+  edits/deletions and independent processes are outside M28. The journal runner
+  also rejects lemma/restriction atoms whose fact name or arity is not emitted
+  in a rule action list (`check-action-atoms.py`); this is a source guard
+  against vacuity, not a soundness certificate.
 - **Additional production composition and parsing.** The actual
   `plan_observed_share` composition proves raw decoded-field authorization,
   including rejection, pin matching and permit revision. The real prefix reader
@@ -159,15 +168,44 @@ Every complete scoped proof must still choose a logic/kernel, machine model
 and interface to physical execution. An assumed OS operation in a model is
 not a proof that a deployed filesystem implements that operation.
 
-## Stronger journal goals not proved
+## All-pairs journal goals
 
-An exploratory run added all-pairs `a_generation_commits_at_most_once` and
-`committed_pins_never_decrease` goals. Search was stopped without completing and without a proof verdict. These goals are not counted
-among the seven verified M28 results or included in its CI success set. Strict
-advance at an individual commit is proved; the stronger unbounded all-pairs
-theorem was not established. The explicitly named unfinished log is retained.
+The journal gate now verifies ten M28 lemmas. The two previously open all-pairs
+statements are included with their exact conclusions and no added premise:
+
+- `committed_pins_never_decrease`: for every two `JournalCleared(slot, tx, g,
+  r)` events in the same slot, an earlier event has `r1 << r2`.
+- `a_generation_commits_at_most_once`: two `JournalDurable` events in the same
+  slot with the same generation occur at the same time.
+
+Both formulas mention only emitted rule actions. The witness
+`two_successive_commits_advance` exhibits two successive real commits with
+concrete generations
+`successor('initial')` and `successor(successor('initial'))`, two cleanups and
+a strict revision advance, so neither goal is vacuous. The existing
+crash/recovery witness remains reachable.
+
+The proofs use a linear `Chain(slot, generation, pin)` ghost fact added to
+`Initialize`, `PersistJournal` and `ClearJournal`. Chain is functionally
+determined by the two durable files: it is initialised to the initial pair,
+advanced to `(successor(gen), next_revision)` when the journal becomes pending,
+and carried unchanged through cleanup. Consequently every trace of the original
+rules has a unique Chain lift, and deleting Chain yields an original trace with
+the same observable actions. This projection/lifting argument is manual, not
+machine-checked; the two all-pairs theorems are therefore established for a
+conservative extension of M28, not for a pure action-only proof on the original
+rules. No guard or restriction was changed; the only rule change is the Chain
+ghost-thread, and no security restriction was added.
+
+The journal runner first runs `check-action-atoms.py` on M28 and M29. It strips
+comments and string literals, collects each rule's action name/arity, and
+rejects lemma or restriction atoms whose fact is not an emitted action. The
+regression fixture `tests/vacuous-action-atom.spthy` is rejected for
+`DiskClean/5`; the real models pass. This catches the historical vacuity shape
+but does not certify soundness.
 
 A matching hash, finite tests, unproved annotation, ideal primitive, new axiom
 or mocked database cannot substitute for these obligations. No unsupported
 computational reduction, full Rust/Kotlin/Swift refinement or whole-system
-completion claim is supplied here.
+completion claim is supplied here. In particular, the Chain
+projection/lifting step and real Rust/filesystem refinement of M28 remain open.

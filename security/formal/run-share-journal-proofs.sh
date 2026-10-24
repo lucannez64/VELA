@@ -4,6 +4,13 @@ set -euo pipefail
 root=$(cd "$(dirname "$0")" && pwd)
 out=${VELA_PROOF_OUT:-$(mktemp -d -t vela-share-journal.XXXXXX)}
 mkdir -p "$out"
+
+# Reject trace-formula fact atoms that no rule emits as an action.  A state
+# fact cannot be observed by "Fact(...) @ #i"; such a lemma is unreachable and
+# vacuous.  This is a source guard, not a soundness certificate.  The
+# regression also checks that the historical DiskClean(...) @ #i shape fails.
+bash "$root/tests/run-action-atom-guard.sh"
+
 for model in m28_share_journal m29_signed_share_commit; do
   log="$out/$model.log"
   "$root/../assurance/bounded.sh" "$root/tamarin-bounded.sh" --derivcheck-timeout=30 --prove "$root/$model.spthy" >"$log" 2>&1

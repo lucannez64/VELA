@@ -237,17 +237,43 @@ remain hand-written abstractions rather than extracted Rust protocols.
 
 ## Recoverable share storage (M28)
 
-[`m28_share_journal.spthy`](../formal/m28_share_journal.spthy) adds seven locally
-verified properties about journal/vault/cleanup ordering, matching pins/content
-on opening, snapshot-generation provenance, per-transaction application
-uniqueness, per-commit revision advancement and crash/recovery reachability.
-Its product-state facts encode separate writes to the two files. Durable
+[`m28_share_journal.spthy`](../formal/m28_share_journal.spthy) adds ten locally
+verified properties: the original seven about journal/vault/cleanup ordering,
+matching pins/content on opening, snapshot-generation provenance,
+per-transaction application uniqueness, per-commit revision advancement and
+crash/recovery reachability; the two exact all-pairs goals
+`committed_pins_never_decrease` (for any two cleanups in a slot, the later
+cleanup pins a strictly larger revision) and
+`a_generation_commits_at_most_once` (one slot cannot make the same generation
+durable in two transactions); and the witness
+`two_successive_commits_advance`, which exhibits two successive real commits
+with a strict revision advance so both antecedents are reachable. The two
+all-pairs goals are stated over emitted action events only; no state fact
+appears in a trace formula.
+
+The all-pairs proofs use the linear `Chain(slot, generation, pin)` ghost fact:
+it is initialised by `Initialize`, advanced by `PersistJournal`, and carried
+unchanged by `ClearJournal`. It is functionally determined by the two durable
+files, so every trace of the original rules has a unique Chain lift and
+deleting Chain from a lifted trace yields an original trace with the same
+observable actions. That projection/lifting argument is manual, not a
+machine-checked equivalence: the two all-pairs theorems are proved in a
+conservative extension of the transition system, not by a pure action-only
+proof on the original rules. No guard or restriction was changed; the only
+rule change is the Chain ghost-thread in `Initialize`, `PersistJournal` and
+`ClearJournal`, and no security restriction was added.
+
+The product-state facts encode separate writes to the two files. Durable
 single-file replacement is trusted; local edits, native persistence and
 independent processes are outside this model. Stale snapshots survive crashes
 as an overapproximation. Generation successor terms abstract checked u64
 increments; overflow is rejected by the separately checked production policy.
-See [formalization status](08-formalization-status.md) for exact nonclaims and
-the stronger goals whose searches did not complete.
+The journal runner also runs `check-action-atoms.py`, which rejects lemma or
+restriction atoms whose fact name/arity is not emitted in a rule action list;
+its regression rejects the historical `DiskClean(...) @ #i` shape. This is a
+lightweight source guard against vacuous trace formulas, not a soundness
+certificate. See [formalization status](08-formalization-status.md) for the
+exact claims and nonclaims.
 
 ## Composed signed sharing and commit (M29)
 

@@ -9,6 +9,19 @@ begin
    Signing, byte encodings, FS correctness, local edits and cross-process writes
    are outside this focused model. Candidate revision monotonicity is the
    verified admission-policy precondition, not a cryptographic theorem here.
+
+   The linear Chain(slot, generation, pin) fact is proof instrumentation, not
+   protocol state: it is the committed (generation, revision) pair, advanced
+   only by PersistJournal and carried unchanged by ClearJournal. It is
+   functionally determined by the two durable files, so every trace of the
+   original rules has a unique Chain lift and deleting Chain from any lifted
+   trace yields an original trace with the same observable actions. The two
+   all-pairs lemmas at the end are proved in this conservative extension; the
+   projection/lifting argument is a manual refinement step, not a machine
+   checked equivalence. No restriction or guard was changed; the only rule
+   change is the Chain ghost-thread in Initialize, PersistJournal and
+   ClearJournal, and the original transitions are recovered by projection.
+   The recovery witness remains reachable.
 */
 functions: successor/1
 
@@ -19,7 +32,8 @@ rule Initialize:
     [ Fr(~slot), Fr(~item) ]
   --[ Initialized(~slot) ]->
     [ !Profile(~slot), !ReadyGeneration(~slot, 'initial', 'initial'),
-      DiskClean(~slot, 'initial', 'initial', 'initial', ~item), Out(~slot) ]
+      DiskClean(~slot, 'initial', 'initial', 'initial', ~item),
+      Chain(~slot, 'initial', 'initial'), Out(~slot) ]
 
 // Old generation observations remain available after commits: this safely
 // overapproximates retained stale snapshots, including across a crash.
@@ -29,11 +43,12 @@ rule ReadSnapshot:
     [ Snapshot(slot, ~tx, gen, pinned) ]
 
 rule PersistJournal:
-    [ DiskClean(slot, gen, pinned, vrev, vpayload), Snapshot(slot, tx, gen, pinned),
-      In(<next_revision, payload>) ]
+    [ DiskClean(slot, gen, pinned, vrev, vpayload), Chain(slot, gen, pinned),
+      Snapshot(slot, tx, gen, pinned), In(<next_revision, payload>) ]
   --[ RevisionIncreases(pinned, next_revision),
       JournalDurable(slot, tx, successor(gen), pinned, next_revision, payload) ]->
-    [ DiskPending(slot, tx, successor(gen), next_revision, payload, vrev, vpayload) ]
+    [ DiskPending(slot, tx, successor(gen), next_revision, payload, vrev, vpayload),
+      Chain(slot, successor(gen), next_revision) ]
 
 rule PersistVault:
     [ DiskPending(slot, tx, gen, next, payload, vrev, vpayload) ]
@@ -41,9 +56,11 @@ rule PersistVault:
     [ DiskApplied(slot, tx, gen, next, payload, next, payload) ]
 
 rule ClearJournal:
-    [ DiskApplied(slot, tx, gen, pinned, intended, vrev, vpayload) ]
+    [ DiskApplied(slot, tx, gen, pinned, intended, vrev, vpayload),
+      Chain(slot, gen, pinned) ]
   --[ JournalCleared(slot, tx, gen, pinned) ]->
-    [ DiskClean(slot, gen, pinned, vrev, vpayload), !ReadyGeneration(slot, gen, pinned) ]
+    [ DiskClean(slot, gen, pinned, vrev, vpayload), Chain(slot, gen, pinned),
+      !ReadyGeneration(slot, gen, pinned) ]
 
 // Crashes do not change either durable file; they can occur arbitrarily often.
 rule Crash:
@@ -96,5 +113,31 @@ lemma recovery_is_reachable:
        JournalCleared(slot, tx, gen, next) @ #k &
        Opened(slot, gen, next, next, payload) @ #o &
        #j < #c & #c < #a & #a < #k & #k < #o"
+
+/* The requested all-pairs goals, stated over emitted action events only.
+   Chain is a ghost fact; it never appears in a trace formula.  Both goals
+   are reachable: see two_successive_commits_advance below. */
+
+lemma committed_pins_never_decrease [use_induction]:
+    "All slot tx1 tx2 g1 g2 r1 r2 #i #j.
+       JournalCleared(slot, tx1, g1, r1) @ #i &
+       JournalCleared(slot, tx2, g2, r2) @ #j & #i < #j ==> r1 << r2"
+
+lemma a_generation_commits_at_most_once [use_induction]:
+    "All slot tx1 tx2 gen o1 n1 p1 o2 n2 p2 #i #j.
+       JournalDurable(slot, tx1, gen, o1, n1, p1) @ #i &
+       JournalDurable(slot, tx2, gen, o2, n2, p2) @ #j ==> #i = #j"
+
+// Two successive real commits, both with a durable journal write followed by
+// cleanup, and a strict revision advance between them.  This witnesses the
+// antecedents of both all-pairs goals without relying on a state fact atom.
+lemma two_successive_commits_advance:
+    exists-trace
+    "Ex slot tx1 tx2 n1 n2 p1 p2 #a1 #b1 #a2 #b2.
+       JournalDurable(slot, tx1, successor('initial'), 'initial', n1, p1) @ #a1 &
+       JournalCleared(slot, tx1, successor('initial'), n1) @ #b1 &
+       JournalDurable(slot, tx2, successor(successor('initial')), n1, n2, p2) @ #a2 &
+       JournalCleared(slot, tx2, successor(successor('initial')), n2) @ #b2 &
+       #a1 < #b1 & #b1 < #a2 & #a2 < #b2 & n1 << n2"
 
 end
