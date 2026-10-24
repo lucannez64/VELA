@@ -23,7 +23,12 @@ if model == 'kem_v1_x25519_baseline':
     print('RESULT Could not prove bit secrecy of b.')
     sys.exit(124 if mode == 'baseline_timeout' else 0)
 if mode != 'missing_query_witness':
-    query = 'event(forge) ==> false' if model.startswith('hybrid_sig_') else 'bit secrecy of b'
+    if model.startswith(('hybrid_sig_', 'possession_proof_')):
+        query = 'event(forge) ==> false'
+    elif model == 'shamir_share_tags':
+        query = 'event(accepted_wrong_secret) ==> false'
+    else:
+        query = 'bit secrecy of b'
     bound = '0'
     if model == 'kem_v2_x25519_gdh_nonuniform':
         bound = '4 * pDistRerandom + 2 * pGDH(time_1, 2 * qH) + (2 * Qd + 2 * qH) * PCollKey'
@@ -72,7 +77,7 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('kem_v1_x25519_baseline: unproved (as expected)', result.stdout)
         self.assertIn('kem_v2_x25519_gdh_nonuniform: proved (as expected)', result.stdout)
-        self.assertEqual(result.stdout.count('(as expected)'), 7)
+        self.assertEqual(result.stdout.count('(as expected)'), 10)
 
     def test_nonuniform_bound_drift_is_rejected(self):
         for mode in ('nonuniform_zero_bound', 'nonuniform_uniform_bound',
