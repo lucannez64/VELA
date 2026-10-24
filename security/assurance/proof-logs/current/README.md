@@ -4,8 +4,8 @@ The hosted baseline on `5fa4e9f` passed the complete security workflow,
 including 173 F★ postconditions and the instrumented journal proofs:
 https://github.com/lucannez64/VELA/actions/runs/40065136343.
 
-Newer local increments, awaiting hosted reproduction (current corpus: 212
-postconditions / 219 selected functions):
+Newer local increments, awaiting hosted reproduction (current corpus: 220
+postconditions / 227 selected functions):
 
 - [Web-session observations](session-observation-refinement/README.md): ten
   additional checked postconditions (183 at that snapshot), exact extraction,
@@ -13,6 +13,9 @@ postconditions / 219 selected functions):
 - [Possession/enrollment observations](recovery-possession-enrollment/README.md):
   29 additional contracts, taking recovery to 71, with decoded key lengths
   derived in the checked constructor and concrete handler regressions.
+- [Enrollment preflight](recovery-enrollment-preflight/README.md): eight
+  additional contracts route live pre-consumption decisions through the policy;
+  recovery now has 79 checked postconditions.
 - [Nonuniform GDH companion](x25519-nonuniform-gdh/README.md): the seventh
   computational game; six positive proofs plus the explicit legacy nonproof,
   with full per-model logs. Collision/distribution and Rust correspondence

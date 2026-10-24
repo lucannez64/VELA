@@ -7,7 +7,7 @@ system. Start with the claims, then inspect the assumptions and Rust mapping.
 ## Baseline
 
 Repository: <https://github.com/lucannez64/VELA> (MIT).
-The current implementation baseline is commit `148ff32` (share signatures,
+The protocol-change starting baseline is commit `148ff32` (share signatures,
 enrollment fingerprint v4, KEM combiner v2). This package adds revised models,
 correspondence records, local proof logs and CI configuration on top of it.
 [`MANIFEST.sha256`](MANIFEST.sha256) identifies the exact reviewed artifacts;
@@ -17,8 +17,10 @@ The older [CI run #39864715971](https://github.com/lucannez64/VELA/actions/runs/
 passed on `5a3b72e7f6d2081cc91b9610adc62a54981f0857`. Its logs are historical
 baseline evidence. They do not validate the subsequent protocol changes.
 The [refinement job passed on `b27dcd6`](proof-logs/current/hosted-refinement-40002230354/README.md).
-The complete [security workflow](https://github.com/lucannez64/VELA/actions/runs/40008926193)
-passed on `e690dfc`. The subsequent parser/accessor increment awaits hosted CI.
+The later complete [security workflow](https://github.com/lucannez64/VELA/actions/runs/40065136343)
+passed on `5fa4e9f`, including the 173-postcondition snapshot and instrumented
+journal proofs. The current 220-postcondition inventory and typed journal
+encoding proof await hosted reproduction; local evidence is indexed below.
 
 ## Contents
 
@@ -60,6 +62,15 @@ correctness is not a consequence of the pure-policy proofs.
 13. [Recovery fact refinement](13-recovery-fact-refinement.md): checked observation
     constructors, epoch normalization, atomic insertion and remaining boundaries.
 
+14. [Session observations](14-session-observation-refinement.md): production
+    observation constructors and their remaining source obligations.
+
+15. [Possession/enrollment observations](15-recovery-possession-enrollment.md):
+    decoded commitment, key-length and grant facts.
+
+16. [Enrollment preflight](16-enrollment-preflight.md): checked rejection
+    sequencing before real single-use grant redemption.
+
 ## Evidence levels
 
 | Tag | Meaning |
@@ -99,7 +110,7 @@ correctness is not a consequence of the pure-policy proofs.
   extends the earlier [hosted enrollment baseline](proof-logs/current/hosted-enrollment-40039992434/README.md)
   to the hosted 180/173 snapshot. The [web-session observation increment](14-session-observation-refinement.md) extends this locally
   to 190/183; the [possession/enrollment constructors](15-recovery-possession-enrollment.md) bring the current local inventory
-  to **219 selected functions / 212 explicit postconditions** across eight policy crates and the sharing/signature kernels.
+  to **227 selected functions / 220 explicit postconditions** across eight policy crates and the sharing/signature kernels.
   All **18 local enum-equality assumptions were removed** through structural
   Rust comparisons; current generated modules contain zero local `assume val`
   declarations. Imported proof libraries, the String/Vec models and tools remain

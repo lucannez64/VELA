@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use uuid::Uuid;
 use vela_recovery_policy::{
-    enrollment_facts, plan_enrollment_preflight, EnrollmentAccountFacts,
+    enrollment_facts, observed_recovery_epoch, plan_enrollment_preflight, EnrollmentAccountFacts,
     EnrollmentAccountObservation, EnrollmentDecision, EnrollmentGrantFacts, EnrollmentObservation,
     EnrollmentPreflightDecision, EnrollmentPreflightObservation, EnrollmentPreflightRejection,
 };
@@ -127,13 +127,24 @@ pub async fn post_enroll_device(
             match user_rows.first() {
                 None => EnrollmentAccountObservation::Absent,
                 Some(user_row) => {
-                    let commitment_len = match user_row.get(3) {
-                        Some(TursoValue::Text(text)) => crate::db::decode_b64(text)?.len(),
-                        _ => 0,
+                    let stored_epoch = user_row.i64(0);
+                    let epoch_active = user_row.text(1).is_none();
+                    // Preserve epoch/rotation rejection before decoding a
+                    // possibly malformed stored commitment. Its length is
+                    // irrelevant when preflight rejects at either guard.
+                    let commitment_len = if observed_recovery_epoch(stored_epoch) == grant.key_epoch
+                        && epoch_active
+                    {
+                        match user_row.get(3) {
+                            Some(TursoValue::Text(text)) => crate::db::decode_b64(text)?.len(),
+                            _ => 0,
+                        }
+                    } else {
+                        0
                     };
                     EnrollmentAccountObservation::Present(EnrollmentAccountFacts {
-                        stored_epoch: user_row.i64(0),
-                        epoch_active: user_row.text(1).is_none(),
+                        stored_epoch,
+                        epoch_active,
                         credential_id_matches: user_row.text(2)
                             == Some(grant.credential_id.as_str()),
                         commitment_len,

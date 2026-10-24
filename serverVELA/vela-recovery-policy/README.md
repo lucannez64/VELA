@@ -18,7 +18,7 @@ Rust decisions to F* and checks their postconditions for every input.
 | `plan_proof_initiation` (M18) | A possession-proof challenge is issued only when the share *and* a non-empty staged RMS commitment exist on a non-rotating account. |
 | `possession_recover_facts` | Phase and one-shot consumption come from whether the exact attempt key was removed; decoded envelope identity, the verification result, the rekey column, decoded commitment length/epoch and the normalized live epoch map field-by-field. |
 | `plan_possession_recovery` (M18) | An enrollment grant issues only from a consumed, attempt-bound, verified possession-proof observation with a non-empty commitment at the live epoch on an active account; its decision type grants enrollment, not share release. |
-| `plan_enrollment_preflight` | Before the single-use grant is spent, the first account/epoch/rotation/credential/commitment rejection in the handler's historical status/message precedence wins. A missing grant yields `GrantUnavailable` without querying or classifying the account; `NotQueried` and `AccountUnavailable` are explicit unknowns, never observed absence. |
+| `plan_enrollment_preflight` | Before grant redemption, the plan matches its shared grant/account/epoch/rotation/commitment/credential rejection predicate and carries the observed epoch/type. Predicate order is reviewed and tested; independent ordering proof remains open. The handler skips account lookup for missing grants (inspected glue); `NotQueried` and `AccountUnavailable` distinguish unknown from absent. |
 | `enrollment_facts` | Grant presence/consumption/replacement, decoded grant possession marker, decoded credential-id equality, decoded commitment length, decoded key lengths, the rekey column and the normalized grant/account epochs map field-by-field. |
 | `plan_enrollment` | A recovered device requires the actual consumed grant to match the preflight-observed grant, loaded under the request's user/grant store key, current credential (or staged commitment for possession grants), valid keys, and exact active grant/account epoch. |
 | `plan_publication_stage` | A server share is staged only for the current active account epoch with a nonempty share and split id. |
@@ -117,3 +117,10 @@ or split id. Consequently:
 `PossessionGrantPermit::releases_server_share()` is false by definition of
 the enrollment-only permit. It does not prove that the effectful handler never
 invokes another release API; that absence is inspected, not formally refined.
+
+The preflight postcondition currently relates the plan to the same rejection
+predicate used by its body. Predicate order is inspected and tested; a proof
+against an independent ordering specification remains open. Commitment and
+credential guards are disjoint on the possession marker. The post-insert
+concurrent recheck uses its historical revocation-before-rotation priority;
+that handler trace is outside the policy proof.

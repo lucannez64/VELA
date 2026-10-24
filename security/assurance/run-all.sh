@@ -112,7 +112,7 @@ fi
   echo
   echo "VELA assurance run — logs in $out_dir"
   for i in "${!names[@]}"; do printf '  %-44s %s\n' "${names[$i]}" "${results[$i]}"; done
-  $with_fstar || echo "  (hax/F* skipped; pass --with-fstar to include it)"
+  $with_fstar || echo "  (Rust extraction/policy checks skipped; pass --with-fstar to include them; journal F* encoding check still runs)"
 } | tee "$out_dir/summary.txt"
 
 exit "$failed"

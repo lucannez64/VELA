@@ -26,7 +26,8 @@ Local evidence for the commit based on `5fa4e9f`. The archived
 (sha256 `ae460bda3a59d2662f79aa39bfaa8093e70654385b4967f508cf590055dfcb1f`)
 and was not hand-edited. The parent subsequently changed the enrollment
 observation to carry actual decoded key lengths and re-extracted/rechecked all
-71 contracts. The live extraction is that newer artifact; see the parent
+71 contracts. That 71-contract extraction is historical; the current preflight artifact has
+79 contracts. See the parent
 [evidence](../../../../security/assurance/proof-logs/current/recovery-possession-enrollment/README.md).
 
 ## Historical delegated run (t3-14097854): toolchain and limits
@@ -40,7 +41,7 @@ observation to carry actual decoded key lengths and re-extracted/rechecked all
   Cargo worker) with `VELA_STEP_TIMEOUT=600`. The parent's warm
   `t3-700776df/target` was reused through `CARGO_TARGET_DIR`; the logs show the
   delegated sources compiled from sibling worktree `t3-14097854`, not from
-  the parent checkout. The live extraction is the subsequent parent run.
+  the parent checkout. That parent run is historical; the current preflight snapshot is documented above.
 
 ## Historical delegated inventory
 

@@ -1,6 +1,6 @@
 # 15. Possession recovery and enrollment observations
 
-The recovery crate now checks 71 postconditions over 71 selected entry points,
+At this increment the recovery crate checked 71 postconditions over 71 selected entry points,
 including 29 new contracts for possession initiation, possession recovery and
 recovered-device enrollment. With the web-session increment, the corpus is
 212 postconditions / 219 directly selected functions. This is a local proof
@@ -37,9 +37,11 @@ The handler order retains the existing grant-before-account-observation rule,
 so an absent grant does not expose account/rotation state. Consumption remains
 single-use; a race-replaced grant is rejected and restored through the existing
 path. This description is a code review, not a proved database trace. For enrollment,
-every policy conjunct is currently pre-enforced by an early return; the final
-policy decision is a redundant confirmation. Its negative theorems do not
-establish those early-return paths. Possession initiation and recovery do have
+at this snapshot every policy conjunct was pre-enforced by an early return;
+the final decision was a redundant confirmation. The later
+[preflight increment](16-enrollment-preflight.md) moves account/epoch/rotation/
+credential/commitment rejection into the checked policy. Neither increment
+proves SQL/store traces. Possession initiation and recovery do have
 live policy denials (empty commitment and unsuccessful proof respectively).
 The guarded possession insert now requires non-null, non-empty commitment text,
 and its retry-time recheck rejects empty text as well. This relies on the

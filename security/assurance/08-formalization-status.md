@@ -60,7 +60,7 @@ turn any open obligation below into a proved result.
 - **Reduced assumption boundary.** Structural Rust matches replaced the 18
   opaque derived-enum equality uses. Fresh checking of all eight policy crates
   succeeded with zero local assume val declarations. The inventory now has
-  **212 explicit postconditions / 219 selected functions** in eleven Rust modules,
+  **220 explicit postconditions / 227 selected functions** in eleven Rust modules,
   plus defined String and Vec compatibility models. Seven selected functions have
   no explicit ensures. Imported library assumptions and proof tools remain
   trusted; the drift checker is not a proof checker.
@@ -178,7 +178,9 @@ increment is pending.
 ## Possession and enrollment observation increment
 
 The [remaining recovery constructors](15-recovery-possession-enrollment.md)
-add 29 checked contracts: recovery now has 71, and the corpus 212/219. The
+added 29 checked contracts: recovery reached 71 and the corpus 212/219.
+The [enrollment preflight increment](16-enrollment-preflight.md) adds eight
+contracts, bringing recovery to 79 and the corpus to 220/227. The
 parent strengthened enrollment to derive key validity from actual decoded
 lengths (1600/2624) inside the verified constructor. Possession state insertion
 uses atomic insert-if-absent, and empty commitments fail unavailable. Fresh
@@ -191,9 +193,9 @@ and complete handler traces remain open.
 | Area | Status | Required to close |
 |---|---|---|
 | F-1: handler facts | Partial: hosted enrollment/recovery baseline; local web-session and additional recovery constructors | Maintain the checked contracts; verify the observation producers (SQL rows, store lookups, signature verifier, session ids) themselves; complete UTF-8/object and authenticated-open composition after the checked byte-frame parser; prove independent context origins; cover remaining token, epoch, recovery and handler fact construction |
-| F-2: state transitions | Partial | Machine-check concrete handler/database transitions against protocol transitions, including exceptions, cancellation and concurrency |
+| F-2: state transitions | Partial: checked preflight plan/shared-predicate relation | Prove the preflight ordering against an independent specification; machine-check concrete handler/database transitions against protocol transitions, including exceptions, cancellation and concurrency |
 | F-3: persistence/recovery | Partial: M28 and composed M29 | Prove the actual journal implementation refines M28; formalize collection equality and filesystem outcomes; compose local edits/deletions and RMS migration; cover or explicitly exclude independent processes |
-| F-4: construction security | Partial: CryptoVerif proofs for idealized v2 KEM games, modular KEM-DEM and AND-signature games under the explicit assumptions | Close the combiner gaps listed in `security/formal/cryptoverif/README.md` (X25519 cofactor and clamped/nonuniform scalars vs uniform prime-order group, SHA-256 step, quantum-query and multi-user composition; KEM-DEM is proved modularly); computational games and reductions for envelope framing, share tags, possession proofs and KDFs under named primitive assumptions; verify application randomness/error/erasure handling. Primitive internals and leakage resistance are trusted under the selected boundary |
+| F-4: construction security | Partial: CryptoVerif proofs for idealized v2 KEM games, modular KEM-DEM and AND-signature games under the explicit assumptions | Close the combiner gaps listed in `security/formal/cryptoverif/README.md` (concrete X25519 clamping/cofactor/encoding correspondence after conditional nonuniform distribution accounting, SHA-256 step, quantum-query and multi-user composition; KEM-DEM is proved modularly); computational games and reductions for envelope framing, share tags, possession proofs and KDFs under named primitive assumptions; verify application randomness/error/erasure handling. Primitive internals and leakage resistance are trusted under the selected boundary |
 | F-5: native clients/composition | Open beyond scoped tests/models | Verify Kotlin/Swift callers, persistence and FFI; formalize enrollment UI trust; compose recovery, enrollment, sync, sharing and revocation in one argument |
 | F-6: trusted base | Partial | Maintain zero local extraction assumptions and review imported model contracts; verify/review std/hax model correspondence and the String/Vec models; retain extraction/compiler correctness explicitly as trusted under the chosen boundary; review solver/library/OS interface assumptions; reproduce in CI and obtain independent review |
 

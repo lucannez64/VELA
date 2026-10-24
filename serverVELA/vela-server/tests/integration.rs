@@ -664,6 +664,97 @@ async fn enroll_device_missing_grant_returns_401_before_account_state() {
 }
 
 #[tokio::test]
+async fn enrollment_preflight_handles_missing_and_malformed_state_in_order() {
+    use vela_server::sqldb::{Db as _, TursoValue};
+
+    // Independent HTTP scenarios, including overlapping rotation/revocation
+    // and corrupt commitment storage; these are execution evidence, not a
+    // theorem about whether SQL queries ran.
+    for (case, expected, message) in [
+        (0, StatusCode::BAD_REQUEST, "hybrid_ek"),
+        (1, StatusCode::NOT_FOUND, "account no longer exists"),
+        (
+            2,
+            StatusCode::CONFLICT,
+            "device enrollment is paused during vault key rotation",
+        ),
+    ] {
+        let state = helpers::test_state().await;
+        let user_id = Uuid::new_v4();
+        let grant = Uuid::new_v4();
+        let grant_key = format!("recovery:enroll_grant:{user_id}:{grant}");
+        if case == 2 {
+            insert_user(&state, user_id).await;
+            state
+                .sqldb
+                .execute(
+                    "UPDATE users SET rekey_state = 'freezing',
+                 recovery_webauthn_cred_id = 'replacement',
+                 recovery_auth_hash = 'not-valid-base64!' WHERE id = ?",
+                    vec![TursoValue::Text(user_id.to_string())],
+                )
+                .await
+                .unwrap();
+        }
+        if case != 0 {
+            state
+                .store
+                .set_ex(
+                    &grant_key,
+                    &serde_json::to_vec(&json!({
+                        "key_epoch": 1,
+                        "credential_id": "old-credential",
+                    }))
+                    .unwrap(),
+                    600,
+                )
+                .unwrap();
+        }
+        let ek = if case == 0 {
+            "not-valid-base64!".to_owned()
+        } else {
+            B64.encode(vec![1u8; 1600])
+        };
+        let response = vela_server::routes::build(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/recovery/enroll-device")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({
+                            "user_id": user_id,
+                            "recovery_grant": grant,
+                            "hybrid_ek": ek,
+                            "hybrid_vk": B64.encode(vec![1u8; 2624]),
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected, "case {case}");
+        let body: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), 1024)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(
+            body["message"].as_str().unwrap().contains(message),
+            "case {case}: {body}"
+        );
+        if case != 0 {
+            assert!(
+                state.store.exists(&grant_key).unwrap(),
+                "preflight must not consume case {case}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn enroll_device_validates_keys_before_the_grant_lookup_and_consumption() {
     use vela_server::sqldb::{Db as _, TursoValue};
 
@@ -908,8 +999,8 @@ async fn recovery_enrollment_grant_is_invalid_after_key_rotation() {
     state
         .sqldb
         .execute(
-            "INSERT INTO users (id, created_at, key_epoch, recovery_webauthn_cred_id)
-             VALUES (?, ?, 2, 'test-recovery-credential')",
+            "INSERT INTO users (id, created_at, key_epoch, recovery_webauthn_cred_id, recovery_auth_hash)
+             VALUES (?, ?, 2, 'test-recovery-credential', 'not-valid-base64!')",
             vec![
                 TursoValue::Text(user_id.to_string()),
                 TursoValue::Text(chrono::Utc::now().to_rfc3339()),
@@ -917,6 +1008,7 @@ async fn recovery_enrollment_grant_is_invalid_after_key_rotation() {
         )
         .await
         .unwrap();
+    // A malformed stored commitment must not outrank the epoch rejection.
     // This grant was minted while the account was still at epoch 1.
     state
         .store
