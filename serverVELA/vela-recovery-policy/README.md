@@ -6,19 +6,27 @@ Rust decisions to F* and checks their postconditions for every input.
 
 | Production decision | Universally checked property |
 |---|---|
+| `initiate_facts` | Phase, account/share/credential presence, attempt-slot freshness and positive TTL are exactly the SQL, credential-option and store observations. |
 | `plan_initiation` | A fresh, expiring challenge starts only for an existing recovery-ready account with both share and credential. |
 | `plan_registration` | Recovery-credential registration requires device scope, the same account, one consumed challenge, a valid credential, and cross-account uniqueness. |
+| `recover_facts` | Phase, one-shot consumption, user/attempt/credential bindings, assertion and user-verification results, share/rekey observations and the normalized epoch are exactly the attempt, WebAuthn and row observations. |
 | `plan_recovery` | Share release requires the exact user, attempt, current credential, one-shot challenge, verified WebAuthn assertion, user verification, active epoch, and stored share. |
+| `credential_update_facts` | Assertion validity, credential identity and metadata-update need are exactly the observed values. |
 | `plan_credential_update` | Authenticator metadata updates only after a valid assertion under the still-current credential. |
+| `observed_recovery_epoch` | A missing or non-positive stored epoch normalizes to the initial epoch. |
 | `plan_enrollment` | A recovered device requires a consumed user-bound grant, current credential, valid keys, and exact active grant/account epoch. |
 | `plan_publication_stage` | A server share is staged only for the current active account epoch with a nonempty share and split id. |
 | `plan_publication_finalize` | First promotion requires an empty active slot plus the exact pending epoch, split id, and stored share; an exact already-active retry is handled idempotently by the server. |
 | `plan_proof_initiation` (M18) | A possession-proof challenge is issued only when the share *and* its staged RMS commitment exist. |
 | `plan_possession_recovery` (M18) | An enrollment grant issues only from a consumed, attempt-bound, cryptographically verified possession proof on an active matching epoch — and never releases the server share. |
-| theorem helpers | Replaced credentials, challenge/grant replay, cross-user grants, rotated grants, competing splits, retired epochs, unproven possession claims, stale commitments, and commitment-less possession grants cannot authorize recovery authority. |
+| theorem helpers | Replaced credentials, challenge/grant replay, cross-user grants, rotated grants, competing splits, retired epochs, unproven possession claims, stale commitments, and commitment-less possession grants cannot authorize recovery authority. Observation theorems additionally reject missing shares/credentials, colliding attempt ids, expired initiation TTLs, unverified assertions, missing/replayed attempts, cross-user observations and rekeying accounts. |
 
 The proof boundary excludes WebAuthn cryptography, HTTP, clocks, SQL, sled, and
-the cloud provider's durability guarantee.
+the cloud provider's durability guarantee. The observation structs contain only
+booleans, integers, `Option` and enums (no `String`, `Vec` or serde types) so hax
+can extract them. They do not establish that the SQL rows, store lookups,
+WebAuthn verifier, session ids or signature results themselves are correct; those
+producers remain explicit glue.
 Production binds serialized challenge state and enrollment grants to the
 credential id, conditionally updates that credential, atomically redeems
 one-shot artifacts, and guards device insertion by epoch and credential id
@@ -34,8 +42,10 @@ export PATH="$(opam var bin --switch vela-hax):$(opam var bin --switch vela-fsta
 ./verify-fstar.sh
 ```
 
-The runner extracts twenty-one production/theorem entry points and asks F* to
-discharge every verification condition without `--lax`.
+The runner extracts forty-two production/theorem entry points and asks F* to
+discharge every verification condition without `--lax`. The checked-in
+extraction predates the observation constructors; hosted CI must re-extract and
+check these entry points.
 
 Run the protocol model separately:
 

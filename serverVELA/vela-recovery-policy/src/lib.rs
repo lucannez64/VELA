@@ -212,6 +212,22 @@ pub enum RecoveryPhase {
     Expired,
 }
 
+/// Raw observations from the recovery-initiation request, the `users` row and
+/// the store slot that will hold the new attempt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InitiateObservation {
+    /// The `users` row exists for the requested user id.
+    pub account_present: bool,
+    /// The row's `recovery_share` column is non-null.
+    pub share_present: bool,
+    /// A recovery WebAuthn credential was decoded for the user.
+    pub credential_present: bool,
+    /// No stored attempt state already occupies the generated attempt id.
+    pub attempt_id_fresh: bool,
+    /// Lifetime requested for the stored challenge state.
+    pub ttl_secs: u64,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct InitiateFacts {
     pub phase: RecoveryPhase,
@@ -246,6 +262,37 @@ pub fn initiation_is_authorized(facts: InitiateFacts) -> bool {
         && facts.credential_present
         && facts.attempt_id_fresh
         && facts.ttl_positive
+}
+
+/// Turn raw account/share/credential/store observations into the initiation
+/// facts. The phase names exactly the observed availability of an account,
+/// its recovery share and its recovery credential; it is not supplied by the
+/// caller.
+#[cfg_attr(hax, hax_lib::ensures(|facts| {
+    (matches!(facts.phase, RecoveryPhase::Ready)
+        == (obs.account_present && obs.share_present && obs.credential_present))
+        && (matches!(facts.phase, RecoveryPhase::Unavailable)
+            == !(obs.account_present && obs.share_present && obs.credential_present))
+        && facts.account_exists == obs.account_present
+        && facts.share_present == obs.share_present
+        && facts.credential_present == obs.credential_present
+        && facts.attempt_id_fresh == obs.attempt_id_fresh
+        && facts.ttl_positive == (obs.ttl_secs > 0)
+}))]
+pub fn initiate_facts(obs: InitiateObservation) -> InitiateFacts {
+    let available = obs.account_present && obs.share_present && obs.credential_present;
+    InitiateFacts {
+        phase: if available {
+            RecoveryPhase::Ready
+        } else {
+            RecoveryPhase::Unavailable
+        },
+        account_exists: obs.account_present,
+        share_present: obs.share_present,
+        credential_present: obs.credential_present,
+        attempt_id_fresh: obs.attempt_id_fresh,
+        ttl_positive: obs.ttl_secs > 0,
+    }
 }
 
 pub fn initiation_decision_matches_spec(facts: InitiateFacts, decision: InitiateDecision) -> bool {
@@ -323,6 +370,39 @@ pub fn plan_registration(facts: RegistrationFacts) -> RegistrationDecision {
     }
 }
 
+/// Where a `/recovery/recover` request found the stored challenge state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RecoveryAttemptSource {
+    /// No stored challenge state matched this user/attempt id.
+    Missing,
+    /// The exact stored challenge was present and consumed by this request.
+    Consumed,
+}
+
+/// Raw observations from `/recovery/recover`, the consumed challenge state,
+/// the WebAuthn assertion and the `users` row.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RecoverObservation {
+    pub attempt_source: RecoveryAttemptSource,
+    /// The stored challenge's user id equals the request user id.
+    pub user_matches: bool,
+    /// The stored challenge's attempt id equals the request attempt id.
+    pub attempt_matches: bool,
+    /// The assertion, the challenge state and the live row all name the same
+    /// recovery credential.
+    pub credential_matches_current: bool,
+    /// WebAuthn verification returned an authentication result.
+    pub assertion_valid: bool,
+    /// The authenticator reported user verification.
+    pub user_verified: bool,
+    /// The row's `recovery_share` column is non-null.
+    pub share_present: bool,
+    /// The row's `rekey_state` column is clear.
+    pub account_epoch_active: bool,
+    /// `users.key_epoch` as stored; `None` means the column is absent.
+    pub stored_epoch: Option<i64>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RecoverFacts {
     pub phase: RecoveryPhase,
@@ -370,6 +450,72 @@ pub fn recovery_is_authorized(facts: RecoverFacts) -> bool {
         && facts.share_present
         && facts.account_epoch_active
         && facts.epoch >= INITIAL_EPOCH
+}
+
+/// Normalize a stored recovery epoch the same way the handler does: a missing
+/// or non-positive column falls back to the initial epoch.
+#[cfg_attr(hax, hax_lib::ensures(|epoch| {
+    epoch == match stored_epoch {
+        None => INITIAL_EPOCH,
+        Some(value) => {
+            if value < INITIAL_EPOCH {
+                INITIAL_EPOCH
+            } else {
+                value
+            }
+        }
+    }
+}))]
+pub fn observed_recovery_epoch(stored_epoch: Option<i64>) -> i64 {
+    match stored_epoch {
+        None => INITIAL_EPOCH,
+        Some(value) => {
+            if value < INITIAL_EPOCH {
+                INITIAL_EPOCH
+            } else {
+                value
+            }
+        }
+    }
+}
+
+/// Turn the consumed-attempt, assertion, credential and row observations into
+/// the share-release facts. The phase and one-shot flag come from whether the
+/// store actually returned (and removed) the exact challenge.
+#[cfg_attr(hax, hax_lib::ensures(|facts| {
+    (matches!(facts.phase, RecoveryPhase::ChallengePending)
+        == matches!(obs.attempt_source, RecoveryAttemptSource::Consumed))
+        && (matches!(facts.phase, RecoveryPhase::Expired)
+            == matches!(obs.attempt_source, RecoveryAttemptSource::Missing))
+        && facts.user_matches == obs.user_matches
+        && facts.attempt_matches == obs.attempt_matches
+        && facts.challenge_consumed
+            == matches!(obs.attempt_source, RecoveryAttemptSource::Consumed)
+        && facts.credential_matches_current == obs.credential_matches_current
+        && facts.assertion_valid == obs.assertion_valid
+        && facts.user_verified == obs.user_verified
+        && facts.share_present == obs.share_present
+        && facts.account_epoch_active == obs.account_epoch_active
+        && facts.epoch == observed_recovery_epoch(obs.stored_epoch)
+}))]
+pub fn recover_facts(obs: RecoverObservation) -> RecoverFacts {
+    let challenge_consumed = matches!(obs.attempt_source, RecoveryAttemptSource::Consumed);
+    RecoverFacts {
+        phase: if challenge_consumed {
+            RecoveryPhase::ChallengePending
+        } else {
+            RecoveryPhase::Expired
+        },
+        user_matches: obs.user_matches,
+        attempt_matches: obs.attempt_matches,
+        challenge_consumed,
+        credential_matches_current: obs.credential_matches_current,
+        assertion_valid: obs.assertion_valid,
+        user_verified: obs.user_verified,
+        share_present: obs.share_present,
+        account_epoch_active: obs.account_epoch_active,
+        epoch: observed_recovery_epoch(obs.stored_epoch),
+    }
 }
 
 pub fn recovery_decision_matches_spec(facts: RecoverFacts, decision: RecoverDecision) -> bool {
@@ -539,6 +685,17 @@ pub fn stale_commitment_can_recover(mut facts: PossessionRecoverFacts) -> bool {
     possession_recovery_is_authorized(facts)
 }
 
+/// Raw observations from the WebAuthn assertion and the live credential.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CredentialUpdateObservation {
+    /// WebAuthn verification returned an authentication result.
+    pub assertion_valid: bool,
+    /// The assertion's credential id equals the challenge-bound credential id.
+    pub credential_matches_current: bool,
+    /// The authenticator signalled updated credential metadata.
+    pub needs_update: bool,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CredentialUpdateFacts {
     pub assertion_valid: bool,
@@ -551,6 +708,21 @@ pub enum CredentialUpdateDecision {
     Update,
     Keep,
     Reject,
+}
+
+/// Turn the assertion result and stored-credential comparison into the
+/// metadata-update facts.
+#[cfg_attr(hax, hax_lib::ensures(|facts| {
+    facts.assertion_valid == obs.assertion_valid
+        && facts.credential_matches_current == obs.credential_matches_current
+        && facts.needs_update == obs.needs_update
+}))]
+pub fn credential_update_facts(obs: CredentialUpdateObservation) -> CredentialUpdateFacts {
+    CredentialUpdateFacts {
+        assertion_valid: obs.assertion_valid,
+        credential_matches_current: obs.credential_matches_current,
+        needs_update: obs.needs_update,
+    }
 }
 
 pub fn credential_update_decision_matches_spec(
@@ -709,6 +881,137 @@ pub fn rotated_grant_can_enroll(mut facts: EnrollmentFacts) -> bool {
 pub fn consumed_grant_can_enroll_again(mut facts: EnrollmentFacts) -> bool {
     facts.phase = RecoveryPhase::Completed;
     enrollment_is_authorized(facts)
+}
+
+// ── Composition and rejection theorems over the observation constructors ───
+
+/// The initiation policy over the real observation is exactly the conjunction
+/// of the observed availability and freshness values.
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    result == (obs.account_present
+        && obs.share_present
+        && obs.credential_present
+        && obs.attempt_id_fresh
+        && obs.ttl_secs > 0)
+}))]
+pub fn initiate_facts_authorize(obs: InitiateObservation) -> bool {
+    initiation_is_authorized(initiate_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn missing_recovery_share_can_initiate(mut obs: InitiateObservation) -> bool {
+    obs.share_present = false;
+    initiation_is_authorized(initiate_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn credentialless_account_can_initiate(mut obs: InitiateObservation) -> bool {
+    obs.credential_present = false;
+    initiation_is_authorized(initiate_facts(obs))
+}
+
+/// A generated attempt id that already occupies stored state is not fresh.
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn colliding_attempt_id_can_initiate(mut obs: InitiateObservation) -> bool {
+    obs.attempt_id_fresh = false;
+    initiation_is_authorized(initiate_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn expired_initiate_ttl_can_start(mut obs: InitiateObservation) -> bool {
+    obs.ttl_secs = 0;
+    initiation_is_authorized(initiate_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn unverified_assertion_can_update_credential(mut obs: CredentialUpdateObservation) -> bool {
+    obs.assertion_valid = false;
+    matches!(
+        plan_credential_update(credential_update_facts(obs)),
+        CredentialUpdateDecision::Update
+    )
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn stale_assertion_credential_can_update(mut obs: CredentialUpdateObservation) -> bool {
+    obs.credential_matches_current = false;
+    matches!(
+        plan_credential_update(credential_update_facts(obs)),
+        CredentialUpdateDecision::Update
+    )
+}
+
+/// Normalization can never produce an epoch below the initial epoch, so the
+/// epoch guard in `recovery_is_authorized` is implied for every observation.
+#[cfg_attr(hax, hax_lib::ensures(|result| result == true))]
+pub fn observed_recovery_epoch_is_active(stored_epoch: Option<i64>) -> bool {
+    observed_recovery_epoch(stored_epoch) >= INITIAL_EPOCH
+}
+
+/// Share release over the real observation is exactly the conjunction of the
+/// consumed exact attempt, the assertion and credential bindings, the row
+/// observations and an active normalized epoch.
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    result == (matches!(obs.attempt_source, RecoveryAttemptSource::Consumed)
+        && obs.user_matches
+        && obs.attempt_matches
+        && obs.credential_matches_current
+        && obs.assertion_valid
+        && obs.user_verified
+        && obs.share_present
+        && obs.account_epoch_active
+        && observed_recovery_epoch(obs.stored_epoch) >= INITIAL_EPOCH)
+}))]
+pub fn recover_facts_authorize(obs: RecoverObservation) -> bool {
+    recovery_is_authorized(recover_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn missing_attempt_can_release(mut obs: RecoverObservation) -> bool {
+    obs.attempt_source = RecoveryAttemptSource::Missing;
+    recovery_is_authorized(recover_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn cross_user_recover_observation_can_release(mut obs: RecoverObservation) -> bool {
+    obs.user_matches = false;
+    recovery_is_authorized(recover_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn mismatched_attempt_observation_can_release(mut obs: RecoverObservation) -> bool {
+    obs.attempt_matches = false;
+    recovery_is_authorized(recover_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn replaced_observed_credential_can_release(mut obs: RecoverObservation) -> bool {
+    obs.credential_matches_current = false;
+    recovery_is_authorized(recover_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn unverified_observed_assertion_can_release(mut obs: RecoverObservation) -> bool {
+    obs.assertion_valid = false;
+    recovery_is_authorized(recover_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn unverified_observation_user_can_release(mut obs: RecoverObservation) -> bool {
+    obs.user_verified = false;
+    recovery_is_authorized(recover_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn missing_observed_share_can_release(mut obs: RecoverObservation) -> bool {
+    obs.share_present = false;
+    recovery_is_authorized(recover_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn rekeying_observed_account_can_release(mut obs: RecoverObservation) -> bool {
+    obs.account_epoch_active = false;
+    recovery_is_authorized(recover_facts(obs))
 }
 
 #[cfg(test)]

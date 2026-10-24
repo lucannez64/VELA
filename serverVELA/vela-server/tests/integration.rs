@@ -451,6 +451,68 @@ async fn recovery_initiate_unknown_user_returns_404() {
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
+#[tokio::test]
+async fn recovery_initiate_existing_account_without_share_returns_404() {
+    use vela_server::sqldb::{Db as _, TursoValue};
+
+    let state = helpers::test_state().await;
+    let user_id = Uuid::new_v4();
+    state
+        .sqldb
+        .execute(
+            "INSERT INTO users (id, created_at) VALUES (?, ?)",
+            vec![
+                TursoValue::Text(user_id.to_string()),
+                TursoValue::Text(chrono::Utc::now().to_rfc3339()),
+            ],
+        )
+        .await
+        .unwrap();
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/recovery/initiate")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_string(&json!({ "user_id": user_id })).unwrap(),
+        ))
+        .unwrap();
+
+    let resp = vela_server::routes::build(state).oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn recovery_initiate_without_credential_returns_404() {
+    use vela_server::sqldb::{Db as _, TursoValue};
+
+    let state = helpers::test_state().await;
+    let user_id = Uuid::new_v4();
+    state
+        .sqldb
+        .execute(
+            "INSERT INTO users (id, created_at, recovery_share) VALUES (?, ?, 'AAAA')",
+            vec![
+                TursoValue::Text(user_id.to_string()),
+                TursoValue::Text(chrono::Utc::now().to_rfc3339()),
+            ],
+        )
+        .await
+        .unwrap();
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/recovery/initiate")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_string(&json!({ "user_id": user_id })).unwrap(),
+        ))
+        .unwrap();
+
+    let resp = vela_server::routes::build(state).oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
 /// Audit S-3: `/recovery/initiate` is unauthenticated and `user_id` is
 /// attacker-controlled, so the per-victim cap must be keyed on the source too.
 /// A third party burning the limit from its own IP must not lock the victim out
