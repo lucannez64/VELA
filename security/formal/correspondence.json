@@ -182,7 +182,7 @@
         "serverVELA/vela-server/src/recovery/enroll_device.rs": "667e78282ed931cac37c16d5e6817c39c557dcf538a8d05976ae24f97140ad0a",
         "serverVELA/vela-server/src/recovery/recover.rs": "301291045074be0dc11fe6ad76c257fe9b044324a79804e1a2e28959c7d4241c",
         "serverVELA/vela-server/tests/integration.rs": "18f03355185a1898ecf5b5b8787d94eb2c8d649b4eba4191e2dbbfaa7eb34890",
-        "security/assurance/15-recovery-possession-enrollment.md": "979b9107e0ced2d4729beec94fc7cb9b2df2417ed09a64f6bc899b3e327265c7"
+        "security/assurance/15-recovery-possession-enrollment.md": "a00e601d90f6ad19e3c509c9acac950ad50e5b84c647cb96e08f11e7f09e43d9"
       }
     }
   ]

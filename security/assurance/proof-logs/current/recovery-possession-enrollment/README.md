@@ -34,3 +34,8 @@ See [the boundary](../../../15-recovery-possession-enrollment.md): observation
 origins, store-key user binding, concrete side effects, exceptions and concurrent
 traces remain open. This is internal evidence, not an external audit or a
 whole-system proof.
+
+`lifecycle-model-tests.log` records three passing bounded M14 checks. The
+enrollment enumeration now includes the new `account_present` input as a
+ninth independent boolean (512 masks), so its coverage tracks the tightened
+policy. This is executable enumeration, not a proof of SQL/HTTP trace refinement.

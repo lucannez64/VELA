@@ -44,6 +44,8 @@ key-length version. The latter passed fresh hax/F★ checking, six policy tests
 and seven observation tests. The parent also ran the complete 60-test server
 integration suite and an additional empty-commitment regression. Earlier
 insertion, recovery and enrollment logs are retained with their own provenance.
+Three bounded lifecycle tests also passed, with account presence included in
+the enrollment enumeration.
 
 ## Unproved correspondence
 

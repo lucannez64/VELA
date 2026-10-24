@@ -2,7 +2,7 @@
 
 Local result for `security/formal/cryptoverif/kem_v2_x25519_gdh_nonuniform.ocv`,
 the nonuniform/clamped-style exponent companion to
-`kem_v2_x25519_gdh.ocv`. This directory records one full local runner pass; it
+`kem_v2_x25519_gdh.ocv`. This directory records local full-run, gate and debug snapshots; it
 is not hosted-CI evidence.
 
 ## Environment and command
@@ -125,3 +125,22 @@ seven per-model logs now record that parent run from
 child summary. All six positive verdicts and the expected legacy nonproof
 passed. Eleven runner/sourceguard tests also passed (`runner-tests.log`).
 Hosted reproduction of this increment remains pending.
+
+## Pinned-bound gate and tool hashes
+
+`pinned-gate-runner.log` records a further complete real run through the hardened
+gate from `/tmp/vela-cv-pinned-bound`. Six positive models and the expected legacy
+nonproof pass, including the exact nonuniform bound check.
+`pinned-bound-tests.log` records thirteen synthetic/golden tests, including five
+negative bound-drift variants. They supersede the earlier eleven-test snapshot
+for gate behavior; neither set is a cryptographic proof.
+
+Actual local tool-file SHA-256 hashes:
+
+- `cryptoverif`: `582f31b301d5efbe8428924c3559454a9a63591bec41f4cf19cd28082933e130`
+- `default.ocvl`: `f60c0fa4701257a57415fc256b440cffd4d2851bf25af66e62c009c0ac9e08fd`
+
+The pinned 2.12 release archive checksum is documented in assurance
+`04-reproducibility.md`. These binary/library hashes identify the actual local
+files; CI builds may have different binary hashes. Internal review and its
+collision-transparency follow-up are maintainer assurance, not an external audit.
