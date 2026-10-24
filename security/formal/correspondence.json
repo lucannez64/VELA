@@ -305,6 +305,14 @@
         "serverVELA/vela-server/src/device/enroll.rs": "a16742b8bc879db82ee0d9c9fe8afe8a7aafcf99c06e70e6438086463cc3c554",
         "serverVELA/vela-server/src/web_session/mod.rs": "9be9bbfa52509c1ef59e01a65d4369b5897a8a391c53d783b46f8e32b1e600ef"
       }
+    },
+    {
+      "boundary": "bounded account-deletion conformance with residue scan over all eight tables and sled (depth 3; non-transactional deletion, crash, replicas and in-flight requests not covered)",
+      "artifacts": {
+        "serverVELA/vela-server/tests/account_deletion_model.rs": "89d1ba6d39ac16b6a9b1914be6eab45d18bd837211607adf0cfc00af838b9141",
+        "serverVELA/vela-server/src/account/delete.rs": "2eecbb128e1022cf77c11e5309d94f76ab07ff38ae923e25f2c91a9c6ec63316",
+        "serverVELA/vela-server/src/db.rs": "efca7cdb094c2165643ce2374f825a28a043b0c1d9e10dc7b753bb3006ba3503"
+      }
     }
   ]
 }
