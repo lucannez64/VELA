@@ -159,6 +159,13 @@ Lemmas 16-17 and the test `insert_error_is_terminal_and_never_restores_the_grant
 check the decision; that the handler performs no restore on that branch is
 inspected code, and the SQL ambiguity itself is not tested.
 
+## Hosted reproduction
+
+The [aaf708f security workflow](https://github.com/lucannez64/VELA/actions/runs/40122568372) ran `verify-fstar.sh` (90 historical
+contracts plus this driver gate) and the 12 driver tests; all fifteen PR checks
+passed. `hosted-aaf708f-driver.log` is the job's driver summary: its extraction
+and lemma hashes equal the local ones in `source-hashes.txt`.
+
 ## Scope and open obligations
 
 - Scope is one request/driver instance. The theorem does not compose concurrent

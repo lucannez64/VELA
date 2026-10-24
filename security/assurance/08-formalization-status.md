@@ -24,7 +24,7 @@ per-test count is inferred. Historical evidence below retains snapshot counts.
 The recovery-redemption lifecycle refinement is subsequent work, not covered by
 this baseline.
 
-## Enrollment-redemption driver (local, after fdee2bc)
+## Enrollment-redemption driver (hosted on aaf708f)
 
 Every decision the enrollment handler makes after preflight (consumed grant,
 final enrollment/rekey permits, insert outcome, live authority recheck,
@@ -39,7 +39,8 @@ committed, so one grant could enroll two devices. Insert errors are now
 terminal. The store/SQL effects, the handler glue around the driver and
 concurrent requests remain unproved; the driver is counted outside the
 249-contract inventory because its step contracts carry a soundness
-precondition that the trace lemmas discharge. Hosted reproduction is pending.
+precondition that the trace lemmas discharge. The [aaf708f security workflow](https://github.com/lucannez64/VELA/actions/runs/40122568372)
+reproduced it with byte-identical extractions, and all fifteen PR checks passed.
 [Evidence](proof-logs/current/recovery-redemption-driver/README.md).
 
 ## Additional checked results
@@ -248,7 +249,7 @@ and complete handler traces remain open.
 | Area | Status | Required to close |
 |---|---|---|
 | F-1: handler facts | Partial: observation constructors and policy checks hosted on fdee2bc; origins and full handlers remain open | Maintain the sharing contracts reproduced on 5d8c366; verify the observation producers (SQL rows, store lookups, signature verifier, session ids) themselves; complete UTF-8/object and authenticated-open composition after the checked byte-frame parser; prove independent context origins; cover remaining token, epoch, recovery and handler fact construction |
-| F-2: state transitions | Partial: preflight ordering/readiness checked against an independent specification; enrollment-redemption decisions extracted into a driver with unbounded per-request trace lemmas (local); sharing handlers: every sequence up to depth 3 (CI) / 4 (local) matches the M19b/M21 state machine against the real router and database, with mutation checks; possession-proof recovery handlers: every sequence up to depth 4 (CI) matches the M18/M26a chain, with mutation checks (WebAuthn path not driven) | Machine-check concrete handler/database transitions against protocol transitions, including exceptions, cancellation and concurrency |
+| F-2: state transitions | Partial: preflight ordering/readiness checked against an independent specification; enrollment-redemption decisions extracted into a driver with unbounded per-request trace lemmas (hosted aaf708f); sharing handlers: every sequence up to depth 3 (CI) / 4 (local) matches the M19b/M21 state machine against the real router and database, with mutation checks; possession-proof recovery handlers: every sequence up to depth 4 (CI) matches the M18/M26a chain, with mutation checks (WebAuthn path not driven) | Machine-check concrete handler/database transitions against protocol transitions, including exceptions, cancellation and concurrency |
 | F-3: persistence/recovery | Partial: M28 and composed M29 | Prove the actual journal implementation refines M28; formalize collection equality and filesystem outcomes; compose local edits/deletions and RMS migration; cover or explicitly exclude independent processes |
 | F-4: construction security | Partial: CryptoVerif proofs for idealized v2 KEM games, modular KEM-DEM, AND-signature, v2 possession-proof and authenticated-share games under the explicit assumptions | Close the combiner gaps listed in `security/formal/cryptoverif/README.md` (concrete X25519 clamping/cofactor/encoding correspondence after conditional nonuniform distribution accounting, SHA-256 step, quantum-query and multi-user composition; KEM-DEM is proved modularly); computational games and reductions for envelope framing and KDF use beyond the random-oracle model, under named primitive assumptions (share tags and the v2 possession proof are now proved in CryptoVerif with KDFs as random oracles; legacy v1 possession commitments are not covered); verify application randomness/error/erasure handling. Primitive internals and leakage resistance are trusted under the selected boundary |
 | F-5: native clients/composition | [Shared chunk kernel](17-universal-chunk-admission.md) and [integer-epoch kernel](18-mobile-sync-admission.md) checked; mobile runtime fixes internally reviewed and hosted on fdee2bc; native trace refinement remains open | Verify Kotlin/Swift callers, persistence and FFI; formalize enrollment UI trust; compose recovery, enrollment, sync, sharing and revocation in one argument |
