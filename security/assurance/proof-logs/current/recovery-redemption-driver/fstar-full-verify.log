@@ -1,4 +1,4 @@
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.14s
      Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-recovery-policy/a0457367b9592201/out/vela_recovery_policy-a0457367b9592201)
 
 running 7 tests
@@ -50,7 +50,7 @@ running 0 tests
 
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.10s
 [1m[94minfo[0m: [1mhax: unchanged file ./proofs/fstar/extraction/Vela_recovery_policy.fst[0m
 * Warning 241 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti(0,0-0,0):
   - Unable to load
@@ -86,7 +86,7 @@ commit=7b347386330d0e5a331a220535b6f15288903234
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
 [1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-driver/Vela_recovery_policy.fst[0m
 [1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-driver/Vela_recovery_policy.Driver.fst[0m
-F* driver argv: --cmi --cache_off --warn_error -331 --z3rlimit 4000 --z3version 4.13.3 --already_cached +Prims+FStar+LowStar+C+Spec.Loops+TestLib --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/core --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proofs/fstar/extraction --include proofs/fstar/extraction-driver --include proofs/fstar/driver-lemmas proofs/fstar/extraction-driver/Vela_recovery_policy.Driver.fst proofs/fstar/extraction-driver/Vela_recovery_policy.fst proofs/fstar/driver-lemmas/Vela_recovery_policy_driver_lemmas.fst
+F* driver argv: --cmi --cache_off --warn_error -331 --z3rlimit 4000 --z3version 4.13.3 --already_cached +Prims+FStar+LowStar+C+Spec.Loops+TestLib --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/core --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proofs/fstar/extraction --include proofs/fstar/extraction-driver --include proofs/fstar/driver-lemmas --include proofs/fstar/driver-composition proofs/fstar/extraction-driver/Vela_recovery_policy.Driver.fst proofs/fstar/extraction-driver/Vela_recovery_policy.fst proofs/fstar/driver-lemmas/Vela_recovery_policy_driver_lemmas.fst proofs/fstar/driver-composition/Vela_recovery_policy_driver_composition.fst
 * Warning 271 at /tmp/vela-fstar-prebuilt/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
   - Pattern uses these theory symbols or terms that should not be in an SMT
     pattern:
@@ -110,9 +110,12 @@ F* driver argv: --cmi --cache_off --warn_error -331 --z3rlimit 4000 --z3version 
 Verified module: Vela_recovery_policy
 Verified module: Vela_recovery_policy.Driver
 Verified module: Vela_recovery_policy_driver_lemmas
+Verified module: Vela_recovery_policy_driver_composition
 All verification conditions discharged successfully
 driver proof: 6 focused Rust contracts, 23 hand-written trace lemmas/witnesses checked
+driver composition: any number of interleaved requests write at most one device row per grant
 1fe6d317eb20bba515092dc7d3181900968b5c64b65387195d58904db4fd1fe1  proofs/fstar/extraction-driver/Vela_recovery_policy.Driver.fst
 fe2380cc9ccb38178ccd064abc79c0a5e3e33d2df2ef3670b5a07813feaac545  proofs/fstar/extraction-driver/Vela_recovery_policy.fst
 074776c05b07a71af48c3fa39048f6e8220f8169ec3ab702b81a270a0aedb022  proofs/fstar/driver-lemmas/Vela_recovery_policy_driver_lemmas.fst
+6297a30d6f26365ee50dbd6d8f922387b4079de0958524aec1cf7644a89f1697  proofs/fstar/driver-composition/Vela_recovery_policy_driver_composition.fst
 42078d422125fb26e77098cc0cd7cd29c3e1c316727ef8786774777761babcfe  src/driver.rs

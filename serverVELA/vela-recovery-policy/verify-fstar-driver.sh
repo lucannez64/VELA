@@ -50,11 +50,16 @@ if (( ${#lemma_files[@]} != 1 )); then
   echo "expected exactly one reviewed driver lemma module" >&2
   exit 1
 fi
+composition_files=(proofs/fstar/driver-composition/Vela_recovery_policy_driver_composition.fst)
+[[ -f ${composition_files[0]} ]] || {
+  echo "missing reviewed driver composition module" >&2
+  exit 1
+}
 
 # Fail closed on proof escapes in the generated artifact and the lemmas. This
 # is a textual guard, not the proof: fstar.exe below is the checker.
 escapes=$(grep -nE '(^|[^[:alnum:]_])(assume|admit)([^[:alnum:]_]|$)|--lax' \
-  "${proof_files[@]}" "${lemma_files[@]}" || true)
+  "${proof_files[@]}" "${lemma_files[@]}" "${composition_files[@]}" || true)
 if [[ -n $escapes ]]; then
   printf '%s\n' "$escapes" >&2
   echo 'proof escape detected in focused driver artifact' >&2
@@ -82,7 +87,8 @@ fstar_args=(
   --include "$hax_lib_root/proofs/fstar/extraction"
   --include proofs/fstar/extraction-driver
   --include proofs/fstar/driver-lemmas
-  "${proof_files[@]}" "${lemma_files[@]}"
+  --include proofs/fstar/driver-composition
+  "${proof_files[@]}" "${lemma_files[@]}" "${composition_files[@]}"
 )
 printf 'F* driver argv:'
 printf ' %q' "${fstar_args[@]}"
@@ -90,4 +96,5 @@ printf '\n'
 fstar.exe "${fstar_args[@]}"
 
 echo "driver proof: 6 focused Rust contracts, 23 hand-written trace lemmas/witnesses checked"
-sha256sum "${proof_files[@]}" "${lemma_files[@]}" src/driver.rs
+echo "driver composition: any number of interleaved requests write at most one device row per grant"
+sha256sum "${proof_files[@]}" "${lemma_files[@]}" "${composition_files[@]}" src/driver.rs

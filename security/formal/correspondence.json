@@ -157,7 +157,7 @@
       "boundary": "recovery observation constructors and atomic challenge insertion (SQL/store/WebAuthn origins and full handler/I/O trace refinement remain open)",
       "artifacts": {
         "serverVELA/vela-recovery-policy/src/lib.rs": "6930171e8e39b43ec6b8d3229e9051643ef1330d3b0c444308a6dbf2cc4279c3",
-        "serverVELA/vela-recovery-policy/README.md": "54b303ac6c42aaad8b0a341815a115f0f2af74bb9040e889f3954a64d9552e2c",
+        "serverVELA/vela-recovery-policy/README.md": "c8e00650e0fc78bd446a8a93c55d8754febf65b8e65efb86fffa4dcd795a8b04",
         "serverVELA/vela-recovery-policy/verify-fstar.sh": "6a4d786bd1a9bbc74512653100d94675461a2196bf6067ef82e39632379efc64",
         "serverVELA/vela-recovery-policy/tests/fact_construction.rs": "bb6d6ae116788d757220dec521b094613d33d7f60d0896d9ed96491d24f3b471",
         "serverVELA/vela-recovery-policy/proofs/fstar/extraction/Vela_recovery_policy.fst": "eaf1148be9567b8d8d6dbca8ceca3a4369df8b3c3856f19afc2de9eeee070327",
@@ -182,7 +182,7 @@
       "boundary": "possession recovery, enrollment observations and preflight sequencing (grant-key binding, verifier/SQL/store origins and full handler traces remain open)",
       "artifacts": {
         "serverVELA/vela-recovery-policy/src/lib.rs": "6930171e8e39b43ec6b8d3229e9051643ef1330d3b0c444308a6dbf2cc4279c3",
-        "serverVELA/vela-recovery-policy/README.md": "54b303ac6c42aaad8b0a341815a115f0f2af74bb9040e889f3954a64d9552e2c",
+        "serverVELA/vela-recovery-policy/README.md": "c8e00650e0fc78bd446a8a93c55d8754febf65b8e65efb86fffa4dcd795a8b04",
         "serverVELA/vela-recovery-policy/verify-fstar.sh": "6a4d786bd1a9bbc74512653100d94675461a2196bf6067ef82e39632379efc64",
         "serverVELA/vela-recovery-policy/proofs/fstar/extraction/Vela_recovery_policy.fst": "eaf1148be9567b8d8d6dbca8ceca3a4369df8b3c3856f19afc2de9eeee070327",
         "serverVELA/vela-recovery-policy/tests/fact_construction.rs": "bb6d6ae116788d757220dec521b094613d33d7f60d0896d9ed96491d24f3b471",
@@ -276,15 +276,16 @@
       }
     },
     {
-      "boundary": "per-request enrollment-redemption driver (6 extracted Rust contracts + 23 handwritten unbounded trace lemmas; insert errors terminal, no restore after any insert outcome; get_del/SQL/store effects, handler glue and concurrent single-grant composition remain open)",
+      "boundary": "enrollment-redemption driver (6 extracted Rust contracts + 23 per-request trace lemmas; concurrent composition: at most one device row per grant for every schedule, assuming atomic get_del and faithful effects; SQL guard/store semantics, grant issuance and handler glue remain open)",
       "artifacts": {
         "serverVELA/vela-recovery-policy/src/driver.rs": "42078d422125fb26e77098cc0cd7cd29c3e1c316727ef8786774777761babcfe",
         "serverVELA/vela-recovery-policy/tests/redemption_driver.rs": "b39736d2b52329ea1f9d8c25cad6046d3404d5f6829a728742f2de99fcc75dcc",
-        "serverVELA/vela-recovery-policy/verify-fstar-driver.sh": "d44da13000a17397e938d8a74154ae4ceedfec5b366399ae66bed05c2151b8e9",
+        "serverVELA/vela-recovery-policy/verify-fstar-driver.sh": "5a665f7bc7b78e22ccd39cb29a01931be9ba1b33d1e4fefe6ecbc2969782b240",
         "serverVELA/vela-recovery-policy/proofs/fstar/extraction-driver/Vela_recovery_policy.Driver.fst": "1fe6d317eb20bba515092dc7d3181900968b5c64b65387195d58904db4fd1fe1",
         "serverVELA/vela-recovery-policy/proofs/fstar/driver-lemmas/Vela_recovery_policy_driver_lemmas.fst": "074776c05b07a71af48c3fa39048f6e8220f8169ec3ab702b81a270a0aedb022",
         "serverVELA/vela-server/src/recovery/enroll_device.rs": "4cb456d6952951db14011ad4f589a6c1019863c42ab54969dd38789eeb370230",
-        "serverVELA/vela-server/src/recovery/recover.rs": "301291045074be0dc11fe6ad76c257fe9b044324a79804e1a2e28959c7d4241c"
+        "serverVELA/vela-server/src/recovery/recover.rs": "301291045074be0dc11fe6ad76c257fe9b044324a79804e1a2e28959c7d4241c",
+        "serverVELA/vela-recovery-policy/proofs/fstar/driver-composition/Vela_recovery_policy_driver_composition.fst": "6297a30d6f26365ee50dbd6d8f922387b4079de0958524aec1cf7644a89f1697"
       }
     }
   ]

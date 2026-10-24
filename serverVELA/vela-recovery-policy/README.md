@@ -71,6 +71,12 @@ about two concurrent requests sharing one grant, and they do not prove that
 the atomic `get_del`, the guarded SQL insert, the live recheck query or
 `restore_enroll_grant` have their intended effects.
 
+[`proofs/fstar/driver-composition`](proofs/fstar/driver-composition/Vela_recovery_policy_driver_composition.fst)
+lifts this to any number of concurrent requests sharing one grant: assuming an
+atomic `get_del` and that the handler performs exactly the returned effect,
+every schedule writes at most one device row per grant, including inserts whose
+errors hid a commit.
+
 An earlier version of this driver restored the grant after an insert error.
 Because an error can hide a committed INSERT, a second redemption of the
 restored grant could then insert a second device row. The driver now treats
