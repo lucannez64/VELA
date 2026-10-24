@@ -1,0 +1,146 @@
+   Compiling vela-sync-policy v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-700776df/libVELA/vela-sync-policy)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.14s
+     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-sync-policy/165feaf577ea3e70/out/vela_sync_policy-165feaf577ea3e70)
+
+running 6 tests
+test structural_equality_tests::structural_merge_equality_matches_derived_equality_exhaustively ... ok
+test tests::adoption_ladder_rejects_everything_but_the_next_epoch ... ok
+test tests::chunk_admission_boundary_grid_matches_independent_predicate ... ok
+test tests::chunk_download_rejects_rollback_and_unbound_aad ... ok
+test tests::merge_classification_covers_every_combination ... ok
+test tests::mobile_sync_epoch_requires_exact_positive_agreement ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests vela_sync_policy
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Checking vela-sync-policy v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-700776df/libVELA/vela-sync-policy)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.57s
+[1m[94minfo[0m: [1mhax: unchanged file ./proofs/fstar/extraction/Vela_sync_policy.fst[0m
+* Warning 241 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti(0,0-0,0):
+  - Unable to load
+    /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti.checked
+    since checked file
+    /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti.checked
+    does not exist; will recheck
+    /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti
+    (suppressing this warning for further modules)
+
+* Warning 239 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+Verified module: Vela_sync_policy
+All verification conditions discharged successfully
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-sync-policy/165feaf577ea3e70/out/vela_sync_policy-165feaf577ea3e70)
+
+running 6 tests
+test structural_equality_tests::structural_merge_equality_matches_derived_equality_exhaustively ... ok
+test tests::adoption_ladder_rejects_everything_but_the_next_epoch ... ok
+test tests::chunk_admission_boundary_grid_matches_independent_predicate ... ok
+test tests::chunk_download_rejects_rollback_and_unbound_aad ... ok
+test tests::merge_classification_covers_every_combination ... ok
+test tests::mobile_sync_epoch_requires_exact_positive_agreement ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests vela_sync_policy
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.01s
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-epoch/Vela_sync_policy.fst[0m
+Epoch source guard: 4 extracted postconditions, 6 handwritten lemmas
+F* 2025.10.06
+platform=Linux_x86_64
+compiler=OCaml 4.14.2
+date=2025-10-06 12:00:42 -0700
+commit=7b347386330d0e5a331a220535b6f15288903234
+F* epoch argv: --cmi --cache_off --warn_error -331 --z3rlimit 500 --z3version 4.13.3 --already_cached +Prims+FStar+LowStar+C+Spec.Loops+TestLib --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/core --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proofs/fstar/extraction --include proofs/fstar/extraction-epoch --include proofs/fstar/epoch-lemmas proofs/fstar/extraction-epoch/Vela_sync_policy.fst proofs/fstar/epoch-lemmas/Vela_sync_policy_epoch_lemmas.fst
+0b7febd0c062d955831133476fba4afc8d9616b83e6be49b63d6ba10fe404393  proofs/fstar/extraction-epoch/Vela_sync_policy.fst
+81843c5aa65b9e1269bcd865ba5fcc957286d72de18311e48a725dfc90ee174b  proofs/fstar/epoch-lemmas/Vela_sync_policy_epoch_lemmas.fst
+proofs/fstar/extraction-epoch/Vela_sync_policy.fst: OK
+proofs/fstar/epoch-lemmas/Vela_sync_policy_epoch_lemmas.fst: OK
+* Warning 271 at /tmp/vela-fstar-prebuilt/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+Verified module: Vela_sync_policy
+Verified module: Vela_sync_policy_epoch_lemmas
+All verification conditions discharged successfully
+Chunk source guard: 11 extracted postconditions, 20 handwritten lemmas
+......
+----------------------------------------------------------------------
+Ran 6 tests in 0.058s
+
+OK
+F* 2025.10.06
+platform=Linux_x86_64
+compiler=OCaml 4.14.2
+date=2025-10-06 12:00:42 -0700
+commit=7b347386330d0e5a331a220535b6f15288903234
+e23bc7556ebb25eaf091ae5f8dd3718f490330e7efd9ea9245714655b1f14add  proofs/fstar/extraction/Vela_sync_policy.fst
+b6aa6204fc78dc1cdb7a389d453d6a71ba97b25a03c553d88a5d4f928121eb84  proofs/fstar/chunk-lemmas/Vela_sync_policy_chunk_lemmas.fst
+proofs/fstar/extraction/Vela_sync_policy.fst: OK
+proofs/fstar/chunk-lemmas/Vela_sync_policy_chunk_lemmas.fst: OK
+F* argv: --cmi --cache_off --warn_error -331 --z3rlimit 500 --z3version 4.13.3 --already_cached +Prims+FStar+LowStar+C+Spec.Loops+TestLib --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/core --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proofs/fstar/extraction --include proofs/fstar/extraction --include proofs/fstar/chunk-lemmas proofs/fstar/extraction/Vela_sync_policy.fst proofs/fstar/chunk-lemmas/Vela_sync_policy_chunk_lemmas.fst
+* Warning 271 at /tmp/vela-fstar-prebuilt/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+Verified module: Vela_sync_policy
+Verified module: Vela_sync_policy_chunk_lemmas
+All verification conditions discharged successfully
+chunk proof: 11 historical Rust postconditions, 20 handwritten lemmas checked
+e23bc7556ebb25eaf091ae5f8dd3718f490330e7efd9ea9245714655b1f14add  proofs/fstar/extraction/Vela_sync_policy.fst
+b6aa6204fc78dc1cdb7a389d453d6a71ba97b25a03c553d88a5d4f928121eb84  proofs/fstar/chunk-lemmas/Vela_sync_policy_chunk_lemmas.fst

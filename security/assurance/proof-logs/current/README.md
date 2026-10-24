@@ -6,10 +6,12 @@ instrumented journal gate. It predates the handwritten journal encoding and
 preflight/ordering increments. The [hosted baseline on 368bcc0](hosted-368bcc0/README.md) reproduces the
 231-postcondition / 238-function snapshot and the journal encoding check.
 
-The current local corpus is 245 postconditions / 252 selected functions.
+The published sharing correction has 245 postconditions / 252 selected functions;
+the local mobile candidate adds four, giving 249 / 256. Runtime publication
+remains held for the auth/persistence review corrections.
 The [sharing arithmetic correction](share-inbox-arithmetic/README.md) checks
 the fourteen new sharing contracts after fixing a universal i64 overflow
-obligation. Hosted reproduction of that correction remains pending.
+obligation. Hosted reproduction of that correction passed in the [5d8c366 snapshot](hosted-5d8c366/README.md).
 
 Recent increments (see the hosted baseline above for snapshot coverage):
 

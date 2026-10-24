@@ -169,8 +169,9 @@ refusals are not relabelled).
   The parent directory is not fsynced, so the rename's survival across sudden
   power loss is an OS/filesystem guarantee taken as trusted. The Android
   `EncryptedSharedPreferences.commit()` durability boundary is likewise an OS
-  guarantee, and the crash window between a successful vault persist and the
-  baseline commit can still re-admit one revision (it cannot lower a baseline).
+  guarantee, and vault persistence plus baseline commit are not atomic. A crash can lose
+  an unrecorded baseline advance and leave a replay window; no once-only or
+  one-revision bound is established.
 - iOS cross-process baseline writes are **not** serialized: the `NSLock` only
   covers one writer process. If a second process ever synced, its whole-map
   `UserDefaults` read-modify-write could lower a clock and erase other
@@ -203,3 +204,33 @@ refusals are not relabelled).
   decision for clients that adopt rotations.
 - Global proof-boundary/correspondence/manifest/CI census of the new F-5
   artifacts is parent-owned and intentionally not modified here.
+
+## Parent integration candidate (not published)
+
+The parent integrates 57d8bf6 and 889b03c as 714aeb2/5086395 with the separate
+chunk proof from 25bf944. `parent-fstar.log` checks six unique Rust tests,
+15 sync Rust contracts (11 historical +4 epoch), 6 epoch lemmas and 20 chunk
+lemmas in separate invocations. All verification conditions discharge. The
+focused epoch module and both lemma modules have reviewed hash pins; the
+source guard rejects local proof escapes/options, with only the exact generated
+hax fuel/budget header allowlisted. Nine final guard tests pass separately.
+The global local-candidate census is 249 Rust postconditions /256 selections;
+26 handwritten lemmas are counted separately. Imported-library warnings remain.
+
+`parent-android-bridge.log` records 28 passing tests; `parent-apple-bridge.log`
+records 18. `parent-android-jvm.log` records a native-library rebuild followed by
+139 passing tests (counts read from 20 JUnit XML reports, no failures/errors).
+`parent-jni-symbols.log` lists the admitted-open export in the packaged arm64
+and x86_64 libraries respectively; it is not a live JNI execution test.
+`parent-gradle-config.log` is a dry-run configuration check after adding policy
+sources/manifests to native-library task inputs, so policy changes cannot leave
+the packaged JNI library stale. No new hax/toolchain cache key was introduced.
+
+The parent noticed that abrupt-power-loss directory durability is not ensured
+by data sync plus rename alone, and removed the once-only/one-revision bound
+on a lost baseline advance. Static review R5 found further token-header-finally,
+missing-pin fallback/durability and RMS-copy race gaps. Those are being fixed
+separately; neither the 139-test result nor the pure IdentityBinding tests
+establish those production failure paths. This candidate must not be published
+as closing them. Swift remains uncompiled/unrun locally and will need hosted
+macOS validation. See the current candidate scope note in the assurance package.

@@ -22,6 +22,8 @@ patterns = [
     '*/vela-*-policy/README.md', '*/vela-*-policy/Cargo.toml', '*/vela-*-policy/Cargo.lock',
     '*/vela-*-policy/proofs/fstar/extraction/*.fst',
     '*/vela-*-policy/proofs/fstar/chunk-lemmas/*.fst',
+    '*/vela-*-policy/proofs/fstar/extraction-epoch/*.fst',
+    '*/vela-*-policy/proofs/fstar/epoch-lemmas/*.fst',
     '*/vela-*-policy/proofs/logs/*.log', '*/vela-*-policy/proofs/logs/*.md',
     'libVELA/vela-crypto/proofs/proverif/extraction/*.pvl',
     'libVELA/vela-crypto/proofs/fstar/extraction/*.fst',

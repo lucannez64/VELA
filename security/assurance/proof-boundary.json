@@ -65,6 +65,11 @@
       "artifact": "libVELA/vela-crypto/proofs/fstar/models/Alloc.Vec.fst",
       "selected_postconditions": 0,
       "allowed_assume_val": []
+    },
+    {
+      "artifact": "libVELA/vela-sync-policy/proofs/fstar/extraction-epoch/Vela_sync_policy.fst",
+      "selected_postconditions": 4,
+      "allowed_assume_val": []
     }
   ]
 }

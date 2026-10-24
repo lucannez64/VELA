@@ -1,0 +1,65 @@
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.11.1/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build 
+Warning: SDK processing. This version only understands SDK XML versions up to 3 but an SDK XML file of version 4 was encountered. This can happen if you use versions of Android Studio and the command-line tools that were released at different times.
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:buildRustBridge
+> Task :app:preBuild
+> Task :app:preDebugBuild
+> Task :app:checkDebugAarMetadata UP-TO-DATE
+> Task :app:generateDebugResValues UP-TO-DATE
+> Task :app:mapDebugSourceSetPaths UP-TO-DATE
+> Task :app:generateDebugResources UP-TO-DATE
+> Task :app:mergeDebugResources UP-TO-DATE
+> Task :app:packageDebugResources UP-TO-DATE
+> Task :app:parseDebugLocalResources UP-TO-DATE
+> Task :app:createDebugCompatibleScreenManifests UP-TO-DATE
+> Task :app:extractDeepLinksDebug UP-TO-DATE
+> Task :app:processDebugMainManifest UP-TO-DATE
+> Task :app:processDebugManifest UP-TO-DATE
+> Task :app:processDebugManifestForPackage UP-TO-DATE
+> Task :app:processDebugResources UP-TO-DATE
+
+> Task :app:compileDebugKotlin
+w: file:///home/hirew/.t3/worktrees/VELA/t3-700776df/androidVELA/app/src/main/java/com/vela/android/MainActivity.kt:34:8 'class IntentIntegrator : Any' is deprecated. Deprecated in Java.
+w: file:///home/hirew/.t3/worktrees/VELA/t3-700776df/androidVELA/app/src/main/java/com/vela/android/MainActivity.kt:206:33 'fun startIntentSenderForResult(intent: IntentSender, requestCode: Int, fillInIntent: Intent?, flagsMask: Int, flagsValues: Int, extraFlags: Int): Unit' is deprecated. This method has been deprecated in favor of using the Activity Result API
+      which brings increased type safety via an {@link ActivityResultContract} and the prebuilt
+      contracts for common intents available in
+      {@link androidx.activity.result.contract.ActivityResultContracts}, provides hooks for
+      testing, and allow receiving results in separate, testable classes independent from your
+      activity. Use
+      {@link #registerForActivityResult(ActivityResultContract, ActivityResultCallback)}
+      passing in a {@link StartIntentSenderForResult} object for the
+      {@link ActivityResultContract}.
+w: file:///home/hirew/.t3/worktrees/VELA/t3-700776df/androidVELA/app/src/main/java/com/vela/android/MainActivity.kt:331:20 'var statusBarColor: Int' is deprecated. Deprecated in Java.
+w: file:///home/hirew/.t3/worktrees/VELA/t3-700776df/androidVELA/app/src/main/java/com/vela/android/MainActivity.kt:332:20 'var navigationBarColor: Int' is deprecated. Deprecated in Java.
+w: file:///home/hirew/.t3/worktrees/VELA/t3-700776df/androidVELA/app/src/main/java/com/vela/android/MainActivity.kt:538:22 'class IntentIntegrator : Any' is deprecated. Deprecated in Java.
+w: file:///home/hirew/.t3/worktrees/VELA/t3-700776df/androidVELA/app/src/main/java/com/vela/android/MainActivity.kt:538:39 'static fun parseActivityResult(p0: Int, p1: Int, p2: Intent!): IntentResult!' is deprecated. Deprecated in Java.
+w: file:///home/hirew/.t3/worktrees/VELA/t3-700776df/androidVELA/app/src/main/java/com/vela/android/MainActivity.kt:555:17 'fun startIntentSenderForResult(intent: IntentSender, requestCode: Int, fillInIntent: Intent?, flagsMask: Int, flagsValues: Int, extraFlags: Int): Unit' is deprecated. This method has been deprecated in favor of using the Activity Result API
+      which brings increased type safety via an {@link ActivityResultContract} and the prebuilt
+      contracts for common intents available in
+      {@link androidx.activity.result.contract.ActivityResultContracts}, provides hooks for
+      testing, and allow receiving results in separate, testable classes independent from your
+      activity. Use
+      {@link #registerForActivityResult(ActivityResultContract, ActivityResultCallback)}
+      passing in a {@link StartIntentSenderForResult} object for the
+      {@link ActivityResultContract}.
+w: file:///home/hirew/.t3/worktrees/VELA/t3-700776df/androidVELA/app/src/main/java/com/vela/android/MainActivity.kt:593:9 'constructor(p0: Activity!): IntentIntegrator' is deprecated. Deprecated in Java.
+w: file:///home/hirew/.t3/worktrees/VELA/t3-700776df/androidVELA/app/src/main/java/com/vela/android/MainActivity.kt:595:38 'class IntentIntegrator : Any' is deprecated. Deprecated in Java.
+w: file:///home/hirew/.t3/worktrees/VELA/t3-700776df/androidVELA/app/src/main/java/com/vela/android/ui/screens/SettingsScreen.kt:224:118 'val Icons.Filled.ManageSearch: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ManageSearch.
+
+> Task :app:javaPreCompileDebug UP-TO-DATE
+> Task :app:compileDebugJavaWithJavac NO-SOURCE
+> Task :app:bundleDebugClassesToRuntimeJar
+> Task :app:bundleDebugClassesToCompileJar
+> Task :app:compileDebugUnitTestKotlin
+> Task :app:preDebugUnitTestBuild
+> Task :app:javaPreCompileDebugUnitTest
+> Task :app:compileDebugUnitTestJavaWithJavac NO-SOURCE
+> Task :app:processDebugJavaRes
+> Task :app:processDebugUnitTestJavaRes
+> Task :app:testDebugUnitTest
+
+BUILD SUCCESSFUL in 9m 31s
+23 actionable tasks: 9 executed, 14 up-to-date
+
+JUnit XML totals: {'tests': 139, 'failures': 0, 'errors': 0, 'skipped': 0}

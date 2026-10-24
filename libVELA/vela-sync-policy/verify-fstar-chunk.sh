@@ -53,6 +53,10 @@ printf '%s\n' "$version"
   exit 2
 }
 sha256sum "$artifact" "${lemma_files[@]}"
+printf '%s  %s\n' \
+  'e23bc7556ebb25eaf091ae5f8dd3718f490330e7efd9ea9245714655b1f14add' "$artifact" \
+  'b6aa6204fc78dc1cdb7a389d453d6a71ba97b25a03c553d88a5d4f928121eb84' "${lemma_files[0]}" \
+  | sha256sum --check
 
 hax_lib_root=$(
   cargo metadata --format-version 1 |

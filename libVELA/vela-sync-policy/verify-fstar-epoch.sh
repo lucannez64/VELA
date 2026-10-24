@@ -3,8 +3,8 @@ set -euo pipefail
 
 # Focused F-5 kernel: mobile clients require the manifest epoch and their
 # authenticated local epoch to be exactly equal and positive. This is checked
-# separately from verify-fstar.sh so the existing extraction artifact and the
-# global proof manifest stay byte-identical; the new artifact lives under
+# in a separate invocation from the historical eleven-contract module;
+# that extraction stays byte-identical. The focused artifact lives under
 # proofs/fstar/extraction-epoch.
 #
 # Two things are checked here:
@@ -48,19 +48,39 @@ if (( ${#lemma_files[@]} == 0 )); then
   exit 1
 fi
 
+if (( ${#proof_files[@]} != 1 || ${#lemma_files[@]} != 1 )); then
+  echo 'expected exactly one focused extraction and one epoch lemma module' >&2
+  exit 1
+fi
+python3 ../../security/formal/check-sync-chunk-proof.py --epoch \
+  "${proof_files[0]}" "${lemma_files[0]}"
+version=$(fstar.exe --version)
+printf '%s\n' "$version"
+[[ ${version%%$'\n'*} == 'F* 2025.10.06' ]] || exit 2
 hax_lib_root=$(
   cargo metadata --format-version 1 |
     jq -r '.packages[] | select(.name == "hax-lib") | .manifest_path | sub("/Cargo.toml$"; "")'
 )
 
-fstar.exe \
-  --cmi \
-  --warn_error -331 \
-  --z3rlimit 500 \
-  --already_cached '+Prims+FStar+LowStar+C+Spec.Loops+TestLib' \
-  --include "$hax_lib_root/proof-libs/fstar/core" \
-  --include "$hax_lib_root/proof-libs/fstar/rust_primitives" \
-  --include "$hax_lib_root/proofs/fstar/extraction" \
-  --include proofs/fstar/extraction-epoch \
-  --include proofs/fstar/epoch-lemmas \
+fstar_args=(
+  --cmi
+  --cache_off
+  --warn_error -331
+  --z3rlimit 500
+  --z3version 4.13.3
+  --already_cached '+Prims+FStar+LowStar+C+Spec.Loops+TestLib'
+  --include "$hax_lib_root/proof-libs/fstar/core"
+  --include "$hax_lib_root/proof-libs/fstar/rust_primitives"
+  --include "$hax_lib_root/proofs/fstar/extraction"
+  --include proofs/fstar/extraction-epoch
+  --include proofs/fstar/epoch-lemmas
   "${proof_files[@]}" "${lemma_files[@]}"
+
+)
+printf 'F* epoch argv:'
+printf ' %q' "${fstar_args[@]}"
+printf '\n'
+sha256sum "${proof_files[@]}" "${lemma_files[@]}"
+printf '%s  %s\n' '0b7febd0c062d955831133476fba4afc8d9616b83e6be49b63d6ba10fe404393' 'proofs/fstar/extraction-epoch/Vela_sync_policy.fst' | sha256sum --check
+printf '%s  %s\n' '81843c5aa65b9e1269bcd865ba5fcc957286d72de18311e48a725dfc90ee174b' 'proofs/fstar/epoch-lemmas/Vela_sync_policy_epoch_lemmas.fst' | sha256sum --check
+fstar.exe "${fstar_args[@]}"

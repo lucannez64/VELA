@@ -22,6 +22,10 @@ passed on `350cd57`, including the 212-postcondition snapshot, seven
 computational games and instrumented journal gate. [Hosted evidence](proof-logs/current/hosted-350cd57/README.md)
 records that exact head. The later [368bcc0 hosted workflow](proof-logs/current/hosted-368bcc0/README.md)
 reproduces the 231-postcondition inventory and the typed journal encoding proof.
+The [5d8c366 snapshot](proof-logs/current/hosted-5d8c366/README.md) then passes
+all fifteen PR checks with 245 Rust postconditions, including the corrected
+sharing constructor. The twenty chunk lemmas and the local 249-contract mobile
+candidate are later increments with separate validation status.
 
 ## Contents
 
@@ -76,6 +80,10 @@ correctness is not a consequence of the pure-policy proofs.
     supplemental handwritten lemmas over the unchanged Rust extraction;
     caller flags and native/storage correspondence remain conditional.
 
+18. [Mobile sync admission candidate](18-mobile-sync-admission.md): four
+    additional Rust epoch contracts and six epoch lemmas, implemented admitted
+    bridge paths and explicit pending runtime/compatibility obligations.
+
 ## Evidence levels
 
 | Tag | Meaning |
@@ -115,7 +123,7 @@ correctness is not a consequence of the pure-policy proofs.
   extends the earlier [hosted enrollment baseline](proof-logs/current/hosted-enrollment-40039992434/README.md)
   to the hosted 180/173 snapshot. The [web-session observation increment](14-session-observation-refinement.md) extends this locally
   to 190/183; the [possession/enrollment constructors](15-recovery-possession-enrollment.md) bring the current local inventory
-  to **252 selected functions / 245 explicit postconditions** across eight policy crates and the sharing/signature kernels.
+  to **256 selected functions / 249 explicit postconditions** across eight policy crates and the sharing/signature kernels.
   All **18 local enum-equality assumptions were removed** through structural
   Rust comparisons; current generated modules contain zero local `assume val`
   declarations. Imported proof libraries, the String/Vec models and tools remain

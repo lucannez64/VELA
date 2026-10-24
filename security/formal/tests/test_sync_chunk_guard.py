@@ -28,7 +28,7 @@ class ChunkGuardTests(unittest.TestCase):
 
     def test_escapes_and_source_options_fail(self):
         for added in ('assume val unsound: False', 'let unsound () = admit ()',
-                      'axiom unsound: False', '#set-options "--lax"',
+                      'axiom unsound: False', 'let bad : Lemma False = (* // *) admit ()', '#set-options "--lax"',
                       '#push-options "--admit_smt_queries true"',
                       'let unsound () = unsafe_coerce ()'):
             with self.subTest(added=added), self.assertRaises(ValueError):
@@ -52,6 +52,30 @@ class ChunkGuardTests(unittest.TestCase):
     def test_unterminated_comment_fails(self):
         with self.assertRaises(ValueError):
             self.check(PROOF + '(* unfinished')
+
+
+class EpochGuardTests(unittest.TestCase):
+    def test_focused_epoch_module_passes(self):
+        guard.check_epoch(
+            ROOT / 'libVELA/vela-sync-policy/proofs/fstar/extraction-epoch/Vela_sync_policy.fst',
+            ROOT / 'libVELA/vela-sync-policy/proofs/fstar/epoch-lemmas/Vela_sync_policy_epoch_lemmas.fst')
+
+    def test_historical_module_cannot_shadow_focused_module(self):
+        with self.assertRaisesRegex(ValueError, '4 epoch postconditions'):
+            guard.check_epoch(
+                ROOT / 'libVELA/vela-sync-policy/proofs/fstar/extraction/Vela_sync_policy.fst',
+                ROOT / 'libVELA/vela-sync-policy/proofs/fstar/epoch-lemmas/Vela_sync_policy_epoch_lemmas.fst')
+
+    def test_epoch_escape_and_theorem_drift_fail(self):
+        source = (ROOT / 'libVELA/vela-sync-policy/proofs/fstar/epoch-lemmas/Vela_sync_policy_epoch_lemmas.fst').read_text()
+        with tempfile.TemporaryDirectory() as folder:
+            p = Path(folder) / 'Epoch.fst'
+            for modified in (source + '\naxiom unsound: False',
+                             source.replace('let plan_matches_independent_predicate', 'let renamed')):
+                p.write_text(modified)
+                with self.assertRaises(ValueError):
+                    guard.check_epoch(
+                        ROOT / 'libVELA/vela-sync-policy/proofs/fstar/extraction-epoch/Vela_sync_policy.fst', p)
 
 
 if __name__ == '__main__':

@@ -363,6 +363,8 @@ jobs:
             serverVELA/vela-*-policy/proofs/fstar/extraction/*.fst
             libVELA/vela-*-policy/proofs/fstar/extraction/*.fst
             libVELA/vela-sync-policy/proofs/fstar/chunk-lemmas/*.fst
+            libVELA/vela-sync-policy/proofs/fstar/extraction-epoch/*.fst
+            libVELA/vela-sync-policy/proofs/fstar/epoch-lemmas/*.fst
             libVELA/vela-crypto/proofs/fstar/extraction/*.fst
 
   static-scan:

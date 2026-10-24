@@ -81,11 +81,35 @@ def check(artifact, lemmas):
         raise ValueError('missing required admission theorem or witness')
 
 
+def check_epoch(artifact, lemmas):
+    extraction, proof = checked_code(artifact, extracted=True), checked_code(lemmas)
+    if not re.search(r'^module Vela_sync_policy\s*$', extraction, re.M):
+        raise ValueError('unexpected epoch extraction module')
+    if len(re.findall(r'\(ensures\b', extraction)) != 4:
+        raise ValueError('expected 4 epoch postconditions')
+    if not re.search(r'^module Vela_sync_policy_epoch_lemmas\s*$', proof, re.M):
+        raise ValueError('unexpected epoch lemma module')
+    if not re.search(r'^open Vela_sync_policy\s*$', proof, re.M):
+        raise ValueError('epoch lemmas must import the focused extraction')
+    if len(re.findall(r':\s*Lemma\b', proof)) != 6:
+        raise ValueError('expected 6 handwritten epoch lemmas')
+    required = {'accepted_implies_positive_and_equal', 'positive_and_equal_admits',
+                'plan_matches_independent_predicate', 'rejected_implies_not_admissible',
+                'equal_positive_pair_admits', 'mismatched_or_nonpositive_pair_refuses'}
+    names = set(re.findall(r'^let\s+(?:rec\s+)?(\w+)\b', proof, re.M))
+    if not required <= names:
+        raise ValueError('missing required epoch theorem')
+
+
 if __name__ == '__main__':
     try:
-        if len(sys.argv) != 3:
-            raise ValueError('usage: check-sync-chunk-proof.py EXTRACTION LEMMAS')
-        check(Path(sys.argv[1]), Path(sys.argv[2]))
+        if len(sys.argv) == 4 and sys.argv[1] == '--epoch':
+            check_epoch(Path(sys.argv[2]), Path(sys.argv[3]))
+            print('Epoch source guard: 4 extracted postconditions, 6 handwritten lemmas')
+        elif len(sys.argv) == 3:
+            check(Path(sys.argv[1]), Path(sys.argv[2]))
+            print('Chunk source guard: 11 extracted postconditions, 20 handwritten lemmas')
+        else:
+            raise ValueError('usage: check-sync-chunk-proof.py [--epoch] EXTRACTION LEMMAS')
     except (OSError, ValueError) as error:
         sys.exit(str(error))
-    print('Chunk source guard: 11 extracted postconditions, 20 handwritten lemmas')

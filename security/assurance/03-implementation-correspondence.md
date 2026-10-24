@@ -62,7 +62,7 @@ Each crate follows the same pattern:
   }
   ```
 
-### Crate inventory (221 policy postconditions / 224 selected policy functions)
+### Crate inventory (225 policy postconditions / 228 selected policy functions)
 
 | Crate | Entry points | Models | Production call sites |
 |---|---:|---|---|
@@ -72,7 +72,7 @@ Each crate follows the same pattern:
 | `serverVELA/vela-recovery-policy` | 90: the prior 42, 29 possession/enrollment observation contracts, 8 preflight contracts and 11 independent ordering/readiness contracts | M14, M16, M18 (server side) | `recovery/{initiate,recover,possess,webauthn,enroll_device,mod}.rs` |
 | `serverVELA/vela-share-policy` | 23 locally checked postconditions: three observation constructors (`ek_registration_facts`, `send_facts`, `link_mutation_facts`), three decisions and seventeen negative theorems (24 selected entry points) | M19b, M21 | `share/mod.rs` |
 | `libVELA/vela-client-recovery-policy` | 18: `plan_reconstruction`, `plan_adoption`, `plan_publication_resume`, `plan_contact_delivery`, plus 14 negative theorems | M15, M17, M18 (client side) | `vela-crypto/src/recovery.rs`, `desktopVELA/vela-desktop-core/src/recovery.rs`, Android and Apple bridges |
-| `libVELA/vela-sync-policy` | 11 Rust postconditions plus [20 supplemental handwritten lemmas](17-universal-chunk-admission.md) (not in the Rust count): `plan_epoch_adoption`, `plan_chunk_download`, `classify_merge_action`, plus 8 negative theorems | M23 | `desktopVELA/vela-desktop-core/src/sync.rs` **only** |
+| `libVELA/vela-sync-policy` | 15 Rust postconditions (11 historical plus 4 focused epoch contracts), [20 chunk lemmas](17-universal-chunk-admission.md) and [6 epoch lemmas](18-mobile-sync-admission.md) counted separately: `plan_epoch_adoption`, `plan_chunk_download`, `classify_merge_action`, plus 8 negative theorems | M23 | `desktopVELA/vela-desktop-core/src/sync.rs`; local mobile candidate uses admitted Rust bridge paths (runtime corrections pending) |
 
 The eighth crate, `libVELA/vela-client-share-policy`, selects 19 postconditions:
 share admission, ten transaction/recovery functions/theorems, and the actual
@@ -90,7 +90,7 @@ All eight policy crates were freshly extracted and checked after replacing
 derived-enum equality uses with structural matches. No local `assume val`
 declarations remain. The [current evidence](proof-logs/current/trusted-boundary/README.md)
 and [crypto contract boundary](../../libVELA/vela-crypto/proofs/fstar/README.md)
-record their assumptions. Current code has 252 selected functions and 245
+record their assumptions. Current code has 256 selected functions and 249
 explicit postconditions; selected functions and predicates are different counts.
 The enrollment fact-construction increment adds five observation-to-fact
 constructors and fifteen negative theorems (twenty selected entry points) that
@@ -145,7 +145,7 @@ Its fresh crypto checking log supersedes the earlier parser snapshot. The
 defined Vec subset exposes checked sequence-concatenation refinements;
 correspondence to Rust std remains trusted.
 Always re-extract after changing Rust sources. `check-proof-boundary.py` records
-245 explicit postconditions; seven selected functions have no `ensures`. It
+249 explicit postconditions; seven selected functions have no `ensures`. It
 detects added extraction assumptions, not semantic correspondence.
 
 ## 3.3 Executable refinement evidence (CI-gated)
