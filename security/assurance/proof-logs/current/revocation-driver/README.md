@@ -223,3 +223,10 @@ See `counts.txt` and `source-hashes.txt`. Summary: 13 extracted Rust
 functions; 28 per-request lemmas with 9 recursive definitions; 56 composition
 lemmas/witnesses over 9 actions and 6 witness schedules; 11 new Rust tests;
 three rejected mutants.
+
+## Hosted reproduction
+
+The [bd765ab security workflow](https://github.com/lucannez64/VELA/actions/runs/40230607902) verified the revocation extraction,
+per-request lemmas and composition, and ran the driver unit tests; all fifteen
+PR checks passed. `hosted-bd765ab.log` holds the summary and hashes, which
+match `source-hashes.txt`.
