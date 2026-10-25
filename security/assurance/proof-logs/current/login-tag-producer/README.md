@@ -2,7 +2,15 @@
 
 Base: `3aaac25` (`Run login proof gate with reviewed source policy`) on the
 `login-driver` increment. This directory records local evidence; it is not a
-hosted CI result.
+hosted CI result. It was authored as `35a8ecc` on `3aaac25`, then
+cherry-picked as `f345512` onto `5ae87da`. `source-hashes.txt` retains the
+original delegated run: script and crate README hashes are pre-merge, while
+proof artifacts and production Rust bodies match the reviewed increment.
+The parent preserves the published runtime-gate and executable-mode fixes.
+Store/take round trips, `as_deref`/`Option::map` and TTL remain unverified glue.
+The original commit message's four-test count means three tests covering four
+scenarios; its mode-restoration wording describes the old branch, not a new
+mode change on top of `5ae87da`.
 
 ## The gap this closes
 
@@ -68,13 +76,13 @@ The slice predicates are independent of both the Rust contract
 producer body.
 
 `purpose_tag_bytes` was added to the focused selection and extracts to literal
-byte slices, so the issued path (issue → store → take → convert → classify) is
+byte slices, so the issued path (issue → convert → classify) is
 also checked, not just described.
 
 ## Results
 
 - `cargo-test-session-policy.log`: 18 unit tests + 13 login-driver tests, 0
-  failed. Four new producer tests cover every length 0..12, long-input
+  failed. Three new producer tests covering four scenarios cover every length 0..12, long-input
   non-aliasing, one-byte corruption and truncation.
 - `cargo-test-server-producer-consumers.log`: the unchanged production
   consumers pass (`challenge_single_use_model` 3/3, `login_driver_handler`
@@ -84,7 +92,7 @@ also checked, not just described.
   both challenge lemma modules and the login-driver lemma module; the source
   policy gate passes. Exit 0. The historical artifact is byte identical.
 - `mutation-truncation-length.log`: truncating the retained length to nine and
-  weakening the contract makes the producer lemma fail (`producer_len`,
+  weakening the contract makes the producer lemma fail (`producer_len_usize`,
   `Error 19`) — the independent lemma, not the contract, catches the aliasing.
 - `mutation-byte-corruption.log`: reading raw index 4 into position 0 while
   keeping the contract makes the extracted

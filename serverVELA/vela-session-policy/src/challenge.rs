@@ -12,7 +12,7 @@
 //! records the real length: a value longer than [`MAX_CHALLENGE_TAG_LEN`] can
 //! never equal a recognized tag and classifies as `Unknown` (and therefore as
 //! the wrong purpose). `stored_tag_from_bytes` is the only conversion; its
-//! nine unchecked-loop-free reads and retained length are extracted and
+//! nine loop-free, bounds-checked reads and retained length are extracted and
 //! checked in F*, which proves the copied prefix is exact and that a long value
 //! cannot alias a short tag.
 

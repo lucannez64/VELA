@@ -248,10 +248,10 @@ let issued_classified (purpose: t_ChallengePurpose)
   | ChallengePurpose_Enroll -> issued_enroll_is_literal ()
   | ChallengePurpose_WebToken -> issued_web_token_is_literal ()
 
-/// The full issued path used by `/auth/verify`, `/device/enroll` and
-/// `/web-session/:id/token`: issue the purpose literal, store it, take it back
-/// as raw bytes, convert with the production constructor, and classify. The
-/// consumer's own purpose is accepted, and no other purpose is.
+/// The pure issued path: issue the purpose literal, convert with the
+/// production constructor, and classify. The consumer's own purpose is
+/// accepted, and no other purpose is. Store/take round trips, TTL and the
+/// handler's Option/Vec glue are not represented by this theorem.
 let issued_path_accepts_only_its_purpose (stored expected: t_ChallengePurpose)
   : Lemma
     (classify_consumption

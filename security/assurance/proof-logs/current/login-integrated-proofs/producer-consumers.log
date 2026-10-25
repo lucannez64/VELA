@@ -1,0 +1,93 @@
+   Compiling vela-session-policy v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-700776df/serverVELA/vela-session-policy)
+   Compiling vela-server v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-700776df/serverVELA/vela-server)
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> vela-server/src/sqldb.rs:76:5
+   |
+76 |     async fn query(&self, sql: &str, params: Vec<turso::Value>) -> anyhow::Result<Vec<VelaRow>>;
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+   = note: `#[warn(async_fn_in_trait)]` on by default
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+76 -     async fn query(&self, sql: &str, params: Vec<turso::Value>) -> anyhow::Result<Vec<VelaRow>>;
+76 +     fn query(&self, sql: &str, params: Vec<turso::Value>) -> impl std::future::Future<Output = anyhow::Result<Vec<VelaRow>>> + Send;
+   |
+
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> vela-server/src/sqldb.rs:78:5
+   |
+78 |     async fn execute(&self, sql: &str, params: Vec<turso::Value>) -> anyhow::Result<u64>;
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+78 -     async fn execute(&self, sql: &str, params: Vec<turso::Value>) -> anyhow::Result<u64>;
+78 +     fn execute(&self, sql: &str, params: Vec<turso::Value>) -> impl std::future::Future<Output = anyhow::Result<u64>> + Send;
+   |
+
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> vela-server/src/sqldb.rs:80:5
+   |
+80 |     async fn execute_batch(&self, sql: &str) -> anyhow::Result<()>;
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+80 -     async fn execute_batch(&self, sql: &str) -> anyhow::Result<()>;
+80 +     fn execute_batch(&self, sql: &str) -> impl std::future::Future<Output = anyhow::Result<()>> + Send;
+   |
+
+warning: `vela-server` (lib) generated 3 warnings
+warning: function `test_app` is never used
+  --> vela-server/tests/helpers/mod.rs:42:14
+   |
+42 | pub async fn test_app() -> Router {
+   |              ^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `vela-server` (test "login_driver_handler") generated 1 warning
+warning: `vela-server` (test "challenge_single_use_model") generated 1 warning (1 duplicate)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 24.19s
+     Running tests/challenge_single_use_model.rs (target/debug/build/vela-server/001b03200d5173af/out/challenge_single_use_model-001b03200d5173af)
+
+running 3 tests
+test every_bounded_challenge_trace_matches_the_single_use_model ... ok
+test failed_or_unknown_or_expired_or_replayed_challenges_never_succeed ... ok
+test one_challenge_yields_exactly_one_success_under_concurrency ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.17s
+
+     Running tests/login_driver_handler.rs (target/debug/build/vela-server/42fde64a6eb5df07/out/login_driver_handler-42fde64a6eb5df07)
+
+running 5 tests
+test failed_verifier_returns_no_token_and_records_the_failure_streak ... ok
+test malformed_consumed_nonce_is_bad_request_before_failure_counting ... ok
+test successful_login_tracks_the_jti_and_replay_is_refused ... ok
+test two_logins_with_one_nonce_yield_at_most_one_token ... ok
+test wrong_purpose_login_nonce_is_refused_and_spent ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/login_driver.rs (target/debug/build/vela-session-policy/19b28869e715825a/out/login_driver-19b28869e715825a)
+
+running 13 tests
+test a_wrong_purpose_cannot_be_mutated_into_a_success ... ok
+test absent_or_undecodable_devices_are_terminal_refusals ... ok
+test an_invalid_verifier_cannot_be_mutated_into_a_success ... ok
+test backoff_reset_and_token_issue_failures_are_terminal_refusals ... ok
+test begin_requests_the_challenge_take ... ok
+test challenge_decode_failure_does_not_touch_the_failure_counter ... ok
+test every_stage_is_sound_and_every_event_is_classified ... ok
+test failure_counter_storage_error_is_terminal_and_keeps_precedence ... ok
+test out_of_order_events_are_ignored_and_do_not_change_the_driver ... ok
+test successful_login_reaches_exactly_one_response ... ok
+test tracking_failure_never_responds_even_though_the_token_was_issued ... ok
+test verifier_rejection_requires_the_failure_side_effects_and_never_responds ... ok
+test wrong_purpose_and_missing_challenges_are_terminal_refusals ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

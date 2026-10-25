@@ -1,0 +1,46 @@
+diff --git a/serverVELA/vela-session-policy/proofs/fstar/challenge-lemmas/Vela_session_policy_tag_producer_lemmas.fst b/serverVELA/vela-session-policy/proofs/fstar/challenge-lemmas/Vela_session_policy_tag_producer_lemmas.fst
+index a0d36ef..5557f46 100644
+--- a/serverVELA/vela-session-policy/proofs/fstar/challenge-lemmas/Vela_session_policy_tag_producer_lemmas.fst
++++ b/serverVELA/vela-session-policy/proofs/fstar/challenge-lemmas/Vela_session_policy_tag_producer_lemmas.fst
+@@ -248,10 +248,10 @@ let issued_classified (purpose: t_ChallengePurpose)
+   | ChallengePurpose_Enroll -> issued_enroll_is_literal ()
+   | ChallengePurpose_WebToken -> issued_web_token_is_literal ()
+ 
+-/// The full issued path used by `/auth/verify`, `/device/enroll` and
+-/// `/web-session/:id/token`: issue the purpose literal, store it, take it back
+-/// as raw bytes, convert with the production constructor, and classify. The
+-/// consumer's own purpose is accepted, and no other purpose is.
++/// The pure issued path: issue the purpose literal, convert with the
++/// production constructor, and classify. The consumer's own purpose is
++/// accepted, and no other purpose is. Store/take round trips, TTL and the
++/// handler's Option/Vec glue are not represented by this theorem.
+ let issued_path_accepts_only_its_purpose (stored expected: t_ChallengePurpose)
+   : Lemma
+     (classify_consumption
+diff --git a/serverVELA/vela-session-policy/proofs/fstar/login-driver-composition/Vela_session_policy_login_driver_composition.fst b/serverVELA/vela-session-policy/proofs/fstar/login-driver-composition/Vela_session_policy_login_driver_composition.fst
+index 43208bf..b7d4ebd 100644
+--- a/serverVELA/vela-session-policy/proofs/fstar/login-driver-composition/Vela_session_policy_login_driver_composition.fst
++++ b/serverVELA/vela-session-policy/proofs/fstar/login-driver-composition/Vela_session_policy_login_driver_composition.fst
+@@ -221,7 +221,8 @@ let step_responded_delta (d: t_LoginDriver) (e: t_LoginEvent)
+   | LoginEvent_TokenIssued _ -> ()
+ 
+ /// Only a successful issuance observation from the issue stage flips the
+-/// token-issued flag, and that step emits exactly one `IssueToken` effect.
++/// token-issued flag. It is counted by `issued_delta`; `IssueToken` is the
++/// preceding request to perform issuance, not the effect emitted here.
+ let step_issued_delta (d: t_LoginDriver) (e: t_LoginEvent)
+   : Lemma
+     (requires (trace_sound d))
+diff --git a/serverVELA/vela-session-policy/src/challenge.rs b/serverVELA/vela-session-policy/src/challenge.rs
+index a1565d5..b32f370 100644
+--- a/serverVELA/vela-session-policy/src/challenge.rs
++++ b/serverVELA/vela-session-policy/src/challenge.rs
+@@ -12,7 +12,7 @@
+ //! records the real length: a value longer than [`MAX_CHALLENGE_TAG_LEN`] can
+ //! never equal a recognized tag and classifies as `Unknown` (and therefore as
+ //! the wrong purpose). `stored_tag_from_bytes` is the only conversion; its
+-//! nine unchecked-loop-free reads and retained length are extracted and
++//! nine loop-free, bounds-checked reads and retained length are extracted and
+ //! checked in F*, which proves the copied prefix is exact and that a long value
+ //! cannot alias a short tag.
+ 

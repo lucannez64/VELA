@@ -221,7 +221,8 @@ let step_responded_delta (d: t_LoginDriver) (e: t_LoginEvent)
   | LoginEvent_TokenIssued _ -> ()
 
 /// Only a successful issuance observation from the issue stage flips the
-/// token-issued flag, and that step emits exactly one `IssueToken` effect.
+/// token-issued flag. It is counted by `issued_delta`; `IssueToken` is the
+/// preceding request to perform issuance, not the effect emitted here.
 let step_issued_delta (d: t_LoginDriver) (e: t_LoginEvent)
   : Lemma
     (requires (trace_sound d))

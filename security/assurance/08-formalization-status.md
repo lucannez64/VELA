@@ -375,20 +375,26 @@ Rust/filesystem refinement of M28 remain open.
 
 ## Login driver increment
 
-The [login proof](proof-logs/current/login-driver/README.md) establishes
-per-request trace safety over the actual extracted Rust step and literal-byte
-recognition over bounded challenge tags. It selects 12 production functions
-with 11 explicit postconditions; 8 require the driver invariant, established
-by `begin_login` and preserved by transitions. This focused artifact is counted
-separately from the unchanged 249 postconditions / 256 selections census.
+The [published login proof](proof-logs/current/login-driver/README.md) and
+[release-build runtime gates](proof-logs/current/login-driver-runtime-gates/README.md)
+passed hosted checks on `5ae87da`, including the
+[refinement job](https://github.com/lucannez64/VELA/actions/runs/40196922149/job/121179647957).
+That hosted result predates the producer and nonce-composition additions below.
+
+The [producer proof](proof-logs/current/login-tag-producer/README.md) checks the
+actual raw-slice conversion and pure issuer/classifier composition. The
+[concurrent nonce module](proof-logs/current/login-nonce-composition/README.md)
+checks at most one accepted request, Respond effect and successful issuance
+observation for any interleaved schedule under its atomic-take interface.
+The focused extraction now has 16 selections / 12 explicit postconditions;
+8 require a sound driver state, established initially and preserved. Producer
+and composition add 23 and 60 handwritten lemmas respectively. These remain
+separate from the unchanged base 249 postconditions / 256 selections census.
 The historical session artifact remains 19 postconditions / 21 selections.
 
-A [parent correction](proof-logs/current/login-driver-runtime-gates/README.md)
-replaces debug-only effect checks with release-build gates. Integrated local
-validation passes 3 challenge, 68 integration and 5 handler tests; all 49
-Python source-policy tests pass. Green hosted `d98475f` predates this increment;
-no hosted proof or test result for these changes is claimed yet.
-Raw slice-to-tag/issuer correspondence and unbounded one-challenge concurrency
-are separate open obligations. Store/SQL/verifier origins, effect fidelity,
-revocation/issuance linearization, crash behavior and whole-system composition
-remain open. This work has no external audit status.
+The real store/take round trip and Option/Vec glue, its connection to the
+composition's purpose bit, SQL/store/verifier origins, effect fidelity,
+revocation/issuance linearization, exceptions, crashes and whole-system
+composition remain open. Neither proof establishes sled linearizability.
+See the [detailed scope](19-login-producer-composition.md). No external audit
+or hosted reproduction of these newer additions is claimed here.

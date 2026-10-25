@@ -90,7 +90,13 @@ accepted login take", not a store fact.
 ## Evidence
 
 Raw logs, argv, source hashes and the two mutation checks are in
-[`security/assurance/proof-logs/current/login-nonce-composition/`](../../../../security/assurance/proof-logs/current/login-nonce-composition/).
+[`security/assurance/proof-logs/current/login-nonce-composition/`](../../../../../security/assurance/proof-logs/current/login-nonce-composition/).
 `verify-fstar-login-composition.sh` reuses the reviewed extraction, hashes the
 historical extraction before and after, and runs the shared source-policy
 guard. It adds **zero** Rust postconditions.
+
+The parent aggregate verifier now includes this composition in its existing
+focused F* invocation after fresh extraction, alongside the raw-byte producer.
+The standalone verifier remains available for checking existing inputs. It
+expects both reviewed challenge lemma modules; the original run below predates
+the producer addition. Proof bodies are unchanged apart from scope comments.

@@ -8,7 +8,12 @@ This increment adds a **new composition module**, a **standalone verification
 script**, and this evidence directory. It does not edit `src/` Rust, the
 challenge/login lemma modules, `verify-fstar-login-driver.sh`,
 `verify-fstar.sh`, handlers, CI, manifests, correspondence, or global docs.
-The parent owns wiring the new script after review.
+This describes the original `d58e5bd` run on `3aaac25`, cherry-picked as
+`63a2b64`. Hashes retain that original pre-producer snapshot. Parent integration
+preserves the actual step and adds the new producer lemma dependency; scope
+comments and verifier wiring have subsequent corrections. The composition is
+checked in the existing focused invocation after fresh extraction, avoiding a
+second extraction/check cycle. The standalone runner remains for targeted checks.
 
 ## Inputs
 

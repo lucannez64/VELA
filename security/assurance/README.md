@@ -31,7 +31,9 @@ The later [recovery-redemption driver](proof-logs/current/recovery-redemption-dr
 which fixed a duplicate-enrollment bug, sharing and possession drivers, and
 bounded Android/iOS admission tests have their own hosted evidence. All fifteen
 checks pass on `c8a377d`; see the [current ledger](08-formalization-status.md).
-The login/challenge-purpose increment is subsequent work in progress.
+The login driver and release-build gates passed hosted checks on `5ae87da`.
+The subsequent [producer and nonce-composition increment](19-login-producer-composition.md)
+has local proof evidence; it is not part of that hosted result.
 
 ## Contents
 
@@ -165,3 +167,6 @@ Report privately through [GitHub advisories](https://github.com/lucannez64/VELA/
 and [`SECURITY.md`](../../SECURITY.md). Private reporting was checked enabled
 on 2026-10-23. Model inadequacy, vacuous proofs and overstated claims are
 valid assurance findings.
+
+19. [Login producer and composition](19-login-producer-composition.md): pure byte
+    conversion and unbounded nonce accounting, with explicit store/handler gaps.

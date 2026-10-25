@@ -1,0 +1,11 @@
+Parent base: c627b2b plus recorded proof-source.patch (comments only).
+Worktree: /home/hirew/.t3/worktrees/VELA/t3-700776df
+Resource cap: ~/.local/opt/vela-tools/bin/vela-heavy (serialized 3 GiB/no swap/1 worker)
+Environment: CARGO_HOME=/tmp/vela-hax-cargo OPAMROOT=/home/hirew/.local/opt/vela-tools/opam CARGO_TARGET_DIR=/home/hirew/.t3/worktrees/VELA/t3-700776df/target
+PATH prefix: /tmp/vela-fstar-prebuilt/fstar/bin:/home/hirew/.local/opt/vela-tools/bin:/home/hirew/.local/opt/vela-tools/opam/vela-hax/bin
+First run: vela-heavy env [environment above] serverVELA/vela-session-policy/verify-fstar.sh
+Final run: vela-heavy env [environment above] serverVELA/vela-session-policy/verify-fstar-login-driver.sh
+First run includes historical verification and integrated focused verification. Final run follows scope-comment corrections and regenerates focused extraction; artifact-hashes.txt identifies the final inputs. Historical extraction is byte-identical across both runs. Full argv/tool versions are retained in each log.
+Focused Rust postconditions: 12 / 16 selections, 8 conditional; historical 19 / 21 unchanged.
+New handwritten producer lemmas: 23. Composition lemmas/witnesses: 60. No new Rust contracts from the composition.
+Proof-source patch SHA-256: b5b8e1d586b27a5da27e64a3f4532dfaaf40e1b12ddc8e14d7a3c335a9e41e06

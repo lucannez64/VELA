@@ -30,7 +30,7 @@ cd serverVELA
 CARGO_TARGET_DIR=/home/hirew/.t3/worktrees/VELA/t3-700776df/target \
   ~/.local/opt/vela-tools/bin/vela-heavy cargo test -p vela-session-policy
 # -> cargo-test-session-policy.log
-#    18 unit tests (4 new producer tests) + 13 login-driver tests, 0 failed
+#    18 unit tests (3 new producer tests covering 4 scenarios) + 13 login-driver tests, 0 failed
 ```
 
 ## Server consumers of the producer (unchanged handlers)
@@ -137,7 +137,7 @@ HAXLIB=/tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib
   proofs/fstar/challenge-lemmas/Vela_session_policy_challenge_lemmas.fst \
   proofs/fstar/challenge-lemmas/Vela_session_policy_tag_producer_lemmas.fst
 # -> mutation-truncation-length.log: exit 1,
-#    Error 19 at Vela_session_policy_tag_producer_lemmas.fst(87): producer_len
+#    Error 19 at Vela_session_policy_tag_producer_lemmas.fst(87): producer_len_usize
 ```
 
 Byte-corruption mutant (`mutant-byte-corruption.diff`): the first copied

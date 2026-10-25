@@ -237,11 +237,23 @@ claim across layers:
 The [login increment](proof-logs/current/login-driver/README.md) checks the
 actual extracted `login_driver::step` by induction over arbitrary per-request
 event lists. A response requires accepted challenge, valid verifier and tracked
-JTI observations, and occurs at most once. Literal-byte recognition is checked
-for every bounded `StoredTag`; actual slice conversion and issuance remain
-tested glue. The handler now enforces every effect in release builds; see the
-[runtime correction](proof-logs/current/login-driver-runtime-gates/README.md).
-This is inspected wiring, not a handler/SQL/store refinement theorem. The
-focused extraction has 12 selections / 11 postconditions (8 conditional on a
-sound driver state), separate from the unchanged 249-postcondition census.
-Concurrent one-challenge composition and full lifecycle composition remain open.
+JTI observations, and occurs at most once. The [producer proof](proof-logs/current/login-tag-producer/README.md)
+now checks the actual raw-slice conversion, composed literal-byte acceptance,
+and the pure issuer → convert → classify path. Store/take round trips and
+Option/Vec glue remain outside that result.
+
+The [nonce composition](proof-logs/current/login-nonce-composition/README.md)
+checks any finite number of interleaved login requests and schedule length,
+with at most one admission, response and successful issuance observation per
+nonce. It assumes an atomic, purpose-correct take on one key, paired effects
+and observations, and faithful handler execution. There is no checked bridge
+from raw stored bytes through the real store to this composition's purpose bit.
+The handler enforces effects in release builds; its wiring is reviewed and
+tested, not a handler/SQL/store refinement theorem.
+
+The focused extraction has 16 selections / 12 explicit postconditions (8
+conditional on a sound driver state), separate from the unchanged 249-policy
+postcondition census. The producer adds 23 handwritten lemmas and composition
+60; these are not Rust postconditions. Full lifecycle, storage, revocation,
+issuance, exception and crash composition remain open. See the
+[scope note](19-login-producer-composition.md).

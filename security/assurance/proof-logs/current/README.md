@@ -162,5 +162,12 @@ local absolute source paths; there are no deployment credentials in them.
 The [login driver](login-driver/README.md) checks exact purpose recognition on
 bounded stored tags and arbitrary per-request login event lists. Its
 [runtime gate correction](login-driver-runtime-gates/README.md) enforces the
-decisions in release builds, with fresh 3/68/5 server tests. Raw-byte producer
-correspondence and unbounded one-nonce concurrency remain open in this snapshot.
+decisions in release builds, with fresh 3/68/5 server tests. The [raw-byte producer](login-tag-producer/README.md) and
+[one-nonce composition](login-nonce-composition/README.md) now have separate
+local proofs under their stated interfaces. Real store/handler correspondence
+and the bridge between the raw-byte proof and purpose-bit composition remain
+open; see [the scope note](../../19-login-producer-composition.md).
+
+The [integrated login replay](login-integrated-proofs/README.md) records fresh
+producer/trace/composition verification in one invocation, the unchanged
+historical check, exact artifact hashes and 18 + 13 policy tests.
