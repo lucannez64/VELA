@@ -1,0 +1,37 @@
+Focused revocation-driver increment
+===================================
+
+Rust (serverVELA/vela-session-policy/src/revocation_driver.rs)
+  public decision functions / constructors extracted: 13
+  hax_lib::ensures                                  13
+  hax_lib::requires                                  7
+  Rust conformance tests                            11
+  public enums/structs                               9
+
+F* per-request lemmas (revocation-driver-lemmas, 1 module)
+  Lemma declarations                                28
+  recursive Pure definitions                         9
+  headline: revocation_trace_theorem
+  effect order: record_effect_prestate, locked_out_origin, trace_order,
+                record_follows_lockout, cascade_effect_prestate
+  logout: logout_step_sound, logout_success_implies_marker
+
+F* concurrent composition (revocation-driver-composition, 1 module)
+  Lemma declarations                                56
+  actions                                            9
+  headline: revocation_composition_theorem
+  named consequences: no_cross_account_revocation,
+                      revoked_actor_never_revokes,
+                      revoked_device_tokens_never_admitted
+  reachability witnesses                             6 schedules
+
+Existing bounded Rust models replayed
+  device_revocation_model                            7 passed
+  integration (revoke cascade)                       1 passed
+  account_deletion_model                             1 passed
+  session_capability_model                           3 passed
+  vela-session-policy unit tests                    34 passed
+
+Static gates
+  proof-boundary                                     249 selected postconditions
+  formal unittest suite                              50 passed

@@ -51,3 +51,8 @@ fstar.exe \
 # invocation and never share an include directory with the historical artifact
 # checked above.
 "$proof_root/verify-fstar-login-driver.sh"
+
+# F-3 focused device-revocation/logout/admission driver gate. It regenerates
+# its own partial extraction into proofs/fstar/extraction-revocation-driver and
+# is checked in its own fstar.exe invocation.
+"$proof_root/verify-fstar-revocation-driver.sh"
