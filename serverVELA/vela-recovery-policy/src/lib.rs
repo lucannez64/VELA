@@ -7,6 +7,7 @@
 //! private permits constructed here. hax extracts these exact decisions to F*.
 
 pub mod driver;
+pub mod possession_driver;
 
 pub const INITIAL_EPOCH: i64 = 1;
 pub const HYBRID_EK_LEN: usize = 1568 + 32;

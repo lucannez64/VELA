@@ -50,3 +50,8 @@ fstar.exe \
 # run in its own fstar.exe invocation and never share an include directory with
 # the historical artifact checked above.
 "$proof_root/verify-fstar-driver.sh"
+
+# F-2 possession-proof recovery drivers. This regenerates its own partial
+# extraction into proofs/fstar/extraction-possession-driver, so it must also run
+# in its own fstar.exe invocation.
+"$proof_root/verify-fstar-possession-driver.sh"

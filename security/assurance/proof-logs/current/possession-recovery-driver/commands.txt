@@ -1,0 +1,61 @@
+# Commands used (all heavy commands through vela-heavy)
+
+Environment for hax/F*:
+
+```
+export CARGO_HOME=/tmp/vela-hax-cargo
+export OPAMROOT=$HOME/.local/opt/vela-tools/opam
+export PATH=/tmp/vela-fstar-prebuilt/fstar/bin:$HOME/.local/opt/vela-tools/bin:$HOME/.local/opt/vela-tools/opam/vela-hax/bin:$PATH
+```
+
+Rust tests (from `serverVELA`):
+
+```
+~/.local/opt/vela-tools/bin/vela-heavy env \
+  CARGO_TARGET_DIR=/home/hirew/.t3/worktrees/VELA/t3-700776df/target \
+  CARGO_PROFILE_DEV_CODEGEN_BACKEND=llvm \
+  cargo test -p vela-recovery-policy
+
+~/.local/opt/vela-tools/bin/vela-heavy env \
+  CARGO_TARGET_DIR=/home/hirew/.t3/worktrees/VELA/t3-700776df/target \
+  CARGO_PROFILE_DEV_CODEGEN_BACKEND=llvm \
+  cargo test -p vela-server --test integration
+
+~/.local/opt/vela-tools/bin/vela-heavy env \
+  CARGO_TARGET_DIR=/home/hirew/.t3/worktrees/VELA/t3-700776df/target \
+  CARGO_PROFILE_DEV_CODEGEN_BACKEND=llvm \
+  cargo test -p vela-server --test recovery_possession_model
+
+~/.local/opt/vela-tools/bin/vela-heavy env \
+  CARGO_TARGET_DIR=/home/hirew/.t3/worktrees/VELA/t3-700776df/target \
+  CARGO_PROFILE_DEV_CODEGEN_BACKEND=llvm \
+  cargo test -p vela-server --test recovery_lifecycle_model
+```
+
+F* (from `serverVELA/vela-recovery-policy`):
+
+```
+~/.local/opt/vela-tools/bin/vela-heavy ./verify-fstar-possession-driver.sh
+~/.local/opt/vela-tools/bin/vela-heavy ./verify-fstar.sh
+```
+
+The full run invokes `verify-fstar-driver.sh` and then
+`verify-fstar-possession-driver.sh` after the historical extraction check.
+
+Mutation run (temporary copied extraction and lemma module; nothing committed):
+
+```
+fstar.exe --cmi --cache_off --warn_error -331 --z3rlimit 4000 \
+  --z3version 4.13.3 \
+  --already_cached '+Prims+FStar+LowStar+C+Spec.Loops+TestLib' \
+  --include <hax-lib>/proof-libs/fstar/core \
+  --include <hax-lib>/proof-libs/fstar/rust_primitives \
+  --include <hax-lib>/proofs/fstar/extraction \
+  --include /tmp/possession-mutation-final/extraction-possession-driver \
+  --include /tmp/possession-mutation-final/possession-driver-lemmas \
+  --include /tmp/possession-mutation-final/possession-driver-composition \
+  ... extraction and proof files ...
+```
+
+See `mutation-full.log` and `mutation-composition.log` for the exact failure
+outputs.
