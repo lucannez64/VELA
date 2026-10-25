@@ -352,7 +352,7 @@
       "boundary": "focused-driver source-policy gate: reviewed proof-search budgets only; a drift/escape guard, not a proof checker or semantic correspondence certificate",
       "artifacts": {
         "security/formal/check-driver-proof-sources.py": "2d28feef4e9be7396be1752deac799098d92c32dd44e3622619db090f757f527",
-        "security/formal/tests/test_driver_proof_sources.py": "a2030f998666b900f23ee5479307b6612a8ab4b8722539a147a69f95b0e9ab82"
+        "security/formal/tests/test_driver_proof_sources.py": "f9b83c339739253fb9dfbb52a7d360d156507ba0079c022cace1195f7b5d9e66"
       }
     },
     {

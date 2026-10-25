@@ -41,3 +41,14 @@ work on those obligations is excluded from this evidence. Cryptography,
 SQL/store semantics, effect fidelity, observation origins, revocation and
 issuance linearization, crashes and whole-system composition remain unproved.
 This is an internal review and local run, not an external audit or hosted result.
+
+## Git executable-mode correction
+
+The follow-up review found that `core.fileMode=false` prevented the prior
+`chmod` from entering Git's index. The script remained 100644 in `6a97e8f`.
+`git update-index --chmod=+x` now explicitly records 100755. The regression
+checks the indexed mode of every focused driver runner, rather than relying on
+local filesystem permissions. `mode-before.log` shows the new check failing
+on 100644; `mode-after.log` records all **50** Python checks passing after the
+index fix. This supersedes the earlier claim that 3aaac25 had committed the
+executable permission. Proof source content and theorem counts are unchanged.

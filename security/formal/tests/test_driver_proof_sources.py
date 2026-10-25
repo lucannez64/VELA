@@ -28,6 +28,19 @@ class DriverGuardTests(unittest.TestCase):
             self.assertTrue(proof_files)
             guard.check_files(list(directory.glob('*.fst')), proof_files, [base.parents[1]])
 
+    def test_focused_driver_runners_are_executable_in_git(self):
+        root = Path(__file__).resolve().parents[3]
+        runners = list(root.glob('serverVELA/vela-*-policy/verify-fstar*driver.sh'))
+        self.assertGreaterEqual(len(runners), 4)
+        for runner in runners:
+            relative = str(runner.relative_to(root))
+            with self.subTest(runner=relative):
+                entry = subprocess.check_output(
+                    ['git', 'ls-files', '--stage', '--', relative],
+                    cwd=root, text=True,
+                )
+                self.assertTrue(entry.startswith('100755 '), entry)
+
     def test_nested_comments_and_strings(self):
         guard.check_source('(* assume (* axiom *) admit *)\nlet text = "admit // (*"\nlet ok : Lemma True = ()')
 

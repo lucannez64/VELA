@@ -1,0 +1,15 @@
+.....F.......
+======================================================================
+FAIL: test_focused_driver_runners_are_executable_in_git (test_driver_proof_sources.DriverGuardTests.test_focused_driver_runners_are_executable_in_git) (runner='serverVELA/vela-session-policy/verify-fstar-login-driver.sh')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/hirew/.t3/worktrees/VELA/t3-700776df/security/formal/tests/test_driver_proof_sources.py", line 42, in test_focused_driver_runners_are_executable_in_git
+    self.assertTrue(entry.startswith('100755 '), entry)
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true : 100644 ef7ebeab8d7b9fcec1385c6a939449ec00cca6d5 0	serverVELA/vela-session-policy/verify-fstar-login-driver.sh
+
+
+----------------------------------------------------------------------
+Ran 13 tests in 0.234s
+
+FAILED (failures=1)
