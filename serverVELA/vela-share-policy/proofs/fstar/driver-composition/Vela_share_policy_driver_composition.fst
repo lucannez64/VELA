@@ -147,7 +147,9 @@ noeq type world = {
   w_link_changes: nat;
   /// Successful update commits, used by the revocation-finality theorem.
   w_update_commits: nat;
-  /// Link changes committed by a non-sender. The invariant keeps this at zero.
+  /// Times the driver authorized a link update or revoke for a non-sender
+  /// (whether or not the SQL guard then wrote a row). The invariant keeps
+  /// this at zero, so it is a property of the extracted driver.
   w_non_sender_changes: nat;
 }
 
@@ -287,8 +289,13 @@ let world_step (w: world) (a: action) : world =
                 w_link_changes = w.w_link_changes + 1;
                 w_update_commits = w.w_update_commits + 1 }
             else
+              // The SQL guard (`sender_user_id = caller`) writes no row, but
+              // the driver should never have authorized this; count it so
+              // the theorem is about the driver, not only the SQL guard.
               let t2 = step t.f_driver (ShareEvent_Mutated rows_missing) in
-              { w with w_reqs = update w.w_reqs i t2.f_driver }
+              { w with
+                w_reqs = update w.w_reqs i t2.f_driver;
+                w_non_sender_changes = w.w_non_sender_changes + 1 }
           else
             { w with w_reqs = update w.w_reqs i t.f_driver }
         else w
@@ -315,7 +322,9 @@ let world_step (w: world) (a: action) : world =
                 w_link_changes = w.w_link_changes + 1 }
             else
               let t2 = step t.f_driver (ShareEvent_Mutated rows_missing) in
-              { w with w_reqs = update w.w_reqs i t2.f_driver }
+              { w with
+                w_reqs = update w.w_reqs i t2.f_driver;
+                w_non_sender_changes = w.w_non_sender_changes + 1 }
           else
             { w with w_reqs = update w.w_reqs i t.f_driver }
         else w
@@ -424,6 +433,9 @@ let commit_update_inv (w: world) (i: nat) (actor: actor)
     let d = FStar.List.Tot.index w.w_reqs i in
     if is_update_observe d && share_state_is_sound d then begin
       let t = step d (ShareEvent_LinkObserved (link_obs w actor)) in
+      // The driver itself never authorizes a non-sender (lemma (3)).
+      Vela_share_policy_driver_lemmas.trace_sound_matches_rust d;
+      Vela_share_policy_driver_lemmas.link_effect_implies_sender_and_live d (link_obs w actor);
       if (match t.f_effect <: t_ShareEffect with
           | ShareEffect_UpdateLinkedItem _ -> true
           | _ -> false)
@@ -458,6 +470,9 @@ let commit_revoke_inv (w: world) (i: nat) (actor: actor)
     let d = FStar.List.Tot.index w.w_reqs i in
     if is_revoke_observe d && share_state_is_sound d then begin
       let t = step d (ShareEvent_LinkObserved (link_obs w actor)) in
+      // The driver itself never authorizes a non-sender (lemma (3)).
+      Vela_share_policy_driver_lemmas.trace_sound_matches_rust d;
+      Vela_share_policy_driver_lemmas.link_effect_implies_sender_and_live d (link_obs w actor);
       if (match t.f_effect <: t_ShareEffect with
           | ShareEffect_RevokeLinkedItem -> true
           | _ -> false)

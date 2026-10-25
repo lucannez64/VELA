@@ -129,7 +129,8 @@ Proved:
 
 - `share_composition_theorem`: for every schedule, the shared invariant holds,
   the inbox count never exceeds a configured quota, and
-  `w_non_sender_changes = 0` (no non-sender ever changed the link).
+  `w_non_sender_changes = 0`: the driver never authorized an update or revoke
+  for a non-sender.
 - `revocation_is_final`: after any prefix that leaves the link revoked, every
   unbounded suffix keeps it revoked and commits no update
   (`w_update_commits` is unchanged).
@@ -144,6 +145,22 @@ Proved:
   third-party inbox delete is refused and a recipient delete succeeds; an EK
   registration commits.
 
+### What each result depends on (parent review)
+
+- **Depends on the extracted driver:** revocation finality and
+  `w_non_sender_changes = 0`. In the delegated version the non-sender counter
+  was never incremented, so that theorem held by construction. The parent
+  review changed the world to increment it whenever the driver emits an
+  update/revoke effect for a non-sender (even though the modelled SQL guard
+  then writes no row), and the proof now uses the per-request lemma
+  `link_effect_implies_sender_and_live`.
+- **Depends on the modelled SQL/transaction semantics, not on the driver:**
+  `inbox_delete_only_by_recipient` (the `recipient_user_id = ?` guard is part
+  of the world) and the quota bound (the send commit rechecks the quota
+  atomically). The real handler reads the quota and inserts inside one SQL
+  transaction; the bound holds if those transactions serialize (SQLite/Turso
+  write serialization). The insert itself has no quota predicate.
+
 ## Mutation check
 
 `mutation-drop-revoked-guard.log` is the F* output after editing a **copy** of
@@ -153,6 +170,12 @@ kept consistent). The composition then fails at
 `revoked_update_observation_rejected` (line 598): a revoked observation would
 authorize an update, so the revocation-finality proof no longer goes through.
 The mutant lives only in `/tmp/opencode/share-mutant`.
+
+`mutation-drop-sender-check.log` (parent review): in a copy of the extraction,
+`link_mutation_facts` sets `f_caller_is_sender = obs.f_item_present` (dropping
+the sender comparison; ensures and body kept consistent). Checking fails at
+`link_effect_implies_sender_and_live`, which `commit_update_inv` and
+`commit_revoke_inv` use, so the sender-only result depends on the driver.
 
 ## Tests
 
