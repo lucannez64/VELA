@@ -250,8 +250,10 @@ and observations, and faithful handler execution. The [raw-byte bridge](proof-lo
 now proves that a modeled raw-slice take using the extracted converter and
 classifier projects to the abstract world for every action and schedule.
 Literal-byte correctness follows from the producer proof. This removes the
-purpose-oracle premise inside the pure model; real store/Option/Vec origins
-and their connection to that raw model remain unproved.
+purpose-oracle premise inside the pure model. The [take adapter](proof-logs/current/challenge-take-adapter/README.md)
+now proves the actual `Option<Vec<u8>>` decision the handler calls equals a
+literal-byte specification; the real store's take semantics and a joined
+Option-to-raw-world theorem remain unproved.
 The handler enforces effects in release builds; its wiring is reviewed and
 tested, not a handler/SQL/store refinement theorem.
 

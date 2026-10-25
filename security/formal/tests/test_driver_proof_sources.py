@@ -26,6 +26,7 @@ class DriverGuardTests(unittest.TestCase):
             if suffix == 'login-driver':
                 proof_files += list((base / 'challenge-lemmas').glob('*.fst'))
                 proof_files += list((base / 'login-raw-nonce-lemmas').glob('*.fst'))
+                proof_files += list((base / 'challenge-take-adapter-lemmas').glob('*.fst'))
             self.assertTrue(proof_files)
             guard.check_files(list(directory.glob('*.fst')), proof_files, [base.parents[1]])
 

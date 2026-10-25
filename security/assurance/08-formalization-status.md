@@ -398,8 +398,19 @@ through the actual classifier to the abstract purpose world. These remain
 separate from the unchanged base 249 postconditions / 256 selections census.
 The historical session artifact remains 19 postconditions / 21 selections.
 
-The real store/take round trip and Option/Vec glue, its connection to the
-raw-world byte values, SQL/store/verifier origins, effect fidelity,
+The [take adapter](proof-logs/current/challenge-take-adapter/README.md) then
+moves the server's `Option<Vec<u8>>` conversion and purpose decision into the
+extracted `classify_taken_challenge`, which `take_challenge` calls right after
+`get_del`; 26 handwritten lemmas prove it equals an independent literal-byte
+specification for every result and purpose (absent is `Missing`; accepted
+exactly on the expected literal; every other present value is
+`WrongPurpose`), and an accept-absent mutant is rejected. It adds no Rust
+postcondition; the focused gate now checks 17 selections in 8 modules
+(194 handwritten lemmas). Hosted reproduction is pending.
+
+The real store's take semantics (linearizability, durability, key binding),
+a single theorem joining the Option adapter to the raw-world take, the
+imported hax `Vec` model, SQL/store/verifier origins, effect fidelity,
 revocation/issuance linearization, exceptions, crashes and whole-system
 composition remain open. Neither proof establishes sled linearizability.
 See the [detailed scope](19-login-producer-composition.md). No external audit

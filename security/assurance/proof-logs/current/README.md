@@ -177,6 +177,11 @@ raw-slice takes through the production converter/classifier to the abstract
 nonce world by per-action and arbitrary-schedule projection and general literal refusal (44 lemmas).
 Real store/Option/Vec byte origins and handler fidelity remain outside it.
 
+The [take adapter](challenge-take-adapter/README.md) proves the extracted
+`Option<Vec<u8>>` challenge-take decision called by the handler equals an
+independent literal-byte specification (26 lemmas, accept-absent mutant
+rejected), replayed with all 8 focused modules on the current set.
+
 The [integrated raw-bridge replay](login-raw-nonce-integrated/README.md) records
 fresh extraction and all seven focused modules verified together on the parent
 source set, plus exact source hashes and 50 source-policy checks.

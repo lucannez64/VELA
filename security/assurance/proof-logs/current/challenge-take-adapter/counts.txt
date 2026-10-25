@@ -41,7 +41,8 @@ F* proofs
 - New hand-written modules: 1
   (challenge-take-adapter-lemmas/Vela_session_policy_challenge_take_adapter.fst).
 - New module: 35 top-level lets = 26 lemmas + 9 definitions/helpers.
-- Hand-written lemmas across the six proof modules: 190 (164 + 26); these are
+- Hand-written lemmas across the six proof modules: 194 (168 + 26, with the
+  current 44-lemma raw nonce bridge; 190 in the original a1436db snapshot); these are
   not Rust contracts.
 - Focused gate: 8 modules checked in one fstar.exe invocation
   (2 extracted + 6 hand-written).

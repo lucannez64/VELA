@@ -1,5 +1,5 @@
 # SHA-256 of every source/artifact input for the take-adapter increment.
-# Base commit: a1436db (Replay the raw nonce bridge in the aggregate gate and document its boundary).
+# Re-pinned on the current parent (dd0cab1 + this increment) after the parent replay; originally pinned on a1436db.
 # Historical extraction is listed to show it did not move; it is not a focused-gate input.
 f558711ac3d165952846d03d1d7b2b91186fa3ff1925a0780b35fdf824f2dd1d  serverVELA/vela-session-policy/proofs/fstar/extraction/Vela_session_policy.fst
 
@@ -12,7 +12,7 @@ a92351ddbe6692cbb14704f048af4ab2f0b97157532984c00351ccba39d96776  serverVELA/vel
 aa62c89bbe13110f249f6244dd68fee871a4fc108471eedd90ee72fd7f5a8238  serverVELA/vela-session-policy/proofs/fstar/challenge-lemmas/Vela_session_policy_tag_producer_lemmas.fst
 52ce34104cc4617b05be04aa0f8cd5d951eb9737e0b4ecee69192828ae06c4dc  serverVELA/vela-session-policy/proofs/fstar/login-driver-lemmas/Vela_session_policy_login_driver_lemmas.fst
 c747ddc0d09e984b5ae0a17b1f488c3f964276e06ffe788e32454684cc59176b  serverVELA/vela-session-policy/proofs/fstar/login-driver-composition/Vela_session_policy_login_driver_composition.fst
-617ea150e18b56b8dd46c556b631c994ca0fb55f25da0aa82ff1965f2ede8f7e  serverVELA/vela-session-policy/proofs/fstar/login-raw-nonce-lemmas/Vela_session_policy_login_raw_nonce.fst
+41d223392eef947a168786177e4f9b6c7bfc44c623841cae742870edef38afa6  serverVELA/vela-session-policy/proofs/fstar/login-raw-nonce-lemmas/Vela_session_policy_login_raw_nonce.fst
 55d6f8e91b56ded9db7f8e38cbd9de0e59bd7bf53d35630e05e6048b64a4ac31  serverVELA/vela-session-policy/proofs/fstar/challenge-take-adapter-lemmas/Vela_session_policy_challenge_take_adapter.fst
 
 # Rust policy, unchanged login driver, actual server adapter call, and the focused verifier.

@@ -235,3 +235,16 @@ From `serverVELA/vela-session-policy`, with the environment in `commands.txt`:
 The take-adapter module is wired into the main focused gate. It is not added to
 `verify-fstar-login-raw-nonce.sh`, which remains the standalone raw-bridge
 runner over its original inputs.
+
+## Parent replay on the current set
+
+After independent review, the parent re-ran the full `verify-fstar.sh` on the
+current source set (with the 44-lemma raw nonce bridge): the historical
+artifact and all 8 focused modules verified in one invocation, 17 selected
+functions / 12 explicit Rust postconditions (`full-verify-current-parent.log`),
+and the real-store challenge/login handler tests passed
+(`cargo-test-server-handlers-current-parent.log`). `source-hashes.txt` is
+re-pinned to that set; the handwritten total is 194 (168 + 26). The fast
+source-policy test now also scans `challenge-take-adapter-lemmas/`. The earlier
+logs in this folder are the a1436db snapshot. These commands were not run
+with `--locked`; no `Cargo.toml` or `Cargo.lock` changed.
