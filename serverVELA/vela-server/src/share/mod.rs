@@ -8,6 +8,14 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
+use vela_share_policy::driver::{
+    begin_ek_registration, begin_inbox_delete, begin_link_revoke, begin_link_update, begin_send,
+    on_cleanup_completed, on_ek_observation, on_link_observation, on_rows_observed,
+    on_send_completed, CleanupObservation, EkDeviceObservation, EkRegistrationStartObservation,
+    LinkUpdateStartObservation, RowsObservation, SendRequestObservation, SendResultObservation,
+    ShareDriver, ShareEffect, ShareFailure,
+};
+use vela_share_policy::{EkRegistrationObservation, LinkMutationObservation, SendObservation};
 
 use crate::{
     db,
@@ -20,9 +28,11 @@ use crate::{
 const MAX_CAPSULE_BYTES: i64 = vela_share_policy::MAX_CAPSULE_BYTES;
 const DEFAULT_INBOX_LIMIT: i64 = 50;
 const MAX_INBOX_LIMIT: i64 = 200;
-const MAX_INBOX_ITEMS_PER_USER: i64 = 500;
-/// Max pending bytes one sender may push to a single recipient.
-const MAX_SENDER_TO_RECIPIENT_BYTES: i64 = 8 * 1024 * 1024;
+/// Max pending items in one recipient's inbox, owned by the verified driver.
+const MAX_INBOX_ITEMS_PER_USER: i64 = vela_share_policy::driver::MAX_INBOX_ITEMS_PER_USER;
+/// Max pending bytes one sender may push to a single recipient, owned by the
+/// verified driver.
+const MAX_SENDER_TO_RECIPIENT_BYTES: i64 = vela_share_policy::driver::MAX_SENDER_TO_RECIPIENT_BYTES;
 /// Max total pending bytes in a recipient's inbox.
 const MAX_RECIPIENT_INBOX_BYTES: i64 = vela_share_policy::MAX_RECIPIENT_INBOX_BYTES;
 
@@ -48,6 +58,67 @@ pub struct SendResponse {
 /// attacker (audit, share-recipient enumeration).
 const SHARE_RECIPIENT_UNAVAILABLE: &str = "recipient cannot receive shares";
 
+/// Render a non-parameterized driver failure with the handler's historical
+/// status and message. The send storage/conflict and EK decode branches are
+/// rendered at their call sites because they carry the original error text.
+fn share_failure_error(failure: ShareFailure) -> AppError {
+    match failure {
+        ShareFailure::RecipientUnavailable => {
+            AppError::NotFound(SHARE_RECIPIENT_UNAVAILABLE.into())
+        }
+        ShareFailure::MalformedCapsule => {
+            AppError::BadRequest("capsule is not valid base64".into())
+        }
+        ShareFailure::CapsuleTooLarge => AppError::BadRequest(format!(
+            "capsule exceeds maximum size of {MAX_CAPSULE_BYTES} bytes"
+        )),
+        ShareFailure::InboxItemLimit => AppError::Conflict(format!(
+            "recipient inbox is full ({MAX_INBOX_ITEMS_PER_USER} items)"
+        )),
+        ShareFailure::SenderQuotaExceeded => AppError::PayloadTooLarge(format!(
+            "pending shares to this recipient exceed {MAX_SENDER_TO_RECIPIENT_BYTES} bytes"
+        )),
+        ShareFailure::RecipientQuotaExceeded => AppError::PayloadTooLarge(format!(
+            "recipient inbox exceeds {MAX_RECIPIENT_INBOX_BYTES} bytes"
+        )),
+        ShareFailure::CapsulePolicyRejected => {
+            AppError::BadRequest("verified sharing policy rejected the capsule delivery".into())
+        }
+        ShareFailure::LinkNotFound => AppError::NotFound("linked share not found".into()),
+        ShareFailure::SendStorage => AppError::Internal("share send storage failure".into()),
+        ShareFailure::SendConflict => {
+            AppError::Conflict("share send raced with a concurrent request".into())
+        }
+        ShareFailure::InboxNotFound => AppError::NotFound("inbox item not found".into()),
+        ShareFailure::UserNotFound => AppError::NotFound("user not found".into()),
+        ShareFailure::ShareEkDecode => AppError::BadRequest("share_ek is not valid base64".into()),
+        ShareFailure::ShareEkSize => {
+            AppError::BadRequest(format!("share_ek must be exactly {SHARE_EK_LEN} bytes"))
+        }
+        ShareFailure::SignedAtNotCanonical => AppError::BadRequest(
+            "signed_at must be a canonical RFC 3339 UTC timestamp (YYYY-MM-DDTHH:MM:SSZ)".into(),
+        ),
+        ShareFailure::SignedAtUnparseable => {
+            AppError::BadRequest("signed_at must be an RFC 3339 timestamp".into())
+        }
+        ShareFailure::SignedAtFuture => {
+            AppError::BadRequest("signed_at is too far in the future".into())
+        }
+        ShareFailure::DeviceNotEnrolled => {
+            AppError::BadRequest("signing device is not enrolled for this account".into())
+        }
+        ShareFailure::StoredIdentityKey => {
+            AppError::BadRequest("signing device has no identity public key".into())
+        }
+        ShareFailure::SignatureDecode => {
+            AppError::BadRequest("signature is not valid base64".into())
+        }
+        ShareFailure::EkPolicyRejected => AppError::Unauthorized(
+            "verified sharing policy rejected the share-key registration".into(),
+        ),
+    }
+}
+
 pub async fn post_send(
     State(state): State<AppState>,
     session: AuthSession,
@@ -69,19 +140,17 @@ pub async fn post_send(
         .first()
         .and_then(|r| r.text(0))
         .is_some_and(|ek| !ek.is_empty());
-    if !recipient_can_receive {
-        return Err(AppError::NotFound(SHARE_RECIPIENT_UNAVAILABLE.into()));
-    }
 
-    let capsule_bytes = B64
-        .decode(&body.capsule)
-        .map_err(|_| AppError::BadRequest("capsule is not valid base64".into()))?;
-
-    if capsule_bytes.len() as i64 > MAX_CAPSULE_BYTES {
-        return Err(AppError::BadRequest(format!(
-            "capsule exceeds maximum size of {MAX_CAPSULE_BYTES} bytes"
-        )));
-    }
+    // Preserve the historical precedence: recipient availability is decided
+    // before the body is decoded. The verified driver renders every one of
+    // these admission failures with the existing status/message.
+    let decoded = if recipient_can_receive {
+        B64.decode(&body.capsule).ok()
+    } else {
+        None
+    };
+    let decode_failed = recipient_can_receive && decoded.is_none();
+    let capsule_bytes = decoded.unwrap_or_default();
 
     let inbox_id = Uuid::new_v4();
     let now = Utc::now().to_rfc3339();
@@ -89,110 +158,158 @@ pub async fn post_send(
     // Quota checks and the two inserts (shared_items + share_inbox, which must
     // share the same id) run inside one transaction so a crash/error between
     // them can never leave an orphaned row in one table without the other.
-    let tx = state
-        .sqldb
-        .tx()
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let mut tx = None;
+    let (inbox_count, pair_bytes, total_bytes) = if recipient_can_receive && !decode_failed {
+        let guard = state
+            .sqldb
+            .tx()
+            .await
+            .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    let count_rows = tx
-        .query(
-            "SELECT COUNT(*) FROM share_inbox WHERE recipient_user_id = ?",
-            vec![TursoValue::Text(body.recipient_user_id.to_string())],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    let inbox_count = count_rows.first().and_then(|r| r.i64(0)).unwrap_or(0);
-    if inbox_count >= MAX_INBOX_ITEMS_PER_USER {
-        return Err(AppError::Conflict(format!(
-            "recipient inbox is full ({MAX_INBOX_ITEMS_PER_USER} items)"
-        )));
-    }
+        let count_rows = guard
+            .query(
+                "SELECT COUNT(*) FROM share_inbox WHERE recipient_user_id = ?",
+                vec![TursoValue::Text(body.recipient_user_id.to_string())],
+            )
+            .await
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        let inbox_count = count_rows.first().and_then(|r| r.i64(0)).unwrap_or(0);
 
-    // Anti-flooding: cap pending bytes per (sender → recipient) pair and per
-    // recipient inbox, so a single sender cannot fill the victim's disk.
-    let pair_rows = tx
-        .query(
-            "SELECT COALESCE(SUM(LENGTH(capsule)), 0) FROM share_inbox
-             WHERE recipient_user_id = ? AND sender_user_id = ?",
+        // Anti-flooding: cap pending bytes per (sender → recipient) pair and
+        // per recipient inbox, so a single sender cannot fill the victim's
+        // disk.
+        let pair_rows = guard
+            .query(
+                "SELECT COALESCE(SUM(LENGTH(capsule)), 0) FROM share_inbox
+                 WHERE recipient_user_id = ? AND sender_user_id = ?",
+                vec![
+                    TursoValue::Text(body.recipient_user_id.to_string()),
+                    TursoValue::Text(session.user_id.to_string()),
+                ],
+            )
+            .await
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        let pair_bytes = pair_rows.first().and_then(|r| r.i64(0)).unwrap_or(0);
+
+        let total_rows = guard
+            .query(
+                "SELECT COALESCE(SUM(LENGTH(capsule)), 0) FROM share_inbox
+                 WHERE recipient_user_id = ?",
+                vec![TursoValue::Text(body.recipient_user_id.to_string())],
+            )
+            .await
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        let total_bytes = total_rows.first().and_then(|r| r.i64(0)).unwrap_or(0);
+
+        tx = Some(guard);
+        (inbox_count, pair_bytes, total_bytes)
+    } else {
+        (0, 0, 0)
+    };
+
+    // Verified send gate (M19). Every fact comes from the real session,
+    // recipient row, decoded capsule and inbox quota observations; the
+    // constructor states those equalities to F*. The driver owns the whole
+    // post-validation admission order and calls the real `send_facts` /
+    // `plan_send` policy.
+    let start = begin_send(SendRequestObservation {
+        policy: SendObservation {
+            session_user_id_present: !session.user_id.is_nil(),
+            recipient_has_share_ek: recipient_can_receive,
+            capsule_len: capsule_bytes.len() as i64,
+            existing_inbox_bytes: total_bytes,
+        },
+        decode_failed,
+        inbox_count,
+        pair_bytes,
+    });
+    let driver = match start.effect {
+        ShareEffect::InsertCapsule(_) => start.driver,
+        ShareEffect::Fail(failure) => return Err(share_failure_error(failure)),
+        _ => {
+            return Err(AppError::Internal(
+                "share send driver produced an unexpected admission effect".into(),
+            ));
+        }
+    };
+    let Some(tx) = tx else {
+        return Err(AppError::Internal(
+            "share send driver authorized without a transaction".into(),
+        ));
+    };
+
+    let mut insert_error = None;
+    let mut commit_error = None;
+    let send_result = match tx
+        .execute(
+            "INSERT INTO shared_items (id, sender_user_id, recipient_user_id, capsule, created_at, updated_at, revoked)
+             VALUES (?, ?, ?, ?, ?, ?, 0)",
             vec![
-                TursoValue::Text(body.recipient_user_id.to_string()),
+                TursoValue::Text(inbox_id.to_string()),
                 TursoValue::Text(session.user_id.to_string()),
+                TursoValue::Text(body.recipient_user_id.to_string()),
+                TursoValue::Text(db::encode_b64(&capsule_bytes)),
+                TursoValue::Text(now.clone()),
+                TursoValue::Text(now.clone()),
             ],
         )
         .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    let pair_bytes = pair_rows.first().and_then(|r| r.i64(0)).unwrap_or(0);
-    if pair_bytes + capsule_bytes.len() as i64 > MAX_SENDER_TO_RECIPIENT_BYTES {
-        return Err(AppError::PayloadTooLarge(format!(
-            "pending shares to this recipient exceed {MAX_SENDER_TO_RECIPIENT_BYTES} bytes"
-        )));
-    }
-
-    let total_rows = tx
-        .query(
-            "SELECT COALESCE(SUM(LENGTH(capsule)), 0) FROM share_inbox
-             WHERE recipient_user_id = ?",
-            vec![TursoValue::Text(body.recipient_user_id.to_string())],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    let total_bytes = total_rows.first().and_then(|r| r.i64(0)).unwrap_or(0);
-    // Verified send gate (M19). Every fact comes from the real session,
-    // recipient row, decoded capsule and inbox quota observations; the
-    // constructor states those equalities to F*.
-    let send_facts = vela_share_policy::send_facts(vela_share_policy::SendObservation {
-        session_user_id_present: !session.user_id.is_nil(),
-        recipient_has_share_ek: recipient_can_receive,
-        capsule_len: capsule_bytes.len() as i64,
-        existing_inbox_bytes: total_bytes,
-    });
-    if !send_facts.inbox_has_capacity {
-        return Err(AppError::PayloadTooLarge(format!(
-            "recipient inbox exceeds {MAX_RECIPIENT_INBOX_BYTES} bytes"
-        )));
-    }
-    match vela_share_policy::plan_send(send_facts) {
-        vela_share_policy::SendDecision::Deliver => {}
-        vela_share_policy::SendDecision::Reject => {
-            return Err(AppError::BadRequest(
-                "verified sharing policy rejected the capsule delivery".into(),
+    {
+        Ok(_) => match tx
+            .execute(
+                "INSERT INTO share_inbox (id, sender_user_id, recipient_user_id, capsule, created_at)
+                 VALUES (?, ?, ?, ?, ?)",
+                vec![
+                    TursoValue::Text(inbox_id.to_string()),
+                    TursoValue::Text(session.user_id.to_string()),
+                    TursoValue::Text(body.recipient_user_id.to_string()),
+                    TursoValue::Text(db::encode_b64(&capsule_bytes)),
+                    TursoValue::Text(now),
+                ],
+            )
+            .await
+        {
+            Ok(_) => match tx.commit().await {
+                Ok(()) => SendResultObservation::Committed,
+                Err(error) => {
+                    commit_error = Some(error);
+                    SendResultObservation::CommitConflict
+                }
+            },
+            Err(error) => {
+                insert_error = Some(error);
+                SendResultObservation::StorageFailed
+            }
+        },
+        Err(error) => {
+            insert_error = Some(error);
+            SendResultObservation::StorageFailed
+        }
+    };
+    let transition = on_send_completed(driver, send_result);
+    match transition.effect {
+        ShareEffect::Complete => {}
+        ShareEffect::Fail(ShareFailure::SendStorage) => {
+            return Err(AppError::Internal(
+                insert_error
+                    .map(|e| e.to_string())
+                    .unwrap_or_else(|| "share send storage failure".into()),
+            ));
+        }
+        ShareEffect::Fail(ShareFailure::SendConflict) => {
+            return Err(AppError::Conflict(format!(
+                "share send raced with a concurrent request: {}",
+                commit_error
+                    .map(|e| e.to_string())
+                    .unwrap_or_else(|| "unknown commit error".into())
+            )));
+        }
+        _ => {
+            return Err(AppError::Internal(
+                "share send driver produced an unexpected completion effect".into(),
             ));
         }
     }
-
-    tx.execute(
-        "INSERT INTO shared_items (id, sender_user_id, recipient_user_id, capsule, created_at, updated_at, revoked)
-         VALUES (?, ?, ?, ?, ?, ?, 0)",
-        vec![
-            TursoValue::Text(inbox_id.to_string()),
-            TursoValue::Text(session.user_id.to_string()),
-            TursoValue::Text(body.recipient_user_id.to_string()),
-            TursoValue::Text(db::encode_b64(&capsule_bytes)),
-            TursoValue::Text(now.clone()),
-            TursoValue::Text(now.clone()),
-        ],
-    )
-    .await
-    .map_err(|e| AppError::Internal(e.to_string()))?;
-
-    tx.execute(
-        "INSERT INTO share_inbox (id, sender_user_id, recipient_user_id, capsule, created_at)
-         VALUES (?, ?, ?, ?, ?)",
-        vec![
-            TursoValue::Text(inbox_id.to_string()),
-            TursoValue::Text(session.user_id.to_string()),
-            TursoValue::Text(body.recipient_user_id.to_string()),
-            TursoValue::Text(db::encode_b64(&capsule_bytes)),
-            TursoValue::Text(now),
-        ],
-    )
-    .await
-    .map_err(|e| AppError::Internal(e.to_string()))?;
-
-    tx.commit().await.map_err(|e| {
-        AppError::Conflict(format!("share send raced with a concurrent request: {e}"))
-    })?;
 
     tracing::info!(
         inbox_id  = %inbox_id,
@@ -348,6 +465,18 @@ pub async fn delete_inbox_item(
     Path(id): Path<Uuid>,
     session: AuthSession,
 ) -> Result<(HeaderMap, StatusCode)> {
+    // The driver owns the recipient-scoped delete authority and the row
+    // classification. The handler performs exactly the one guarded effect.
+    let start = begin_inbox_delete();
+    let driver = match start.effect {
+        ShareEffect::DeleteInboxItem(permit) if permit.recipient_scoped => start.driver,
+        _ => {
+            return Err(AppError::Internal(
+                "inbox delete driver produced an unexpected effect".into(),
+            ));
+        }
+    };
+
     let n = state
         .sqldb
         .execute(
@@ -360,8 +489,17 @@ pub async fn delete_inbox_item(
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    if n == 0 {
-        return Err(AppError::NotFound(format!("inbox item {id} not found")));
+    let transition = on_rows_observed(driver, RowsObservation { rows: n });
+    match transition.effect {
+        ShareEffect::Complete => {}
+        ShareEffect::Fail(ShareFailure::InboxNotFound) => {
+            return Err(AppError::NotFound(format!("inbox item {id} not found")));
+        }
+        _ => {
+            return Err(AppError::Internal(
+                "inbox delete driver produced an unexpected completion effect".into(),
+            ));
+        }
     }
 
     tracing::info!(inbox_id = %id, user_id = %session.user_id, "inbox item deleted");
@@ -441,25 +579,41 @@ pub async fn put_linked_item(
     session: AuthSession,
     Json(body): Json<UpdateLinkedShareRequest>,
 ) -> Result<(HeaderMap, Json<serde_json::Value>)> {
-    let capsule_bytes = B64
-        .decode(&body.capsule)
-        .map_err(|_| AppError::BadRequest("capsule is not valid base64".into()))?;
-
-    if capsule_bytes.len() as i64 > MAX_CAPSULE_BYTES {
-        return Err(AppError::BadRequest(format!(
-            "capsule exceeds maximum size of {MAX_CAPSULE_BYTES} bytes"
-        )));
-    }
+    let decoded = B64.decode(&body.capsule);
+    let decode_failed = decoded.is_err();
+    let capsule_bytes = decoded.unwrap_or_default();
 
     // Verified linked-item mutation gate (M21): the caller is the original
-    // sender and the row is a live item, observed from the stored row.
-    let observed = observe_link_mutation(&state, id, session.user_id).await?;
-    match vela_share_policy::plan_link_mutation(vela_share_policy::link_mutation_facts(observed)) {
-        vela_share_policy::LinkMutationDecision::Apply => {}
-        vela_share_policy::LinkMutationDecision::Reject => {
-            return Err(AppError::NotFound(format!("linked share {id} not found")));
+    // sender and the row is a live item, observed from the stored row. The
+    // driver owns the decode/length checks, the real `plan_link_mutation`
+    // decision and the affected-row classification.
+    let start = begin_link_update(LinkUpdateStartObservation {
+        decode_failed,
+        capsule_len: capsule_bytes.len() as i64,
+    });
+    let driver = match start.effect {
+        ShareEffect::ObserveLink => {
+            let observed = observe_link_mutation(&state, id, session.user_id).await?;
+            let transition = on_link_observation(start.driver, observed);
+            match transition.effect {
+                ShareEffect::UpdateLinkedItem(_) => transition.driver,
+                ShareEffect::Fail(ShareFailure::LinkNotFound) => {
+                    return Err(AppError::NotFound(format!("linked share {id} not found")));
+                }
+                _ => {
+                    return Err(AppError::Internal(
+                        "linked update driver produced an unexpected observation effect".into(),
+                    ));
+                }
+            }
         }
-    }
+        ShareEffect::Fail(failure) => return Err(share_failure_error(failure)),
+        _ => {
+            return Err(AppError::Internal(
+                "linked update driver produced an unexpected admission effect".into(),
+            ));
+        }
+    };
 
     let n = state
         .sqldb
@@ -477,8 +631,17 @@ pub async fn put_linked_item(
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    if n == 0 {
-        return Err(AppError::NotFound(format!("linked share {id} not found")));
+    let transition = on_rows_observed(driver, RowsObservation { rows: n });
+    match transition.effect {
+        ShareEffect::Complete => {}
+        ShareEffect::Fail(ShareFailure::LinkNotFound) => {
+            return Err(AppError::NotFound(format!("linked share {id} not found")));
+        }
+        _ => {
+            return Err(AppError::Internal(
+                "linked update driver produced an unexpected completion effect".into(),
+            ));
+        }
     }
 
     let mut headers = HeaderMap::new();
@@ -492,14 +655,32 @@ pub async fn delete_linked_item(
     session: AuthSession,
 ) -> Result<(HeaderMap, Json<serde_json::Value>)> {
     // Verified linked-item mutation gate (M21): the caller is the original
-    // sender and the row is a live item, observed from the stored row.
-    let observed = observe_link_mutation(&state, id, session.user_id).await?;
-    match vela_share_policy::plan_link_mutation(vela_share_policy::link_mutation_facts(observed)) {
-        vela_share_policy::LinkMutationDecision::Apply => {}
-        vela_share_policy::LinkMutationDecision::Reject => {
-            return Err(AppError::NotFound(format!("linked share {id} not found")));
+    // sender and the row is a live item, observed from the stored row. The
+    // driver owns the real `plan_link_mutation` decision, the affected-row
+    // classification and the post-revoke inbox cleanup.
+    let start = begin_link_revoke();
+    let driver = match start.effect {
+        ShareEffect::ObserveLink => {
+            let observed = observe_link_mutation(&state, id, session.user_id).await?;
+            let transition = on_link_observation(start.driver, observed);
+            match transition.effect {
+                ShareEffect::RevokeLinkedItem => transition.driver,
+                ShareEffect::Fail(ShareFailure::LinkNotFound) => {
+                    return Err(AppError::NotFound(format!("linked share {id} not found")));
+                }
+                _ => {
+                    return Err(AppError::Internal(
+                        "linked revoke driver produced an unexpected observation effect".into(),
+                    ));
+                }
+            }
         }
-    }
+        _ => {
+            return Err(AppError::Internal(
+                "linked revoke driver produced an unexpected admission effect".into(),
+            ));
+        }
+    };
 
     let n = state
         .sqldb
@@ -516,17 +697,41 @@ pub async fn delete_linked_item(
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    if n == 0 {
-        return Err(AppError::NotFound(format!("linked share {id} not found")));
-    }
+    let transition = on_rows_observed(driver, RowsObservation { rows: n });
+    let driver = match transition.effect {
+        ShareEffect::DeleteLinkedInbox => transition.driver,
+        ShareEffect::Fail(ShareFailure::LinkNotFound) => {
+            return Err(AppError::NotFound(format!("linked share {id} not found")));
+        }
+        _ => {
+            return Err(AppError::Internal(
+                "linked revoke driver produced an unexpected completion effect".into(),
+            ));
+        }
+    };
 
-    let _ = state
+    let cleanup_failed = state
         .sqldb
         .execute(
             "DELETE FROM share_inbox WHERE id = ?",
             vec![TursoValue::Text(id.to_string())],
         )
-        .await;
+        .await
+        .is_err();
+    let transition = on_cleanup_completed(
+        driver,
+        CleanupObservation {
+            storage_failed: cleanup_failed,
+        },
+    );
+    match transition.effect {
+        ShareEffect::Complete => {}
+        _ => {
+            return Err(AppError::Internal(
+                "linked revoke driver produced an unexpected cleanup effect".into(),
+            ));
+        }
+    }
 
     let mut headers = HeaderMap::new();
     maybe_append_new_token(&mut headers, &session);
@@ -542,7 +747,7 @@ async fn observe_link_mutation(
     state: &AppState,
     id: Uuid,
     user_id: Uuid,
-) -> Result<vela_share_policy::LinkMutationObservation> {
+) -> Result<LinkMutationObservation> {
     let caller = user_id.to_string();
     let rows = state
         .sqldb
@@ -554,14 +759,14 @@ async fn observe_link_mutation(
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
     let Some(row) = rows.first() else {
-        return Ok(vela_share_policy::LinkMutationObservation {
+        return Ok(LinkMutationObservation {
             item_present: false,
             caller_matches_sender: false,
             item_not_revoked: false,
         });
     };
 
-    Ok(vela_share_policy::LinkMutationObservation {
+    Ok(LinkMutationObservation {
         item_present: true,
         caller_matches_sender: row.text(0) == Some(caller.as_str()),
         // Mirror the SQL `revoked = 0` predicate: only a zero cell is live.
@@ -641,41 +846,50 @@ async fn authorize_ek_binding(
     state: &AppState,
     user_id: Uuid,
     request: &PutShareEkRequest,
-) -> Result<(Uuid, String)> {
+) -> Result<(Uuid, String, ShareDriver)> {
     use crate::device::enroll::verify_hybrid_signature;
-    use vela_share_policy::{ek_registration_facts, EkRegistrationObservation};
 
-    let ek_bytes = B64
-        .decode(&request.share_ek)
-        .map_err(|_| AppError::BadRequest("share_ek is not valid base64".into()))?;
-    let ek_size_valid = ek_bytes.len() == SHARE_EK_LEN;
-    if !ek_size_valid {
-        return Err(AppError::BadRequest(format!(
-            "share_ek must be exactly {SHARE_EK_LEN} bytes"
-        )));
-    }
+    let ek_decoded = B64.decode(&request.share_ek);
+    let ek_decode_failed = ek_decoded.is_err();
+    let ek_bytes = ek_decoded.unwrap_or_default();
     let device_id = request.device_id;
+
     // M-signed_at canonicalization (audit fix): the raw string previously went
     // into a lexicographic freshness compare and the stored `share_ek_since`,
     // so an offset form like `2026-01-01T01:00:00+01:00` could wind back the
     // monotonic clock. Require canonical UTC (`...:SSZ`, second precision) and
     // reject excessive future skew; store/pass only the verified canonical
-    // instant.
-    if !request.signed_at.ends_with('Z') || request.signed_at.len() != 20 {
-        return Err(AppError::BadRequest(
-            "signed_at must be a canonical RFC 3339 UTC timestamp (YYYY-MM-DDTHH:MM:SSZ)".into(),
-        ));
-    }
-    let parsed_signed_at = chrono::DateTime::parse_from_rfc3339(&request.signed_at)
-        .map_err(|_| AppError::BadRequest("signed_at must be an RFC 3339 timestamp".into()))?;
+    // instant. The driver owns the precedence of these checks.
+    let signed_at_not_canonical =
+        !request.signed_at.ends_with('Z') || request.signed_at.len() != 20;
+    let parsed_signed_at = if signed_at_not_canonical {
+        None
+    } else {
+        chrono::DateTime::parse_from_rfc3339(&request.signed_at).ok()
+    };
+    let signed_at_unparseable = !signed_at_not_canonical && parsed_signed_at.is_none();
     const MAX_FUTURE_SKEW_SECS: i64 = 300;
-    let skew_secs = parsed_signed_at.timestamp() - chrono::Utc::now().timestamp();
-    if skew_secs > MAX_FUTURE_SKEW_SECS {
-        return Err(AppError::BadRequest(
-            "signed_at is too far in the future".into(),
-        ));
-    }
+    let signed_at_future = parsed_signed_at
+        .map(|parsed| parsed.timestamp() - chrono::Utc::now().timestamp() > MAX_FUTURE_SKEW_SECS)
+        .unwrap_or(false);
     let canonical_signed_at = request.signed_at.clone();
+
+    let start = begin_ek_registration(EkRegistrationStartObservation {
+        ek_decode_failed,
+        ek_len: ek_bytes.len(),
+        signed_at_not_canonical,
+        signed_at_unparseable,
+        signed_at_future,
+    });
+    let driver = match start.effect {
+        ShareEffect::ObserveDevice => start.driver,
+        ShareEffect::Fail(failure) => return Err(share_failure_error(failure)),
+        _ => {
+            return Err(AppError::Internal(
+                "share-key driver produced an unexpected admission effect".into(),
+            ));
+        }
+    };
 
     // The signing device must exist, belong to the caller, and be live. The
     // query is ownership-scoped, and the returned `d.user_id` is compared to
@@ -737,34 +951,41 @@ async fn authorize_ek_binding(
         current_since.as_deref().map(|c| c.as_bytes()),
     );
 
-    match vela_share_policy::plan_ek_registration(ek_registration_facts(
-        EkRegistrationObservation {
-            ek_len: ek_bytes.len(),
-            signature_verified,
-            device_row_present,
-            device_user_matches,
-            device_active,
-            signed_at_is_fresher,
-            binding_exists,
+    let transition = on_ek_observation(
+        driver,
+        EkDeviceObservation {
+            registration: EkRegistrationObservation {
+                ek_len: ek_bytes.len(),
+                signature_verified,
+                device_row_present,
+                device_user_matches,
+                device_active,
+                signed_at_is_fresher,
+                binding_exists,
+            },
+            stored_identity_vk_decode_failed: stored_vk_result.is_err(),
+            signature_decode_failed: signature_bytes_result.is_err(),
         },
-    )) {
-        vela_share_policy::EkRegistrationDecision::Register(_) => {
-            Ok((request.device_id, canonical_signed_at))
+    );
+    match transition.effect {
+        ShareEffect::UpdateShareEk(_) => {
+            Ok((request.device_id, canonical_signed_at, transition.driver))
         }
-        vela_share_policy::EkRegistrationDecision::Reject => {
+        ShareEffect::Fail(ShareFailure::DeviceNotEnrolled) => Err(AppError::BadRequest(
+            "signing device is not enrolled for this account".into(),
+        )),
+        ShareEffect::Fail(_) => {
             // Preserve the original early-return errors and their order now
             // that the verified policy has seen the same facts.
-            if !device_row_present || !device_user_matches {
-                return Err(AppError::BadRequest(
-                    "signing device is not enrolled for this account".into(),
-                ));
-            }
             stored_vk_result?;
             signature_bytes_result?;
             Err(AppError::Unauthorized(
                 "verified sharing policy rejected the share-key registration".into(),
             ))
         }
+        _ => Err(AppError::Internal(
+            "share-key driver produced an unexpected observation effect".into(),
+        )),
     }
 }
 
@@ -780,7 +1001,8 @@ pub async fn put_my_ek(
     session: DeviceSession,
     Json(body): Json<PutShareEkRequest>,
 ) -> Result<(HeaderMap, Json<serde_json::Value>)> {
-    let (bound_device_id, signed_at) = authorize_ek_binding(&state, session.user_id, &body).await?;
+    let (bound_device_id, signed_at, driver) =
+        authorize_ek_binding(&state, session.user_id, &body).await?;
 
     let n = state
         .sqldb
@@ -797,8 +1019,17 @@ pub async fn put_my_ek(
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    if n == 0 {
-        return Err(AppError::NotFound("user not found".into()));
+    let transition = on_rows_observed(driver, RowsObservation { rows: n });
+    match transition.effect {
+        ShareEffect::Complete => {}
+        ShareEffect::Fail(ShareFailure::UserNotFound) => {
+            return Err(AppError::NotFound("user not found".into()));
+        }
+        _ => {
+            return Err(AppError::Internal(
+                "share-key driver produced an unexpected completion effect".into(),
+            ));
+        }
     }
 
     tracing::info!(user_id = %session.user_id, "share key registered (device-signed binding)");

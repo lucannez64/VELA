@@ -7,6 +7,8 @@
 //! and can only act from the private permits constructed here. hax extracts
 //! these exact decisions to F*.
 
+pub mod driver;
+
 pub const INITIAL_SEQ: i64 = 1;
 
 /// Decoded length of a hybrid share encapsulation key (`ML-KEM` + `X25519`).

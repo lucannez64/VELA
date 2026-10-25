@@ -1,0 +1,116 @@
+   Compiling vela-share-policy v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-3b1a2c14/serverVELA/vela-share-policy)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.70s
+     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-share-policy/1e0507d2426f7e67/out/vela_share_policy-1e0507d2426f7e67)
+
+running 4 tests
+test tests::ek_registration_requires_every_binding_condition ... ok
+test tests::link_mutations_require_sender_authority_over_live_items ... ok
+test tests::send_requires_recipient_capacity_and_authentication ... ok
+test tests::timestamp_freshness_is_strict_and_first_registration_always_fresh ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/driver.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-share-policy/8bbe40cffac35e4e/out/driver-8bbe40cffac35e4e)
+
+running 13 tests
+test a_done_driver_is_inert_for_every_event ... ok
+test ek_registration_keeps_the_handlers_error_precedence ... ok
+test every_reachable_transition_preserves_soundness_and_effect_authority ... ok
+test every_stage_ignores_every_out_of_order_event ... ok
+test inbox_delete_is_recipient_scoped_and_classifies_rows ... ok
+test link_mutation_effects_are_never_emitted_for_a_revoked_observation ... ok
+test link_mutation_length_checks_precede_the_row_observation ... ok
+test link_mutations_require_the_sender_and_a_live_item ... ok
+test revoke_commits_then_requests_the_inbox_cleanup_before_success ... ok
+test send_and_ek_results_are_classified_without_extra_effects ... ok
+test send_quota_checks_keep_the_handlers_historical_order ... ok
+test send_requires_an_authenticated_session_and_the_real_plan ... ok
+test update_and_revoke_are_distinguished_by_the_observed_plan ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/fact_construction.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-share-policy/ff01a0ab69cbac44/out/fact_construction-ff01a0ab69cbac44)
+
+running 3 tests
+test ek_registration_facts_are_exactly_the_request_device_row_and_store ... ok
+test link_mutation_facts_are_exactly_the_linked_row_observations ... ok
+test send_facts_are_exactly_the_session_recipient_capsule_and_inbox ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests vela_share_policy
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Checking vela-share-policy v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-3b1a2c14/serverVELA/vela-share-policy)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.12s
+[1m[94minfo[0m: [1mhax: unchanged file ./proofs/fstar/extraction/Vela_share_policy.fst[0m
+* Warning 241 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti(0,0-0,0):
+  - Unable to load
+    /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti.checked
+    since checked file
+    /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti.checked
+    does not exist; will recheck
+    /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti
+    (suppressing this warning for further modules)
+
+* Warning 239 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+Verified module: Vela_share_policy
+All verification conditions discharged successfully
+F* 2025.10.06
+platform=Linux_x86_64
+compiler=OCaml 4.14.2
+date=2025-10-06 12:00:42 -0700
+commit=7b347386330d0e5a331a220535b6f15288903234
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-driver/Vela_share_policy.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-driver/Vela_share_policy.Driver.fst[0m
+F* driver argv: --cmi --cache_off --warn_error -331 --z3rlimit 4000 --z3version 4.13.3 --already_cached +Prims+FStar+LowStar+C+Spec.Loops+TestLib --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/core --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proofs/fstar/extraction --include proofs/fstar/extraction-driver --include proofs/fstar/driver-lemmas --include proofs/fstar/driver-composition proofs/fstar/extraction-driver/Vela_share_policy.Driver.fst proofs/fstar/extraction-driver/Vela_share_policy.fst proofs/fstar/driver-lemmas/Vela_share_policy_driver_lemmas.fst proofs/fstar/driver-composition/Vela_share_policy_driver_composition.fst
+* Warning 271 at /tmp/vela-fstar-prebuilt/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+Verified module: Vela_share_policy
+Verified module: Vela_share_policy.Driver
+Verified module: Vela_share_policy_driver_lemmas
+Verified module: Vela_share_policy_driver_composition
+All verification conditions discharged successfully
+driver proof: 11 focused Rust driver functions, 34 per-request trace lemmas/witnesses checked
+driver composition: 45 composition lemmas/witnesses; revocation is final and the inbox count never exceeds its quota
+04face7802f23f651e4feb0279850b0f72c18b75e8069746b431acb12a6a7fa0  proofs/fstar/extraction-driver/Vela_share_policy.Driver.fst
+53bea0ae7162f8c4bdd4ee40b8155469624914e46602fd87bd2eb89a52b1b01d  proofs/fstar/extraction-driver/Vela_share_policy.fst
+db315296df922d071a47697950effaa12ee025e709444502d835d3a235eaac87  proofs/fstar/driver-lemmas/Vela_share_policy_driver_lemmas.fst
+0821aed9d3b8736940cf8fa0989b425d553ebff882f0e8d4a6c3c32db6f6efe0  proofs/fstar/driver-composition/Vela_share_policy_driver_composition.fst
+06445b82fdc87bb1dc5ff0a6282b1cd9032a6ee5a85d8e61a4ade609cced10ea  src/driver.rs

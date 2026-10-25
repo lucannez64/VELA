@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Focused F-2 increment: the actual M19/M21 sharing transition driver.
+#
+# `proofs/fstar/extraction/` is the historical 23-contract artifact for this
+# crate. The driver extraction reuses the F* module name `Vela_share_policy`,
+# so it is regenerated into `proofs/fstar/extraction-driver/` and checked in a
+# separate fstar.exe invocation. Never pass both include directories: the
+# focused (partial) root module would shadow the historical one, or vice versa.
+#
+# The hand-written trace lemmas quantify over every event list and call the
+# extracted `Vela_share_policy.Driver.step`; they do not restate its
+# transition logic. The composition module is self-contained over the
+# extracted driver so the mutation check fails in the composition theorem.
+
+proof_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+cd "$proof_root"
+
+for command_name in cargo cargo-hax driver-hax-frontend-exporter hax-engine fstar.exe z3-4.13.3 jq; do
+  command -v "$command_name" >/dev/null || {
+    echo "$command_name is missing; follow README.md" >&2
+    exit 1
+  }
+done
+
+version=$(fstar.exe --version)
+printf '%s\n' "$version"
+[[ ${version%%$'\n'*} == 'F* 2025.10.06' ]] || {
+  echo 'unexpected F* version' >&2
+  exit 2
+}
+
+rm -rf proofs/fstar/extraction-driver
+cargo hax into \
+  --output-dir proofs/fstar/extraction-driver \
+  -i '-** +vela_share_policy::driver::begin_send +vela_share_policy::driver::begin_link_update +vela_share_policy::driver::begin_link_revoke +vela_share_policy::driver::begin_inbox_delete +vela_share_policy::driver::begin_ek_registration +vela_share_policy::driver::step +vela_share_policy::driver::on_link_observation +vela_share_policy::driver::on_ek_observation +vela_share_policy::driver::on_send_completed +vela_share_policy::driver::on_rows_observed +vela_share_policy::driver::on_cleanup_completed' \
+  fstar --z3rlimit 500
+
+mapfile -t proof_files < <(
+  find proofs/fstar/extraction-driver -maxdepth 1 -type f -name '*.fst' -print | sort
+)
+mapfile -t lemma_files < <(
+  find proofs/fstar/driver-lemmas -maxdepth 1 -type f -name '*.fst' -print | sort
+)
+if (( ${#proof_files[@]} == 0 )); then
+  echo "hax generated no focused driver modules" >&2
+  exit 1
+fi
+if (( ${#lemma_files[@]} != 1 )); then
+  echo "expected exactly one reviewed driver lemma module" >&2
+  exit 1
+fi
+composition_files=(proofs/fstar/driver-composition/Vela_share_policy_driver_composition.fst)
+[[ -f ${composition_files[0]} ]] || {
+  echo "missing reviewed driver composition module" >&2
+  exit 1
+}
+
+# Fail closed on proof escapes in the generated artifact and the lemmas. This
+# is a textual guard, not the proof: fstar.exe below is the checker.
+escapes=$(grep -nE '(^|[^[:alnum:]_])(assume|admit)([^[:alnum:]_]|$)|--lax' \
+  "${proof_files[@]}" "${lemma_files[@]}" "${composition_files[@]}" || true)
+if [[ -n $escapes ]]; then
+  printf '%s\n' "$escapes" >&2
+  echo 'proof escape detected in focused driver artifact' >&2
+  exit 3
+fi
+
+hax_lib_root=$(
+  cargo metadata --format-version 1 |
+    jq -r '.packages[] | select(.name == "hax-lib") | .manifest_path | sub("/Cargo.toml$"; "")'
+)
+if [[ -z $hax_lib_root || ! -d $hax_lib_root ]]; then
+  echo "could not locate hax-lib proof libraries" >&2
+  exit 1
+fi
+
+fstar_args=(
+  --cmi
+  --cache_off
+  --warn_error -331
+  --z3rlimit 4000
+  --z3version 4.13.3
+  --already_cached '+Prims+FStar+LowStar+C+Spec.Loops+TestLib'
+  --include "$hax_lib_root/proof-libs/fstar/core"
+  --include "$hax_lib_root/proof-libs/fstar/rust_primitives"
+  --include "$hax_lib_root/proofs/fstar/extraction"
+  --include proofs/fstar/extraction-driver
+  --include proofs/fstar/driver-lemmas
+  --include proofs/fstar/driver-composition
+  "${proof_files[@]}" "${lemma_files[@]}" "${composition_files[@]}"
+)
+printf 'F* driver argv:'
+printf ' %q' "${fstar_args[@]}"
+printf '\n'
+fstar.exe "${fstar_args[@]}"
+
+echo "driver proof: 11 focused Rust driver functions, 34 per-request trace lemmas/witnesses checked"
+echo "driver composition: 45 composition lemmas/witnesses; revocation is final and the inbox count never exceeds its quota"
+sha256sum "${proof_files[@]}" "${lemma_files[@]}" "${composition_files[@]}" src/driver.rs
