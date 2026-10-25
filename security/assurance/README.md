@@ -27,7 +27,11 @@ all fifteen PR checks with 245 Rust postconditions, including the corrected
 sharing constructor. The [fdee2bc hosted baseline](proof-logs/current/hosted-fdee2bc/README.md)
 now covers the 249-contract mobile increment, twenty chunk lemmas, six epoch
 lemmas and stronger encoded journal proofs, with all fifteen checks passing.
-The later [recovery-redemption driver](proof-logs/current/recovery-redemption-driver/README.md), which also fixed a duplicate-enrollment bug, is not part of that snapshot.
+The later [recovery-redemption driver](proof-logs/current/recovery-redemption-driver/README.md),
+which fixed a duplicate-enrollment bug, sharing and possession drivers, and
+bounded Android/iOS admission tests have their own hosted evidence. All fifteen
+checks pass on `c8a377d`; see the [current ledger](08-formalization-status.md).
+The login/challenge-purpose increment is subsequent work in progress.
 
 ## Contents
 

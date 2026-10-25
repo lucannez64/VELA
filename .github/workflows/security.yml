@@ -128,6 +128,9 @@ jobs:
       - name: Check reviewed model correspondence
         run: python3 security/formal/check-correspondence.py
 
+      - name: Check driver proof source-policy regressions
+        run: python3 -m unittest discover -s security/formal/tests -p 'test_driver_proof_sources.py'
+
       - name: Prove malicious-server enrollment, shares, and device authentication
         run: VELA_PROOF_OUT="$RUNNER_TEMP/network-proofs" security/formal/run-network-boundary-proofs.sh
 

@@ -15,14 +15,21 @@ turn any open obligation below into a proved result.
 
 ## Current hosted baseline
 
-[All fifteen checks passed on fdee2bc](proof-logs/current/hosted-fdee2bc/README.md).
-That snapshot checks 249 Rust postconditions /256 selections across fourteen
-artifacts, twenty handwritten chunk lemmas, six epoch lemmas and the encoded
-journal development. The iOS job reports success after correcting its decode-
-failure test fixture; the downloaded console log is incomplete, so no fresh
-per-test count is inferred. Historical evidence below retains snapshot counts.
-The recovery-redemption lifecycle refinement is subsequent work, not covered by
-this baseline.
+All fifteen PR checks passed on `c8a377de98c3e7b0ea06070818062acf8cb97e8a`,
+including the [security workflow](https://github.com/lucannez64/VELA/actions/runs/40154658518)
+and [iOS workflow](https://github.com/lucannez64/VELA/actions/runs/40154658482).
+The base inventory remains 249 Rust postconditions /256 selections across
+fourteen artifacts, plus twenty handwritten chunk lemmas, six epoch lemmas and
+the encoded journal development. Focused driver contracts and trace/composition
+proofs are counted separately below, with their preconditions and assumptions.
+Android and iOS bounded sync conformance tests have also passed in hosted CI.
+Historical evidence keeps each snapshot's original counts and scope.
+
+The next login/challenge-purpose driver is work in progress and is not covered
+by that hosted baseline. The focused drivers' source gates now reject nested-
+comment escape attempts, axioms, expected-failure annotations, bare declarations
+and unreviewed source options. This gate is tested against known bypass shapes;
+it is not a proof checker and does not validate the specification's intent.
 
 ## Enrollment-redemption driver (hosted on aaf708f)
 

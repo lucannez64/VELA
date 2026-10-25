@@ -56,15 +56,11 @@ composition_files=(proofs/fstar/driver-composition/Vela_recovery_policy_driver_c
   exit 1
 }
 
-# Fail closed on proof escapes in the generated artifact and the lemmas. This
-# is a textual guard, not the proof: fstar.exe below is the checker.
-escapes=$(grep -nE '(^|[^[:alnum:]_])(assume|admit)([^[:alnum:]_]|$)|--lax' \
-  "${proof_files[@]}" "${lemma_files[@]}" "${composition_files[@]}" || true)
-if [[ -n $escapes ]]; then
-  printf '%s\n' "$escapes" >&2
-  echo 'proof escape detected in focused driver artifact' >&2
-  exit 3
-fi
+# Enforce the reviewed source policy, including nested comments and exact
+# budget-only pragmas. This is a source guard; fstar.exe remains the checker.
+python3 "$proof_root/../../security/formal/check-driver-proof-sources.py" \
+  --generated "${proof_files[@]}" \
+  --proof "${lemma_files[@]}" "${composition_files[@]}"
 
 hax_lib_root=$(
   cargo metadata --format-version 1 |
