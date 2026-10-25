@@ -1,46 +1,53 @@
-diff --git a/serverVELA/vela-session-policy/proofs/fstar/challenge-lemmas/Vela_session_policy_tag_producer_lemmas.fst b/serverVELA/vela-session-policy/proofs/fstar/challenge-lemmas/Vela_session_policy_tag_producer_lemmas.fst
-index a0d36ef..5557f46 100644
---- a/serverVELA/vela-session-policy/proofs/fstar/challenge-lemmas/Vela_session_policy_tag_producer_lemmas.fst
-+++ b/serverVELA/vela-session-policy/proofs/fstar/challenge-lemmas/Vela_session_policy_tag_producer_lemmas.fst
-@@ -248,10 +248,10 @@ let issued_classified (purpose: t_ChallengePurpose)
-   | ChallengePurpose_Enroll -> issued_enroll_is_literal ()
-   | ChallengePurpose_WebToken -> issued_web_token_is_literal ()
- 
--/// The full issued path used by `/auth/verify`, `/device/enroll` and
--/// `/web-session/:id/token`: issue the purpose literal, store it, take it back
--/// as raw bytes, convert with the production constructor, and classify. The
--/// consumer's own purpose is accepted, and no other purpose is.
-+/// The pure issued path: issue the purpose literal, convert with the
-+/// production constructor, and classify. The consumer's own purpose is
-+/// accepted, and no other purpose is. Store/take round trips, TTL and the
-+/// handler's Option/Vec glue are not represented by this theorem.
- let issued_path_accepts_only_its_purpose (stored expected: t_ChallengePurpose)
-   : Lemma
-     (classify_consumption
 diff --git a/serverVELA/vela-session-policy/proofs/fstar/login-driver-composition/Vela_session_policy_login_driver_composition.fst b/serverVELA/vela-session-policy/proofs/fstar/login-driver-composition/Vela_session_policy_login_driver_composition.fst
-index 43208bf..b7d4ebd 100644
+index b7d4ebd..704c005 100644
 --- a/serverVELA/vela-session-policy/proofs/fstar/login-driver-composition/Vela_session_policy_login_driver_composition.fst
 +++ b/serverVELA/vela-session-policy/proofs/fstar/login-driver-composition/Vela_session_policy_login_driver_composition.fst
-@@ -221,7 +221,8 @@ let step_responded_delta (d: t_LoginDriver) (e: t_LoginEvent)
-   | LoginEvent_TokenIssued _ -> ()
+@@ -18,9 +18,10 @@ module Vela_session_policy_login_driver_composition
+ ///   schedule chooses subject to the extracted driver's stage guards.
+ ///
+ /// Theorem: for every schedule, at most one request is admitted by the nonce,
+-/// at most one `Respond` effect occurs, and at most one token is issued. When
+-/// the stored challenge is not a login challenge, no request is admitted and
+-/// no response/token is produced.
++/// at most one `Respond` effect occurs, and at most one successful token-issue
++/// observation is counted. With handler fidelity these bound actual responses
++/// and issuance. A non-login initial nonce admits no request and produces no
++/// Respond effect or successful issuance observation.
+ ///
+ /// The composition calls the actual extracted `step`; it does not restate the
+ /// transition relation. Assumptions (not proved here): `get_del` is
+@@ -381,7 +382,7 @@ let rec run_world (w: world) (schedule: list action) : Tot world (decreases sche
  
- /// Only a successful issuance observation from the issue stage flips the
--/// token-issued flag, and that step emits exactly one `IssueToken` effect.
-+/// token-issued flag. It is counted by `issued_delta`; `IssueToken` is the
-+/// preceding request to perform issuance, not the effect emitted here.
- let step_issued_delta (d: t_LoginDriver) (e: t_LoginEvent)
-   : Lemma
-     (requires (trace_sound d))
-diff --git a/serverVELA/vela-session-policy/src/challenge.rs b/serverVELA/vela-session-policy/src/challenge.rs
-index a1565d5..b32f370 100644
---- a/serverVELA/vela-session-policy/src/challenge.rs
-+++ b/serverVELA/vela-session-policy/src/challenge.rs
-@@ -12,7 +12,7 @@
- //! records the real length: a value longer than [`MAX_CHALLENGE_TAG_LEN`] can
- //! never equal a recognized tag and classifies as `Unknown` (and therefore as
- //! the wrong purpose). `stored_tag_from_bytes` is the only conversion; its
--//! nine unchecked-loop-free reads and retained length are extracted and
-+//! nine loop-free, bounds-checked reads and retained length are extracted and
- //! checked in F*, which proves the copied prefix is exact and that a long value
- //! cannot alias a short tag.
+ /// Nonce conservation: the nonce is either still stored or has admitted one
+ /// request (and then it is gone), at most one request is admitted, responses
+-/// and token-issuance effects are exactly the corresponding driver flags.
++/// effects and successful issuance observations match their driver flags.
+ let inv (w: world) : prop =
+   all_sound w.reqs /\
+   b2n w.nonce_admitted + challenge_present w <= 1 /\
+diff --git a/serverVELA/vela-session-policy/verify-fstar-login-composition.sh b/serverVELA/vela-session-policy/verify-fstar-login-composition.sh
+index d1e2455..80c05c8 100755
+--- a/serverVELA/vela-session-policy/verify-fstar-login-composition.sh
++++ b/serverVELA/vela-session-policy/verify-fstar-login-composition.sh
+@@ -162,7 +162,7 @@ focused_after=$(sha256sum proofs/fstar/extraction-login-driver/*.fst)
+ printf 'historical extraction after:  %s\n' "$historical_after"
  
+ echo "login composition: 0 new Rust postconditions; the two extracted modules are inputs and are byte-identical"
+-echo "login composition: one nonce admits at most one request, one Respond effect and one successful token issuance"
+-echo "login composition: an absent or non-login nonce never admits a request, responds or issues a token"
++echo "login composition: one nonce admits at most one request, one Respond effect and one successful token-issue observation"
++echo "login composition: an absent or non-login nonce yields no admission, Respond effect or successful issue observation"
+ sha256sum "${generated_files[@]}" "${challenge_lemma_files[@]}" "${login_lemma_files[@]}" "${composition_files[@]}" \
+   src/challenge.rs src/login_driver.rs
+diff --git a/serverVELA/vela-session-policy/verify-fstar-login-driver.sh b/serverVELA/vela-session-policy/verify-fstar-login-driver.sh
+index 5a23e18..9d96f28 100755
+--- a/serverVELA/vela-session-policy/verify-fstar-login-driver.sh
++++ b/serverVELA/vela-session-policy/verify-fstar-login-driver.sh
+@@ -121,6 +121,6 @@ echo "challenge refinement: exact literal-byte recognition for every bounded sto
+ echo "tag producer: length preserved, min(len,9) prefix exact, acceptance iff raw literal, for every slice"
+ echo "issued path: purpose_tag_bytes classifies as its own purpose and no other"
+ echo "login trace: one response at most, response implies accepted login + valid verifier + tracked token, failure terminal"
+-echo "login composition: one nonce admits at most one request, Respond effect and successful issuance under the atomic-take interface"
++echo "login composition: one nonce admits at most one request, Respond effect and successful issuance observation under the atomic-take interface"
+ sha256sum "${proof_files[@]}" "${challenge_lemma_files[@]}" "${login_lemma_files[@]}" "$composition_file" \
+   src/challenge.rs src/login_driver.rs

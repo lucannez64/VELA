@@ -9,3 +9,8 @@ First run includes historical verification and integrated focused verification. 
 Focused Rust postconditions: 12 / 16 selections, 8 conditional; historical 19 / 21 unchanged.
 New handwritten producer lemmas: 23. Composition lemmas/witnesses: 60. No new Rust contracts from the composition.
 Proof-source patch SHA-256: b5b8e1d586b27a5da27e64a3f4532dfaaf40e1b12ddc8e14d7a3c335a9e41e06
+
+Final current-set replay: parent1902ecd plus proof-source.patch (scope comments / reporting echoes only).
+Command: vela-heavy env [same environment above] serverVELA/vela-session-policy/verify-fstar-login-composition.sh
+Log: current-composition.log; 2 extracted + 4 proof modules checked, 124 handwritten Lemma declarations total. This standalone run does not regenerate extraction; its inputs are the freshly regenerated artifacts from final-focused.log, unchanged. artifact-hashes.txt now identifies this final set. The earlier logs preserve their original scope-comment snapshots.
+Current proof-source patch SHA-256: bbaae9b762a1fa65c8a0f0332a4540e07c901a62608943eb14274485f92937a5

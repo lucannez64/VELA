@@ -121,6 +121,6 @@ echo "challenge refinement: exact literal-byte recognition for every bounded sto
 echo "tag producer: length preserved, min(len,9) prefix exact, acceptance iff raw literal, for every slice"
 echo "issued path: purpose_tag_bytes classifies as its own purpose and no other"
 echo "login trace: one response at most, response implies accepted login + valid verifier + tracked token, failure terminal"
-echo "login composition: one nonce admits at most one request, Respond effect and successful issuance under the atomic-take interface"
+echo "login composition: one nonce admits at most one request, Respond effect and successful issuance observation under the atomic-take interface"
 sha256sum "${proof_files[@]}" "${challenge_lemma_files[@]}" "${login_lemma_files[@]}" "$composition_file" \
   src/challenge.rs src/login_driver.rs

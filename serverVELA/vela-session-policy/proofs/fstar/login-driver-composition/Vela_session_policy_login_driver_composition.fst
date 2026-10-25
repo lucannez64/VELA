@@ -18,9 +18,10 @@ module Vela_session_policy_login_driver_composition
 ///   schedule chooses subject to the extracted driver's stage guards.
 ///
 /// Theorem: for every schedule, at most one request is admitted by the nonce,
-/// at most one `Respond` effect occurs, and at most one token is issued. When
-/// the stored challenge is not a login challenge, no request is admitted and
-/// no response/token is produced.
+/// at most one `Respond` effect occurs, and at most one successful token-issue
+/// observation is counted. With handler fidelity these bound actual responses
+/// and issuance. A non-login initial nonce admits no request and produces no
+/// Respond effect or successful issuance observation.
 ///
 /// The composition calls the actual extracted `step`; it does not restate the
 /// transition relation. Assumptions (not proved here): `get_del` is
@@ -381,7 +382,7 @@ let rec run_world (w: world) (schedule: list action) : Tot world (decreases sche
 
 /// Nonce conservation: the nonce is either still stored or has admitted one
 /// request (and then it is gone), at most one request is admitted, responses
-/// and token-issuance effects are exactly the corresponding driver flags.
+/// effects and successful issuance observations match their driver flags.
 let inv (w: world) : prop =
   all_sound w.reqs /\
   b2n w.nonce_admitted + challenge_present w <= 1 /\

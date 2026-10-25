@@ -162,7 +162,7 @@ focused_after=$(sha256sum proofs/fstar/extraction-login-driver/*.fst)
 printf 'historical extraction after:  %s\n' "$historical_after"
 
 echo "login composition: 0 new Rust postconditions; the two extracted modules are inputs and are byte-identical"
-echo "login composition: one nonce admits at most one request, one Respond effect and one successful token issuance"
-echo "login composition: an absent or non-login nonce never admits a request, responds or issues a token"
+echo "login composition: one nonce admits at most one request, one Respond effect and one successful token-issue observation"
+echo "login composition: an absent or non-login nonce yields no admission, Respond effect or successful issue observation"
 sha256sum "${generated_files[@]}" "${challenge_lemma_files[@]}" "${login_lemma_files[@]}" "${composition_files[@]}" \
   src/challenge.rs src/login_driver.rs

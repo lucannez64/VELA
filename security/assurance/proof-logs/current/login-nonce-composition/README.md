@@ -1,4 +1,4 @@
-# Concurrent login nonce composition (F*)
+# Historical concurrent login nonce composition (F*)
 
 `serverVELA/vela-session-policy/proofs/fstar/login-driver-composition/Vela_session_policy_login_driver_composition.fst`
 composes the extracted `Vela_session_policy.Login_driver.step` across any
@@ -14,6 +14,16 @@ preserves the actual step and adds the new producer lemma dependency; scope
 comments and verifier wiring have subsequent corrections. The composition is
 checked in the existing focused invocation after fresh extraction, avoiding a
 second extraction/check cycle. The standalone runner remains for targeted checks.
+
+The current six-module source set is reproduced in the
+[integrated parent evidence](../login-integrated-proofs/README.md). The original
+`fstar-verify.log`, `source-hashes.txt`, commands and mutation argv here are
+historical evidence for `d58e5bd`, not a current-head replay. Its 101 total
+handwritten lemma declarations predate the producer addition; the integrated
+source set has 124 (13 bounded challenge + 23 producer + 28 login + 60
+composition). Response counters count returned Respond effects; token counters
+count successful issuance observations, not IssueToken effects or real handler
+operations. Actual effects require the stated fidelity assumption.
 
 ## Inputs
 

@@ -28,3 +28,16 @@ linearizability, get_del/set_ex/Option/Vec round trips, observation origins,
 handler effects, SQL/PASETO/JTI behavior, revocation and crash/multi-node
 composition remain outside this result. This is local replay and internal
 review evidence, not a hosted verdict, external audit or full-system proof.
+
+## Final current-set replay after composition review
+
+`current-composition.log` checks the current six-module set with corrected
+scope comments and reporting echoes. All VCs discharge with `--cache_off`;
+the source guard reports 2 extracted and 4 proof modules. There are **124**
+handwritten lemma declarations (13 bounded challenge + 23 producer + 28
+per-request + 60 composition). This final run reuses unchanged, freshly
+regenerated artifacts from the preceding focused run, rather than repeating
+hax extraction. `artifact-hashes.txt` now pins this final source set; the older
+logs above are retained as their original snapshots. Proof bodies are unchanged.
+The historical `login-nonce-composition/` logs and mutations are explicitly
+labeled as the d58e5bd run; they are not presented as current-head evidence.

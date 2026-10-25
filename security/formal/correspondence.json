@@ -361,7 +361,7 @@
         "serverVELA/vela-session-policy/src/challenge.rs": "6ddb8af59d99aff1dfaa7b51f89becde9b5a39bb9e73d69c60fbf0461f2f8c11",
         "serverVELA/vela-session-policy/src/login_driver.rs": "455602a9035d8766c5cd30b9b901ef9cbaab3cb48da685aa832f6408a8b1e441",
         "serverVELA/vela-session-policy/tests/login_driver.rs": "8dbb576cbb60960437f9dee20e3e3982ded6a104c6e94ccdbdbbb40ff6855df6",
-        "serverVELA/vela-session-policy/verify-fstar-login-driver.sh": "0a17a70ecc57d82887168ed4d93ddfb12db0c68bda27196f858eaeb7a365a5c0",
+        "serverVELA/vela-session-policy/verify-fstar-login-driver.sh": "d9a13fce92d770ef99513e4840faf3f41ff873f7d0c40e6876bf3e8a5635a433",
         "serverVELA/vela-session-policy/rust-toolchain.toml": "50786309c2f9d452b358b0995257d726737eb19aa007a4b97606a40499f51b3f",
         "serverVELA/vela-server/src/auth/challenge.rs": "c813c92754761cc04be989c4ca80333a37ddf0239e2b283d1f553358789df106",
         "serverVELA/vela-server/src/auth/verify.rs": "6fc986c8406317230c591808d32a47e37a11eee1dbf206f841afe5cb5b1e6823",
@@ -370,9 +370,9 @@
         "serverVELA/vela-session-policy/proofs/fstar/extraction-login-driver/Vela_session_policy.Login_driver.fst": "ab5f233536bd6e98fe5b34433b4b7665f89906fac0ac900588926723bac72bb5",
         "serverVELA/vela-session-policy/proofs/fstar/challenge-lemmas/Vela_session_policy_challenge_lemmas.fst": "a92351ddbe6692cbb14704f048af4ab2f0b97157532984c00351ccba39d96776",
         "serverVELA/vela-session-policy/proofs/fstar/login-driver-lemmas/Vela_session_policy_login_driver_lemmas.fst": "52ce34104cc4617b05be04aa0f8cd5d951eb9737e0b4ecee69192828ae06c4dc",
-        "serverVELA/vela-session-policy/verify-fstar-login-composition.sh": "c0b4e7ba8a02438a096cf814d3240cc8a39584b403a7985cdd8f4dfcca1f6108",
+        "serverVELA/vela-session-policy/verify-fstar-login-composition.sh": "d1d098a9ad8ba2358a35ca9322c1c722a9f2e554de53fa57b8dddd9f7825f8f1",
         "serverVELA/vela-session-policy/proofs/fstar/challenge-lemmas/Vela_session_policy_tag_producer_lemmas.fst": "aa62c89bbe13110f249f6244dd68fee871a4fc108471eedd90ee72fd7f5a8238",
-        "serverVELA/vela-session-policy/proofs/fstar/login-driver-composition/Vela_session_policy_login_driver_composition.fst": "166295e6617ed0029c33fd9bac8aec4e483f2055508e2bec32a2450ee2febfba",
+        "serverVELA/vela-session-policy/proofs/fstar/login-driver-composition/Vela_session_policy_login_driver_composition.fst": "c747ddc0d09e984b5ae0a17b1f488c3f964276e06ffe788e32454684cc59176b",
         "serverVELA/vela-session-policy/proofs/fstar/login-driver-composition/README.md": "b6c7ec2879a712b3a0d2780ebda44fd19b9b57e07ab798593ce705781641b070"
       }
     }
