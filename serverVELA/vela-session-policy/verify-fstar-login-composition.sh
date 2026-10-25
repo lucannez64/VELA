@@ -95,8 +95,8 @@ if (( ${#generated_files[@]} != 2 )); then
   echo "expected the two focused challenge/login extraction modules" >&2
   exit 1
 fi
-if (( ${#challenge_lemma_files[@]} != 1 )); then
-  echo "expected exactly one reviewed challenge lemma module" >&2
+if (( ${#challenge_lemma_files[@]} != 2 )); then
+  echo "expected exactly two reviewed challenge lemma modules" >&2
   exit 1
 fi
 if (( ${#login_lemma_files[@]} != 1 )); then

@@ -30,7 +30,7 @@ class DriverGuardTests(unittest.TestCase):
 
     def test_focused_driver_runners_are_executable_in_git(self):
         root = Path(__file__).resolve().parents[3]
-        runners = list(root.glob('serverVELA/vela-*-policy/verify-fstar*driver.sh'))
+        runners = list(root.glob('serverVELA/vela-*-policy/verify-fstar*.sh'))
         self.assertGreaterEqual(len(runners), 4)
         for runner in runners:
             relative = str(runner.relative_to(root))
