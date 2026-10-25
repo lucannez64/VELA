@@ -1,0 +1,38 @@
+# Mutation command for the accept-None adapter mutant (run from
+# serverVELA/vela-session-policy in /home/hirew/.t3/worktrees/VELA/t3-e3b08814).
+#
+# The mutant is a copy of the regenerated focused Challenge module in
+# /tmp/opencode/vela-take-mutant-accept-none/ whose
+# classify_taken_challenge `None` branch returns Accepted.  The checked-in
+# extraction and every proof input are untouched.  The include for
+# proofs/fstar/extraction-login-driver is replaced with the mutant directory;
+# everything else matches the focused gate (--cache_off, --z3rlimit 16000,
+# --z3version 4.13.3, pinned F* 2025.10.06).
+
+~/.local/opt/vela-tools/bin/vela-heavy \
+  env PATH=/tmp/vela-fstar-prebuilt/fstar/bin:$HOME/.local/opt/vela-tools/bin:$PATH \
+  fstar.exe --cmi --cache_off --warn_error -331 --z3rlimit 16000 \
+  --z3version 4.13.3 \
+  --already_cached '+Prims+FStar+LowStar+C+Spec.Loops+TestLib' \
+  --include "$HAXLIB/proof-libs/fstar/core" \
+  --include "$HAXLIB/proof-libs/fstar/rust_primitives" \
+  --include "$HAXLIB/proofs/fstar/extraction" \
+  --include /tmp/opencode/vela-take-mutant-accept-none \
+  --include proofs/fstar/challenge-lemmas \
+  --include proofs/fstar/login-driver-lemmas \
+  --include proofs/fstar/login-driver-composition \
+  --include proofs/fstar/login-raw-nonce-lemmas \
+  --include proofs/fstar/challenge-take-adapter-lemmas \
+  /tmp/opencode/vela-take-mutant-accept-none/Vela_session_policy.Challenge.fst \
+  /tmp/opencode/vela-take-mutant-accept-none/Vela_session_policy.Login_driver.fst \
+  proofs/fstar/challenge-lemmas/*.fst \
+  proofs/fstar/login-driver-lemmas/*.fst \
+  proofs/fstar/login-driver-composition/*.fst \
+  proofs/fstar/login-raw-nonce-lemmas/*.fst \
+  proofs/fstar/challenge-take-adapter-lemmas/*.fst
+
+# HAXLIB=/home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7
+# exit 1; rejected at
+# proofs/fstar/challenge-take-adapter-lemmas/Vela_session_policy_challenge_take_adapter.fst(164,2-179,43):
+# Error 19 "Could not prove post-condition" in
+# classify_taken_challenge_matches_literal.  Log: mutation-accept-none.log.

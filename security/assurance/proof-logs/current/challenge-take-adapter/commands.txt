@@ -1,0 +1,107 @@
+# Exact commands for the challenge take-adapter increment
+# Worktree: /home/hirew/.t3/worktrees/VELA/t3-e3b08814
+# Base commit: a1436db
+
+All heavy execution is serialized through the global lock/wrapper:
+
+    ~/.local/opt/vela-tools/bin/vela-heavy ...
+
+which runs under security/assurance/bounded.sh: 3 GiB process-tree cap, no
+swap, CARGO_BUILD_JOBS=1, OPAMJOBS=1, MAKEFLAGS=-j1, RUST_TEST_THREADS=1.
+Every heavy command below was invoked through it.
+
+Common environment (exactly the task environment):
+
+    CARGO_HOME=/tmp/vela-hax-cargo
+    OPAMROOT=$HOME/.local/opt/vela-tools/opam
+    PATH=/tmp/vela-fstar-prebuilt/fstar/bin:$HOME/.local/opt/vela-tools/bin:$HOME/.local/opt/vela-tools/opam/vela-hax/bin:$PATH
+    CARGO_TARGET_DIR=/home/hirew/.t3/worktrees/VELA/t3-700776df/target
+
+Observed tools:
+    F* 2025.10.06 (platform=Linux_x86_64, compiler=OCaml 4.14.2,
+                   date=2025-10-06, commit=7b347386330d0e5a331a220535b6f15288903234)
+    Z3 version 4.13.3 - 64 bit
+    hax 0.3.7 (hax-lib 0.3.7 from the Cargo registry)
+    rustc 1.93.0-nightly (843f8ce2e 2025-11-07), channel nightly-2025-11-08
+
+## Targeted Rust policy tests
+
+    cd serverVELA
+    ~/.local/opt/vela-tools/bin/vela-heavy env \
+      CARGO_HOME=/tmp/vela-hax-cargo \
+      OPAMROOT=$HOME/.local/opt/vela-tools/opam \
+      PATH=... CARGO_TARGET_DIR=/home/hirew/.t3/worktrees/VELA/t3-700776df/target \
+      cargo test -p vela-session-policy
+    # -> cargo-test-session-policy.log
+    #    23 unit tests + 13 login-driver tests, 0 failed
+
+## Real-Store server handler tests
+
+    cd serverVELA
+    ~/.local/opt/vela-tools/bin/vela-heavy env ... \
+      cargo test -p vela-server \
+        --test challenge_single_use_model --test login_driver_handler
+    # -> cargo-test-server-handlers.log
+    #    challenge_single_use_model: 3 passed
+    #    login_driver_handler: 5 passed, 0 failed
+
+    cd serverVELA
+    ~/.local/opt/vela-tools/bin/vela-heavy env ... \
+      cargo test -p vela-server --test integration challenge
+    # -> cargo-test-server-integration-challenge.log
+    #    2 passed, 66 filtered out, 0 failed
+    #    (challenge_is_bound_to_its_purpose_and_spent_on_misuse,
+    #     challenge_returns_nonce)
+
+## Full fresh focused proof (regenerates the focused extraction)
+
+    cd serverVELA/vela-session-policy
+    ~/.local/opt/vela-tools/bin/vela-heavy env ... \
+      ./verify-fstar-login-driver.sh
+    # -> focused-verify.log
+    #    cargo test (23 + 13), one cargo hax run (17 selections),
+    #    source guard "2 extracted modules, 6 proof modules",
+    #    8 F* modules verified in one invocation, all VCs discharged.
+
+The gate's exact F* argv is printed in the log:
+
+    --cmi --cache_off --warn_error -331 --z3rlimit 16000 --z3version 4.13.3
+    --already_cached '+Prims+FStar+LowStar+C+Spec.Loops+TestLib'
+    --include <hax-lib>/proof-libs/fstar/core
+    --include <hax-lib>/proof-libs/fstar/rust_primitives
+    --include <hax-lib>/proofs/fstar/extraction
+    --include proofs/fstar/extraction-login-driver
+    --include proofs/fstar/challenge-lemmas
+    --include proofs/fstar/login-driver-lemmas
+    --include proofs/fstar/login-driver-composition
+    --include proofs/fstar/login-raw-nonce-lemmas
+    --include proofs/fstar/challenge-take-adapter-lemmas
+    <2 extracted> <5 unchanged proof modules> <new take-adapter module>
+
+## Full aggregate (historical artifact + focused gate)
+
+    cd serverVELA/vela-session-policy
+    ~/.local/opt/vela-tools/bin/vela-heavy env ... ./verify-fstar.sh
+    # -> full-verify.log
+    #    historical 21-selection extraction: "hax: unchanged file",
+    #    historical module verified; focused gate above re-run and passed.
+
+## Mutation check (accept None as Accepted)
+
+See mutation-accept-none-argv.txt and mutation-commands notes below.
+Mutant directory: /tmp/opencode/vela-take-mutant-accept-none (copies of the
+two regenerated modules; only the adapter's None branch changed to Accepted).
+The checked-in extraction and every proof input were unchanged.
+Result: exit 1, Error 19 in
+classify_taken_challenge_matches_literal
+(challenge-take-adapter module lines 164-179). Log: mutation-accept-none.log.
+
+## Invariants checked before the local commit
+
+    git status --porcelain
+    git ls-files --stage serverVELA/vela-session-policy/verify-fstar*.sh
+    # all four runners indexed 100755; core.fileMode=false (no mode drift)
+    sha256sum <all inputs>    # source-hashes.txt
+    git show HEAD:<historical extraction> | sha256sum
+    # equals the current historical artifact and focused Login_driver,
+    # raw-bridge module and login_driver.rs: all unchanged from a1436db.

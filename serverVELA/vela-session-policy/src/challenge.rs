@@ -15,6 +15,12 @@
 //! nine loop-free, bounds-checked reads and retained length are extracted and
 //! checked in F*, which proves the copied prefix is exact and that a long value
 //! cannot alias a short tag.
+//!
+//! [`classify_taken_challenge`] is the actual `Option<Vec<u8>>` adapter between
+//! the atomic take and the pure decision. The handler performs only the
+//! effectful `get_del`; the conversion of the returned value and the
+//! consumption classification both happen here, so the extracted adapter — not
+//! a handler-local restatement — is what the F* take-adapter module checks.
 
 /// Longest recognized purpose tag (`web_token`).
 pub const MAX_CHALLENGE_TAG_LEN: usize = 9;
@@ -264,6 +270,32 @@ pub fn classify_consumption(
     }
 }
 
+/// Classify the exact value the atomic take returned.
+///
+/// This is the complete pure adapter from the store result to the decision:
+/// `None` means the nonce was absent, expired or already spent and yields
+/// [`ChallengeConsumption::Missing`]. `Some(bytes)` is converted with the
+/// production [`stored_tag_from_bytes`] and classified with the production
+/// [`classify_consumption`]; it is accepted only when the stored bytes are
+/// exactly `expected`'s issued tag, and every other present value is
+/// [`ChallengeConsumption::WrongPurpose`]. The take already removed a present
+/// value, so both `Some` outcomes spend the nonce.
+///
+/// The parameter is a borrow so the caller keeps ownership of the value
+/// returned by `get_del`; nothing is truncated or copied beyond the bounded
+/// conversion.
+pub fn classify_taken_challenge(
+    consumed: &Option<Vec<u8>>,
+    expected: ChallengePurpose,
+) -> ChallengeConsumption {
+    match consumed {
+        None => ChallengeConsumption::Missing,
+        Some(bytes) => {
+            classify_consumption(Some(stored_tag_from_bytes(bytes.as_slice())), expected)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -481,6 +513,118 @@ mod tests {
                 classify_consumption(Some(tag), expected),
                 ChallengeConsumption::WrongPurpose
             );
+        }
+    }
+
+    #[test]
+    fn taken_adapter_maps_absent_to_missing() {
+        assert_eq!(
+            classify_taken_challenge(&None, ChallengePurpose::Login),
+            ChallengeConsumption::Missing
+        );
+        for expected in [
+            ChallengePurpose::Login,
+            ChallengePurpose::Enroll,
+            ChallengePurpose::WebToken,
+        ] {
+            assert_eq!(
+                classify_taken_challenge(&None, expected),
+                ChallengeConsumption::Missing,
+                "{expected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn taken_adapter_accepts_only_the_exact_expected_literal() {
+        for stored in [
+            ChallengePurpose::Login,
+            ChallengePurpose::Enroll,
+            ChallengePurpose::WebToken,
+        ] {
+            let issued = purpose_tag_bytes(stored).to_vec();
+            for expected in [
+                ChallengePurpose::Login,
+                ChallengePurpose::Enroll,
+                ChallengePurpose::WebToken,
+            ] {
+                let consumed = Some(issued.clone());
+                let decision = classify_taken_challenge(&consumed, expected);
+                if stored == expected {
+                    assert_eq!(decision, ChallengeConsumption::Accepted, "{stored:?}");
+                } else {
+                    assert_eq!(
+                        decision,
+                        ChallengeConsumption::WrongPurpose,
+                        "{stored:?} presented as {expected:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn taken_adapter_refuses_empty_unknown_and_long_values() {
+        for consumed in [
+            Some(Vec::new()),
+            Some(b"?".to_vec()),
+            Some(b"logi".to_vec()),
+            Some(b"enrollx".to_vec()),
+            Some(b"login-extra".to_vec()),
+            Some(b"login\0\0\0\0".to_vec()),
+        ] {
+            for expected in [
+                ChallengePurpose::Login,
+                ChallengePurpose::Enroll,
+                ChallengePurpose::WebToken,
+            ] {
+                assert_eq!(
+                    classify_taken_challenge(&consumed, expected),
+                    ChallengeConsumption::WrongPurpose,
+                    "{consumed:?} presented as {expected:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn taken_adapter_keeps_a_long_value_from_aliasing_the_prefix() {
+        // The take result is not truncated: a longer value keeps its length and
+        // its copied prefix does not make the classifier accept it.
+        let consumed = Some(b"login!!!!!".to_vec());
+        assert_eq!(stored_tag_from_bytes(consumed.as_deref().unwrap()).len, 10);
+        assert_eq!(
+            classify_taken_challenge(&consumed, ChallengePurpose::Login),
+            ChallengeConsumption::WrongPurpose
+        );
+    }
+
+    #[test]
+    fn taken_adapter_agrees_with_the_former_as_deref_adapter() {
+        let cases: [Option<Vec<u8>>; 8] = [
+            None,
+            Some(b"login".to_vec()),
+            Some(b"enroll".to_vec()),
+            Some(b"web_token".to_vec()),
+            Some(Vec::new()),
+            Some(b"unknown".to_vec()),
+            Some(b"login-extra".to_vec()),
+            Some(b"web_token\0".to_vec()),
+        ];
+        for consumed in cases {
+            for expected in [
+                ChallengePurpose::Login,
+                ChallengePurpose::Enroll,
+                ChallengePurpose::WebToken,
+            ] {
+                let former =
+                    classify_consumption(consumed.as_deref().map(stored_tag_from_bytes), expected);
+                assert_eq!(
+                    classify_taken_challenge(&consumed, expected),
+                    former,
+                    "{consumed:?} presented as {expected:?}"
+                );
+            }
         }
     }
 }

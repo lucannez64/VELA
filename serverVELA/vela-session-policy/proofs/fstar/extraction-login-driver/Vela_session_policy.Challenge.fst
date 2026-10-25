@@ -334,3 +334,32 @@ let classify_consumption
       then ChallengeConsumption_Accepted <: t_ChallengeConsumption
       else ChallengeConsumption_WrongPurpose <: t_ChallengeConsumption
     | TagClass_Unknown  -> ChallengeConsumption_WrongPurpose <: t_ChallengeConsumption
+
+/// Classify the exact value the atomic take returned.
+/// This is the complete pure adapter from the store result to the decision:
+/// `None` means the nonce was absent, expired or already spent and yields
+/// [`ChallengeConsumption::Missing`]. `Some(bytes)` is converted with the
+/// production [`stored_tag_from_bytes`] and classified with the production
+/// [`classify_consumption`]; it is accepted only when the stored bytes are
+/// exactly `expected`'s issued tag, and every other present value is
+/// [`ChallengeConsumption::WrongPurpose`]. The take already removed a present
+/// value, so both `Some` outcomes spend the nonce.
+/// The parameter is a borrow so the caller keeps ownership of the value
+/// returned by `get_del`; nothing is truncated or copied beyond the bounded
+/// conversion.
+let classify_taken_challenge
+      (consumed: Core_models.Option.t_Option (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global))
+      (expected: t_ChallengePurpose)
+    : t_ChallengeConsumption =
+  match consumed <: Core_models.Option.t_Option (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global) with
+  | Core_models.Option.Option_None  -> ChallengeConsumption_Missing <: t_ChallengeConsumption
+  | Core_models.Option.Option_Some bytes ->
+    classify_consumption (Core_models.Option.Option_Some
+        (stored_tag_from_bytes (Alloc.Vec.impl_1__as_slice #u8 #Alloc.Alloc.t_Global bytes
+              <:
+              t_Slice u8)
+          <:
+          t_StoredTag)
+        <:
+        Core_models.Option.t_Option t_StoredTag)
+      expected

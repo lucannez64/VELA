@@ -26,7 +26,7 @@ use crate::{
     state::AppState,
 };
 use vela_session_policy::challenge::{
-    classify_consumption, purpose_tag_bytes, stored_tag_from_bytes, ChallengeConsumption,
+    classify_taken_challenge, purpose_tag_bytes, ChallengeConsumption,
 };
 
 const CHALLENGE_TTL_SECS: u64 = 60;
@@ -76,17 +76,16 @@ pub struct ChallengeQuery {
 /// Atomically take `challenge_b64` and classify the exact stored bytes against
 /// the pure purpose policy. The take removes the value whatever its purpose, so
 /// a present but non-matching value is spent. The caller still owns the
-/// `get_del` error and its original status/message.
+/// `get_del` error and its original status/message; the pure conversion of the
+/// returned value and the decision live in
+/// `vela_session_policy::challenge::classify_taken_challenge`.
 pub(crate) fn take_challenge(
     state: &AppState,
     challenge_b64: &str,
     purpose: ChallengePurpose,
 ) -> Result<ChallengeConsumption> {
     let consumed = state.store.get_del(&format!("challenge:{challenge_b64}"))?;
-    Ok(classify_consumption(
-        consumed.as_deref().map(stored_tag_from_bytes),
-        purpose.policy(),
-    ))
+    Ok(classify_taken_challenge(&consumed, purpose.policy()))
 }
 
 /// Spend `challenge_b64` and accept it only if it was issued for `purpose`.

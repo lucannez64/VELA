@@ -1,0 +1,65 @@
+Take-adapter increment counts
+=============================
+
+Rust (production)
+- New pure functions in vela-session-policy/src/challenge.rs: 1
+  (classify_taken_challenge, the Option<Vec<u8>> adapter).
+- New hax postconditions (ensures) on the adapter: 0.
+  src/challenge.rs still has 3 explicit postconditions (stored_tag_from_bytes,
+  classify_stored_tag, classify_consumption), all unchanged.
+- New hax preconditions (requires) on the adapter: 0.
+- vela-server/src/auth/challenge.rs: take_challenge now performs only the
+  actual Store::get_del and calls the extracted adapter. One import line and
+  one decision expression changed; all error messages, the default purpose
+  (login), purpose parsing and spend-on-wrong-purpose behaviour are unchanged.
+- login_driver.rs: unchanged (byte-identical to a1436db).
+- Other handlers: unchanged.
+
+Rust tests
+- vela-session-policy unit tests: 23 passed, 0 failed (18 before; +5 adapter
+  tests: absent, exact/cross purpose, empty/unknown/long, retained length,
+  agreement with the former as_deref adapter).
+- vela-session-policy login-driver integration tests: 13 passed, 0 failed.
+- vela-server challenge_single_use_model: 3 passed, 0 failed (real Store).
+- vela-server login_driver_handler: 5 passed, 0 failed (real handlers/Store).
+- vela-server integration `challenge` filter: 2 passed, 0 failed
+  (challenge_is_bound_to_its_purpose_and_spent_on_misuse,
+   challenge_returns_nonce; real Router and sled-backed Store).
+
+F* extraction
+- Focused hax run: 1 invocation, 17 selected functions.
+- Generated focused modules: 2 (Vela_session_policy.Challenge,
+  Vela_session_policy.Login_driver); the adapter is appended to the Challenge
+  module. No new generated module file.
+- Challenge.fst additions: 29 lines including doc comments and the extracted
+  classify_taken_challenge body; existing bodies byte-identical.
+- Login_driver.fst: byte-identical to a1436db.
+- Historical extraction proofs/fstar/extraction/Vela_session_policy.fst:
+  byte-identical to a1436db; hax reported "unchanged file" in the aggregate run.
+
+F* proofs
+- New hand-written modules: 1
+  (challenge-take-adapter-lemmas/Vela_session_policy_challenge_take_adapter.fst).
+- New module: 35 top-level lets = 26 lemmas + 9 definitions/helpers.
+- Hand-written lemmas across the six proof modules: 190 (164 + 26); these are
+  not Rust contracts.
+- Focused gate: 8 modules checked in one fstar.exe invocation
+  (2 extracted + 6 hand-written).
+- Focused gate message: 17 selected functions (8 challenge/producer/adapter +
+  9 login), 12 explicit Rust postconditions.
+- Source policy: 2 extracted modules, 6 proof modules; no unreviewed
+  escapes/options. No assume/admit/axiom/--lax/opaque/local val/
+  proof-goal-as-hypothesis.
+- Full aggregate (verify-fstar.sh): historical 21-selection artifact verified,
+  focused extraction regenerated, 8 focused modules verified.
+- Mutation checks: 1 (accept-None adapter mutant), rejected by F*.
+
+Files
+- Modified: src/challenge.rs, ../vela-server/src/auth/challenge.rs,
+  proofs/fstar/extraction-login-driver/Vela_session_policy.Challenge.fst,
+  verify-fstar-login-driver.sh.
+- New: challenge-take-adapter-lemmas/ (module + README),
+  security/assurance/proof-logs/current/challenge-take-adapter/.
+- Untouched: login_driver.rs, every existing hand-written F* module
+  (including the raw nonce bridge), other handlers, global assurance docs,
+  MANIFEST.sha256, correspondence.json, CI.
