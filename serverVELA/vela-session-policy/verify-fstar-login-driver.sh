@@ -70,15 +70,12 @@ if (( ${#login_lemma_files[@]} != 1 )); then
   exit 1
 fi
 
-# Fail closed on proof escapes in the generated artifact and the lemmas. This
-# is a textual guard, not the proof: fstar.exe below is the checker.
-escapes=$(grep -nE '(^|[^[:alnum:]_])(assume|admit|axiom)([^[:alnum:]_]|$)|--lax' \
-  "${proof_files[@]}" "${challenge_lemma_files[@]}" "${login_lemma_files[@]}" || true)
-if [[ -n $escapes ]]; then
-  printf '%s\n' "$escapes" >&2
-  echo 'proof escape detected in focused challenge/login artifact' >&2
-  exit 3
-fi
+# Enforce the same reviewed source policy as the other focused drivers.
+# Imported hax libraries remain trusted; fstar.exe is the proof checker.
+python3 "$proof_root/../../security/formal/check-driver-proof-sources.py" \
+  --generated "${proof_files[@]}" \
+  --proof "${challenge_lemma_files[@]}" "${login_lemma_files[@]}" \
+  --include-dir "$proof_root"
 
 hax_lib_root=$(
   cargo metadata --format-version 1 |
