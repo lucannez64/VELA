@@ -352,16 +352,16 @@
       "boundary": "focused-driver source-policy gate: reviewed proof-search budgets only; a drift/escape guard, not a proof checker or semantic correspondence certificate",
       "artifacts": {
         "security/formal/check-driver-proof-sources.py": "2d28feef4e9be7396be1752deac799098d92c32dd44e3622619db090f757f527",
-        "security/formal/tests/test_driver_proof_sources.py": "4aeae5db748e3f1b2dbc432bd63bc0c5ebff74e5045d5b8790c0887ba802ae9a"
+        "security/formal/tests/test_driver_proof_sources.py": "7b7da61e182c768f85dadd8471ef13ba7a0ece7e05a1031eeb41f2a126fddc22"
       }
     },
     {
-      "boundary": "login driver and byte producer: 16 selections / 12 postconditions plus 23 producer lemmas and 60 nonce-composition lemmas; pure issuer/conversion/classifier checked, atomic-purpose take assumed; real store/Option/Vec bridge, handler effects, SQL/verifier origins, revocation/issuance linearization and joint lifecycle composition remain open",
+      "boundary": "login driver and byte producer: 16 selections / 12 postconditions, 23 producer lemmas, 60 nonce-composition and 40 raw-world projection lemmas; modeled raw takes use actual converter/classifier; real store/Option/Vec byte origins, handler effects, SQL/verifier origins, revocation/issuance linearization and full lifecycle composition remain open",
       "artifacts": {
         "serverVELA/vela-session-policy/src/challenge.rs": "6ddb8af59d99aff1dfaa7b51f89becde9b5a39bb9e73d69c60fbf0461f2f8c11",
         "serverVELA/vela-session-policy/src/login_driver.rs": "455602a9035d8766c5cd30b9b901ef9cbaab3cb48da685aa832f6408a8b1e441",
         "serverVELA/vela-session-policy/tests/login_driver.rs": "8dbb576cbb60960437f9dee20e3e3982ded6a104c6e94ccdbdbbb40ff6855df6",
-        "serverVELA/vela-session-policy/verify-fstar-login-driver.sh": "d9a13fce92d770ef99513e4840faf3f41ff873f7d0c40e6876bf3e8a5635a433",
+        "serverVELA/vela-session-policy/verify-fstar-login-driver.sh": "5ef10f32fc3027a034cb1294b3c6ddc3979739f2b3df741767e22e08e0dc6bbb",
         "serverVELA/vela-session-policy/rust-toolchain.toml": "50786309c2f9d452b358b0995257d726737eb19aa007a4b97606a40499f51b3f",
         "serverVELA/vela-server/src/auth/challenge.rs": "c813c92754761cc04be989c4ca80333a37ddf0239e2b283d1f553358789df106",
         "serverVELA/vela-server/src/auth/verify.rs": "6fc986c8406317230c591808d32a47e37a11eee1dbf206f841afe5cb5b1e6823",
@@ -373,7 +373,10 @@
         "serverVELA/vela-session-policy/verify-fstar-login-composition.sh": "d1d098a9ad8ba2358a35ca9322c1c722a9f2e554de53fa57b8dddd9f7825f8f1",
         "serverVELA/vela-session-policy/proofs/fstar/challenge-lemmas/Vela_session_policy_tag_producer_lemmas.fst": "aa62c89bbe13110f249f6244dd68fee871a4fc108471eedd90ee72fd7f5a8238",
         "serverVELA/vela-session-policy/proofs/fstar/login-driver-composition/Vela_session_policy_login_driver_composition.fst": "c747ddc0d09e984b5ae0a17b1f488c3f964276e06ffe788e32454684cc59176b",
-        "serverVELA/vela-session-policy/proofs/fstar/login-driver-composition/README.md": "b6c7ec2879a712b3a0d2780ebda44fd19b9b57e07ab798593ce705781641b070"
+        "serverVELA/vela-session-policy/proofs/fstar/login-driver-composition/README.md": "b6c7ec2879a712b3a0d2780ebda44fd19b9b57e07ab798593ce705781641b070",
+        "serverVELA/vela-session-policy/verify-fstar-login-raw-nonce.sh": "7b7451feed2803f21cbaa14b2897286c89cd851d0eeeef3e425fda97b5b1c54e",
+        "serverVELA/vela-session-policy/proofs/fstar/login-raw-nonce-lemmas/Vela_session_policy_login_raw_nonce.fst": "617ea150e18b56b8dd46c556b631c994ca0fb55f25da0aa82ff1965f2ede8f7e",
+        "serverVELA/vela-session-policy/proofs/fstar/login-raw-nonce-lemmas/README.md": "7bb12b1277a57946af89eee0b7b3f3543b088a6d4faf21bffacf614bdfd47cc1"
       }
     }
   ]

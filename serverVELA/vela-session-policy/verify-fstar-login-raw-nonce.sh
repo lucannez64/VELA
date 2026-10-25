@@ -197,8 +197,8 @@ printf 'proof inputs after:\n%s\n' "$after_hashes"
 echo "login raw nonce: 0 new Rust postconditions; all extraction and proof modules are inputs and byte-identical"
 echo "login raw nonce: the actual stored_tag_from_bytes/classify_consumption decision drives Take"
 echo "login raw nonce: projection to the abstract composition commutes with every action and schedule"
-echo "login raw nonce: one raw nonce admits at most one request, one Respond effect and one successful token issuance"
-echo "login raw nonce: a raw value the actual classifier does not accept for login never admits, responds or issues"
+echo "login raw nonce: one raw nonce admits at most one request, one Respond effect and one successful token-issue observation"
+echo "login raw nonce: a raw value the actual classifier does not accept for login yields no admission, Respond effect or successful issue observation"
 sha256sum "${generated_files[@]}" "${challenge_lemma_files[@]}" \
   "${login_lemma_files[@]}" "${composition_files[@]}" \
   "${raw_nonce_files[@]}" src/challenge.rs src/login_driver.rs

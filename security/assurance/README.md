@@ -33,7 +33,8 @@ bounded Android/iOS admission tests have their own hosted evidence. All fifteen
 checks pass on `c8a377d`; see the [current ledger](08-formalization-status.md).
 The login driver and release-build gates passed hosted checks on `5ae87da`.
 The subsequent [producer and nonce-composition increment](19-login-producer-composition.md)
-has local proof evidence; it is not part of that hosted result.
+passed hosted checks on `8d3610d`. A newer pure raw-byte/world bridge has local
+proof evidence; real store/handler refinement remains open.
 
 ## Contents
 

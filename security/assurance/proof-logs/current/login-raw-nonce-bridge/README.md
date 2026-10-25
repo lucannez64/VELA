@@ -13,6 +13,13 @@ The module bridges the existing abstract concurrent composition
 bytes** and the **actual extracted classifier**, without claiming a sled or
 handler refinement theorem.
 
+The original run is `09d991c` on `1902ecd`, cherry-picked as `5d68185`
+onto hosted-green `8d3610d`. Original hashes and logs retain that delegated
+snapshot; inherited scope-comment/echo corrections in reused modules are not
+proof-body changes. The parent aggregate replay records current inputs and
+checks all seven modules after fresh extraction. This is pure model bridging,
+not actual store/handler refinement.
+
 ## Base and scope
 
 - Base commit: `1902ecd30ce7b41fa400cdfbebf387f49144ffd1`

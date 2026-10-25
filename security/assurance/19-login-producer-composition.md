@@ -38,9 +38,13 @@ Two mutation checks reject a reusable nonce and non-login acceptance.
 
 This is conditional on one nonce key, a purpose-correct linearizable take,
 paired effects/observations and faithful handler execution. The purpose is an
-abstract Login/Other value, not raw bytes. The pure byte result and concurrent
-module are checked separately: their bridge through the actual store is not
-proved. Token/JTI effects, SQL rows, verification, revocation linearization,
+abstract Login/Other value, not raw bytes. The [raw-byte nonce bridge](proof-logs/current/login-raw-nonce-bridge/README.md)
+now connects the pure byte result and concurrent module: a raw world stores
+`option(t_Slice u8)` and computes Take decisions with the actual extracted
+converter/classifier. Projection commutes with every action and arbitrary
+schedule, transferring the safety bounds. Its 40 lemmas include literal-byte
+meaning and success/refusal/contention witnesses. The real store/handler
+Option/Vec bridge to these modeled raw bytes is still unproved. Token/JTI effects, SQL rows, verification, revocation linearization,
 crash/retry behavior, nonce re-issuance, cross-endpoint and multi-node lifecycle
 composition remain outside this theorem.
 
@@ -48,7 +52,9 @@ composition remain outside this theorem.
 
 The focused extraction selects 16 functions with 12 explicit postconditions
 (3 challenge/producer, 9 login; 8 transition contracts require sound state).
-The producer adds 23 handwritten lemmas; composition adds 60. The unchanged
+The producer adds 23 handwritten lemmas; composition adds 60; the raw-world
+bridge adds 40, totaling 164 with the 13 bounded-challenge and 28 per-request
+lemmas. The unchanged
 base inventory remains 249 postconditions / 256 selections across 14 artifacts;
 focused artifacts are counted separately. Historical session extraction is
 unchanged at 19 postconditions / 21 selections.
@@ -65,6 +71,6 @@ checks all six focused modules together after fresh extraction.
 
 Original evidence: [producer](proof-logs/current/login-tag-producer/README.md),
 [composition](proof-logs/current/login-nonce-composition/README.md). These retain
-their original source snapshots and worktree provenance. Hosted green `5ae87da`
-predates both additions. Actual store/handler refinement and joint whole-system
+their original source snapshots and worktree provenance. Hosted green `8d3610d` reproduces the producer and nonce additions but
+predates the raw-world bridge. Actual store/handler refinement and joint whole-system
 composition remain open regardless of the local verdicts.

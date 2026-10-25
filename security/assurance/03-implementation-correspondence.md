@@ -246,14 +246,19 @@ The [nonce composition](proof-logs/current/login-nonce-composition/README.md)
 checks any finite number of interleaved login requests and schedule length,
 with at most one admission, response and successful issuance observation per
 nonce. It assumes an atomic, purpose-correct take on one key, paired effects
-and observations, and faithful handler execution. There is no checked bridge
-from raw stored bytes through the real store to this composition's purpose bit.
+and observations, and faithful handler execution. The [raw-byte bridge](proof-logs/current/login-raw-nonce-bridge/README.md)
+now proves that a modeled raw-slice take using the extracted converter and
+classifier projects to the abstract world for every action and schedule.
+Literal-byte correctness follows from the producer proof. This removes the
+purpose-oracle premise inside the pure model; real store/Option/Vec origins
+and their connection to that raw model remain unproved.
 The handler enforces effects in release builds; its wiring is reviewed and
 tested, not a handler/SQL/store refinement theorem.
 
 The focused extraction has 16 selections / 12 explicit postconditions (8
 conditional on a sound driver state), separate from the unchanged 249-policy
 postcondition census. The producer adds 23 handwritten lemmas and composition
-60; these are not Rust postconditions. Full lifecycle, storage, revocation,
+60; the raw-world projection adds 40. These are not Rust postconditions.
+Full lifecycle, storage, revocation,
 issuance, exception and crash composition remain open. See the
 [scope note](19-login-producer-composition.md).

@@ -91,6 +91,12 @@ Not proved here:
 The raw slice is the modelled take result, not a proof about the store.  No
 `assume`, `admit`, `axiom`, `--lax`, `opaque`, local `val`, or goal-as-hypothesis
 is used.  The standalone runner is
-`../../../../verify-fstar-login-raw-nonce.sh`; it adds **zero** Rust
+[standalone runner](../../../verify-fstar-login-raw-nonce.sh); it adds **zero** Rust
 postconditions.  Evidence is under
 `security/assurance/proof-logs/current/login-raw-nonce-bridge/`.
+
+The aggregate session verifier also includes this module in its existing
+focused invocation after fresh extraction. The standalone runner checks
+existing inputs without regeneration. The original evidence is from
+`09d991c` on `1902ecd`; later parent scope-comment/reporting corrections to
+reused inputs are identified by the integrated parent replay.

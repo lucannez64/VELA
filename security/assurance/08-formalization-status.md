@@ -379,7 +379,10 @@ The [published login proof](proof-logs/current/login-driver/README.md) and
 [release-build runtime gates](proof-logs/current/login-driver-runtime-gates/README.md)
 passed hosted checks on `5ae87da`, including the
 [refinement job](https://github.com/lucannez64/VELA/actions/runs/40196922149/job/121179647957).
-That hosted result predates the producer and nonce-composition additions below.
+That hosted result predates the producer and nonce-composition additions below,
+which then passed on `8d3610d` in the
+[security workflow](https://github.com/lucannez64/VELA/actions/runs/40200134577).
+The raw-world bridge is a subsequent local increment.
 
 The [producer proof](proof-logs/current/login-tag-producer/README.md) checks the
 actual raw-slice conversion and pure issuer/classifier composition. The
@@ -388,13 +391,16 @@ checks at most one accepted request, Respond effect and successful issuance
 observation for any interleaved schedule under its atomic-take interface.
 The focused extraction now has 16 selections / 12 explicit postconditions;
 8 require a sound driver state, established initially and preserved. Producer
-and composition add 23 and 60 handwritten lemmas respectively. These remain
+and composition add 23 and 60 handwritten lemmas respectively. The subsequent
+[raw-world bridge](proof-logs/current/login-raw-nonce-bridge/README.md) adds 40,
+proving per-action and arbitrary-schedule projection from modeled raw bytes
+through the actual classifier to the abstract purpose world. These remain
 separate from the unchanged base 249 postconditions / 256 selections census.
 The historical session artifact remains 19 postconditions / 21 selections.
 
 The real store/take round trip and Option/Vec glue, its connection to the
-composition's purpose bit, SQL/store/verifier origins, effect fidelity,
+raw-world byte values, SQL/store/verifier origins, effect fidelity,
 revocation/issuance linearization, exceptions, crashes and whole-system
 composition remain open. Neither proof establishes sled linearizability.
 See the [detailed scope](19-login-producer-composition.md). No external audit
-or hosted reproduction of these newer additions is claimed here.
+is claimed; hosted reproduction of the raw-world bridge is still pending.
