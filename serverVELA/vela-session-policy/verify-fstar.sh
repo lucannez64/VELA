@@ -44,3 +44,10 @@ fstar.exe \
   --include "$hax_lib_root/proofs/fstar/extraction" \
   --include proofs/fstar/extraction \
   "${proof_files[@]}"
+
+# F-1/F-2 focused challenge-purpose and login-driver gate. It regenerates a
+# partial extraction with the same root module name into
+# proofs/fstar/extraction-login-driver, so it must run in its own fstar.exe
+# invocation and never share an include directory with the historical artifact
+# checked above.
+"$proof_root/verify-fstar-login-driver.sh"

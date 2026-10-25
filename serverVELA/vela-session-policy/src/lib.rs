@@ -5,6 +5,9 @@
 //! into the facts below and may sign a token only from the private [`TokenPlan`]
 //! returned here. hax extracts these exact decisions to F*.
 
+pub mod challenge;
+pub mod login_driver;
+
 pub const TOKEN_LIFETIME_SECS: i64 = 15 * 60;
 pub const DEVICE_HARD_CAP_SECS: i64 = 8 * 60 * 60;
 pub const RENEWAL_WINDOW_SECS: i64 = 5 * 60;

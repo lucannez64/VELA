@@ -25,6 +25,9 @@ use crate::{
     net, rate_limit,
     state::AppState,
 };
+use vela_session_policy::challenge::{
+    classify_consumption, purpose_tag_bytes, stored_tag_from_bytes, ChallengeConsumption,
+};
 
 const CHALLENGE_TTL_SECS: u64 = 60;
 
@@ -42,10 +45,14 @@ pub enum ChallengePurpose {
 impl ChallengePurpose {
     /// The value stored under the nonce key.
     fn tag(self) -> &'static [u8] {
+        purpose_tag_bytes(self.policy())
+    }
+
+    fn policy(self) -> vela_session_policy::challenge::ChallengePurpose {
         match self {
-            Self::Login => b"login",
-            Self::Enroll => b"enroll",
-            Self::WebToken => b"web_token",
+            Self::Login => vela_session_policy::challenge::ChallengePurpose::Login,
+            Self::Enroll => vela_session_policy::challenge::ChallengePurpose::Enroll,
+            Self::WebToken => vela_session_policy::challenge::ChallengePurpose::WebToken,
         }
     }
 
@@ -66,6 +73,22 @@ pub struct ChallengeQuery {
     pub purpose: Option<String>,
 }
 
+/// Atomically take `challenge_b64` and classify the exact stored bytes against
+/// the pure purpose policy. The take removes the value whatever its purpose, so
+/// a present but non-matching value is spent. The caller still owns the
+/// `get_del` error and its original status/message.
+pub(crate) fn take_challenge(
+    state: &AppState,
+    challenge_b64: &str,
+    purpose: ChallengePurpose,
+) -> Result<ChallengeConsumption> {
+    let consumed = state.store.get_del(&format!("challenge:{challenge_b64}"))?;
+    Ok(classify_consumption(
+        consumed.as_deref().map(stored_tag_from_bytes),
+        purpose.policy(),
+    ))
+}
+
 /// Spend `challenge_b64` and accept it only if it was issued for `purpose`.
 ///
 /// The nonce is removed whatever its purpose, so presenting it at the wrong
@@ -75,14 +98,13 @@ pub(crate) fn consume_challenge(
     challenge_b64: &str,
     purpose: ChallengePurpose,
 ) -> Result<()> {
-    let consumed = state.store.get_del(&format!("challenge:{challenge_b64}"))?;
-    match consumed {
-        Some(tag) if tag == purpose.tag() => Ok(()),
-        Some(_) => Err(AppError::Unauthorized(
-            "challenge was issued for a different purpose".into(),
-        )),
-        None => Err(AppError::Unauthorized(
+    match take_challenge(state, challenge_b64, purpose)? {
+        ChallengeConsumption::Accepted => Ok(()),
+        ChallengeConsumption::Missing => Err(AppError::Unauthorized(
             "challenge not found or already used".into(),
+        )),
+        ChallengeConsumption::WrongPurpose => Err(AppError::Unauthorized(
+            "challenge was issued for a different purpose".into(),
         )),
     }
 }

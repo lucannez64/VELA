@@ -1,0 +1,115 @@
+# Exact heavy commands (run inside /home/hirew/.t3/worktrees/VELA/t3-cd2daf01)
+
+All heavy commands go through the global lock/wrapper:
+`~/.local/opt/vela-tools/bin/vela-heavy`
+
+Common normal-cargo target:
+`CARGO_TARGET_DIR=/home/hirew/.t3/worktrees/VELA/t3-700776df/target`
+
+Common hax/F* environment:
+```
+CARGO_HOME=/tmp/vela-hax-cargo
+OPAMROOT=$HOME/.local/opt/vela-tools/opam
+PATH=/tmp/vela-fstar-prebuilt/fstar/bin:$HOME/.local/opt/vela-tools/bin:$HOME/.local/opt/vela-tools/opam/vela-hax/bin:$PATH
+```
+
+`serverVELA/vela-session-policy/rust-toolchain.toml` pins the Rust channel to
+`nightly-2025-11-08` (the active compiler reports
+`rustc 1.93.0-nightly (843f8ce2e 2025-11-07)`), matching the rekey-policy
+crate. `/tmp/vela-fstar-prebuilt/fstar` is a symlink to the pinned
+`/home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar` install because the
+prebuilt path named by the task was absent in this worktree. `fstar.exe
+--version` reports `F* 2025.10.06`; hax reports `version=0.3.7`; Z3 reports
+`4.13.3`.
+
+## Tests (cargo)
+
+```
+cd serverVELA
+CARGO_TARGET_DIR=/home/hirew/.t3/worktrees/VELA/t3-700776df/target \
+  ~/.local/opt/vela-tools/bin/vela-heavy cargo test -p vela-session-policy
+# -> cargo-test-session-policy.log (14 unit + 13 login-driver tests)
+
+CARGO_TARGET_DIR=/home/hirew/.t3/worktrees/VELA/t3-700776df/target \
+  ~/.local/opt/vela-tools/bin/vela-heavy cargo test -p vela-server --test integration
+# -> cargo-test-server-integration.log (67 passed)
+
+CARGO_TARGET_DIR=/home/hirew/.t3/worktrees/VELA/t3-700776df/target \
+  ~/.local/opt/vela-tools/bin/vela-heavy cargo test -p vela-server --test challenge_single_use_model
+# -> cargo-test-challenge-single-use-model.log (3 passed, bounded depth 3 + concurrency)
+
+CARGO_TARGET_DIR=/home/hirew/.t3/worktrees/VELA/t3-700776df/target \
+  ~/.local/opt/vela-tools/bin/vela-heavy cargo test -p vela-server --test login_driver_handler
+# -> cargo-test-login-driver-handler.log (4 focused handler tests)
+```
+
+## Historical + focused proof
+
+```
+cd serverVELA/vela-session-policy
+export CARGO_HOME=... OPAMROOT=... PATH=... CARGO_TARGET_DIR=...
+~/.local/opt/vela-tools/bin/vela-heavy ./verify-fstar.sh
+# -> fstar-full-verify.log
+```
+
+`verify-fstar.sh` first tests the crate, re-extracts the historical 21
+selected functions into `proofs/fstar/extraction/`, checks them with F*, then
+calls `verify-fstar-login-driver.sh`, which:
+
+```
+rm -rf proofs/fstar/extraction-login-driver
+cargo hax into --output-dir proofs/fstar/extraction-login-driver \
+  -i '-** +vela_session_policy::challenge::purpose_stored_tag \
+       +vela_session_policy::challenge::classify_stored_tag \
+       +vela_session_policy::challenge::classify_consumption \
+       +vela_session_policy::login_driver::begin_login \
+       +vela_session_policy::login_driver::step \
+       +vela_session_policy::login_driver::on_challenge_taken \
+       +vela_session_policy::login_driver::on_device_looked_up \
+       +vela_session_policy::login_driver::on_verifier_finished \
+       +vela_session_policy::login_driver::on_failure_record_observed \
+       +vela_session_policy::login_driver::on_backoff_reset_observed_event \
+       +vela_session_policy::login_driver::on_token_issue_observed \
+       +vela_session_policy::login_driver::on_token_track_observed' \
+  fstar --z3rlimit 500
+# textual proof-escape guard (no assume/admit/axiom/--lax)
+fstar.exe --cmi --cache_off --warn_error -331 --z3rlimit 16000 \
+  --z3version 4.13.3 \
+  --already_cached '+Prims+FStar+LowStar+C+Spec.Loops+TestLib' \
+  --include "$hax_lib_root/proof-libs/fstar/core" \
+  --include "$hax_lib_root/proof-libs/fstar/rust_primitives" \
+  --include "$hax_lib_root/proofs/fstar/extraction" \
+  --include proofs/fstar/extraction-login-driver \
+  --include proofs/fstar/challenge-lemmas \
+  --include proofs/fstar/login-driver-lemmas \
+  proofs/fstar/extraction-login-driver/Vela_session_policy.Challenge.fst \
+  proofs/fstar/extraction-login-driver/Vela_session_policy.Login_driver.fst \
+  proofs/fstar/challenge-lemmas/Vela_session_policy_challenge_lemmas.fst \
+  proofs/fstar/login-driver-lemmas/Vela_session_policy_login_driver_lemmas.fst
+```
+
+The exact F* argv is printed in `fstar-full-verify.log`. The historical
+extraction is byte-identical (`git diff` on
+`proofs/fstar/extraction/Vela_session_policy.fst` is empty).
+
+## Mutation checks
+
+Both mutate a **copy** of the extracted driver in `/tmp/opencode`, never the
+production source. The command is the focused F* invocation above with
+`--include /tmp/opencode/mutant-purpose` (or `mutant-verifier`) replacing the
+focused extraction include.
+
+- `mutant-purpose`: in `on_challenge_observed`, the `WrongPurpose` branch is
+  changed to the `Accepted` transition (`Device` + `challenge_accepted = true`).
+  The focused check fails at
+  `Vela_session_policy_login_driver_lemmas.step_challenge_flag_origin`
+  (`mutation-drop-purpose-check.log`).
+- `mutant-verifier`: in `on_verifier_observed`, the `RejectedUnauthorized`
+  branch is changed to the `Valid` transition (`Reset` + `verifier_valid =
+  true`). The focused check fails at
+  `Vela_session_policy_login_driver_lemmas.step_verifier_flag_origin`
+  (`mutation-drop-verifier-gate.log`).
+
+## Checked artifact hashes
+
+See `source-hashes.txt`.
