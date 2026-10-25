@@ -410,9 +410,15 @@ postcondition; the focused gate now checks 17 selections in 8 modules
 (194 handwritten lemmas). The [ca061a3 workflow](https://github.com/lucannez64/VELA/actions/runs/40210079502) checked all 8 modules
 in one invocation.
 
+The [store world](proof-logs/current/challenge-store-world/README.md) then
+joins the two: a world whose nonce is the store's actual `Option<Vec<u8>>`
+value, taken by the extracted adapter, commutes with the raw world for every
+action and schedule, so at most one admission, response and token per nonce
+holds over the real result type (10 lemmas; a take that keeps the value
+breaks the proof). Hosted reproduction is pending.
+
 The real store's take semantics (linearizability, durability, key binding),
-a single theorem joining the Option adapter to the raw-world take, the
-imported hax `Vec` model, SQL/store/verifier origins, effect fidelity,
+the imported hax `Vec` model, SQL/store/verifier origins, effect fidelity,
 revocation/issuance linearization, exceptions, crashes and whole-system
 composition remain open. Neither proof establishes sled linearizability.
 See the [detailed scope](19-login-producer-composition.md). No external audit

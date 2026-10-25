@@ -352,16 +352,16 @@
       "boundary": "focused-driver source-policy gate: reviewed proof-search budgets only; a drift/escape guard, not a proof checker or semantic correspondence certificate",
       "artifacts": {
         "security/formal/check-driver-proof-sources.py": "2d28feef4e9be7396be1752deac799098d92c32dd44e3622619db090f757f527",
-        "security/formal/tests/test_driver_proof_sources.py": "8dae7342c46676707eebd9cca2676073f362948cc4af2279f105fa35227a957c"
+        "security/formal/tests/test_driver_proof_sources.py": "4feec17915fed0f3649de4b19b1c5a0ec926970f4dbbbed0ccd02cb6be91b56a"
       }
     },
     {
-      "boundary": "login driver and byte producer: 17 selections / 12 postconditions, 23 producer lemmas, 60 nonce-composition and 44 raw-world projection/literal-refusal lemmas and a 26-lemma Option<Vec<u8>> take-adapter proof; modeled raw takes use actual converter/classifier; real store take semantics, the hax Vec model, a joined Option-to-raw-world theorem, handler effects, SQL/verifier origins, revocation/issuance linearization and full lifecycle composition remain open",
+      "boundary": "login driver and byte producer: 17 selections / 12 postconditions, 23 producer lemmas, 60 nonce-composition and 44 raw-world projection/literal-refusal lemmas and a 26-lemma Option<Vec<u8>> take-adapter proof joined to the raw world by a 10-lemma store-world commutation; modeled raw takes use actual converter/classifier; real store take semantics, the hax Vec model, handler effects, SQL/verifier origins, revocation/issuance linearization and full lifecycle composition remain open",
       "artifacts": {
         "serverVELA/vela-session-policy/src/challenge.rs": "c45023bd826355c65b63e120c2be6ce60491ef4f2c39cbdbad60971d47cf027d",
         "serverVELA/vela-session-policy/src/login_driver.rs": "455602a9035d8766c5cd30b9b901ef9cbaab3cb48da685aa832f6408a8b1e441",
         "serverVELA/vela-session-policy/tests/login_driver.rs": "8dbb576cbb60960437f9dee20e3e3982ded6a104c6e94ccdbdbbb40ff6855df6",
-        "serverVELA/vela-session-policy/verify-fstar-login-driver.sh": "2e9cb9fd16da1a9e50452428bdba7c896f1bc196c7c969531b5effdf0d7c7b1c",
+        "serverVELA/vela-session-policy/verify-fstar-login-driver.sh": "20ae2b94cad3791607e8a28f54713c3eca63ba5962e73f0d7d51a156eaf1bfcd",
         "serverVELA/vela-session-policy/rust-toolchain.toml": "50786309c2f9d452b358b0995257d726737eb19aa007a4b97606a40499f51b3f",
         "serverVELA/vela-server/src/auth/challenge.rs": "5009e5fcee46ee7cbef0e69a87a29fa8c4cc527501a80161fbba3788901a36e2",
         "serverVELA/vela-server/src/auth/verify.rs": "6fc986c8406317230c591808d32a47e37a11eee1dbf206f841afe5cb5b1e6823",
@@ -380,7 +380,8 @@
         "serverVELA/Cargo.toml": "77e23c5dddb56901a805f46b5432e15215ee5bf2e13bed26080459a04e3a2173",
         "serverVELA/Cargo.lock": "3312fa7828158e26fbc6543d078e2f147f5acc27bde021f54cc4408b0a6c60dd",
         "serverVELA/vela-session-policy/Cargo.toml": "9891af2597c255e247172bade4aa01e6f979d198f4baa567fb4df5800fda8677",
-        "serverVELA/vela-session-policy/proofs/fstar/challenge-take-adapter-lemmas/Vela_session_policy_challenge_take_adapter.fst": "55d6f8e91b56ded9db7f8e38cbd9de0e59bd7bf53d35630e05e6048b64a4ac31"
+        "serverVELA/vela-session-policy/proofs/fstar/challenge-take-adapter-lemmas/Vela_session_policy_challenge_take_adapter.fst": "55d6f8e91b56ded9db7f8e38cbd9de0e59bd7bf53d35630e05e6048b64a4ac31",
+        "serverVELA/vela-session-policy/proofs/fstar/challenge-store-world-lemmas/Vela_session_policy_challenge_store_world.fst": "c4ac18f38ba8e136b7b1143d359f300d9c9b083f69d68a9b1f4012b9d7bf0d0c"
       }
     }
   ]

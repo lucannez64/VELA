@@ -182,6 +182,10 @@ The [take adapter](challenge-take-adapter/README.md) proves the extracted
 independent literal-byte specification (26 lemmas, accept-absent mutant
 rejected), replayed with all 8 focused modules on the current set.
 
+The [store world](challenge-store-world/README.md) joins the take adapter to
+the raw nonce bridge: the login bounds hold over the store's actual
+`Option<Vec<u8>>` result, with every take decided by the extracted adapter.
+
 The [integrated raw-bridge replay](login-raw-nonce-integrated/README.md) records
 fresh extraction and all seven focused modules verified together on the parent
 source set, plus exact source hashes and 50 source-policy checks.

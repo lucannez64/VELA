@@ -79,6 +79,12 @@ raw_nonce_file=proofs/fstar/login-raw-nonce-lemmas/Vela_session_policy_login_raw
   exit 1
 }
 
+store_world_file=proofs/fstar/challenge-store-world-lemmas/Vela_session_policy_challenge_store_world.fst
+[[ -f $store_world_file ]] || {
+  echo "missing reviewed challenge store-world module" >&2
+  exit 1
+}
+
 if (( ${#proof_files[@]} == 0 )); then
   echo "hax generated no focused challenge/login modules" >&2
   exit 1
@@ -100,7 +106,7 @@ fi
 # Imported hax libraries remain trusted; fstar.exe is the proof checker.
 python3 "$proof_root/../../security/formal/check-driver-proof-sources.py" \
   --generated "${proof_files[@]}" \
-  --proof "${challenge_lemma_files[@]}" "${login_lemma_files[@]}" "$composition_file" "$raw_nonce_file" "${take_adapter_lemma_files[@]}" \
+  --proof "${challenge_lemma_files[@]}" "${login_lemma_files[@]}" "$composition_file" "$raw_nonce_file" "${take_adapter_lemma_files[@]}" "$store_world_file" \
   --include-dir "$proof_root"
 
 hax_lib_root=$(
@@ -128,7 +134,8 @@ fstar_args=(
   --include proofs/fstar/login-driver-composition
   --include proofs/fstar/login-raw-nonce-lemmas
   --include proofs/fstar/challenge-take-adapter-lemmas
-  "${proof_files[@]}" "${challenge_lemma_files[@]}" "${login_lemma_files[@]}" "$composition_file" "$raw_nonce_file" "${take_adapter_lemma_files[@]}"
+  --include proofs/fstar/challenge-store-world-lemmas
+  "${proof_files[@]}" "${challenge_lemma_files[@]}" "${login_lemma_files[@]}" "$composition_file" "$raw_nonce_file" "${take_adapter_lemma_files[@]}" "$store_world_file"
 )
 printf 'F* login-driver argv:'
 printf ' %q' "${fstar_args[@]}"
@@ -142,6 +149,7 @@ echo "issued path: purpose_tag_bytes classifies as its own purpose and no other"
 echo "login trace: one response at most, response implies accepted login + valid verifier + tracked token, failure terminal"
 echo "raw-byte bridge: projection commutes with every action and schedule; modeled takes use the extracted converter and classifier"
 echo "take adapter: actual Option<Vec> result yields Missing for None and Accepted iff the exact expected literal, else WrongPurpose; length retained"
+echo "store world: the login bounds hold over the store's actual Option<Vec<u8>> value, every take decided by the extracted adapter"
 echo "login composition: one nonce admits at most one request, Respond effect and successful issuance observation under the atomic-take interface"
-sha256sum "${proof_files[@]}" "${challenge_lemma_files[@]}" "${login_lemma_files[@]}" "$composition_file" "$raw_nonce_file" "${take_adapter_lemma_files[@]}" \
+sha256sum "${proof_files[@]}" "${challenge_lemma_files[@]}" "${login_lemma_files[@]}" "$composition_file" "$raw_nonce_file" "${take_adapter_lemma_files[@]}" "$store_world_file" \
   src/challenge.rs src/login_driver.rs ../vela-server/src/auth/challenge.rs
