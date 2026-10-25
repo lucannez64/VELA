@@ -248,3 +248,10 @@ re-pinned to that set; the handwritten total is 194 (168 + 26). The fast
 source-policy test now also scans `challenge-take-adapter-lemmas/`. The earlier
 logs in this folder are the a1436db snapshot. These commands were not run
 with `--locked`; no `Cargo.toml` or `Cargo.lock` changed.
+
+## Hosted reproduction
+
+The [ca061a3 security workflow](https://github.com/lucannez64/VELA/actions/runs/40210079502) checked the historical artifact and all
+8 focused modules in one invocation; all fifteen PR checks passed.
+`hosted-ca061a3.log` holds the argv, summary and module hashes, which match
+`source-hashes.txt`.

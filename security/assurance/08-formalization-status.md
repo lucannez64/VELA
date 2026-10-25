@@ -382,7 +382,8 @@ passed hosted checks on `5ae87da`, including the
 That hosted result predates the producer and nonce-composition additions below,
 which then passed on `8d3610d` in the
 [security workflow](https://github.com/lucannez64/VELA/actions/runs/40200134577).
-The raw-world bridge is a subsequent local increment.
+The raw-world bridge then passed on `dd0cab1`, and the take adapter below on
+`ca061a3`.
 
 The [producer proof](proof-logs/current/login-tag-producer/README.md) checks the
 actual raw-slice conversion and pure issuer/classifier composition. The
@@ -406,7 +407,8 @@ specification for every result and purpose (absent is `Missing`; accepted
 exactly on the expected literal; every other present value is
 `WrongPurpose`), and an accept-absent mutant is rejected. It adds no Rust
 postcondition; the focused gate now checks 17 selections in 8 modules
-(194 handwritten lemmas). Hosted reproduction is pending.
+(194 handwritten lemmas). The [ca061a3 workflow](https://github.com/lucannez64/VELA/actions/runs/40210079502) checked all 8 modules
+in one invocation.
 
 The real store's take semantics (linearizability, durability, key binding),
 a single theorem joining the Option adapter to the raw-world take, the
@@ -414,4 +416,4 @@ imported hax `Vec` model, SQL/store/verifier origins, effect fidelity,
 revocation/issuance linearization, exceptions, crashes and whole-system
 composition remain open. Neither proof establishes sled linearizability.
 See the [detailed scope](19-login-producer-composition.md). No external audit
-is claimed; hosted reproduction of the raw-world bridge is still pending.
+is claimed.
