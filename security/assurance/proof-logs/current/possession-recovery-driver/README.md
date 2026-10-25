@@ -252,3 +252,8 @@ conflict.
 - hax 0.3.7, F* 2025.10.06, Z3 4.13.3.
 - Focused extraction and argv: `verify-fstar-possession-driver.sh`.
 - Full F* argv and hashes: `fstar-full-verify.log` and `source-hashes.txt`.
+
+## Hosted reproduction
+
+The [7a6d108 security workflow](https://github.com/lucannez64/VELA/actions/runs/40149234823) ran this gate; all fifteen PR checks
+passed. `hosted-7a6d108.log` is its summary and matches the local hashes.
