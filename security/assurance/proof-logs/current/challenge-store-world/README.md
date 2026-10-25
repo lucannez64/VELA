@@ -48,4 +48,10 @@ read the nonce and reuse the raw model's step.
 `get_del` is linearizable, removes the value and returns it unchanged; the
 handler delivers that value to this decision and performs the driver's
 effects; the imported hax `Option`/`Vec` models. No store, SQL, verifier or
-handler refinement is claimed. Hosted reproduction is pending.
+handler refinement is claimed.
+
+## Hosted reproduction
+
+The [28c72c3 security workflow](https://github.com/lucannez64/VELA/actions/runs/40215378476) checked all 9 modules in one
+invocation; all fifteen PR checks passed. `hosted-28c72c3.log` holds the
+argv, summary and module hash, which matches `source-hashes.txt`.

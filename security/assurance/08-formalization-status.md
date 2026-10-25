@@ -415,7 +415,7 @@ joins the two: a world whose nonce is the store's actual `Option<Vec<u8>>`
 value, taken by the extracted adapter, commutes with the raw world for every
 action and schedule, so at most one admission, response and token per nonce
 holds over the real result type (10 lemmas; a take that keeps the value
-breaks the proof). Hosted reproduction is pending.
+breaks the proof). The [28c72c3 workflow](https://github.com/lucannez64/VELA/actions/runs/40215378476) reproduced it.
 
 The real store's take semantics (linearizability, durability, key binding),
 the imported hax `Vec` model, SQL/store/verifier origins, effect fidelity,
