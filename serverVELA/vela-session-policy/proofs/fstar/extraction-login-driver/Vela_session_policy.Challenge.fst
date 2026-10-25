@@ -26,6 +26,40 @@ type t_ChallengeConsumption =
   | ChallengeConsumption_Missing : t_ChallengeConsumption
   | ChallengeConsumption_WrongPurpose : t_ChallengeConsumption
 
+/// The exact bytes `GET /auth/challenge` stores for `purpose`.
+let purpose_tag_bytes (purpose: t_ChallengePurpose) : t_Slice u8 =
+  match purpose <: t_ChallengePurpose with
+  | ChallengePurpose_Login  ->
+    (let list = [mk_u8 108; mk_u8 111; mk_u8 103; mk_u8 105; mk_u8 110] in
+      FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 5);
+      Rust_primitives.Hax.array_of_list 5 list)
+    <:
+    t_Slice u8
+  | ChallengePurpose_Enroll  ->
+    (let list = [mk_u8 101; mk_u8 110; mk_u8 114; mk_u8 111; mk_u8 108; mk_u8 108] in
+      FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 6);
+      Rust_primitives.Hax.array_of_list 6 list)
+    <:
+    t_Slice u8
+  | ChallengePurpose_WebToken  ->
+    (let list =
+        [
+          mk_u8 119;
+          mk_u8 101;
+          mk_u8 98;
+          mk_u8 95;
+          mk_u8 116;
+          mk_u8 111;
+          mk_u8 107;
+          mk_u8 101;
+          mk_u8 110
+        ]
+      in
+      FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 9);
+      Rust_primitives.Hax.array_of_list 9 list)
+    <:
+    t_Slice u8
+
 /// The bounded representation of `purpose_tag_bytes(purpose)`.
 let purpose_stored_tag (purpose: t_ChallengePurpose) : t_StoredTag =
   match purpose <: t_ChallengePurpose with
@@ -88,6 +122,94 @@ let purpose_stored_tag (purpose: t_ChallengePurpose) : t_StoredTag =
     }
     <:
     t_StoredTag
+
+/// The byte at `index` when the raw value is long enough, zero otherwise.
+/// Each call is an explicit bounds test plus a checked slice read, so the
+/// unrolled copy below never indexes out of bounds and the extracted body is a
+/// pure conditional rather than a loop.
+let byte_or_zero (bytes: t_Slice u8) (index: usize) : u8 =
+  if index <. (Core_models.Slice.impl__len #u8 bytes <: usize) then bytes.[ index ] else mk_u8 0
+
+/// Structural contract of the bounded copy, stated over the raw slice: the
+/// real length is preserved and each of the nine buffer positions holds the raw
+/// byte at that position when the raw value reaches it, and zero otherwise.
+/// The comparisons and index reads are written out explicitly rather than by
+/// calling [`byte_or_zero`], so the contract does not restate the helper used
+/// by the implementation.
+let stored_tag_copies_prefix (tag: t_StoredTag) (bytes: t_Slice u8) : bool =
+  tag.f_len =. (Core_models.Slice.impl__len #u8 bytes <: usize) &&
+  (tag.f_bytes.[ mk_usize 0 ] <: u8) =.
+  (if (Core_models.Slice.impl__len #u8 bytes <: usize) >. mk_usize 0 <: bool
+    then bytes.[ mk_usize 0 ] <: u8
+    else mk_u8 0) &&
+  (tag.f_bytes.[ mk_usize 1 ] <: u8) =.
+  (if (Core_models.Slice.impl__len #u8 bytes <: usize) >. mk_usize 1 <: bool
+    then bytes.[ mk_usize 1 ] <: u8
+    else mk_u8 0) &&
+  (tag.f_bytes.[ mk_usize 2 ] <: u8) =.
+  (if (Core_models.Slice.impl__len #u8 bytes <: usize) >. mk_usize 2 <: bool
+    then bytes.[ mk_usize 2 ] <: u8
+    else mk_u8 0) &&
+  (tag.f_bytes.[ mk_usize 3 ] <: u8) =.
+  (if (Core_models.Slice.impl__len #u8 bytes <: usize) >. mk_usize 3 <: bool
+    then bytes.[ mk_usize 3 ] <: u8
+    else mk_u8 0) &&
+  (tag.f_bytes.[ mk_usize 4 ] <: u8) =.
+  (if (Core_models.Slice.impl__len #u8 bytes <: usize) >. mk_usize 4 <: bool
+    then bytes.[ mk_usize 4 ] <: u8
+    else mk_u8 0) &&
+  (tag.f_bytes.[ mk_usize 5 ] <: u8) =.
+  (if (Core_models.Slice.impl__len #u8 bytes <: usize) >. mk_usize 5 <: bool
+    then bytes.[ mk_usize 5 ] <: u8
+    else mk_u8 0) &&
+  (tag.f_bytes.[ mk_usize 6 ] <: u8) =.
+  (if (Core_models.Slice.impl__len #u8 bytes <: usize) >. mk_usize 6 <: bool
+    then bytes.[ mk_usize 6 ] <: u8
+    else mk_u8 0) &&
+  (tag.f_bytes.[ mk_usize 7 ] <: u8) =.
+  (if (Core_models.Slice.impl__len #u8 bytes <: usize) >. mk_usize 7 <: bool
+    then bytes.[ mk_usize 7 ] <: u8
+    else mk_u8 0) &&
+  (tag.f_bytes.[ mk_usize 8 ] <: u8) =.
+  (if (Core_models.Slice.impl__len #u8 bytes <: usize) >. mk_usize 8 <: bool
+    then bytes.[ mk_usize 8 ] <: u8
+    else mk_u8 0)
+
+/// Copy the stored bytes into the bounded representation. Bytes past
+/// `MAX_CHALLENGE_TAG_LEN` are not copied but the real length is retained, so
+/// the classifier cannot mistake a truncated long value for a short tag. The
+/// nine reads are unrolled so the extracted body is a single record literal;
+/// the checked `ensures` states the exact prefix and length relation hax then
+/// proves against that body.
+let stored_tag_from_bytes (bytes: t_Slice u8)
+    : Prims.Pure t_StoredTag
+      Prims.l_True
+      (ensures
+        fun tag ->
+          let tag:t_StoredTag = tag in
+          stored_tag_copies_prefix tag bytes) =
+  {
+    f_len = Core_models.Slice.impl__len #u8 bytes;
+    f_bytes
+    =
+    let list =
+      [
+        byte_or_zero bytes (mk_usize 0);
+        byte_or_zero bytes (mk_usize 1);
+        byte_or_zero bytes (mk_usize 2);
+        byte_or_zero bytes (mk_usize 3);
+        byte_or_zero bytes (mk_usize 4);
+        byte_or_zero bytes (mk_usize 5);
+        byte_or_zero bytes (mk_usize 6);
+        byte_or_zero bytes (mk_usize 7);
+        byte_or_zero bytes (mk_usize 8)
+      ]
+    in
+    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 9);
+    Rust_primitives.Hax.array_of_list 9 list
+  }
+  <:
+  t_StoredTag
 
 /// Structural recognition equality over the *significant* stored bytes.
 /// Padding past `len` is not part of the stored value and is ignored; the

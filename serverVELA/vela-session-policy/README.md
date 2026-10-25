@@ -14,6 +14,7 @@ F* and checks their postconditions for every input.
 | `authorize_route` | Web sessions may access vault routes but can never receive a permanent-account route permit. |
 | `renewal_escalates_authority` | Renewal never changes scope or epoch. |
 | `terminal_session_issues_token` | Revoked and expired sessions never issue tokens. |
+| `challenge::stored_tag_from_bytes` | The raw stored slice is copied exactly: the real length is preserved, the first `min(len, 9)` bytes are the raw bytes, and the remaining positions are zero. A longer value cannot alias a shorter tag. |
 | `challenge::classify_stored_tag` | Exact stored-tag bytes are recognized only as `login`, `enroll` or `web_token`; every other length/byte pattern is `Unknown`. |
 | `challenge::classify_consumption` | A present tag is accepted only for its own purpose; a present wrong/unknown tag is `WrongPurpose` and the take has already spent it; absence is `Missing`. |
 | `login_driver::begin_login` / `step` | `/auth/verify` can respond only after an accepted login challenge, a present unrevoked device, a valid actual verifier result, a successful backoff reset, issuance and JTI tracking; a failure is terminal and never responds. |
@@ -40,8 +41,9 @@ entry points, checks them without `--lax`, and then invokes
 `verify-fstar-login-driver.sh` in a separate `cargo hax`/`fstar.exe` invocation.
 That focused gate extracts `challenge` and `login_driver` into
 `proofs/fstar/extraction-login-driver/` (never mixed with the historical
-`proofs/fstar/extraction/` root module) and checks the hand-written raw-byte
-challenge refinement and the unbounded login trace lemmas.
+`proofs/fstar/extraction/` root module) and checks the two hand-written
+challenge lemma modules (bounded recognition and the raw-slice tag producer)
+and the unbounded login trace lemmas.
 
 Run the protocol model separately:
 
@@ -95,6 +97,42 @@ Rust helpers, and proves the extracted classifier and consumption decision
 equal that raw-byte specification for **every** bounded tag. It also proves an
 accepted consumption carries the expected purpose's raw bytes and that a
 present non-matching tag is always `WrongPurpose`.
+
+### Challenge tag producer (F-1 producer closure)
+
+The bounded classifier above only spoke about the value `stored_tag_from_bytes`
+returns. That conversion is the actual production constructor used by
+`take_challenge` in `vela-server`, so it is now extracted and checked too. The
+Rust body is a single record literal with the raw `usize` length and nine
+unrolled, bounds-checked `byte_or_zero` reads (the earlier bounded `while` loop
+is gone, so hax emits no loop). Its checked contract,
+`stored_tag_copies_prefix`, states the length and each of the nine conditional
+copies over the raw slice.
+
+`proofs/fstar/challenge-lemmas/Vela_session_policy_tag_producer_lemmas.fst`
+restates the obligations independently over an arbitrary `t_Slice u8` and
+proves them from the extracted body:
+
+- **Length preservation:** `v (stored_tag_from_bytes b).len = Seq.length b`, so a
+  long value keeps a long length and cannot alias a five-, six- or nine-byte
+  tag.
+- **Exact copied prefix:** for every `k < min (Seq.length b) 9`, position `k` is
+  exactly `Seq.index b k`; every position past the raw length is zero padding.
+- **Composed classifier:** `classify_stored_tag (stored_tag_from_bytes b)` equals
+  an independently written raw-slice classifier built from the literal bytes of
+  `login`, `enroll` and `web_token`; in particular a ten-byte value is
+  `Unknown`.
+- **Composed consumption:** `classify_consumption (Some (stored_tag_from_bytes b))
+  expected` is `Accepted` exactly when the raw slice is `expected`'s literal
+  tag, and `WrongPurpose` otherwise (still spent).
+- **Issued path:** `purpose_tag_bytes` extracts to the literal byte slices, and
+  converting and classifying them accepts the matching purpose only.
+
+The two proof-level mutation checks in the evidence directory patch a copy of
+the extracted module: truncating the retained length to nine (and weakening its
+contract) makes the producer lemma fail, and corrupting the first byte read
+makes the extracted contract itself fail. The production source is never
+patched.
 
 ## `/auth/verify` login driver (F-2)
 
@@ -152,7 +190,8 @@ patched.
 
 - The checked login result is per request. A concurrent one-challenge
   composition (two or more requests racing for the same nonce) is **not**
-  proved here; the executable
+  proved here, and neither is the concurrent nonce composition between
+  producers and consumers; the executable
   `vela-server/tests/challenge_single_use_model.rs` covers the atomic
   `get_del`/single-use behavior for bounded traces and real concurrency. The
   per-request theorem does not claim `get_del` linearizability, SQL row/guard

@@ -1,0 +1,18 @@
+--- serverVELA/vela-session-policy/proofs/fstar/extraction-login-driver/Vela_session_policy.Challenge.fst	2026-10-25 14:28:44.974286575 +0100
++++ /tmp/opencode/mutant-truncation/Vela_session_policy.Challenge.fst	2026-10-25 14:24:16.932453786 +0100
+@@ -187,9 +187,13 @@
+       (ensures
+         fun tag ->
+           let tag:t_StoredTag = tag in
+-          stored_tag_copies_prefix tag bytes) =
++          Prims.l_True) =
+   {
+-    f_len = Core_models.Slice.impl__len #u8 bytes;
++    f_len
++    =
++    if (Core_models.Slice.impl__len #u8 bytes <: usize) <. mk_usize 9
++    then Core_models.Slice.impl__len #u8 bytes
++    else mk_usize 9;
+     f_bytes
+     =
+     let list =

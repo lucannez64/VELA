@@ -1,0 +1,167 @@
+# Exact heavy commands (run inside /home/hirew/.t3/worktrees/VELA/t3-2c7e3fb1)
+
+All heavy commands go through the global lock/wrapper:
+`~/.local/opt/vela-tools/bin/vela-heavy` (3 GiB process-tree cap, no swap,
+`CARGO_BUILD_JOBS=1`, `OPAMJOBS=1`, `MAKEFLAGS=-j1`, `RUST_TEST_THREADS=1`).
+
+Common normal-cargo target:
+`CARGO_TARGET_DIR=/home/hirew/.t3/worktrees/VELA/t3-700776df/target`
+
+Common hax/F* environment:
+```
+CARGO_HOME=/tmp/vela-hax-cargo
+OPAMROOT=$HOME/.local/opt/vela-tools/opam
+PATH=/tmp/vela-fstar-prebuilt/fstar/bin:$HOME/.local/opt/vela-tools/bin:$HOME/.local/opt/vela-tools/opam/vela-hax/bin:$PATH
+```
+
+`/tmp/vela-fstar-prebuilt/fstar` is a symlink to the pinned
+`/home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar` install (the path
+named by the task is absent on this host). Observed versions:
+`F* 2025.10.06`, `platform=Linux_x86_64`, `compiler=OCaml 4.14.2`,
+`rustc 1.93.0-nightly (843f8ce2e 2025-11-07)` (the channel pinned by
+`rust-toolchain.toml`: `nightly-2025-11-08`), `hax 0.3.7`, `Z3 4.13.3`.
+The focused F* invocation prints `--z3rlimit 16000 --z3version 4.13.3`; its
+full argv is in `fstar-full-verify.log`.
+
+## Policy tests
+
+```
+cd serverVELA
+CARGO_TARGET_DIR=/home/hirew/.t3/worktrees/VELA/t3-700776df/target \
+  ~/.local/opt/vela-tools/bin/vela-heavy cargo test -p vela-session-policy
+# -> cargo-test-session-policy.log
+#    18 unit tests (4 new producer tests) + 13 login-driver tests, 0 failed
+```
+
+## Server consumers of the producer (unchanged handlers)
+
+```
+cd serverVELA
+CARGO_TARGET_DIR=/home/hirew/.t3/worktrees/VELA/t3-700776df/target \
+  ~/.local/opt/vela-tools/bin/vela-heavy cargo test -p vela-server \
+    --test challenge_single_use_model --test login_driver_handler
+# -> cargo-test-server-producer-consumers.log
+#    challenge_single_use_model: 3 passed; login_driver_handler: 4 passed; 0 failed
+```
+
+These are the unchanged production consumers of `stored_tag_from_bytes`
+(`take_challenge` in `vela-server/src/auth/challenge.rs`); no server source was
+modified.
+
+## Historical + focused proof
+
+```
+cd serverVELA/vela-session-policy
+export CARGO_HOME=... OPAMROOT=... PATH=... CARGO_TARGET_DIR=...
+~/.local/opt/vela-tools/bin/vela-heavy ./verify-fstar.sh
+# -> fstar-full-verify.log
+```
+
+`verify-fstar.sh` tests the crate, re-extracts the historical 21 selected
+functions into `proofs/fstar/extraction/` and checks them, then calls the
+focused `verify-fstar-login-driver.sh`, which:
+
+```
+rm -rf proofs/fstar/extraction-login-driver
+cargo hax into --output-dir proofs/fstar/extraction-login-driver \
+  -i '-** +vela_session_policy::challenge::byte_or_zero \
+       +vela_session_policy::challenge::stored_tag_copies_prefix \
+       +vela_session_policy::challenge::stored_tag_from_bytes \
+       +vela_session_policy::challenge::purpose_tag_bytes \
+       +vela_session_policy::challenge::purpose_stored_tag \
+       +vela_session_policy::challenge::classify_stored_tag \
+       +vela_session_policy::challenge::classify_consumption \
+       +vela_session_policy::login_driver::begin_login \
+       +vela_session_policy::login_driver::step \
+       +vela_session_policy::login_driver::on_challenge_taken \
+       +vela_session_policy::login_driver::on_device_looked_up \
+       +vela_session_policy::login_driver::on_verifier_finished \
+       +vela_session_policy::login_driver::on_failure_record_observed \
+       +vela_session_policy::login_driver::on_backoff_reset_observed_event \
+       +vela_session_policy::login_driver::on_token_issue_observed \
+       +vela_session_policy::login_driver::on_token_track_observed' \
+  fstar --z3rlimit 500
+python3 ../../security/formal/check-driver-proof-sources.py \
+  --generated proofs/fstar/extraction-login-driver/*.fst \
+  --proof proofs/fstar/challenge-lemmas/*.fst proofs/fstar/login-driver-lemmas/*.fst \
+  --include-dir .
+fstar.exe --cmi --cache_off --warn_error -331 --z3rlimit 16000 \
+  --z3version 4.13.3 \
+  --already_cached '+Prims+FStar+LowStar+C+Spec.Loops+TestLib' \
+  --include "$hax_lib_root/proof-libs/fstar/core" \
+  --include "$hax_lib_root/proof-libs/fstar/rust_primitives" \
+  --include "$hax_lib_root/proofs/fstar/extraction" \
+  --include proofs/fstar/extraction-login-driver \
+  --include proofs/fstar/challenge-lemmas \
+  --include proofs/fstar/login-driver-lemmas \
+  proofs/fstar/extraction-login-driver/Vela_session_policy.Challenge.fst \
+  proofs/fstar/extraction-login-driver/Vela_session_policy.Login_driver.fst \
+  proofs/fstar/challenge-lemmas/Vela_session_policy_challenge_lemmas.fst \
+  proofs/fstar/challenge-lemmas/Vela_session_policy_tag_producer_lemmas.fst \
+  proofs/fstar/login-driver-lemmas/Vela_session_policy_login_driver_lemmas.fst
+```
+
+The historical `proofs/fstar/extraction/Vela_session_policy.fst` is byte
+identical after the run (`git diff` empty). The focused extraction is its own
+`cargo hax` invocation and its own `fstar.exe` invocation with a separate
+include directory; the historical and focused root modules are never mixed.
+
+## Proof-level mutation checks
+
+Both mutate a **copy** of `proofs/fstar/extraction-login-driver/Vela_session_policy.Challenge.fst`
+in `/tmp/opencode`; the production source and the checked extraction are never
+patched. Each run is the focused F* invocation above restricted to the
+Challenge module and the two challenge lemma modules, with
+`--include /tmp/opencode/mutant-<name>` replacing
+`--include proofs/fstar/extraction-login-driver`, and `--z3rlimit 8000`
+(everything else identical, including `--z3version 4.13.3`).
+
+Truncation mutant (`mutant-truncation-length.diff`): the retained length is
+truncated at nine and the Rust `ensures` is weakened to `Prims.l_True`, so the
+truncation is not caught by the extracted contract. The independent producer
+lemma must catch it. Command:
+
+```
+cd serverVELA/vela-session-policy
+HAXLIB=/tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7
+~/.local/opt/vela-tools/bin/vela-heavy \
+  /tmp/vela-fstar-prebuilt/fstar/bin/fstar.exe \
+  --cmi --cache_off --warn_error -331 --z3rlimit 8000 --z3version 4.13.3 \
+  --already_cached '+Prims+FStar+LowStar+C+Spec.Loops+TestLib' \
+  --include "$HAXLIB/proof-libs/fstar/core" \
+  --include "$HAXLIB/proof-libs/fstar/rust_primitives" \
+  --include "$HAXLIB/proofs/fstar/extraction" \
+  --include proofs/fstar/challenge-lemmas \
+  --include /tmp/opencode/mutant-truncation \
+  /tmp/opencode/mutant-truncation/Vela_session_policy.Challenge.fst \
+  proofs/fstar/challenge-lemmas/Vela_session_policy_challenge_lemmas.fst \
+  proofs/fstar/challenge-lemmas/Vela_session_policy_tag_producer_lemmas.fst
+# -> mutation-truncation-length.log: exit 1,
+#    Error 19 at Vela_session_policy_tag_producer_lemmas.fst(87): producer_len
+```
+
+Byte-corruption mutant (`mutant-byte-corruption.diff`): the first copied
+position reads raw index 4 instead of 0, and the contract is kept. The checked
+Rust contract must catch it before the lemma module. Same command with
+`mutant-byte`; result: exit 1, `Error 19` at
+`Vela_session_policy.Challenge.fst(191-210)` (the `stored_tag_from_bytes`
+postcondition).
+
+## Corpus counts for this increment
+
+- Generated F* modules: 2 focused (`Vela_session_policy.Challenge`,
+  `Vela_session_policy.Login_driver`) with 12 and 22 top-level `let`s.
+- Explicit Rust postconditions among the 16 selected functions: 12
+  (3 challenge/producer + 9 login). The new producer adds one
+  (`stored_tag_from_bytes`, contract `stored_tag_copies_prefix`).
+- Hand-written F* lemma declarations: 13 in
+  `Vela_session_policy_challenge_lemmas.fst` (unchanged), **23 new** in
+  `Vela_session_policy_tag_producer_lemmas.fst`, 28 in
+  `Vela_session_policy_login_driver_lemmas.fst` (unchanged).
+- The producer module has 32 top-level `let`s: 23 lemmas and 9
+  definition/accessor helpers (the independent slice predicates, the tag byte
+  readers, and two concrete witness slices).
+- Focused gate message: `focused proof: 16 selected functions checked
+  (7 challenge/producer + 9 login), 12 explicit Rust postconditions`.
+- Source policy gate: `Driver source policy: 2 extracted modules, 3 proof
+  modules; no unreviewed escapes/options`.

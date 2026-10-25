@@ -11,9 +11,10 @@
 //! so the extracted function compares exact byte positions. `StoredTag::len`
 //! records the real length: a value longer than [`MAX_CHALLENGE_TAG_LEN`] can
 //! never equal a recognized tag and classifies as `Unknown` (and therefore as
-//! the wrong purpose). `stored_tag_from_bytes` is the only lossy conversion and
-//! is exercised by Rust tests; the proof speaks about the bounded value it
-//! produces.
+//! the wrong purpose). `stored_tag_from_bytes` is the only conversion; its
+//! nine unchecked-loop-free reads and retained length are extracted and
+//! checked in F*, which proves the copied prefix is exact and that a long value
+//! cannot alias a short tag.
 
 /// Longest recognized purpose tag (`web_token`).
 pub const MAX_CHALLENGE_TAG_LEN: usize = 9;
@@ -85,20 +86,59 @@ pub fn purpose_stored_tag(purpose: ChallengePurpose) -> StoredTag {
     }
 }
 
+/// The byte at `index` when the raw value is long enough, zero otherwise.
+/// Each call is an explicit bounds test plus a checked slice read, so the
+/// unrolled copy below never indexes out of bounds and the extracted body is a
+/// pure conditional rather than a loop.
+fn byte_or_zero(bytes: &[u8], index: usize) -> u8 {
+    if index < bytes.len() {
+        bytes[index]
+    } else {
+        0
+    }
+}
+
+/// Structural contract of the bounded copy, stated over the raw slice: the
+/// real length is preserved and each of the nine buffer positions holds the raw
+/// byte at that position when the raw value reaches it, and zero otherwise.
+/// The comparisons and index reads are written out explicitly rather than by
+/// calling [`byte_or_zero`], so the contract does not restate the helper used
+/// by the implementation.
+pub fn stored_tag_copies_prefix(tag: StoredTag, bytes: &[u8]) -> bool {
+    tag.len == bytes.len()
+        && tag.bytes[0] == (if bytes.len() > 0 { bytes[0] } else { 0 })
+        && tag.bytes[1] == (if bytes.len() > 1 { bytes[1] } else { 0 })
+        && tag.bytes[2] == (if bytes.len() > 2 { bytes[2] } else { 0 })
+        && tag.bytes[3] == (if bytes.len() > 3 { bytes[3] } else { 0 })
+        && tag.bytes[4] == (if bytes.len() > 4 { bytes[4] } else { 0 })
+        && tag.bytes[5] == (if bytes.len() > 5 { bytes[5] } else { 0 })
+        && tag.bytes[6] == (if bytes.len() > 6 { bytes[6] } else { 0 })
+        && tag.bytes[7] == (if bytes.len() > 7 { bytes[7] } else { 0 })
+        && tag.bytes[8] == (if bytes.len() > 8 { bytes[8] } else { 0 })
+}
+
 /// Copy the stored bytes into the bounded representation. Bytes past
 /// `MAX_CHALLENGE_TAG_LEN` are not copied but the real length is retained, so
-/// the classifier cannot mistake a truncated long value for a short tag.
+/// the classifier cannot mistake a truncated long value for a short tag. The
+/// nine reads are unrolled so the extracted body is a single record literal;
+/// the checked `ensures` states the exact prefix and length relation hax then
+/// proves against that body.
+#[cfg_attr(hax, hax_lib::ensures(|tag| stored_tag_copies_prefix(tag, bytes)))]
 pub fn stored_tag_from_bytes(bytes: &[u8]) -> StoredTag {
-    let mut out = StoredTag {
+    StoredTag {
         len: bytes.len(),
-        bytes: [0u8; MAX_CHALLENGE_TAG_LEN],
-    };
-    let mut i = 0;
-    while i < bytes.len() && i < MAX_CHALLENGE_TAG_LEN {
-        out.bytes[i] = bytes[i];
-        i += 1;
+        bytes: [
+            byte_or_zero(bytes, 0),
+            byte_or_zero(bytes, 1),
+            byte_or_zero(bytes, 2),
+            byte_or_zero(bytes, 3),
+            byte_or_zero(bytes, 4),
+            byte_or_zero(bytes, 5),
+            byte_or_zero(bytes, 6),
+            byte_or_zero(bytes, 7),
+            byte_or_zero(bytes, 8),
+        ],
     }
-    out
 }
 
 /// Structural recognition equality over the *significant* stored bytes.
@@ -265,6 +305,74 @@ mod tests {
             let tag = stored_tag_from_bytes(bytes);
             assert_eq!(tag, purpose_stored_tag(purpose));
             assert_eq!(classify_stored_tag(tag), TagClass::Recognized(purpose));
+        }
+    }
+
+    #[test]
+    fn producer_retains_length_and_exact_prefix_for_every_length() {
+        let raw: [u8; 12] = [
+            b'l', b'o', b'g', b'i', b'n', b'x', b'y', b'z', b'q', b'r', b's', b't',
+        ];
+        for len in 0..=raw.len() {
+            let bytes = &raw[..len];
+            let tag = stored_tag_from_bytes(bytes);
+            assert!(stored_tag_copies_prefix(tag, bytes), "len {len}");
+            assert_eq!(tag.len, len);
+            for i in 0..MAX_CHALLENGE_TAG_LEN {
+                let expected = if i < len { bytes[i] } else { 0 };
+                assert_eq!(tag.bytes[i], expected, "len {len} position {i}");
+            }
+            if len != 5 {
+                assert_eq!(classify_stored_tag(tag), TagClass::Unknown, "len {len}");
+            }
+        }
+    }
+
+    #[test]
+    fn producer_preserves_long_input_length_so_it_cannot_alias() {
+        let tag = stored_tag_from_bytes(b"login-extra");
+        assert_eq!(tag.len, 11);
+        assert_eq!(tag.bytes, *b"login-ext");
+        assert_ne!(tag, purpose_stored_tag(ChallengePurpose::Login));
+        assert_eq!(
+            classify_consumption(Some(tag), ChallengePurpose::Login),
+            ChallengeConsumption::WrongPurpose
+        );
+
+        for padding in 1..8 {
+            let mut bytes = b"login".to_vec();
+            bytes.resize(5 + padding, b'!');
+            let tag = stored_tag_from_bytes(&bytes);
+            assert_eq!(tag.len, 5 + padding);
+            assert_ne!(tag, purpose_stored_tag(ChallengePurpose::Login));
+            assert_eq!(classify_stored_tag(tag), TagClass::Unknown);
+        }
+    }
+
+    #[test]
+    fn producer_contract_rejects_corrupted_and_truncated_values() {
+        // Every one-byte corruption of a recognized literal must break both the
+        // structural contract and recognition.
+        for purpose in [
+            ChallengePurpose::Login,
+            ChallengePurpose::Enroll,
+            ChallengePurpose::WebToken,
+        ] {
+            let issued = purpose_tag_bytes(purpose);
+            for position in 0..issued.len() {
+                let mut corrupted = issued.to_vec();
+                corrupted[position] ^= 1;
+                let tag = stored_tag_from_bytes(&corrupted);
+                assert!(!stored_tag_copies_prefix(tag, issued));
+                assert_eq!(classify_stored_tag(tag), TagClass::Unknown);
+            }
+
+            // A truncation is never the issued tag: the length is retained.
+            for cut in 0..issued.len() {
+                let tag = stored_tag_from_bytes(&issued[..cut]);
+                assert_eq!(tag.len, cut);
+                assert_eq!(classify_stored_tag(tag), TagClass::Unknown);
+            }
         }
     }
 

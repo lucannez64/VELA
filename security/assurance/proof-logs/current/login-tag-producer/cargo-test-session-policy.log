@@ -1,0 +1,51 @@
+   Compiling vela-session-policy v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-2c7e3fb1/serverVELA/vela-session-policy)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.67s
+     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-session-policy/652ed2674f77390e/out/vela_session_policy-652ed2674f77390e)
+
+running 18 tests
+test challenge::tests::absent_tag_is_missing_not_wrong_purpose ... ok
+test challenge::tests::bytes_roundtrip_matches_the_issued_tag ... ok
+test challenge::tests::every_cross_purpose_presentation_is_wrong_and_spends ... ok
+test challenge::tests::exact_issued_tags_are_recognized ... ok
+test challenge::tests::one_byte_or_length_mutation_is_unknown ... ok
+test challenge::tests::padding_past_the_stored_length_is_not_significant ... ok
+test challenge::tests::producer_contract_rejects_corrupted_and_truncated_values ... ok
+test challenge::tests::producer_preserves_long_input_length_so_it_cannot_alias ... ok
+test challenge::tests::producer_retains_length_and_exact_prefix_for_every_length ... ok
+test challenge::tests::unknown_and_cross_purpose_tags_never_accept ... ok
+test structural_equality_tests::structural_comparisons_match_derived_equality_exhaustively ... ok
+test tests::grant_binds_pending_approver_nonce_mode_and_epoch ... ok
+test tests::invalid_and_overflowing_times_fail_closed ... ok
+test tests::permanent_routes_are_device_only ... ok
+test tests::renewal_preserves_scope_epoch_and_cap ... ok
+test tests::scope_parser_rejects_unknown_claims ... ok
+test tests::terminal_sessions_never_issue ... ok
+test tests::web_issue_requires_every_lifecycle_fact ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/login_driver.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-session-policy/19b28869e715825a/out/login_driver-19b28869e715825a)
+
+running 13 tests
+test a_wrong_purpose_cannot_be_mutated_into_a_success ... ok
+test absent_or_undecodable_devices_are_terminal_refusals ... ok
+test an_invalid_verifier_cannot_be_mutated_into_a_success ... ok
+test backoff_reset_and_token_issue_failures_are_terminal_refusals ... ok
+test begin_requests_the_challenge_take ... ok
+test challenge_decode_failure_does_not_touch_the_failure_counter ... ok
+test every_stage_is_sound_and_every_event_is_classified ... ok
+test failure_counter_storage_error_is_terminal_and_keeps_precedence ... ok
+test out_of_order_events_are_ignored_and_do_not_change_the_driver ... ok
+test successful_login_reaches_exactly_one_response ... ok
+test tracking_failure_never_responds_even_though_the_token_was_issued ... ok
+test verifier_rejection_requires_the_failure_side_effects_and_never_responds ... ok
+test wrong_purpose_and_missing_challenges_are_terminal_refusals ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests vela_session_policy
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

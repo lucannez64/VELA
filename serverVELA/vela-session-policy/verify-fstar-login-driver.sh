@@ -11,12 +11,15 @@ set -euo pipefail
 # the historical extraction directory to this invocation: the focused partial
 # root module would shadow it (or vice versa).
 #
-# The hand-written challenge lemma module restates exact recognition as literal
-# bytes and proves the extracted classifier equals that raw-byte specification.
-# The login lemma module quantifies over every event list and calls the actual
-# extracted `Vela_session_policy.Login_driver.step`; it does not restate the
-# transition logic. No `assume`, `admit`, `axiom`, `--lax` or proof-goal-as-
-# hypothesis is used.
+# The hand-written challenge lemma modules restate exact recognition as literal
+# bytes and prove the extracted classifier equals that raw-byte specification.
+# The tag-producer module states the raw-slice conversion obligations (length
+# preservation, exact copied prefix, composed classifier acceptance) over an
+# arbitrary `&[u8]` and proves them against the extracted
+# `stored_tag_from_bytes` body. The login lemma module quantifies over every
+# event list and calls the actual extracted `Vela_session_policy.Login_driver.step`;
+# it does not restate the transition logic. No `assume`, `admit`, `axiom`,
+# `--lax` or proof-goal-as-hypothesis is used.
 
 proof_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cd "$proof_root"
@@ -45,7 +48,7 @@ cargo test
 rm -rf proofs/fstar/extraction-login-driver
 cargo hax into \
   --output-dir proofs/fstar/extraction-login-driver \
-  -i '-** +vela_session_policy::challenge::purpose_stored_tag +vela_session_policy::challenge::classify_stored_tag +vela_session_policy::challenge::classify_consumption +vela_session_policy::login_driver::begin_login +vela_session_policy::login_driver::step +vela_session_policy::login_driver::on_challenge_taken +vela_session_policy::login_driver::on_device_looked_up +vela_session_policy::login_driver::on_verifier_finished +vela_session_policy::login_driver::on_failure_record_observed +vela_session_policy::login_driver::on_backoff_reset_observed_event +vela_session_policy::login_driver::on_token_issue_observed +vela_session_policy::login_driver::on_token_track_observed' \
+  -i '-** +vela_session_policy::challenge::byte_or_zero +vela_session_policy::challenge::stored_tag_copies_prefix +vela_session_policy::challenge::stored_tag_from_bytes +vela_session_policy::challenge::purpose_tag_bytes +vela_session_policy::challenge::purpose_stored_tag +vela_session_policy::challenge::classify_stored_tag +vela_session_policy::challenge::classify_consumption +vela_session_policy::login_driver::begin_login +vela_session_policy::login_driver::step +vela_session_policy::login_driver::on_challenge_taken +vela_session_policy::login_driver::on_device_looked_up +vela_session_policy::login_driver::on_verifier_finished +vela_session_policy::login_driver::on_failure_record_observed +vela_session_policy::login_driver::on_backoff_reset_observed_event +vela_session_policy::login_driver::on_token_issue_observed +vela_session_policy::login_driver::on_token_track_observed' \
   fstar --z3rlimit 500
 
 mapfile -t proof_files < <(
@@ -61,8 +64,8 @@ if (( ${#proof_files[@]} == 0 )); then
   echo "hax generated no focused challenge/login modules" >&2
   exit 1
 fi
-if (( ${#challenge_lemma_files[@]} != 1 )); then
-  echo "expected exactly one reviewed challenge lemma module" >&2
+if (( ${#challenge_lemma_files[@]} != 2 )); then
+  echo "expected exactly two reviewed challenge lemma modules" >&2
   exit 1
 fi
 if (( ${#login_lemma_files[@]} != 1 )); then
@@ -106,8 +109,10 @@ printf ' %q' "${fstar_args[@]}"
 printf '\n'
 fstar.exe "${fstar_args[@]}"
 
-echo "login driver proof: 12 focused production entry points checked (3 challenge + 9 login)"
+echo "focused proof: 16 selected functions checked (7 challenge/producer + 9 login), 12 explicit Rust postconditions"
 echo "challenge refinement: exact literal-byte recognition for every bounded stored tag"
+echo "tag producer: length preserved, min(len,9) prefix exact, acceptance iff raw literal, for every slice"
+echo "issued path: purpose_tag_bytes classifies as its own purpose and no other"
 echo "login trace: one response at most, response implies accepted login + valid verifier + tracked token, failure terminal"
 sha256sum "${proof_files[@]}" "${challenge_lemma_files[@]}" "${login_lemma_files[@]}" \
   src/challenge.rs src/login_driver.rs
