@@ -1,0 +1,42 @@
+# Counts
+
+Base commit: `1902ecd30ce7b41fa400cdfbebf387f49144ffd1`
+
+## Hand-written vs Rust
+
+| Item | Count |
+|---|---|
+| New hand-written F* proof modules | 1 |
+| New hand-written F* interface (`.fsti`) modules | 0 |
+| New hand-written F* proof obligations (`: Lemma` occurrences) | 40 |
+| New hand-written F* recursive functions | 2 |
+| New extracted F* modules | 0 |
+| New Rust source files | 0 |
+| New Rust postconditions / `ensures` contracts | 0 |
+| New Rust functions or branches | 0 |
+| Existing F* modules edited | 0 |
+| Existing Rust modules edited | 0 |
+| Reused focused extraction modules (inputs) | 2 |
+| Reused hand-written proof modules (inputs) | 4 |
+| New standalone verifier scripts | 1 |
+| New evidence directories | 1 |
+| Mutation checks (both rejected by F*) | 2 |
+
+The new module is 731 lines including comments and blank lines.  It adds no
+Rust contract: the two focused extraction modules are inputs and are
+byte-identical before and after the run.
+
+## Proof invocation
+
+- F* modules passed to the checker: 7
+  - generated: `Vela_session_policy.Challenge`,
+    `Vela_session_policy.Login_driver`
+  - proof: `Vela_session_policy_challenge_lemmas`,
+    `Vela_session_policy_tag_producer_lemmas`,
+    `Vela_session_policy_login_driver_lemmas`,
+    `Vela_session_policy_login_driver_composition`,
+    `Vela_session_policy_login_raw_nonce`
+- Source-policy result: 2 extracted modules, 5 proof modules; no unreviewed
+  escapes/options.
+- Verification result: all verification conditions discharged; exit 0.
+- Historical extraction: hash-guarded, not a F* resolution input.
