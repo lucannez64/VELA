@@ -60,6 +60,12 @@ mapfile -t challenge_lemma_files < <(
 mapfile -t login_lemma_files < <(
   find proofs/fstar/login-driver-lemmas -maxdepth 1 -type f -name '*.fst' -print | sort
 )
+composition_file=proofs/fstar/login-driver-composition/Vela_session_policy_login_driver_composition.fst
+[[ -f $composition_file ]] || {
+  echo "missing reviewed login composition module" >&2
+  exit 1
+}
+
 if (( ${#proof_files[@]} == 0 )); then
   echo "hax generated no focused challenge/login modules" >&2
   exit 1
@@ -77,7 +83,7 @@ fi
 # Imported hax libraries remain trusted; fstar.exe is the proof checker.
 python3 "$proof_root/../../security/formal/check-driver-proof-sources.py" \
   --generated "${proof_files[@]}" \
-  --proof "${challenge_lemma_files[@]}" "${login_lemma_files[@]}" \
+  --proof "${challenge_lemma_files[@]}" "${login_lemma_files[@]}" "$composition_file" \
   --include-dir "$proof_root"
 
 hax_lib_root=$(
@@ -102,7 +108,8 @@ fstar_args=(
   --include proofs/fstar/extraction-login-driver
   --include proofs/fstar/challenge-lemmas
   --include proofs/fstar/login-driver-lemmas
-  "${proof_files[@]}" "${challenge_lemma_files[@]}" "${login_lemma_files[@]}"
+  --include proofs/fstar/login-driver-composition
+  "${proof_files[@]}" "${challenge_lemma_files[@]}" "${login_lemma_files[@]}" "$composition_file"
 )
 printf 'F* login-driver argv:'
 printf ' %q' "${fstar_args[@]}"
@@ -114,5 +121,6 @@ echo "challenge refinement: exact literal-byte recognition for every bounded sto
 echo "tag producer: length preserved, min(len,9) prefix exact, acceptance iff raw literal, for every slice"
 echo "issued path: purpose_tag_bytes classifies as its own purpose and no other"
 echo "login trace: one response at most, response implies accepted login + valid verifier + tracked token, failure terminal"
-sha256sum "${proof_files[@]}" "${challenge_lemma_files[@]}" "${login_lemma_files[@]}" \
+echo "login composition: one nonce admits at most one request, Respond effect and successful issuance under the atomic-take interface"
+sha256sum "${proof_files[@]}" "${challenge_lemma_files[@]}" "${login_lemma_files[@]}" "$composition_file" \
   src/challenge.rs src/login_driver.rs
