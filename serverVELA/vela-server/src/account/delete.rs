@@ -58,81 +58,77 @@ pub async fn delete_account(
         }
     }
 
-    state
+    // Every SQL deletion runs in one transaction, so a crash or database
+    // error part-way leaves the account intact instead of partly deleted.
+    // The store-side revocations above run first and only ever lock out, so
+    // they are safe to leave in place if this transaction rolls back.
+    let tx = state
         .sqldb
-        .execute(
-            "DELETE FROM web_sessions WHERE user_id = ? OR approver_user_id = ?",
-            vec![
-                TursoValue::Text(session.user_id.to_string()),
-                TursoValue::Text(session.user_id.to_string()),
-            ],
-        )
+        .tx()
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    state
-        .sqldb
-        .execute(
-            "DELETE FROM share_inbox WHERE recipient_user_id = ? OR sender_user_id = ?",
-            vec![
-                TursoValue::Text(session.user_id.to_string()),
-                TursoValue::Text(session.user_id.to_string()),
-            ],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+    tx.execute(
+        "DELETE FROM web_sessions WHERE user_id = ? OR approver_user_id = ?",
+        vec![
+            TursoValue::Text(session.user_id.to_string()),
+            TursoValue::Text(session.user_id.to_string()),
+        ],
+    )
+    .await
+    .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    state
-        .sqldb
-        .execute(
-            "DELETE FROM shared_items WHERE recipient_user_id = ? OR sender_user_id = ?",
-            vec![
-                TursoValue::Text(session.user_id.to_string()),
-                TursoValue::Text(session.user_id.to_string()),
-            ],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+    tx.execute(
+        "DELETE FROM share_inbox WHERE recipient_user_id = ? OR sender_user_id = ?",
+        vec![
+            TursoValue::Text(session.user_id.to_string()),
+            TursoValue::Text(session.user_id.to_string()),
+        ],
+    )
+    .await
+    .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    tx.execute(
+        "DELETE FROM shared_items WHERE recipient_user_id = ? OR sender_user_id = ?",
+        vec![
+            TursoValue::Text(session.user_id.to_string()),
+            TursoValue::Text(session.user_id.to_string()),
+        ],
+    )
+    .await
+    .map_err(|e| AppError::Internal(e.to_string()))?;
 
     // One-off send links belong to the account that created them. They are
     // fetched anonymously by unguessable id, so leaving the rows behind would
     // keep the deleted account's ciphertext readable by anyone holding the
     // link until its TTL (up to 30 days) expired.
-    state
-        .sqldb
-        .execute(
-            "DELETE FROM sends WHERE owner_user_id = ?",
-            vec![TursoValue::Text(session.user_id.to_string())],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+    tx.execute(
+        "DELETE FROM sends WHERE owner_user_id = ?",
+        vec![TursoValue::Text(session.user_id.to_string())],
+    )
+    .await
+    .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    state
-        .sqldb
-        .execute(
-            "DELETE FROM vault_chunks WHERE user_id = ?",
-            vec![TursoValue::Text(session.user_id.to_string())],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+    tx.execute(
+        "DELETE FROM vault_chunks WHERE user_id = ?",
+        vec![TursoValue::Text(session.user_id.to_string())],
+    )
+    .await
+    .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    state
-        .sqldb
-        .execute(
-            "DELETE FROM oram_buckets WHERE user_id = ?",
-            vec![TursoValue::Text(session.user_id.to_string())],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+    tx.execute(
+        "DELETE FROM oram_buckets WHERE user_id = ?",
+        vec![TursoValue::Text(session.user_id.to_string())],
+    )
+    .await
+    .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    state
-        .sqldb
-        .execute(
-            "DELETE FROM devices WHERE user_id = ?",
-            vec![TursoValue::Text(session.user_id.to_string())],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+    tx.execute(
+        "DELETE FROM devices WHERE user_id = ?",
+        vec![TursoValue::Text(session.user_id.to_string())],
+    )
+    .await
+    .map_err(|e| AppError::Internal(e.to_string()))?;
 
     // Web-session-only accounts legitimately have zero rows in `devices`
     // (a web-session RW token uses session_id as device_id and carries no
@@ -142,8 +138,7 @@ pub async fn delete_account(
     // deleted them. Check the `users` delete's own affected-row count
     // instead, and check it before treating the operation as done — that
     // row is the actual account record.
-    let users_n = state
-        .sqldb
+    let users_n = tx
         .execute(
             "DELETE FROM users WHERE id = ?",
             vec![TursoValue::Text(session.user_id.to_string())],
@@ -152,8 +147,12 @@ pub async fn delete_account(
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
     if users_n == 0 {
+        // Dropping the guard rolls the transaction back.
         return Err(AppError::NotFound("account not found".into()));
     }
+    tx.commit()
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
 
     tracing::warn!(
         user_id = %session.user_id,

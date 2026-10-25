@@ -123,6 +123,86 @@ async fn register_rejects_bad_key_size() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
+/// U-16: a challenge only works at the endpoint it was issued for, and
+/// presenting it anywhere spends it.
+#[tokio::test]
+async fn challenge_is_bound_to_its_purpose_and_spent_on_misuse() {
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
+
+    async fn issue(app: &axum::Router, query: &str) -> (StatusCode, String) {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/auth/challenge{query}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = resp.status();
+        let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+        (status, body["challenge"].as_str().unwrap_or_default().to_string())
+    }
+
+    assert_eq!(issue(&app, "?purpose=admin").await.0, StatusCode::BAD_REQUEST);
+    for (query, tag) in [
+        ("", &b"login"[..]),
+        ("?purpose=login", b"login"),
+        ("?purpose=enroll", b"enroll"),
+        ("?purpose=web_token", b"web_token"),
+    ] {
+        let (status, nonce) = issue(&app, query).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            state.store.get(&format!("challenge:{nonce}")).unwrap().as_deref(),
+            Some(tag),
+            "{query}"
+        );
+    }
+
+    // A login nonce presented at /device/enroll is refused for its purpose
+    // and burned, so it cannot be used for login afterwards either.
+    let (_, login) = issue(&app, "").await;
+    let bad_sig = B64.encode(vec![0u8; 4627 + 64]);
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/device/enroll")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "enrolling_device_id": Uuid::new_v4(),
+                        "challenge": login,
+                        "auth_signature": bad_sig,
+                        "new_device": {
+                            "hybrid_ek": B64.encode(vec![0u8; 1600]),
+                            "hybrid_vk": B64.encode(vec![0u8; 2624]),
+                            "rms_capsule": B64.encode(vec![0u8; 64]),
+                            "signature": bad_sig,
+                            "key_epoch": 1,
+                        },
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(
+        body["message"].as_str().unwrap_or_default().contains("different purpose"),
+        "{body}"
+    );
+    assert!(state.store.get(&format!("challenge:{login}")).unwrap().is_none());
+}
+
 #[tokio::test]
 async fn challenge_returns_nonce() {
     let app = app().await;
@@ -1393,7 +1473,7 @@ async fn fresh_challenge(app: &axum::Router) -> String {
         .clone()
         .oneshot(
             Request::builder()
-                .uri("/auth/challenge")
+                .uri("/auth/challenge?purpose=enroll")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -2061,6 +2141,74 @@ async fn revoking_a_device_revokes_the_web_sessions_it_approved() {
     let (late, status) = start_and_grant(&app, user_id, &laptop_token).await;
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(session_status(&app, &late).await, "pending");
+}
+
+/// U-17: account deletion is all-or-nothing. A database error part-way
+/// (here a later table is missing) rolls back every earlier deletion.
+#[tokio::test]
+async fn failed_account_deletion_rolls_back_every_table() {
+    use vela_server::sqldb::{Db as _, TursoValue};
+
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
+    let user_id = Uuid::new_v4();
+    insert_user(&state, user_id).await;
+    let device = insert_device_for(&state, user_id).await;
+    let token = issue_token(&state, user_id, device);
+
+    // A row in a table deleted early (web_sessions) ...
+    let (pending, status) = {
+        let link_nonce = B64.encode(vec![7u8; 32]);
+        let resp = app
+            .clone()
+            .oneshot(web_session_start_req(user_id, &link_nonce))
+            .await
+            .unwrap();
+        let status = resp.status();
+        let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        (body["session_id"].as_str().unwrap().to_string(), status)
+    };
+    assert_eq!(status, StatusCode::OK);
+    // ... and a table deleted later that now fails.
+    state
+        .sqldb
+        .execute("DROP TABLE oram_buckets", vec![])
+        .await
+        .unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/account")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    let count = |sql: &'static str, id: String| {
+        let state = state.clone();
+        async move {
+            state
+                .sqldb
+                .query(sql, vec![TursoValue::Text(id)])
+                .await
+                .unwrap()
+                .len()
+        }
+    };
+    assert_eq!(
+        count("SELECT id FROM web_sessions WHERE id = ?", pending).await,
+        1,
+        "the web-session delete was not rolled back"
+    );
+    assert_eq!(count("SELECT id FROM devices WHERE id = ?", device.to_string()).await, 1);
+    assert_eq!(count("SELECT id FROM users WHERE id = ?", user_id.to_string()).await, 1);
 }
 
 /// Audit S-1/S-4: the session is bound to the account the browser named at
@@ -4070,13 +4218,13 @@ async fn device_existence_is_not_revealed_by_auth_failures() {
         )
     }
 
-    // A fresh challenge per probe: /device/enroll consumes it.
-    async fn challenge(app: &axum::Router) -> String {
+    // A fresh challenge per probe, bound to the endpoint that consumes it.
+    async fn challenge(app: &axum::Router, purpose: &str) -> String {
         let resp = app
             .clone()
             .oneshot(
                 Request::builder()
-                    .uri("/auth/challenge")
+                    .uri(format!("/auth/challenge?purpose={purpose}"))
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -4093,7 +4241,7 @@ async fn device_existence_is_not_revealed_by_auth_failures() {
         let mut verify_answers = Vec::new();
         let mut enroll_answers = Vec::new();
         for id in &device_ids {
-            let ch = challenge(&app).await;
+            let ch = challenge(&app, "login").await;
             verify_answers.push(
                 probe(
                     &app,
@@ -4103,7 +4251,7 @@ async fn device_existence_is_not_revealed_by_auth_failures() {
                 .await,
             );
 
-            let ch = challenge(&app).await;
+            let ch = challenge(&app, "enroll").await;
             enroll_answers.push(
                 probe(
                     &app,

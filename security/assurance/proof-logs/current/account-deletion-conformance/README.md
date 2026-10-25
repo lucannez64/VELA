@@ -4,8 +4,8 @@ Test: `serverVELA/vela-server/tests/account_deletion_model.rs` (CI: `security`
 workflow, step "Check bounded policies and rekey handler/database conformance",
 default depth 3).
 
-`DELETE /account` (`src/account/delete.rs`) is a sequence of SQL statements, not
-one transaction. This test drives the real Axum router and the real Turso schema
+`DELETE /account` (`src/account/delete.rs`) now runs all SQL deletions in one
+transaction (U-17; earlier it was a sequence of separate statements). This test drives the real Axum router and the real Turso schema
 through every command sequence up to a bounded depth and compares it with an
 independent reference model after every step. After every successful delete it
 also queries the database and the sled store directly for anything that still
@@ -163,11 +163,12 @@ Executable evidence for bounded sequential traces, not a proof.
 
 - **Backups, replicas and point-in-time recovery**: a restore can resurrect
   deleted rows; that is outside this server process and this test.
-- **Crash or SQL error mid-delete**: the handler is a sequence of statements, not
-  one transaction. A failure between statements can leave a partially deleted
-  account (e.g. shares gone, user row still present). This test observes only a
-  completed delete; it does not fault-inject between statements. This is a
-  residual availability/consistency risk, not something the model hides.
+- **Crash or SQL error mid-delete**: now one transaction. The integration test
+  `failed_account_deletion_rolls_back_every_table` drops a table deleted late
+  and checks that earlier deletions roll back (it fails against the old
+  statement-by-statement handler). This bounded model still observes only
+  completed deletes. Store-side token revocations run before the transaction
+  and are not rolled back; they only lock out.
 - **Concurrency**: another device of the same account issuing requests while the
   delete runs; two deletes racing; a send-link fetch racing the delete.
 - **Clock/TTL expiry** of tombstones, pending sessions and send links.

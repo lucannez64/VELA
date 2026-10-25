@@ -42,13 +42,11 @@ pub async fn post_verify(
     rate_limit::verify_by_ip(&state.store, &ip)?;
     rate_limit::check_verify_backoff(&state.store, &ip, &device_id_str)?;
 
-    let challenge_key = format!("challenge:{}", body.challenge);
-    let consumed = state.store.get_del(&challenge_key)?;
-    if consumed.is_none() {
-        return Err(AppError::Unauthorized(
-            "challenge not found or already used".into(),
-        ));
-    }
+    crate::auth::challenge::consume_challenge(
+        &state,
+        &body.challenge,
+        crate::auth::challenge::ChallengePurpose::Login,
+    )?;
 
     let rows = state
         .sqldb
@@ -117,7 +115,8 @@ pub async fn post_verify(
     if requested_name.is_some() || requested_type.is_some() {
         let next_name = requested_name.unwrap_or(&device.device_name);
         let next_type = requested_type.unwrap_or(&device.device_type);
-        let _ = state.sqldb
+        let _ = state
+            .sqldb
             .execute(
                 "UPDATE devices SET last_active = ?, device_name = ?, device_type = ? WHERE id = ?",
                 vec![
@@ -129,10 +128,14 @@ pub async fn post_verify(
             )
             .await;
     } else {
-        let _ = state.sqldb
+        let _ = state
+            .sqldb
             .execute(
                 "UPDATE devices SET last_active = ? WHERE id = ?",
-                vec![TursoValue::Text(now), TursoValue::Text(device_id_str.clone())],
+                vec![
+                    TursoValue::Text(now),
+                    TursoValue::Text(device_id_str.clone()),
+                ],
             )
             .await;
     }

@@ -32,9 +32,12 @@ A challenge is a linear token:
 - a consumed, expired or never-issued nonce is refused at every endpoint;
 - a nonce yields **at most one success across all three endpoints**.
 
-The server does **not** bind a purpose into `challenge:<b64>`. The model records
-the same fact: a nonce is endpoint-agnostic and may be presented at any consumer,
-but only once. The test does not pretend a purpose binding exists. Every endpoint
+Update (U-16 closed): each nonce is now issued for one purpose
+(`/auth/challenge?purpose=login|enroll|web_token`, default `login`) and stored
+with that tag. A consumer accepts only its own purpose; presenting a nonce
+elsewhere is refused even with a valid proof, and spends it. The model now
+issues per purpose and asserts this; the passage below describes the earlier
+behavior that this test originally recorded. Every endpoint
 still verifies its own action proof under its own key (`auth_message(device_id,
 nonce)` for verify/enroll, the web session's ephemeral key for web-token), so the
 exploration found no cross-endpoint privilege escalation — see "Observation"
@@ -103,7 +106,7 @@ Mutation in `src/auth/verify.rs`: `Store::get_del` → `Store::get` (non-consumi
 `git diff -- serverVELA/vela-server/src/` is empty after the revert. No handler
 change was kept.
 
-## Observation: no purpose binding
+## Earlier observation: no purpose binding (now fixed)
 
 A nonce issued by `/auth/challenge` is accepted at `/device/enroll` and
 `/web-session/:id/token` as well as `/auth/verify`, provided that endpoint's own

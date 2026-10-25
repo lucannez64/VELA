@@ -768,7 +768,7 @@ impl Fixture {
                 // `challenge_single_use_model.rs`, not by this model.
                 self.state
                     .store
-                    .set_ex(&format!("challenge:{challenge_b64}"), &[1u8], 60)
+                    .set_ex(&format!("challenge:{challenge_b64}"), b"login", 60)
                     .expect("re-arm pre-issued challenge");
                 let signature = with_big_stack(|| {
                     B64.encode(

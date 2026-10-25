@@ -279,7 +279,10 @@ pub async fn generate_enrollment_code(state: &AppState) -> Result<String, String
     .map_err(|e| format!("Thread join error: {e}"))?
     .map_err(|e| format!("Signing failed: {e}"))?;
 
-    let challenge_resp = client.get_challenge().await.map_err(|e| format!("Failed to get challenge: {e}"))?;
+    let challenge_resp = client
+        .get_challenge_for("enroll")
+        .await
+        .map_err(|e| format!("Failed to get challenge: {e}"))?;
     let challenge_bytes =
         B64.decode(&challenge_resp.challenge).map_err(|_| "Invalid challenge encoding from server")?;
 

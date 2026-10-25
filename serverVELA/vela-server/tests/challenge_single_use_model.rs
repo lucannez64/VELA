@@ -2,8 +2,9 @@
 //! a single-use reference model, plus a real-concurrency redemption test.
 //!
 //! The nonce is issued by `GET /auth/challenge` as `challenge:<b64>` in sled
-//! (`src/auth/challenge.rs`) and consumed with `Store::get_del`. Three handlers
-//! read that *same* namespace:
+//! (`src/auth/challenge.rs`), tagged with its purpose (`?purpose=`), and
+//! consumed with `Store::get_del`. Three handlers read that namespace, each
+//! accepting only its own purpose:
 //!
 //! - `POST /auth/verify`                    (`src/auth/verify.rs`)
 //! - `POST /device/enroll`                  (`src/device/enroll.rs`)
@@ -23,10 +24,8 @@
 //! it at any endpoint consumes it **before** the proof is checked (the handlers
 //! call `get_del` before device lookup / signature verification), and every
 //! later presentation of that token — at any endpoint, with any proof — is
-//! refused. The server does **not** bind a purpose into the key: a nonce issued
-//! for logging in is accepted at the enrollment or web-session endpoint as long
-//! as that endpoint's own proof verifies. The model records the same fact
-//! (endpoint-agnostic challenges) instead of pretending a binding exists.
+//! refused. Each nonce is issued for one endpoint: presenting it elsewhere is
+//! refused even with a valid proof, and that refusal spends it (U-16).
 //!
 //! The model keeps every issued token, not just the latest per slot: issuing a
 //! second nonce into a slot does not revoke the first one, so the first remains
@@ -36,7 +35,7 @@
 //! ## Exploration
 //!
 //! Every command sequence up to `VELA_CHALLENGE_MODEL_DEPTH` (default 3) over a
-//! 19-command alphabet runs against the model and against the real Axum router
+//! 23-command alphabet runs against the model and against the real Axum router
 //! with the real Turso schema and sled store. After every step the test compares
 //! the HTTP status and the presence of every issued challenge key.
 //!
@@ -104,6 +103,19 @@ enum Endpoint {
 const ENDPOINTS: [Endpoint; 3] = [Endpoint::Verify, Endpoint::Enroll, Endpoint::WebToken];
 
 impl Endpoint {
+    /// The `/auth/challenge?purpose=` value and stored tag for this endpoint.
+    fn purpose(self) -> &'static str {
+        match self {
+            Endpoint::Verify => "login",
+            Endpoint::Enroll => "enroll",
+            Endpoint::WebToken => "web_token",
+        }
+    }
+
+    fn tag(self) -> &'static [u8] {
+        self.purpose().as_bytes()
+    }
+
     fn name(self) -> &'static str {
         match self {
             Endpoint::Verify => "PresentVerify",
@@ -115,9 +127,10 @@ impl Endpoint {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Command {
-    /// Issue a fresh nonce into a slot (real `GET /auth/challenge` output,
-    /// re-armed under the same store key the endpoint uses).
-    Issue(usize),
+    /// Issue a fresh nonce for one endpoint's purpose into a slot (real
+    /// `GET /auth/challenge` output, re-armed under the same store key with
+    /// that purpose's tag).
+    Issue(usize, Endpoint),
     /// Present the slot's latest nonce at an endpoint, with a valid proof for
     /// that endpoint or a well-formed invalid one.
     Present {
@@ -134,7 +147,7 @@ enum Command {
 impl Command {
     fn kind(self) -> &'static str {
         match self {
-            Command::Issue(_) => "Issue",
+            Command::Issue(..) => "Issue",
             Command::Expire(_) => "Expire",
             Command::PresentUnknown { endpoint } => match endpoint {
                 Endpoint::Verify => "PresentUnknownVerify",
@@ -150,7 +163,9 @@ fn alphabet() -> Vec<Command> {
     use Command::*;
     let mut out = Vec::new();
     for slot in 0..SLOTS {
-        out.push(Issue(slot));
+        for endpoint in ENDPOINTS {
+            out.push(Issue(slot, endpoint));
+        }
         out.push(Expire(slot));
     }
     for slot in 0..SLOTS {
@@ -210,6 +225,8 @@ struct Model {
     current: [Option<usize>; SLOTS],
     /// Every nonce ever issued in this trace: `(slot, index) -> state`.
     issued: BTreeMap<(usize, usize), ChallengeState>,
+    /// The endpoint each nonce was issued for.
+    purpose: BTreeMap<(usize, usize), Endpoint>,
     /// Successful presentations per nonce. Must never exceed 1.
     successes: BTreeMap<(usize, usize), u32>,
 }
@@ -217,11 +234,12 @@ struct Model {
 impl Model {
     fn apply(&mut self, command: Command) -> Option<StatusCode> {
         match command {
-            Command::Issue(slot) => {
+            Command::Issue(slot, purpose) => {
                 let index = self.next_index[slot];
                 self.next_index[slot] += 1;
                 self.current[slot] = Some(index);
                 self.issued.insert((slot, index), ChallengeState::Live);
+                self.purpose.insert((slot, index), purpose);
                 // Issuing is not an HTTP command.
                 None
             }
@@ -236,15 +254,21 @@ impl Model {
                 None
             }
             Command::PresentUnknown { .. } => Some(StatusCode::UNAUTHORIZED),
-            Command::Present { slot, honest, .. } => {
+            Command::Present {
+                slot,
+                endpoint,
+                honest,
+            } => {
                 let Some(index) = self.current[slot] else {
                     return Some(StatusCode::UNAUTHORIZED);
                 };
                 match self.issued.get(&(slot, index)).copied() {
                     Some(ChallengeState::Live) => {
-                        // Consumed on presentation, whatever the proof says.
+                        // Consumed on presentation, whatever the proof or the
+                        // endpoint; accepted only at the endpoint it was
+                        // issued for.
                         self.issued.insert((slot, index), ChallengeState::Consumed);
-                        if honest {
+                        if honest && self.purpose.get(&(slot, index)) == Some(&endpoint) {
                             *self.successes.entry((slot, index)).or_insert(0) += 1;
                             Some(StatusCode::OK)
                         } else {
@@ -260,6 +284,11 @@ impl Model {
     fn current_state(&self, slot: usize) -> Option<ChallengeState> {
         let index = self.current[slot]?;
         self.issued.get(&(slot, index)).copied()
+    }
+
+    fn current_purpose(&self, slot: usize) -> Option<Endpoint> {
+        let index = self.current[slot]?;
+        self.purpose.get(&(slot, index)).copied()
     }
 
     fn assert_state(&self, fixture: &Fixture, trace: &[Command], step: usize) {
@@ -432,7 +461,7 @@ impl Fixture {
         let mut raw_pool: Vec<Vec<(String, Vec<u8>)>> = vec![Vec::new(); SLOTS];
         for slot in 0..SLOTS {
             for _ in 0..depth.max(1) {
-                let (b64, bytes) = get_challenge(&app).await;
+                let (b64, bytes) = get_challenge(&app, Endpoint::Verify).await;
                 raw_pool[slot].push((b64, bytes));
             }
         }
@@ -562,8 +591,8 @@ impl Fixture {
         })
     }
 
-    async fn issue_challenge(&self) -> (String, Vec<u8>) {
-        get_challenge(&self.app).await
+    async fn issue_challenge(&self, endpoint: Endpoint) -> (String, Vec<u8>) {
+        get_challenge(&self.app, endpoint).await
     }
 
     /// Clear the challenge namespace and the web-token per-session budget so a
@@ -633,10 +662,10 @@ impl Fixture {
     }
 }
 
-async fn get_challenge(app: &Router) -> (String, Vec<u8>) {
+async fn get_challenge(app: &Router, endpoint: Endpoint) -> (String, Vec<u8>) {
     let request = Request::builder()
         .method("GET")
-        .uri("/auth/challenge")
+        .uri(format!("/auth/challenge?purpose={}", endpoint.purpose()))
         .extension(fresh_ip())
         .body(Body::empty())
         .unwrap();
@@ -688,7 +717,7 @@ impl<'a> TraceReal<'a> {
 
     async fn apply(&mut self, command: Command) -> Option<StatusCode> {
         match command {
-            Command::Issue(slot) => {
+            Command::Issue(slot, purpose) => {
                 let index = self.next_index[slot];
                 assert!(
                     index < self.fixture.pool[slot].len(),
@@ -699,7 +728,11 @@ impl<'a> TraceReal<'a> {
                 self.fixture
                     .state
                     .store
-                    .set_ex(&self.fixture.challenge_key(slot, index), &[1u8], 60)
+                    .set_ex(
+                        &self.fixture.challenge_key(slot, index),
+                        purpose.tag(),
+                        60,
+                    )
                     .expect("re-arm pre-issued challenge");
                 None
             }
@@ -776,6 +809,7 @@ async fn every_bounded_challenge_trace_matches_the_single_use_model() {
     let mut seen: BTreeSet<(&'static str, u16)> = BTreeSet::new();
     let mut no_status: BTreeSet<&'static str> = BTreeSet::new();
     let mut dead_presentations = 0usize;
+    let mut cross_purpose_refusals = 0usize;
 
     for trace in &traces {
         let mut model = Model::default();
@@ -783,12 +817,23 @@ async fn every_bounded_challenge_trace_matches_the_single_use_model() {
         for (step, command) in trace.iter().enumerate() {
             // Was this presentation aimed at a challenge that was already
             // consumed or expired? Count it to prove replay is exercised.
-            if let Command::Present { slot, .. } = command {
+            if let Command::Present {
+                slot,
+                endpoint,
+                honest,
+            } = command
+            {
                 if matches!(
                     model.current_state(*slot),
                     Some(ChallengeState::Consumed) | Some(ChallengeState::Expired)
                 ) {
                     dead_presentations += 1;
+                }
+                if *honest
+                    && model.current_state(*slot) == Some(ChallengeState::Live)
+                    && model.current_purpose(*slot) != Some(*endpoint)
+                {
+                    cross_purpose_refusals += 1;
                 }
             }
 
@@ -830,6 +875,10 @@ async fn every_bounded_challenge_trace_matches_the_single_use_model() {
         );
     }
     assert!(
+        cross_purpose_refusals > 0,
+        "no live nonce was ever presented at the wrong endpoint with a valid proof"
+    );
+    assert!(
         no_status.contains("Issue"),
         "no challenge was ever issued: {no_status:?}"
     );
@@ -863,7 +912,7 @@ async fn failed_or_unknown_or_expired_or_replayed_challenges_never_succeed() {
     //     proof returns 401 and leaves no challenge behind, and a subsequent
     //     valid proof of the same nonce is also refused.
     for endpoint in ENDPOINTS {
-        let (challenge_b64, challenge_bytes) = fixture.issue_challenge().await;
+        let (challenge_b64, challenge_bytes) = fixture.issue_challenge(endpoint).await;
         assert!(
             state
                 .store
@@ -913,7 +962,7 @@ async fn failed_or_unknown_or_expired_or_replayed_challenges_never_succeed() {
     }
 
     // (2) A successful login burns the nonce for every other endpoint too.
-    let (challenge_b64, challenge_bytes) = fixture.issue_challenge().await;
+    let (challenge_b64, challenge_bytes) = fixture.issue_challenge(Endpoint::Verify).await;
     let valid = fixture.device_signature(&challenge_bytes);
     assert_eq!(
         send(
@@ -945,8 +994,45 @@ async fn failed_or_unknown_or_expired_or_replayed_challenges_never_succeed() {
         "a login challenge was accepted twice"
     );
 
+    // (2b) U-16: a nonce issued for one endpoint is refused at every other
+    //      endpoint even with a valid proof, and that refusal spends it.
+    for issued in ENDPOINTS {
+        for presented in ENDPOINTS {
+            if issued == presented {
+                continue;
+            }
+            let (b64, bytes) = fixture.issue_challenge(issued).await;
+            let valid = match presented {
+                Endpoint::WebToken => fixture.web_signature(&bytes),
+                _ => fixture.device_signature(&bytes),
+            };
+            assert_eq!(
+                send(&app, fixture.present_request(presented, &b64, &valid))
+                    .await
+                    .0,
+                StatusCode::UNAUTHORIZED,
+                "a {issued:?} nonce was accepted at {presented:?}"
+            );
+            assert!(
+                state.store.get(&format!("challenge:{b64}")).unwrap().is_none(),
+                "a cross-purpose presentation at {presented:?} did not spend the nonce"
+            );
+            let own = match issued {
+                Endpoint::WebToken => fixture.web_signature(&bytes),
+                _ => fixture.device_signature(&bytes),
+            };
+            assert_eq!(
+                send(&app, fixture.present_request(issued, &b64, &own))
+                    .await
+                    .0,
+                StatusCode::UNAUTHORIZED,
+                "a spent {issued:?} nonce was accepted at its own endpoint"
+            );
+        }
+    }
+
     // (3) An expired (removed) challenge never succeeds.
-    let (expired_b64, expired_bytes) = fixture.issue_challenge().await;
+    let (expired_b64, expired_bytes) = fixture.issue_challenge(Endpoint::Verify).await;
     let expired_valid = fixture.device_signature(&expired_bytes);
     state
         .store
@@ -984,7 +1070,7 @@ async fn failed_or_unknown_or_expired_or_replayed_challenges_never_succeed() {
     //     burn the nonce: `post_token` checks session status/mode/expiry first
     //     and only then calls get_del. The model's web-token command always
     //     presents against a valid session, so pin the ordering explicitly.
-    let (precheck_b64, precheck_bytes) = fixture.issue_challenge().await;
+    let (precheck_b64, precheck_bytes) = fixture.issue_challenge(Endpoint::WebToken).await;
     let precheck_valid = fixture.web_signature(&precheck_bytes);
     state
         .sqldb
@@ -1075,8 +1161,12 @@ async fn one_challenge_yields_exactly_one_success_under_concurrency() {
         rounds.push(None);
     }
 
+    let mut mixed_zero = 0usize;
     for (round, fixed) in rounds.into_iter().enumerate() {
-        let (challenge_b64, challenge_bytes) = fixture.issue_challenge().await;
+        // Fixed rounds race requests at the nonce's own endpoint; mixed rounds
+        // also race wrong-endpoint requests, which may spend it first.
+        let purpose = fixed.unwrap_or(ENDPOINTS[round % ENDPOINTS.len()]);
+        let (challenge_b64, challenge_bytes) = fixture.issue_challenge(purpose).await;
         // One budget per round: the per-session web-token limit is 30/min and
         // an all-web round sends 16 requests.
         fixture.reset();
@@ -1123,10 +1213,18 @@ async fn one_challenge_yields_exactly_one_success_under_concurrency() {
         }
 
         let successes = statuses.iter().filter(|&&s| s == StatusCode::OK).count();
-        assert_eq!(
-            successes, 1,
-            "round {round} (fixed {fixed:?}) produced {successes} successes: {statuses:?}"
-        );
+        if fixed.is_some() {
+            assert_eq!(
+                successes, 1,
+                "round {round} (fixed {fixed:?}) produced {successes} successes: {statuses:?}"
+            );
+        } else {
+            assert!(
+                successes <= 1,
+                "mixed round {round} produced {successes} successes: {statuses:?}"
+            );
+            mixed_zero += usize::from(successes == 0);
+        }
         for (i, status) in statuses.iter().enumerate() {
             if *status != StatusCode::OK {
                 assert_eq!(
@@ -1136,9 +1234,12 @@ async fn one_challenge_yields_exactly_one_success_under_concurrency() {
                     fixed.unwrap_or(ENDPOINTS[i % ENDPOINTS.len()])
                 );
             } else {
-                *wins
-                    .entry(fixed.unwrap_or(ENDPOINTS[i % ENDPOINTS.len()]).name())
-                    .or_insert(0) += 1;
+                let winner = fixed.unwrap_or(ENDPOINTS[i % ENDPOINTS.len()]);
+                assert_eq!(
+                    winner, purpose,
+                    "round {round}: a {purpose:?} nonce won at {winner:?}"
+                );
+                *wins.entry(winner.name()).or_insert(0) += 1;
             }
         }
     }
@@ -1152,9 +1253,10 @@ async fn one_challenge_yields_exactly_one_success_under_concurrency() {
     }
 
     eprintln!(
-        "challenge concurrency: {} rounds x {} requests, wins {:?}",
+        "challenge concurrency: {} rounds x {} requests, wins {:?}, mixed rounds with no winner {}",
         SAME_ENDPOINT_ROUNDS * ENDPOINTS.len() + MIXED_ROUNDS,
         CONCURRENCY,
-        wins
+        wins,
+        mixed_zero
     );
 }

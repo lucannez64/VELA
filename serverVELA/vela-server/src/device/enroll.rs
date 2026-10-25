@@ -80,13 +80,11 @@ pub async fn post_enroll(
     rate_limit::enroll_by_ip(&state.store, &ip)?;
 
     let enrolling_device_id_str = body.enrolling_device_id.to_string();
-    let challenge_key = format!("challenge:{}", body.challenge);
-    let consumed = state.store.get_del(&challenge_key)?;
-    if consumed.is_none() {
-        return Err(AppError::Unauthorized(
-            "challenge not found or already used".into(),
-        ));
-    }
+    crate::auth::challenge::consume_challenge(
+        &state,
+        &body.challenge,
+        crate::auth::challenge::ChallengePurpose::Enroll,
+    )?;
 
     let rows = state
         .sqldb

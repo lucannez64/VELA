@@ -679,15 +679,12 @@ pub async fn post_token(
         .decode(web_vk_b64.as_bytes())
         .map_err(|e| AppError::Internal(format!("web_vk decode: {e}")))?;
 
-    // Single-use challenge (issued by /auth/challenge), consumed here.
-    let consumed = state
-        .store
-        .get_del(&format!("challenge:{}", body.challenge))?;
-    if consumed.is_none() {
-        return Err(AppError::Unauthorized(
-            "challenge not found or already used".into(),
-        ));
-    }
+    // Single-use challenge issued by `/auth/challenge?purpose=web_token`.
+    crate::auth::challenge::consume_challenge(
+        &state,
+        &body.challenge,
+        crate::auth::challenge::ChallengePurpose::WebToken,
+    )?;
 
     let challenge_bytes = B64
         .decode(&body.challenge)
@@ -731,7 +728,9 @@ pub async fn post_token(
             granted_user: session.user_id.map(|user| user.as_u128()),
             approver_user: session.approver_user_id.map(|user| user.as_u128()),
             nonce_present: session.link_nonce.is_some(),
-            challenge_consumed: consumed.is_some(),
+            // `consume_challenge` returned early unless a web_token nonce
+            // was actually removed, so this observation is true here.
+            challenge_consumed: true,
             signature_valid,
         },
         now.timestamp(),
