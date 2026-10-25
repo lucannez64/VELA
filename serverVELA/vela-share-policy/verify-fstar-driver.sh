@@ -61,7 +61,8 @@ composition_files=(proofs/fstar/driver-composition/Vela_share_policy_driver_comp
 # budget-only pragmas. This is a source guard; fstar.exe remains the checker.
 python3 "$proof_root/../../security/formal/check-driver-proof-sources.py" \
   --generated "${proof_files[@]}" \
-  --proof "${lemma_files[@]}" "${composition_files[@]}"
+  --proof "${lemma_files[@]}" "${composition_files[@]}" \
+  --include-dir "$proof_root"
 
 hax_lib_root=$(
   cargo metadata --format-version 1 |

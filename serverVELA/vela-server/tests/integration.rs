@@ -2128,8 +2128,8 @@ async fn revoking_a_device_revokes_the_web_sessions_it_approved() {
     );
     assert_eq!(session_status(&app, &by_laptop).await, "granted");
 
-    // A grant cannot land after the approving device's row is revoked, even
-    // if its token is still accepted (the window before middleware sees it).
+    // A fresh request cannot reach the grant once the durable device row is
+    // revoked, even without a sled revocation marker.
     state
         .sqldb
         .execute(
@@ -2139,7 +2139,7 @@ async fn revoking_a_device_revokes_the_web_sessions_it_approved() {
         .await
         .unwrap();
     let (late, status) = start_and_grant(&app, user_id, &laptop_token).await;
-    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(session_status(&app, &late).await, "pending");
 }
 
@@ -3192,8 +3192,8 @@ async fn recovery_share_writes_are_epoch_bound_and_refuse_freezing_accounts() {
     let state = helpers::test_state().await;
     let app = vela_server::routes::build(state.clone());
     let user_id = Uuid::new_v4();
-    let device_id = Uuid::new_v4();
     insert_user(&state, user_id).await;
+    let device_id = insert_device_for(&state, user_id).await;
     let token = token_for(&state, user_id, device_id, TokenScope::Device);
     let split_id = Uuid::new_v4();
 
@@ -3370,7 +3370,8 @@ async fn recovery_publication_finalizes_exactly_the_current_staged_split() {
     let app = vela_server::routes::build(state.clone());
     let user_id = Uuid::new_v4();
     insert_user(&state, user_id).await;
-    let token = token_for(&state, user_id, Uuid::new_v4(), TokenScope::Device);
+    let device_id = insert_device_for(&state, user_id).await;
+    let token = token_for(&state, user_id, device_id, TokenScope::Device);
     let split_a = Uuid::new_v4();
     let split_b = Uuid::new_v4();
 
@@ -3526,8 +3527,8 @@ async fn recovery_share_upload_cannot_survive_a_concurrent_epoch_commit() {
         let state = helpers::test_state().await;
         let app = vela_server::routes::build(state.clone());
         let user_id = Uuid::new_v4();
-        let device_id = Uuid::new_v4();
         insert_user(&state, user_id).await;
+        let device_id = insert_device_for(&state, user_id).await;
         let token = token_for(&state, user_id, device_id, TokenScope::Device);
         let split_id = Uuid::new_v4();
         let request = Request::builder()

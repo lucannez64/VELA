@@ -14,7 +14,8 @@
 //! `AuthSession::from_request_parts` (`src/middleware.rs`) is the single place
 //! that turns either record into a refusal, in this order: PASETO signature →
 //! hard cap → `jti:revoked` → `device:revoked` → per-JTI rate limit → account
-//! existence. Every authenticated route extracts `AuthSession` or the stricter
+//! existence → active device row for device-scoped tokens. Every authenticated
+//! route extracts `AuthSession` or the stricter
 //! `DeviceSession`, so the two checks gate all of them.
 //!
 //! ## Reference model
@@ -1589,4 +1590,186 @@ async fn the_device_sentinel_stops_a_token_that_escaped_jti_enumeration() {
             "a token outside the JTI set survived revocation at {endpoint:?}"
         );
     }
+}
+
+/// A login can read an active row, pause, then issue/track its token after
+/// revocation enumerated the JTI set. That token's expiry is later than the
+/// temporary sentinel's expiry. Project the delayed issuance with the real
+/// token service, and remove only the temporary sentinel to model its expiry.
+/// The durable SQL revocation must still prevent every fresh request.
+#[tokio::test(flavor = "current_thread")]
+async fn durable_revocation_refuses_a_late_login_token_after_sentinel_expiry() {
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
+    let keys = Keys::new();
+    let mut challenges = Vec::new();
+    for _ in Dev::ALL {
+        challenges.push(get_challenge(&app).await);
+    }
+    let mut real = Fixture::new(state.clone(), app.clone(), &keys, &challenges).await;
+    assert_eq!(
+        real.apply(Command::Login(TokenRef::B0), &keys).await.0,
+        StatusCode::OK
+    );
+    let a_device = real.device_id(Dev::A);
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/device/revoke",
+            Some(&real.bearer(TokenRef::B0)),
+            Some(json!({ "target_device_id": a_device }))
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+
+    // Issuance belongs to the in-flight login, not to an attacker holding the
+    // server key. Tracking occurs after the revoker already enumerated JTIs.
+    let ts = vela_server::auth::token::TokenService::new(
+        state.paseto_sk.clone(),
+        state.paseto_pk.clone(),
+    );
+    let (late, jti) = ts
+        .issue(real.user_id(Owner::Alice), a_device, None)
+        .unwrap();
+    vela_server::rate_limit::track_device_jti(&state.store, &a_device.to_string(), &jti).unwrap();
+    assert!(!state.store.exists(&format!("jti:revoked:{jti}")).unwrap());
+    assert_eq!(
+        state
+            .store
+            .del(&format!("device:revoked:{a_device}"))
+            .unwrap(),
+        1
+    );
+    for (method, uri) in [
+        ("GET", "/devices"),
+        ("GET", "/vault/epoch"),
+        ("GET", "/share/inbox"),
+    ] {
+        assert_eq!(
+            call(&app, method, uri, Some(&late), None).await.0,
+            StatusCode::UNAUTHORIZED,
+            "durably revoked late token admitted at {uri}"
+        );
+    }
+    // A repeat revoke also retries the store effects, despite returning the
+    // historical 400 for an already-revoked row.
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/device/revoke",
+            Some(&real.bearer(TokenRef::B0)),
+            Some(json!({ "target_device_id": a_device }))
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert!(state.store.exists(&format!("jti:revoked:{jti}")).unwrap());
+    assert!(state
+        .store
+        .exists(&format!("device:revoked:{a_device}"))
+        .unwrap());
+}
+
+/// Even a correctly signed device token needs a live row for the same account.
+/// This tests admission separately from login's already-registered-row lookup.
+#[tokio::test(flavor = "current_thread")]
+async fn device_token_admission_requires_a_matching_live_device_row() {
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
+    let keys = Keys::new();
+    let mut challenges = Vec::new();
+    for _ in Dev::ALL {
+        challenges.push(get_challenge(&app).await);
+    }
+    let real = Fixture::new(state.clone(), app.clone(), &keys, &challenges).await;
+    let ts = vela_server::auth::token::TokenService::new(
+        state.paseto_sk.clone(),
+        state.paseto_pk.clone(),
+    );
+    let user = real.user_id(Owner::Alice);
+    for device in [uuid::Uuid::new_v4(), real.device_id(Dev::E)] {
+        let (token, _) = ts.issue(user, device, None).unwrap();
+        assert_eq!(
+            call(&app, "GET", "/devices", Some(&token), None).await.0,
+            StatusCode::UNAUTHORIZED,
+            "missing or foreign device row admitted"
+        );
+    }
+    let (valid, _) = ts.issue(user, real.device_id(Dev::A), None).unwrap();
+    assert_eq!(
+        call(&app, "GET", "/devices", Some(&valid), None).await.0,
+        StatusCode::OK
+    );
+}
+
+/// A near-expiry logout must not mint/return a replacement credential, and
+/// endpoints whose clients do not consume rotations must not retire the old
+/// credential as an extractor side effect.
+#[tokio::test(flavor = "current_thread")]
+async fn logout_schema_and_revoke_do_not_mint_undelivered_replacements() {
+    use vela_session_policy::{plan_device_token, TokenDecision};
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
+    let keys = Keys::new();
+    let mut challenges = Vec::new();
+    for _ in Dev::ALL {
+        challenges.push(get_challenge(&app).await);
+    }
+    let real = Fixture::new(state.clone(), app.clone(), &keys, &challenges).await;
+    let device = real.device_id(Dev::B);
+    let now = chrono::Utc::now().timestamp();
+    let plan = match plan_device_token(now - (15 * 60) + 120, None) {
+        TokenDecision::Issue(plan) => plan,
+        TokenDecision::Reject => panic!("near-expiry plan must be issued"),
+    };
+    let ts = vela_server::auth::token::TokenService::new(
+        state.paseto_sk.clone(),
+        state.paseto_pk.clone(),
+    );
+    let (token, jti) = ts
+        .issue_from_plan(real.user_id(Owner::Alice), device, plan)
+        .unwrap();
+    vela_server::rate_limit::track_device_jti(&state.store, &device.to_string(), &jti).unwrap();
+    for (method, uri, body) in [
+        ("GET", "/vault/schema", None),
+        ("POST", "/vault/schema", None),
+        (
+            "POST",
+            "/device/revoke",
+            Some(json!({ "target_device_id": real.device_id(Dev::A) })),
+        ),
+    ] {
+        let (status, headers, _) = call(&app, method, uri, Some(&token), body).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            headers.get("x-new-token").is_none(),
+            "unexpected renewal at {uri}"
+        );
+        assert!(
+            !state.store.exists(&format!("jti:revoked:{jti}")).unwrap(),
+            "old token retired without a delivered successor at {uri}"
+        );
+    }
+    let (status, headers, _) = call(&app, "POST", "/auth/logout", Some(&token), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(headers.get("x-new-token").is_none());
+    assert!(state.store.exists(&format!("jti:revoked:{jti}")).unwrap());
+    assert_eq!(
+        state
+            .store
+            .smembers(&format!("device:jtis:{device}"))
+            .unwrap()
+            .len(),
+        1,
+        "logout minted a replacement token"
+    );
+    assert_eq!(
+        call(&app, "GET", "/devices", Some(&token), None).await.0,
+        StatusCode::UNAUTHORIZED
+    );
 }

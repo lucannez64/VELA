@@ -9,7 +9,7 @@ cite them.
 | ID | Property | Status |
 |---|---|---|
 | **U-1** | **End-to-end secrecy of the RMS and vault plaintext against a malicious server** (CONF-1, CONF-2) | No theory models the whole system with the server as attacker. Secrecy is argued from the architecture. Individual theories either model the server as an honest enforcer (M11–M21, M26) or make capsule contents opaque by assumption (M19b, M21) |
-| **U-2** | **Device authentication beyond the challenge proof** | M27 locally proves signature provenance, challenge single use and registered-user binding. PASETO parsing, TTL, JTI revocation, device-revocation cascade and concurrent issuance remain unproved. An in-flight request can pass lookup before revocation and mint later. |
+| **U-2** | **Device authentication beyond the challenge proof** | M27 locally proves signature provenance, challenge single use and registered-user binding. PASETO parsing, TTL, JTI revocation, device-revocation cascade and concurrent issuance remain unproved. An in-flight request can pass lookup before revocation and mint later. Fresh device-token admissions now recheck the durable matching active-device row, so a late token cannot bypass a completed revocation when the temporary sentinel expires; this is regression-tested, not an unbounded middleware proof. |
 | **U-3** | **Computational security of the complete constructions**, including AEAD AAD encodings, BLAKE3 contexts, Shamir share tags, link-key/passphrase mixing and possession proofs | Scoped exceptions: CryptoVerif models cover the v2 KEM combiner, modular KEM-DEM, AND signatures, v2 RMS possession proofs and authenticated Shamir reconstruction under the [listed assumptions](../formal/cryptoverif/README.md), including ideal KDF/tag abstractions. Concrete hash/context/encoding correspondence, other constructions and full composition remain unproved. See [Q-1](06-engaging-researchers.md#priority-questions) |
 | **U-4** | **Enrollment beyond both-key fingerprint binding** | M13b locally proves secrecy against key substitution under an ideal authentic human comparison. It does not prove primary-to-joiner authentication, correct adoption, human behavior, finite fingerprint collision resistance, or full composition with M13. |
 | **U-5** | **Recovery with a network adversary** | M14 is ordering-only. M15 and M18 add adversarial cloud storage and contact responses, but WebAuthn is an idealised honest rule |
@@ -40,6 +40,12 @@ to actual Tamarin traces remains a manual argument with two unproved embedding
 obligations; the direct encoded safety proofs do not discharge those source
 obligations or instantiate the full Tamarin term algebra.
 Neither source equivalence nor Rust/filesystem refinement is machine-checked.
+
+New login/revocation refinements retain two explicit limits: a request already
+past the durable lookup can finish after revocation, and token renewal still
+happens before other handlers finish. Logout/schema/revoke suppress renewal;
+other error paths can lose a replacement header and require re-authentication.
+A successful login response is not a proof of atomic issuance/revocation.
 
 ## Trusted components
 
@@ -78,7 +84,7 @@ them. Each is an easy place for a reviewer to find an over-claim.
 
 | ID | Gap | Impact | Planned fix |
 |---|---|---|---|
-| **G-1** | **Hosted baseline passed on fdee2bc:** 249 Rust postconditions /256 selections, twenty chunk lemmas, six epoch lemmas and encoded journal proofs; all fifteen PR checks passed | Conditional policy proofs and green CI do not establish whole-handler/client correctness; later lifecycle changes need their own evidence | Exact metadata, uploaded proof logs and scope: [hosted-fdee2bc](proof-logs/current/hosted-fdee2bc/README.md); older snapshots keep their original provenance |
+| **G-1** | **Hosted baseline passed on c8a377d:** the 249-contract base inventory plus separately scoped driver/composition proofs and mobile conformance tests; all fifteen PR checks passed | Conditional proofs and green CI do not establish whole-handler/client correctness; the new login/durable-admission increment needs its own evidence | [Security workflow](https://github.com/lucannez64/VELA/actions/runs/40154658518) and [current ledger](08-formalization-status.md); older snapshots keep their original provenance |
 | **G-2** | **Closed: credential-release theories run in CI** | CONF-6/7/8, AUTH-9 and COMP-7 are now CI-witnessed | `run-all.sh` passed in the [368bcc0 hosted workflow](proof-logs/current/hosted-368bcc0/README.md): 83 verified plus exactly the five named intended falsifications |
 | **G-3** | **Partly pinned environment** | Historical CI used unsupported Maude 3.2 and unpinned ProVerif | Current proof gates pin Tamarin 1.12.0, Maude 3.5.1, ProVerif 2.05 and Rust 1.99.1; hax/F*/Z3 versions are pinned. OS packages, action tags, transitive opam resolution and static scanners remain non-hermetic |
 | **G-4** | **Historical documentation drift** | The original package predated the new protocols | This update removes the unsupported GL20 citation and the claimed reduction, records current counts and preserves old CI results as historical evidence |

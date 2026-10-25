@@ -20,6 +20,15 @@ def uncomment(source):
                 index += 2
                 continue
             quoted = char != '"'
+        elif not depth and char == "'" and (literal := re.match(
+            r"'(?:[^'\\\r\n]|\\(?:x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|[0-9]{3}|.))'",
+            source[index:],
+        )):
+            # F* type variables such as 'a do not match a closed character
+            # literal. A quote character must not shift string-lexer parity.
+            output.append('0')
+            index += len(literal.group())
+            continue
         elif depth:
             if pair == '(*':
                 depth += 1
@@ -90,18 +99,34 @@ def check_source(source, *, generated=False):
         raise ValueError('unreviewed bare declaration')
 
 
+def check_files(generated, proofs, include_dirs=()):
+    declared = {path.resolve() for path in [*generated, *proofs]}
+    directories = {path.parent for path in declared}
+    directories.update(path.resolve() for path in include_dirs)
+    # All local source-resolution directories must be covered, including the
+    # verifier cwd. Extra modules/interfaces cannot silently add assumptions.
+    for directory in directories:
+        siblings = set(directory.glob('*.fst')) | set(directory.glob('*.fsti'))
+        unlisted = siblings - declared
+        if unlisted:
+            raise ValueError('unlisted proof sources in include directory: ' +
+                             ', '.join(str(path) for path in sorted(unlisted)))
+    for extracted, paths in [(True, generated), (False, proofs)]:
+        for path in paths:
+            try:
+                check_source(path.read_text(encoding='utf-8'), generated=extracted)
+            except ValueError as error:
+                raise ValueError(f'{path}: {error}') from error
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--generated', nargs='+', type=Path, required=True)
     parser.add_argument('--proof', nargs='+', type=Path, required=True)
+    parser.add_argument('--include-dir', type=Path, action='append', default=[])
     args = parser.parse_args()
     try:
-        for generated, paths in [(True, args.generated), (False, args.proof)]:
-            for path in paths:
-                try:
-                    check_source(path.read_text(), generated=generated)
-                except ValueError as error:
-                    raise ValueError(f'{path}: {error}') from error
+        check_files(args.generated, args.proof, args.include_dir)
     except (OSError, ValueError) as error:
         parser.exit(1, str(error) + '\n')
     print(f'Driver source policy: {len(args.generated)} extracted modules, {len(args.proof)} proof modules; no unreviewed escapes/options')

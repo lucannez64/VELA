@@ -52,6 +52,16 @@ pub async fn post_revoke(
         ));
     }
     if target.revoked {
+        // Retry all revocation effects: an in-flight login/renewal may have
+        // tracked another JTI after the first enumeration, and the temporary
+        // sentinel may have expired. The durable middleware row check remains
+        // the final guard for every new device-token admission.
+        rate_limit::revoke_all_device_jtis(&state.store, &body.target_device_id.to_string())?;
+        state.store.set_ex(
+            &format!("device:revoked:{}", body.target_device_id),
+            &[1u8],
+            rate_limit::TOKEN_MAX_LIFETIME_SECS,
+        )?;
         // Repeat the web-session cascade so a revoke whose cascade failed
         // part-way is finished by a retry.
         revoke_web_sessions_approved_by(&state, session.user_id, body.target_device_id).await?;

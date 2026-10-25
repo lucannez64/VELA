@@ -7,7 +7,7 @@ conformance", immediately after `challenge_single_use_model`).
 Every command sequence up to `VELA_REVOCATION_MODEL_DEPTH` (default 3) over a
 22-command alphabet runs against an independent reference state machine and
 against the real Axum router backed by the real Turso schema and sled store.
-Three focused tests pin the properties in readable form: a regression sequence,
+Six focused tests pin the properties in readable form: a regression sequence,
 automatic token renewal, and a token that escaped JTI enumeration.
 
 ## What the server actually does
@@ -27,7 +27,8 @@ caller's own token with the 15-minute maximum token lifetime.
 
 `AuthSession::from_request_parts` (`src/middleware.rs`, steps 4–5) is the only
 place either record is consulted, in this order: PASETO signature → 8-hour hard
-cap → `jti:revoked` → `device:revoked` → per-JTI rate limit → account exists.
+cap → `jti:revoked` → `device:revoked` → per-JTI rate limit → account exists
+→ matching unrevoked device row (device-scoped tokens only).
 `DeviceSession` delegates to `AuthSession`, so every authenticated route is
 gated by both checks. Every authenticated handler in `src/routes.rs` extracts
 one of those two types; none parses the bearer itself.
@@ -41,7 +42,7 @@ enumeration and the sentinel write.
 |---|---|---|---|
 | `jti:revoked:{jti}` | logout, revoke (bulk), middleware renewal | `AuthSession` | 900 s |
 | `device:revoked:{id}` | revoke | `AuthSession` | 900 s |
-| `devices.revoked` (SQL) | revoke | `/auth/verify` lookup (`AND revoked = 0`), `/devices` listing, `revoke` pre-check | durable |
+| `devices.revoked` (SQL) | revoke | `/auth/verify` lookup (`AND revoked = 0`), `/devices` listing, `revoke` pre-check and device-token admission in `AuthSession` | durable |
 
 ## Reference model
 
@@ -162,7 +163,7 @@ instead of growing by four ~5 KiB device rows per trace (~11k traces at depth
   replacement works, and **both** die when the device is revoked (the
   middleware registers the replacement's JTI with the device).
 
-## Mutation checks (applied locally, then reverted)
+## Historical mutation checks (before the durable admission gate)
 
 `git diff -- serverVELA/vela-server/src/` is empty after the revert; no handler
 change was kept.
@@ -220,6 +221,31 @@ be unrevoked, so a grant racing the revocation cannot survive it. The
 regression test is `revoking_a_device_revokes_the_web_sessions_it_approved`
 in `tests/integration.rs` (mutation-checked for both parts); this bounded
 model does not drive web sessions.
+
+## Durable admission and token-delivery correction
+
+The initial sentinel-only admission had a late-login race: a login can observe
+an active row, then issue/track its token after revocation enumerated JTIs and
+wrote its 900-second sentinel. The token expires later than the sentinel and
+could become usable again. The new regression reproduces that boundary: the real
+token service issues after revoke, its JTI is tracked afterwards, then only the
+temporary sentinel is removed to project expiry. Before the correction `/devices`
+returned 200; after it, fresh requests are refused by the durable row gate.
+
+Device-token admission now requires a matching account/device row with revoked=0
+before renewal; missing and foreign device rows also refuse. Web-session tokens
+have no device row and retain their separate path. A repeated revoke retries JTI
+cleanup and sentinel writes before the existing web-session cascade/400 response.
+Near-expiry logout never mints/returns a replacement; schema and revoke requests
+also suppress renewal because their callers do not consume a replacement token.
+Other handlers' failed-response renewal delivery remains outside this correction.
+
+The old marker-disabling mutation results above are historical. With the durable
+row gate, disabling a temporary marker alone need not change a completed-revoke
+trace's result. The new failing-before/passing-after regression tests the durable
+boundary directly. These are implementation tests, not unbounded proofs. No
+15-minute wait or real concurrent login pause is used; DB linearizability and
+already-admitted/in-flight requests remain explicit assumptions/limits.
 
 ## Not covered
 

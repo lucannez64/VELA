@@ -10,11 +10,7 @@
 
 use axum::{extract::State, http::HeaderMap};
 
-use crate::{
-    error::Result,
-    middleware::{maybe_append_new_token, AuthSession},
-    state::AppState,
-};
+use crate::{error::Result, middleware::AuthSession, state::AppState};
 
 pub async fn post_logout(
     State(state): State<AppState>,
@@ -31,8 +27,7 @@ pub async fn post_logout(
         "explicit logout — JTI revoked"
     );
 
-    let mut headers = HeaderMap::new();
-    maybe_append_new_token(&mut headers, &session);
-
-    Ok((headers, "logged out"))
+    // Logout must never advertise a replacement credential. The extractor
+    // suppresses renewal on this route as well.
+    Ok((HeaderMap::new(), "logged out"))
 }

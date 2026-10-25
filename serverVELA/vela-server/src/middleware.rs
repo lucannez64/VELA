@@ -116,6 +116,29 @@ impl FromRequestParts<AppState> for AuthSession {
             ));
         }
 
+        // A login/renewal that read an active device can finish after revoke
+        // enumerated its JTIs. Its later-issued token may outlive the temporary
+        // sled sentinel. The durable row is therefore checked on every new
+        // device-token admission, before issuing a replacement token. Web
+        // sessions use their session id as device_id and have no devices row.
+        // This does not cancel a request that already passed authentication.
+        if claims.scope == TokenScope::Device {
+            let active_device = state
+                .sqldb
+                .query(
+                    "SELECT id FROM devices WHERE id = ? AND user_id = ? AND revoked = 0",
+                    vec![
+                        TursoValue::Text(claims.device_id.to_string()),
+                        TursoValue::Text(claims.user_id.to_string()),
+                    ],
+                )
+                .await
+                .map_err(|e| AppError::Internal(e.to_string()))?;
+            if active_device.is_empty() {
+                return Err(AppError::Unauthorized("device has been revoked".into()));
+            }
+        }
+
         // ── 6. Verified token renewal ────────────────────────────────────────
         let renewal = vela_session_policy::plan_renewal(
             TokenClaims {
@@ -126,7 +149,16 @@ impl FromRequestParts<AppState> for AuthSession {
             },
             now.timestamp(),
         );
+        // These endpoints either terminate the token or have clients that do
+        // not consume renewal headers. Keep the old token usable until its
+        // normal expiry rather than retiring it without delivering a successor.
+        // Other handlers' error-path delivery remains a separate limitation.
+        let suppress_renewal = matches!(
+            parts.uri.path(),
+            "/auth/logout" | "/vault/schema" | "/device/revoke"
+        );
         let new_token = match renewal {
+            RenewalDecision::Renew(_) if suppress_renewal => None,
             RenewalDecision::Renew(plan) => {
                 let old_ttl_secs = (claims.exp - now).num_seconds().max(0) as u64;
 

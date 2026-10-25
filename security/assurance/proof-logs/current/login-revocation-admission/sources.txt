@@ -1,0 +1,7 @@
+base: 8fd59d8
+source-patch-sha256: b87b1933219aca7535289071885cd067550888425373775bc3feed6f98cac2f1
+3ae236e4de81a091ff963fbd4fa480ad2d6305779ffe41747498f8b02347af7c  serverVELA/vela-server/src/middleware.rs
+7f7e6d087138b4736c9b4b5f828e3eb8034eb11a2d5089ce659a8a02d3854bb3  serverVELA/vela-server/src/device/revoke.rs
+a0b48b40cc077eec3cdb2544351ae94c06b2de8ff262a923f53ce906dc102748  serverVELA/vela-server/src/auth/logout.rs
+ca038d6162186296ec385c901456fbbce17c5b4c212400089537964762934880  serverVELA/vela-server/tests/device_revocation_model.rs
+bf95e6a3b1125810a3cdee8bd9d5b736ddfe872f448c5666ee3d71926824ff06  serverVELA/vela-server/tests/integration.rs
