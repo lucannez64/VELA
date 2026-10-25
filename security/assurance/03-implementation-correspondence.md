@@ -232,6 +232,14 @@ claim across layers:
    canonical rendering (see [Q-6](06-engaging-researchers.md#priority-questions)).
 5. **Executable:** exploit `test_rt5_share_ek_hijack.py`.
 
+## Device revocation driver
+
+`vela-session-policy::revocation_driver` holds the revoke, logout and
+revocation-admission decisions called by `device/revoke.rs`, `auth/logout.rs`
+and `middleware.rs` (13 contracts, 28 per-request and 56 composition lemmas;
+[evidence](proof-logs/current/revocation-driver/README.md)). Handler effect
+fidelity and store/SQL semantics are assumed.
+
 ## Login driver and challenge-purpose recognition
 
 The [login increment](proof-logs/current/login-driver/README.md) checks the
