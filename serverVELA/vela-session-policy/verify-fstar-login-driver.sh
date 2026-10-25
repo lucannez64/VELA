@@ -4,8 +4,8 @@ set -euo pipefail
 # Focused F-1/F-2 increment: exact challenge-purpose recognition and the
 # `/auth/verify` login decision driver.
 #
-# The historical `proofs/fstar/extraction/` artifact keeps the original 21
-# session-policy contracts. The new `challenge` and `login_driver` modules are
+# The historical `proofs/fstar/extraction/` artifact keeps the original 21 selections / 19
+# session-policy postconditions. The new `challenge` and `login_driver` modules are
 # extracted into `proofs/fstar/extraction-login-driver/` in their own
 # `cargo hax` run and checked in their own `fstar.exe` invocation. Never pass
 # the historical extraction directory to this invocation: the focused partial
@@ -106,7 +106,7 @@ printf ' %q' "${fstar_args[@]}"
 printf '\n'
 fstar.exe "${fstar_args[@]}"
 
-echo "login driver proof: 11 focused production entry points checked (3 challenge + 8 login)"
+echo "login driver proof: 12 focused production entry points checked (3 challenge + 9 login)"
 echo "challenge refinement: exact literal-byte recognition for every bounded stored tag"
 echo "login trace: one response at most, response implies accepted login + valid verifier + tracked token, failure terminal"
 sha256sum "${proof_files[@]}" "${challenge_lemma_files[@]}" "${login_lemma_files[@]}" \

@@ -1,12 +1,21 @@
 # Login driver and challenge-purpose refinement (F-1/F-2 increment)
 
 Date: 2026-10-25
-Parent: `c8a377d` (`Record the first hosted iOS sync admission test pass`)
-Worktree: `/home/hirew/.t3/worktrees/VELA/t3-cd2daf01`
+Authored on parent: `c8a377d` (`Record the first hosted iOS sync admission test pass`)
+Original delegated worktree: `/home/hirew/.t3/worktrees/VELA/t3-cd2daf01`
 Heavy-command wrapper: `~/.local/opt/vela-tools/bin/vela-heavy`
 Target dir: `/home/hirew/.t3/worktrees/VELA/t3-700776df/target`
 
-This increment owns only:
+The original sources/evidence were cherry-picked as `40129b6` onto
+`d98475f`. Historical logs below describe that delegated run, not a rerun on
+the integrated tree. Its concluding “11 (3 + 8)” entry-point count is a
+reporting error: the extraction selects **12 (3 challenge + 9 login)**.
+The historical artifact has **19 explicit postconditions / 21 selections**;
+“21 contracts” in the original log counts selected functions, not ensures.
+Parent runtime-gate corrections and fresh integrated handler tests are
+recorded separately in `login-driver-runtime-gates/`.
+
+This original increment owns only:
 
 - `serverVELA/vela-session-policy` (new `src/challenge.rs`,
   `src/login_driver.rs`, `tests/login_driver.rs`, focused extraction,
@@ -45,6 +54,11 @@ maps it to the historical messages for all three consumers (`/auth/verify`,
 `take_challenge` directly so the driver sees the actual classification.
 
 ### `/auth/verify` decision driver
+
+This section describes the intended driver sequence. The original handler
+only enforced the challenge effect at runtime; the other checks were debug
+assertions. The parent [runtime-gate correction](../login-driver-runtime-gates/README.md)
+now enforces every effect in release builds and retains fresh integrated tests.
 
 `post_verify` now runs the pure `vela_session_policy::login_driver` state
 machine for every decision after the existing IP limiter and backoff precheck:
@@ -214,8 +228,8 @@ The unmutated focused gate discharges every verification condition; no
 - `cargo-test-login-driver-handler.log`: four focused real-handler tests —
   successful login tracks the issued JTI and replay is refused; a wrong-purpose
   login nonce is refused and spent; a failed verifier returns no token and
-  records both failure-streak side effects; two concurrent logins with one nonce yield at most one token.
-- `fstar-full-verify.log`: one `./verify-fstar.sh` run: historical 21-contract
+  records both failure-streak side effects; two current-thread, interleaved login futures with one nonce yield at most one token. The parent runtime-gate increment also exercises this on a two-worker runtime.
+- `fstar-full-verify.log`: one `./verify-fstar.sh` run: historical 21-selection / 19-postcondition
   extraction/F* check followed by the focused challenge/login gate. All
   verification conditions discharged.
 
@@ -236,7 +250,7 @@ Tests and proof are separate evidence; neither substitutes for the other.
   result is decision-relevant and propagated.
 - The `last_active` update is unconditional handler glue and is not part of the
   driver's decision trace.
-- The historical 21-contract extraction is unchanged. The focused extraction
+- The historical 21-selection / 19-postcondition extraction is unchanged. The focused extraction
   must never share an `fstar.exe` include directory with it.
 
 ## Toolchain / commands

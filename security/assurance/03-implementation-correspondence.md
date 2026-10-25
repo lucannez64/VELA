@@ -231,3 +231,17 @@ claim across layers:
    handler stores the client-supplied string as-is, while M25 assumes a
    canonical rendering (see [Q-6](06-engaging-researchers.md#priority-questions)).
 5. **Executable:** exploit `test_rt5_share_ek_hijack.py`.
+
+## Login driver and challenge-purpose recognition
+
+The [login increment](proof-logs/current/login-driver/README.md) checks the
+actual extracted `login_driver::step` by induction over arbitrary per-request
+event lists. A response requires accepted challenge, valid verifier and tracked
+JTI observations, and occurs at most once. Literal-byte recognition is checked
+for every bounded `StoredTag`; actual slice conversion and issuance remain
+tested glue. The handler now enforces every effect in release builds; see the
+[runtime correction](proof-logs/current/login-driver-runtime-gates/README.md).
+This is inspected wiring, not a handler/SQL/store refinement theorem. The
+focused extraction has 12 selections / 11 postconditions (8 conditional on a
+sound driver state), separate from the unchanged 249-postcondition census.
+Concurrent one-challenge composition and full lifecycle composition remain open.

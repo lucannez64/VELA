@@ -199,6 +199,8 @@ jobs:
           cargo test --manifest-path serverVELA/Cargo.toml --test recovery_possession_model
           cargo test --manifest-path serverVELA/Cargo.toml --test pairing_model
           cargo test --manifest-path serverVELA/Cargo.toml --test challenge_single_use_model
+          cargo test --manifest-path serverVELA/Cargo.toml --test login_driver_handler
+          cargo test --manifest-path serverVELA/Cargo.toml -p vela-session-policy --test login_driver
           cargo test --manifest-path serverVELA/Cargo.toml --test account_deletion_model
           cargo test --manifest-path serverVELA/Cargo.toml --test device_revocation_model
           cargo test --manifest-path serverVELA/Cargo.toml -p vela-recovery-policy --test redemption_driver
@@ -371,6 +373,9 @@ jobs:
           name: assurance-refinement-extractions
           path: |
             serverVELA/vela-*-policy/proofs/fstar/extraction/*.fst
+            serverVELA/vela-*-policy/proofs/fstar/extraction-*driver/*.fst
+            serverVELA/vela-*-policy/proofs/fstar/*-lemmas/*.fst
+            serverVELA/vela-*-policy/proofs/fstar/*-composition/*.fst
             libVELA/vela-*-policy/proofs/fstar/extraction/*.fst
             libVELA/vela-sync-policy/proofs/fstar/chunk-lemmas/*.fst
             libVELA/vela-sync-policy/proofs/fstar/extraction-epoch/*.fst

@@ -51,7 +51,9 @@ pub async fn post_verify(
     rate_limit::verify_by_ip(&state.store, &ip)?;
     rate_limit::check_verify_backoff(&state.store, &ip, &device_id_str)?;
 
-    let mut driver = login_driver::begin_login().driver;
+    let initial = login_driver::begin_login();
+    require_login_effect(initial.effect, LoginEffect::ConsumeChallenge)?;
+    let mut driver = initial.driver;
 
     // ── Consume the login nonce ─────────────────────────────────────────────
     let challenge =
@@ -118,14 +120,22 @@ pub async fn post_verify(
     };
     let transition = login_driver::on_device_looked_up(driver, device_observation);
     driver = transition.driver;
-    let device = match device_result {
-        Ok(device) => device,
-        Err(error) => {
-            debug_assert!(matches!(transition.effect, LoginEffect::Fail(_)));
+    let device = match (transition.effect, device_result) {
+        (LoginEffect::VerifySignature, Ok(device)) => device,
+        (LoginEffect::Fail(failure), Err(error)) => {
+            let expected = match device_observation {
+                DeviceObservation::Absent => LoginFailure::DeviceUnavailable,
+                DeviceObservation::QueryFailed => LoginFailure::DeviceQueryStorage,
+                DeviceObservation::ParseFailed => LoginFailure::DeviceParseStorage,
+                DeviceObservation::Present => {
+                    return Err(unexpected_login_effect(transition.effect))
+                }
+            };
+            require_login_effect(LoginEffect::Fail(failure), LoginEffect::Fail(expected))?;
             return Err(error);
         }
+        (effect, _) => return Err(unexpected_login_effect(effect)),
     };
-    debug_assert!(matches!(transition.effect, LoginEffect::VerifySignature));
 
     // ── Decode the nonce and run the actual verifier ────────────────────────
     let challenge_bytes = B64.decode(&body.challenge);
@@ -136,10 +146,10 @@ pub async fn post_verify(
                 driver,
                 VerifierObservation::ChallengeDecodeFailed,
             );
-            debug_assert!(matches!(
+            require_login_effect(
                 transition.effect,
-                LoginEffect::Fail(LoginFailure::ChallengeDecode)
-            ));
+                LoginEffect::Fail(LoginFailure::ChallengeDecode),
+            )?;
             return Err(AppError::BadRequest("invalid challenge encoding".into()));
         }
     };
@@ -153,7 +163,7 @@ pub async fn post_verify(
         Ok(()) => {
             let transition = login_driver::on_verifier_finished(driver, VerifierObservation::Valid);
             driver = transition.driver;
-            debug_assert!(matches!(transition.effect, LoginEffect::ResetBackoff));
+            require_login_effect(transition.effect, LoginEffect::ResetBackoff)?;
         }
         Err(error) => {
             let observation = match &error {
@@ -163,10 +173,7 @@ pub async fn post_verify(
             };
             let transition = login_driver::on_verifier_finished(driver, observation);
             driver = transition.driver;
-            debug_assert!(matches!(
-                transition.effect,
-                LoginEffect::RecordVerificationFailure
-            ));
+            require_login_effect(transition.effect, LoginEffect::RecordVerificationFailure)?;
 
             // The exponential-backoff record is log-only: a store hiccup must
             // not let a failed proof skip the request-level fallback limiter.
@@ -186,7 +193,20 @@ pub async fn post_verify(
             };
             let failure_transition =
                 login_driver::on_failure_record_observed(driver, record_observation);
-            debug_assert!(matches!(failure_transition.effect, LoginEffect::Fail(_)));
+            let expected_failure = if counter_result.is_err() {
+                LoginFailure::FailureCounterStorage
+            } else {
+                match observation {
+                    VerifierObservation::RejectedUnauthorized => LoginFailure::VerifierUnauthorized,
+                    VerifierObservation::RejectedBadRequest => LoginFailure::VerifierBadRequest,
+                    VerifierObservation::RejectedInternal => LoginFailure::VerifierInternal,
+                    _ => return Err(unexpected_login_effect(failure_transition.effect)),
+                }
+            };
+            require_login_effect(
+                failure_transition.effect,
+                LoginEffect::Fail(expected_failure),
+            )?;
             return match counter_result {
                 // Preserve the historical status/message precedence: the
                 // fallback limiter's own error wins; otherwise the verifier
@@ -207,14 +227,11 @@ pub async fn post_verify(
     };
     let transition = login_driver::on_backoff_reset_observed_event(driver, reset_observation);
     driver = transition.driver;
-    if let Err(error) = reset_result {
-        debug_assert!(matches!(
-            transition.effect,
-            LoginEffect::Fail(LoginFailure::BackoffResetStorage)
-        ));
-        return Err(error);
+    match (transition.effect, reset_result) {
+        (LoginEffect::IssueToken, Ok(())) => {}
+        (LoginEffect::Fail(LoginFailure::BackoffResetStorage), Err(error)) => return Err(error),
+        (effect, _) => return Err(unexpected_login_effect(effect)),
     }
-    debug_assert!(matches!(transition.effect, LoginEffect::IssueToken));
 
     // ── Best-effort device activity update (unchanged handler glue) ─────────
     let now = chrono::Utc::now().to_rfc3339();
@@ -266,17 +283,11 @@ pub async fn post_verify(
     };
     let transition = login_driver::on_token_issue_observed(driver, issue_observation);
     driver = transition.driver;
-    let (token, jti) = match issue_result {
-        Ok(value) => value,
-        Err(error) => {
-            debug_assert!(matches!(
-                transition.effect,
-                LoginEffect::Fail(LoginFailure::TokenIssueFailed)
-            ));
-            return Err(error);
-        }
+    let (token, jti) = match (transition.effect, issue_result) {
+        (LoginEffect::TrackToken, Ok(value)) => value,
+        (LoginEffect::Fail(LoginFailure::TokenIssueFailed), Err(error)) => return Err(error),
+        (effect, _) => return Err(unexpected_login_effect(effect)),
     };
-    debug_assert!(matches!(transition.effect, LoginEffect::TrackToken));
 
     // ── Track the JTI before any response ───────────────────────────────────
     let track_result = rate_limit::track_device_jti(&state.store, &device_id_str, &jti);
@@ -286,21 +297,26 @@ pub async fn post_verify(
         TokenTrackObservation::Failed
     };
     let transition = login_driver::on_token_track_observed(driver, track_observation);
-    match track_result {
-        Ok(()) => {
-            debug_assert!(matches!(transition.effect, LoginEffect::Respond));
-            Ok(Json(VerifyResponse {
-                token,
-                user_id: device.user_id.to_string(),
-            }))
-        }
-        Err(error) => {
-            debug_assert!(matches!(
-                transition.effect,
-                LoginEffect::Fail(LoginFailure::TrackingFailed)
-            ));
-            // The issued token is discarded: no response without tracking.
-            Err(error)
-        }
+    match (transition.effect, track_result) {
+        (LoginEffect::Respond, Ok(())) => Ok(Json(VerifyResponse {
+            token,
+            user_id: device.user_id.to_string(),
+        })),
+        // The issued token is discarded: no response without tracking.
+        (LoginEffect::Fail(LoginFailure::TrackingFailed), Err(error)) => Err(error),
+        (effect, _) => Err(unexpected_login_effect(effect)),
+    }
+}
+
+fn unexpected_login_effect(effect: LoginEffect) -> AppError {
+    AppError::Internal(format!("unexpected login driver effect: {effect:?}"))
+}
+
+/// Release-build gate: no effect or response proceeds on a driver mismatch.
+fn require_login_effect(actual: LoginEffect, expected: LoginEffect) -> Result<()> {
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(unexpected_login_effect(actual))
     }
 }

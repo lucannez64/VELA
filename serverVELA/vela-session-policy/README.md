@@ -116,8 +116,10 @@ present non-matching tag is always `WrongPurpose`.
 8. `on_token_track_observed` requires JTI tracking before `Respond`; a tracking
    failure discards the token and returns the tracking error.
 
-The handler still performs the effects and renders the driver's category with
-the original status/message precedence: challenge messages, the uniform
+The handler checks every next effect in release builds, including the initial
+challenge take and final `Respond`. Unexpected effects fail closed with an
+internal error. It carries original errors through the corresponding failure
+category, preserving the original status/message precedence: challenge messages, the uniform
 `DEVICE_AUTH_FAILED` message, verifier `BadRequest`/`Internal` pass-through,
 the fallback limiter's own error, backoff-reset errors, issuance errors and
 tracking errors. The `last_active` update remains unconditional handler glue
@@ -133,8 +135,8 @@ predicate, and proves by induction over arbitrary `list t_LoginEvent`:
 
 - every trace from `begin_login` stays sound;
 - at most one `Respond` effect per request, and a finished driver is inert;
-- a response implies an actual accepted `login` challenge event, an actual
-  `Valid` verifier event, and an actual `Tracked` JTI event;
+- a response implies the event list contains an accepted `login` challenge
+  event, a `Valid` verifier event, and a `Tracked` JTI event;
 - a wrong-purpose or missing challenge, an actual verifier rejection, and a
   tracking failure are terminal and cannot be followed by a response;
 - real success, wrong-purpose refusal, verifier refusal and tracking-failure

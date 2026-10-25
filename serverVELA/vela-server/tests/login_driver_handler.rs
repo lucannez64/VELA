@@ -289,7 +289,7 @@ async fn failed_verifier_returns_no_token_and_records_the_failure_streak() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn two_logins_with_one_nonce_yield_at_most_one_token() {
     let state = helpers::test_state().await;
     let app = vela_server::routes::build(state.clone());
@@ -326,6 +326,47 @@ async fn two_logins_with_one_nonce_yield_at_most_one_token() {
     assert!(state
         .store
         .get(&format!("challenge:{challenge}"))
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
+async fn malformed_consumed_nonce_is_bad_request_before_failure_counting() {
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
+    let seeded = seed_device(&state).await;
+    // Corrupt stored nonce key with a valid login tag: take succeeds, decode fails.
+    let challenge = "not-base64!";
+    state
+        .store
+        .set_ex(&format!("challenge:{challenge}"), b"login", 60)
+        .unwrap();
+    let (status, body) = body_json(
+        app.oneshot(verify_request(seeded.device_id, challenge, "unused"))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body["message"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("invalid challenge encoding"));
+    assert!(body.get("token").is_none());
+    assert!(state
+        .store
+        .get(&format!("challenge:{challenge}"))
+        .unwrap()
+        .is_none());
+    let ip = "203.0.113.77";
+    assert!(state
+        .store
+        .get(&format!("rl:streak:verify:{ip}:{}", seeded.device_id))
+        .unwrap()
+        .is_none());
+    assert!(state
+        .store
+        .get(&format!("rl:verify:fail:dev:{ip}:{}", seeded.device_id))
         .unwrap()
         .is_none());
 }

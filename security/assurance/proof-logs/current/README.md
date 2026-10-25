@@ -158,3 +158,9 @@ logs in the parent directory remain identified by their older commit.
 
 Reproduce with the commands in `../../04-reproducibility.md`. Logs contain
 local absolute source paths; there are no deployment credentials in them.
+
+The [login driver](login-driver/README.md) checks exact purpose recognition on
+bounded stored tags and arbitrary per-request login event lists. Its
+[runtime gate correction](login-driver-runtime-gates/README.md) enforces the
+decisions in release builds, with fresh 3/68/5 server tests. Raw-byte producer
+correspondence and unbounded one-nonce concurrency remain open in this snapshot.

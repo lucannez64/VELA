@@ -28,7 +28,7 @@ prebuilt path named by the task was absent in this worktree. `fstar.exe
 cd serverVELA
 CARGO_TARGET_DIR=/home/hirew/.t3/worktrees/VELA/t3-700776df/target \
   ~/.local/opt/vela-tools/bin/vela-heavy cargo test -p vela-session-policy
-# -> cargo-test-session-policy.log (14 unit + 13 login-driver tests)
+# -> cargo-test-session-policy.log (15 unit + 13 login-driver tests)
 
 CARGO_TARGET_DIR=/home/hirew/.t3/worktrees/VELA/t3-700776df/target \
   ~/.local/opt/vela-tools/bin/vela-heavy cargo test -p vela-server --test integration

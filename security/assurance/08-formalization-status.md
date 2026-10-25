@@ -372,3 +372,23 @@ or mocked database cannot substitute for these obligations. No unsupported
 computational reduction, full Rust/Kotlin/Swift refinement or whole-system
 completion claim is supplied here. The Tamarin↔F★ source bridge and real
 Rust/filesystem refinement of M28 remain open.
+
+## Login driver increment
+
+The [login proof](proof-logs/current/login-driver/README.md) establishes
+per-request trace safety over the actual extracted Rust step and literal-byte
+recognition over bounded challenge tags. It selects 12 production functions
+with 11 explicit postconditions; 8 require the driver invariant, established
+by `begin_login` and preserved by transitions. This focused artifact is counted
+separately from the unchanged 249 postconditions / 256 selections census.
+The historical session artifact remains 19 postconditions / 21 selections.
+
+A [parent correction](proof-logs/current/login-driver-runtime-gates/README.md)
+replaces debug-only effect checks with release-build gates. Integrated local
+validation passes 3 challenge, 68 integration and 5 handler tests; all 49
+Python source-policy tests pass. Green hosted `d98475f` predates this increment;
+no hosted proof or test result for these changes is claimed yet.
+Raw slice-to-tag/issuer correspondence and unbounded one-challenge concurrency
+are separate open obligations. Store/SQL/verifier origins, effect fidelity,
+revocation/issuance linearization, crash behavior and whole-system composition
+remain open. This work has no external audit status.
