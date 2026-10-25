@@ -28,3 +28,7 @@ reads rejected Unicode comments. These are corrected with local include-director
 inventory checks, character-literal handling and explicit UTF-8. The regression
 suite now covers each reported case. This is still not a full F* parser or a
 semantic proof certificate.
+
+The gate checks local include directories supplied by its verifier script. It
+does not prove those inputs agree with every future F* CLI/include change and
+does not validate F* command-line flags. Imported proof libraries remain trusted.

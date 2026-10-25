@@ -25,7 +25,7 @@ Additional reviewed implementation corrections:
 - Repeat revoke retries JTI enumeration/sentinel writes as well as the web-session
   cascade, retaining the historical 400 response for an already-revoked device.
 - Logout suppresses automatic renewal and never advertises a replacement token.
-- Schema/revoke suppress renewal because their clients do not consume a successor;
+- Schema/revoke suppress renewal because their handlers/clients do not consistently deliver and consume a successor;
   the old token remains usable until normal expiry unless deliberately revoked.
 - Other handler/error paths can still discard a replacement header. No general
   renewal-delivery/liveness or atomic issuance/revocation theorem is claimed.
@@ -41,5 +41,23 @@ registered devices; the stronger authentication check was preserved.
 
 No cryptographic/F* proof source changed in this runtime correction. Tests run
 through the shared heavy wrapper; `environment.txt` and `sources.txt` record the
-actual tool versions, argv and source-patch/file hashes. Hosted validation and a
-focused review of the fix remain pending. This is not an external audit.
+actual tool versions, argv and source-patch/file hashes. Focused static internal review found no code blockers; hosted validation remains
+pending. This is not an external audit.
+
+
+Review coverage corrections: the permanent-power positive test now registers a
+real device and requires 200 (a 401 can no longer satisfy it). A new test captures
+DeviceSession using the real extractor before revocation, then invokes the real
+web grant handler after a SQL revoke. It requires Conflict and unchanged pending
+session/capsule/approver state. Removing only the SQL predicate `revoked = 0`
+lets the grant succeed and fails this test (`web-grant-mutant.log`). The source
+was restored. This is a deterministic handler schedule projection, not a threaded
+race or an unbounded proof. `coverage-integration.log` records all 68 integration
+tests passing; the earlier 57/7/67 log remains the reviewed runtime snapshot.
+
+All nine additional server model suites also pass (22 tests total): account
+deletion, challenge single use, enrollment ceremony, pairing, recovery lifecycle,
+possession recovery, rekey state, session capability and share channel. See
+`additional-models.log`. This extends compatibility coverage of the common
+authentication extractor; the finite models remain bounded tests, not unbounded
+proofs. All heavy runs used the same shared 3 GiB/no-swap/one-worker wrapper.

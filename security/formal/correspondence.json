@@ -163,7 +163,7 @@
         "serverVELA/vela-recovery-policy/proofs/fstar/extraction/Vela_recovery_policy.fst": "eaf1148be9567b8d8d6dbca8ceca3a4369df8b3c3856f19afc2de9eeee070327",
         "serverVELA/vela-server/src/recovery/initiate.rs": "d4eface969dee6902e22908ce5f3d965d0282d4b553d58088e40844a8904f465",
         "serverVELA/vela-server/src/recovery/recover.rs": "301291045074be0dc11fe6ad76c257fe9b044324a79804e1a2e28959c7d4241c",
-        "serverVELA/vela-server/tests/integration.rs": "bf95e6a3b1125810a3cdee8bd9d5b736ddfe872f448c5666ee3d71926824ff06",
+        "serverVELA/vela-server/tests/integration.rs": "10fe38e642d6c2c97a4d417800ce36a18fc6b1448e2d8feafc05db1ef25fc0b0",
         "security/assurance/13-recovery-fact-refinement.md": "fd64f81ba6bff10f0a73c621c419464990d0c968a1790a3a2641d1186028eab0"
       }
     },
@@ -189,7 +189,7 @@
         "serverVELA/vela-server/src/recovery/possess.rs": "832ef6be363aa6df35834fc8c42f7581be56bcbdc1c7c58d2ffb0948f0b5ac0e",
         "serverVELA/vela-server/src/recovery/enroll_device.rs": "4cb456d6952951db14011ad4f589a6c1019863c42ab54969dd38789eeb370230",
         "serverVELA/vela-server/src/recovery/recover.rs": "301291045074be0dc11fe6ad76c257fe9b044324a79804e1a2e28959c7d4241c",
-        "serverVELA/vela-server/tests/integration.rs": "bf95e6a3b1125810a3cdee8bd9d5b736ddfe872f448c5666ee3d71926824ff06",
+        "serverVELA/vela-server/tests/integration.rs": "10fe38e642d6c2c97a4d417800ce36a18fc6b1448e2d8feafc05db1ef25fc0b0",
         "security/assurance/15-recovery-possession-enrollment.md": "b311b885bc4910000bddcfca8ccfba081d720b5dc2ee502262743c5d716ff3f1",
         "security/assurance/16-enrollment-preflight.md": "2d8f5aeb5031f5fafc5f7be30a900de2bf87f91b6191d705437430feb88d41e3"
       }
@@ -320,8 +320,8 @@
         "serverVELA/vela-server/tests/device_revocation_model.rs": "ca038d6162186296ec385c901456fbbce17c5b4c212400089537964762934880",
         "serverVELA/vela-server/src/device/revoke.rs": "7f7e6d087138b4736c9b4b5f828e3eb8034eb11a2d5089ce659a8a02d3854bb3",
         "serverVELA/vela-server/src/auth/logout.rs": "a0b48b40cc077eec3cdb2544351ae94c06b2de8ff262a923f53ce906dc102748",
-        "serverVELA/vela-server/src/middleware.rs": "3ae236e4de81a091ff963fbd4fa480ad2d6305779ffe41747498f8b02347af7c",
-        "serverVELA/vela-server/tests/integration.rs": "bf95e6a3b1125810a3cdee8bd9d5b736ddfe872f448c5666ee3d71926824ff06"
+        "serverVELA/vela-server/src/middleware.rs": "484e7f5a5a3f0c775cced30290c05dbedad3fd4b1eac46b893ce000a610b1aac",
+        "serverVELA/vela-server/tests/integration.rs": "10fe38e642d6c2c97a4d417800ce36a18fc6b1448e2d8feafc05db1ef25fc0b0"
       }
     },
     {

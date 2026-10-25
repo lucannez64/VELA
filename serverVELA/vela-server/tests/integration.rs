@@ -3149,8 +3149,8 @@ async fn device_token_still_reaches_permanent_power_routes() {
     let state = helpers::test_state().await;
     let app = vela_server::routes::build(state.clone());
     let user_id = Uuid::new_v4();
-    let device_id = Uuid::new_v4();
     insert_user(&state, user_id).await;
+    let device_id = insert_device_for(&state, user_id).await;
 
     let device = token_for(&state, user_id, device_id, TokenScope::Device);
     let resp = app
@@ -3174,10 +3174,10 @@ async fn device_token_still_reaches_permanent_power_routes() {
         )
         .await
         .unwrap();
-    assert_ne!(
+    assert_eq!(
         resp.status(),
-        StatusCode::FORBIDDEN,
-        "a real device must not be caught by the web-session guard"
+        StatusCode::OK,
+        "a registered device must reach the recovery-share write"
     );
 }
 
@@ -5473,4 +5473,53 @@ async fn possession_initiation_rejects_an_empty_decoded_commitment() {
         "recovery is not available for this account"
     );
     assert!(body.get("challenge_b64").is_none());
+}
+
+
+/// Simulate revocation after the real extractor admitted the request. Calling
+/// the handler with that captured capability exercises the SQL guard, which a
+/// new HTTP request can no longer reach once the durable admission gate sees
+/// the revoked row. No concurrent scheduler or middleware bypass is claimed.
+#[tokio::test]
+async fn a_previously_admitted_web_grant_is_refused_by_the_live_sql_guard() {
+    use axum::extract::{FromRequestParts, Path, State};
+    use axum::Json;
+    use vela_server::{
+        error::AppError,
+        middleware::DeviceSession,
+        sqldb::{Db as _, TursoValue},
+        web_session::{post_grant, GrantRequest},
+    };
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
+    let user = Uuid::new_v4();
+    insert_user(&state, user).await;
+    let device = insert_device_for(&state, user).await;
+    let token = issue_token(&state, user, device);
+    let nonce = B64.encode([7u8; 32]);
+    let started = app.clone().oneshot(web_session_start_req(user, &nonce)).await.unwrap();
+    assert_eq!(started.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(started.into_body(), 4096).await.unwrap();
+    let started: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let id: Uuid = started["session_id"].as_str().unwrap().parse().unwrap();
+    let request = Request::builder()
+        .uri(format!("/web-session/{id}/grant"))
+        .header("authorization", format!("Bearer {token}"))
+        .body(Body::empty()).unwrap();
+    let (mut parts, _) = request.into_parts();
+    let admitted = DeviceSession::from_request_parts(&mut parts, &state).await.unwrap();
+    state.sqldb.execute("UPDATE devices SET revoked = 1 WHERE id = ?",
+        vec![TursoValue::Text(device.to_string())]).await.unwrap();
+    let body = GrantRequest {
+        mode: "rw".into(), capsule: B64.encode([0u8; 64]),
+        link_nonce: nonce, key_epoch: 1, ttl_secs: None,
+    };
+    let result = post_grant(State(state.clone()), Path(id), admitted, Json(body)).await;
+    assert!(matches!(result, Err(AppError::Conflict(_))),
+        "an already-admitted request must not grant after device revocation");
+    assert_eq!(session_status(&app, &id.to_string()).await, "pending");
+    let rows = state.sqldb.query("SELECT capsule, approved_by FROM web_sessions WHERE id = ?",
+        vec![TursoValue::Text(id.to_string())]).await.unwrap();
+    assert!(matches!(rows[0].get(0), Some(TursoValue::Null)));
+    assert!(matches!(rows[0].get(1), Some(TursoValue::Null)));
 }

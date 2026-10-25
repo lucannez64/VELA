@@ -22,6 +22,16 @@ and stronger encoded journal increments, with all fifteen checks passing.
 The later [recovery-redemption driver](recovery-redemption-driver/README.md) passed hosted CI on aaf708f (all fifteen checks).
 Its [concurrent composition](recovery-redemption-composition/README.md) passed hosted CI on edaee5a.
 
+Current login-boundary work:
+
+- [Durable token admission](login-revocation-admission/README.md): closes a
+  reproduced late-login/sentinel-expiry gap, makes repeat revocation retry token
+  cleanup, and suppresses undelivered renewal on logout/schema/revoke. Tested
+  implementation behavior, not an unbounded middleware theorem.
+- [Driver source policy](driver-source-policy/README.md): lexer-aware escape and
+  local-include inventory gates with twelve regression tests. This is not a
+  replacement for F* or a semantic correspondence certificate.
+
 Recent increments (see the hosted baseline above for snapshot coverage):
 
 - [Web-session observations](session-observation-refinement/README.md): ten

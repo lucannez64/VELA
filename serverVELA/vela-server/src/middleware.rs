@@ -1,6 +1,6 @@
 //! Axum middleware and extractors.
 //!
-//! ## `RequireAuth` extractor
+//! ## `AuthSession` extractor
 //!
 //! Parses and validates the `Authorization: Bearer <paseto-token>` header on
 //! every authenticated route.  It:
@@ -8,7 +8,8 @@
 //!   2. Checks the `exp` / `nbf` / `hcap` claims.
 //!   3. Verifies the JTI is not in the sled revocation set.
 //!   4. Runs the 300 req/min per-JTI rate limit.
-//!   5. Optionally renews the token (issued when <5 min remain on current token)
+//!   5. Requires the account and, for device scope, its active matching device row.
+//!   6. Optionally renews the token (issued when <5 min remain on current token)
 //!      via the `X-New-Token` response header.
 
 use axum::{
@@ -149,8 +150,8 @@ impl FromRequestParts<AppState> for AuthSession {
             },
             now.timestamp(),
         );
-        // These endpoints either terminate the token or have clients that do
-        // not consume renewal headers. Keep the old token usable until its
+        // These endpoints terminate the token or do not consistently deliver
+        // and consume renewal headers across their handlers/clients. Keep the old token usable until its
         // normal expiry rather than retiring it without delivering a successor.
         // Other handlers' error-path delivery remains a separate limitation.
         let suppress_renewal = matches!(
