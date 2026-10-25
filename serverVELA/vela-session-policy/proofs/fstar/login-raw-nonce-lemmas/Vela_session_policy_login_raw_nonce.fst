@@ -473,7 +473,7 @@ let raw_at_most_one_successful_issue
   raw_one_nonce_at_most_one_admission nonce0 schedule
 
 /// If the raw value is not accepted as a login value, no schedule can admit a
-/// request, respond, or issue a token.  The premise is stated directly over
+/// request, emit Respond, or count a successful issue observation. The premise is over
 /// the actual raw decision, not over the abstract purpose.
 let raw_purpose_not_login_of_raw_is_login_false
       (o: option (t_Slice u8))

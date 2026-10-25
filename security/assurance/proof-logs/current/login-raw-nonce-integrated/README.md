@@ -47,3 +47,15 @@ reproduction hardening leaves F* inputs/argv unchanged; `locked-metadata.log`
 records a separate successful metadata check. It is not attributed to the
 original script invocation. Real store/handler and physical trust boundaries
 remain open.
+
+## Final publication replay
+
+`final-current.log` verifies the current seven-module set with 44 raw lemmas
+(168 handwritten lemmas total), after the accepted re-review's scope-comment
+and reproduction nits. All VCs discharge. This invocation hashes both package
+and workspace Cargo.toml, workspace Cargo.lock, and the listed proof inputs
+before and after, and uses `cargo metadata --locked`. The current
+`source-hashes.txt` matches this final set. `literal-refusal.log` retains the
+previous source-comment snapshot; proof bodies are unchanged between them.
+The results lists, runner path and historical integration wording are corrected.
+This is local replay; hosted CI for this new head remains pending.

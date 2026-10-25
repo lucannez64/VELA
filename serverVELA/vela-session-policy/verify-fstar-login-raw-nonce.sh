@@ -76,6 +76,7 @@ hax_version=$(cargo hax --version)
 # module one byte.
 input_files=(
   Cargo.toml
+  ../Cargo.toml
   ../Cargo.lock
   proofs/fstar/extraction/Vela_session_policy.fst
   proofs/fstar/extraction-login-driver/Vela_session_policy.Challenge.fst

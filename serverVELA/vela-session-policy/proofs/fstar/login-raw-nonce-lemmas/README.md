@@ -50,6 +50,14 @@ equivalence.
 
 ## Results
 
+- `raw_literal_matches_classifier`: independent literal bytes equal the actual decision.
+- `raw_non_literal_never_admits`: absent/non-login literal bytes yield no admission,
+  Respond effect or successful issue observation under any schedule.
+- `raw_admission_requires_literal_login`: any such admission/effect requires literal login bytes.
+- `raw_run_invariant`: all driver states are sound, nonce conservation holds,
+  and response/issue counters equal the corresponding driver flags.
+
+
 - `project_raw_step`: projection commutes with every action.
 - `project_raw_run`: projection commutes with an arbitrary `list action`
   schedule.
@@ -61,7 +69,7 @@ equivalence.
   `raw_at_most_one_successful_issue`: the three observations named separately.
 - `raw_non_login_never_admits`: if the actual classifier does not accept the
   initial raw value for login (`raw_is_login nonce0 = false`), then no schedule
-  admits a request, responds, or issues a token.
+  admits a request, emits Respond, or counts a successful issue observation.
 - Witnesses over concrete raw values, with checked producer lemmas:
   successful login (`concrete_login`), wrong purpose (`purpose_tag_bytes
   Enroll`), unknown/long bytes (`concrete_long`, ten bytes, no truncation),
@@ -90,7 +98,7 @@ Not proved here:
 
 The raw slice is the modelled take result, not a proof about the store.  No
 `assume`, `admit`, `axiom`, `--lax`, `opaque`, local `val`, or goal-as-hypothesis
-is used.  The standalone runner is
+is used. The
 [standalone runner](../../../verify-fstar-login-raw-nonce.sh); it adds **zero** Rust
 postconditions.  Evidence is under
 `security/assurance/proof-logs/current/login-raw-nonce-bridge/`.

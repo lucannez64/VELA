@@ -103,6 +103,14 @@ and admission-requires-literal lemmas make that link part of their proof.
 
 ## Results
 
+- `raw_literal_matches_classifier`: independent literal bytes equal the actual decision.
+- `raw_non_literal_never_admits`: absent/non-login literal bytes yield no admission,
+  Respond effect or successful issue observation under any schedule.
+- `raw_admission_requires_literal_login`: any such admission/effect requires literal login bytes.
+- `raw_run_invariant`: all driver states are sound, nonce conservation holds,
+  and response/issue counters equal the corresponding driver flags.
+
+
 All general schedule-safety results quantify over arbitrary initial raw values and schedules
 (`list action`, i.e. arbitrary request counts and schedule lengths).
 
@@ -119,7 +127,7 @@ All general schedule-safety results quantify over arbitrary initial raw values a
   `raw_at_most_one_successful_issue`: the three named observations separately.
 - `raw_non_login_never_admits`: if `raw_is_login nonce0 = false` (the actual
   classifier does not accept the initial raw value for login), then no schedule
-  admits a request, answers with a response, or issues a token.
+  admits a request, emits Respond, or counts a successful issue observation.
 - `raw_non_login_purpose_never_admits`: the same refusal with the projected
   abstract-purpose premise.
 
@@ -216,8 +224,10 @@ From `serverVELA/vela-session-policy`, with the environment in `commands.txt`:
 ~/.local/opt/vela-tools/bin/vela-heavy ./verify-fstar-login-raw-nonce.sh
 ```
 
-The runner is standalone and is not wired into the aggregate verifier,
-manifests, correspondence, or CI in this change.
+The original standalone run predates parent integration. The parent aggregate
+verifier now checks this module after fresh extraction in CI; manifests and
+correspondence pin its source. The standalone script remains a targeted check
+of existing inputs, rather than a second aggregate invocation.
 
 ## Post-review strengthening
 
