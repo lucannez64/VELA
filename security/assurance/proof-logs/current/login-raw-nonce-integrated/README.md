@@ -1,6 +1,6 @@
 # Integrated raw-byte/world bridge replay and literal refusal
 
-The parent aggregate verifier freshly checks the historical artifact,
+The original parent aggregate replay freshly checks the historical artifact,
 regenerates the focused extraction and verifies all seven focused modules
 in one F* invocation. `full-verify.log` ends with all VCs discharged. The
 shared source guard checks 2 extracted + 5 handwritten proof modules.
@@ -12,9 +12,9 @@ models emit the retained warnings; zero warnings are not claimed.
 as new coverage. This increment adds no Rust/handler code, so no server test
 rerun is attributed to it. The historical artifact remains 19 postconditions /
 21 selections and focused extraction 12 / 16 (8 conditional). The base census
-is unchanged at 249 postconditions / 256 selections / 14 artifacts. The new
-raw-world bridge adds 40 handwritten lemmas, giving 164 across the five proof
-modules; these are not Rust contracts.
+is unchanged at 249 postconditions / 256 selections / 14 artifacts. That original snapshot
+adds 40 handwritten lemmas, giving 164 across the five proof modules; the
+post-review snapshot below has 44 / 168; these are not Rust contracts.
 
 The projection connects modeled raw-slice takes through the actual extracted
 converter and classifier to the abstract nonce world for every action and

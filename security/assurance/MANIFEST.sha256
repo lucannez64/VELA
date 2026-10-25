@@ -133,7 +133,7 @@ e6a947446aef393f95d0ad2b9fd09aec4a2e5e339aace9d3ea670dba601d0f15  security/assur
 abb333d1bf6218e4908a21eb8ca212b16065913a909c5bc90c2065628b4498b7  security/assurance/proof-logs/ci-39864715971-formal.txt
 33da9d573495a4b068adad48e9ef9dafcd8a1e5810d93a76254b193681b5624f  security/assurance/proof-logs/ci-39864715971-regression.txt
 71583a2b99419da87ec997026731e87b0a5bc95f5f68aad7d9d14a3b2b35d628  security/assurance/proof-logs/ci-39864715971-static-scan.txt
-0cdd6c32e326b84ea23daa4c9285289d1f9a9629f96a0228bd2aa48e27e53e39  security/assurance/proof-logs/current/README.md
+b544158adb70967abd754ed6e742230c7b83d5833deffe822ba086349ae8b902  security/assurance/proof-logs/current/README.md
 c131a2b9f06b275e16b5c478e7555a3e3d6a12c8c155b50e4af4969ac7a656e4  security/assurance/proof-logs/current/account-deletion-conformance/README.md
 e8bc78dc568cba14f3411e8dc8f798d2af80cb1dc191c48219550e0620b42984  security/assurance/proof-logs/current/account-deletion-conformance/bug-evidence-sends-residue.log
 c5ec6ca42336ab97416bfed7fe28f57196a62d68bfdf7ced5f44598fdb58d4a3  security/assurance/proof-logs/current/account-deletion-conformance/bug-evidence-web-session-residue.log
@@ -512,7 +512,7 @@ be72ce6efc82b9ec4c480245b240ec93dcd0a9c8d486129f13b5d3e10e1cac38  security/assur
 5085df93e21831fd1d8719757093d7b3abb1da0ca17edd65f6c50d611ce7646a  security/assurance/proof-logs/current/login-raw-nonce-bridge/mutation-B.diff
 066351864868c79001873f58f88f036147bd9b2f57a63aabd66bca2b169bea7f  security/assurance/proof-logs/current/login-raw-nonce-bridge/mutation-commands.txt
 4108025d3967978ec683a4539a83f6c0e633afcef4bbaf5af09fa9c36e4f8d92  security/assurance/proof-logs/current/login-raw-nonce-bridge/source-hashes.txt
-27eb7be9eae43746f7885bcf840e4e86666b0f552060217317d6a54db76794e7  security/assurance/proof-logs/current/login-raw-nonce-integrated/README.md
+62a5623239ccb2ea70cd4cd0f20d83cd3ce290bec1cafb065c37205feeb574b2  security/assurance/proof-logs/current/login-raw-nonce-integrated/README.md
 cc3a942cad61c5e410dc3d1031238be99e637bc0cc7de362f1138467f0b703fa  security/assurance/proof-logs/current/login-raw-nonce-integrated/aggregate-wiring.patch
 cc44bff31dc0b764c23b1dd0419dd02c8482b4a8702bc84b875086dc0f8be129  security/assurance/proof-logs/current/login-raw-nonce-integrated/commands.txt
 aad7f9c93ad9e295eb5bbb3939c8c937a9858d2a7a983ae0ba97061aa7e9ddd8  security/assurance/proof-logs/current/login-raw-nonce-integrated/full-verify.log

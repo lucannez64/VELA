@@ -174,7 +174,7 @@ historical check, exact artifact hashes and 18 + 13 policy tests.
 
 The [raw nonce bridge](login-raw-nonce-bridge/README.md) connects modeled
 raw-slice takes through the production converter/classifier to the abstract
-nonce world by per-action and arbitrary-schedule projection (40 lemmas).
+nonce world by per-action and arbitrary-schedule projection and general literal refusal (44 lemmas).
 Real store/Option/Vec byte origins and handler fidelity remain outside it.
 
 The [integrated raw-bridge replay](login-raw-nonce-integrated/README.md) records
