@@ -1,0 +1,64 @@
+# Commands used for the login nonce composition run
+
+Worktree: `/home/hirew/.t3/worktrees/VELA/t3-72db2118`
+Base commit: `3aaac25` (parent that reviewed the focused login driver)
+Date: 2026-10-25
+
+All heavy commands ran through the global heavy wrapper (3 GiB, no swap, one
+worker, global lock). The F* run reuses the checked-in focused extraction; it
+does not run hax and does not modify either extraction.
+
+## Environment
+
+```
+export CARGO_HOME=/tmp/vela-hax-cargo
+export OPAMROOT=$HOME/.local/opt/vela-tools/opam
+export PATH=/tmp/vela-fstar-prebuilt/fstar/bin:$HOME/.local/opt/vela-tools/bin:$HOME/.local/opt/vela-tools/opam/vela-hax/bin:$PATH
+export CARGO_TARGET_DIR=/home/hirew/.t3/worktrees/VELA/t3-700776df/target
+export CARGO_PROFILE_DEV_CODEGEN_BACKEND=llvm
+```
+
+Pinned tools observed in the run:
+
+```
+F* 2025.10.06
+Z3 4.13.3
+hax 0.3.7
+rustc 1.93.0-nightly (843f8ce2e 2025-11-07)   # rust-toolchain.toml channel nightly-2025-11-08
+```
+
+The persistent F* fallback is
+`$HOME/.local/opt/vela-formal-fstar-2025.10.06/fstar/bin`; the script uses it
+only when `fstar.exe` is not already on `PATH`.
+
+## Verification
+
+From `serverVELA/vela-session-policy`:
+
+```
+~/.local/opt/vela-tools/bin/vela-heavy ./verify-fstar-login-composition.sh
+```
+
+Raw output (including the exact `fstar.exe` argv, source-policy line,
+`--cache_off`, `--z3rlimit 16000`, `--z3version 4.13.3`, verification lines and
+final hashes): `fstar-verify.log`.
+
+The script hashes `proofs/fstar/extraction/Vela_session_policy.fst` before and
+after the run and fails if it moves. It also hashes the two focused extraction
+modules before and after.
+
+## Mutation checks
+
+The production module was never patched. Each mutation is a temporary copy
+under `/tmp`; the original extraction and lemma modules are still used. See
+`mutation-commands.txt` for the replacement text and exact invocation.
+
+```
+~/.local/opt/vela-tools/bin/vela-heavy fstar.exe ... \
+  /tmp/login-mut-reusable/composition/Vela_session_policy_login_driver_composition.fst
+~/.local/opt/vela-tools/bin/vela-heavy fstar.exe ... \
+  /tmp/login-mut-wrong-purpose/composition/Vela_session_policy_login_driver_composition.fst
+```
+
+Raw failures: `mutation-reusable-challenge.log` and
+`mutation-wrong-purpose-accepted.log`.

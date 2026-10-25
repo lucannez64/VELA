@@ -1,0 +1,86 @@
+# Mutation-check commands (temporary copies only)
+
+The committed composition module and both extraction directories were not
+modified. Each mutation copies
+`serverVELA/vela-session-policy/proofs/fstar/login-driver-composition/Vela_session_policy_login_driver_composition.fst`
+to a fresh `/tmp` directory and changes only that copy.
+
+## Mutation A: reusable challenge state (accepted take does not remove the nonce)
+
+```
+mkdir -p /tmp/login-mut-reusable/composition
+cp .../Vela_session_policy_login_driver_composition.fst /tmp/login-mut-reusable/composition/
+```
+
+Replace, in the `Some StoredPurpose_Login` branch of `world_step`:
+
+```
+              None true
+```
+
+with:
+
+```
+              w.challenge true
+```
+
+and the matching obligation in `world_step_inv`:
+
+```
+             deliver_inv w i e None true
+```
+
+with:
+
+```
+             deliver_inv w i e w.challenge true
+```
+
+Run with `--include /tmp/login-mut-reusable/composition` and the mutated file.
+Result: F* rejects `world_step_inv` with `Assertion failed`; the nonce
+conservation bound `b2n nonce_admitted + challenge_present <= 1` is false after
+an accepted take. See `mutation-reusable-challenge.log`.
+
+## Mutation B: accept a non-login challenge (accepted without the matching take)
+
+Replace, in the `Some StoredPurpose_Other` branch of `world_step`:
+
+```
+            deliver w i
+              (LoginEvent_ChallengeObserved
+                (ChallengeObservation_Observed ChallengeConsumption_WrongPurpose))
+              None w.nonce_admitted
+```
+
+with an `Accepted` observation and `None true`, and update the matching
+`world_step_inv` branch to use the `Accepted` event and `deliver_inv ... None
+true`.
+
+Run with `--include /tmp/login-mut-wrong-purpose/composition` and the mutated
+file. Result: F* rejects `world_step_no_login` with `Could not prove
+post-condition`; accepting a non-login challenge violates purpose isolation
+(`nonce_admitted` becomes true and a request is accepted). See
+`mutation-wrong-purpose-accepted.log`.
+
+## Common invocation
+
+For each mutated composition directory `$dir`:
+
+```
+~/.local/opt/vela-tools/bin/vela-heavy fstar.exe \
+  --cmi --cache_off --warn_error -331 --z3rlimit 16000 \
+  --z3version 4.13.3 \
+  --already_cached '+Prims+FStar+LowStar+C+Spec.Loops+TestLib' \
+  --include "$hax_lib_root/proof-libs/fstar/core" \
+  --include "$hax_lib_root/proof-libs/fstar/rust_primitives" \
+  --include "$hax_lib_root/proofs/fstar/extraction" \
+  --include proofs/fstar/extraction-login-driver \
+  --include proofs/fstar/challenge-lemmas \
+  --include proofs/fstar/login-driver-lemmas \
+  --include "$dir" \
+  proofs/fstar/extraction-login-driver/Vela_session_policy.Challenge.fst \
+  proofs/fstar/extraction-login-driver/Vela_session_policy.Login_driver.fst \
+  proofs/fstar/challenge-lemmas/Vela_session_policy_challenge_lemmas.fst \
+  proofs/fstar/login-driver-lemmas/Vela_session_policy_login_driver_lemmas.fst \
+  "$dir/Vela_session_policy_login_driver_composition.fst"
+```
