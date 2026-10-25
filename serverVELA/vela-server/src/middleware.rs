@@ -20,7 +20,12 @@ use chrono::Utc;
 use vela_rekey_policy::{
     MutationAuthority, MutationDecision, MutationKind, MutationPermit, MutationRequest,
 };
-use vela_session_policy::{RenewalDecision, RouteClass, RouteDecision, TokenClaims};
+use vela_session_policy::{
+    revocation_driver::{
+        plan_admission, AdmissionDecision, AdmissionObservation, AdmissionRefusal,
+    },
+    RenewalDecision, RouteClass, RouteDecision, TokenClaims,
+};
 
 use crate::{
     auth::token::{TokenScope, TokenService},
@@ -29,6 +34,28 @@ use crate::{
     sqldb::{Db as _, TursoValue},
     state::AppState,
 };
+
+/// Map a pure admission refusal to the historical status/message.
+fn admission_error(refusal: AdmissionRefusal) -> AppError {
+    match refusal {
+        AdmissionRefusal::JtiRevoked => AppError::Unauthorized("token has been revoked".into()),
+        AdmissionRefusal::DeviceRevoked | AdmissionRefusal::DeviceRowRevoked => {
+            AppError::Unauthorized("device has been revoked".into())
+        }
+        AdmissionRefusal::AccountAbsent => {
+            AppError::Unauthorized("account no longer exists".into())
+        }
+    }
+}
+
+/// Apply the pure admission decision. Every revocation-based refusal in this
+/// extractor goes through this function.
+fn enforce_admission(observation: AdmissionObservation) -> Result<(), AppError> {
+    match plan_admission(observation) {
+        AdmissionDecision::Admit => Ok(()),
+        AdmissionDecision::Reject(refusal) => Err(admission_error(refusal)),
+    }
+}
 
 /// Authenticated session extracted from the `Authorization: Bearer` header.
 #[derive(Clone, Debug)]
@@ -78,17 +105,24 @@ impl FromRequestParts<AppState> for AuthSession {
         }
 
         // ── 4. JTI and device revocation check ──────────────────────────────
+        // The pure admission planner owns the precedence: JTI marker, then
+        // device sentinel, then account existence, then the durable device
+        // row. The marker observations are complete and may be decided before
+        // the account query, exactly as the historical request path did.
         let store = &state.store;
 
         let jti_revoked = store.exists(&format!("jti:revoked:{}", claims.jti))?;
-        if jti_revoked {
-            return Err(AppError::Unauthorized("token has been revoked".into()));
-        }
-
         let device_revoked = store.exists(&format!("device:revoked:{}", claims.device_id))?;
-        if device_revoked {
-            return Err(AppError::Unauthorized("device has been revoked".into()));
-        }
+        enforce_admission(AdmissionObservation {
+            jti_revoked,
+            device_revoked,
+            // These two fields cannot influence the outcome when either
+            // marker is set, and the tail is re-evaluated below when they are
+            // clear.
+            account_present: true,
+            device_row_active: true,
+            device_scoped: claims.scope == TokenScope::Device,
+        })?;
 
         // ── 5. Per-JTI rate limit (300 req/min) ──────────────────────────────
         rate_limit::authenticated_by_jti(store, &claims.jti)?;
@@ -106,7 +140,16 @@ impl FromRequestParts<AppState> for AuthSession {
             .await
             .map_err(|e| AppError::Internal(e.to_string()))?;
         let Some(user_row) = user_rows.first() else {
-            return Err(AppError::Unauthorized("account no longer exists".into()));
+            enforce_admission(AdmissionObservation {
+                jti_revoked: false,
+                device_revoked: false,
+                account_present: false,
+                device_row_active: true,
+                device_scoped: claims.scope == TokenScope::Device,
+            })?;
+            return Err(AppError::Internal(
+                "admission admitted an absent account".into(),
+            ));
         };
         let current_key_epoch = user_row.i64(0).unwrap_or(1).max(1);
         if claims.scope == TokenScope::WebSession
@@ -135,9 +178,13 @@ impl FromRequestParts<AppState> for AuthSession {
                 )
                 .await
                 .map_err(|e| AppError::Internal(e.to_string()))?;
-            if active_device.is_empty() {
-                return Err(AppError::Unauthorized("device has been revoked".into()));
-            }
+            enforce_admission(AdmissionObservation {
+                jti_revoked: false,
+                device_revoked: false,
+                account_present: true,
+                device_row_active: !active_device.is_empty(),
+                device_scoped: true,
+            })?;
         }
 
         // ── 6. Verified token renewal ────────────────────────────────────────

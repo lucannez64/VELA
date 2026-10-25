@@ -1,0 +1,14 @@
+--- proofs/fstar/extraction-revocation-driver/Vela_session_policy.Revocation_driver.fst	2026-10-25 18:52:50.863568408 +0100
++++ /tmp/opencode/vela-revocation-mutant-same-account/Vela_session_policy.Revocation_driver.fst	2026-10-25 19:18:46.883892617 +0100
+@@ -335,10 +335,7 @@
+   | DeviceLookupObservation_Malformed  ->
+     terminal driver (RevocationFailure_TargetParseStorage <: t_RevocationFailure)
+   | DeviceLookupObservation_Present target ->
+-    if ~.target.f_same_account
+-    then terminal driver (RevocationFailure_CrossAccount <: t_RevocationFailure)
+-    else
+-      if target.f_already_revoked
++    if target.f_already_revoked
+       then
+         transition ({
+               driver with

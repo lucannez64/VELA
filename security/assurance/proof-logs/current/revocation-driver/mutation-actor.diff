@@ -1,0 +1,11 @@
+--- proofs/fstar/extraction-revocation-driver/Vela_session_policy.Revocation_driver.fst	2026-10-25 18:52:50.863568408 +0100
++++ /tmp/opencode/vela-revocation-mutant-actor/Vela_session_policy.Revocation_driver.fst	2026-10-25 19:19:24.710651954 +0100
+@@ -289,7 +289,7 @@
+           let result:t_RevocationTransition = result in
+           revocation_state_is_sound result.f_driver &&
+           revocation_effect_is_sound result.f_driver result.f_effect) =
+-  if actor.f_authenticated && actor.f_device_active
++  if true
+   then
+     transition ({
+           f_stage = RevocationStage_Observe <: t_RevocationStage;
