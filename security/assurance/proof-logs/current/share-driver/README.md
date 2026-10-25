@@ -212,6 +212,12 @@ predicate. SQLite/Turso write serialization is what prevents an over-quota
 commit under racing sends. Proving that serialization (or adding a conditional
 insert) is an open obligation, not a claimed result here.
 
+## Hosted reproduction
+
+The [e89ebed security workflow](https://github.com/lucannez64/VELA/actions/runs/40147963623) ran the driver gate; all fifteen PR
+checks passed. `hosted-e89ebed.log` is its summary; the hashes match
+`source-hashes.txt`.
+
 ## Scope and open obligations
 
 - Scope is the sharing handlers only. SQL statement semantics, transaction

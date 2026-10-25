@@ -200,6 +200,7 @@ jobs:
           cargo test --manifest-path serverVELA/Cargo.toml --test device_revocation_model
           cargo test --manifest-path serverVELA/Cargo.toml -p vela-recovery-policy --test redemption_driver
           cargo test --manifest-path serverVELA/Cargo.toml -p vela-share-policy --test driver
+          cargo test --manifest-path serverVELA/Cargo.toml -p vela-recovery-policy --test possession_driver
           cargo test --manifest-path serverVELA/Cargo.toml --test integration \
             recovery_publication_finalizes_exactly_the_current_staged_split
           cargo test --manifest-path libVELA/vela-client-recovery-policy/Cargo.toml --test bounded_refinement
