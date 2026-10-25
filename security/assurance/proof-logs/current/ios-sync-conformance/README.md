@@ -1,13 +1,11 @@
 # iOS sync download/admission conformance (bounded exhaustive)
 
-Status: **written, committed, not executed.** This host has no Swift toolchain,
-so nothing in this increment has been compiled or run. The test is plain XCTest
-and is picked up by the existing `VELATests` target (`iosVELA/project.yml`
-includes `Tests` by directory, so no project change is needed). Hosted
-confirmation must come from `.github/workflows/ios-app.yml`, which builds
-`VelaCore.xcframework` and runs
-`xcodebuild test -only-testing:VELATests`. Do not cite this file as passing
-evidence until that run exists.
+Status: **passed in hosted CI.** The [ios-app run on d3ccba6](https://github.com/lucannez64/VELA/actions/runs/40153630277)
+(and the earlier [964dfc8 run](https://github.com/lucannez64/VELA/actions/runs/40152705125))
+compiled and ran all five `SyncAdmissionModelTests` cases, including the
+1,110-trace exhaustive test (6-8 s), with the trace/step/sync count guards
+holding. `hosted-d3ccba6.log` is the extracted test log. This host has no Swift
+toolchain, so there is no local run.
 
 ## Files
 
@@ -181,10 +179,8 @@ bridge behind `VelaCoreFFI.decryptVaultChunkAdmittedOrThrow` /
 
 ## Not covered
 
-- **Not executed.** Compilation, runtime and the exact counts above are
-  expectations computed by hand; CI has not confirmed them. If
-  `XCTAssertEqual(traces.count, 1110)`, `stepCount == 3210` or `syncCount == 2889`
-  fails, the harness (alphabet/depth), not the product, is what drifted.
+- **No local or mutation run.** The tests passed in hosted CI only; the proposed
+  mutation below was not executed (no Swift toolchain here).
 - No proof is produced or re-run. This is bounded executable conformance against
   a hand-written model, not the F★/Rust proofs and not a full-system claim.
 - The push path is never entered: every manifest in the corpus carries exactly

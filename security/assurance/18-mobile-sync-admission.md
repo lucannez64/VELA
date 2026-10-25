@@ -109,7 +109,8 @@ a blank token before the identity record is touched.
 **iOS** ([evidence](proof-logs/current/ios-sync-conformance/README.md)): the
 same style of model drives the real `SyncEngine.sync`, the Rust admission
 bridge and `VaultRepository` over all 1,110 sequences of up to three
-responses, plus a 360-call kernel grid. It runs only in macOS CI. iOS never
+responses, plus a 360-call kernel grid. It runs only in macOS CI, where it
+passed on d3ccba6; its mutation check has not been run. iOS never
 adopts an epoch on the download path and keeps a stricter manifest-wide
 floor; both are recorded as deliberate, fail-closed differences.
 

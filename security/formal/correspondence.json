@@ -256,7 +256,7 @@
         "libVELA/vela-sync-policy/verify-fstar-chunk.sh": "7fa8980be900ac65b19f344a75ec65b68a4040b5a96f279b6704e4cca231a7a0",
         "libVELA/vela-sync-policy/verify-fstar-epoch.sh": "7281e299bf1cdfd05873601134651084ee96e8a8067cd87e319da616eb44e3fb",
         "libVELA/vela-sync-policy/verify-fstar.sh": "cb7ebeab02302a5e9b698d3f2453f90bbdc1cb5081fde029bf8ed1edf89b1703",
-        "security/assurance/18-mobile-sync-admission.md": "e0a077c3fd0ed98895a7d5942703c823b3b0cb93238db30510b468432cb86d78",
+        "security/assurance/18-mobile-sync-admission.md": "aeef07f7d965e33f57122fd40f424c12439de4566cbaa21c5745a7b2ea869b89",
         "security/formal/check-sync-chunk-proof.py": "52f717ba328ada95de482234daf56dd8a99ca5b04083b449965427c3d62696a2",
         "security/formal/tests/test_sync_chunk_guard.py": "3bc8a630a152cfc62669c6d59e6149a1b47b4268a79f2bd137009013437a286b",
         "androidVELA/app/src/main/java/com/vela/android/sync/AndroidVelaApiClient.kt": "9bf0a20bcfa1b253b87cdca958050ea20a53b9c1375b7d2b964c60bb8d277664",
