@@ -96,12 +96,14 @@ producer lemmas:
   `concrete_long_is_unknown`, `issued_classified`, and
   `issued_path_accepts_only_its_purpose` from the checked lemma modules.
 
-No target equivalence is assumed, and no proof of the form "the old abstract
-theorem plus an unrelated fact" is used.
+No target equivalence is assumed. Cardinality transport is purpose-agnostic:
+it holds even for a classifier with incorrect literal semantics. The literal
+link supplies byte meaning separately; post-review general literal-refusal
+and admission-requires-literal lemmas make that link part of their proof.
 
 ## Results
 
-All results quantify over arbitrary initial raw values and arbitrary schedules
+All general schedule-safety results quantify over arbitrary initial raw values and schedules
 (`list action`, i.e. arbitrary request counts and schedule lengths).
 
 - `project_raw_step`: projection commutes with each action.
@@ -112,7 +114,7 @@ All results quantify over arbitrary initial raw values and arbitrary schedules
   - `accepted_count raw_reqs <= 1` (at most one accepted request),
   - `responded_count <= 1`, `issued_count <= 1`,
   - `b2n raw_admitted + raw_present raw_nonce <= 1` (one nonce is either still
-    stored or has admitted exactly one request, never both).
+    stored and marked admitted cannot both hold; this inequality alone does not assert exactly one accepted request).
 - `raw_at_most_one_accepted`, `raw_at_most_one_respond`,
   `raw_at_most_one_successful_issue`: the three named observations separately.
 - `raw_non_login_never_admits`: if `raw_is_login nonce0 = false` (the actual
@@ -128,11 +130,11 @@ concrete schedule.
 
 | Witness | Raw value | Result |
 |---|---|---|
-| `raw_success_is_reachable` | checked `concrete_login` (`login`) | take admits; final one response, one token, one accepted/responded/issued |
+| `raw_success_is_reachable` | checked `concrete_login` (`login`) | take admits; final one Respond effect, one successful token-issue observation, one accepted/responded/issued |
 | `raw_wrong_purpose_spends_nonce` | actual `purpose_tag_bytes Enroll` | actual classifier returns `WrongPurpose`; nonce spent; no admission/response/token |
 | `raw_long_unknown_is_refused` | checked `concrete_long` (`login` + five `!`, length 10) | retained length 10, classifier `Unknown`, nonce spent, no admission/response/token |
 | `raw_missing_nonce_is_terminal` | `None` | `Missing`; no admission/response/token |
-| `raw_two_request_contention` | checked `concrete_login`, two requests | one accepted, one response, one token; second request cannot take the spent nonce |
+| `raw_two_request_contention` | checked `concrete_login`, two requests | one accepted, one Respond effect, one successful token-issue observation; second request cannot take the spent nonce |
 | `raw_take_failure_preserves_nonce` | checked `concrete_login` | a failed take leaves the raw nonce for a later successful take |
 
 ## Verification
@@ -165,7 +167,8 @@ unchanged.  Both are rejected by F*.
 - Mutation B (`mutation-B.diff`): `raw_login_decision` ignores the raw bytes
   and always converts `purpose_stored_tag ChallengePurpose_Login`.  F* rejects
   at `raw_login_decision_iff_slice` (mutant line 162).  This shows the take
-  decision must read the stored bytes through the actual conversion.
+  literal-byte link and refusal witnesses depend on reading the actual bytes.
+  It does not invalidate the purpose-agnostic at-most-one bound.
 
 Logs and exact argv are in
 `mutation-A-purpose-always-login.log`, `mutation-B-copy-path-ignores-bytes.log`,
@@ -215,3 +218,16 @@ From `serverVELA/vela-session-policy`, with the environment in `commands.txt`:
 
 The runner is standalone and is not wired into the aggregate verifier,
 manifests, correspondence, or CI in this change.
+
+## Post-review strengthening
+
+The original snapshot has 40 lemmas. Its general cardinality theorem is
+purpose-agnostic, and the literal link was originally separate from the
+general refusal theorem. Parent corrections add four lemmas: literal/classifier
+equivalence for optional values, refusal of any absent/non-literal initial
+value for all schedules, admission/effect requiring literal login bytes, and
+the full raw run invariant. The new refusal theorem explicitly calls the
+literal bridge, and the successful witness also instantiates its necessity
+corollary. The current module has 44 lemmas; original raw logs/hashes above
+remain the 09d991c snapshot. Current verification is recorded separately in
+[the parent replay](../login-raw-nonce-integrated/README.md).

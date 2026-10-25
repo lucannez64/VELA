@@ -258,7 +258,7 @@ tested, not a handler/SQL/store refinement theorem.
 The focused extraction has 16 selections / 12 explicit postconditions (8
 conditional on a sound driver state), separate from the unchanged 249-policy
 postcondition census. The producer adds 23 handwritten lemmas and composition
-60; the raw-world projection adds 40. These are not Rust postconditions.
+60; the raw-world projection adds 44. These are not Rust postconditions.
 Full lifecycle, storage, revocation,
 issuance, exception and crash composition remain open. See the
 [scope note](19-login-producer-composition.md).

@@ -153,7 +153,7 @@ let raw_purpose_login_iff (o: option (t_Slice u8))
   | Some b -> ()
 
 /// The actual decision, connected to the checked producer's literal-byte
-/// predicate.  This is the raw purpose connection used by every witness below.
+/// predicate. General literal-based refusal below uses this connection.
 let raw_login_decision_iff_slice (b: t_Slice u8)
   : Lemma
     (raw_login_decision b = ChallengeConsumption_Accepted <==>
@@ -527,6 +527,57 @@ let raw_non_login_purpose_never_admits
   let w = raw_run (raw_initial nonce0) schedule in
   assert (project w == run_world (initial (raw_purpose nonce0)) schedule)
 
+/// Independent literal requirement over initial raw bytes, including absence.
+let raw_literal_login (o: option (t_Slice u8)) : bool =
+  match o with
+  | None -> false
+  | Some b -> slice_is_login b
+
+/// Connect literal meaning to the actual classifier for every optional value.
+let raw_literal_matches_classifier (o: option (t_Slice u8))
+  : Lemma (raw_literal_login o = raw_is_login o) =
+  raw_purpose_iff_slice o;
+  raw_purpose_login_iff o
+
+/// Unlike the cardinality bound, literal refusal depends on byte semantics.
+let raw_non_literal_never_admits
+      (nonce0: option (t_Slice u8)) (schedule: list action)
+  : Lemma
+    (requires (raw_literal_login nonce0 = false))
+    (ensures (
+      let w = raw_run (raw_initial nonce0) schedule in
+      not w.raw_admitted /\ accepted_count w.raw_reqs = 0 /\
+      w.raw_responses = 0 /\ w.raw_tokens = 0)) =
+  raw_literal_matches_classifier nonce0;
+  raw_non_login_never_admits nonce0 schedule
+
+/// Any modeled admission, response or successful issuance requires login bytes.
+let raw_admission_requires_literal_login
+      (nonce0: option (t_Slice u8)) (schedule: list action)
+  : Lemma (
+      let w = raw_run (raw_initial nonce0) schedule in
+      (w.raw_admitted \/ accepted_count w.raw_reqs > 0 \/
+       w.raw_responses > 0 \/ w.raw_tokens > 0) ==>
+      raw_literal_login nonce0 = true) =
+  if raw_literal_login nonce0 then ()
+  else raw_non_literal_never_admits nonce0 schedule
+
+/// Expose the full transported invariant, not only its cardinality corollaries.
+let raw_run_invariant
+      (nonce0: option (t_Slice u8)) (schedule: list action)
+  : Lemma (
+      let w = raw_run (raw_initial nonce0) schedule in
+      all_sound w.raw_reqs /\
+      b2n w.raw_admitted + raw_present w.raw_nonce <= 1 /\
+      accepted_count w.raw_reqs <= b2n w.raw_admitted /\
+      w.raw_responses = responded_count w.raw_reqs /\
+      w.raw_tokens = issued_count w.raw_reqs) =
+  project_raw_initial nonce0;
+  project_raw_run (raw_initial nonce0) schedule;
+  initial_inv (raw_purpose nonce0);
+  run_world_inv (initial (raw_purpose nonce0)) schedule;
+  challenge_present_project (raw_run (raw_initial nonce0) schedule)
+
 // ── Concrete raw values and classification witnesses ──────────────────────
 
 /// The checked producer's concrete raw `login` slice.
@@ -609,6 +660,7 @@ let raw_run_nil (w: raw_world) : Lemma (raw_run w [] == w) = ()
 let raw_success_is_reachable ()
   : Lemma (
       let w = raw_run (raw_initial (Some raw_login_slice)) success_schedule in
+      raw_literal_login (Some raw_login_slice) /\
       w.raw_nonce = None /\ w.raw_admitted /\
       w.raw_responses = 1 /\ w.raw_tokens = 1 /\
       accepted_count w.raw_reqs = 1 /\
@@ -622,10 +674,11 @@ let raw_success_is_reachable ()
   let pw = project w in
   assert (pw == run_world (initial login_nonce) success_schedule);
   success_is_reachable ();
+  raw_admission_requires_literal_login (Some raw_login_slice) success_schedule;
   raw_purpose_eq_none w.raw_nonce
 
 /// Wrong purpose: the concrete raw `enroll` bytes are spent by the take and
-/// the login request is refused; no response or token follows.
+/// the login request is refused; no Respond effect or successful token-issue observation follows.
 let raw_wrong_purpose_spends_nonce ()
   : Lemma (
       let w = raw_run (raw_initial (Some raw_enroll_slice))
@@ -681,7 +734,7 @@ let raw_missing_nonce_is_terminal ()
 
 /// Two requests contend for one concrete raw `login` nonce: the first take
 /// admits and removes it; the second sees `Missing` and fails.  Only one
-/// request is accepted, one response occurs and one token is issued.
+/// request is accepted, one Respond effect and one successful token-issue observation occur.
 let raw_two_request_contention ()
   : Lemma (
       let w = raw_run (raw_initial (Some raw_login_slice)) race_schedule in

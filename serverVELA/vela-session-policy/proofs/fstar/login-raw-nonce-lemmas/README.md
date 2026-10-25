@@ -100,3 +100,11 @@ focused invocation after fresh extraction. The standalone runner checks
 existing inputs without regeneration. The original evidence is from
 `09d991c` on `1902ecd`; later parent scope-comment/reporting corrections to
 reused inputs are identified by the integrated parent replay.
+
+The at-most-one bound is purpose-agnostic; it does not establish the correctness
+of the classifier. `raw_non_literal_never_admits` instead starts from the
+independent literal predicate and uses its checked equivalence to the actual
+classifier. `raw_admission_requires_literal_login` gives the converse necessity
+for admission, Respond effects or successful issuance observations.
+`raw_run_invariant` exposes the complete transported invariant. These four
+post-review lemmas bring this module to 44; original logs retain 40.

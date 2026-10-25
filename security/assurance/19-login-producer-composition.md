@@ -42,7 +42,7 @@ abstract Login/Other value, not raw bytes. The [raw-byte nonce bridge](proof-log
 now connects the pure byte result and concurrent module: a raw world stores
 `option(t_Slice u8)` and computes Take decisions with the actual extracted
 converter/classifier. Projection commutes with every action and arbitrary
-schedule, transferring the safety bounds. Its 40 lemmas include literal-byte
+schedule, transferring the safety bounds. Its 44 lemmas include literal-byte
 meaning and success/refusal/contention witnesses. The real store/handler
 Option/Vec bridge to these modeled raw bytes is still unproved. Token/JTI effects, SQL rows, verification, revocation linearization,
 crash/retry behavior, nonce re-issuance, cross-endpoint and multi-node lifecycle
@@ -53,7 +53,7 @@ composition remain outside this theorem.
 The focused extraction selects 16 functions with 12 explicit postconditions
 (3 challenge/producer, 9 login; 8 transition contracts require sound state).
 The producer adds 23 handwritten lemmas; composition adds 60; the raw-world
-bridge adds 40, totaling 164 with the 13 bounded-challenge and 28 per-request
+bridge adds 44, totaling 168 with the 13 bounded-challenge and 28 per-request
 lemmas. The unchanged
 base inventory remains 249 postconditions / 256 selections across 14 artifacts;
 focused artifacts are counted separately. Historical session extraction is
@@ -74,3 +74,11 @@ Original evidence: [producer](proof-logs/current/login-tag-producer/README.md),
 their original source snapshots and worktree provenance. Hosted green `8d3610d` reproduces the producer and nonce additions but
 predates the raw-world bridge. Actual store/handler refinement and joint whole-system
 composition remain open regardless of the local verdicts.
+
+The cardinality theorem is purpose-agnostic. The post-review
+`raw_non_literal_never_admits` theorem uses the independent byte predicate via
+its checked classifier equivalence, proving no admission/effect for absent or
+non-login literal bytes under any schedule. The necessity corollary states
+that any admission, Respond effect or successful issuance observation requires
+literal login bytes. This connects byte meaning to general refusal; it does
+not remove actual store/handler assumptions at the physical trust boundary.

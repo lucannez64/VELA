@@ -392,7 +392,7 @@ observation for any interleaved schedule under its atomic-take interface.
 The focused extraction now has 16 selections / 12 explicit postconditions;
 8 require a sound driver state, established initially and preserved. Producer
 and composition add 23 and 60 handwritten lemmas respectively. The subsequent
-[raw-world bridge](proof-logs/current/login-raw-nonce-bridge/README.md) adds 40,
+[raw-world bridge](proof-logs/current/login-raw-nonce-bridge/README.md) adds 44,
 proving per-action and arbitrary-schedule projection from modeled raw bytes
 through the actual classifier to the abstract purpose world. These remain
 separate from the unchanged base 249 postconditions / 256 selections census.

@@ -1,4 +1,4 @@
-# Integrated raw-byte/world bridge replay
+# Integrated raw-byte/world bridge replay and literal refusal
 
 The parent aggregate verifier freshly checks the historical artifact,
 regenerates the focused extraction and verifies all seven focused modules
@@ -25,3 +25,25 @@ or handler Option/Vec glue supply those modeled bytes, get_del linearizability,
 effect/observation pairing, SQL/verifier/JTI/PASETO/TTL/crash semantics, or
 whole-system composition. This is local replay, not a hosted result or audit.
 Original delegated evidence retains its original 1902ecd input snapshot.
+
+## Post-review general literal refusal
+
+`literal-refusal.log` is the subsequent seven-module replay after adding four
+lemmas. All VCs discharge; the raw module now has **44** lemmas and the five
+handwritten modules total **168**. The original aggregate log above checked
+the 40-lemma snapshot; `source-hashes.txt` now pins the final proof inputs.
+`raw_non_literal_never_admits` uses the independently stated literal predicate
+and its checked equivalence to the actual classifier for every optional value
+and schedule. `raw_admission_requires_literal_login` makes literal login bytes
+necessary for admission, Respond effects or successful issuance observations.
+The success witness instantiates this necessity, and `raw_run_invariant`
+exposes the full transported invariant. The at-most-one count theorem remains
+purpose-agnostic; mutation B originally rejects the literal bridge/refusal
+witnesses, not that bound.
+
+The standalone runner also now uses `cargo metadata --locked` and hashes
+Cargo.toml and the workspace lockfile among its input guards. This later
+reproduction hardening leaves F* inputs/argv unchanged; `locked-metadata.log`
+records a separate successful metadata check. It is not attributed to the
+original script invocation. Real store/handler and physical trust boundaries
+remain open.

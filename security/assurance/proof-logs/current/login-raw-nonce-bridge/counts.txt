@@ -1,4 +1,4 @@
-# Counts
+# Original delegated counts (09d991c; 40 lemmas)
 
 Base commit: `1902ecd30ce7b41fa400cdfbebf387f49144ffd1`
 

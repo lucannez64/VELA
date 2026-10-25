@@ -6,3 +6,6 @@ Pinned tool versions and exact F* argv are in full-verify.log.
 Historical extraction checked first, focused extraction regenerated, then all seven focused modules checked in one invocation. cache_off; no duplicate hax for the bridge.
 The standalone raw runner's subsequent reporting-echo correction is not used by this aggregate run. source-hashes.txt records it as a related reproduction entry point, alongside the exact checked F* inputs.
 Aggregate wiring patch SHA-256: cc3a942cad61c5e410dc3d1031238be99e637bc0cc7de362f1138467f0b703fa
+
+Post-review command: vela-heavy env [same pinned environment above] serverVELA/vela-session-policy/verify-fstar-login-raw-nonce.sh > literal-refusal.log
+Result: all seven modules verified, raw lemmas44 / totalhandwritten168. No extraction rerun: Rust and extracted artifacts are unchanged. The later --locked metadata/input guard change is tested separately in locked-metadata.log; it does not change F* inputs/argv.

@@ -75,6 +75,8 @@ hax_version=$(cargo hax --version)
 # Inputs, not outputs.  Refuse to move either extraction or any reviewed proof
 # module one byte.
 input_files=(
+  Cargo.toml
+  ../Cargo.lock
   proofs/fstar/extraction/Vela_session_policy.fst
   proofs/fstar/extraction-login-driver/Vela_session_policy.Challenge.fst
   proofs/fstar/extraction-login-driver/Vela_session_policy.Login_driver.fst
@@ -155,7 +157,7 @@ python3 "$proof_root/../../security/formal/check-driver-proof-sources.py" \
   --include-dir proofs/fstar/login-raw-nonce-lemmas
 
 hax_lib_root=$(
-  cargo metadata --format-version 1 |
+  cargo metadata --locked --format-version 1 |
     jq -r '.packages[] | select(.name == "hax-lib") | .manifest_path | sub("/Cargo.toml$"; "")'
 )
 if [[ -z $hax_lib_root || ! -d $hax_lib_root ]]; then
