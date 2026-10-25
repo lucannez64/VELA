@@ -1,0 +1,10 @@
+date: 2026-10-25T02:07:46Z
+worktree: /home/hirew/.t3/worktrees/VELA/t3-8c369507
+branch: t3/android-sync-admission-conformance
+parent commit: 7e4dba6f5bfa26659f79dfcaf7af45ba544a177d
+parent subject: Bind each challenge to one purpose and make account deletion atomic
+java: openjdk version "17.0.20.1" 2026-08-18
+gradle wrapper: distributionUrl=https\://services.gradle.org/distributions/gradle-8.11.1-bin.zip
+kotlin plugin:  id("org.jetbrains.kotlin.android") version "2.0.21" apply false
+host: Linux 7.3.0-3-cachyos x86_64
+nproc: 12
