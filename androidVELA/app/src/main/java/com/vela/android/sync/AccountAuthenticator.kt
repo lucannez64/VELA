@@ -76,6 +76,13 @@ internal class AccountAuthenticator(
         // never comes back across the boundary to be signed with here.
         val signature = signChallenge(deviceId, challenge.challengeB64)
         val verified = verifySignature(deviceId, challenge.challengeB64, signature)
+        // A blank token is not a credential: refuse it before the identity
+        // record is touched, so the caller cannot persist an empty session.
+        if (verified.token.isBlank()) {
+            throw IllegalStateException(
+                "The server returned an empty session token; it was not accepted."
+            )
+        }
         // Validate before saving the identity and before the caller can
         // persist the returned token. On a mismatch this throws with both
         // untouched.

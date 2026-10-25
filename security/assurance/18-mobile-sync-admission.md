@@ -89,3 +89,29 @@ retry idempotency is unproved. Recovery may already have cleared its old token
 before a concurrent replacement is detected. The pre-existing recovery RMS
 cleanup on exceptional exits is also outside this increment. SSE itself does not
 advance floors; sync triggered by SSE uses the regular guarded sync path.
+
+## Bounded client conformance (after 7e4dba6)
+
+**Android** ([evidence](proof-logs/current/android-sync-conformance/README.md)):
+an independent Kotlin model of the shared Rust floor/epoch rules is compared
+with the production Kotlin gates (`requireSyncBaselineAccount`,
+`requireMatchingSyncEpoch`, `syncBaselineScope`, `bindVerifiedUserId` and the
+admitted-baseline merge) over every sequence of up to three server responses
+(4,851,495 traces across five initial states; a reduced 30-command alphabet
+to depth four, 2,430,000 traces). No rollback, floor decrease, epoch jump or
+cross-account floor effect was admitted; weakening the epoch check fails the
+test. The native AEAD/AAD path is faked down to the chunk policy, and the
+gates are exercised as functions, not through the full manager. The focused
+tests listed as missing above (field-isolated rotation refusal, successful
+registration, blank-token refusal) now exist, and `/auth/verify` now refuses
+a blank token before the identity record is touched.
+
+**iOS** ([evidence](proof-logs/current/ios-sync-conformance/README.md)): the
+same style of model drives the real `SyncEngine.sync`, the Rust admission
+bridge and `VaultRepository` over all 1,110 sequences of up to three
+responses, plus a 360-call kernel grid. It runs only in macOS CI. iOS never
+adopts an epoch on the download path and keeps a stricter manifest-wide
+floor; both are recorded as deliberate, fail-closed differences.
+
+Neither is a proof; Keystore, real HTTPS, multi-process writers and
+manager-level ordering remain outside both tests.

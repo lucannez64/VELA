@@ -116,6 +116,27 @@ class BlankTokenRefusalTest {
         ): HttpResponse = handler(method, url, token)
     }
 
+    @Test
+    fun blankVerifyTokenIsRefusedBeforeTheIdentityIsUpdated() {
+        val identity = ServerIdentity("alice", "device-a", "ek-a", "vk-a", sealedB64 = "sealed-a")
+        var updates = 0
+        val authenticator = AccountAuthenticator(
+            loadIdentity = { identity },
+            getOrCreateIdentity = { identity },
+            saveIdentity = { error("must not save identity") },
+            updateIdentity = { transform -> updates++; transform(identity) },
+            signChallenge = { _, _ -> "signature" },
+            registerAccount = { error("an existing identity must not register") },
+            getChallenge = { ChallengeResponse("challenge") },
+            verifySignature = { _, _, _ -> VerifyResponse(token = "  ", userId = "alice") },
+            updateKeyEpoch = { error("must not update epoch") },
+        )
+        org.junit.Assert.assertThrows(IllegalStateException::class.java) {
+            authenticator.authenticate(IdentityBindingMode.EXISTING)
+        }
+        assertEquals("a blank token must not update the identity", 0, updates)
+    }
+
     private fun response(code: Int, body: String, newToken: String? = null) = HttpResponse(
         code = code,
         headers = if (newToken == null) emptyMap() else mapOf("X-New-Token" to listOf(newToken)),
