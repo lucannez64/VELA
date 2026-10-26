@@ -240,6 +240,16 @@ and `middleware.rs` (13 contracts, 28 per-request and 56 composition lemmas;
 [evidence](proof-logs/current/revocation-driver/README.md)). Handler effect
 fidelity and store/SQL semantics are assumed.
 
+## WebAuthn recovery drivers
+
+`vela-recovery-policy::webauthn_driver` holds every decision of the WebAuthn
+registration (`recovery/webauthn.rs`), initiation (`recovery/initiate.rs`) and
+share-release (`recovery/recover.rs`) handlers (27 contracts, 4 trace theorems,
+24 per-request witnesses and 47 composition lemmas;
+[evidence](proof-logs/current/webauthn-recovery-driver/README.md)). The
+WebAuthn verifier result, store/SQL semantics and handler effect fidelity are
+assumed.
+
 ## Login driver and challenge-purpose recognition
 
 The [login increment](proof-logs/current/login-driver/README.md) checks the

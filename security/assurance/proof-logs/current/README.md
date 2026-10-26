@@ -186,6 +186,11 @@ The [revocation driver](revocation-driver/README.md) proves the revoke,
 logout and revocation-admission decisions per request and under any
 interleaving (13 contracts, 84 lemmas, three load-bearing mutations).
 
+The [WebAuthn recovery drivers](webauthn-recovery-driver/README.md) prove
+registration, initiation and share release per request and under any
+interleaving (27 contracts, 4 trace theorems, 47 composition lemmas, three
+load-bearing mutations).
+
 The [store world](challenge-store-world/README.md) joins the take adapter to
 the raw nonce bridge: the login bounds hold over the store's actual
 `Option<Vec<u8>>` result, with every take decided by the extracted adapter.
