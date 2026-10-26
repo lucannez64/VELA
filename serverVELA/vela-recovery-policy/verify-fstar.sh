@@ -55,3 +55,8 @@ fstar.exe \
 # extraction into proofs/fstar/extraction-possession-driver, so it must also run
 # in its own fstar.exe invocation.
 "$proof_root/verify-fstar-possession-driver.sh"
+
+# F-2 WebAuthn recovery drivers. This regenerates its own partial extraction
+# into proofs/fstar/extraction-webauthn-driver, so it must also run in its own
+# fstar.exe invocation.
+"$proof_root/verify-fstar-webauthn-driver.sh"

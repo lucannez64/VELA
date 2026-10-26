@@ -1,0 +1,21 @@
+--- /home/hirew/.t3/worktrees/VELA/t3-e2171f5c/serverVELA/vela-recovery-policy/proofs/fstar/extraction-webauthn-driver/Vela_recovery_policy.Webauthn_driver.fst	2026-10-26 17:04:23.390979837 +0100
++++ /tmp/webauthn-mutation-live-guard/extraction-webauthn-driver/Vela_recovery_policy.Webauthn_driver.fst	2026-10-26 17:15:25.881648343 +0100
+@@ -1849,8 +1849,7 @@
+   then auth_finish_terminal driver (AuthFinishFailure_AccountAbsent <: t_AuthFinishFailure)
+   else
+     let credential_matches_current:bool =
+-      driver.f_challenge_credential_matches && driver.f_assertion_credential_matches &&
+-      observation.f_stored_credential_matches
++      driver.f_challenge_credential_matches && driver.f_assertion_credential_matches
+     in
+     let facts:Vela_recovery_policy.t_RecoverFacts =
+       Vela_recovery_policy.recover_facts ({
+@@ -1865,7 +1864,7 @@
+             Vela_recovery_policy.f_assertion_valid = driver.f_assertion_valid;
+             Vela_recovery_policy.f_user_verified = driver.f_user_verified;
+             Vela_recovery_policy.f_share_present = observation.f_share_present;
+-            Vela_recovery_policy.f_account_epoch_active = observation.f_account_epoch_active;
++            Vela_recovery_policy.f_account_epoch_active = true;
+             Vela_recovery_policy.f_stored_epoch = observation.f_stored_epoch
+           }
+           <:

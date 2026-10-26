@@ -83,6 +83,93 @@ restored grant could then insert a second device row. The driver now treats
 the error as terminal: the grant stays consumed and the user restarts recovery.
 The restore on a definite zero-row insert remains, because no row was written.
 
+### WebAuthn recovery driver
+
+The four WebAuthn recovery requests — recovery-credential registration start
+and finish, recovery-challenge initiation and the share-releasing assertion —
+now route every post-validation decision through
+[`src/webauthn_driver.rs`](src/webauthn_driver.rs). The handlers only perform the
+effects (the `users`/credential queries, the WebAuthn ceremony start/finish, the
+atomic `get_del`/`set_ex*`, the conditional credential update, the share decode,
+the single-use grant store and the rate-limit counters) and render the driver's
+failure class with the historical status and message.
+
+- `RegistrationStartDriver` classifies the stored credential (absent, present,
+  corrupt), the ceremony start and the `set_ex` state write.
+- `RegistrationDriver` counts the limiter attempt, consumes the registration
+  state, verifies the ceremony, checks cross-account uniqueness and emits
+  `PersistCredential` only after the existing `plan_registration` permit.
+- `AuthStartDriver` classifies account/share/credential availability, the
+  generated attempt slot and the atomic `set_ex_nx` write, emitting
+  `StoreChallenge` only after the existing `plan_initiation` policy.
+- `AuthFinishDriver` counts the attempt, observes the pre-consumption context,
+  consumes the attempt-bound challenge, verifies the assertion, runs the
+  conditional metadata update chosen by `plan_credential_update`, queries the
+  live row and emits one `ReleaseGrant` effect only after the existing
+  `plan_recovery` decision. `ReleaseGrant` is the single indivisible
+  authorization to read the observed share and store the single-use enrollment
+  grant; it carries only the policy epoch, never share bytes.
+
+The extracted transition functions are the object of the unbounded trace
+induction in
+[`proofs/fstar/webauthn-driver-lemmas`](proofs/fstar/webauthn-driver-lemmas/Vela_recovery_policy_webauthn_driver_lemmas.fst).
+For every event list, from the extracted `begin_*`:
+
+- the final state is sound, and every emitted effect agrees with the state it
+  produces;
+- a registration ceremony/state write and a challenge store happen at most once
+  per request;
+- a `PersistCredential` effect implies the checked registration policy
+  authorized it, and a stored credential implies a consumed single-use state, a
+  valid ceremony and uniqueness;
+- a `StoreChallenge` effect is only a response to an observation
+  `plan_initiation` admitted;
+- a `ReleaseGrant` effect implies a consumed, user/attempt-bound challenge, a
+  verified user-verified assertion under the still-current credential, an
+  active non-rotating account at the live normalized epoch, a present share, the
+  exact stored credential and (when the authenticator asked for it) a completed
+  metadata update;
+- at most one release per request, and after it no later event can release
+  again;
+- reachable witnesses exercise the success paths, budget refusal, missing /
+  corrupt / mismatched / replaced challenges, invalid / unverified / mismatched
+  assertions, a failed metadata update, freezing, credential replacement, a
+  missing share, share corruption and grant-store failure.
+
+[`proofs/fstar/webauthn-driver-composition`](proofs/fstar/webauthn-driver-composition/Vela_recovery_policy_webauthn_driver_composition.fst)
+lifts this to any number of interleaved requests sharing one attempt-bound
+challenge and budget `k`:
+
+```
+one_challenge_at_most_one_grant (k) (schedule):
+  let w = run_world (initial k) schedule in
+  w.grants <= 1 /\ counted w.reqs <= k /\ w.budget <= k /\
+  w.w_forbidden_release = 0
+```
+
+`w.grants` counts driver `ReleaseGrant` effects, `counted` sums the drivers'
+own `budget_counted` flags, and `w_forbidden_release` counts a `ReleaseGrant`
+authorized from a live-account observation that forbids it (freezing/rotation,
+a replaced stored credential, a missing share, or an incomplete
+challenge/assertion credential chain). Every counter is incremented when the
+driver authorizes the effect, not when a modelled guard refuses it; the
+evidence directory shows each is load-bearing with a mutated copy of the
+extracted driver.
+
+**Scope adjustment.** Unlike the possession path, this is the recovery flow
+whose purpose is to release Share 2. The brief's "the recovery share is never an
+effect" is therefore stated for this path as: `ReleaseGrant` is the *only*
+share-releasing effect, it is emitted only from the checked policy's `Release`
+decision, and it is never returned unless the grant store succeeded. The other
+three drivers and every other effect are share-free.
+
+Assumptions (not proved): `get_del`/`set_ex`/`set_ex_nx` linearizability, SQL row
+and guard semantics, the WebAuthn signature/attestation verification itself, the
+JSON/base64 decodes, store TTL/expiry, the rate-limit window implementation, and
+that the handler performs exactly the returned effect in the same step as its
+observation. The challenge is assumed to have been created once by an admitted
+initiation; initiation and redemption are not composed in one world.
+
 ## Run
 
 Use the pinned hax/F*/Z3 toolchain documented in
