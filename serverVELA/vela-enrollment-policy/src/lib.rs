@@ -5,6 +5,11 @@
 //! into facts below. Private permits ensure a handler can reach a security-
 //! sensitive transition only through a decision whose exact predicate hax
 //! extracts and F* verifies.
+//!
+//! [`pairing_driver`] adds the per-request, total transition relation the
+//! invitation and rendezvous handlers follow between their effects.
+
+pub mod pairing_driver;
 
 /// Decoded length of a hybrid encapsulation key (`X25519` + `ML-KEM`).
 pub const HYBRID_EK_LEN: usize = 1568 + 32;

@@ -16,6 +16,7 @@ F* and checks their postconditions for every input.
 | `plan_completion` | Completion requires the opener, an active opener and epoch, the stored/displayed claim identity, and a primary signature over that stored claim. |
 | `result_facts` | Phase, claimed-key presence and proof validity are exactly the store and signature observations. |
 | `authorize_result` | Pending or enrolled status is returned only after proof under the claimed verification key. |
+| `pairing_driver::*` | The total per-request transition relation for the invitation store/fetch, grant open, claim, completion and result collection; every post-validation decision the handlers make between their effects. |
 | theorem helpers | Grant opening, claim, inspection, completion replay, cross-device inspection, claim substitution, unproved result collection, revocation and stale epochs are impossible. |
 
 The proof boundary excludes HTTP parsing, signature security, clocks, SQL, and
@@ -40,6 +41,13 @@ export PATH="$(opam var bin --switch vela-hax):$(opam var bin --switch vela-fsta
 The runner extracts twenty-nine production/theorem entry points — five fact
 constructors, five decisions and nineteen negative theorems — and asks F* to
 discharge every postcondition without `--lax`.
+
+`./verify-fstar-pairing-driver.sh` is the focused device-pairing increment. It
+regenerates the driver into `proofs/fstar/extraction-pairing-driver/` (never
+mixing it with the historical artifact), then checks the unbounded per-request
+trace lemmas (`proofs/fstar/pairing-driver-lemmas/`) and the concurrent
+composition (`proofs/fstar/pairing-driver-composition/`) over the extracted
+transition relation. `verify-fstar.sh` runs it after the historical modules.
 
 Run the protocol model separately:
 

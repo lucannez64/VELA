@@ -1,0 +1,14 @@
+--- /home/hirew/.t3/worktrees/VELA/t3-04703409/serverVELA/vela-enrollment-policy/proofs/fstar/extraction-pairing-driver/Vela_enrollment_policy.Pairing_driver.fst	2026-10-26 20:03:06.448931954 +0100
++++ /tmp/opencode/mutations/claim-guard/Vela_enrollment_policy.Pairing_driver.fst	2026-10-26 20:19:13.384585725 +0100
+@@ -812,7 +812,10 @@
+         t_PairingDriver)
+       (PairingEffect_WriteClaim <: t_PairingEffect)
+   | Vela_enrollment_policy.ClaimDecision_Reject  ->
+-    terminal d (claim_rejection observation <: t_PairingFailure)
++    transition ({ d with f_stage = PairingStage_Applied <: t_PairingStage; f_wrote = true }
++        <:
++        t_PairingDriver)
++      (PairingEffect_WriteClaim <: t_PairingEffect)
+
+ let on_claim_written (d: t_PairingDriver) (observation: t_ClaimWriteObservation)
+     : Prims.Pure t_PairingTransition

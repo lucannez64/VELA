@@ -48,10 +48,17 @@ use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use uuid::Uuid;
 use vela_enrollment_policy::{
-    claim_facts, completion_facts, inspect_facts, open_facts, result_facts, ClaimDecision,
-    ClaimKeySource, ClaimObservation, CompletionDecision, CompletionObservation, InspectDecision,
-    InspectObservation, OpenDecision, OpenObservation, ResultDecision, ResultKind,
-    ResultObservation, ResultSource, HYBRID_EK_LEN, HYBRID_VK_LEN,
+    inspect_facts, ClaimObservation, InspectDecision, InspectObservation, OpenObservation,
+    ResultKind, HYBRID_EK_LEN, HYBRID_VK_LEN,
+};
+use vela_enrollment_policy::pairing_driver::{
+    begin_claim, begin_completion, begin_open_grant, begin_result, on_ceremony_taken_event,
+    on_claim_checked_event, on_claim_read_event, on_claim_written_event, on_completion_account,
+    on_completion_ready_event, on_device_inserted_event, on_grant_written_event,
+    on_result_read_event, on_result_written_event, ClaimMaterialObservation, ClaimReadObservation,
+    ClaimWriteObservation, CompletionAccountObservation, CompletionPreflightObservation,
+    DeviceInsertObservation, GrantObservation, OpenerObservation, PairingEffect, PairingFailure,
+    ResultReadObservation, SignatureObservation, StoreObservation, TakeObservation,
 };
 use vela_rekey_policy::{
     MutationAuthority, MutationDecision, MutationKind, MutationRequest, Phase as PolicyPhase,
@@ -136,32 +143,62 @@ pub async fn post_grant(
 ) -> Result<(HeaderMap, Json<CreateGrantResponse>)> {
     rate_limit::enrollment_grant_by_user(&state.store, &session.user_id.to_string())?;
 
-    let _permit = match vela_enrollment_policy::plan_open(open_facts(OpenObservation {
+    // Every post-validation decision belongs to the extracted driver: whether
+    // the verified open policy permits a write, and how the write outcome is
+    // classified. The handler only performs the returned effect.
+    let start = begin_open_grant(OpenObservation {
         scope_is_device: matches!(session.scope, crate::auth::token::TokenScope::Device),
         user_id_present: !session.user_id.is_nil(),
         device_id_present: !session.device_id.is_nil(),
         ttl_secs: GRANT_TTL_SECS,
-    })) {
-        OpenDecision::Open(permit) => permit,
-        OpenDecision::Reject => {
-            return Err(AppError::Internal(
-                "verified enrollment policy rejected an authenticated device grant".into(),
-            ));
-        }
-    };
+    });
+    debug_assert!(matches!(
+        start.effect,
+        PairingEffect::StoreGrant | PairingEffect::Fail(_)
+    ));
 
     let grant_id = Uuid::new_v4().to_string();
     let grant = Grant {
         user_id: session.user_id.to_string(),
         device_id: session.device_id.to_string(),
     };
-    state.store.set_ex(
-        &grant_key(&grant_id),
-        serde_json::to_vec(&grant)
-            .map_err(|e| AppError::Internal(e.to_string()))?
-            .as_slice(),
-        GRANT_TTL_SECS,
-    )?;
+    let stored_error = match start.effect {
+        PairingEffect::StoreGrant => match state.store.set_ex(
+            &grant_key(&grant_id),
+            serde_json::to_vec(&grant)
+                .map_err(|e| AppError::Internal(e.to_string()))?
+                .as_slice(),
+            GRANT_TTL_SECS,
+        ) {
+            Ok(()) => None,
+            Err(error) => Some(error),
+        },
+        PairingEffect::Fail(failure) => return Err(rendezvous_failure_error(failure)),
+        _ => {
+            return Err(AppError::Internal(
+                "pairing driver produced an unexpected grant-store effect".into(),
+            ))
+        }
+    };
+    let observation = if stored_error.is_some() {
+        StoreObservation::Failed
+    } else {
+        StoreObservation::Stored
+    };
+    let transition = on_grant_written_event(start.driver, observation);
+    match transition.effect {
+        PairingEffect::Complete => {}
+        PairingEffect::Fail(PairingFailure::GrantStorage) => {
+            return Err(stored_error
+                .unwrap_or_else(|| AppError::Internal("enrollment grant store failed".into())))
+        }
+        PairingEffect::Fail(failure) => return Err(rendezvous_failure_error(failure)),
+        _ => {
+            return Err(AppError::Internal(
+                "pairing driver produced an unexpected grant-store observation effect".into(),
+            ))
+        }
+    }
 
     let mut headers = HeaderMap::new();
     maybe_append_new_token(&mut headers, &session);
@@ -199,44 +236,39 @@ pub async fn post_claim(
     // still has to read the claim and complete, and burning it now would let an
     // unauthenticated caller destroy a grant it cannot otherwise use.
     let grant_live = state.store.exists(&grant_key(grant_id))?;
-    if !grant_live {
-        return Err(AppError::NotFound(
-            "enrollment grant not found or expired".into(),
-        ));
-    }
+    let start = begin_claim(grant_live);
+    let driver = match start.effect {
+        PairingEffect::CheckClaim => start.driver,
+        PairingEffect::Fail(failure) => return Err(rendezvous_failure_error(failure)),
+        _ => {
+            return Err(AppError::Internal(
+                "pairing driver produced an unexpected claim-check effect".into(),
+            ))
+        }
+    };
 
+    // Base64 decoding is request validation, not a store decision; a bad field
+    // is refused before any claim is written.
     let ek = decode_base64_field(&body.hybrid_ek, "hybrid_ek")?;
     let vk = decode_base64_field(&body.hybrid_vk, "hybrid_vk")?;
 
     let claim_exists = state.store.exists(&claim_key(grant_id))?;
-    let _permit = match vela_enrollment_policy::plan_claim(claim_facts(ClaimObservation {
-        grant_live,
-        claim_exists,
-        hybrid_ek_len: ek.len(),
-        hybrid_vk_len: vk.len(),
-    })) {
-        ClaimDecision::Claim(permit) => permit,
-        // Preserve the original per-field length errors even though the
-        // decision now comes from the verified fact constructor.
-        ClaimDecision::Reject if ek.len() != HYBRID_EK_LEN => {
-            return Err(AppError::BadRequest(format!(
-                "hybrid_ek must be {HYBRID_EK_LEN} bytes"
-            )));
-        }
-        ClaimDecision::Reject if vk.len() != HYBRID_VK_LEN => {
-            return Err(AppError::BadRequest(format!(
-                "hybrid_vk must be {HYBRID_VK_LEN} bytes"
-            )));
-        }
-        ClaimDecision::Reject if claim_exists => {
-            return Err(AppError::Conflict(
-                "this enrollment code has already been used by another device".into(),
-            ));
-        }
-        ClaimDecision::Reject => {
-            return Err(AppError::BadRequest(
-                "enrollment claim is not authorized".into(),
-            ));
+    let planned = on_claim_checked_event(
+        driver,
+        ClaimObservation {
+            grant_live,
+            claim_exists,
+            hybrid_ek_len: ek.len(),
+            hybrid_vk_len: vk.len(),
+        },
+    );
+    let driver = match planned.effect {
+        PairingEffect::WriteClaim => planned.driver,
+        PairingEffect::Fail(failure) => return Err(rendezvous_failure_error(failure)),
+        _ => {
+            return Err(AppError::Internal(
+                "pairing driver produced an unexpected claim-plan effect".into(),
+            ))
         }
     };
 
@@ -258,21 +290,19 @@ pub async fn post_claim(
             .as_slice(),
         GRANT_TTL_SECS,
     )?;
-    match outcome {
-        crate::store::GuardedSetOutcome::Inserted => {}
-        crate::store::GuardedSetOutcome::GuardMissing => {
-            return Err(AppError::NotFound(
-                "enrollment grant not found or expired".into(),
-            ));
-        }
-        crate::store::GuardedSetOutcome::KeyExists => {
-            return Err(AppError::Conflict(
-                "this enrollment code has already been used by another device".into(),
-            ))
-        }
+    let observation = match outcome {
+        crate::store::GuardedSetOutcome::Inserted => ClaimWriteObservation::Inserted,
+        crate::store::GuardedSetOutcome::GuardMissing => ClaimWriteObservation::GuardMissing,
+        crate::store::GuardedSetOutcome::KeyExists => ClaimWriteObservation::KeyExists,
+    };
+    let transition = on_claim_written_event(driver, observation);
+    match transition.effect {
+        PairingEffect::Complete => Ok(Json(serde_json::json!({ "claimed": true }))),
+        PairingEffect::Fail(failure) => Err(rendezvous_failure_error(failure)),
+        _ => Err(AppError::Internal(
+            "pairing driver produced an unexpected claim-write observation effect".into(),
+        )),
     }
-
-    Ok(Json(serde_json::json!({ "claimed": true })))
 }
 
 // ── 3. The primary reads the claim, to show the user a fingerprint ──────────
@@ -354,7 +384,64 @@ pub async fn post_complete(
     Json(body): Json<CompleteRequest>,
 ) -> Result<(HeaderMap, Json<CompleteResponse>)> {
     let grant_id = crate::ids::validate_id("grant_id", &grant_id)?;
-    let (grant, expected_grant_bytes) = authorize_grant(&state, grant_id, &session)?;
+
+    // Read the grant once. The extracted driver owns the user/opener binding
+    // decision; the handler keeps the bytes because the single-use take below
+    // compares them with what the ceremony validated.
+    let (grant_observation, grant, expected_grant_bytes, grant_error) =
+        match state.store.get(&grant_key(grant_id)) {
+            Ok(Some(bytes)) => match serde_json::from_slice::<Grant>(&bytes) {
+                Ok(grant) => (
+                    GrantObservation::Present {
+                        user_matches: grant.user_id == session.user_id.to_string(),
+                        opener_matches: grant.device_id == session.device_id.to_string(),
+                    },
+                    Some(grant),
+                    Some(bytes),
+                    None,
+                ),
+                Err(error) => (
+                    GrantObservation::Error,
+                    None,
+                    None,
+                    Some(AppError::Internal(format!(
+                        "stored grant is unreadable: {error}"
+                    ))),
+                ),
+            },
+            Ok(None) => (GrantObservation::Absent, None, None, None),
+            Err(error) => (GrantObservation::Error, None, None, Some(error)),
+        };
+
+    let begin = begin_completion(grant_observation);
+    let driver = match begin.effect {
+        PairingEffect::CheckAccount => begin.driver,
+        PairingEffect::Fail(PairingFailure::GrantUnavailable) => {
+            // Same message as "not found": whether a grant exists is not
+            // something an unrelated caller should be able to probe.
+            return Err(AppError::NotFound(
+                "enrollment grant not found or expired".into(),
+            ));
+        }
+        PairingEffect::Fail(PairingFailure::GrantError) => {
+            return Err(grant_error
+                .unwrap_or_else(|| AppError::Internal("enrollment grant read failed".into())))
+        }
+        PairingEffect::Fail(failure) => return Err(rendezvous_failure_error(failure)),
+        _ => {
+            return Err(AppError::Internal(
+                "pairing driver produced an unexpected grant-binding effect".into(),
+            ))
+        }
+    };
+    let (grant, expected_grant_bytes) = match (grant, expected_grant_bytes) {
+        (Some(grant), Some(bytes)) => (grant, bytes),
+        _ => {
+            return Err(AppError::Internal(
+                "pairing driver admitted an unobserved grant".into(),
+            ))
+        }
+    };
 
     let user_rows = state
         .sqldb
@@ -362,26 +449,27 @@ pub async fn post_complete(
             "SELECT key_epoch, rekey_state FROM users WHERE id = ?",
             vec![TursoValue::Text(grant.user_id.clone())],
         )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    let current_epoch = user_rows.first().and_then(|row| row.i64(0));
-    let rotation_state = user_rows.first().and_then(|row| row.text(1));
-    if body.key_epoch < 1 {
-        return Err(AppError::BadRequest("key_epoch must be positive".into()));
-    }
-    let permit = match vela_rekey_policy::plan_active_mutation(MutationRequest {
+        .await;
+    let (account_query_ok, account_error) = match &user_rows {
+        Ok(_) => (true, None),
+        Err(error) => (false, Some(AppError::Internal(error.to_string()))),
+    };
+    let current_epoch = user_rows
+        .as_ref()
+        .ok()
+        .and_then(|rows| rows.first())
+        .and_then(|row| row.i64(0));
+    let rotation_state = user_rows
+        .as_ref()
+        .ok()
+        .and_then(|rows| rows.first())
+        .and_then(|row| row.text(1));
+    let rekey_decision = vela_rekey_policy::plan_active_mutation(MutationRequest {
         declared_epoch: body.key_epoch,
         authority_epoch: body.key_epoch,
         kind: MutationKind::Enrollment,
         authority: MutationAuthority::Device,
-    }) {
-        MutationDecision::Permit(permit) => permit,
-        MutationDecision::Reject => {
-            return Err(AppError::BadRequest(
-                "device enrollment requires a positive device-authority epoch".into(),
-            ));
-        }
-    };
+    });
     let observed_state = PolicyState {
         epoch: current_epoch.unwrap_or(0),
         phase: if rotation_state.is_some() {
@@ -390,14 +478,40 @@ pub async fn post_complete(
             PolicyPhase::Active
         },
     };
-    // The enum decision below is kept as an observation; the rejection is
-    // reported after the verified enrollment policy has seen the same facts.
-    let account_epoch_active = vela_rekey_policy::authorize_active_mutation(observed_state, permit)
-        == ShadowDecision::Allow;
+    let (rekey_permitted, rekey_epoch, account_epoch_active) = match rekey_decision {
+        MutationDecision::Permit(permit) => (
+            true,
+            permit.epoch(),
+            vela_rekey_policy::authorize_active_mutation(observed_state, permit)
+                == ShadowDecision::Allow,
+        ),
+        MutationDecision::Reject => (false, 0, false),
+    };
+    let account = on_completion_account(
+        driver,
+        CompletionAccountObservation {
+            account_query_ok,
+            declared_epoch_positive: body.key_epoch >= 1,
+            rekey_permitted,
+        },
+    );
+    let driver = match account.effect {
+        PairingEffect::PrepareCompletion => account.driver,
+        PairingEffect::Fail(PairingFailure::AccountStorage) => {
+            return Err(account_error
+                .unwrap_or_else(|| AppError::Internal("account query failed".into())))
+        }
+        PairingEffect::Fail(failure) => return Err(rendezvous_failure_error(failure)),
+        _ => {
+            return Err(AppError::Internal(
+                "pairing driver produced an unexpected account-preflight effect".into(),
+            ))
+        }
+    };
 
     // Read without consuming first. Invalid signatures must not let an
     // unauthenticated or corrupted request burn a legitimate ceremony. Every
-    // fallible observation is retained so the enrollment policy receives the
+    // fallible observation is retained so the extracted driver receives the
     // real value and the original error precedence is preserved.
     let expected_claim_bytes_opt = state.store.get(&claim_key(grant_id))?;
     let claim_present = expected_claim_bytes_opt.is_some();
@@ -419,9 +533,9 @@ pub async fn post_complete(
     let rms_capsule_result = decode_any(&body.rms_capsule, "rms_capsule");
     let signature_decode_result = decode_exact(&body.signature, HYBRID_SIG_LEN, "signature");
     let opener_result = load_primary_key(&state, &grant).await;
-    let (primary_vk, opener_active) = match &opener_result {
-        Ok((Some(vk), active)) => (Some(vk.as_slice()), *active),
-        _ => (None, false),
+    let primary_vk = match &opener_result {
+        Ok((Some(vk), true)) => Some(vk.as_slice()),
+        _ => None,
     };
 
     let signature_result = match (
@@ -445,51 +559,90 @@ pub async fn post_complete(
     };
     let signature_verified = signature_result.is_ok();
 
-    let ceremony_permit =
-        match vela_enrollment_policy::plan_completion(completion_facts(CompletionObservation {
-            claim_present,
-            user_matches: grant.user_id == session.user_id.to_string(),
-            opener_matches: grant.device_id == session.device_id.to_string(),
-            opener_active,
-            signature_verified,
-            // The view and insertion both deserialize the same immutable claim
-            // record; there is no request field that can substitute either key.
-            claim_key_source: ClaimKeySource::StoredClaim,
+    let claim_observation = match (&claim_materials, claim_present) {
+        (Ok(_), _) => ClaimMaterialObservation::Usable,
+        (Err(_), false) => ClaimMaterialObservation::Missing,
+        (Err(_), true) => ClaimMaterialObservation::Error,
+    };
+    let opener_observation = match &opener_result {
+        Ok((Some(_), true)) => OpenerObservation::Active,
+        Ok(_) => OpenerObservation::Inactive,
+        Err(_) => OpenerObservation::Error,
+    };
+    let signature_observation = if signature_verified {
+        SignatureObservation::Verified
+    } else {
+        SignatureObservation::Failed
+    };
+
+    let ceremony = on_completion_ready_event(
+        driver,
+        CompletionPreflightObservation {
+            claim: claim_observation,
+            capsule_valid: rms_capsule_result.is_ok(),
+            signature_field_valid: signature_decode_result.is_ok(),
+            opener: opener_observation,
+            signature: signature_observation,
             account_epoch: current_epoch.unwrap_or(0),
             declared_epoch: body.key_epoch,
             rotation_in_progress: rotation_state.is_some(),
-        })) {
-            CompletionDecision::Complete(permit) => permit,
-            CompletionDecision::Reject => {
-                // Report the same failure the old early returns produced, in the
-                // same order, but only after the verified policy has seen the real
-                // observations.
-                if !account_epoch_active {
-                    return Err(AppError::Conflict(
-                        "device enrollment key epoch changed or rotation is in progress".into(),
-                    ));
-                }
-                if !claim_present {
-                    return Err(AppError::NotFound(
-                        "no device has claimed this code yet".into(),
-                    ));
-                }
-                let (_claim, _hybrid_ek, _hybrid_vk) = claim_materials?;
-                let _rms_capsule = rms_capsule_result?;
-                let _signature = signature_decode_result?;
-                let _opener = opener_result?;
-                if !opener_active {
-                    return Err(AppError::Unauthorized(
-                        "enrolling device not found or revoked".into(),
-                    ));
-                }
-                signature_result?;
-                return Err(AppError::Unauthorized(
-                    "device enrollment completion is not authorized".into(),
-                ));
-            }
-        };
-    debug_assert!(ceremony_permit.consumes_grant_and_claim());
+            account_epoch_active,
+        },
+    );
+    let driver = match ceremony.effect {
+        PairingEffect::TakeCeremony => ceremony.driver,
+        PairingEffect::Fail(PairingFailure::EpochChanged) => {
+            return Err(AppError::Conflict(
+                "device enrollment key epoch changed or rotation is in progress".into(),
+            ));
+        }
+        PairingEffect::Fail(PairingFailure::NoClaim) => {
+            return Err(AppError::NotFound(
+                "no device has claimed this code yet".into(),
+            ));
+        }
+        PairingEffect::Fail(PairingFailure::ClaimUnreadable) => {
+            return Err(claim_materials
+                .err()
+                .unwrap_or_else(|| AppError::Internal("stored claim is unreadable".into())));
+        }
+        PairingEffect::Fail(PairingFailure::CapsuleInvalid) => {
+            return Err(rms_capsule_result
+                .err()
+                .unwrap_or_else(|| AppError::BadRequest("rms_capsule is invalid".into())));
+        }
+        PairingEffect::Fail(PairingFailure::SignatureFieldInvalid) => {
+            return Err(signature_decode_result
+                .err()
+                .unwrap_or_else(|| AppError::BadRequest("signature is invalid".into())));
+        }
+        PairingEffect::Fail(PairingFailure::OpenerStorage) => {
+            return Err(opener_result
+                .err()
+                .unwrap_or_else(|| AppError::Internal("opener lookup failed".into())));
+        }
+        PairingEffect::Fail(PairingFailure::OpenerRevoked) => {
+            return Err(AppError::Unauthorized(
+                "enrolling device not found or revoked".into(),
+            ));
+        }
+        PairingEffect::Fail(PairingFailure::SignatureRejected) => {
+            return Err(signature_result.err().unwrap_or_else(|| {
+                AppError::Unauthorized("enrolling device not found or revoked".into())
+            }));
+        }
+        PairingEffect::Fail(PairingFailure::CompletionNotAuthorized) => {
+            return Err(AppError::Unauthorized(
+                "device enrollment completion is not authorized".into(),
+            ));
+        }
+        PairingEffect::Fail(failure) => return Err(rendezvous_failure_error(failure)),
+        _ => {
+            return Err(AppError::Internal(
+                "pairing driver produced an unexpected completion-policy effect".into(),
+            ))
+        }
+    };
 
     let (claim, hybrid_ek, hybrid_vk) = claim_materials?;
     let rms_capsule = rms_capsule_result?;
@@ -501,24 +654,52 @@ pub async fn post_complete(
 
     // This sled transaction is the ceremony's linearization point. Exactly one
     // racing/replayed completion gets both records; every loser gets neither.
-    let (grant_bytes, claim_bytes) = state
+    let taken_pair = state
         .store
-        .take_live_pair(&grant_key(grant_id), &claim_key(grant_id))?
-        .ok_or_else(|| {
-            AppError::NotFound("enrollment grant or claim was already consumed".into())
-        })?;
-    if grant_bytes != expected_grant_bytes || claim_bytes != expected_claim_bytes {
-        state.store.set_ex_pair(
-            &grant_key(grant_id),
-            &grant_bytes,
-            &claim_key(grant_id),
-            &claim_bytes,
-            GRANT_TTL_SECS,
-        )?;
-        return Err(AppError::Conflict(
-            "enrollment ceremony changed while it was being confirmed".into(),
-        ));
+        .take_live_pair(&grant_key(grant_id), &claim_key(grant_id))?;
+    let take_observation = match &taken_pair {
+        None => TakeObservation::Missing,
+        Some((grant_bytes, claim_bytes)) => TakeObservation::Taken {
+            grant_matches: grant_bytes == &expected_grant_bytes,
+            claim_matches: claim_bytes == &expected_claim_bytes,
+        },
+    };
+    let transition = on_ceremony_taken_event(driver, take_observation);
+    let driver = transition.driver;
+    match transition.effect {
+        PairingEffect::InsertDevice => {}
+        PairingEffect::Fail(PairingFailure::CeremonyConsumed) => {
+            return Err(AppError::NotFound(
+                "enrollment grant or claim was already consumed".into(),
+            ))
+        }
+        PairingEffect::RestoreAndFail(PairingFailure::CeremonyChanged) => {
+            if let Some((grant_bytes, claim_bytes)) = &taken_pair {
+                state.store.set_ex_pair(
+                    &grant_key(grant_id),
+                    grant_bytes,
+                    &claim_key(grant_id),
+                    claim_bytes,
+                    GRANT_TTL_SECS,
+                )?;
+            }
+            return Err(AppError::Conflict(
+                "enrollment ceremony changed while it was being confirmed".into(),
+            ));
+        }
+        PairingEffect::Fail(failure) => return Err(rendezvous_failure_error(failure)),
+        PairingEffect::RestoreAndFail(failure) => {
+            return Err(rendezvous_failure_error(failure))
+        }
+        _ => {
+            return Err(AppError::Internal(
+                "pairing driver produced an unexpected ceremony-take effect".into(),
+            ))
+        }
     }
+    let (grant_bytes, claim_bytes) = taken_pair.ok_or_else(|| {
+        AppError::Internal("completion driver admitted an unobserved ceremony take".into())
+    })?;
 
     let new_device_id = Uuid::new_v4();
     let now = Utc::now().to_rfc3339();
@@ -531,7 +712,7 @@ pub async fn post_complete(
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| "unknown".to_string());
 
-    let inserted = match state.sqldb.execute(
+    let (insert_observation, insert_error) = match state.sqldb.execute(
         "INSERT INTO devices
          (id, user_id, device_name, device_type, last_active, hybrid_ek, hybrid_vk, enrolled_by, rms_capsule, created_at)
          SELECT ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?
@@ -550,11 +731,21 @@ pub async fn post_complete(
             TursoValue::Text(crate::db::encode_b64(&rms_capsule)),
             TursoValue::Text(now),
             TursoValue::Text(grant.user_id.clone()),
-            TursoValue::Integer(permit.epoch()),
+            TursoValue::Integer(rekey_epoch),
         ],
     ).await {
-        Ok(inserted) => inserted,
-        Err(error) => {
+        Ok(inserted) if inserted > 0 => (DeviceInsertObservation::Inserted, None),
+        Ok(_) => (DeviceInsertObservation::Skipped, None),
+        Err(error) => (DeviceInsertObservation::Failed, Some(error.to_string())),
+    };
+    let transition = on_device_inserted_event(driver, insert_observation);
+    let driver = transition.driver;
+    match transition.effect {
+        PairingEffect::WriteResult => {}
+        // A rotation may have started after the fast check but before the
+        // guarded insert. Restore the exact consumed claim and grant so the
+        // already-confirmed pairing can be retried once rotation completes.
+        PairingEffect::RestoreAndFail(PairingFailure::Rotation) => {
             state.store.set_ex_pair(
                 &grant_key(grant_id),
                 &grant_bytes,
@@ -562,23 +753,34 @@ pub async fn post_complete(
                 &claim_bytes,
                 GRANT_TTL_SECS,
             )?;
-            return Err(AppError::Internal(error.to_string()));
+            return Err(AppError::Conflict(
+                "device enrollment key epoch changed or rotation is in progress".into(),
+            ));
         }
-    };
-    if inserted == 0 {
-        // A rotation may have started after the fast check but before the
-        // guarded insert. Restore the exact consumed claim and grant so the
-        // already-confirmed pairing can be retried once rotation completes.
-        state.store.set_ex_pair(
-            &grant_key(grant_id),
-            &grant_bytes,
-            &claim_key(grant_id),
-            &claim_bytes,
-            GRANT_TTL_SECS,
-        )?;
-        return Err(AppError::Conflict(
-            "device enrollment key epoch changed or rotation is in progress".into(),
-        ));
+        // An INSERT error is ambiguous: the row may have committed before the
+        // error surfaced. The grant and claim stay consumed; restoring them
+        // would let a retry enroll a second device from one ceremony.
+        PairingEffect::Fail(PairingFailure::InsertStorage) => {
+            return Err(AppError::Internal(
+                insert_error.unwrap_or_else(|| "device insert failed".into()),
+            ));
+        }
+        PairingEffect::Fail(failure) => return Err(rendezvous_failure_error(failure)),
+        PairingEffect::RestoreAndFail(failure) => {
+            state.store.set_ex_pair(
+                &grant_key(grant_id),
+                &grant_bytes,
+                &claim_key(grant_id),
+                &claim_bytes,
+                GRANT_TTL_SECS,
+            )?;
+            return Err(rendezvous_failure_error(failure));
+        }
+        _ => {
+            return Err(AppError::Internal(
+                "pairing driver produced an unexpected insert effect".into(),
+            ))
+        }
     }
 
     // Only now that the row exists: the joining device is holding a keypair and
@@ -588,13 +790,35 @@ pub async fn post_complete(
         device_id: new_device_id.to_string(),
         hybrid_vk: claim.hybrid_vk.clone(),
     };
-    state.store.set_ex(
+    let result_bytes = serde_json::to_vec(&result)
+        .map_err(|e| AppError::Internal(format!("enrollment result encode failed: {e}")))?;
+    let result_error = match state.store.set_ex(
         &result_key(grant_id),
-        serde_json::to_vec(&result)
-            .map_err(|e| AppError::Internal(e.to_string()))?
-            .as_slice(),
+        result_bytes.as_slice(),
         GRANT_TTL_SECS,
-    )?;
+    ) {
+        Ok(()) => None,
+        Err(error) => Some(error),
+    };
+    let observation = if result_error.is_some() {
+        StoreObservation::Failed
+    } else {
+        StoreObservation::Stored
+    };
+    let transition = on_result_written_event(driver, observation);
+    match transition.effect {
+        PairingEffect::Complete => {}
+        PairingEffect::Fail(PairingFailure::ResultStorage) => {
+            return Err(result_error
+                .unwrap_or_else(|| AppError::Internal("enrollment result store failed".into())))
+        }
+        PairingEffect::Fail(failure) => return Err(rendezvous_failure_error(failure)),
+        _ => {
+            return Err(AppError::Internal(
+                "pairing driver produced an unexpected result-write effect".into(),
+            ))
+        }
+    }
 
     tracing::info!(
         new_device_id = %new_device_id,
@@ -654,71 +878,119 @@ pub async fn post_result(
     rate_limit::enrollment_result_by_ip(&state.store, &ip)?;
     let grant_id = crate::ids::validate_id("grant_id", &grant_id)?;
 
+    // Signature length/base64 is request validation, not a store decision.
     let signature = decode_exact(&body.signature, HYBRID_SIG_LEN, "signature")?;
 
-    // Completed: the claim is gone and the result carries the vk forward.
-    if let Some(bytes) = state.store.get(&result_key(grant_id))? {
-        let result: EnrollmentResult = serde_json::from_slice(&bytes)
-            .map_err(|e| AppError::Internal(format!("stored result is unreadable: {e}")))?;
-        let vk = crate::db::decode_b64(&result.hybrid_vk)?;
-        let signature_result = verify_result_signature(&vk, grant_id, &signature);
-        let permit =
-            match vela_enrollment_policy::authorize_result(result_facts(ResultObservation {
-                source: ResultSource::CompletedResult,
-                claimed_key_len: vk.len(),
-                signature_verified: signature_result.is_ok(),
-            })) {
-                ResultDecision::Return(permit) => permit,
-                ResultDecision::Reject => {
-                    // Preserve the signature verifier's own error, if any, before
-                    // the policy's generic refusal.
-                    signature_result?;
-                    return Err(AppError::Unauthorized(
-                        "enrollment result is not authorized".into(),
-                    ));
-                }
-            };
-        signature_result?;
-        debug_assert_eq!(permit.kind(), ResultKind::Enrolled);
-        return Ok(Json(ResultResponse::Enrolled {
-            device_id: result.device_id,
-        }));
-    }
+    let start = begin_result();
+    debug_assert!(matches!(start.effect, PairingEffect::ReadResult));
+
+    // Completed: the claim is gone and the result carries the vk forward. The
+    // extracted driver owns whether that record may be answered and under
+    // which verified key; the handler retains the exact storage/verify error.
+    let (result_observation, result_record, result_error) =
+        match state.store.get(&result_key(grant_id))? {
+            Some(bytes) => match serde_json::from_slice::<EnrollmentResult>(&bytes) {
+                Ok(result) => match crate::db::decode_b64(&result.hybrid_vk) {
+                    Ok(vk) => {
+                        let signature_result = verify_result_signature(&vk, grant_id, &signature);
+                        let observation = ResultReadObservation::Completed {
+                            claimed_key_len: vk.len(),
+                            signature_verified: signature_result.is_ok(),
+                        };
+                        match signature_result {
+                            Ok(()) => (observation, Some(result), None),
+                            Err(error) => (observation, Some(result), Some(error)),
+                        }
+                    }
+                    Err(error) => (ResultReadObservation::Unreadable, None, Some(error)),
+                },
+                Err(error) => (
+                    ResultReadObservation::Unreadable,
+                    None,
+                    Some(AppError::Internal(format!(
+                        "stored result is unreadable: {error}"
+                    ))),
+                ),
+            },
+            None => (ResultReadObservation::Absent, None, None),
+        };
+
+    let first = on_result_read_event(start.driver, result_observation);
+    let driver = match first.effect {
+        PairingEffect::ReturnResult(ResultKind::Enrolled) => {
+            let result = result_record.ok_or_else(|| {
+                AppError::Internal("result driver admitted an unobserved result".into())
+            })?;
+            return Ok(Json(ResultResponse::Enrolled {
+                device_id: result.device_id,
+            }));
+        }
+        PairingEffect::ReadClaim => first.driver,
+        PairingEffect::Fail(PairingFailure::ResultUnreadable) => {
+            return Err(result_error
+                .unwrap_or_else(|| AppError::Internal("stored result is unreadable".into())))
+        }
+        PairingEffect::Fail(PairingFailure::ResultSignatureRejected)
+        | PairingEffect::Fail(PairingFailure::ResultNotAuthorized) => {
+            // Preserve the signature verifier's own error, if any, before the
+            // policy's generic refusal.
+            return Err(result_error.unwrap_or_else(|| {
+                AppError::Unauthorized("enrollment result is not authorized".into())
+            }));
+        }
+        PairingEffect::Fail(failure) => return Err(rendezvous_failure_error(failure)),
+        _ => {
+            return Err(AppError::Internal(
+                "pairing driver produced an unexpected result-read effect".into(),
+            ))
+        }
+    };
 
     // Not completed yet. Still checked against the claimed key, so "pending" is
     // not an answer an interceptor can get.
-    if let Some(claim) = load_claim(&state, grant_id)? {
-        let vk = crate::db::decode_b64(&claim.hybrid_vk)?;
-        let signature_result = verify_result_signature(&vk, grant_id, &signature);
-        let permit =
-            match vela_enrollment_policy::authorize_result(result_facts(ResultObservation {
-                source: ResultSource::ClaimedClaim,
-                claimed_key_len: vk.len(),
-                signature_verified: signature_result.is_ok(),
-            })) {
-                ResultDecision::Return(permit) => permit,
-                ResultDecision::Reject => {
-                    signature_result?;
-                    return Err(AppError::Unauthorized(
-                        "enrollment result is not authorized".into(),
-                    ));
+    let (claim_observation, claim_error) = match state.store.get(&claim_key(grant_id))? {
+        Some(bytes) => match serde_json::from_slice::<Claim>(&bytes) {
+            Ok(claim) => match crate::db::decode_b64(&claim.hybrid_vk) {
+                Ok(vk) => {
+                    let signature_result = verify_result_signature(&vk, grant_id, &signature);
+                    let observation = ClaimReadObservation::Claimed {
+                        claimed_key_len: vk.len(),
+                        signature_verified: signature_result.is_ok(),
+                    };
+                    match signature_result {
+                        Ok(()) => (observation, None),
+                        Err(error) => (observation, Some(error)),
+                    }
                 }
-            };
-        signature_result?;
-        debug_assert_eq!(permit.kind(), ResultKind::Pending);
-        return Ok(Json(ResultResponse::Pending));
+                Err(error) => (ClaimReadObservation::Unreadable, Some(error)),
+            },
+            Err(error) => (
+                ClaimReadObservation::Unreadable,
+                Some(AppError::Internal(format!(
+                    "stored claim is unreadable: {error}"
+                ))),
+            ),
+        },
+        None => (ClaimReadObservation::Absent, None),
+    };
+    let second = on_claim_read_event(driver, claim_observation);
+    match second.effect {
+        PairingEffect::ReturnResult(ResultKind::Pending) => Ok(Json(ResultResponse::Pending)),
+        PairingEffect::Fail(PairingFailure::ClaimRecordUnreadable) => {
+            return Err(claim_error
+                .unwrap_or_else(|| AppError::Internal("stored claim is unreadable".into())))
+        }
+        PairingEffect::Fail(PairingFailure::ResultSignatureRejected)
+        | PairingEffect::Fail(PairingFailure::ResultNotAuthorized) => {
+            return Err(claim_error.unwrap_or_else(|| {
+                AppError::Unauthorized("enrollment result is not authorized".into())
+            }));
+        }
+        PairingEffect::Fail(failure) => Err(rendezvous_failure_error(failure)),
+        _ => Err(AppError::Internal(
+            "pairing driver produced an unexpected claim-read effect".into(),
+        )),
     }
-
-    // Neither a result nor a claim exists. The verified policy still sees that
-    // absence rather than being skipped.
-    let _ = vela_enrollment_policy::authorize_result(result_facts(ResultObservation {
-        source: ResultSource::NoRecord,
-        claimed_key_len: 0,
-        signature_verified: false,
-    }));
-    Err(AppError::NotFound(
-        "enrollment grant not found or expired".into(),
-    ))
 }
 
 /// Check a collector's signature, treating an unusable stored key as a refusal
@@ -846,6 +1118,64 @@ fn decode_any(value: &str, what: &str) -> Result<Vec<u8>> {
         )));
     }
     Ok(bytes)
+}
+
+/// Render the driver's failure with the handler's historical status/message.
+/// Variants whose original error is retained by the handler (storage, decode
+/// and signature-verifier errors) fall back to a total internal error here;
+/// the call sites return the retained error instead.
+fn rendezvous_failure_error(failure: PairingFailure) -> AppError {
+    match failure {
+        PairingFailure::OpenPolicy => AppError::Internal(
+            "verified enrollment policy rejected an authenticated device grant".into(),
+        ),
+        PairingFailure::GrantStorage => {
+            AppError::Internal("enrollment grant store failed".into())
+        }
+        PairingFailure::GrantUnavailable => {
+            AppError::NotFound("enrollment grant not found or expired".into())
+        }
+        PairingFailure::InvalidEkLength => AppError::BadRequest(format!(
+            "hybrid_ek must be {HYBRID_EK_LEN} bytes"
+        )),
+        PairingFailure::InvalidVkLength => AppError::BadRequest(format!(
+            "hybrid_vk must be {HYBRID_VK_LEN} bytes"
+        )),
+        PairingFailure::AlreadyClaimed => AppError::Conflict(
+            "this enrollment code has already been used by another device".into(),
+        ),
+        PairingFailure::ClaimNotAuthorized => {
+            AppError::BadRequest("enrollment claim is not authorized".into())
+        }
+        PairingFailure::KeyEpochInvalid => {
+            AppError::BadRequest("key_epoch must be positive".into())
+        }
+        PairingFailure::RekeyPolicy => AppError::BadRequest(
+            "device enrollment requires a positive device-authority epoch".into(),
+        ),
+        PairingFailure::EpochChanged | PairingFailure::Rotation => AppError::Conflict(
+            "device enrollment key epoch changed or rotation is in progress".into(),
+        ),
+        PairingFailure::NoClaim => {
+            AppError::NotFound("no device has claimed this code yet".into())
+        }
+        PairingFailure::CeremonyConsumed => {
+            AppError::NotFound("enrollment grant or claim was already consumed".into())
+        }
+        PairingFailure::CeremonyChanged => AppError::Conflict(
+            "enrollment ceremony changed while it was being confirmed".into(),
+        ),
+        PairingFailure::OpenerRevoked | PairingFailure::SignatureRejected => {
+            AppError::Unauthorized("enrolling device not found or revoked".into())
+        }
+        PairingFailure::CompletionNotAuthorized => {
+            AppError::Unauthorized("device enrollment completion is not authorized".into())
+        }
+        PairingFailure::ResultSignatureRejected | PairingFailure::ResultNotAuthorized => {
+            AppError::Unauthorized("enrollment result is not authorized".into())
+        }
+        _ => AppError::Internal("pairing driver produced an unexpected failure".into()),
+    }
 }
 
 #[cfg(test)]
