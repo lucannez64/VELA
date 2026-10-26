@@ -244,3 +244,9 @@ CARGO_TARGET_DIR=$PWD/target cargo test -p vela-server --test account_deletion_m
 CARGO_TARGET_DIR=$PWD/target cargo test -p vela-server --test integration
 CARGO_TARGET_DIR=$PWD/target cargo test -p vela-server --test device_revocation_model
 ```
+
+## Hosted reproduction
+
+The [cdffe46 security workflow](https://github.com/lucannez64/VELA/actions/runs/40408500479) verified the deletion extraction, per-request, bridge and composition modules, and ran the deletion driver unit tests;
+all fifteen PR checks passed. `hosted-cdffe46.log` holds the summary and
+hashes, which match the local run.

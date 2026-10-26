@@ -225,3 +225,9 @@ See `counts.txt` and `source-hashes.txt`. Summary: 14 extracted Rust functions;
 42 per-request lemmas with 8 recursive definitions; 39 composition lemmas with
 12 recursive definitions over 11 actions and 4 witness schedules; 12 new Rust
 tests; three rejected mutants.
+
+## Hosted reproduction
+
+The [cdffe46 security workflow](https://github.com/lucannez64/VELA/actions/runs/40408500479) verified the vault extraction, per-request lemmas and composition, and ran the rekey policy unit tests;
+all fifteen PR checks passed. `hosted-cdffe46.log` holds the summary and
+hashes, which match the local run.
