@@ -353,3 +353,10 @@ and messages are preserved.
   `extraction-webauthn-driver` source-policy case and the executable-bit check
   for the new runner.
 - Hashes: `source-hashes.txt`.
+
+## Hosted reproduction
+
+The [a79cba7 security workflow](https://github.com/lucannez64/VELA/actions/runs/40366675615) verified the WebAuthn extraction,
+per-request lemmas and composition with the other recovery gates, and ran the
+23 driver tests; all fifteen PR checks passed. `hosted-a79cba7.log` holds the
+summary and hashes, which match `source-hashes.txt`.

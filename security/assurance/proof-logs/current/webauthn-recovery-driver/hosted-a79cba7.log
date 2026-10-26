@@ -1,0 +1,55 @@
+# security workflow 40366675615 on a79cba7 (all 15 PR checks passed)
+# vela-recovery-policy refinement log (WebAuthn lines)
+[1m[92m     Running[0m tests/webauthn_driver.rs (/home/runner/work/VELA/VELA/target/debug/deps/webauthn_driver-1eabd95e09961dad)
+Verified module: Vela_recovery_policy
+All verification conditions discharged successfully
+Verified module: Vela_recovery_policy
+Verified module: Vela_recovery_policy.Driver
+Verified module: Vela_recovery_policy_driver_lemmas
+Verified module: Vela_recovery_policy_driver_composition
+All verification conditions discharged successfully
+Verified module: Vela_recovery_policy
+Verified module: Vela_recovery_policy.Possession_driver
+Verified module: Vela_recovery_policy_possession_driver_lemmas
+Verified module: Vela_recovery_policy_possession_driver_composition
+All verification conditions discharged successfully
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-webauthn-driver/Vela_recovery_policy.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-webauthn-driver/Vela_recovery_policy.Webauthn_driver.fst[0m
+F* webauthn-driver argv: --cmi --cache_off --warn_error -331 --z3rlimit 4000 --z3version 4.13.3 --already_cached +Prims+FStar+LowStar+C+Spec.Loops+TestLib --include /home/runner/.local/opt/vela-hax-0.3.7/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/core --include /home/runner/.local/opt/vela-hax-0.3.7/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives --include /home/runner/.local/opt/vela-hax-0.3.7/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proofs/fstar/extraction --include proofs/fstar/extraction-webauthn-driver --include proofs/fstar/webauthn-driver-lemmas --include proofs/fstar/webauthn-driver-composition proofs/fstar/extraction-webauthn-driver/Vela_recovery_policy.Webauthn_driver.fst proofs/fstar/extraction-webauthn-driver/Vela_recovery_policy.fst proofs/fstar/webauthn-driver-lemmas/Vela_recovery_policy_webauthn_driver_lemmas.fst proofs/fstar/webauthn-driver-composition/Vela_recovery_policy_webauthn_driver_composition.fst
+Verified module: Vela_recovery_policy
+Verified module: Vela_recovery_policy.Webauthn_driver
+Verified module: Vela_recovery_policy_webauthn_driver_lemmas
+Verified module: Vela_recovery_policy_webauthn_driver_composition
+All verification conditions discharged successfully
+webauthn driver proof: 27 focused Rust contracts checked
+webauthn driver composition: any number of interleaved requests issue at most one grant per challenge
+3d8cee1dfc903510b23bcbeb505adf4466ba1e113eb85d367f30324edf368baf  proofs/fstar/extraction-webauthn-driver/Vela_recovery_policy.Webauthn_driver.fst
+5a3736865b9ddf18f4a417faa07bfea48be8266ab0f418a822a8eb7fccd5d34d  proofs/fstar/extraction-webauthn-driver/Vela_recovery_policy.fst
+54fb28544bf96c7608c9c11c247c6563ecfe1383973f2dab0255903f10ba1f19  proofs/fstar/webauthn-driver-lemmas/Vela_recovery_policy_webauthn_driver_lemmas.fst
+dc1df713528bed91802afab53d549050d0d6f91ea98a8af699c40a17ae5b5177  proofs/fstar/webauthn-driver-composition/Vela_recovery_policy_webauthn_driver_composition.fst
+b30814cef5eea7711133fbdf74553f271ba311f27da06231043416817b192880  src/webauthn_driver.rs
+# cargo test -p vela-recovery-policy --test webauthn_driver
+test auth_finish_assertion_rejections_never_reach_the_live_row ... ok
+test auth_finish_begins_by_counting_the_attempt ... ok
+test auth_finish_consumption_failures_are_terminal_and_never_rearm ... ok
+test auth_finish_context_rejections_preserve_historical_precedence ... ok
+test auth_finish_metadata_update_must_complete_before_the_row ... ok
+test auth_finish_release_carries_the_live_epoch_and_never_share_bytes ... ok
+test auth_finish_release_requires_every_live_fact ... ok
+test auth_finish_requires_an_admitted_attempt_before_consuming ... ok
+test auth_finish_share_and_grant_outcomes_are_terminal_success_or_failure ... ok
+test auth_start_rejections_preserve_historical_precedence ... ok
+test auth_start_success_and_races_never_claim_a_second_challenge ... ok
+test every_auth_finish_stage_ignores_every_out_of_order_event ... ok
+test every_registration_start_stage_ignores_every_out_of_order_event ... ok
+test no_reachable_registration_transition_persists_without_a_policy_permit ... ok
+test no_reachable_transition_releases_without_a_verified_current_credential ... ok
+test registration_counts_before_consuming_and_limits_terminally ... ok
+test registration_persist_failures_never_report_success ... ok
+test registration_persist_requires_the_checked_policy_and_is_terminal ... ok
+test registration_rejections_preserve_historical_precedence ... ok
+test registration_start_observes_then_starts_exactly_one_ceremony ... ok
+test registration_start_or_store_failure_never_claims_success ... ok
+test registration_start_rejections_are_terminal_without_authority ... ok
+test registration_state_failures_never_persist ... ok
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
