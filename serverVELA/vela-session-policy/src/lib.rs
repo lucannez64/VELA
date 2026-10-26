@@ -6,6 +6,7 @@
 //! returned here. hax extracts these exact decisions to F*.
 
 pub mod challenge;
+pub mod deletion_driver;
 pub mod login_driver;
 pub mod revocation_driver;
 
