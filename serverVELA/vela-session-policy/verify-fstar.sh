@@ -56,3 +56,9 @@ fstar.exe \
 # its own partial extraction into proofs/fstar/extraction-revocation-driver and
 # is checked in its own fstar.exe invocation.
 "$proof_root/verify-fstar-revocation-driver.sh"
+
+# F-4 focused account-deletion driver gate. It regenerates its own partial
+# extraction into proofs/fstar/extraction-deletion-driver (including the
+# middleware admission decision it composes with) and is checked in its own
+# fstar.exe invocation.
+"$proof_root/verify-fstar-deletion-driver.sh"

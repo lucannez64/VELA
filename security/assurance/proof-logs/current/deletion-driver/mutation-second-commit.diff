@@ -1,0 +1,35 @@
+--- serverVELA/vela-session-policy/proofs/fstar/extraction-deletion-driver/Vela_session_policy.Deletion_driver.fst	2026-10-26 21:26:07.461887421 +0100
++++ /tmp/opencode/mut/extraction-2/Vela_session_policy.Deletion_driver.fst	2026-10-26 22:14:59.684803459 +0100
+@@ -630,7 +630,14 @@
+         t_DeletionDriver)
+       (DeletionEffect_CommitTransaction <: t_DeletionEffect)
+   | UsersDeleteObservation_Absent  ->
+-    terminal driver (DeletionFailure_AccountNotFound <: t_DeletionFailure)
++    transition ({
++          driver with
++          f_stage = DeletionStage_Commit <: t_DeletionStage;
++          f_users_deleted = true
++        }
++        <:
++        t_DeletionDriver)
++      (DeletionEffect_CommitTransaction <: t_DeletionEffect)
+   | UsersDeleteObservation_Failed  ->
+     terminal driver (DeletionFailure_UsersStorage <: t_DeletionFailure)
+ 
+@@ -666,15 +673,7 @@
+           let result:t_DeletionTransition = result in
+           deletion_effect_is_sound result.f_driver result.f_effect &&
+           (~.(deletion_state_is_sound driver <: bool) || deletion_state_is_sound result.f_driver) &&
+-          (~.(match result.f_effect <: t_DeletionEffect with
+-            | DeletionEffect_CommitTransaction  -> true
+-            | _ -> false) ||
+-          (match event <: t_DeletionEvent with
+-            | DeletionEvent_UsersDeleted (UsersDeleteObservation_Deleted ) -> true
+-            | _ -> false) &&
+-          (match driver.f_stage <: t_DeletionStage with
+-            | DeletionStage_DeleteUsers  -> true
+-            | _ -> false)) &&
++          true &&
+           (~.((match event <: t_DeletionEvent with
+               | DeletionEvent_UsersDeleted (UsersDeleteObservation_Deleted ) -> true
+               | _ -> false) &&
