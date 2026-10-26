@@ -42,7 +42,7 @@ h3-quinn          = "0.0.10"
 # ── Embedded SQL database ──────────────────────────────────────────────────────
 stoolap = "0.4"
 # Target backend for the stoolap -> Turso migration (SQLite-compatible).
-turso = "0.7"
+turso = { version = "0.7", default-features = false, features = ["mimalloc"] }  # no fts: avoids tantivy/zstd (RUSTSEC-2026-0391/0398/0403)
 # Recent nightly removed core::intrinsics::abort; use the upstream std path.
 branches = { version = "0.4.6", default-features = false, features = ["std"] }
 
@@ -84,7 +84,7 @@ dotenvy = "0.15"
 clap = { version = "4", features = ["derive"] }
 rpassword = "7"
 tar = "0.4"
-zstd = "0.13"
+zstd = "0.14.3"
 tempfile = "3"
 fs2 = "0.4"
 
