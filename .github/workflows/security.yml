@@ -210,6 +210,7 @@ jobs:
           cargo test --manifest-path serverVELA/Cargo.toml -p vela-recovery-policy --test webauthn_driver
           cargo test --manifest-path serverVELA/Cargo.toml --test integration
           cargo test --manifest-path serverVELA/Cargo.toml -p vela-enrollment-policy
+          cargo test --manifest-path serverVELA/Cargo.toml -p vela-rekey-policy --lib
           cargo test --manifest-path libVELA/vela-client-recovery-policy/Cargo.toml --test bounded_refinement
 
       - name: Verify the desktop, Android, Apple, and web epoch wire contract

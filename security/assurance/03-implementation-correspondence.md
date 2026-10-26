@@ -240,6 +240,15 @@ and `middleware.rs` (13 contracts, 28 per-request and 56 composition lemmas;
 [evidence](proof-logs/current/revocation-driver/README.md)). Handler effect
 fidelity and store/SQL semantics are assumed.
 
+## Vault upload driver
+
+`vela-rekey-policy::vault_upload_driver` holds the authentication, epoch-route,
+shadow-authority, quota, write-classification and publication decisions of
+`put_chunk` and the read scope of `get_chunk` (`vault/chunk.rs`; 14 extracted
+functions, 42 per-request and 39 composition lemmas;
+[evidence](proof-logs/current/vault-upload-driver/README.md)). The guarded SQL
+statements, quota accounting and handler effect fidelity are assumed.
+
 ## Device pairing driver
 
 `vela-enrollment-policy::pairing_driver` holds every post-validation decision

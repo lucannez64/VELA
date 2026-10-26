@@ -51,8 +51,9 @@ cargo hax into \
 # include directory; its contracts are covered by
 # security/assurance/check-proof-boundary.py, while the guard below checks only
 # the new driver module and the hand-written proofs.
-rm -rf proofs/fstar/extraction-vault-upload-driver-root
+# Keep the directory's .gitignore; replace only the generated module.
 mkdir -p proofs/fstar/extraction-vault-upload-driver-root
+rm -f proofs/fstar/extraction-vault-upload-driver-root/*.fst
 mv proofs/fstar/extraction-vault-upload-driver/Vela_rekey_policy.fst \
   proofs/fstar/extraction-vault-upload-driver-root/
 

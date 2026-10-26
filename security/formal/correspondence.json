@@ -78,7 +78,7 @@
         "security/formal/signed-share-commit-correspondence.md": "8b1a5ae7bc8dbedd8c83c6a979fd82470706c87703d73503cc1f70ea6f582822",
         "serverVELA/vela-enrollment-policy/src/lib.rs": "83d2e518a013917a83c798979dbbcbe4f1e16e5894a04f1527cd839c54856e14",
         "serverVELA/vela-recovery-policy/src/lib.rs": "2a2b21e1b632470b2feb715911907590a7d1cdf7decee54b5ec8a723a0d9b4f1",
-        "serverVELA/vela-rekey-policy/src/lib.rs": "4ce4d9604cd924f12d05b5ec62f2b40d9917194e7baa20fde348dd27a81b0dfb",
+        "serverVELA/vela-rekey-policy/src/lib.rs": "036b9d3c864a75c4a92ebf3cb084d0fa82b9d1b446d7bc9c306b40c48df80dd0",
         "serverVELA/vela-session-policy/src/lib.rs": "41e844f166f05d0a1e55f37dca0a20d584306540d42022db7cb2786daee43de3",
         "serverVELA/vela-share-policy/src/lib.rs": "fa325b39863aec393d76f171655402049a769f1868ac0cbd2f83a354b485fd34"
       }
@@ -420,6 +420,18 @@
         "serverVELA/vela-enrollment-policy/proofs/fstar/pairing-driver-composition/Vela_enrollment_policy_pairing_driver_composition.fst": "52d2dda82eabcac2992b976d3d17faa0655945d46d80f3767fa8470e953b2ea4",
         "serverVELA/vela-server/src/device/invitation.rs": "1228c675eb28721d3034f47cdef3f3f8f4843fc1408a168515f0c23b605b119a",
         "serverVELA/vela-server/src/device/rendezvous.rs": "3b59281786c1310a0638e86ee0c25fb86f11ab0ccb8838a6703510ef4134611a"
+      }
+    },
+    {
+      "boundary": "vault chunk upload/read driver (14 extracted functions, 42 per-request and 39 composition lemmas): success only after a matched guarded write on a clean route, shadow writes only by the starting device and never by a web session, at most one success or failure; the composition checks each write permit against the route its own request resolved, so stale-write prevention at commit rests on the guarded SQL statement (assumed); quota, SQL linearizability, Lamport-clock monotonicity (client-enforced) and handler effect fidelity remain open",
+      "artifacts": {
+        "serverVELA/vela-rekey-policy/src/vault_upload_driver.rs": "5e410fe31e2571e27382efcc96263b9ec2998a436646af7316a76507638dbd32",
+        "serverVELA/vela-rekey-policy/verify-fstar-vault-upload-driver.sh": "56da26ebc764063c8e40c61c5282605aed0a210fbb168bce993f9f9aa1844675",
+        "serverVELA/vela-rekey-policy/proofs/fstar/extraction-vault-upload-driver/Vela_rekey_policy.Vault_upload_driver.fst": "eeef9d44dc0513065a2fe07c762a2eb5f31fdbf34ea987f19cdc4da6976c5324",
+        "serverVELA/vela-rekey-policy/proofs/fstar/vault-upload-driver-lemmas/Vela_rekey_policy_vault_upload_driver_lemmas.fst": "27d146e89f912c9ee8a2d1e02053968d26bd99d1dd7f94db7a50a00833a7be08",
+        "serverVELA/vela-rekey-policy/proofs/fstar/vault-upload-driver-composition/Vela_rekey_policy_vault_upload_driver_composition.fst": "d75b175cf69b7324b1b362171d7a1891bd17455894b37c02807e19e2ddac6ba9",
+        "serverVELA/vela-server/src/vault/chunk.rs": "a66d8c010cbb2a8417202c29563086cb825e31d7f402fd01a04d1df8cb7ca3a3",
+        "serverVELA/vela-server/src/vault/rekey.rs": "032b483561f637d5e2b05623a018f538a43c20d6fcac88e446feecb95afccc13"
       }
     }
   ]

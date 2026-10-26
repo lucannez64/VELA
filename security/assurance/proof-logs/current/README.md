@@ -186,6 +186,11 @@ The [revocation driver](revocation-driver/README.md) proves the revoke,
 logout and revocation-admission decisions per request and under any
 interleaving (13 contracts, 84 lemmas, three load-bearing mutations).
 
+The [vault upload driver](vault-upload-driver/README.md) proves the
+`put_chunk`/`get_chunk` decisions per request and the write-permit counters
+under any interleaving with rotations (14 functions, 81 lemmas, three
+load-bearing mutations).
+
 The [pairing driver](pairing-driver/README.md) proves package, claim,
 completion and result decisions per request and under any interleaving (30
 contracts, 110 lemmas, six load-bearing mutations) and fixed U-19.
