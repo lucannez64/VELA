@@ -1,0 +1,159 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.15s
+     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/deps/vela_rekey_policy-e298c9bf57839bbb)
+
+running 25 tests
+test tests::abort_preserves_epoch_and_requires_attempt_authority ... ok
+test tests::active_accepts_only_current_epoch_with_epoch_one_legacy_exception ... ok
+test tests::active_guard_rejects_freezing_and_stale_permits ... ok
+test tests::commit_replay_must_name_the_exact_recorded_attempt ... ok
+test tests::commit_requires_attempt_authority_and_both_completeness_witnesses ... ok
+test tests::every_shadow_authority_fact_is_required ... ok
+test tests::freezing_routes_only_next_epoch_writes_while_reading_current ... ok
+test tests::integer_boundary_and_invalid_epochs_fail_closed ... ok
+test tests::mutation_permits_bind_epoch_and_authority_class ... ok
+test tests::start_requires_every_readiness_gate_and_exact_successor ... ok
+test tests::timeout_rolls_back_only_expired_well_formed_attempts ... ok
+test vault_upload_driver::tests::active_create_walks_resolve_quota_write_reread_publish_complete ... ok
+test vault_upload_driver::tests::bfs_reachable_states_preserve_the_invariant ... ok
+test vault_upload_driver::tests::create_conflicts_are_terminal_and_never_read_back ... ok
+test vault_upload_driver::tests::exhaustive_stage_times_event_is_total_and_sound ... ok
+test vault_upload_driver::tests::out_of_order_events_are_inert ... ok
+test vault_upload_driver::tests::read_rejects_invalid_epochs_and_unauthenticated_callers ... ok
+test vault_upload_driver::tests::read_serves_only_the_current_account_and_epoch ... ok
+test vault_upload_driver::tests::shadow_skipped_never_rechecks_and_reports_rotation_end ... ok
+test vault_upload_driver::tests::shadow_success_records_activity_and_publishes_nothing ... ok
+test vault_upload_driver::tests::shadow_write_requires_the_starting_device_and_a_rotation_id ... ok
+test vault_upload_driver::tests::skipped_update_rechecks_and_classifies_version_vs_epoch ... ok
+test vault_upload_driver::tests::unauthenticated_and_invalid_epochs_fail_closed ... ok
+test vault_upload_driver::tests::web_session_never_authorizes_a_shadow_write ... ok
+test vault_upload_driver::tests::web_writer_must_be_pinned_to_the_resolved_epoch ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests vela_rekey_policy
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+[1m[94minfo[0m: [1mhax: wrote file ./proofs/fstar/extraction/Vela_rekey_policy.fst[0m
+* Warning 241 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti(0,0-0,0):
+  - Unable to load
+    /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti.checked
+    since checked file
+    /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti.checked
+    does not exist; will recheck
+    /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti
+    (suppressing this warning for further modules)
+
+* Warning 239 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+Verified module: Vela_rekey_policy
+All verification conditions discharged successfully
+F* 2025.10.06
+platform=Linux_x86_64
+compiler=OCaml 4.14.2
+date=2025-10-06 12:00:42 -0700
+commit=7b347386330d0e5a331a220535b6f15288903234
+rustc: rustc 1.93.0-nightly (843f8ce2e 2025-11-07)
+cargo hax: hax  version=0.3.7 commit=unknown 
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.08s
+     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/deps/vela_rekey_policy-e298c9bf57839bbb)
+
+running 25 tests
+test tests::abort_preserves_epoch_and_requires_attempt_authority ... ok
+test tests::active_accepts_only_current_epoch_with_epoch_one_legacy_exception ... ok
+test tests::active_guard_rejects_freezing_and_stale_permits ... ok
+test tests::commit_replay_must_name_the_exact_recorded_attempt ... ok
+test tests::commit_requires_attempt_authority_and_both_completeness_witnesses ... ok
+test tests::every_shadow_authority_fact_is_required ... ok
+test tests::freezing_routes_only_next_epoch_writes_while_reading_current ... ok
+test tests::integer_boundary_and_invalid_epochs_fail_closed ... ok
+test tests::mutation_permits_bind_epoch_and_authority_class ... ok
+test tests::start_requires_every_readiness_gate_and_exact_successor ... ok
+test tests::timeout_rolls_back_only_expired_well_formed_attempts ... ok
+test vault_upload_driver::tests::active_create_walks_resolve_quota_write_reread_publish_complete ... ok
+test vault_upload_driver::tests::bfs_reachable_states_preserve_the_invariant ... ok
+test vault_upload_driver::tests::create_conflicts_are_terminal_and_never_read_back ... ok
+test vault_upload_driver::tests::exhaustive_stage_times_event_is_total_and_sound ... ok
+test vault_upload_driver::tests::out_of_order_events_are_inert ... ok
+test vault_upload_driver::tests::read_rejects_invalid_epochs_and_unauthenticated_callers ... ok
+test vault_upload_driver::tests::read_serves_only_the_current_account_and_epoch ... ok
+test vault_upload_driver::tests::shadow_skipped_never_rechecks_and_reports_rotation_end ... ok
+test vault_upload_driver::tests::shadow_success_records_activity_and_publishes_nothing ... ok
+test vault_upload_driver::tests::shadow_write_requires_the_starting_device_and_a_rotation_id ... ok
+test vault_upload_driver::tests::skipped_update_rechecks_and_classifies_version_vs_epoch ... ok
+test vault_upload_driver::tests::unauthenticated_and_invalid_epochs_fail_closed ... ok
+test vault_upload_driver::tests::web_session_never_authorizes_a_shadow_write ... ok
+test vault_upload_driver::tests::web_writer_must_be_pinned_to_the_resolved_epoch ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests vela_rekey_policy
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.09s
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-vault-upload-driver/Vela_rekey_policy.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-vault-upload-driver/Vela_rekey_policy.Vault_upload_driver.fst[0m
+Driver source policy: 1 extracted modules, 2 proof modules; no unreviewed escapes/options
+F* vault-upload-driver argv: --cmi --cache_off --warn_error -331 --z3rlimit 16000 --z3version 4.13.3 --already_cached +Prims+FStar+LowStar+C+Spec.Loops+TestLib --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/core --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proofs/fstar/extraction --include proofs/fstar/extraction-vault-upload-driver-root --include proofs/fstar/extraction-vault-upload-driver --include proofs/fstar/vault-upload-driver-lemmas --include proofs/fstar/vault-upload-driver-composition proofs/fstar/extraction-vault-upload-driver/Vela_rekey_policy.Vault_upload_driver.fst proofs/fstar/vault-upload-driver-lemmas/Vela_rekey_policy_vault_upload_driver_lemmas.fst proofs/fstar/vault-upload-driver-composition/Vela_rekey_policy_vault_upload_driver_composition.fst
+* Warning 271 at /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 328 at proofs/fstar/vault-upload-driver-composition/Vela_rekey_policy_vault_upload_driver_composition.fst(131,8-131,31):
+  - Global binding
+        'Vela_rekey_policy_vault_upload_driver_composition.all_requests_sound_cons'
+    is recursive but not used in its body
+
+* Warning 328 at proofs/fstar/vault-upload-driver-composition/Vela_rekey_policy_vault_upload_driver_composition.fst(157,8-157,30):
+  - Global binding
+        'Vela_rekey_policy_vault_upload_driver_composition.requests_in_range_cons'
+    is recursive but not used in its body
+
+Verified module: Vela_rekey_policy.Vault_upload_driver
+Verified module: Vela_rekey_policy_vault_upload_driver_lemmas
+Verified module: Vela_rekey_policy_vault_upload_driver_composition
+All verification conditions discharged successfully
+vault upload driver: 14 focused Rust functions, 2 soundness postconditions
+per-request trace: every active write follows an ACTIVE non-rotation route; shadow writes require the starting device; success implies a matched guarded write; at most one success/failure
+read trace: only a current-epoch, same-account row is served
+upload composition: arbitrary interleavings never authorize a stale active write or a web-session shadow write, and the extracted epoch guards reject stale commits and non-device shadow writers
+b99aa83318ab074cbbf95f85ec6c3df0158bdc9149cd80eb7e8768560f00e3e8  proofs/fstar/extraction-vault-upload-driver-root/Vela_rekey_policy.fst
+eeef9d44dc0513065a2fe07c762a2eb5f31fdbf34ea987f19cdc4da6976c5324  proofs/fstar/extraction-vault-upload-driver/Vela_rekey_policy.Vault_upload_driver.fst
+27d146e89f912c9ee8a2d1e02053968d26bd99d1dd7f94db7a50a00833a7be08  proofs/fstar/vault-upload-driver-lemmas/Vela_rekey_policy_vault_upload_driver_lemmas.fst
+d75b175cf69b7324b1b362171d7a1891bd17455894b37c02807e19e2ddac6ba9  proofs/fstar/vault-upload-driver-composition/Vela_rekey_policy_vault_upload_driver_composition.fst
+5e410fe31e2571e27382efcc96263b9ec2998a436646af7316a76507638dbd32  src/vault_upload_driver.rs

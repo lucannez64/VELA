@@ -36,7 +36,7 @@ use chrono::Utc;
 use serde::Deserialize;
 use std::collections::HashMap;
 use vela_rekey_policy::{
-    AbortDecision, AttemptAuthority, CommitDecision, CommitFacts, CommitReplayFacts, EpochRoute,
+    AbortDecision, AttemptAuthority, CommitDecision, CommitFacts, CommitReplayFacts,
     Phase as PolicyPhase, RekeyState as PolicyState, ShadowDecision, StartDecision, StartFacts,
     TimeoutDecision, TimeoutFacts, WriteDecision,
 };
@@ -303,55 +303,32 @@ pub async fn resolve_write_epoch(
 /// Only the real device which started the freeze may populate or replace it;
 /// in particular, an outstanding RW web-session token must not be able to
 /// poison rows which commit will make authoritative.
-pub async fn ensure_shadow_writer(
+///
+/// This function only *observes* the authenticated attempt facts; the
+/// extracted `vela_rekey_policy::vault_upload_driver` owns the decision.
+pub(crate) async fn shadow_authority(
     state: &AppState,
     session: &AuthSession,
-    write_epoch: i64,
-    read_epoch: i64,
     rotation_id: Option<&str>,
-) -> Result<()> {
-    if write_epoch == read_epoch {
-        return Ok(());
-    }
+) -> Result<AttemptAuthority> {
     let ks = load_key_state(state, &session.user_id.to_string()).await?;
-    let facts = attempt_authority(&ks, session, rotation_id);
-    let decision = vela_rekey_policy::authorize_shadow(
-        ks.policy_state(),
-        EpochRoute {
-            write_epoch,
-            read_epoch,
-        },
-        facts,
-    );
-    if decision == ShadowDecision::Allow {
-        return Ok(());
-    }
-    if !facts.device_scope {
-        return Err(AppError::Forbidden(
-            "temporary web sessions cannot write re-key shadows".into(),
-        ));
-    }
-    if !facts.rotation_id_present {
-        return Err(AppError::BadRequest(
-            "X-Vela-Rekey-Id header is required for shadow writes".into(),
-        ));
-    }
-    Err(AppError::Forbidden(
-        "only the device which started this re-key may write shadows".into(),
-    ))
+    Ok(attempt_authority(&ks, session, rotation_id))
 }
 
 /// Refresh the inactivity deadline after a shadow write actually succeeded.
 /// Failed or deliberately malformed requests must not keep an account frozen.
+/// Returns `true` when the guarded refresh matched the live attempt and
+/// `false` when the rotation ended first; the extracted driver classifies both
+/// as non-fatal.
 pub async fn record_shadow_activity(
     state: &AppState,
     session: &AuthSession,
     write_epoch: i64,
     read_epoch: i64,
     rotation_id: Option<&str>,
-) -> Result<()> {
+) -> Result<bool> {
     if write_epoch == read_epoch {
-        return Ok(());
+        return Ok(true);
     }
     let refreshed = state
         .sqldb
@@ -374,8 +351,10 @@ pub async fn record_shadow_activity(
             user_id = %session.user_id,
             "shadow write completed as the re-key transition ended"
         );
+        Ok(false)
+    } else {
+        Ok(true)
     }
-    Ok(())
 }
 
 /// The read-side filter: chunks at or below the served epoch exist; callers
