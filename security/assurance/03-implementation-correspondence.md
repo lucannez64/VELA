@@ -240,6 +240,15 @@ and `middleware.rs` (13 contracts, 28 per-request and 56 composition lemmas;
 [evidence](proof-logs/current/revocation-driver/README.md)). Handler effect
 fidelity and store/SQL semantics are assumed.
 
+## Device pairing driver
+
+`vela-enrollment-policy::pairing_driver` holds every post-validation decision
+of the invitation (`device/invitation.rs`) and rendezvous
+(`device/rendezvous.rs`) handlers: package store/redeem, grant open, claim,
+completion and result (30 contracts, 43 per-request and 67 composition lemmas;
+[evidence](proof-logs/current/pairing-driver/README.md)). Store/SQL atomicity,
+signature verification and handler effect fidelity are assumed.
+
 ## WebAuthn recovery drivers
 
 `vela-recovery-policy::webauthn_driver` holds every decision of the WebAuthn

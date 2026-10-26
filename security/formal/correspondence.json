@@ -76,7 +76,7 @@
         "libVELA/vela-sync-policy/src/lib.rs": "66a983da454039bf18ca2b42c0134692055c7717118c0606cfb142b6a5d96c33",
         "security/formal/m29_signed_share_commit.spthy": "1b57cbec760120c4ac42267ab277a3d17db6439f425f0cddee65a22d32bdd08c",
         "security/formal/signed-share-commit-correspondence.md": "8b1a5ae7bc8dbedd8c83c6a979fd82470706c87703d73503cc1f70ea6f582822",
-        "serverVELA/vela-enrollment-policy/src/lib.rs": "24fd425d557bae739f3ea35986ebb3257d90d1a8c596c39326898ca627ed6c3e",
+        "serverVELA/vela-enrollment-policy/src/lib.rs": "83d2e518a013917a83c798979dbbcbe4f1e16e5894a04f1527cd839c54856e14",
         "serverVELA/vela-recovery-policy/src/lib.rs": "2a2b21e1b632470b2feb715911907590a7d1cdf7decee54b5ec8a723a0d9b4f1",
         "serverVELA/vela-rekey-policy/src/lib.rs": "4ce4d9604cd924f12d05b5ec62f2b40d9917194e7baa20fde348dd27a81b0dfb",
         "serverVELA/vela-session-policy/src/lib.rs": "41e844f166f05d0a1e55f37dca0a20d584306540d42022db7cb2786daee43de3",
@@ -125,11 +125,11 @@
     {
       "boundary": "enrollment observation-to-fact construction (observation provenance and handler/database trace refinement remain open)",
       "artifacts": {
-        "serverVELA/vela-enrollment-policy/src/lib.rs": "24fd425d557bae739f3ea35986ebb3257d90d1a8c596c39326898ca627ed6c3e",
-        "serverVELA/vela-enrollment-policy/verify-fstar.sh": "c0f1d3c0d1c91ad6c61f2dc06c064b2d0636bac47b6656aeb220544582aad2c9",
+        "serverVELA/vela-enrollment-policy/src/lib.rs": "83d2e518a013917a83c798979dbbcbe4f1e16e5894a04f1527cd839c54856e14",
+        "serverVELA/vela-enrollment-policy/verify-fstar.sh": "c62da21550a5357f41b6db9a788cd962e05c100e91bbe8433e8ef561ae8c563a",
         "serverVELA/vela-enrollment-policy/proofs/fstar/extraction/Vela_enrollment_policy.fst": "be5fbb7f35bb2d5124f36546c76ef40bc87ef7b89e9e0ae9b73d15f7e4f53f03",
         "serverVELA/vela-enrollment-policy/tests/fact_construction.rs": "ca84b5b6a4e11089242ec0ba393937837efddfcdf2aec5a5e3c411dbdc071f53",
-        "serverVELA/vela-server/src/device/rendezvous.rs": "dac8cfb3a79dafb745ea1e9cbb6969bd3cf0f6a70bd7c8f7f325212e20002c70"
+        "serverVELA/vela-server/src/device/rendezvous.rs": "3b59281786c1310a0638e86ee0c25fb86f11ab0ccb8838a6703510ef4134611a"
       }
     },
     {
@@ -292,8 +292,8 @@
       "boundary": "bounded device invitation/rendezvous handler conformance against M13 (depth 3 CI / 4 local; crypto validity, real concurrency, TTL expiry and rate limits not covered)",
       "artifacts": {
         "serverVELA/vela-server/tests/pairing_model.rs": "b78d0620afda029eb70835c8b780f40e16775e7c75812674948dfce42c27065f",
-        "serverVELA/vela-server/src/device/invitation.rs": "9586807c11101ed36b3831df4c3c3c4b5acd3edcc7f79b84a135d0f6cf0d33b2",
-        "serverVELA/vela-server/src/device/rendezvous.rs": "dac8cfb3a79dafb745ea1e9cbb6969bd3cf0f6a70bd7c8f7f325212e20002c70"
+        "serverVELA/vela-server/src/device/invitation.rs": "1228c675eb28721d3034f47cdef3f3f8f4843fc1408a168515f0c23b605b119a",
+        "serverVELA/vela-server/src/device/rendezvous.rs": "3b59281786c1310a0638e86ee0c25fb86f11ab0ccb8838a6703510ef4134611a"
       }
     },
     {
@@ -408,6 +408,18 @@
         "serverVELA/vela-server/src/recovery/webauthn.rs": "7210a07bdbecad1fa69efa50cc2a69676a3cfb91b0baa307a7a12762cf711601",
         "serverVELA/vela-server/src/recovery/initiate.rs": "62237ca126dc6d15244f8576cdf05023b111fa5d1bdb871cb4d82b002d391f05",
         "serverVELA/vela-server/src/recovery/recover.rs": "c6a86eaa46f34e268f30a398c7751e833b9f04fc091d2e58c93203031e32c363"
+      }
+    },
+    {
+      "boundary": "device pairing driver (package store/redeem, grant open, claim, completion, result; 30 extracted contracts, 43 per-request and 67 composition lemmas): at most one claim and one enrolled device per grant, no cross-account, unsigned or claimless enrollment and at most one redemption per package version, counted on driver effects; an ambiguous insert error is terminal (U-19, per request only); store/SQL atomicity, signature cryptography, TTLs, the lost-result gap (U-20) and handler effect fidelity remain open",
+      "artifacts": {
+        "serverVELA/vela-enrollment-policy/src/pairing_driver.rs": "e2ad6ba6ae701868d35e1ad63828c9c783f36660199e57cfcda82f16f42b1a42",
+        "serverVELA/vela-enrollment-policy/verify-fstar-pairing-driver.sh": "432433dda88c38ff37c0b2004088df0c01edd59de458d9c4b6926977ce5265be",
+        "serverVELA/vela-enrollment-policy/proofs/fstar/extraction-pairing-driver/Vela_enrollment_policy.Pairing_driver.fst": "b2b0dbfd26ec67a061bcbe52eb641f894db8916c6ee4be96b123abcfbae348a3",
+        "serverVELA/vela-enrollment-policy/proofs/fstar/pairing-driver-lemmas/Vela_enrollment_policy_pairing_driver_lemmas.fst": "ab768e5db288deda9cb47ab3060c6d66dfe4da0fa6f09feeb1b6dd5b54982f4a",
+        "serverVELA/vela-enrollment-policy/proofs/fstar/pairing-driver-composition/Vela_enrollment_policy_pairing_driver_composition.fst": "52d2dda82eabcac2992b976d3d17faa0655945d46d80f3767fa8470e953b2ea4",
+        "serverVELA/vela-server/src/device/invitation.rs": "1228c675eb28721d3034f47cdef3f3f8f4843fc1408a168515f0c23b605b119a",
+        "serverVELA/vela-server/src/device/rendezvous.rs": "3b59281786c1310a0638e86ee0c25fb86f11ab0ccb8838a6703510ef4134611a"
       }
     }
   ]

@@ -186,6 +186,10 @@ The [revocation driver](revocation-driver/README.md) proves the revoke,
 logout and revocation-admission decisions per request and under any
 interleaving (13 contracts, 84 lemmas, three load-bearing mutations).
 
+The [pairing driver](pairing-driver/README.md) proves package, claim,
+completion and result decisions per request and under any interleaving (30
+contracts, 110 lemmas, six load-bearing mutations) and fixed U-19.
+
 The [WebAuthn recovery drivers](webauthn-recovery-driver/README.md) prove
 registration, initiation and share release per request and under any
 interleaving (27 contracts, 4 trace theorems, 47 composition lemmas, three
