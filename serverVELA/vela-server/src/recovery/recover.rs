@@ -6,10 +6,13 @@ use axum::{
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use vela_recovery_policy::{
-    credential_update_facts, plan_credential_update, plan_recovery, recover_facts,
-    CredentialUpdateDecision, CredentialUpdateObservation, RecoverDecision, RecoverObservation,
-    RecoveryAttemptSource,
+use vela_recovery_policy::webauthn_driver::{
+    begin_auth_finish, on_auth_account_observed, on_auth_assertion_observed,
+    on_auth_attempt_consumed, on_auth_credential_updated, on_auth_finish_attempt_counted,
+    on_auth_finish_context_observed, on_auth_grant_stored, on_auth_share_observed,
+    AssertionObservation, AttemptBudgetObservation, AuthAccountObservation, AuthAttemptConsumptionObservation,
+    AuthFinishContextObservation, AuthFinishEffect, AuthFinishFailure, CredentialUpdateStoreObservation,
+    GrantStoreObservation, ShareDecodeObservation,
 };
 use webauthn_rs::prelude::PublicKeyCredential;
 
@@ -67,86 +70,227 @@ pub async fn post_recover(
     // anyone who knew a user id lock that user out of recovery from a single IP,
     // without ever presenting a credential.
     let ip = net::client_ip(&headers, addr.map(|ConnectInfo(a)| a.ip()), &state.config);
-    rate_limit::recovery_recover_by_ip_user(&state.store, &ip, &body.user_id.to_string())?;
-    rate_limit::recovery_recover_by_user(&state.store, &body.user_id.to_string())?;
-
-    crate::recovery::initiate::ensure_recovery_share_exists(&state, body.user_id).await?;
-    let mut passkey = crate::recovery::webauthn::recovery_passkey_for_user(&state, body.user_id)
-        .await?
-        .ok_or_else(|| {
-            AppError::NotFound(crate::recovery::initiate::RECOVERY_UNAVAILABLE.into())
-        })?;
-    let recovery_id = body.recovery_id.ok_or_else(|| {
-        AppError::BadRequest("recovery_id from /recovery/initiate is required".into())
-    })?;
-    let taken = crate::recovery::initiate::take_auth_state(&state, body.user_id, recovery_id)?;
-    let attempt_source = if taken.is_some() {
-        RecoveryAttemptSource::Consumed
-    } else {
-        RecoveryAttemptSource::Missing
+    let limited = match rate_limit::recovery_recover_by_ip_user(
+        &state.store,
+        &ip,
+        &body.user_id.to_string(),
+    ) {
+        Ok(()) => rate_limit::recovery_recover_by_user(&state.store, &body.user_id.to_string()).err(),
+        Err(error) => Some(error),
     };
-    let auth_state = taken
-        .ok_or_else(|| AppError::BadRequest("recovery challenge expired or already used".into()))?;
-    let current_credential_id = B64.encode(passkey.cred_id().as_slice());
-    let challenge_credential_matches_current = current_credential_id == auth_state.credential_id;
-    if !challenge_credential_matches_current {
-        return Err(AppError::Unauthorized(
-            "recovery credential was replaced after this challenge was issued".into(),
-        ));
+    let start = begin_auth_finish();
+    debug_assert_eq!(start.effect, AuthFinishEffect::CountAttempt);
+    let budget = if limited.is_some() {
+        AttemptBudgetObservation::Limited
+    } else {
+        AttemptBudgetObservation::Admitted
+    };
+    let transition = on_auth_finish_attempt_counted(start.driver, budget);
+    let mut driver = transition.driver;
+    match (transition.effect, limited) {
+        (AuthFinishEffect::ObserveContext, None) => {}
+        (AuthFinishEffect::Fail(AuthFinishFailure::AttemptLimited), Some(error)) => {
+            return Err(error)
+        }
+        _ => {
+            return Err(AppError::Internal(
+                "WebAuthn recovery driver produced an unexpected budget effect".into(),
+            ))
+        }
     }
 
+    // Effect: observe the share, the stored credential and whether the request
+    // carried the attempt id. The challenge is not spent until all of them are
+    // usable.
+    let availability = crate::recovery::initiate::observe_recovery_share(&state, body.user_id)
+        .await?;
+    let credential = crate::recovery::webauthn::observe_recovery_credential(&state, body.user_id)
+        .await?;
+    let transition = on_auth_finish_context_observed(
+        driver,
+        AuthFinishContextObservation {
+            account_present: availability.account_present,
+            share_present: availability.share_present,
+            credential: credential.credential,
+            attempt_id_present: body.recovery_id.is_some(),
+        },
+    );
+    driver = transition.driver;
+    match transition.effect {
+        AuthFinishEffect::ConsumeAttempt => {}
+        AuthFinishEffect::Fail(failure) => {
+            return Err(auth_finish_context_failure(failure, credential.decode_error))
+        }
+        _ => {
+            return Err(AppError::Internal(
+                "WebAuthn recovery driver produced an unexpected context effect".into(),
+            ))
+        }
+    }
+    let recovery_id = body.recovery_id.ok_or_else(|| {
+        AppError::Internal("WebAuthn recovery driver admitted a missing attempt id".into())
+    })?;
+    let mut passkey = credential.passkey.ok_or_else(|| {
+        AppError::Internal("WebAuthn recovery driver admitted a missing credential".into())
+    })?;
+    let current_credential_id = B64.encode(passkey.cred_id().as_slice());
+
+    // Effect: consume the exact attempt state once.
+    let (observation, auth_state, attempt_error) =
+        match crate::recovery::initiate::observe_auth_state(&state, body.user_id, recovery_id)? {
+            crate::recovery::initiate::StoredAuthAttempt::Missing => {
+                (AuthAttemptConsumptionObservation::Missing, None, None)
+            }
+            crate::recovery::initiate::StoredAuthAttempt::Corrupt(error) => {
+                (AuthAttemptConsumptionObservation::Corrupt, None, Some(error))
+            }
+            crate::recovery::initiate::StoredAuthAttempt::Present {
+                state,
+                user_matches,
+                attempt_matches,
+            } => (
+                AuthAttemptConsumptionObservation::Present {
+                    user_matches,
+                    attempt_matches,
+                    credential_matches: current_credential_id == state.credential_id,
+                },
+                Some(state),
+                None,
+            ),
+        };
+    let transition = on_auth_attempt_consumed(driver, observation);
+    driver = transition.driver;
+    match transition.effect {
+        AuthFinishEffect::VerifyAssertion => {}
+        AuthFinishEffect::Fail(AuthFinishFailure::AttemptMissing) => {
+            return Err(AppError::BadRequest(
+                "recovery challenge expired or already used".into(),
+            ))
+        }
+        AuthFinishEffect::Fail(AuthFinishFailure::AttemptCorrupt) => {
+            return Err(attempt_error.unwrap_or_else(|| {
+                AppError::BadRequest("invalid recovery challenge state".into())
+            }))
+        }
+        AuthFinishEffect::Fail(AuthFinishFailure::BindingMismatch) => {
+            return Err(AppError::Unauthorized(
+                "recovery challenge binding does not match this attempt".into(),
+            ))
+        }
+        AuthFinishEffect::Fail(AuthFinishFailure::ChallengeCredentialReplaced) => {
+            return Err(AppError::Unauthorized(
+                "recovery credential was replaced after this challenge was issued".into(),
+            ))
+        }
+        _ => {
+            return Err(AppError::Internal(
+                "WebAuthn recovery driver produced an unexpected consumption effect".into(),
+            ))
+        }
+    }
+    let auth_state = auth_state.ok_or_else(|| {
+        AppError::Internal("WebAuthn recovery driver admitted an undecoded attempt".into())
+    })?;
+
+    // Effect: verify the assertion. The cryptographic outcome is an observation
+    // (assumed), not a proof.
     let assertion_result = state
         .webauthn
         .finish_passkey_authentication(&body.credential, &auth_state.auth_state);
-    let assertion_valid = assertion_result.is_ok();
-    let auth_result = match assertion_result {
-        Ok(result) => result,
-        Err(e) => {
-            return Err(AppError::Unauthorized(format!(
+    let (observation, auth_result, assertion_error) = match assertion_result {
+        Ok(auth_result) => {
+            let assertion_matches =
+                B64.encode(auth_result.cred_id().as_slice()) == auth_state.credential_id;
+            (
+                AssertionObservation {
+                    assertion_valid: true,
+                    user_verified: auth_result.user_verified(),
+                    credential_matches: assertion_matches,
+                    needs_update: auth_result.needs_update(),
+                },
+                Some(auth_result),
+                None,
+            )
+        }
+        Err(e) => (
+            AssertionObservation {
+                assertion_valid: false,
+                user_verified: false,
+                credential_matches: false,
+                needs_update: false,
+            },
+            None,
+            Some(AppError::Unauthorized(format!(
                 "WebAuthn recovery failed: {e:?}"
-            )));
-        }
+            ))),
+        ),
     };
-
-    let user_verified = auth_result.user_verified();
-    if !user_verified {
-        return Err(AppError::Unauthorized(
-            "WebAuthn recovery requires user verification".into(),
-        ));
-    }
-
-    let assertion_credential_matches =
-        B64.encode(auth_result.cred_id().as_slice()) == auth_state.credential_id;
-    let update_decision =
-        plan_credential_update(credential_update_facts(CredentialUpdateObservation {
-            assertion_valid,
-            credential_matches_current: assertion_credential_matches,
-            needs_update: auth_result.needs_update(),
-        }));
-    match update_decision {
-        CredentialUpdateDecision::Reject => {
-            return Err(AppError::Unauthorized(
-                "WebAuthn assertion used a different recovery credential".into(),
-            ));
-        }
-        CredentialUpdateDecision::Update => {
-            if passkey.update_credential(&auth_result).is_none()
-                || !crate::recovery::webauthn::update_recovery_passkey_if_current(
-                    &state,
-                    body.user_id,
-                    &auth_state.credential_id,
-                    &passkey,
-                )
-                .await?
-            {
+    let transition = on_auth_assertion_observed(driver, observation);
+    driver = transition.driver;
+    match transition.effect {
+        AuthFinishEffect::UpdateCredential => {
+            let auth_result = auth_result.as_ref().ok_or_else(|| {
+                AppError::Internal("WebAuthn recovery driver admitted an unverified assertion".into())
+            })?;
+            if passkey.update_credential(auth_result).is_none() {
+                let transition = on_auth_credential_updated(
+                    driver,
+                    CredentialUpdateStoreObservation::Changed,
+                );
+                debug_assert_eq!(
+                    transition.effect,
+                    AuthFinishEffect::Fail(AuthFinishFailure::CredentialUpdateMismatch)
+                );
+                return Err(AppError::Unauthorized(
+                    "recovery credential changed while authenticating".into(),
+                ));
+            }
+            let updated = crate::recovery::webauthn::update_recovery_passkey_if_current(
+                &state,
+                body.user_id,
+                &auth_state.credential_id,
+                &passkey,
+            )
+            .await?;
+            let observation = if updated {
+                CredentialUpdateStoreObservation::Updated
+            } else {
+                CredentialUpdateStoreObservation::Changed
+            };
+            let transition = on_auth_credential_updated(driver, observation);
+            driver = transition.driver;
+            if !matches!(transition.effect, AuthFinishEffect::QueryAccount) {
                 return Err(AppError::Unauthorized(
                     "recovery credential changed while authenticating".into(),
                 ));
             }
         }
-        CredentialUpdateDecision::Keep => {}
+        AuthFinishEffect::QueryAccount => {}
+        AuthFinishEffect::Fail(AuthFinishFailure::AssertionInvalid) => {
+            return Err(assertion_error.unwrap_or_else(|| {
+                AppError::Unauthorized("WebAuthn recovery failed".into())
+            }))
+        }
+        AuthFinishEffect::Fail(AuthFinishFailure::UserVerificationRequired) => {
+            return Err(AppError::Unauthorized(
+                "WebAuthn recovery requires user verification".into(),
+            ))
+        }
+        AuthFinishEffect::Fail(AuthFinishFailure::AssertionCredentialMismatch) => {
+            return Err(AppError::Unauthorized(
+                "WebAuthn assertion used a different recovery credential".into(),
+            ))
+        }
+        _ => {
+            return Err(AppError::Internal(
+                "WebAuthn recovery driver produced an unexpected assertion effect".into(),
+            ))
+        }
     }
 
+    // Effect: query the live row. Every field is retained as an observation so
+    // the checked policy, not a hard-coded fact, decides release and the
+    // handler can still return the original error.
     let rows = state
         .sqldb
         .query(
@@ -157,87 +301,126 @@ pub async fn post_recover(
         )
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
-
-    // Retain every row observation so the policy, not a hard-coded fact,
-    // decides release and the handler can still return the original error.
     let row = rows.first();
-    let row_present = row.is_some();
-    let account_epoch_active = row.map(|row| row.text(2).is_none()).unwrap_or(false);
-    let stored_credential_matches_attempt = row
-        .map(|row| row.text(3) == Some(auth_state.credential_id.as_str()))
-        .unwrap_or(false);
-    let share_present = row.map(|row| row.text(0).is_some()).unwrap_or(false);
-    let stored_epoch = row.and_then(|row| row.i64(1));
-    let credential_matches_current = challenge_credential_matches_current
-        && assertion_credential_matches
-        && stored_credential_matches_attempt;
-
-    let release_permit = match plan_recovery(recover_facts(RecoverObservation {
-        attempt_source,
-        user_matches: auth_state.user_id == body.user_id,
-        attempt_matches: auth_state.recovery_id == recovery_id,
-        credential_matches_current,
-        assertion_valid,
-        user_verified,
-        share_present,
-        account_epoch_active,
-        stored_epoch,
-    })) {
-        RecoverDecision::Release(permit) => permit,
-        // Preserve the original status classes, messages and precedence now
-        // that the policy sees every observation instead of hard-coded facts.
-        RecoverDecision::Reject if !row_present => {
-            return Err(AppError::NotFound(
-                crate::recovery::initiate::RECOVERY_UNAVAILABLE.into(),
-            ));
-        }
-        RecoverDecision::Reject if !account_epoch_active => {
-            return Err(AppError::Conflict(
-                "account recovery is paused during vault key rotation".into(),
-            ));
-        }
-        RecoverDecision::Reject if !stored_credential_matches_attempt => {
-            return Err(AppError::Unauthorized(
-                "recovery credential changed while authenticating".into(),
-            ));
-        }
-        RecoverDecision::Reject if !share_present => {
-            return Err(AppError::NotFound(
-                crate::recovery::initiate::RECOVERY_UNAVAILABLE.into(),
-            ));
-        }
-        RecoverDecision::Reject => {
-            return Err(AppError::Unauthorized(
-                "verified recovery policy rejected share release".into(),
-            ));
+    let observation = AuthAccountObservation {
+        account_present: row.is_some(),
+        account_epoch_active: row.map(|row| row.text(2).is_none()).unwrap_or(false),
+        share_present: row.map(|row| row.text(0).is_some()).unwrap_or(false),
+        stored_credential_matches: row
+            .map(|row| row.text(3) == Some(auth_state.credential_id.as_str()))
+            .unwrap_or(false),
+        stored_epoch: row.and_then(|row| row.i64(1)),
+    };
+    let transition = on_auth_account_observed(driver, observation);
+    driver = transition.driver;
+    let permit = match transition.effect {
+        AuthFinishEffect::ReleaseGrant(permit) => permit,
+        AuthFinishEffect::Fail(failure) => return Err(auth_finish_account_failure(failure)),
+        _ => {
+            return Err(AppError::Internal(
+                "WebAuthn recovery driver produced an unexpected account effect".into(),
+            ))
         }
     };
-    debug_assert!(release_permit.issues_single_use_grant());
+    debug_assert!(permit.epoch >= vela_recovery_policy::INITIAL_EPOCH);
 
     let row = row.expect("release policy admits only a present share row");
     let share_b64 = row.text(0).map(String::from).ok_or_else(|| {
         AppError::NotFound(crate::recovery::initiate::RECOVERY_UNAVAILABLE.into())
     })?;
-    let share_bytes = crate::db::decode_b64(&share_b64)?;
+    let share = crate::db::decode_b64(&share_b64);
+    let observation = if share.is_ok() {
+        ShareDecodeObservation::Decoded
+    } else {
+        ShareDecodeObservation::Corrupt
+    };
+    let transition = on_auth_share_observed(driver, observation);
+    driver = transition.driver;
+    let share_bytes = match (transition.effect, share) {
+        (AuthFinishEffect::StoreGrant, Ok(bytes)) => bytes,
+        (AuthFinishEffect::Fail(AuthFinishFailure::ShareCorrupt), Err(error)) => return Err(error),
+        (_, Ok(_)) => {
+            return Err(AppError::Internal(
+                "WebAuthn recovery driver produced an unexpected share effect".into(),
+            ))
+        }
+        (_, Err(error)) => return Err(error),
+    };
     let split_id = row.text(4).map(String::from);
 
     let recovery_grant = Uuid::new_v4();
-    store_credential_grant(
+    let stored = store_credential_grant(
         &state,
         body.user_id,
         recovery_grant,
-        release_permit.epoch(),
+        permit.epoch,
         &auth_state.credential_id,
-    )?;
+    );
+    let observation = if stored.is_ok() {
+        GrantStoreObservation::Stored
+    } else {
+        GrantStoreObservation::Failed
+    };
+    let transition = on_auth_grant_stored(driver, observation);
+    match (transition.effect, stored) {
+        (AuthFinishEffect::Complete, Ok(())) => {}
+        (AuthFinishEffect::Fail(AuthFinishFailure::GrantStorage), Err(error)) => return Err(error),
+        _ => {
+            return Err(AppError::Internal(
+                "WebAuthn recovery driver produced an unexpected grant effect".into(),
+            ))
+        }
+    }
 
     tracing::info!(user_id = %body.user_id, "recovery share released after WebAuthn assertion");
 
     Ok(Json(RecoverResponse {
         share: B64.encode(&share_bytes),
-        key_epoch: release_permit.epoch(),
+        key_epoch: permit.epoch,
         split_id,
         recovery_grant,
     }))
+}
+
+/// Render a pre-consumption context failure with the handler's historical
+/// status/message precedence.
+fn auth_finish_context_failure(
+    failure: AuthFinishFailure,
+    decode_error: Option<AppError>,
+) -> AppError {
+    match failure {
+        AuthFinishFailure::AccountUnavailable
+        | AuthFinishFailure::ShareMissing
+        | AuthFinishFailure::CredentialMissing => {
+            AppError::NotFound(crate::recovery::initiate::RECOVERY_UNAVAILABLE.into())
+        }
+        AuthFinishFailure::CredentialCorrupt => decode_error.unwrap_or_else(|| {
+            AppError::Internal("invalid stored WebAuthn credential".into())
+        }),
+        AuthFinishFailure::AttemptIdMissing => {
+            AppError::BadRequest("recovery_id from /recovery/initiate is required".into())
+        }
+        _ => AppError::Internal("unexpected WebAuthn recovery context failure".into()),
+    }
+}
+
+/// Render a live-row policy rejection with the handler's historical status and
+/// message.
+fn auth_finish_account_failure(failure: AuthFinishFailure) -> AppError {
+    match failure {
+        AuthFinishFailure::AccountAbsent | AuthFinishFailure::ShareMissing => {
+            AppError::NotFound(crate::recovery::initiate::RECOVERY_UNAVAILABLE.into())
+        }
+        AuthFinishFailure::RotationPaused => AppError::Conflict(
+            "account recovery is paused during vault key rotation".into(),
+        ),
+        AuthFinishFailure::StoredCredentialMismatch => AppError::Unauthorized(
+            "recovery credential changed while authenticating".into(),
+        ),
+        _ => AppError::Unauthorized(
+            "verified recovery policy rejected share release".into(),
+        ),
+    }
 }
 
 fn enroll_grant_key(user_id: Uuid, grant: Uuid) -> String {

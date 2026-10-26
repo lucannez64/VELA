@@ -7,8 +7,10 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use uuid::Uuid;
-use vela_recovery_policy::{
-    initiate_facts, plan_initiation, InitiateDecision, InitiateObservation,
+use vela_recovery_policy::webauthn_driver::{
+    begin_auth_start, on_auth_ceremony_started, on_auth_start_observed, on_auth_start_stored,
+    AuthStartEffect, AuthStartFailure, AuthStartObservation, CeremonyStartObservation,
+    ChallengeStoreObservation,
 };
 use webauthn_rs::prelude::{PasskeyAuthentication, RequestChallengeResponse};
 
@@ -67,59 +69,135 @@ pub async fn post_initiate(
     rate_limit::recovery_initiate_by_ip_user(&state.store, &ip, &body.user_id.to_string())?;
     rate_limit::recovery_initiate_by_user(&state.store, &body.user_id.to_string())?;
 
+    // Effect: observe availability, decode the stored credential and probe the
+    // generated attempt slot. Every fact the checked initiation policy needs is
+    // an observation; the driver owns the historical precedence.
     let availability = observe_recovery_share(&state, body.user_id).await?;
-    if !availability.account_present || !availability.share_present {
-        return Err(AppError::NotFound(RECOVERY_UNAVAILABLE.into()));
-    }
-    let passkey_opt =
-        crate::recovery::webauthn::recovery_passkey_for_user(&state, body.user_id).await?;
-    let credential_present = passkey_opt.is_some();
-    let passkey = passkey_opt.ok_or_else(|| AppError::NotFound(RECOVERY_UNAVAILABLE.into()))?;
-    let credential_id = B64.encode(passkey.cred_id().as_slice());
-
-    let (challenge, auth_state) = state
-        .webauthn
-        .start_passkey_authentication(&[passkey])
-        .map_err(|e| AppError::BadRequest(format!("failed to start WebAuthn recovery: {e:?}")))?;
-
+    let credential = crate::recovery::webauthn::observe_recovery_credential(&state, body.user_id)
+        .await?;
     let recovery_id = Uuid::new_v4();
     // Observe freshness for the policy. Storage checks it atomically again:
     // another insertion may win after this preflight observation.
     let attempt_id_fresh = !state
         .store
         .exists(&auth_state_key(body.user_id, recovery_id))?;
-    let permit = match plan_initiation(initiate_facts(InitiateObservation {
-        account_present: availability.account_present,
-        share_present: availability.share_present,
-        credential_present,
-        attempt_id_fresh,
-        ttl_secs: AUTH_STATE_TTL_SECS,
-    })) {
-        InitiateDecision::Start(permit) => permit,
-        InitiateDecision::Reject if !attempt_id_fresh => {
-            return Err(AppError::Conflict(
-                "recovery challenge id is already in use".into(),
-            ));
+
+    let start = begin_auth_start();
+    debug_assert_eq!(start.effect, AuthStartEffect::Observe);
+    let transition = on_auth_start_observed(
+        start.driver,
+        AuthStartObservation {
+            account_present: availability.account_present,
+            share_present: availability.share_present,
+            credential: credential.credential,
+            attempt_id_fresh,
+            ttl_secs: AUTH_STATE_TTL_SECS,
+        },
+    );
+    match transition.effect {
+        AuthStartEffect::StartCeremony => {}
+        AuthStartEffect::Fail(failure) => {
+            return Err(auth_start_failure(failure, credential.decode_error))
         }
-        InitiateDecision::Reject => {
+        _ => {
             return Err(AppError::Internal(
-                "verified recovery policy rejected a valid initiation".into(),
-            ));
+                "authentication-start driver produced an unexpected observation effect".into(),
+            ))
+        }
+    }
+    let passkey = credential.passkey.ok_or_else(|| {
+        AppError::Internal("authentication-start driver admitted a missing credential".into())
+    })?;
+    let credential_id = B64.encode(passkey.cred_id().as_slice());
+
+    let ceremony = state.webauthn.start_passkey_authentication(&[passkey]);
+    let (challenge, auth_state) = match ceremony {
+        Ok(value) => value,
+        Err(e) => {
+            let failed =
+                on_auth_ceremony_started(transition.driver, CeremonyStartObservation::Failed);
+            debug_assert_eq!(
+                failed.effect,
+                AuthStartEffect::Fail(AuthStartFailure::CeremonyFailed)
+            );
+            return Err(AppError::BadRequest(format!(
+                "failed to start WebAuthn recovery: {e:?}"
+            )));
         }
     };
-    debug_assert!(permit.binds_user_attempt_and_credential());
+    let transition = on_auth_ceremony_started(
+        transition.driver,
+        CeremonyStartObservation::Started,
+    );
+    if !matches!(transition.effect, AuthStartEffect::StoreChallenge) {
+        return Err(AppError::Internal(
+            "authentication-start driver produced an unexpected ceremony effect".into(),
+        ));
+    }
+
     let envelope = RecoveryAuthState {
         user_id: body.user_id,
         recovery_id,
         credential_id,
         auth_state,
     };
-    store_auth_state(&state, &envelope)?;
+    let written = store_auth_state(&state, &envelope);
+    let observation = match &written {
+        Ok(()) => ChallengeStoreObservation::Stored,
+        Err(AppError::Conflict(_)) => ChallengeStoreObservation::Lost,
+        Err(_) => ChallengeStoreObservation::StorageFailed,
+    };
+    let transition = on_auth_start_stored(transition.driver, observation);
+    match transition.effect {
+        AuthStartEffect::Complete => {}
+        AuthStartEffect::Fail(AuthStartFailure::AttemptCollision) => {
+            return Err(AppError::Conflict(
+                "recovery challenge id is already in use".into(),
+            ))
+        }
+        AuthStartEffect::Fail(AuthStartFailure::StateStorage) => {
+            return Err(written.err().unwrap_or_else(|| {
+                AppError::Internal("failed to store recovery challenge state".into())
+            }))
+        }
+        _ => {
+            return Err(AppError::Internal(
+                "authentication-start driver produced an unexpected store effect".into(),
+            ))
+        }
+    }
 
     Ok(Json(InitiateResponse {
         recovery_id,
         public_key: challenge,
     }))
+}
+
+/// Render an initiation failure with the handler's historical status and
+/// message. The corrupt-credential class carries the original decode error.
+fn auth_start_failure(failure: AuthStartFailure, decode_error: Option<AppError>) -> AppError {
+    match failure {
+        AuthStartFailure::AccountUnavailable
+        | AuthStartFailure::ShareMissing
+        | AuthStartFailure::CredentialMissing => {
+            AppError::NotFound(RECOVERY_UNAVAILABLE.into())
+        }
+        AuthStartFailure::CredentialCorrupt => decode_error.unwrap_or_else(|| {
+            AppError::Internal("invalid stored WebAuthn credential".into())
+        }),
+        AuthStartFailure::AttemptCollision => {
+            AppError::Conflict("recovery challenge id is already in use".into())
+        }
+        AuthStartFailure::CeremonyFailed => {
+            AppError::BadRequest("failed to start WebAuthn recovery".into())
+        }
+        AuthStartFailure::PolicyRejected => AppError::Internal(
+            "verified recovery policy rejected a valid initiation".into(),
+        ),
+        AuthStartFailure::StateStorage => {
+            AppError::Internal("failed to store recovery challenge state".into())
+        }
+    }
 }
 
 /// Raw availability of the recovery share for one account.
@@ -157,14 +235,6 @@ pub(crate) async fn observe_recovery_share(
     })
 }
 
-pub(crate) async fn ensure_recovery_share_exists(state: &AppState, user_id: Uuid) -> Result<()> {
-    let observation = observe_recovery_share(state, user_id).await?;
-    if !observation.account_present || !observation.share_present {
-        return Err(AppError::NotFound(RECOVERY_UNAVAILABLE.into()));
-    }
-    Ok(())
-}
-
 fn auth_state_key(user_id: Uuid, recovery_id: Uuid) -> String {
     format!("recovery:webauthn:auth:{user_id}:{recovery_id}")
 }
@@ -196,28 +266,42 @@ fn store_auth_state_bytes(
     }
 }
 
-/// Consume the exact attempt state once. `Ok(None)` means no state matched;
-/// `Ok(Some(_))` means this call removed the stored challenge. The old
-/// per-user fallback could not distinguish concurrent initiations and
-/// therefore cannot meet the M14 attempt-binding or replay properties;
-/// callers must return `recovery_id`.
-pub(crate) fn take_auth_state(
+/// What the atomic single-use `get_del` of one attempt-bound challenge
+/// observed. A decode failure still removed the state, so it is reported
+/// separately from "nothing matched"; the driver decides that corruption is
+/// terminal rather than assuming the store returned nothing.
+pub(crate) enum StoredAuthAttempt {
+    Missing,
+    Corrupt(AppError),
+    Present {
+        state: RecoveryAuthState,
+        user_matches: bool,
+        attempt_matches: bool,
+    },
+}
+
+/// Consume the exact attempt state once. `Missing` means no state matched. The
+/// binding comparison is returned as an observation; the checked driver decides
+/// that a mismatch is terminal without re-arming the consumed challenge.
+pub(crate) fn observe_auth_state(
     state: &AppState,
     user_id: Uuid,
     recovery_id: Uuid,
-) -> Result<Option<RecoveryAuthState>> {
+) -> Result<StoredAuthAttempt> {
     let key = auth_state_key(user_id, recovery_id);
     let Some(bytes) = state.store.get_del(&key)? else {
-        return Ok(None);
+        return Ok(StoredAuthAttempt::Missing);
     };
-    let envelope: RecoveryAuthState = serde_json::from_slice(&bytes)
-        .map_err(|e| AppError::BadRequest(format!("invalid recovery challenge state: {e}")))?;
-    if envelope.user_id != user_id || envelope.recovery_id != recovery_id {
-        return Err(AppError::Unauthorized(
-            "recovery challenge binding does not match this attempt".into(),
-        ));
+    match serde_json::from_slice::<RecoveryAuthState>(&bytes) {
+        Ok(envelope) => Ok(StoredAuthAttempt::Present {
+            user_matches: envelope.user_id == user_id,
+            attempt_matches: envelope.recovery_id == recovery_id,
+            state: envelope,
+        }),
+        Err(e) => Ok(StoredAuthAttempt::Corrupt(AppError::BadRequest(format!(
+            "invalid recovery challenge state: {e}"
+        )))),
     }
-    Ok(Some(envelope))
 }
 
 #[cfg(test)]

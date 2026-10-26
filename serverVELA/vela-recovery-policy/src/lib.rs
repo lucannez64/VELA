@@ -8,6 +8,7 @@
 
 pub mod driver;
 pub mod possession_driver;
+pub mod webauthn_driver;
 
 pub const INITIAL_EPOCH: i64 = 1;
 pub const HYBRID_EK_LEN: usize = 1568 + 32;
