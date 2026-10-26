@@ -202,6 +202,7 @@ jobs:
           cargo test --manifest-path serverVELA/Cargo.toml --test login_driver_handler
           cargo test --manifest-path serverVELA/Cargo.toml -p vela-session-policy --test login_driver
           cargo test --manifest-path serverVELA/Cargo.toml -p vela-session-policy --lib revocation_driver
+          cargo test --manifest-path serverVELA/Cargo.toml -p vela-session-policy --lib deletion_driver
           cargo test --manifest-path serverVELA/Cargo.toml --test account_deletion_model
           cargo test --manifest-path serverVELA/Cargo.toml --test device_revocation_model
           cargo test --manifest-path serverVELA/Cargo.toml -p vela-recovery-policy --test redemption_driver

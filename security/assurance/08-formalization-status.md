@@ -79,6 +79,27 @@ atomicity, PASETO and rate limits, in-flight handlers of a revoked actor and
 effect fidelity remain assumptions. The [bd765ab workflow](https://github.com/lucannez64/VELA/actions/runs/40230607902) reproduced
 it. [Evidence](proof-logs/current/revocation-driver/README.md).
 
+## Account deletion driver (local, after e15a70b)
+
+`DELETE /account` now takes every decision from an extracted driver in
+`vela-session-policy` (11 contracts, 37 per-request lemmas, 5 bridge lemmas and
+an 18-lemma composition). Per request, both store-side lockouts (device tokens,
+then web sessions) precede the transaction and every SQL delete, the seven
+tables are deleted once each in a fixed order before `users`, the transaction
+commits only after the `users` row was deleted, a response implies a commit,
+and success and failure exclude each other. For any interleaving of deletions
+and token use on two accounts: no cross-account deletion, no second commit for
+an account already gone, and no token of a locked-out account admitted by the
+extracted `plan_admission`. The counters are keyed on driver decisions. The
+three mutations are rejected before the composition is reached (two by the
+per-request theorem, one by the extracted admission contract), so they show
+the driver lemmas are load-bearing, not the composition counters themselves. Store-side lockout
+failures are still ignored (historical behaviour): a failed sentinel write
+leaves that token usable until the commit removes the account row. SQL
+transaction atomicity, store linearizability and effect fidelity remain
+assumptions. No new bug was found. Hosted reproduction is pending.
+[Evidence](proof-logs/current/deletion-driver/README.md).
+
 ## Vault upload driver (local, after 54b38b3)
 
 `PUT /vault/chunk/:id` and `GET /vault/chunk/:id` now take their decisions from
@@ -100,7 +121,7 @@ monotonicity on upload; clock rollback is refused by the client download
 policy (docs 17/18). No bug was found. Hosted reproduction is pending.
 [Evidence](proof-logs/current/vault-upload-driver/README.md).
 
-## Device pairing driver (local, after f1b640b)
+## Device pairing driver (hosted on 54b38b3)
 
 The invitation and rendezvous handlers (`/device/enrollment-package`,
 `/device/enrollment-grant/*`) now delegate every post-validation decision to an
@@ -118,8 +139,8 @@ of the extracted driver each break the composition. This work found and fixed
 U-19 (an insert error re-armed the ceremony); that fix is proved per request,
 while the composition models successful inserts only. Store/SQL atomicity,
 signature cryptography (M13), TTLs and effect fidelity remain assumptions, and
-U-20 stays open. Hosted reproduction is pending.
-[Evidence](proof-logs/current/pairing-driver/README.md).
+U-20 stays open. The [54b38b3 workflow](https://github.com/lucannez64/VELA/actions/runs/40402764401) reproduced
+it. [Evidence](proof-logs/current/pairing-driver/README.md).
 
 ## WebAuthn recovery drivers (hosted on a79cba7)
 
@@ -380,7 +401,7 @@ and complete handler traces remain open.
 | Area | Status | Required to close |
 |---|---|---|
 | F-1: handler facts | Partial: observation constructors and policy checks hosted on fdee2bc; origins and full handlers remain open | Maintain the sharing contracts reproduced on 5d8c366; verify the observation producers (SQL rows, store lookups, signature verifier, session ids) themselves; complete UTF-8/object and authenticated-open composition after the checked byte-frame parser; prove independent context origins; cover remaining token, epoch, recovery and handler fact construction |
-| F-2: state transitions | Partial: preflight ordering/readiness checked against an independent specification; enrollment-redemption decisions extracted into a driver with unbounded per-request trace lemmas (hosted aaf708f) and a concurrent at-most-one-device-per-grant composition (hosted edaee5a); sharing decisions extracted into a driver with per-request and concurrent composition proofs (hosted e89ebed); possession-proof recovery decisions likewise (hosted 7a6d108); device revocation, logout and revocation admission likewise (hosted bd765ab); WebAuthn recovery registration, initiation and release likewise (hosted a79cba7); device pairing likewise (local, found U-19); vault chunk upload and read likewise (local; stale-write prevention at commit rests on the SQL guard); sharing handlers: every sequence up to depth 3 (CI) / 4 (local) matches the M19b/M21 state machine against the real router and database, with mutation checks; possession-proof recovery handlers: every sequence up to depth 4 (CI) matches the M18/M26a chain, with mutation checks (WebAuthn path not driven); device invitation/rendezvous handlers: every sequence up to depth 3 (CI, 5,220 traces) / 4 (local, 88,741) matches the M13 ceremony, with a mutation check ([evidence](proof-logs/current/pairing-conformance/README.md)); challenge consumers (`/auth/verify`, `/device/enroll`, `/web-session/:id/token`): every sequence up to depth 3 (CI, 7,240 traces) / 4 (local, 137,561) keeps each nonce single-use across all three, plus a 16-way concurrent race test and a mutation check ([evidence](proof-logs/current/challenge-single-use/README.md); each nonce is now bound to one purpose, see U-16); account deletion: every sequence up to depth 3 (CI, 2,380 traces) leaves no row in any of the eight tables and no sled key of the deleted account, and its tokens and devices stop working everywhere; this found and fixed two residues (send links and pending web sessions survived deletion) ([evidence](proof-logs/current/account-deletion-conformance/README.md); deletion now runs in one transaction, see U-17); device revocation and logout: every sequence up to depth 3 (CI, 11,155 traces) shows a revoked device loses every token and cannot log in again, logout ends only its own token, revoked devices cannot revoke and no cross-account revocation succeeds, with mutation checks ([evidence](proof-logs/current/device-revocation-conformance/README.md); revoking a device now also ends the web sessions it approved, see U-18) | Machine-check concrete handler/database transitions against protocol transitions, including exceptions, cancellation and concurrency |
+| F-2: state transitions | Partial: preflight ordering/readiness checked against an independent specification; enrollment-redemption decisions extracted into a driver with unbounded per-request trace lemmas (hosted aaf708f) and a concurrent at-most-one-device-per-grant composition (hosted edaee5a); sharing decisions extracted into a driver with per-request and concurrent composition proofs (hosted e89ebed); possession-proof recovery decisions likewise (hosted 7a6d108); device revocation, logout and revocation admission likewise (hosted bd765ab); WebAuthn recovery registration, initiation and release likewise (hosted a79cba7); device pairing likewise (hosted 54b38b3, found U-19); account deletion likewise (local); vault chunk upload and read likewise (local; stale-write prevention at commit rests on the SQL guard); sharing handlers: every sequence up to depth 3 (CI) / 4 (local) matches the M19b/M21 state machine against the real router and database, with mutation checks; possession-proof recovery handlers: every sequence up to depth 4 (CI) matches the M18/M26a chain, with mutation checks (WebAuthn path not driven); device invitation/rendezvous handlers: every sequence up to depth 3 (CI, 5,220 traces) / 4 (local, 88,741) matches the M13 ceremony, with a mutation check ([evidence](proof-logs/current/pairing-conformance/README.md)); challenge consumers (`/auth/verify`, `/device/enroll`, `/web-session/:id/token`): every sequence up to depth 3 (CI, 7,240 traces) / 4 (local, 137,561) keeps each nonce single-use across all three, plus a 16-way concurrent race test and a mutation check ([evidence](proof-logs/current/challenge-single-use/README.md); each nonce is now bound to one purpose, see U-16); account deletion: every sequence up to depth 3 (CI, 2,380 traces) leaves no row in any of the eight tables and no sled key of the deleted account, and its tokens and devices stop working everywhere; this found and fixed two residues (send links and pending web sessions survived deletion) ([evidence](proof-logs/current/account-deletion-conformance/README.md); deletion now runs in one transaction, see U-17); device revocation and logout: every sequence up to depth 3 (CI, 11,155 traces) shows a revoked device loses every token and cannot log in again, logout ends only its own token, revoked devices cannot revoke and no cross-account revocation succeeds, with mutation checks ([evidence](proof-logs/current/device-revocation-conformance/README.md); revoking a device now also ends the web sessions it approved, see U-18) | Machine-check concrete handler/database transitions against protocol transitions, including exceptions, cancellation and concurrency |
 | F-3: persistence/recovery | Partial: M28 and composed M29 | Prove the actual journal implementation refines M28; formalize collection equality and filesystem outcomes; compose local edits/deletions and RMS migration; cover or explicitly exclude independent processes |
 | F-4: construction security | Partial: CryptoVerif proofs for idealized v2 KEM games, modular KEM-DEM, AND-signature, v2 possession-proof and authenticated-share games under the explicit assumptions | Close the combiner gaps listed in `security/formal/cryptoverif/README.md` (concrete X25519 clamping/cofactor/encoding correspondence after conditional nonuniform distribution accounting, SHA-256 step, quantum-query and multi-user composition; KEM-DEM is proved modularly); computational games and reductions for envelope framing and KDF use beyond the random-oracle model, under named primitive assumptions (share tags and the v2 possession proof are now proved in CryptoVerif with KDFs as random oracles; legacy v1 possession commitments are not covered); verify application randomness/error/erasure handling. Primitive internals and leakage resistance are trusted under the selected boundary |
 | F-5: native clients/composition | [Shared chunk kernel](17-universal-chunk-admission.md) and [integer-epoch kernel](18-mobile-sync-admission.md) checked; mobile runtime fixes internally reviewed and hosted on fdee2bc; bounded Android (millions of traces) and iOS (1,110 traces, passing in macOS CI) conformance of the download gates against the Rust rules; native trace refinement remains open | Verify Kotlin/Swift callers, persistence and FFI; formalize enrollment UI trust; compose recovery, enrollment, sync, sharing and revocation in one argument |

@@ -240,6 +240,16 @@ and `middleware.rs` (13 contracts, 28 per-request and 56 composition lemmas;
 [evidence](proof-logs/current/revocation-driver/README.md)). Handler effect
 fidelity and store/SQL semantics are assumed.
 
+## Account deletion driver
+
+`vela-session-policy::deletion_driver` holds every decision of
+`DELETE /account` (`account/delete.rs`): actor and scope refusal, scan and
+lockout classification, the fixed table order, the `users`-row existence check
+and commit or rollback (11 contracts, 37 per-request, 5 bridge and 18
+composition lemmas; [evidence](proof-logs/current/deletion-driver/README.md)).
+The SQL transaction's atomicity, store linearizability and handler effect
+fidelity are assumed.
+
 ## Vault upload driver
 
 `vela-rekey-policy::vault_upload_driver` holds the authentication, epoch-route,

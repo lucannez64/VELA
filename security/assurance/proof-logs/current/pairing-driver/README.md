@@ -327,3 +327,10 @@ historical `proofs/fstar/extraction/` artifact.
 ## Counts and hashes
 
 See `counts.txt` and `source-hashes.txt`.
+
+## Hosted reproduction
+
+The [54b38b3 security workflow](https://github.com/lucannez64/VELA/actions/runs/40402764401) verified the pairing extraction,
+per-request lemmas and composition, and ran the enrollment policy tests and the
+full 68-test integration suite; all fifteen PR checks passed.
+`hosted-54b38b3.log` holds the summary and hashes, which match the local run.

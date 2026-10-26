@@ -186,6 +186,11 @@ The [revocation driver](revocation-driver/README.md) proves the revoke,
 logout and revocation-admission decisions per request and under any
 interleaving (13 contracts, 84 lemmas, three load-bearing mutations).
 
+The [deletion driver](deletion-driver/README.md) proves the lockout-first,
+fixed-order, commit-only-after-`users` deletion per request and no
+cross-account deletion, second commit or locked-out admission under any
+interleaving (11 contracts, 60 lemmas, three mutations).
+
 The [vault upload driver](vault-upload-driver/README.md) proves the
 `put_chunk`/`get_chunk` decisions per request and the write-permit counters
 under any interleaving with rotations (14 functions, 81 lemmas, three

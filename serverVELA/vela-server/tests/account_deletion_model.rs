@@ -44,10 +44,10 @@
 //!
 //! ## Not covered
 //!
-//! Backups, replicas and point-in-time recovery; a crash or error between the
-//! individual SQL statements of the delete (the handler is a sequence of
-//! statements, not one transaction — this test observes only the completed
-//! operation); concurrency with in-flight requests from another device; clock
+//! Backups, replicas and point-in-time recovery; a crash part-way through the
+//! delete (the SQL deletions run in one transaction, see
+//! `failed_account_deletion_rolls_back_every_table` in `integration.rs`; this
+//! test observes only the completed operation); concurrency with in-flight requests from another device; clock
 //! and TTL expiry; and WebAuthn recovery credentials (no command drives them
 //! here — the users row that stores them is covered by the residue scan).
 //! This is bounded executable evidence, not a proof.
