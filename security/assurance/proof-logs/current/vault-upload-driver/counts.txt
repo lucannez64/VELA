@@ -1,0 +1,33 @@
+Vault upload/read driver increment
+==================================
+
+Rust (serverVELA/vela-rekey-policy/src/vault_upload_driver.rs)
+  public decision functions / constructors extracted: 14
+  hax_lib::ensures                                   2
+  hax_lib::requires                                  0 (the F* lemmas carry the
+                                                     soundness preconditions)
+  Rust conformance tests                            12 (25 total in the crate)
+  public enums/structs                              17
+
+F* per-request lemmas (vault-upload-driver-lemmas, 1 module)
+  Lemma declarations                                42
+  recursive Pure definitions                         8
+  headline: upload_trace_theorem
+  write authorization: write_effect_route, write_effect_authority
+  read: read_step_sound, read_trace_theorem
+  reachability witnesses: active create, shadow, version conflict,
+                          unauthenticated, web shadow refusal, stale web,
+                          epoch rejection
+
+F* concurrent composition (vault-upload-driver-composition, 1 module)
+  Lemma declarations                                39
+  recursive definitions                             12
+  headline: upload_composition_theorem
+  named consequences: no_stale_active_write, no_web_shadow_write
+  guard lemmas: active_guard_rejects_stale,
+                shadow_guard_requires_device
+
+Extraction
+  focused driver module: proofs/fstar/extraction-vault-upload-driver/
+  regenerated root dependency: proofs/fstar/extraction-vault-upload-driver-root/
+  historical artifact untouched: proofs/fstar/extraction/ (12 contracts)

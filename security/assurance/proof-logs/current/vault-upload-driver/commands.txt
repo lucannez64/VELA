@@ -1,0 +1,34 @@
+# Commands used for this evidence directory. Run from the repository root
+# unless noted otherwise. Every cargo/hax/fstar command went through
+# ~/.local/opt/vela-tools/bin/vela-heavy (global machine-wide heavy lock).
+
+# Environment
+export CARGO_HOME=/tmp/vela-hax-cargo
+export OPAMROOT=$HOME/.local/opt/vela-tools/opam
+export PATH=/tmp/vela-fstar-prebuilt/fstar/bin:$HOME/.local/opt/vela-tools/bin:$HOME/.local/opt/vela-tools/opam/vela-hax/bin:$PATH
+export CARGO_TARGET_DIR=/home/hirew/.t3/worktrees/VELA/t3-700776df/target
+export CARGO_PROFILE_DEV_CODEGEN_BACKEND=llvm
+
+# Focused proof (writes focused-verify.log)
+cd serverVELA/vela-rekey-policy
+~/.local/opt/vela-tools/bin/vela-heavy ./verify-fstar-vault-upload-driver.sh
+
+# Full crate gate, including the historical extraction
+~/.local/opt/vela-tools/bin/vela-heavy ./verify-fstar.sh
+
+# Rust tests (server-tests.log)
+cd ../..
+~/.local/opt/vela-tools/bin/vela-heavy cargo test -p vela-rekey-policy --lib
+~/.local/opt/vela-tools/bin/vela-heavy cargo test -p vela-server --test rekey_state_model
+~/.local/opt/vela-tools/bin/vela-heavy cargo test -p vela-server --test session_capability_model
+~/.local/opt/vela-tools/bin/vela-heavy cargo test -p vela-server --test account_deletion_model
+~/.local/opt/vela-tools/bin/vela-heavy cargo test -p vela-server --test integration
+
+# Static gates
+python3 security/assurance/check-proof-boundary.py
+python3 -m unittest discover -s security/formal/tests -p 'test_*.py'
+
+# Mutation checks: copies of the regenerated extraction under /tmp/opencode are
+# edited; the checked-in extraction is never modified. Diffs are next to their
+# logs. Each fstar.exe invocation includes the mutant directories instead of
+# the checked-in ones.
