@@ -50,3 +50,8 @@ fstar.exe \
 # it must run in its own fstar.exe invocation and never share an include
 # directory with the historical artifact checked above.
 "$proof_root/verify-fstar-pairing-driver.sh"
+
+# Handler-to-driver link for the device-pairing ceremonies: the interpreter
+# loop the handlers expand, proved to perform exactly the driver's effects.
+# Needs the pairing driver extraction above.
+"$proof_root/verify-fstar-pairing-interpreter.sh"

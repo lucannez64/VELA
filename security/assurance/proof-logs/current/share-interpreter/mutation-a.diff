@@ -1,0 +1,19 @@
+--- vela-share-policy/proofs/fstar/extraction-interpreter/Vela_share_policy.Interpreter.fst	2026-10-27 13:24:20.384345070 +0100
++++ /tmp/vela-mut/share-a/Vela_share_policy.Interpreter.fst	2026-10-27 13:32:06.067085523 +0100
+@@ -119,13 +119,13 @@
+               transition.Vela_share_policy.Driver.f_effect <: Vela_share_policy.Driver.t_ShareEffect
+             with
+             | Vela_share_policy.Driver.ShareEffect_ObserveLink  ->
+-              let (tmp0: v_Io), (out: Vela_share_policy.t_LinkMutationObservation) =
+-                f_observe_link #v_Io #FStar.Tactics.Typeclasses.solve io
++              let (tmp0: v_Io), (out: Vela_share_policy.Driver.t_EkDeviceObservation) =
++                f_observe_device #v_Io #FStar.Tactics.Typeclasses.solve io
+               in
+               let io:v_Io = tmp0 in
+               io,
+               Vela_share_policy.Driver.step transition.Vela_share_policy.Driver.f_driver
+-                (Vela_share_policy.Driver.ShareEvent_LinkObserved out
++                (Vela_share_policy.Driver.ShareEvent_EkObserved out
+                   <:
+                   Vela_share_policy.Driver.t_ShareEvent)
+               <:

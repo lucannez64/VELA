@@ -6,11 +6,11 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use vela_enrollment_policy::pairing_driver::{
-    begin_redeem_package, begin_store_package, on_package_redeemed_event, on_package_written_event,
     PackageStoreObservation, PackageTokenObservation, PairingEffect, PairingFailure,
     RedeemObservation, StoreObservation,
 };
 
+use super::pairing_executor::PairingExecutor;
 use crate::{
     error::{AppError, Result},
     net, rate_limit,
@@ -31,6 +31,34 @@ pub struct FetchEnrollmentPackageResponse {
     pub ciphertext: String,
 }
 
+/// The I/O behind the package-store ceremony. The driver decides whether the
+/// write may happen at all and how its outcome is classified; this executor
+/// performs only the one effect the proved loop hands it.
+struct StorePackageIo<'a> {
+    state: &'a AppState,
+    token: String,
+    ciphertext: String,
+    error: Option<AppError>,
+}
+
+impl PairingExecutor for StorePackageIo<'_> {
+    async fn store_package(&mut self) -> StoreObservation {
+        match self.state.store.set_ex(
+            &package_key(&self.token),
+            self.ciphertext.as_bytes(),
+            ENROLLMENT_PACKAGE_TTL_SECS,
+        ) {
+            Ok(()) => StoreObservation::Stored,
+            Err(error) => {
+                if self.error.is_none() {
+                    self.error = Some(error);
+                }
+                StoreObservation::Failed
+            }
+        }
+    }
+}
+
 pub async fn post_enrollment_package(
     State(state): State<AppState>,
     addr: Option<ConnectInfo<SocketAddr>>,
@@ -43,50 +71,66 @@ pub async fn post_enrollment_package(
     // Every post-validation decision below belongs to the extracted driver:
     // whether the request may write at all, and how the write outcome is
     // classified. The handler only performs the returned effect.
-    let start = begin_store_package(PackageStoreObservation {
-        token_valid: validate_token(&body.token).is_ok(),
-        ciphertext_len_valid: !body.ciphertext.is_empty()
-            && body.ciphertext.len() <= MAX_ENROLLMENT_PACKAGE_BYTES,
-    });
-    debug_assert!(matches!(
-        start.effect,
-        PairingEffect::StorePackage | PairingEffect::Fail(_)
-    ));
-    let stored_error = match start.effect {
-        PairingEffect::StorePackage => match state.store.set_ex(
-            &package_key(&body.token),
-            body.ciphertext.as_bytes(),
-            ENROLLMENT_PACKAGE_TTL_SECS,
-        ) {
-            Ok(()) => None,
-            Err(error) => Some(error),
+    let start = vela_enrollment_policy::pairing_interpreter::start_store_package(
+        PackageStoreObservation {
+            token_valid: validate_token(&body.token).is_ok(),
+            ciphertext_len_valid: !body.ciphertext.is_empty()
+                && body.ciphertext.len() <= MAX_ENROLLMENT_PACKAGE_BYTES,
         },
-        PairingEffect::Fail(failure) => return Err(invitation_failure_error(failure)),
-        _ => {
-            return Err(AppError::Internal(
-                "pairing driver produced an unexpected package-store effect".into(),
-            ))
-        }
+    );
+    let mut io = StorePackageIo {
+        state: &state,
+        token: body.token,
+        ciphertext: body.ciphertext,
+        error: None,
     };
+    // The proved loop: only the effect the driver just emitted is performed,
+    // and nothing after its verdict.
+    let transition = vela_enrollment_policy::pairing_interpreter!(io, start, await);
 
-    let observation = if stored_error.is_some() {
-        StoreObservation::Failed
-    } else {
-        StoreObservation::Stored
-    };
-    let transition = on_package_written_event(start.driver, observation);
     match transition.effect {
         PairingEffect::Complete => Ok(Json(serde_json::json!({
             "stored": true,
             "expires_in": ENROLLMENT_PACKAGE_TTL_SECS
         }))),
-        PairingEffect::Fail(PairingFailure::PackageStorage) => Err(stored_error.unwrap_or_else(|| {
-            AppError::Internal("enrollment package store failed".into())
-        })),
-        PairingEffect::Fail(failure) => Err(invitation_failure_error(failure)),
+        PairingEffect::Fail(failure) => Err(io
+            .error
+            .take()
+            .unwrap_or_else(|| invitation_failure_error(failure))),
         _ => Err(AppError::Internal(
-            "pairing driver produced an unexpected package-store observation effect".into(),
+            "pairing driver produced an unexpected package-store effect".into(),
         )),
+    }
+}
+
+/// The I/O behind the package-fetch ceremony. The destructive read is the only
+/// way a package is handed out, and the driver authorizes it at most once per
+/// request.
+struct RedeemPackageIo<'a> {
+    state: &'a AppState,
+    token: String,
+    removed: Option<Vec<u8>>,
+    error: Option<AppError>,
+}
+
+impl PairingExecutor for RedeemPackageIo<'_> {
+    async fn redeem_package(&mut self) -> RedeemObservation {
+        match self.state.store.get_del(&package_key(&self.token)) {
+            Ok(None) => RedeemObservation::Missing,
+            Ok(Some(bytes)) => {
+                let observation = RedeemObservation::Present {
+                    utf8_valid: std::str::from_utf8(&bytes).is_ok(),
+                };
+                self.removed = Some(bytes);
+                observation
+            }
+            Err(error) => {
+                if self.error.is_none() {
+                    self.error = Some(error);
+                }
+                RedeemObservation::Missing
+            }
+        }
     }
 }
 
@@ -109,40 +153,35 @@ pub async fn get_enrollment_package(
         .map(str::to_string)
         .unwrap_or(path_token);
 
-    let start = begin_redeem_package(PackageTokenObservation {
-        token_valid: validate_token(&token).is_ok(),
-    });
-    let removed = match start.effect {
-        // The destructive read is the only way a package is handed out, and
-        // the driver authorizes it at most once per request.
-        PairingEffect::RedeemPackage => state.store.get_del(&package_key(&token))?,
-        PairingEffect::Fail(failure) => return Err(invitation_failure_error(failure)),
-        _ => {
-            return Err(AppError::Internal(
-                "pairing driver produced an unexpected package-redeem effect".into(),
-            ))
-        }
-    };
-
-    let observation = match &removed {
-        None => RedeemObservation::Missing,
-        Some(bytes) => RedeemObservation::Present {
-            utf8_valid: std::str::from_utf8(bytes).is_ok(),
+    let start = vela_enrollment_policy::pairing_interpreter::start_redeem_package(
+        PackageTokenObservation {
+            token_valid: validate_token(&token).is_ok(),
         },
+    );
+    let mut io = RedeemPackageIo {
+        state: &state,
+        token,
+        removed: None,
+        error: None,
     };
-    let transition = on_package_redeemed_event(start.driver, observation);
+    let transition = vela_enrollment_policy::pairing_interpreter!(io, start, await);
+
     match transition.effect {
         PairingEffect::Complete => {
-            let bytes = removed.ok_or_else(|| {
+            // The driver completes only for a present, UTF-8 package.
+            let bytes = io.removed.take().ok_or_else(|| {
                 AppError::Internal("redemption driver completed without a package".into())
             })?;
             let ciphertext = String::from_utf8(bytes)
                 .map_err(|_| AppError::Internal("stored enrollment package is not UTF-8".into()))?;
             Ok(Json(FetchEnrollmentPackageResponse { ciphertext }))
         }
-        PairingEffect::Fail(failure) => Err(invitation_failure_error(failure)),
+        PairingEffect::Fail(failure) => Err(io
+            .error
+            .take()
+            .unwrap_or_else(|| invitation_failure_error(failure))),
         _ => Err(AppError::Internal(
-            "pairing driver produced an unexpected package-redeem observation effect".into(),
+            "pairing driver produced an unexpected package-redeem effect".into(),
         )),
     }
 }

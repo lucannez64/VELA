@@ -8,20 +8,23 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
+mod executor;
+
+use executor::ShareExecutor;
 use vela_share_policy::driver::{
-    begin_ek_registration, begin_inbox_delete, begin_link_revoke, begin_link_update, begin_send,
-    on_cleanup_completed, on_ek_observation, on_link_observation, on_rows_observed,
-    on_send_completed, CleanupObservation, EkDeviceObservation, EkRegistrationStartObservation,
-    LinkUpdateStartObservation, RowsObservation, SendRequestObservation, SendResultObservation,
-    ShareDriver, ShareEffect, ShareFailure,
+    CleanupObservation, EkDeviceObservation, EkRegistrationStartObservation, InboxDeletePermit,
+    LinkUpdatePermit, LinkUpdateStartObservation, RowsObservation, SendInsertPermit,
+    SendRequestObservation, SendResultObservation, ShareEffect, ShareFailure,
 };
-use vela_share_policy::{EkRegistrationObservation, LinkMutationObservation, SendObservation};
+use vela_share_policy::{
+    EkRegistrationObservation, EkRegistrationPermit, LinkMutationObservation, SendObservation,
+};
 
 use crate::{
     db,
     error::{AppError, Result},
     middleware::{maybe_append_new_token, AuthSession, DeviceSession},
-    sqldb::{Db as _, TursoDb, TursoValue},
+    sqldb::{Db as _, TursoDb, TursoValue, TxGuard},
     state::AppState,
 };
 
@@ -119,6 +122,76 @@ fn share_failure_error(failure: ShareFailure) -> AppError {
     }
 }
 
+/// The I/O behind one capsule send. The quota reads and the transaction begin
+/// happen before the driver starts (they are its admission observations); the
+/// driver owns the admission order and the one guarded transaction.
+struct SendIo {
+    recipient_user_id: Uuid,
+    sender_user_id: Uuid,
+    capsule_bytes: Vec<u8>,
+    inbox_id: Uuid,
+    now: String,
+    tx: Option<TxGuard>,
+    insert_error: Option<String>,
+    commit_error: Option<String>,
+}
+
+impl ShareExecutor for SendIo {
+    async fn insert_capsule(&mut self, _permit: SendInsertPermit) -> SendResultObservation {
+        let Some(tx) = self.tx.take() else {
+            self.insert_error = Some("share send driver authorized without a transaction".into());
+            return SendResultObservation::StorageFailed;
+        };
+        let capsule = db::encode_b64(&self.capsule_bytes);
+        match tx
+            .execute(
+                "INSERT INTO shared_items (id, sender_user_id, recipient_user_id, capsule, created_at, updated_at, revoked)
+             VALUES (?, ?, ?, ?, ?, ?, 0)",
+                vec![
+                    TursoValue::Text(self.inbox_id.to_string()),
+                    TursoValue::Text(self.sender_user_id.to_string()),
+                    TursoValue::Text(self.recipient_user_id.to_string()),
+                    TursoValue::Text(capsule.clone()),
+                    TursoValue::Text(self.now.clone()),
+                    TursoValue::Text(self.now.clone()),
+                ],
+            )
+            .await
+        {
+            Ok(_) => match tx
+                .execute(
+                    "INSERT INTO share_inbox (id, sender_user_id, recipient_user_id, capsule, created_at)
+                 VALUES (?, ?, ?, ?, ?)",
+                    vec![
+                        TursoValue::Text(self.inbox_id.to_string()),
+                        TursoValue::Text(self.sender_user_id.to_string()),
+                        TursoValue::Text(self.recipient_user_id.to_string()),
+                        TursoValue::Text(capsule),
+                        TursoValue::Text(self.now.clone()),
+                    ],
+                )
+                .await
+            {
+                Ok(_) => match tx.commit().await {
+                    Ok(()) => SendResultObservation::Committed,
+                    Err(error) => {
+                        self.commit_error = Some(error.to_string());
+                        SendResultObservation::CommitConflict
+                    }
+                },
+                Err(error) => {
+                    self.insert_error = Some(error.to_string());
+                    SendResultObservation::StorageFailed
+                }
+            },
+            Err(error) => {
+                self.insert_error = Some(error.to_string());
+                SendResultObservation::StorageFailed
+            }
+        }
+    }
+}
+
 pub async fn post_send(
     State(state): State<AppState>,
     session: AuthSession,
@@ -151,6 +224,7 @@ pub async fn post_send(
     };
     let decode_failed = recipient_can_receive && decoded.is_none();
     let capsule_bytes = decoded.unwrap_or_default();
+    let capsule_len = capsule_bytes.len();
 
     let inbox_id = Uuid::new_v4();
     let now = Utc::now().to_rfc3339();
@@ -212,7 +286,7 @@ pub async fn post_send(
     // constructor states those equalities to F*. The driver owns the whole
     // post-validation admission order and calls the real `send_facts` /
     // `plan_send` policy.
-    let start = begin_send(SendRequestObservation {
+    let start = vela_share_policy::interpreter::start_send(SendRequestObservation {
         policy: SendObservation {
             session_user_id_present: !session.user_id.is_nil(),
             recipient_has_share_ek: recipient_can_receive,
@@ -223,87 +297,36 @@ pub async fn post_send(
         inbox_count,
         pair_bytes,
     });
-    let driver = match start.effect {
-        ShareEffect::InsertCapsule(_) => start.driver,
-        ShareEffect::Fail(failure) => return Err(share_failure_error(failure)),
-        _ => {
-            return Err(AppError::Internal(
-                "share send driver produced an unexpected admission effect".into(),
-            ));
-        }
+    let mut io = SendIo {
+        recipient_user_id: body.recipient_user_id,
+        sender_user_id: session.user_id,
+        capsule_bytes,
+        inbox_id,
+        now,
+        tx,
+        insert_error: None,
+        commit_error: None,
     };
-    let Some(tx) = tx else {
-        return Err(AppError::Internal(
-            "share send driver authorized without a transaction".into(),
-        ));
-    };
+    let transition = vela_share_policy::share_interpreter!(io, start, await);
 
-    let mut insert_error = None;
-    let mut commit_error = None;
-    let send_result = match tx
-        .execute(
-            "INSERT INTO shared_items (id, sender_user_id, recipient_user_id, capsule, created_at, updated_at, revoked)
-             VALUES (?, ?, ?, ?, ?, ?, 0)",
-            vec![
-                TursoValue::Text(inbox_id.to_string()),
-                TursoValue::Text(session.user_id.to_string()),
-                TursoValue::Text(body.recipient_user_id.to_string()),
-                TursoValue::Text(db::encode_b64(&capsule_bytes)),
-                TursoValue::Text(now.clone()),
-                TursoValue::Text(now.clone()),
-            ],
-        )
-        .await
-    {
-        Ok(_) => match tx
-            .execute(
-                "INSERT INTO share_inbox (id, sender_user_id, recipient_user_id, capsule, created_at)
-                 VALUES (?, ?, ?, ?, ?)",
-                vec![
-                    TursoValue::Text(inbox_id.to_string()),
-                    TursoValue::Text(session.user_id.to_string()),
-                    TursoValue::Text(body.recipient_user_id.to_string()),
-                    TursoValue::Text(db::encode_b64(&capsule_bytes)),
-                    TursoValue::Text(now),
-                ],
-            )
-            .await
-        {
-            Ok(_) => match tx.commit().await {
-                Ok(()) => SendResultObservation::Committed,
-                Err(error) => {
-                    commit_error = Some(error);
-                    SendResultObservation::CommitConflict
-                }
-            },
-            Err(error) => {
-                insert_error = Some(error);
-                SendResultObservation::StorageFailed
-            }
-        },
-        Err(error) => {
-            insert_error = Some(error);
-            SendResultObservation::StorageFailed
-        }
-    };
-    let transition = on_send_completed(driver, send_result);
     match transition.effect {
         ShareEffect::Complete => {}
         ShareEffect::Fail(ShareFailure::SendStorage) => {
             return Err(AppError::Internal(
-                insert_error
-                    .map(|e| e.to_string())
+                io.insert_error
+                    .take()
                     .unwrap_or_else(|| "share send storage failure".into()),
             ));
         }
         ShareEffect::Fail(ShareFailure::SendConflict) => {
             return Err(AppError::Conflict(format!(
                 "share send raced with a concurrent request: {}",
-                commit_error
-                    .map(|e| e.to_string())
+                io.commit_error
+                    .take()
                     .unwrap_or_else(|| "unknown commit error".into())
             )));
         }
+        ShareEffect::Fail(failure) => return Err(share_failure_error(failure)),
         _ => {
             return Err(AppError::Internal(
                 "share send driver produced an unexpected completion effect".into(),
@@ -315,7 +338,7 @@ pub async fn post_send(
         inbox_id  = %inbox_id,
         sender    = %session.user_id,
         recipient = %body.recipient_user_id,
-        bytes     = capsule_bytes.len(),
+        bytes     = capsule_len,
         "share capsule delivered"
     );
 
@@ -460,6 +483,38 @@ pub async fn get_inbox(
     ))
 }
 
+/// The I/O behind the recipient-scoped inbox delete.
+struct InboxDeleteIo<'a> {
+    state: &'a AppState,
+    id: Uuid,
+    user_id: Uuid,
+    error: Option<AppError>,
+}
+
+impl ShareExecutor for InboxDeleteIo<'_> {
+    async fn delete_inbox_item(&mut self, permit: InboxDeletePermit) -> RowsObservation {
+        debug_assert!(permit.recipient_scoped);
+        match self
+            .state
+            .sqldb
+            .execute(
+                "DELETE FROM share_inbox WHERE id = ? AND recipient_user_id = ?",
+                vec![
+                    TursoValue::Text(self.id.to_string()),
+                    TursoValue::Text(self.user_id.to_string()),
+                ],
+            )
+            .await
+        {
+            Ok(rows) => RowsObservation { rows },
+            Err(error) => {
+                self.error = Some(AppError::Internal(error.to_string()));
+                RowsObservation { rows: 0 }
+            }
+        }
+    }
+}
+
 pub async fn delete_inbox_item(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
@@ -467,34 +522,24 @@ pub async fn delete_inbox_item(
 ) -> Result<(HeaderMap, StatusCode)> {
     // The driver owns the recipient-scoped delete authority and the row
     // classification. The handler performs exactly the one guarded effect.
-    let start = begin_inbox_delete();
-    let driver = match start.effect {
-        ShareEffect::DeleteInboxItem(permit) if permit.recipient_scoped => start.driver,
-        _ => {
-            return Err(AppError::Internal(
-                "inbox delete driver produced an unexpected effect".into(),
-            ));
-        }
+    let start = vela_share_policy::interpreter::start_inbox_delete();
+    let mut io = InboxDeleteIo {
+        state: &state,
+        id,
+        user_id: session.user_id,
+        error: None,
     };
+    let transition = vela_share_policy::share_interpreter!(io, start, await);
 
-    let n = state
-        .sqldb
-        .execute(
-            "DELETE FROM share_inbox WHERE id = ? AND recipient_user_id = ?",
-            vec![
-                TursoValue::Text(id.to_string()),
-                TursoValue::Text(session.user_id.to_string()),
-            ],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-
-    let transition = on_rows_observed(driver, RowsObservation { rows: n });
     match transition.effect {
         ShareEffect::Complete => {}
         ShareEffect::Fail(ShareFailure::InboxNotFound) => {
+            if let Some(error) = io.error.take() {
+                return Err(error);
+            }
             return Err(AppError::NotFound(format!("inbox item {id} not found")));
         }
+        ShareEffect::Fail(failure) => return Err(share_failure_error(failure)),
         _ => {
             return Err(AppError::Internal(
                 "inbox delete driver produced an unexpected completion effect".into(),
@@ -573,6 +618,58 @@ pub struct UpdateLinkedShareRequest {
     pub capsule: String,
 }
 
+/// The I/O behind a linked-item update: the linked-row observation and the one
+/// guarded UPDATE.
+struct LinkUpdateIo<'a> {
+    state: &'a AppState,
+    id: Uuid,
+    user_id: Uuid,
+    capsule_bytes: Vec<u8>,
+    error: Option<AppError>,
+}
+
+impl ShareExecutor for LinkUpdateIo<'_> {
+    async fn observe_link(&mut self) -> LinkMutationObservation {
+        match observe_link_mutation(self.state, self.id, self.user_id).await {
+            Ok(observation) => observation,
+            Err(error) => {
+                self.error = Some(error);
+                LinkMutationObservation {
+                    item_present: false,
+                    caller_matches_sender: false,
+                    item_not_revoked: false,
+                }
+            }
+        }
+    }
+
+    async fn update_linked_item(&mut self, permit: LinkUpdatePermit) -> RowsObservation {
+        debug_assert_eq!(permit.capsule_len, self.capsule_bytes.len() as i64);
+        match self
+            .state
+            .sqldb
+            .execute(
+                "UPDATE shared_items
+         SET capsule = ?, updated_at = ?
+         WHERE id = ? AND sender_user_id = ? AND revoked = 0",
+                vec![
+                    TursoValue::Text(db::encode_b64(&self.capsule_bytes)),
+                    TursoValue::Text(Utc::now().to_rfc3339()),
+                    TursoValue::Text(self.id.to_string()),
+                    TursoValue::Text(self.user_id.to_string()),
+                ],
+            )
+            .await
+        {
+            Ok(rows) => RowsObservation { rows },
+            Err(error) => {
+                self.error = Some(AppError::Internal(error.to_string()));
+                RowsObservation { rows: 0 }
+            }
+        }
+    }
+}
+
 pub async fn put_linked_item(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
@@ -587,56 +684,28 @@ pub async fn put_linked_item(
     // sender and the row is a live item, observed from the stored row. The
     // driver owns the decode/length checks, the real `plan_link_mutation`
     // decision and the affected-row classification.
-    let start = begin_link_update(LinkUpdateStartObservation {
+    let start = vela_share_policy::interpreter::start_link_update(LinkUpdateStartObservation {
         decode_failed,
         capsule_len: capsule_bytes.len() as i64,
     });
-    let driver = match start.effect {
-        ShareEffect::ObserveLink => {
-            let observed = observe_link_mutation(&state, id, session.user_id).await?;
-            let transition = on_link_observation(start.driver, observed);
-            match transition.effect {
-                ShareEffect::UpdateLinkedItem(_) => transition.driver,
-                ShareEffect::Fail(ShareFailure::LinkNotFound) => {
-                    return Err(AppError::NotFound(format!("linked share {id} not found")));
-                }
-                _ => {
-                    return Err(AppError::Internal(
-                        "linked update driver produced an unexpected observation effect".into(),
-                    ));
-                }
-            }
-        }
-        ShareEffect::Fail(failure) => return Err(share_failure_error(failure)),
-        _ => {
-            return Err(AppError::Internal(
-                "linked update driver produced an unexpected admission effect".into(),
-            ));
-        }
+    let mut io = LinkUpdateIo {
+        state: &state,
+        id,
+        user_id: session.user_id,
+        capsule_bytes,
+        error: None,
     };
+    let transition = vela_share_policy::share_interpreter!(io, start, await);
 
-    let n = state
-        .sqldb
-        .execute(
-            "UPDATE shared_items
-         SET capsule = ?, updated_at = ?
-         WHERE id = ? AND sender_user_id = ? AND revoked = 0",
-            vec![
-                TursoValue::Text(db::encode_b64(&capsule_bytes)),
-                TursoValue::Text(Utc::now().to_rfc3339()),
-                TursoValue::Text(id.to_string()),
-                TursoValue::Text(session.user_id.to_string()),
-            ],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-
-    let transition = on_rows_observed(driver, RowsObservation { rows: n });
     match transition.effect {
         ShareEffect::Complete => {}
         ShareEffect::Fail(ShareFailure::LinkNotFound) => {
+            if let Some(error) = io.error.take() {
+                return Err(error);
+            }
             return Err(AppError::NotFound(format!("linked share {id} not found")));
         }
+        ShareEffect::Fail(failure) => return Err(share_failure_error(failure)),
         _ => {
             return Err(AppError::Internal(
                 "linked update driver produced an unexpected completion effect".into(),
@@ -649,6 +718,69 @@ pub async fn put_linked_item(
     Ok((headers, Json(serde_json::json!({ "updated": true }))))
 }
 
+/// The I/O behind a linked-item revoke: the linked-row observation, the one
+/// guarded UPDATE and the post-revoke inbox cleanup.
+struct LinkRevokeIo<'a> {
+    state: &'a AppState,
+    id: Uuid,
+    user_id: Uuid,
+    error: Option<AppError>,
+}
+
+impl ShareExecutor for LinkRevokeIo<'_> {
+    async fn observe_link(&mut self) -> LinkMutationObservation {
+        match observe_link_mutation(self.state, self.id, self.user_id).await {
+            Ok(observation) => observation,
+            Err(error) => {
+                self.error = Some(error);
+                LinkMutationObservation {
+                    item_present: false,
+                    caller_matches_sender: false,
+                    item_not_revoked: false,
+                }
+            }
+        }
+    }
+
+    async fn revoke_linked_item(&mut self) -> RowsObservation {
+        match self
+            .state
+            .sqldb
+            .execute(
+                "UPDATE shared_items
+         SET revoked = 1, updated_at = ?
+         WHERE id = ? AND sender_user_id = ? AND revoked = 0",
+                vec![
+                    TursoValue::Text(Utc::now().to_rfc3339()),
+                    TursoValue::Text(self.id.to_string()),
+                    TursoValue::Text(self.user_id.to_string()),
+                ],
+            )
+            .await
+        {
+            Ok(rows) => RowsObservation { rows },
+            Err(error) => {
+                self.error = Some(AppError::Internal(error.to_string()));
+                RowsObservation { rows: 0 }
+            }
+        }
+    }
+
+    async fn delete_linked_inbox(&mut self) -> CleanupObservation {
+        CleanupObservation {
+            storage_failed: self
+                .state
+                .sqldb
+                .execute(
+                    "DELETE FROM share_inbox WHERE id = ?",
+                    vec![TursoValue::Text(self.id.to_string())],
+                )
+                .await
+                .is_err(),
+        }
+    }
+}
+
 pub async fn delete_linked_item(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
@@ -658,77 +790,27 @@ pub async fn delete_linked_item(
     // sender and the row is a live item, observed from the stored row. The
     // driver owns the real `plan_link_mutation` decision, the affected-row
     // classification and the post-revoke inbox cleanup.
-    let start = begin_link_revoke();
-    let driver = match start.effect {
-        ShareEffect::ObserveLink => {
-            let observed = observe_link_mutation(&state, id, session.user_id).await?;
-            let transition = on_link_observation(start.driver, observed);
-            match transition.effect {
-                ShareEffect::RevokeLinkedItem => transition.driver,
-                ShareEffect::Fail(ShareFailure::LinkNotFound) => {
-                    return Err(AppError::NotFound(format!("linked share {id} not found")));
-                }
-                _ => {
-                    return Err(AppError::Internal(
-                        "linked revoke driver produced an unexpected observation effect".into(),
-                    ));
-                }
-            }
-        }
-        _ => {
-            return Err(AppError::Internal(
-                "linked revoke driver produced an unexpected admission effect".into(),
-            ));
-        }
+    let start = vela_share_policy::interpreter::start_link_revoke();
+    let mut io = LinkRevokeIo {
+        state: &state,
+        id,
+        user_id: session.user_id,
+        error: None,
     };
+    let transition = vela_share_policy::share_interpreter!(io, start, await);
 
-    let n = state
-        .sqldb
-        .execute(
-            "UPDATE shared_items
-         SET revoked = 1, updated_at = ?
-         WHERE id = ? AND sender_user_id = ? AND revoked = 0",
-            vec![
-                TursoValue::Text(Utc::now().to_rfc3339()),
-                TursoValue::Text(id.to_string()),
-                TursoValue::Text(session.user_id.to_string()),
-            ],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-
-    let transition = on_rows_observed(driver, RowsObservation { rows: n });
-    let driver = match transition.effect {
-        ShareEffect::DeleteLinkedInbox => transition.driver,
+    match transition.effect {
+        ShareEffect::Complete => {}
         ShareEffect::Fail(ShareFailure::LinkNotFound) => {
+            if let Some(error) = io.error.take() {
+                return Err(error);
+            }
             return Err(AppError::NotFound(format!("linked share {id} not found")));
         }
+        ShareEffect::Fail(failure) => return Err(share_failure_error(failure)),
         _ => {
             return Err(AppError::Internal(
                 "linked revoke driver produced an unexpected completion effect".into(),
-            ));
-        }
-    };
-
-    let cleanup_failed = state
-        .sqldb
-        .execute(
-            "DELETE FROM share_inbox WHERE id = ?",
-            vec![TursoValue::Text(id.to_string())],
-        )
-        .await
-        .is_err();
-    let transition = on_cleanup_completed(
-        driver,
-        CleanupObservation {
-            storage_failed: cleanup_failed,
-        },
-    );
-    match transition.effect {
-        ShareEffect::Complete => {}
-        _ => {
-            return Err(AppError::Internal(
-                "linked revoke driver produced an unexpected cleanup effect".into(),
             ));
         }
     }
@@ -831,131 +913,125 @@ pub struct PutShareEkRequest {
     pub signature: String,
 }
 
-/// Verify an EK binding against one of the caller's own enrolled devices.
-///
-/// The signature is the substitution defense (M19): database-level writes or
-/// a stolen session token alone can no longer point a victim's sharing key at
-/// an attacker-chosen capsule key — the attacker needs the private half of an
-/// enrolled device identity. Monotonic `signed_at` turns replayed older
-/// bindings into no-ops.
-///
-/// Returns the *verified* `(device_id, signed_at)` pair from the request body
-/// (not the caller's session), so the database stores exactly what the binding
-/// signature covered.
-async fn authorize_ek_binding(
-    state: &AppState,
+/// The I/O behind a share-EK registration: the signing-device row read and the
+/// one guarded `users` update.
+struct ShareEkIo<'a> {
+    state: &'a AppState,
     user_id: Uuid,
-    request: &PutShareEkRequest,
-) -> Result<(Uuid, String, ShareDriver)> {
-    use crate::device::enroll::verify_hybrid_signature;
+    device_id: Uuid,
+    share_ek: String,
+    signature: String,
+    ek_bytes: Vec<u8>,
+    canonical_signed_at: String,
+    error: Option<AppError>,
+    stored_vk_error: Option<AppError>,
+    signature_decode_error: Option<AppError>,
+}
 
-    let ek_decoded = B64.decode(&request.share_ek);
-    let ek_decode_failed = ek_decoded.is_err();
-    let ek_bytes = ek_decoded.unwrap_or_default();
-    let device_id = request.device_id;
+fn rejecting_ek_observation() -> EkDeviceObservation {
+    EkDeviceObservation {
+        registration: EkRegistrationObservation {
+            ek_len: SHARE_EK_LEN,
+            signature_verified: false,
+            device_row_present: false,
+            device_user_matches: false,
+            device_active: false,
+            signed_at_is_fresher: false,
+            binding_exists: false,
+        },
+        stored_identity_vk_decode_failed: false,
+        signature_decode_failed: false,
+    }
+}
 
-    // M-signed_at canonicalization (audit fix): the raw string previously went
-    // into a lexicographic freshness compare and the stored `share_ek_since`,
-    // so an offset form like `2026-01-01T01:00:00+01:00` could wind back the
-    // monotonic clock. Require canonical UTC (`...:SSZ`, second precision) and
-    // reject excessive future skew; store/pass only the verified canonical
-    // instant. The driver owns the precedence of these checks.
-    let signed_at_not_canonical =
-        !request.signed_at.ends_with('Z') || request.signed_at.len() != 20;
-    let parsed_signed_at = if signed_at_not_canonical {
-        None
-    } else {
-        chrono::DateTime::parse_from_rfc3339(&request.signed_at).ok()
-    };
-    let signed_at_unparseable = !signed_at_not_canonical && parsed_signed_at.is_none();
-    const MAX_FUTURE_SKEW_SECS: i64 = 300;
-    let signed_at_future = parsed_signed_at
-        .map(|parsed| parsed.timestamp() - chrono::Utc::now().timestamp() > MAX_FUTURE_SKEW_SECS)
-        .unwrap_or(false);
-    let canonical_signed_at = request.signed_at.clone();
+impl ShareExecutor for ShareEkIo<'_> {
+    async fn observe_device(&mut self) -> EkDeviceObservation {
+        use crate::device::enroll::verify_hybrid_signature;
 
-    let start = begin_ek_registration(EkRegistrationStartObservation {
-        ek_decode_failed,
-        ek_len: ek_bytes.len(),
-        signed_at_not_canonical,
-        signed_at_unparseable,
-        signed_at_future,
-    });
-    let driver = match start.effect {
-        ShareEffect::ObserveDevice => start.driver,
-        ShareEffect::Fail(failure) => return Err(share_failure_error(failure)),
-        _ => {
-            return Err(AppError::Internal(
-                "share-key driver produced an unexpected admission effect".into(),
-            ));
-        }
-    };
-
-    // The signing device must exist, belong to the caller, and be live. The
-    // query is ownership-scoped, and the returned `d.user_id` is compared to
-    // the caller rather than assuming the join did the work.
-    let caller = user_id.to_string();
-    let rows = state
-        .sqldb
-        .query(
-            "SELECT d.hybrid_vk, d.revoked, u.share_ek_since, d.user_id
+        let caller = self.user_id.to_string();
+        let rows = match self
+            .state
+            .sqldb
+            .query(
+                "SELECT d.hybrid_vk, d.revoked, u.share_ek_since, d.user_id
              FROM devices d JOIN users u ON u.id = d.user_id
              WHERE d.id = ? AND d.user_id = ?",
-            vec![
-                TursoValue::Text(device_id.to_string()),
-                TursoValue::Text(user_id.to_string()),
-            ],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    let row = rows.first();
-    let device_row_present = row.is_some();
-    let device_user_matches = row
-        .and_then(|r| r.text(3))
-        .is_some_and(|owner| owner == caller.as_str());
-    let device_active = row
-        .map(|r| !matches!(r.get(1), Some(TursoValue::Integer(1))) && r.text(1) != Some("1"))
-        .unwrap_or(false);
-    let current_since = row.and_then(|r| r.text(2));
-    let binding_exists = current_since.is_some();
-    let hybrid_vk = row.and_then(|r| r.text(0));
+                vec![
+                    TursoValue::Text(self.device_id.to_string()),
+                    TursoValue::Text(self.user_id.to_string()),
+                ],
+            )
+            .await
+        {
+            Ok(rows) => rows,
+            Err(error) => {
+                self.error = Some(AppError::Internal(error.to_string()));
+                return rejecting_ek_observation();
+            }
+        };
+        let row = rows.first();
+        let device_row_present = row.is_some();
+        let device_user_matches = row
+            .and_then(|r| r.text(3))
+            .is_some_and(|owner| owner == caller.as_str());
+        let device_active = row
+            .map(|r| !matches!(r.get(1), Some(TursoValue::Integer(1))) && r.text(1) != Some("1"))
+            .unwrap_or(false);
+        let current_since = row.and_then(|r| r.text(2));
+        let binding_exists = current_since.is_some();
+        let hybrid_vk = row.and_then(|r| r.text(0));
 
-    let message = vela_crypto::signing::share_ek_binding_message(&ek_bytes, &canonical_signed_at);
-    // Retain the original decode errors so the rejecting branch can reproduce
-    // them in the same order, after the verified policy has seen the real
-    // observations.
-    let stored_vk_result = match hybrid_vk {
-        Some(vk) => crate::db::decode_b64(vk),
-        None => Err(AppError::BadRequest(
-            "signing device has no identity public key".into(),
-        )),
-    };
-    let signature_bytes_result = B64
-        .decode(&request.signature)
-        .map_err(|_| AppError::BadRequest("signature is not valid base64".into()));
-    let signature_verified = match (&stored_vk_result, &signature_bytes_result) {
-        (Ok(vk), Ok(signature)) => verify_hybrid_signature(
-            vk.as_slice(),
-            &message,
-            signature.as_slice(),
-            "share-key binding signature invalid",
-        )
-        .is_ok(),
-        _ => false,
-    };
+        let message =
+            vela_crypto::signing::share_ek_binding_message(&self.ek_bytes, &self.canonical_signed_at);
+        // Retain the original decode errors so the rejecting branch can
+        // reproduce them in the same order, after the verified policy has seen
+        // the real observations.
+        let (stored_vk, stored_vk_error) = match hybrid_vk {
+            Some(vk) => match crate::db::decode_b64(vk) {
+                Ok(vk) => (Some(vk), None),
+                Err(error) => (None, Some(error)),
+            },
+            None => (
+                None,
+                Some(AppError::BadRequest(
+                    "signing device has no identity public key".into(),
+                )),
+            ),
+        };
+        let (signature_bytes, signature_decode_error) = match B64.decode(&self.signature) {
+            Ok(signature) => (Some(signature), None),
+            Err(_) => (
+                None,
+                Some(AppError::BadRequest(
+                    "signature is not valid base64".into(),
+                )),
+            ),
+        };
+        let signature_verified = match (&stored_vk, &signature_bytes) {
+            (Some(vk), Some(signature)) => verify_hybrid_signature(
+                vk.as_slice(),
+                &message,
+                signature.as_slice(),
+                "share-key binding signature invalid",
+            )
+            .is_ok(),
+            _ => false,
+        };
 
-    // M25: the freshness relation lives in the verified policy layer. The
-    // observation records that bytewise comparison unchanged.
-    let signed_at_is_fresher = vela_share_policy::timestamp_is_fresher(
-        canonical_signed_at.as_bytes(),
-        current_since.as_deref().map(|c| c.as_bytes()),
-    );
+        // M25: the freshness relation lives in the verified policy layer. The
+        // observation records that bytewise comparison unchanged.
+        let signed_at_is_fresher = vela_share_policy::timestamp_is_fresher(
+            self.canonical_signed_at.as_bytes(),
+            current_since.as_deref().map(|c| c.as_bytes()),
+        );
+        let stored_identity_vk_decode_failed = stored_vk_error.is_some();
+        let signature_decode_failed = signature_decode_error.is_some();
+        self.stored_vk_error = stored_vk_error;
+        self.signature_decode_error = signature_decode_error;
 
-    let transition = on_ek_observation(
-        driver,
         EkDeviceObservation {
             registration: EkRegistrationObservation {
-                ek_len: ek_bytes.len(),
+                ek_len: self.ek_bytes.len(),
                 signature_verified,
                 device_row_present,
                 device_user_matches,
@@ -963,29 +1039,39 @@ async fn authorize_ek_binding(
                 signed_at_is_fresher,
                 binding_exists,
             },
-            stored_identity_vk_decode_failed: stored_vk_result.is_err(),
-            signature_decode_failed: signature_bytes_result.is_err(),
-        },
-    );
-    match transition.effect {
-        ShareEffect::UpdateShareEk(_) => {
-            Ok((request.device_id, canonical_signed_at, transition.driver))
+            stored_identity_vk_decode_failed,
+            signature_decode_failed,
         }
-        ShareEffect::Fail(ShareFailure::DeviceNotEnrolled) => Err(AppError::BadRequest(
-            "signing device is not enrolled for this account".into(),
-        )),
-        ShareEffect::Fail(_) => {
-            // Preserve the original early-return errors and their order now
-            // that the verified policy has seen the same facts.
-            stored_vk_result?;
-            signature_bytes_result?;
-            Err(AppError::Unauthorized(
-                "verified sharing policy rejected the share-key registration".into(),
-            ))
+    }
+
+    async fn update_share_ek(&mut self, permit: EkRegistrationPermit) -> RowsObservation {
+        if !permit.binds_device_signature() {
+            self.error = Some(AppError::Internal(
+                "share-key driver authorized without a device signature".into(),
+            ));
+            return RowsObservation { rows: 0 };
         }
-        _ => Err(AppError::Internal(
-            "share-key driver produced an unexpected observation effect".into(),
-        )),
+        match self
+            .state
+            .sqldb
+            .execute(
+                "UPDATE users SET share_ek = ?, share_ek_since = ?, share_ek_device_id = ?
+             WHERE id = ?",
+                vec![
+                    TursoValue::Text(self.share_ek.clone()),
+                    TursoValue::Text(self.canonical_signed_at.clone()),
+                    TursoValue::Text(self.device_id.to_string()),
+                    TursoValue::Text(self.user_id.to_string()),
+                ],
+            )
+            .await
+        {
+            Ok(rows) => RowsObservation { rows },
+            Err(error) => {
+                self.error = Some(AppError::Internal(error.to_string()));
+                RowsObservation { rows: 0 }
+            }
+        }
     }
 }
 
@@ -1001,30 +1087,81 @@ pub async fn put_my_ek(
     session: DeviceSession,
     Json(body): Json<PutShareEkRequest>,
 ) -> Result<(HeaderMap, Json<serde_json::Value>)> {
-    let (bound_device_id, signed_at, driver) =
-        authorize_ek_binding(&state, session.user_id, &body).await?;
+    let ek_decoded = B64.decode(&body.share_ek);
+    let ek_decode_failed = ek_decoded.is_err();
+    let ek_bytes = ek_decoded.unwrap_or_default();
 
-    let n = state
-        .sqldb
-        .execute(
-            "UPDATE users SET share_ek = ?, share_ek_since = ?, share_ek_device_id = ?
-             WHERE id = ?",
-            vec![
-                TursoValue::Text(body.share_ek.clone()),
-                TursoValue::Text(signed_at.clone()),
-                TursoValue::Text(bound_device_id.to_string()),
-                TursoValue::Text(session.user_id.to_string()),
-            ],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+    // M-signed_at canonicalization (audit fix): the raw string previously went
+    // into a lexicographic freshness compare and the stored `share_ek_since`,
+    // so an offset form like `2026-01-01T01:00:00+01:00` could wind back the
+    // monotonic clock. Require canonical UTC (`...:SSZ`, second precision) and
+    // reject excessive future skew; store/pass only the verified canonical
+    // instant. The driver owns the precedence of these checks.
+    let signed_at_not_canonical =
+        !body.signed_at.ends_with('Z') || body.signed_at.len() != 20;
+    let parsed_signed_at = if signed_at_not_canonical {
+        None
+    } else {
+        chrono::DateTime::parse_from_rfc3339(&body.signed_at).ok()
+    };
+    let signed_at_unparseable = !signed_at_not_canonical && parsed_signed_at.is_none();
+    const MAX_FUTURE_SKEW_SECS: i64 = 300;
+    let signed_at_future = parsed_signed_at
+        .map(|parsed| parsed.timestamp() - chrono::Utc::now().timestamp() > MAX_FUTURE_SKEW_SECS)
+        .unwrap_or(false);
+    let canonical_signed_at = body.signed_at.clone();
 
-    let transition = on_rows_observed(driver, RowsObservation { rows: n });
+    let start = vela_share_policy::interpreter::start_ek_registration(
+        EkRegistrationStartObservation {
+            ek_decode_failed,
+            ek_len: ek_bytes.len(),
+            signed_at_not_canonical,
+            signed_at_unparseable,
+            signed_at_future,
+        },
+    );
+    let mut io = ShareEkIo {
+        state: &state,
+        user_id: session.user_id,
+        device_id: body.device_id,
+        share_ek: body.share_ek.clone(),
+        signature: body.signature.clone(),
+        ek_bytes,
+        canonical_signed_at,
+        error: None,
+        stored_vk_error: None,
+        signature_decode_error: None,
+    };
+    let transition = vela_share_policy::share_interpreter!(io, start, await);
+
     match transition.effect {
         ShareEffect::Complete => {}
+        ShareEffect::Fail(ShareFailure::DeviceNotEnrolled) => {
+            if let Some(error) = io.error.take() {
+                return Err(error);
+            }
+            return Err(AppError::BadRequest(
+                "signing device is not enrolled for this account".into(),
+            ));
+        }
+        ShareEffect::Fail(ShareFailure::StoredIdentityKey) => {
+            return Err(io.stored_vk_error.take().unwrap_or_else(|| {
+                AppError::BadRequest("signing device has no identity public key".into())
+            }));
+        }
+        ShareEffect::Fail(ShareFailure::SignatureDecode) => {
+            return Err(io
+                .signature_decode_error
+                .take()
+                .unwrap_or_else(|| AppError::BadRequest("signature is not valid base64".into())));
+        }
         ShareEffect::Fail(ShareFailure::UserNotFound) => {
+            if let Some(error) = io.error.take() {
+                return Err(error);
+            }
             return Err(AppError::NotFound("user not found".into()));
         }
+        ShareEffect::Fail(failure) => return Err(share_failure_error(failure)),
         _ => {
             return Err(AppError::Internal(
                 "share-key driver produced an unexpected completion effect".into(),

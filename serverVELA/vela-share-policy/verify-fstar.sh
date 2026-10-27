@@ -46,3 +46,8 @@ fstar.exe \
 # run in its own fstar.exe invocation and never share an include directory with
 # the historical artifact checked above.
 "$proof_root/verify-fstar-driver.sh"
+
+# Handler-to-driver link for the sharing endpoints: the interpreter loop the
+# handlers expand, proved to perform exactly the driver's effects. Needs the
+# driver extraction above.
+"$proof_root/verify-fstar-share-interpreter.sh"

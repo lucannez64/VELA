@@ -11,13 +11,35 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 
-# (handler, macro, driver module path, interpreter source)
+# (handler, macro, driver module path, interpreter source, expansions)
 WIRED = [
     (
         'serverVELA/vela-server/src/account/delete.rs',
         'deletion_interpreter',
         'deletion_driver',
         'serverVELA/vela-session-policy/src/deletion_interpreter.rs',
+        1,
+    ),
+    (
+        'serverVELA/vela-server/src/device/invitation.rs',
+        'pairing_interpreter',
+        'pairing_driver',
+        'serverVELA/vela-enrollment-policy/src/pairing_interpreter.rs',
+        2,
+    ),
+    (
+        'serverVELA/vela-server/src/device/rendezvous.rs',
+        'pairing_interpreter',
+        'pairing_driver',
+        'serverVELA/vela-enrollment-policy/src/pairing_interpreter.rs',
+        4,
+    ),
+    (
+        'serverVELA/vela-server/src/share/mod.rs',
+        'share_interpreter',
+        'driver',
+        'serverVELA/vela-share-policy/src/interpreter.rs',
+        5,
     ),
 ]
 
@@ -32,16 +54,18 @@ def code_only(text):
 
 
 class HandlerInterpreterTest(unittest.TestCase):
-    def test_handlers_expand_the_proved_macro_once_with_await(self):
-        for handler, macro, _, _ in WIRED:
+    def test_handlers_expand_the_proved_macro_only_from_the_loop(self):
+        for handler, macro, _, _, expected in WIRED:
             code = code_only((ROOT / handler).read_text(encoding='utf-8'))
             calls = re.findall(r'\b' + macro + r'!\s*\(([^)]*)\)', code)
-            self.assertEqual(len(calls), 1, f'{handler}: expected one {macro}! expansion')
-            self.assertTrue(calls[0].rstrip().endswith('await'),
-                            f'{handler}: {macro}! must be expanded with await')
+            self.assertEqual(len(calls), expected,
+                             f'{handler}: expected {expected} {macro}! expansions')
+            for call in calls:
+                self.assertTrue(call.rstrip().endswith('await'),
+                                f'{handler}: {macro}! must be expanded with await')
 
     def test_handlers_never_call_driver_transitions(self):
-        for handler, _, driver, _ in WIRED:
+        for handler, _, driver, _, _ in WIRED:
             code = code_only((ROOT / handler).read_text(encoding='utf-8'))
             imported = re.findall(r'use\s+vela_\w+::' + driver + r'::\{([^}]*)\}', code, flags=re.S)
             names = {n.strip() for group in imported for n in group.split(',') if n.strip()}
@@ -51,7 +75,7 @@ class HandlerInterpreterTest(unittest.TestCase):
                                 f'{handler} calls a driver transition directly')
 
     def test_interpreter_defines_one_macro_and_its_sync_expansion(self):
-        for _, macro, _, source in WIRED:
+        for _, macro, _, source, _ in WIRED:
             code = code_only((ROOT / source).read_text(encoding='utf-8'))
             self.assertEqual(len(re.findall(r'macro_rules!\s*' + macro + r'\b', code)), 1)
             self.assertEqual(len(re.findall(r'\b' + macro + r'!\s*\(', code)), 1,
