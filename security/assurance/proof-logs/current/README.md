@@ -191,8 +191,9 @@ The [login](login-interpreter/README.md),
 [pairing](pairing-interpreter/README.md),
 [sharing](share-interpreter/README.md),
 [vault](vault-upload-interpreter/README.md),
-[redemption](redemption-interpreter/README.md) and
-[possession](possession-interpreter/README.md) interpreters extend the same check to
+[redemption](redemption-interpreter/README.md),
+[possession](possession-interpreter/README.md) and
+[WebAuthn](webauthn-interpreter/README.md) interpreters extend the same check to
 those handlers.
 
 The [deletion interpreter](deletion-interpreter/README.md) checks the loop

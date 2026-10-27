@@ -158,7 +158,7 @@
       "artifacts": {
         "serverVELA/vela-recovery-policy/src/lib.rs": "7a5920ca838d56f913863a9749e3d6606b50a3e70f5583d7927613e2f7bb0f12",
         "serverVELA/vela-recovery-policy/README.md": "b8a08b686c6d9c76e8341951281c9e47cfc94569a73a70b97bc6517c46afc6c9",
-        "serverVELA/vela-recovery-policy/verify-fstar.sh": "e32ffbc9d0c78d8931e0a6647f2759e18bd4a997f3fa0b6936b08712e43a9f87",
+        "serverVELA/vela-recovery-policy/verify-fstar.sh": "71d363b13252b44d034dcca4757764060f0e7c94394e085b838cb67828b668a4",
         "serverVELA/vela-recovery-policy/tests/fact_construction.rs": "bb6d6ae116788d757220dec521b094613d33d7f60d0896d9ed96491d24f3b471",
         "serverVELA/vela-recovery-policy/proofs/fstar/extraction/Vela_recovery_policy.fst": "eaf1148be9567b8d8d6dbca8ceca3a4369df8b3c3856f19afc2de9eeee070327",
         "serverVELA/vela-server/src/recovery/initiate.rs": "df66dfb74fbd58b7d8e0ebcf3688cf2c064a6c323012003655dcf17dc02342ee",
@@ -183,7 +183,7 @@
       "artifacts": {
         "serverVELA/vela-recovery-policy/src/lib.rs": "7a5920ca838d56f913863a9749e3d6606b50a3e70f5583d7927613e2f7bb0f12",
         "serverVELA/vela-recovery-policy/README.md": "b8a08b686c6d9c76e8341951281c9e47cfc94569a73a70b97bc6517c46afc6c9",
-        "serverVELA/vela-recovery-policy/verify-fstar.sh": "e32ffbc9d0c78d8931e0a6647f2759e18bd4a997f3fa0b6936b08712e43a9f87",
+        "serverVELA/vela-recovery-policy/verify-fstar.sh": "71d363b13252b44d034dcca4757764060f0e7c94394e085b838cb67828b668a4",
         "serverVELA/vela-recovery-policy/proofs/fstar/extraction/Vela_recovery_policy.fst": "eaf1148be9567b8d8d6dbca8ceca3a4369df8b3c3856f19afc2de9eeee070327",
         "serverVELA/vela-recovery-policy/tests/fact_construction.rs": "bb6d6ae116788d757220dec521b094613d33d7f60d0896d9ed96491d24f3b471",
         "serverVELA/vela-server/src/recovery/possess.rs": "89edb9b3ffefe8ca913698da2f4268cf273c5fd834ef2081883a45ecb8dc990e",
@@ -531,6 +531,19 @@
         "serverVELA/vela-recovery-policy/proofs/fstar/extraction-possession-interpreter/Vela_recovery_policy.Possession_interpreter.fst": "46c1afc4e7a6e051412b61ff0827401c9a716296920bbc93bbf1a093cc8ad41c",
         "serverVELA/vela-recovery-policy/proofs/fstar/possession-interpreter-lemmas/Vela_recovery_policy_possession_interpreter_lemmas.fst": "eca469e21ca893a21d7b8af1ac3d195fe3fcb92e436893e6c39c1e9560351d4b",
         "serverVELA/vela-server/src/recovery/possess.rs": "89edb9b3ffefe8ca913698da2f4268cf273c5fd834ef2081883a45ecb8dc990e"
+      }
+    },
+    {
+      "boundary": "WebAuthn recovery handler-to-driver interpreters (registration start/finish, authentication start/finish): each handler expands its interpreter macro, whose synchronous expansion is proved for every executor to call exactly the method for the driver's current effect, stop at the verdict or an executor abort within 3/5/3/8 turns and end in a state the WebAuthn per-request theorems cover; executor method I/O including the WebAuthn verifier, the await-only macro difference, pre-driver validation and response rendering remain open",
+      "artifacts": {
+        "serverVELA/vela-recovery-policy/src/webauthn_interpreter.rs": "7bfcbf823a25eca061078d26435ed3a73c68b1145a67b08c1328cfb2acc7f094",
+        "serverVELA/vela-recovery-policy/src/interpreter_support.rs": "45a42d7a4cdc48cb63528211cf58baf1d07cf2b0f51aa375771f4d409493fd0c",
+        "serverVELA/vela-recovery-policy/verify-fstar-webauthn-interpreter.sh": "6af1bed10b84872d7f1d7ce17263ee6b8933ad848babe8d2bf6f4d7c96947b15",
+        "serverVELA/vela-recovery-policy/proofs/fstar/extraction-webauthn-interpreter/Vela_recovery_policy.Webauthn_interpreter.fst": "bff9112ed5510f4562a85bdcf7747851f77e9f6d2b2549818655c21bf7a9836b",
+        "serverVELA/vela-recovery-policy/proofs/fstar/webauthn-interpreter-lemmas/Vela_recovery_policy_webauthn_interpreter_lemmas.fst": "c2e6a26ee5cca95ea1f2675f19c2752d660a63695824e7b69e432b1902de3109",
+        "serverVELA/vela-server/src/recovery/webauthn.rs": "2aec31b4201b6356ca01430b2720083b4643d4ed4d2b665843c67f4fa737f996",
+        "serverVELA/vela-server/src/recovery/initiate.rs": "df66dfb74fbd58b7d8e0ebcf3688cf2c064a6c323012003655dcf17dc02342ee",
+        "serverVELA/vela-server/src/recovery/recover.rs": "3cbca150fbf07aa820859e8cf3f6f12a3e20ecd7ffaa3e5ce2d80c55321b3c4f"
       }
     }
   ]

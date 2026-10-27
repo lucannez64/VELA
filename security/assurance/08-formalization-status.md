@@ -119,6 +119,7 @@ covered by the driver's per-request theorem):
 | `PUT /vault/chunk/:id`, `GET /vault/chunk/:id` | `upload_interpreter!`, `read_interpreter!` | 7, 2 | [vault](proof-logs/current/vault-upload-interpreter/README.md) |
 | `POST /recovery/enroll-device` | `redemption_interpreter!` | 5 | [redemption](proof-logs/current/redemption-interpreter/README.md) |
 | `/recovery/initiate-proof`, `/recovery/recover/proof` | `possession_initiation_interpreter!`, `possession_recover_interpreter!` | 3, 6 | [possession](proof-logs/current/possession-interpreter/README.md) |
+| WebAuthn registration start/finish, `/recovery/initiate`, `/recovery/recover` | `registration_start_interpreter!`, `registration_interpreter!`, `auth_start_interpreter!`, `auth_finish_interpreter!` | 3, 5, 3, 8 | [WebAuthn](proof-logs/current/webauthn-interpreter/README.md) (local) |
 
 Each crate's mutations (a wrong executor method, a call after the verdict,
 and for logout a skipped or doubled marker write) are rejected. The pairing
@@ -139,10 +140,9 @@ ceremony on `RestoreAndFail`, which the verdict authorizes), and each executor
 method's I/O. In the recovery loops an executor method may also abort (return
 no observation) on a storage error the old handler returned on; the loop then
 performs nothing more and the request fails with that error, and the proofs
-cover that exit. The four WebAuthn handlers (registration start/finish,
-`/recovery/initiate`, `/recovery/recover`) already run their interpreter
-macros, but those loops are not yet proved; their driver proofs stand, and
-the link from handler to driver remains a reviewed obligation there. The [6be552c workflow](https://github.com/lucannez64/VELA/actions/runs/40538488807) reproduced every
+cover that exit. Every server handler that runs a decision driver now
+reaches it only through a proved interpreter; `plan_admission` (a single pure
+decision) is the one exempt call site. The [6be552c workflow](https://github.com/lucannez64/VELA/actions/runs/40538488807) reproduced every
 proved interpreter in the table.
 
 ## Account deletion driver (hosted on cdffe46)
