@@ -12,15 +12,19 @@
 //! *before* the durable SQL `revoked = 1` record. If the update fails, the
 //! device is already stopped and the row can be reconciled; the reverse order
 //! would leave a device marked revoked whose existing tokens still work.
+//!
+//! The handler expands [`vela_session_policy::revocation_interpreter!`] with
+//! `await`: the same loop text the policy crate expands into the synchronous
+//! `run_revocation` that hax extracts and F* checks. Only the effect the driver
+//! just emitted is performed, and nothing after its verdict.
 
 use axum::{extract::State, Json};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use vela_session_policy::revocation_driver::{
-    begin_revocation, on_cascade_completed, on_lockout_completed, on_record_completed,
-    on_target_looked_up, ActorObservation, CascadeObservation, DeviceLookupObservation,
-    LockoutObservation, RecordObservation, RevocationEffect, RevocationFailure, TargetObservation,
+    ActorObservation, CascadeObservation, DeviceLookupObservation, LockoutObservation,
+    RecordObservation, RevocationEffect, RevocationFailure, TargetObservation,
 };
 
 use crate::{
@@ -67,6 +71,138 @@ fn revocation_failure_error(failure: RevocationFailure) -> AppError {
     }
 }
 
+/// The I/O behind each revocation effect. The driver decides which method runs
+/// and when (through the shared `revocation_interpreter!` loop, proved in F* as
+/// `run_revocation`); each method only performs its effect and reports the
+/// outcome. Storage errors are kept so the response carries the original error,
+/// exactly as the hand-written handler returned it.
+struct RevokeDeviceIo<'a> {
+    state: &'a AppState,
+    /// The authenticated caller's account and device.
+    actor_user_id: Uuid,
+    actor_device_id: Uuid,
+    target_device_id: Uuid,
+    device_id_str: String,
+    sentinel_key: String,
+    error: Option<AppError>,
+}
+
+impl RevokeDeviceIo<'_> {
+    fn fail(&mut self, error: impl ToString) {
+        if self.error.is_none() {
+            self.error = Some(AppError::Internal(error.to_string()));
+        }
+    }
+
+    /// ── The target `devices` row ────────────────────────────────────────
+    async fn lookup_target(&mut self) -> DeviceLookupObservation {
+        let rows = match self
+            .state
+            .sqldb
+            .query(
+                "SELECT id, user_id, device_name, device_type, last_active,
+                    hybrid_ek, hybrid_vk,
+                    enrolled_by, rms_capsule, revoked,
+                    revoked_at, revoked_by, created_at
+             FROM devices
+             WHERE id = ?",
+                vec![TursoValue::Text(self.device_id_str.clone())],
+            )
+            .await
+        {
+            Ok(rows) => rows,
+            Err(error) => {
+                self.fail(error);
+                return DeviceLookupObservation::QueryFailed;
+            }
+        };
+        match rows.first() {
+            None => DeviceLookupObservation::Absent,
+            Some(row) => match crate::db::parse_device_row_turso(row) {
+                Ok(target) => DeviceLookupObservation::Present(TargetObservation {
+                    same_account: target.user_id == self.actor_user_id,
+                    already_revoked: target.revoked,
+                }),
+                Err(error) => {
+                    self.error = Some(error);
+                    DeviceLookupObservation::Malformed
+                }
+            },
+        }
+    }
+
+    /// ── Stop the device before recording that it is stopped ─────────────
+    ///
+    /// Both writes are one logical lockout effect. A failed JTI enumeration
+    /// skips the sentinel, exactly as before.
+    async fn lockout_device(&mut self) -> LockoutObservation {
+        let lockout = match rate_limit::revoke_all_device_jtis(
+            &self.state.store,
+            &self.device_id_str,
+        ) {
+            Ok(()) => self.state.store.set_ex(
+                &self.sentinel_key,
+                &[1u8],
+                rate_limit::TOKEN_MAX_LIFETIME_SECS,
+            ),
+            Err(error) => Err(error),
+        };
+        match lockout {
+            Ok(()) => LockoutObservation::Applied,
+            Err(error) => {
+                self.error = Some(error);
+                LockoutObservation::StorageFailed
+            }
+        }
+    }
+
+    /// ── The durable SQL row ─────────────────────────────────────────────
+    async fn record_revocation(&mut self) -> RecordObservation {
+        let now = Utc::now().to_rfc3339();
+        let record = self
+            .state
+            .sqldb
+            .execute(
+                "UPDATE devices SET revoked = 1, revoked_at = ?, revoked_by = ? WHERE id = ?",
+                vec![
+                    TursoValue::Text(now),
+                    TursoValue::Text(self.actor_device_id.to_string()),
+                    TursoValue::Text(self.target_device_id.to_string()),
+                ],
+            )
+            .await;
+        match record {
+            Ok(_) => RecordObservation::Updated,
+            Err(error) => {
+                self.fail(error);
+                RecordObservation::Failed
+            }
+        }
+    }
+
+    /// ── End the web sessions the target approved ────────────────────────
+    ///
+    /// Browser sessions this device approved inherit its trust, so they end
+    /// with it. This runs after the SQL row says revoked: a concurrent grant by
+    /// the device either committed before that (and is found here) or is
+    /// refused by the grant's `revoked = 0` guard.
+    async fn cascade_web_sessions(&mut self) -> CascadeObservation {
+        match revoke_web_sessions_approved_by(
+            self.state,
+            self.actor_user_id,
+            self.target_device_id,
+        )
+        .await
+        {
+            Ok(()) => CascadeObservation::Completed,
+            Err(error) => {
+                self.error = Some(error);
+                CascadeObservation::StorageFailed
+            }
+        }
+    }
+}
+
 pub async fn post_revoke(
     State(state): State<AppState>,
     session: DeviceSession,
@@ -75,172 +211,22 @@ pub async fn post_revoke(
     // The extractor already verified the PASETO and the active device row. The
     // driver re-checks both facts so a rewired or future caller cannot skip
     // them; a revoked actor gets no effect at all.
-    let start = begin_revocation(ActorObservation {
+    let actor = ActorObservation {
         authenticated: true,
         device_active: true,
-    });
-    debug_assert!(matches!(start.effect, RevocationEffect::LookupTarget));
-    let mut driver = start.driver;
-
-    let rows = match state
-        .sqldb
-        .query(
-            "SELECT id, user_id, device_name, device_type, last_active,
-                hybrid_ek, hybrid_vk,
-                enrolled_by, rms_capsule, revoked,
-                revoked_at, revoked_by, created_at
-         FROM devices
-         WHERE id = ?",
-            vec![TursoValue::Text(body.target_device_id.to_string())],
-        )
-        .await
-    {
-        Ok(rows) => rows,
-        Err(error) => {
-            let transition = on_target_looked_up(driver, DeviceLookupObservation::QueryFailed);
-            debug_assert!(matches!(
-                transition.effect,
-                RevocationEffect::Fail(RevocationFailure::TargetQueryStorage)
-            ));
-            return Err(AppError::Internal(error.to_string()));
-        }
     };
-
-    let target = match rows.first() {
-        None => {
-            let transition = on_target_looked_up(driver, DeviceLookupObservation::Absent);
-            return match transition.effect {
-                RevocationEffect::Fail(failure) => Err(revocation_failure_error(failure)),
-                _ => Err(AppError::Internal(
-                    "revocation driver produced an unexpected lookup effect".into(),
-                )),
-            };
-        }
-        Some(row) => match crate::db::parse_device_row_turso(row) {
-            Ok(target) => target,
-            Err(error) => {
-                let transition = on_target_looked_up(driver, DeviceLookupObservation::Malformed);
-                debug_assert!(matches!(
-                    transition.effect,
-                    RevocationEffect::Fail(RevocationFailure::TargetParseStorage)
-                ));
-                return Err(error);
-            }
-        },
+    let mut io = RevokeDeviceIo {
+        state: &state,
+        actor_user_id: session.user_id,
+        actor_device_id: session.device_id,
+        target_device_id: body.target_device_id,
+        device_id_str: body.target_device_id.to_string(),
+        sentinel_key: format!("device:revoked:{}", body.target_device_id),
+        error: None,
     };
-
-    let transition = on_target_looked_up(
-        driver,
-        DeviceLookupObservation::Present(TargetObservation {
-            same_account: target.user_id == session.user_id,
-            already_revoked: target.revoked,
-        }),
-    );
-    driver = transition.driver;
-
-    match transition.effect {
-        RevocationEffect::LockoutDevice => {}
-        RevocationEffect::Fail(failure) => return Err(revocation_failure_error(failure)),
-        _ => {
-            return Err(AppError::Internal(
-                "revocation driver produced an unexpected target effect".into(),
-            ));
-        }
-    }
-
-    let device_id_str = body.target_device_id.to_string();
-    let sentinel_key = format!("device:revoked:{}", body.target_device_id);
-
-    // Stop the device *before* recording that it is stopped. Both writes are
-    // one logical lockout effect; the driver has already refused an
-    // unauthenticated actor, a missing/cross-account target and a terminal
-    // prior state.
-    let lockout = match rate_limit::revoke_all_device_jtis(&state.store, &device_id_str) {
-        Ok(()) => state
-            .store
-            .set_ex(&sentinel_key, &[1u8], rate_limit::TOKEN_MAX_LIFETIME_SECS),
-        Err(error) => Err(error),
-    };
-    let lockout_observation = match &lockout {
-        Ok(()) => LockoutObservation::Applied,
-        Err(_) => LockoutObservation::StorageFailed,
-    };
-    let transition = on_lockout_completed(driver, lockout_observation);
-    driver = transition.driver;
-    if let Err(error) = lockout {
-        debug_assert!(matches!(
-            transition.effect,
-            RevocationEffect::Fail(RevocationFailure::LockoutStorage)
-        ));
-        return Err(error);
-    }
-
-    match transition.effect {
-        RevocationEffect::RecordRevocation => {
-            let now = Utc::now().to_rfc3339();
-            let record = state
-                .sqldb
-                .execute(
-                    "UPDATE devices SET revoked = 1, revoked_at = ?, revoked_by = ? WHERE id = ?",
-                    vec![
-                        TursoValue::Text(now),
-                        TursoValue::Text(session.device_id.to_string()),
-                        TursoValue::Text(body.target_device_id.to_string()),
-                    ],
-                )
-                .await;
-            let record_observation = match &record {
-                Ok(_) => RecordObservation::Updated,
-                Err(_) => RecordObservation::Failed,
-            };
-            let transition = on_record_completed(driver, record_observation);
-            driver = transition.driver;
-            if let Err(error) = record {
-                debug_assert!(matches!(
-                    transition.effect,
-                    RevocationEffect::Fail(RevocationFailure::RecordStorage)
-                ));
-                return Err(AppError::Internal(error.to_string()));
-            }
-            match transition.effect {
-                RevocationEffect::CascadeWebSessions => {}
-                _ => {
-                    return Err(AppError::Internal(
-                        "revocation driver produced an unexpected record effect".into(),
-                    ));
-                }
-            }
-        }
-        RevocationEffect::CascadeWebSessions => {
-            // Already-revoked retry: repeat the cascade but skip the SQL
-            // record, exactly as the historical branch did.
-        }
-        RevocationEffect::Fail(failure) => return Err(revocation_failure_error(failure)),
-        _ => {
-            return Err(AppError::Internal(
-                "revocation driver produced an unexpected lockout effect".into(),
-            ));
-        }
-    }
-
-    // Browser sessions this device approved inherit its trust, so they end
-    // with it. This runs after the SQL row says revoked: a concurrent grant by
-    // the device either committed before that (and is found here) or is
-    // refused by the grant's `revoked = 0` guard.
-    let cascade =
-        revoke_web_sessions_approved_by(&state, session.user_id, body.target_device_id).await;
-    let cascade_observation = match &cascade {
-        Ok(()) => CascadeObservation::Completed,
-        Err(_) => CascadeObservation::StorageFailed,
-    };
-    let transition = on_cascade_completed(driver, cascade_observation);
-    if let Err(error) = cascade {
-        debug_assert!(matches!(
-            transition.effect,
-            RevocationEffect::Fail(RevocationFailure::CascadeStorage)
-        ));
-        return Err(error);
-    }
+    // The proved loop: only the effect the driver just emitted is performed,
+    // and nothing after its verdict.
+    let transition = vela_session_policy::revocation_interpreter!(io, actor, await);
 
     match transition.effect {
         RevocationEffect::Complete => {
@@ -255,9 +241,16 @@ pub async fn post_revoke(
                 revoked: body.target_device_id,
             }))
         }
+        RevocationEffect::Fail(
+            RevocationFailure::TargetQueryStorage
+            | RevocationFailure::TargetParseStorage
+            | RevocationFailure::LockoutStorage
+            | RevocationFailure::RecordStorage
+            | RevocationFailure::CascadeStorage,
+        ) if io.error.is_some() => Err(io.error.take().expect("checked above")),
         RevocationEffect::Fail(failure) => Err(revocation_failure_error(failure)),
         _ => Err(AppError::Internal(
-            "revocation driver produced an unexpected cascade effect".into(),
+            "revocation driver reached no verdict".into(),
         )),
     }
 }

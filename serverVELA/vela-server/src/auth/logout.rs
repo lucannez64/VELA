@@ -11,12 +11,12 @@
 //! The decision (write exactly one JTI marker; a successful write authorizes
 //! the response and a failed write is terminal) lives in the pure
 //! [`vela_session_policy::revocation_driver::logout_step`] driver. This handler
-//! only performs the returned effect.
+//! expands [`vela_session_policy::logout_interpreter!`] with `await`: the same
+//! loop text the policy crate expands into the synchronous `run_logout` that
+//! hax extracts and F* checks.
 
 use axum::{extract::State, http::HeaderMap};
-use vela_session_policy::revocation_driver::{
-    begin_logout, on_logout_completed, LogoutEffect, LogoutFailure, LogoutObservation,
-};
+use vela_session_policy::revocation_driver::{LogoutEffect, LogoutFailure, LogoutObservation};
 
 use crate::{
     error::{AppError, Result},
@@ -24,31 +24,48 @@ use crate::{
     state::AppState,
 };
 
+/// The I/O behind the one logout effect: the `jti:revoked:` marker with the
+/// remaining-lifetime TTL. The original error is kept so the response carries
+/// it, exactly as the hand-written handler returned it.
+struct LogoutJtiIo<'a> {
+    state: &'a AppState,
+    jti: String,
+    error: Option<AppError>,
+}
+
+impl LogoutJtiIo<'_> {
+    async fn revoke_jti(&mut self) -> LogoutObservation {
+        match self
+            .state
+            .store
+            .set_ex(&format!("jti:revoked:{}", self.jti), &[1u8], 15 * 60)
+        {
+            Ok(()) => LogoutObservation::Applied,
+            Err(error) => {
+                self.error = Some(error);
+                LogoutObservation::StorageFailed
+            }
+        }
+    }
+}
+
 pub async fn post_logout(
     State(state): State<AppState>,
     session: AuthSession,
 ) -> Result<(HeaderMap, &'static str)> {
-    let start = begin_logout();
-    debug_assert!(matches!(start.effect, LogoutEffect::RevokeJti));
-
-    let write = state
-        .store
-        .set_ex(&format!("jti:revoked:{}", session.jti), &[1u8], 15 * 60);
-    let observation = match &write {
-        Ok(()) => LogoutObservation::Applied,
-        Err(_) => LogoutObservation::StorageFailed,
+    let mut io = LogoutJtiIo {
+        state: &state,
+        jti: session.jti.clone(),
+        error: None,
     };
-    let transition = on_logout_completed(start.driver, observation);
-    if let Err(error) = write {
-        debug_assert!(matches!(
-            transition.effect,
-            LogoutEffect::Fail(LogoutFailure::Storage)
-        ));
-        return Err(error);
-    }
+    // The proved loop: exactly one marker write, then the verdict.
+    let transition = vela_session_policy::logout_interpreter!(io, await);
 
     match transition.effect {
         LogoutEffect::Complete => {}
+        LogoutEffect::Fail(LogoutFailure::Storage) if io.error.is_some() => {
+            return Err(io.error.take().expect("checked above"))
+        }
         LogoutEffect::Fail(_) => {
             return Err(AppError::Internal("logout marker was not written".into()))
         }

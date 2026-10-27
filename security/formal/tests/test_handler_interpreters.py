@@ -19,6 +19,24 @@ WIRED = [
         'deletion_driver',
         'serverVELA/vela-session-policy/src/deletion_interpreter.rs',
     ),
+    (
+        'serverVELA/vela-server/src/auth/verify.rs',
+        'login_interpreter',
+        'login_driver',
+        'serverVELA/vela-session-policy/src/login_interpreter.rs',
+    ),
+    (
+        'serverVELA/vela-server/src/device/revoke.rs',
+        'revocation_interpreter',
+        'revocation_driver',
+        'serverVELA/vela-session-policy/src/revocation_interpreter.rs',
+    ),
+    (
+        'serverVELA/vela-server/src/auth/logout.rs',
+        'logout_interpreter',
+        'revocation_driver',
+        'serverVELA/vela-session-policy/src/revocation_interpreter.rs',
+    ),
 ]
 
 TRANSITIONS = re.compile(r'\b(?:begin_\w+|step|on_\w+_event|on_\w+)\s*\(')
