@@ -117,6 +117,8 @@ covered by the driver's per-request theorem):
 | enrollment package store/fetch, grant open, claim, completion, result | `pairing_interpreter!` | 5 | [pairing](proof-logs/current/pairing-interpreter/README.md) |
 | send, linked-item update/revoke, inbox delete, share-key registration | `share_interpreter!` | 3 | [sharing](proof-logs/current/share-interpreter/README.md) |
 | `PUT /vault/chunk/:id`, `GET /vault/chunk/:id` | `upload_interpreter!`, `read_interpreter!` | 7, 2 | [vault](proof-logs/current/vault-upload-interpreter/README.md) |
+| `POST /recovery/enroll-device` | `redemption_interpreter!` | 5 | [redemption](proof-logs/current/redemption-interpreter/README.md) |
+| `/recovery/initiate-proof`, `/recovery/recover/proof` | `possession_initiation_interpreter!`, `possession_recover_interpreter!` | 3, 6 | [possession](proof-logs/current/possession-interpreter/README.md) |
 
 Each crate's mutations (a wrong executor method, a call after the verdict,
 and for logout a skipped or doubled marker write) are rejected. The pairing
@@ -134,7 +136,13 @@ handler does not expect fails closed rather than panicking. `plan_admission`
 Still outside: request parsing and rate limits before a driver begins,
 response rendering after its verdict (including pairing's restore of a taken
 ceremony on `RestoreAndFail`, which the verdict authorizes), and each executor
-method's I/O. Recovery handlers are in progress.
+method's I/O. In the recovery loops an executor method may also abort (return
+no observation) on a storage error the old handler returned on; the loop then
+performs nothing more and the request fails with that error, and the proofs
+cover that exit. The four WebAuthn handlers (registration start/finish,
+`/recovery/initiate`, `/recovery/recover`) already run their interpreter
+macros, but those loops are not yet proved; their driver proofs stand, and
+the link from handler to driver remains a reviewed obligation there.
 
 ## Account deletion driver (hosted on cdffe46)
 
