@@ -1,0 +1,10 @@
+--- /home/hirew/.t3/worktrees/VELA/t3-d0ca44cd/serverVELA/vela-rekey-policy/proofs/fstar/vault-upload-driver-lemmas/Vela_rekey_policy_vault_upload_driver_lemmas.fst	2026-10-26 22:28:05.301648738 +0100
++++ /tmp/opencode/mutants/shadow-epoch/vault-upload-driver-lemmas/Vela_rekey_policy_vault_upload_driver_lemmas.fst	2026-10-27 00:45:13.508629150 +0100
+@@ -485,7 +485,6 @@
+     (ensures (
+       match (upload_step d e).f_effect <: t_UploadEffect with
+       | UploadEffect_Write permit ->
+-          permit.f_write_epoch = d.f_write_epoch /\
+           permit.f_read_epoch = d.f_read_epoch /\
+           permit.f_permit_epoch = d.f_permit_epoch /\
+           permit.f_shadow = d.f_shadow /\

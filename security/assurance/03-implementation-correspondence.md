@@ -255,9 +255,10 @@ fidelity are assumed.
 `vela-rekey-policy::vault_upload_driver` holds the authentication, epoch-route,
 shadow-authority, quota, write-classification and publication decisions of
 `put_chunk` and the read scope of `get_chunk` (`vault/chunk.rs`; 14 extracted
-functions, 42 per-request and 39 composition lemmas;
+functions, 42 per-request and 67 composition lemmas;
 [evidence](proof-logs/current/vault-upload-driver/README.md)). The guarded SQL
-statements, quota accounting and handler effect fidelity are assumed.
+statements are modelled as atomic steps against the live account row; their
+linearizability, quota accounting and handler effect fidelity are assumed.
 
 ## Device pairing driver
 

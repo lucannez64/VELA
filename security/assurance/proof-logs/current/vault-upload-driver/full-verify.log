@@ -1,5 +1,5 @@
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.15s
-     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/deps/vela_rekey_policy-e298c9bf57839bbb)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-d0ca44cd/target-own/debug/deps/vela_rekey_policy-e298c9bf57839bbb)
 
 running 25 tests
 test tests::abort_preserves_epoch_and_requires_attempt_authority ... ok
@@ -37,7 +37,7 @@ running 0 tests
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
-[1m[94minfo[0m: [1mhax: wrote file ./proofs/fstar/extraction/Vela_rekey_policy.fst[0m
+[1m[94minfo[0m: [1mhax: unchanged file ./proofs/fstar/extraction/Vela_rekey_policy.fst[0m
 * Warning 241 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti(0,0-0,0):
   - Unable to load
     /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti.checked
@@ -71,8 +71,8 @@ date=2025-10-06 12:00:42 -0700
 commit=7b347386330d0e5a331a220535b6f15288903234
 rustc: rustc 1.93.0-nightly (843f8ce2e 2025-11-07)
 cargo hax: hax  version=0.3.7 commit=unknown 
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.08s
-     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/deps/vela_rekey_policy-e298c9bf57839bbb)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-d0ca44cd/target-own/debug/deps/vela_rekey_policy-e298c9bf57839bbb)
 
 running 25 tests
 test tests::abort_preserves_epoch_and_requires_attempt_authority ... ok
@@ -109,7 +109,7 @@ running 0 tests
 
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.09s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
 [1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-vault-upload-driver/Vela_rekey_policy.fst[0m
 [1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-vault-upload-driver/Vela_rekey_policy.Vault_upload_driver.fst[0m
 Driver source policy: 1 extracted modules, 2 proof modules; no unreviewed escapes/options
@@ -134,12 +134,12 @@ F* vault-upload-driver argv: --cmi --cache_off --warn_error -331 --z3rlimit 1600
     with their types
   - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
 
-* Warning 328 at proofs/fstar/vault-upload-driver-composition/Vela_rekey_policy_vault_upload_driver_composition.fst(131,8-131,31):
+* Warning 328 at proofs/fstar/vault-upload-driver-composition/Vela_rekey_policy_vault_upload_driver_composition.fst(276,8-276,28):
   - Global binding
-        'Vela_rekey_policy_vault_upload_driver_composition.all_requests_sound_cons'
+        'Vela_rekey_policy_vault_upload_driver_composition.all_requests_ok_cons'
     is recursive but not used in its body
 
-* Warning 328 at proofs/fstar/vault-upload-driver-composition/Vela_rekey_policy_vault_upload_driver_composition.fst(157,8-157,30):
+* Warning 328 at proofs/fstar/vault-upload-driver-composition/Vela_rekey_policy_vault_upload_driver_composition.fst(302,8-302,30):
   - Global binding
         'Vela_rekey_policy_vault_upload_driver_composition.requests_in_range_cons'
     is recursive but not used in its body
@@ -151,9 +151,9 @@ All verification conditions discharged successfully
 vault upload driver: 14 focused Rust functions, 2 soundness postconditions
 per-request trace: every active write follows an ACTIVE non-rotation route; shadow writes require the starting device; success implies a matched guarded write; at most one success/failure
 read trace: only a current-epoch, same-account row is served
-upload composition: arbitrary interleavings never authorize a stale active write or a web-session shadow write, and the extracted epoch guards reject stale commits and non-device shadow writers
+upload composition: arbitrary interleavings never authorize a stale active write or a web-session shadow write, and the shared-store composition never commits a stale active row, an unauthorized shadow row, or a success response without its own commit
 b99aa83318ab074cbbf95f85ec6c3df0158bdc9149cd80eb7e8768560f00e3e8  proofs/fstar/extraction-vault-upload-driver-root/Vela_rekey_policy.fst
 eeef9d44dc0513065a2fe07c762a2eb5f31fdbf34ea987f19cdc4da6976c5324  proofs/fstar/extraction-vault-upload-driver/Vela_rekey_policy.Vault_upload_driver.fst
 27d146e89f912c9ee8a2d1e02053968d26bd99d1dd7f94db7a50a00833a7be08  proofs/fstar/vault-upload-driver-lemmas/Vela_rekey_policy_vault_upload_driver_lemmas.fst
-d75b175cf69b7324b1b362171d7a1891bd17455894b37c02807e19e2ddac6ba9  proofs/fstar/vault-upload-driver-composition/Vela_rekey_policy_vault_upload_driver_composition.fst
+eb6af2c184afcd1fa9d3632422bb24a7e78841ae8f7fc16e16c68b9ed00665da  proofs/fstar/vault-upload-driver-composition/Vela_rekey_policy_vault_upload_driver_composition.fst
 5e410fe31e2571e27382efcc96263b9ec2998a436646af7316a76507638dbd32  src/vault_upload_driver.rs

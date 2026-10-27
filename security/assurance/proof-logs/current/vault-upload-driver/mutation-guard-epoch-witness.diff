@@ -1,0 +1,59 @@
+--- /home/hirew/.t3/worktrees/VELA/t3-d0ca44cd/serverVELA/vela-rekey-policy/proofs/fstar/vault-upload-driver-composition/Vela_rekey_policy_vault_upload_driver_composition.fst	2026-10-27 00:19:56.661995313 +0100
++++ /tmp/opencode/mutants/guard-epoch-witness/vault-upload-driver-composition/Vela_rekey_policy_vault_upload_driver_composition.fst	2026-10-27 00:45:13.511524424 +0100
+@@ -320,7 +320,7 @@
+ /// `WHERE users.id = ? AND users.key_epoch = permit.permit_epoch AND
+ /// users.rekey_state IS NULL`.
+ let sql_active_guard (a: account) (p: t_UploadWritePermit) : bool =
+-  a.a_epoch = p.f_permit_epoch && a.a_phase = Phase_Active
++  a.a_phase = Phase_Active
+ 
+ /// `WHERE id = ? AND key_epoch = ? AND rekey_state = 'freezing'
+ /// AND rekey_starter = ? AND rekey_id = ?` with the read epoch, the writer's
+@@ -471,17 +471,8 @@
+       permit_matches_driver p d /\
+       not p.f_shadow))
+     (ensures (active_row_ok a p)) =
+-  assert (not d.f_shadow);
+-  assert (route_clean d);
+-  route_active_of_not_shadow d;
+-  assert (active_route d);
+-  assert (d.f_state_phase = Phase_Active);
+-  assert (d.f_write_epoch = d.f_state_epoch);
+-  assert (p.f_write_epoch = d.f_state_epoch);
+-  assert (a.a_epoch = p.f_permit_epoch);
+-  assert (p.f_permit_epoch = d.f_permit_epoch);
+-  assert (p.f_write_epoch = a.a_epoch);
+-  assert (a.a_phase = Phase_Active)
++  admit ()
++
+ 
+ /// A shadow guarded statement that commits lands at `next(live epoch)` for the
+ /// FREEZING rotation the writer started, and never for a web session. Dropping
+@@ -1489,18 +1480,20 @@
+   : Lemma (
+       (account_at c5 0).a_phase = Phase_Active /\
+       (account_at c5 0).a_epoch = mk_i64 2 /\
+-      FStar.List.Tot.length c6.w_store = 0 /\
+-      (request_head c6.w_reqs).rq_committed = false /\
+-      (request_head c6.w_reqs).rq_driver.f_failed = true /\
+-      c6.w_stale_commit = 0 /\ c6.w_bad_shadow_commit = 0 /\
++      FStar.List.Tot.length c6.w_store = 1 /\
++      (store_head c6.w_store).cr_epoch = mk_i64 1 /\
++      (request_head c6.w_reqs).rq_committed = true /\
++      (request_head c6.w_reqs).rq_driver.f_failed = false /\
++      c6.w_stale_commit = 1 /\ c6.w_bad_shadow_commit = 0 /\
+       c6.w_success_without_commit = 0) = ()
+ 
+ let rotation_between_resolve_and_write_skips ()
+   : Lemma (
+       let w = run_world initial rotation_skip_schedule in
+-      FStar.List.Tot.length w.w_store = 0 /\
+-      (request_head w.w_reqs).rq_committed = false /\
+-      w.w_stale_commit = 0) =
++      FStar.List.Tot.length w.w_store = 1 /\
++      (store_head w.w_store).cr_epoch = mk_i64 1 /\
++      (request_head w.w_reqs).rq_committed = true /\
++      w.w_stale_commit = 1) =
+   run_cons initial (Spawn 0 false 0 0 0)
+     [Resolve 0; Quota 0 QuotaObservation_Allowed;
+      RekeyStart 0 0; RekeyCommit 0; GuardedWrite 0];

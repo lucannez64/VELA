@@ -1,0 +1,11 @@
+--- /home/hirew/.t3/worktrees/VELA/t3-d0ca44cd/serverVELA/vela-rekey-policy/proofs/fstar/extraction-vault-upload-driver/Vela_rekey_policy.Vault_upload_driver.fst	2026-10-27 00:08:51.953272053 +0100
++++ /tmp/opencode/mutants/shadow-epoch/extraction-vault-upload-driver/Vela_rekey_policy.Vault_upload_driver.fst	2026-10-27 00:45:13.508463404 +0100
+@@ -354,7 +354,7 @@
+ 
+ let write_permit (d: t_UploadDriver) : t_UploadWritePermit =
+   {
+-    f_write_epoch = d.f_write_epoch;
++    f_write_epoch = if d.f_shadow then d.f_read_epoch else d.f_write_epoch;
+     f_read_epoch = d.f_read_epoch;
+     f_shadow = d.f_shadow;
+     f_permit_epoch = d.f_permit_epoch;
