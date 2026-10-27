@@ -545,6 +545,45 @@
         "serverVELA/vela-server/src/recovery/initiate.rs": "df66dfb74fbd58b7d8e0ebcf3688cf2c064a6c323012003655dcf17dc02342ee",
         "serverVELA/vela-server/src/recovery/recover.rs": "3cbca150fbf07aa820859e8cf3f6f12a3e20ecd7ffaa3e5ce2d80c55321b3c4f"
       }
+    },
+    {
+      "boundary": "device-enroll driver (POST /device/enroll): at most one insert decision per challenge, and an insert only after an enroll-purpose challenge was consumed, the enrolling device was active and authenticated, the new keys and signature verified, the rekey permit was held and the account epoch matched; an ambiguous insert error is terminal (U-19); challenge store atomicity, signature cryptography and handler effect fidelity remain open",
+      "artifacts": {
+        "serverVELA/vela-enrollment-policy/src/enroll_driver.rs": "a1a64135a80460065a12dd9bd4f606cc2d058aa05639854797f44534d7dec3d0",
+        "serverVELA/vela-enrollment-policy/verify-fstar-enroll-driver.sh": "b4f3908893c2917a3d3ac885889c6026e6d4ca990139ce0e131a7f87dd406bfa",
+        "serverVELA/vela-enrollment-policy/proofs/fstar/extraction-enroll-driver/Vela_enrollment_policy.Enroll_driver.fst": "d4b9b81f02632fbd06c09677b336c37c9104d9d72250d904b761a744d8fafa03",
+        "serverVELA/vela-enrollment-policy/proofs/fstar/enroll-driver-lemmas/Vela_enrollment_policy_enroll_driver_lemmas.fst": "45f32ac1e3998f5c49e816cf70d51b0028f9d03285cf49f443ef317de55e943b"
+      }
+    },
+    {
+      "boundary": "device-enroll handler-to-driver interpreter: device/enroll.rs expands enroll_interpreter!, whose synchronous expansion is proved for every executor to call exactly the method for the driver's current effect, stop at the verdict within 5 turns and end in a state the enroll per-request theorem covers; executor method I/O, the await-only macro difference, request parsing and response rendering remain open",
+      "artifacts": {
+        "serverVELA/vela-enrollment-policy/src/enroll_interpreter.rs": "2eddb5ccf12d1357602677ec977256fc3db4dd79bc2e3f7640cd3c0e83d9fc7a",
+        "serverVELA/vela-enrollment-policy/verify-fstar-enroll-interpreter.sh": "07e6f576675531cac969cf72329a66fcc778e3ec47bfbde5fb3d28a6170b959c",
+        "serverVELA/vela-enrollment-policy/proofs/fstar/extraction-enroll-interpreter/Vela_enrollment_policy.Enroll_interpreter.fst": "bf31d7c58cebda8a67664b8a498205a81ddeb19806f7ea3da129bb871c3576bf",
+        "serverVELA/vela-enrollment-policy/proofs/fstar/enroll-interpreter-lemmas/Vela_enrollment_policy_enroll_interpreter_lemmas.fst": "f5ae4b954352e659bd3c08b06c58e60e188976b393c217f644b35acf650f9167",
+        "serverVELA/vela-server/src/device/enroll.rs": "49762df698a2bf7f1636d0a220b50bcd48e56e52ea5738e55efbd4c5d33d2b7d"
+      }
+    },
+    {
+      "boundary": "send-link driver (POST /send, GET /send/:id, DELETE /send/:id): an owner-bound create permit is the only route to an insert, with bounded TTL and views; at most one delivery per request and only after a consume; only the owner deletes; under any interleaving on one store, a single-use link is fetched at most once, never after deletion, and never deleted by a non-owner, counted on driver decisions; SQL semantics and handler effect fidelity remain open",
+      "artifacts": {
+        "serverVELA/vela-share-policy/src/send_driver.rs": "81454e442d270bf842cc2a57d953111280fc9126cb8e5b63f0dd87eb3dc517c4",
+        "serverVELA/vela-share-policy/verify-fstar-send-driver.sh": "7fe6d2c1412d68e60daf7cf041764e7816328aa2ed8af519770b1764eb4c2020",
+        "serverVELA/vela-share-policy/proofs/fstar/extraction-send-driver/Vela_share_policy.Send_driver.fst": "4b4bf906d2f0a622fe911ac233378c8546e9529a26c16b4855ebb89eddcd343e",
+        "serverVELA/vela-share-policy/proofs/fstar/send-driver-lemmas/Vela_share_policy_send_driver_lemmas.fst": "b0d747092b9fc98239b0feb76eb9231363698af12f118ac448b515dd61bfaf47",
+        "serverVELA/vela-share-policy/proofs/fstar/send-driver-composition/Vela_share_policy_send_driver_composition.fst": "8aa61f150f617e021360d20619c4c219fb6f59c86e02c822731127c2a4f1df96"
+      }
+    },
+    {
+      "boundary": "send-link handler-to-driver interpreter: send.rs expands send_interpreter! for create, fetch and delete, whose synchronous expansion is proved for every executor to call exactly the method for the driver's current effect, stop at the verdict within 3 turns and end in a state the send per-request theorems cover; executor method I/O, the await-only macro difference, request parsing, GET /sends and response rendering remain open",
+      "artifacts": {
+        "serverVELA/vela-share-policy/src/send_interpreter.rs": "f4db5f1886491a69eea265b45a50046eae9281f67dcaae0dea87ca6054ed6b93",
+        "serverVELA/vela-share-policy/verify-fstar-send-interpreter.sh": "165dc1f0d2a2c0a018f3af0d9ab92b0cf7bf3d956fc0c57cc7bafd930e49c16a",
+        "serverVELA/vela-share-policy/proofs/fstar/extraction-send-interpreter/Vela_share_policy.Send_interpreter.fst": "b8a90b9e697700b03713462bbfceb550c5bd1690ad9521387901d256dfccf4bd",
+        "serverVELA/vela-share-policy/proofs/fstar/send-interpreter-lemmas/Vela_share_policy_send_interpreter_lemmas.fst": "8f92dab0f0754483e06cdf42a3fafde61803a5f3d5a737332c2d28ef370330ac",
+        "serverVELA/vela-server/src/send.rs": "437f0bd3169c1b4c518715f50604f5a07a10e8c1ee17da66ce4013de7dbc49e7"
+      }
     }
   ]
 }
