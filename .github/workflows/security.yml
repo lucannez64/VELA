@@ -271,9 +271,26 @@ jobs:
           name: assurance-sharing-logs
           path: ${{ runner.temp }}/sharing-logs
 
+  # One job per policy crate, in parallel: each regenerates and checks its own
+  # extractions, interpreter and driver proofs. `refinement-boundary` then
+  # audits the freshly regenerated extractions of all of them together.
   refinement:
+    name: refinement (${{ matrix.name }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: vela-rekey-policy, dir: serverVELA/vela-rekey-policy, script: verify-fstar.sh, fresh: true }
+          - { name: vela-session-policy, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, fresh: true }
+          - { name: vela-enrollment-policy, dir: serverVELA/vela-enrollment-policy, script: verify-fstar.sh, fresh: true }
+          - { name: vela-recovery-policy, dir: serverVELA/vela-recovery-policy, script: verify-fstar.sh, fresh: true }
+          - { name: vela-share-policy, dir: serverVELA/vela-share-policy, script: verify-fstar.sh, fresh: true }
+          - { name: vela-client-recovery-policy, dir: libVELA/vela-client-recovery-policy, script: verify-fstar.sh, fresh: true }
+          - { name: vela-sync-policy, dir: libVELA/vela-sync-policy, script: verify-fstar.sh, fresh: true }
+          - { name: vela-client-share-policy, dir: libVELA/vela-client-share-policy, script: verify-fstar.sh, fresh: true }
+          - { name: share-facts, dir: libVELA/vela-crypto, script: verify-share-facts-fstar.sh, fresh: false }
     env:
       CARGO_BUILD_JOBS: 1
       OPAMJOBS: 1
@@ -300,7 +317,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/refinement-logs"
-          VELA_MEMORY_MAX=6G VELA_STEP_TIMEOUT=5400 security/assurance/bounded.sh security/assurance/install-hax.sh 2>&1 | tee "$RUNNER_TEMP/refinement-logs/toolchain-install.log"
+          VELA_MEMORY_MAX=6G VELA_STEP_TIMEOUT=5400 security/assurance/bounded.sh security/assurance/install-hax.sh 2>&1 | tee "$RUNNER_TEMP/refinement-logs/toolchain-install-${{ matrix.name }}.log"
       - name: Activate and check pinned proof tools
         run: |
           set -euo pipefail
@@ -318,7 +335,7 @@ jobs:
             fstar.exe --version
             z3-4.13.3 --version
             rustc +nightly-2025-11-08 --version
-          } 2>&1 | tee "$RUNNER_TEMP/refinement-logs/toolchain-activation.log"
+          } 2>&1 | tee "$RUNNER_TEMP/refinement-logs/toolchain-activation-${{ matrix.name }}.log"
       - name: Cache completed proof toolchain
         if: steps.refinement-toolchain-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
@@ -331,61 +348,91 @@ jobs:
       # own evolving cache. Activate CARGO_HOME before restoring this cache.
       # Keep proof outputs fresh: this action caches dependency build artifacts,
       # not successful VELA proof verdicts or workspace crate artifacts.
+      # Installed tools are immutable above; application dependencies need their
+      # own evolving cache. Activate CARGO_HOME before restoring this cache.
+      # Keep proof outputs fresh: this action caches dependency build artifacts,
+      # not successful VELA proof verdicts or workspace crate artifacts.
       - name: Cache refinement Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: |
-            serverVELA/vela-rekey-policy -> ../../target
-            serverVELA/vela-session-policy -> ../../target
-            serverVELA/vela-enrollment-policy -> ../../target
-            serverVELA/vela-recovery-policy -> ../../target
-            serverVELA/vela-share-policy -> ../../target
-            libVELA/vela-client-recovery-policy -> ../../target
-            libVELA/vela-sync-policy -> ../../target
-            libVELA/vela-client-share-policy -> ../../target
-            libVELA/vela-crypto -> ../../target
-          shared-key: refinement-rust-v1
+          workspaces: ${{ matrix.dir }} -> ../../target
+          shared-key: refinement-rust-v2-${{ matrix.name }}
           key: ${{ hashFiles('security/assurance/install-hax.sh') }}
           cache-bin: false
-      - name: Extract and check all eight policy crates
+      - name: Extract and check ${{ matrix.name }}
+        env:
+          CRATE_DIR: ${{ matrix.dir }}
+          SCRIPT: ${{ matrix.script }}
+          FRESH: ${{ matrix.fresh }}
+          LOG_NAME: ${{ matrix.name }}
         run: |
           mkdir -p "$RUNNER_TEMP/refinement-logs"
-          for crate in serverVELA/vela-{rekey,session,enrollment,recovery,share}-policy libVELA/vela-{client-recovery,sync,client-share}-policy; do
-            # Require fresh output even when the repository contains extractions.
-            if [[ -d "$crate/proofs/fstar/extraction" ]]; then
-              find "$crate/proofs/fstar/extraction" -maxdepth 1 -type f \( -name '*.fst' -o -name '*.fsti' \) -delete
-            fi
-            log="$RUNNER_TEMP/refinement-logs/$(basename "$crate").log"
-            if ! security/assurance/bounded.sh "$crate/verify-fstar.sh" > "$log" 2>&1; then
-              tail -n 100 "$log"
-              exit 1
-            fi
-          done
-      - name: Verify production share-fact construction and audit extraction assumptions
+          # Require fresh output even when the repository contains extractions.
+          if [[ $FRESH == true && -d "$CRATE_DIR/proofs/fstar/extraction" ]]; then
+            find "$CRATE_DIR/proofs/fstar/extraction" -maxdepth 1 -type f \( -name '*.fst' -o -name '*.fsti' \) -delete
+          fi
+          log="$RUNNER_TEMP/refinement-logs/$LOG_NAME.log"
+          if ! security/assurance/bounded.sh "$CRATE_DIR/$SCRIPT" > "$log" 2>&1; then
+            tail -n 100 "$log"
+            exit 1
+          fi
+      # Keep repository-relative paths so the boundary job can lay them back.
+      - name: Collect checked extractions
+        if: always()
+        env:
+          CRATE_DIR: ${{ matrix.dir }}
+        run: |
+          out="$RUNNER_TEMP/refinement-extractions"
+          mkdir -p "$out"
+          find "$CRATE_DIR/proofs/fstar" -type f -name '*.fst' \
+            \( -path '*/extraction/*' -o -path '*/extraction-*' -o -path '*-lemmas/*' -o -path '*-composition/*' -o -path '*/models/*' \) \
+            -exec cp --parents {} "$out" \; 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: refinement-logs-${{ matrix.name }}
+          path: ${{ runner.temp }}/refinement-logs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: refinement-extractions-${{ matrix.name }}
+          path: ${{ runner.temp }}/refinement-extractions
+
+  # Audits the selected postconditions and reviewed assumptions across every
+  # crate, over the extractions the matrix jobs just regenerated and checked,
+  # and republishes the combined evidence under the historical artifact names.
+  refinement-boundary:
+    needs: refinement
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require every crate job to pass
+        env:
+          RESULT: ${{ needs.refinement.result }}
+        run: test "$RESULT" = success
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: refinement-extractions-*
+          merge-multiple: true
+          path: .
+      - name: Audit extraction assumptions
         run: |
           set -euo pipefail
-          security/assurance/bounded.sh libVELA/vela-crypto/verify-share-facts-fstar.sh > "$RUNNER_TEMP/refinement-logs/share-facts.log" 2>&1
+          mkdir -p "$RUNNER_TEMP/refinement-logs"
           python3 security/assurance/check-proof-boundary.py | tee "$RUNNER_TEMP/refinement-logs/proof-boundary.log"
       - uses: actions/upload-artifact@v4
-        if: always()
+        with:
+          name: refinement-logs-proof-boundary
+          path: ${{ runner.temp }}/refinement-logs
+      - uses: actions/upload-artifact/merge@v4
         with:
           name: assurance-refinement-logs
-          path: ${{ runner.temp }}/refinement-logs
-      # The extractions F* just checked, so they can be committed verbatim.
-      - uses: actions/upload-artifact@v4
-        if: always()
+          pattern: refinement-logs-*
+      - uses: actions/upload-artifact/merge@v4
         with:
           name: assurance-refinement-extractions
-          path: |
-            serverVELA/vela-*-policy/proofs/fstar/extraction/*.fst
-            serverVELA/vela-*-policy/proofs/fstar/extraction-*driver/*.fst
-            serverVELA/vela-*-policy/proofs/fstar/*-lemmas/*.fst
-            serverVELA/vela-*-policy/proofs/fstar/*-composition/*.fst
-            libVELA/vela-*-policy/proofs/fstar/extraction/*.fst
-            libVELA/vela-sync-policy/proofs/fstar/chunk-lemmas/*.fst
-            libVELA/vela-sync-policy/proofs/fstar/extraction-epoch/*.fst
-            libVELA/vela-sync-policy/proofs/fstar/epoch-lemmas/*.fst
-            libVELA/vela-crypto/proofs/fstar/extraction/*.fst
+          pattern: refinement-extractions-*
 
   static-scan:
     runs-on: ubuntu-latest
