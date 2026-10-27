@@ -1,0 +1,12 @@
+--- serverVELA/vela-enrollment-policy/proofs/fstar/extraction-enroll-driver/Vela_enrollment_policy.Enroll_driver.fst	2026-10-27 22:21:06.344185587 +0100
++++ /tmp/vela-f2-account-b-mut/enroll-rejected-challenge-continues/Vela_enrollment_policy.Enroll_driver.fst	2026-10-27 22:49:36.628077832 +0100
+@@ -374,7 +374,8 @@
+         t_EnrollDriver)
+       (EnrollEffect_CheckDevice <: t_EnrollEffect)
+   | ChallengeObservation_Rejected  ->
+-    terminal d (EnrollFailure_ChallengeRejected <: t_EnrollFailure)
++    transition ({ d with f_stage = EnrollStage_Device <: t_EnrollStage; f_challenge_consumed = true; f_challenge_purpose_enroll = true } <: t_EnrollDriver)
++      (EnrollEffect_CheckDevice <: t_EnrollEffect)
+ 
+ let on_device_checked (d: t_EnrollDriver) (observation: t_DeviceObservation)
+     : Prims.Pure t_EnrollTransition

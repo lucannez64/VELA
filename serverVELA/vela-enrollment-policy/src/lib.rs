@@ -11,6 +11,8 @@
 
 pub mod pairing_driver;
 pub mod pairing_interpreter;
+pub mod enroll_driver;
+pub mod enroll_interpreter;
 
 /// Decoded length of a hybrid encapsulation key (`X25519` + `ML-KEM`).
 pub const HYBRID_EK_LEN: usize = 1568 + 32;

@@ -1,0 +1,10 @@
+# local runs, F* 2025.10.06 / Z3 4.13.3 / hax 0.3.7, CARGO_TARGET_DIR=$PWD/target-own
+cd serverVELA/vela-enrollment-policy
+vela-heavy ./verify-fstar-enroll-driver.sh
+vela-heavy ./verify-fstar-enroll-interpreter.sh
+vela-heavy ./verify-fstar.sh
+cd ../..
+vela-heavy cargo test --manifest-path serverVELA/Cargo.toml -p vela-enrollment-policy
+vela-heavy cargo test --manifest-path serverVELA/Cargo.toml -p vela-server --test integration
+python3 -m unittest discover -s security/formal/tests -p 'test_*.py'
+python3 security/assurance/check-proof-boundary.py

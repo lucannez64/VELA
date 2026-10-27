@@ -17,6 +17,7 @@ F* and checks their postconditions for every input.
 | `result_facts` | Phase, claimed-key presence and proof validity are exactly the store and signature observations. |
 | `authorize_result` | Pending or enrolled status is returned only after proof under the claimed verification key. |
 | `pairing_driver::*` | The total per-request transition relation for the invitation store/fetch, grant open, claim, completion and result collection; every post-validation decision the handlers make between their effects. |
+| `enroll_driver::*` | The total per-request transition relation for `POST /device/enroll`: single-use enroll-purpose challenge, enrolling-device authentication, new-key signature and lengths, rekey permit, and the account-epoch-guarded insert. |
 | theorem helpers | Grant opening, claim, inspection, completion replay, cross-device inspection, claim substitution, unproved result collection, revocation and stale epochs are impossible. |
 
 The proof boundary excludes HTTP parsing, signature security, clocks, SQL, and
@@ -48,6 +49,16 @@ mixing it with the historical artifact), then checks the unbounded per-request
 trace lemmas (`proofs/fstar/pairing-driver-lemmas/`) and the concurrent
 composition (`proofs/fstar/pairing-driver-composition/`) over the extracted
 transition relation. `verify-fstar.sh` runs it after the historical modules.
+
+`./verify-fstar-enroll-driver.sh` is the focused `POST /device/enroll`
+increment. It regenerates the driver into
+`proofs/fstar/extraction-enroll-driver/` and checks, for every event list, that
+a device row is inserted only after the enroll-purpose challenge was consumed
+once, the approving device/account checks passed and the guarded account epoch
+matched; at most one insert decision is taken per request, and an ambiguous
+insert error is terminal and restores nothing (U-19). `./verify-fstar-enroll-interpreter.sh`
+then checks that the handler's loop performs exactly the driver's effects and
+stops at its verdict within five turns. `verify-fstar.sh` runs both.
 
 Run the protocol model separately:
 

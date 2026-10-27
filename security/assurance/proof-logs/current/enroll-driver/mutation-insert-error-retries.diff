@@ -1,0 +1,11 @@
+--- serverVELA/vela-enrollment-policy/proofs/fstar/extraction-enroll-driver/Vela_enrollment_policy.Enroll_driver.fst	2026-10-27 22:21:06.344185587 +0100
++++ /tmp/vela-f2-account-b-mut/enroll-insert-error-retries/Vela_enrollment_policy.Enroll_driver.fst	2026-10-27 22:49:36.627680335 +0100
+@@ -489,7 +489,7 @@
+   | InsertObservation_Inserted  ->
+     complete ({ d with f_inserted = true; f_account_epoch_active = true } <: t_EnrollDriver)
+   | InsertObservation_EpochMismatch  -> terminal d (EnrollFailure_EpochConflict <: t_EnrollFailure)
+-  | InsertObservation_Failed  -> terminal d (EnrollFailure_InsertStorage <: t_EnrollFailure)
++  | InsertObservation_Failed  -> transition d (EnrollEffect_InsertDevice <: t_EnrollEffect)
+ 
+ let stage_start (d: t_EnrollDriver) : bool =
+   match d.f_stage <: t_EnrollStage with

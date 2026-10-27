@@ -55,3 +55,11 @@ fstar.exe \
 # loop the handlers expand, proved to perform exactly the driver's effects.
 # Needs the pairing driver extraction above.
 "$proof_root/verify-fstar-pairing-interpreter.sh"
+
+# F-2 focused `POST /device/enroll` driver: the single-use challenge, the two
+# signature checks and the guarded account-epoch insert.
+"$proof_root/verify-fstar-enroll-driver.sh"
+
+# Handler-to-driver link for `POST /device/enroll`; needs the driver
+# extraction above.
+"$proof_root/verify-fstar-enroll-interpreter.sh"

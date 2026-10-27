@@ -51,3 +51,11 @@ fstar.exe \
 # handlers expand, proved to perform exactly the driver's effects. Needs the
 # driver extraction above.
 "$proof_root/verify-fstar-share-interpreter.sh"
+
+# F-2 focused one-off share-link driver: create/fetch/delete decisions plus the
+# concurrent at-most-one-fetch/delete composition over a shared link store.
+"$proof_root/verify-fstar-send-driver.sh"
+
+# Handler-to-driver link for the one-off share-link endpoints; needs the send
+# driver extraction above.
+"$proof_root/verify-fstar-send-interpreter.sh"

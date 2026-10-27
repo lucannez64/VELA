@@ -1,0 +1,11 @@
+--- serverVELA/vela-share-policy/proofs/fstar/send-driver-composition/Vela_share_policy_send_driver_composition.fst	2026-10-27 21:43:51.433732731 +0100
++++ /tmp/vela-f2-account-b-mut/send-delete-keeps-link/Vela_share_policy_send_driver_composition.fst	2026-10-27 22:49:36.756484836 +0100
+@@ -207,7 +207,7 @@
+       if d.f_deleted && owner then
+         {
+           w with
+-          w_link = Link_Deleted (link_single w.w_link);
++          w_link = w.w_link;
+           w_deletes = w.w_deletes + 1;
+         }
+       else if d.f_deleted && not owner then
