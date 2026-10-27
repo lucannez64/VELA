@@ -101,6 +101,35 @@ says and reports it honestly, the macro expansion in the server (it differs
 only by `.await`), and the store/SQL semantics. The [f947ef7 workflow](https://github.com/lucannez64/VELA/actions/runs/40488103343)
 reproduced it. [Evidence](proof-logs/current/deletion-interpreter/README.md).
 
+## Handler-to-driver interpreters (local, after 5c82971)
+
+The same construction now covers the login, device-revocation, logout,
+pairing and sharing handlers. Each policy crate defines one interpreter macro
+per driver; the server expands it once with `.await` over an async executor
+that holds the request's I/O, and F* proves the synchronous expansion for
+every executor (exact executor calls, verdict within the budget, final state
+covered by the driver's per-request theorem):
+
+| Handler(s) | Interpreter | Budget | Evidence |
+|---|---|---|---|
+| `POST /auth/verify` | `login_interpreter!` | 6 | [login](proof-logs/current/login-interpreter/README.md) |
+| `POST /device/revoke`, `POST /auth/logout` | `revocation_interpreter!`, `logout_interpreter!` | 4, 1 | [revocation](proof-logs/current/revocation-interpreter/README.md) |
+| enrollment package store/fetch, grant open, claim, completion, result | `pairing_interpreter!` | 5 | [pairing](proof-logs/current/pairing-interpreter/README.md) |
+| send, linked-item update/revoke, inbox delete, share-key registration | `share_interpreter!` | 3 | [sharing](proof-logs/current/share-interpreter/README.md) |
+
+Each crate's mutations (a wrong executor method, a call after the verdict,
+and for logout a skipped or doubled marker write) are rejected. The pairing
+driver gained one additive event (`AccountChecked`) so its `step` covers the
+completion's account preflight; `on_completion_account` is unchanged and still
+guards the ceremony and stage. The server-side executor traits for pairing and
+sharing give unimplemented methods a refusing observation, so an effect a
+handler does not expect fails closed rather than panicking. `plan_admission`
+(middleware) is a single pure decision with no effect loop and is exempt.
+Still outside: request parsing and rate limits before a driver begins,
+response rendering after its verdict (including pairing's restore of a taken
+ceremony on `RestoreAndFail`, which the verdict authorizes), and each executor
+method's I/O. Recovery and vault handlers are in progress.
+
 ## Account deletion driver (hosted on cdffe46)
 
 `DELETE /account` now takes every decision from an extracted driver in
