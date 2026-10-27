@@ -188,8 +188,9 @@ interleaving (13 contracts, 84 lemmas, three load-bearing mutations).
 
 The [login](login-interpreter/README.md),
 [revocation](revocation-interpreter/README.md),
-[pairing](pairing-interpreter/README.md) and
-[sharing](share-interpreter/README.md) interpreters extend the same check to
+[pairing](pairing-interpreter/README.md),
+[sharing](share-interpreter/README.md) and
+[vault](vault-upload-interpreter/README.md) interpreters extend the same check to
 those handlers.
 
 The [deletion interpreter](deletion-interpreter/README.md) checks the loop

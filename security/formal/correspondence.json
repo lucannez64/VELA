@@ -78,7 +78,7 @@
         "security/formal/signed-share-commit-correspondence.md": "8b1a5ae7bc8dbedd8c83c6a979fd82470706c87703d73503cc1f70ea6f582822",
         "serverVELA/vela-enrollment-policy/src/lib.rs": "38ca3a6b03b2a930d689255460848765aebc1371c153fc174b59736296e11441",
         "serverVELA/vela-recovery-policy/src/lib.rs": "2a2b21e1b632470b2feb715911907590a7d1cdf7decee54b5ec8a723a0d9b4f1",
-        "serverVELA/vela-rekey-policy/src/lib.rs": "036b9d3c864a75c4a92ebf3cb084d0fa82b9d1b446d7bc9c306b40c48df80dd0",
+        "serverVELA/vela-rekey-policy/src/lib.rs": "b1407ca78c911c1519cbdc3f78496af146a5ed1ebac4a8586c80aba79252f1e7",
         "serverVELA/vela-session-policy/src/lib.rs": "9fc62ac3b42056e9d095fe3cefb076206ce48a0655b6cb92cf282d9daa592e4b",
         "serverVELA/vela-share-policy/src/lib.rs": "28f2175c43141b9b59d4c91cdd0e5fcfb4b3a633eeb1362c34636a00f512feff"
       }
@@ -425,12 +425,12 @@
     {
       "boundary": "vault chunk upload/read driver (14 extracted functions, 42 per-request and 67 composition lemmas): success only after a matched guarded write on a clean route, shadow writes only by the starting device and never by a web session; against the three guarded SQL statements modelled atomically on the live account row and chunk store, no stale active row, no unauthorized shadow row and no success without a committed write under any interleaving with rotations; SQL linearizability, quota, Lamport-clock monotonicity (client-enforced) and handler effect fidelity remain open",
       "artifacts": {
-        "serverVELA/vela-rekey-policy/src/vault_upload_driver.rs": "5e410fe31e2571e27382efcc96263b9ec2998a436646af7316a76507638dbd32",
-        "serverVELA/vela-rekey-policy/verify-fstar-vault-upload-driver.sh": "f79d6ba461174bf24a8b80ef24558f698090da8efe593c516e2ac088f9ec4aa7",
-        "serverVELA/vela-rekey-policy/proofs/fstar/extraction-vault-upload-driver/Vela_rekey_policy.Vault_upload_driver.fst": "eeef9d44dc0513065a2fe07c762a2eb5f31fdbf34ea987f19cdc4da6976c5324",
-        "serverVELA/vela-rekey-policy/proofs/fstar/vault-upload-driver-lemmas/Vela_rekey_policy_vault_upload_driver_lemmas.fst": "27d146e89f912c9ee8a2d1e02053968d26bd99d1dd7f94db7a50a00833a7be08",
-        "serverVELA/vela-rekey-policy/proofs/fstar/vault-upload-driver-composition/Vela_rekey_policy_vault_upload_driver_composition.fst": "eb6af2c184afcd1fa9d3632422bb24a7e78841ae8f7fc16e16c68b9ed00665da",
-        "serverVELA/vela-server/src/vault/chunk.rs": "a66d8c010cbb2a8417202c29563086cb825e31d7f402fd01a04d1df8cb7ca3a3",
+        "serverVELA/vela-rekey-policy/src/vault_upload_driver.rs": "808649a0e73f764ca28daec2931b67c6b92ad66509e567da1bb5c36136bec786",
+        "serverVELA/vela-rekey-policy/verify-fstar-vault-upload-driver.sh": "29fc7a9c3c93aa4fd7d551d393259c967119e45d778e33d351dddfeb52400785",
+        "serverVELA/vela-rekey-policy/proofs/fstar/extraction-vault-upload-driver/Vela_rekey_policy.Vault_upload_driver.fst": "de21fb5e61ce9270d1e324d3775364e3562d14a4777d95178d8f62c26140f894",
+        "serverVELA/vela-rekey-policy/proofs/fstar/vault-upload-driver-lemmas/Vela_rekey_policy_vault_upload_driver_lemmas.fst": "fea986169ec7c34c4c522afe689142399b2ea14a8cd4d0616e67709b5368baed",
+        "serverVELA/vela-rekey-policy/proofs/fstar/vault-upload-driver-composition/Vela_rekey_policy_vault_upload_driver_composition.fst": "f786c5f37a5ae086b11bf205cae99fa37af639bce87097221ea4185d77b014b5",
+        "serverVELA/vela-server/src/vault/chunk.rs": "efa4301f0439e17a4870a510a100390eae65f76582737b5890062a88416673b5",
         "serverVELA/vela-server/src/vault/rekey.rs": "032b483561f637d5e2b05623a018f538a43c20d6fcac88e446feecb95afccc13"
       }
     },
@@ -454,7 +454,7 @@
         "serverVELA/vela-session-policy/proofs/fstar/extraction-deletion-interpreter/Vela_session_policy.Deletion_interpreter.fst": "4d134c09e43113412fadf01a435f30b08fd470b6992233c04d2ecab799c05c3d",
         "serverVELA/vela-session-policy/proofs/fstar/deletion-interpreter-lemmas/Vela_session_policy_deletion_interpreter_lemmas.fst": "ef0704ed88a00a507182021f437deec3ac530f051db2c3f1c533461b17305969",
         "serverVELA/vela-server/src/account/delete.rs": "b8320b3afe874ca932169a20b3c828dc4ccb16d94c921529e677abfcd00a20ce",
-        "security/formal/tests/test_handler_interpreters.py": "57b003c18397378b66e96b5579a29de8045b2d89d0a16ff8156a7707be40d4d6"
+        "security/formal/tests/test_handler_interpreters.py": "5c4f749413315afe34c530da59b8898667d1024a9286470c6b4fb167f8b7e5af"
       }
     },
     {
@@ -499,6 +499,16 @@
         "serverVELA/vela-share-policy/proofs/fstar/interpreter-lemmas/Vela_share_policy_interpreter_lemmas.fst": "ceea40327cfbb9cc427ea71a2e1a573fa460d1171d59316c5a19a25ebdf8ad84",
         "serverVELA/vela-server/src/share/mod.rs": "eef2176f016a8ae1930540eb1f7df255d49f141cfb3bb66837e2d7b0e0cd4114",
         "serverVELA/vela-server/src/share/executor.rs": "23cf66d4bd9ae47bd0da0a60e6fc739a7ee5c2d82671ceeb2390a75ee0b5ead6"
+      }
+    },
+    {
+      "boundary": "vault chunk upload/read handler-to-driver interpreters: put_chunk and get_chunk expand upload_interpreter!/read_interpreter!, whose synchronous expansions are proved for every executor to call exactly the method for the driver's current effect, stop at the verdict within 7/2 turns and end in a state the vault per-request theorems cover; executor method I/O, the await-only macro difference, request parsing, the schema lock and response rendering remain open",
+      "artifacts": {
+        "serverVELA/vela-rekey-policy/src/vault_upload_interpreter.rs": "4574ddf4e3e4b756bb54af3926e9fe645346052f3e8261ea41b00c7bfb98dd00",
+        "serverVELA/vela-rekey-policy/verify-fstar-vault-upload-interpreter.sh": "d3e76fcc8cc57ebc9bfb1d3770c43a5a641ad7445c64dfb55a5d300759225a66",
+        "serverVELA/vela-rekey-policy/proofs/fstar/extraction-vault-upload-interpreter/Vela_rekey_policy.Vault_upload_interpreter.fst": "1bb850f5a06282d219d040ddef6076b20acb6de7c5dbd2604e88e02cd30fbda4",
+        "serverVELA/vela-rekey-policy/proofs/fstar/vault-upload-interpreter-lemmas/Vela_rekey_policy_vault_upload_interpreter_lemmas.fst": "80b0b7bc1379ecdbd5d009f063e16a313a1f11176ade7bf6c9e0d6f6d80108f1",
+        "serverVELA/vela-server/src/vault/chunk.rs": "efa4301f0439e17a4870a510a100390eae65f76582737b5890062a88416673b5"
       }
     }
   ]

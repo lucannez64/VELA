@@ -41,7 +41,8 @@ Statuses, messages, the logged fields and the effect order are unchanged.
 ## Contract and theorem statements
 
 Focused extraction: `proofs/fstar/extraction-vault-upload-driver/` (14 selected
-Rust functions, 2 `ensures`). The regenerated policy root dependency is kept in
+Rust functions; 2 `ensures` at the round-1/2 commits, 4 since the interpreter
+added the `upload_step`/`read_step` dispatchers). The regenerated policy root dependency is kept in
 `proofs/fstar/extraction-vault-upload-driver-root/`; it is the historical
 policy module with hax's `PartialEq Phase` instance assumption, so it is
 deliberately outside the focused source guard (its contracts are covered by

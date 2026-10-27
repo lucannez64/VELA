@@ -116,19 +116,25 @@ covered by the driver's per-request theorem):
 | `POST /device/revoke`, `POST /auth/logout` | `revocation_interpreter!`, `logout_interpreter!` | 4, 1 | [revocation](proof-logs/current/revocation-interpreter/README.md) |
 | enrollment package store/fetch, grant open, claim, completion, result | `pairing_interpreter!` | 5 | [pairing](proof-logs/current/pairing-interpreter/README.md) |
 | send, linked-item update/revoke, inbox delete, share-key registration | `share_interpreter!` | 3 | [sharing](proof-logs/current/share-interpreter/README.md) |
+| `PUT /vault/chunk/:id`, `GET /vault/chunk/:id` | `upload_interpreter!`, `read_interpreter!` | 7, 2 | [vault](proof-logs/current/vault-upload-interpreter/README.md) |
 
 Each crate's mutations (a wrong executor method, a call after the verdict,
 and for logout a skipped or doubled marker write) are rejected. The pairing
 driver gained one additive event (`AccountChecked`) so its `step` covers the
 completion's account preflight; `on_completion_account` is unchanged and still
-guards the ceremony and stage. The server-side executor traits for pairing and
+guards the ceremony and stage. The vault driver gained two storage-failure
+events (attempt lookup, epoch lookup) that were early returns before, and two
+invariant corrections found while proving its loop: a web session may hold a
+shadow route only until the shadow-authority check refuses it (it was claimed
+never to, which a reachable state contradicted), and the read invariant no
+longer restates the row decoder's `version >= 0` check. The server-side executor traits for pairing and
 sharing give unimplemented methods a refusing observation, so an effect a
 handler does not expect fails closed rather than panicking. `plan_admission`
 (middleware) is a single pure decision with no effect loop and is exempt.
 Still outside: request parsing and rate limits before a driver begins,
 response rendering after its verdict (including pairing's restore of a taken
 ceremony on `RestoreAndFail`, which the verdict authorizes), and each executor
-method's I/O. Recovery and vault handlers are in progress.
+method's I/O. Recovery handlers are in progress.
 
 ## Account deletion driver (hosted on cdffe46)
 

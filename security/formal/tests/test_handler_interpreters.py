@@ -67,12 +67,14 @@ WIRED = [
         'upload_interpreter',
         'vault_upload_driver',
         'serverVELA/vela-rekey-policy/src/vault_upload_interpreter.rs',
+        1,
     ),
     (
         'serverVELA/vela-server/src/vault/chunk.rs',
         'read_interpreter',
         'vault_upload_driver',
         'serverVELA/vela-rekey-policy/src/vault_upload_interpreter.rs',
+        1,
     ),
 ]
 

@@ -254,13 +254,15 @@ fidelity are assumed.
 
 `DELETE /account`, `POST /auth/verify`, `POST /device/revoke`,
 `POST /auth/logout`, the pairing handlers in `device/invitation.rs` and
-`device/rendezvous.rs`, and the sharing handlers in `share/mod.rs` each run
+`device/rendezvous.rs`, the sharing handlers in `share/mod.rs` and the vault chunk handlers in
+`vault/chunk.rs` each run
 their policy crate's interpreter macro, the same loop F* checks for every
 executor ([deletion](proof-logs/current/deletion-interpreter/README.md),
 [login](proof-logs/current/login-interpreter/README.md),
 [revocation](proof-logs/current/revocation-interpreter/README.md),
 [pairing](proof-logs/current/pairing-interpreter/README.md),
-[sharing](proof-logs/current/share-interpreter/README.md)). The handler's
+[sharing](proof-logs/current/share-interpreter/README.md),
+[vault](proof-logs/current/vault-upload-interpreter/README.md)). The handler's
 review surface is reduced to the executor methods in `account/delete.rs`, one
 per effect; `security/formal/tests/test_handler_interpreters.py` refuses a
 handler that calls the driver outside the macro.
