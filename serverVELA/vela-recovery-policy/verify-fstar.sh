@@ -68,3 +68,8 @@ fstar.exe \
 # into proofs/fstar/extraction-webauthn-driver, so it must also run in its own
 # fstar.exe invocation.
 "$proof_root/verify-fstar-webauthn-driver.sh"
+
+# F-2 WebAuthn handler-to-driver interpreters for the four recovery handlers.
+# They consume the driver extraction above and keep their own interpreter
+# extraction.
+"$proof_root/verify-fstar-webauthn-interpreter.sh"
