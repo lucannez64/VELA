@@ -46,18 +46,21 @@ WIRED = [
         'login_interpreter',
         'login_driver',
         'serverVELA/vela-session-policy/src/login_interpreter.rs',
+        1,
     ),
     (
         'serverVELA/vela-server/src/device/revoke.rs',
         'revocation_interpreter',
         'revocation_driver',
         'serverVELA/vela-session-policy/src/revocation_interpreter.rs',
+        1,
     ),
     (
         'serverVELA/vela-server/src/auth/logout.rs',
         'logout_interpreter',
         'revocation_driver',
         'serverVELA/vela-session-policy/src/revocation_interpreter.rs',
+        1,
     ),
 ]
 
