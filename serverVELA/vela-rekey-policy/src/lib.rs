@@ -8,6 +8,7 @@
 //! and authority shape claimed by the Tamarin M11/M11c models.
 
 pub mod vault_upload_driver;
+pub mod vault_upload_interpreter;
 
 /// Epoch zero is reserved; every persisted account begins at epoch one.
 pub const INITIAL_EPOCH: i64 = 1;

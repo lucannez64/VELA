@@ -1,0 +1,21 @@
+--- serverVELA/vela-rekey-policy/proofs/fstar/extraction-vault-upload-interpreter/Vela_rekey_policy.Vault_upload_interpreter.fst
++++ /tmp/vela-mut/a/Vela_rekey_policy.Vault_upload_interpreter.fst
+@@ -181,14 +181,15 @@
+               Vela_rekey_policy.Vault_upload_driver.t_UploadEffect
+             with
+             | Vela_rekey_policy.Vault_upload_driver.UploadEffect_ResolveEpoch  ->
+-              let (tmp0: v_Io), (out: Vela_rekey_policy.Vault_upload_driver.t_RekeyObservation) =
+-                f_resolve_epoch #v_Io #FStar.Tactics.Typeclasses.solve io
++              let (tmp0: v_Io), (out: Vela_rekey_policy.Vault_upload_driver.t_QuotaObservation) =
++                f_enforce_quota #v_Io #FStar.Tactics.Typeclasses.solve io
+               in
+               let io:v_Io = tmp0 in
+               io,
+               Vela_rekey_policy.Vault_upload_driver.upload_step transition
+                   .Vela_rekey_policy.Vault_upload_driver.f_driver
+-                (Vela_rekey_policy.Vault_upload_driver.UploadEvent_Rekey out
++                (Vela_rekey_policy.Vault_upload_driver.UploadEvent_Rekey
++                    Vela_rekey_policy.Vault_upload_driver.RekeyObservation_Rejected
+                   <:
+                   Vela_rekey_policy.Vault_upload_driver.t_UploadEvent)
+               <:

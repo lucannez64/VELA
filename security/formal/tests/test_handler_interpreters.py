@@ -62,6 +62,18 @@ WIRED = [
         'serverVELA/vela-session-policy/src/revocation_interpreter.rs',
         1,
     ),
+    (
+        'serverVELA/vela-server/src/vault/chunk.rs',
+        'upload_interpreter',
+        'vault_upload_driver',
+        'serverVELA/vela-rekey-policy/src/vault_upload_interpreter.rs',
+    ),
+    (
+        'serverVELA/vela-server/src/vault/chunk.rs',
+        'read_interpreter',
+        'vault_upload_driver',
+        'serverVELA/vela-rekey-policy/src/vault_upload_interpreter.rs',
+    ),
 ]
 
 TRANSITIONS = re.compile(r'\b(?:begin_\w+|step|on_\w+_event|on_\w+)\s*\(')

@@ -1,0 +1,10 @@
+--- serverVELA/vela-rekey-policy/proofs/fstar/extraction-vault-upload-interpreter/Vela_rekey_policy.Vault_upload_interpreter.fst
++++ /tmp/vela-mut/b/Vela_rekey_policy.Vault_upload_interpreter.fst
+@@ -297,6 +297,7 @@
+             | Vela_rekey_policy.Vault_upload_driver.UploadEffect_Complete
+             | Vela_rekey_policy.Vault_upload_driver.UploadEffect_Fail _
+             | Vela_rekey_policy.Vault_upload_driver.UploadEffect_Idle  ->
++              let io:v_Io = f_publish #v_Io #FStar.Tactics.Typeclasses.solve io in
+               io, transition <: (v_Io & Vela_rekey_policy.Vault_upload_driver.t_UploadTransition)
+           in
+           let transition:Vela_rekey_policy.Vault_upload_driver.t_UploadTransition = hoist18 in

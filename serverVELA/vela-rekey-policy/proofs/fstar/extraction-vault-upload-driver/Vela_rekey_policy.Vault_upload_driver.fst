@@ -83,6 +83,7 @@ type t_ActivityObservation =
 type t_UploadEvent =
   | UploadEvent_Rekey : t_RekeyObservation -> t_UploadEvent
   | UploadEvent_Attempt : Vela_rekey_policy.t_AttemptAuthority -> t_UploadEvent
+  | UploadEvent_AttemptStorage : t_UploadEvent
   | UploadEvent_Quota : t_QuotaObservation -> t_UploadEvent
   | UploadEvent_Write : t_WriteObservation -> t_UploadEvent
   | UploadEvent_Recheck : t_RecheckObservation -> t_UploadEvent
@@ -97,6 +98,7 @@ type t_UploadFailure =
   | UploadFailure_ShadowWebSessionForbidden : t_UploadFailure
   | UploadFailure_ShadowRotationIdRequired : t_UploadFailure
   | UploadFailure_ShadowStarterForbidden : t_UploadFailure
+  | UploadFailure_AttemptStorage : t_UploadFailure
   | UploadFailure_AuthorityEpochMismatch : t_UploadFailure
   | UploadFailure_QuotaExceeded : t_UploadFailure
   | UploadFailure_QuotaStorage : t_UploadFailure
@@ -192,7 +194,7 @@ let upload_state_is_sound (d: t_UploadDriver) : bool =
     (match d.f_state_phase <: Vela_rekey_policy.t_Phase with
       | Vela_rekey_policy.Phase_Active  -> ~.d.f_shadow && d.f_write_epoch =. d.f_state_epoch
       | Vela_rekey_policy.Phase_Freezing  ->
-        d.f_shadow && ~.d.f_web &&
+        d.f_shadow &&
         (Vela_rekey_policy.next_epoch d.f_state_epoch <: Core_models.Option.t_Option i64) =.
         (Core_models.Option.Option_Some d.f_write_epoch <: Core_models.Option.t_Option i64))
   in
@@ -271,7 +273,11 @@ let upload_state_is_sound (d: t_UploadDriver) : bool =
     | UploadStage_Done  -> true
     | _ -> false) ||
   done_clean) &&
-  (~.d.f_shadow || ~.d.f_web) &&
+  (~.d.f_shadow || ~.d.f_web ||
+  (match d.f_stage <: t_UploadStage with
+    | UploadStage_Shadow  -> true
+    | _ -> false) ||
+  d.f_failed) &&
   (~.d.f_write_matched || d.f_write_epoch >=. Vela_rekey_policy.v_INITIAL_EPOCH) &&
   (~.d.f_activity_done || d.f_shadow) &&
   (~.d.f_published || ~.d.f_shadow && d.f_write_matched) &&
@@ -487,6 +493,11 @@ let on_rekey (driver: t_UploadDriver) (observation: t_RekeyObservation) : t_Uplo
     | Vela_rekey_policy.WriteDecision_Reject  ->
       terminal driver (UploadFailure_EpochMismatch <: t_UploadFailure)
 
+/// The attempt lookup failed. Like every terminal category, this only records
+/// the verdict; the handler keeps the storage error for rendering.
+let on_attempt_storage (driver: t_UploadDriver) : t_UploadTransition =
+  terminal driver (UploadFailure_AttemptStorage <: t_UploadFailure)
+
 let on_attempt (driver: t_UploadDriver) (authority: Vela_rekey_policy.t_AttemptAuthority)
     : t_UploadTransition =
   if driver.f_web
@@ -618,7 +629,15 @@ let on_publish (driver: t_UploadDriver) : t_UploadTransition =
 
 /// The complete, total upload transition relation. Events that do not match
 /// the current stage (and every event after `Done`) are ignored.
-let upload_step (driver: t_UploadDriver) (event: t_UploadEvent) : t_UploadTransition =
+let upload_step (driver: t_UploadDriver) (event: t_UploadEvent)
+    : Prims.Pure t_UploadTransition
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:t_UploadTransition = result in
+          ~.(upload_state_is_sound driver <: bool) ||
+          upload_state_is_sound result.f_driver &&
+          upload_effect_is_sound result.f_driver result.f_effect) =
   match event <: t_UploadEvent with
   | UploadEvent_Rekey observation ->
     if
@@ -633,6 +652,13 @@ let upload_step (driver: t_UploadDriver) (event: t_UploadEvent) : t_UploadTransi
       | UploadStage_Shadow  -> true
       | _ -> false
     then on_attempt driver authority
+    else idle driver
+  | UploadEvent_AttemptStorage  ->
+    if
+      match driver.f_stage <: t_UploadStage with
+      | UploadStage_Shadow  -> true
+      | _ -> false
+    then on_attempt_storage driver
     else idle driver
   | UploadEvent_Quota observation ->
     if
@@ -721,11 +747,13 @@ type t_ReadLookupObservation =
 
 type t_ReadEvent =
   | ReadEvent_Epoch : t_ReadEpochObservation -> t_ReadEvent
+  | ReadEvent_EpochStorage : t_ReadEvent
   | ReadEvent_Lookup : t_ReadLookupObservation -> t_ReadEvent
 
 type t_ReadFailure =
   | ReadFailure_Unauthenticated : t_ReadFailure
   | ReadFailure_InvalidEpoch : t_ReadFailure
+  | ReadFailure_EpochStorage : t_ReadFailure
   | ReadFailure_NotFound : t_ReadFailure
   | ReadFailure_QueryStorage : t_ReadFailure
   | ReadFailure_ParseStorage : t_ReadFailure
@@ -775,8 +803,7 @@ let read_state_is_sound (r: t_ReadDriver) : bool =
   in
   let served:bool =
     r.f_authenticated && r.f_epoch >=. Vela_rekey_policy.v_INITIAL_EPOCH && r.f_responded &&
-    ~.r.f_failed &&
-    r.f_version >=. mk_i64 0
+    ~.r.f_failed
   in
   (~.(match r.f_stage <: t_ReadStage with
     | ReadStage_Epoch  -> true
@@ -851,7 +878,15 @@ let begin_read (request: t_ReadRequest)
   then read_transition driver (ReadEffect_ReadEpoch <: t_ReadEffect)
   else read_terminal driver (ReadFailure_Unauthenticated <: t_ReadFailure)
 
-let read_step (driver: t_ReadDriver) (event: t_ReadEvent) : t_ReadTransition =
+let read_step (driver: t_ReadDriver) (event: t_ReadEvent)
+    : Prims.Pure t_ReadTransition
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:t_ReadTransition = result in
+          ~.(read_state_is_sound driver <: bool) ||
+          read_state_is_sound result.f_driver &&
+          read_effect_is_sound result.f_driver result.f_effect) =
   match event <: t_ReadEvent with
   | ReadEvent_Epoch observation ->
     if
@@ -871,6 +906,13 @@ let read_step (driver: t_ReadDriver) (event: t_ReadEvent) : t_ReadTransition =
             <:
             t_ReadDriver)
           (ReadEffect_LookupChunk <: t_ReadEffect)
+  | ReadEvent_EpochStorage  ->
+    if
+      ~.(match driver.f_stage <: t_ReadStage with
+        | ReadStage_Epoch  -> true
+        | _ -> false)
+    then read_transition driver (ReadEffect_Idle <: t_ReadEffect)
+    else read_terminal driver (ReadFailure_EpochStorage <: t_ReadFailure)
   | ReadEvent_Lookup observation ->
     if
       ~.(match driver.f_stage <: t_ReadStage with
