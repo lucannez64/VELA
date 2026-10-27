@@ -379,5 +379,5 @@ source and keeps `check-proof-boundary.py` at 249 selected postconditions.
 The [cdffe46 security workflow](https://github.com/lucannez64/VELA/actions/runs/40408500479) verified the round-1 vault
 extraction, per-request lemmas and composition, and ran the rekey policy unit
 tests; all fifteen PR checks passed. `hosted-cdffe46.log` holds the summary
-and hashes, which match the local run. The round-2 store-world composition is
-not yet reproduced by a hosted run.
+and hashes, which match the local run. The [727d447 workflow](https://github.com/lucannez64/VELA/actions/runs/40426119764) reproduced the round-2
+store-world composition; `hosted-727d447.log` holds its summary and hashes.
