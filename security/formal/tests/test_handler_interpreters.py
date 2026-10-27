@@ -19,6 +19,48 @@ WIRED = [
         'deletion_driver',
         'serverVELA/vela-session-policy/src/deletion_interpreter.rs',
     ),
+    (
+        'serverVELA/vela-server/src/recovery/enroll_device.rs',
+        'redemption_interpreter',
+        'driver',
+        'serverVELA/vela-recovery-policy/src/redemption_interpreter.rs',
+    ),
+    (
+        'serverVELA/vela-server/src/recovery/possess.rs',
+        'possession_initiation_interpreter',
+        'possession_driver',
+        'serverVELA/vela-recovery-policy/src/possession_interpreter.rs',
+    ),
+    (
+        'serverVELA/vela-server/src/recovery/possess.rs',
+        'possession_recover_interpreter',
+        'possession_driver',
+        'serverVELA/vela-recovery-policy/src/possession_interpreter.rs',
+    ),
+    (
+        'serverVELA/vela-server/src/recovery/initiate.rs',
+        'auth_start_interpreter',
+        'webauthn_driver',
+        'serverVELA/vela-recovery-policy/src/webauthn_interpreter.rs',
+    ),
+    (
+        'serverVELA/vela-server/src/recovery/webauthn.rs',
+        'registration_start_interpreter',
+        'webauthn_driver',
+        'serverVELA/vela-recovery-policy/src/webauthn_interpreter.rs',
+    ),
+    (
+        'serverVELA/vela-server/src/recovery/webauthn.rs',
+        'registration_interpreter',
+        'webauthn_driver',
+        'serverVELA/vela-recovery-policy/src/webauthn_interpreter.rs',
+    ),
+    (
+        'serverVELA/vela-server/src/recovery/recover.rs',
+        'auth_finish_interpreter',
+        'webauthn_driver',
+        'serverVELA/vela-recovery-policy/src/webauthn_interpreter.rs',
+    ),
 ]
 
 TRANSITIONS = re.compile(r'\b(?:begin_\w+|step|on_\w+_event|on_\w+)\s*\(')
@@ -32,8 +74,12 @@ def code_only(text):
 
 
 class HandlerInterpreterTest(unittest.TestCase):
-    def test_handlers_expand_the_proved_macro_once_with_await(self):
+    def test_handlers_expand_each_proved_macro_once_with_await(self):
+        seen = set()
         for handler, macro, _, _ in WIRED:
+            if (handler, macro) in seen:
+                continue
+            seen.add((handler, macro))
             code = code_only((ROOT / handler).read_text(encoding='utf-8'))
             calls = re.findall(r'\b' + macro + r'!\s*\(([^)]*)\)', code)
             self.assertEqual(len(calls), 1, f'{handler}: expected one {macro}! expansion')
@@ -50,12 +96,20 @@ class HandlerInterpreterTest(unittest.TestCase):
             self.assertNotRegex(code, driver + r'::(?:begin_\w+|step|on_\w+)\s*\(',
                                 f'{handler} calls a driver transition directly')
 
-    def test_interpreter_defines_one_macro_and_its_sync_expansion(self):
+    def test_interpreters_define_one_macro_and_its_sync_expansion(self):
+        by_source = {}
         for _, macro, _, source in WIRED:
+            by_source.setdefault(source, set()).add(macro)
+        for source, macros in by_source.items():
             code = code_only((ROOT / source).read_text(encoding='utf-8'))
-            self.assertEqual(len(re.findall(r'macro_rules!\s*' + macro + r'\b', code)), 1)
-            self.assertEqual(len(re.findall(r'\b' + macro + r'!\s*\(', code)), 1,
-                             f'{source}: the sync function must expand the macro exactly once')
+            for macro in macros:
+                self.assertEqual(len(re.findall(r'macro_rules!\s*' + macro + r'\b', code)), 1,
+                                 f'{source}: {macro} must be defined once')
+                self.assertEqual(len(re.findall(r'\b' + macro + r'!\s*\(', code)), 1,
+                                 f'{source}: {macro} must be expanded exactly once')
+            declared = set(re.findall(r'macro_rules!\s*(\w+)', code))
+            self.assertEqual(declared - {'executor_trait'}, macros,
+                             f'{source}: unexpected interpreter macro set')
 
 
 if __name__ == '__main__':

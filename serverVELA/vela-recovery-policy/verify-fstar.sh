@@ -51,10 +51,18 @@ fstar.exe \
 # the historical artifact checked above.
 "$proof_root/verify-fstar-driver.sh"
 
+# F-2 enrollment-redemption handler-to-driver interpreter. It consumes the
+# driver extraction above and keeps its own interpreter extraction.
+"$proof_root/verify-fstar-redemption-interpreter.sh"
+
 # F-2 possession-proof recovery drivers. This regenerates its own partial
 # extraction into proofs/fstar/extraction-possession-driver, so it must also run
 # in its own fstar.exe invocation.
 "$proof_root/verify-fstar-possession-driver.sh"
+
+# F-2 possession-proof handler-to-driver interpreters for the two proof
+# handlers. They consume the driver extraction above.
+"$proof_root/verify-fstar-possession-interpreter.sh"
 
 # F-2 WebAuthn recovery drivers. This regenerates its own partial extraction
 # into proofs/fstar/extraction-webauthn-driver, so it must also run in its own

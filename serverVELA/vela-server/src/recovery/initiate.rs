@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use uuid::Uuid;
 use vela_recovery_policy::webauthn_driver::{
-    begin_auth_start, on_auth_ceremony_started, on_auth_start_observed, on_auth_start_stored,
     AuthStartEffect, AuthStartFailure, AuthStartObservation, CeremonyStartObservation,
     ChallengeStoreObservation,
 };
@@ -69,108 +68,181 @@ pub async fn post_initiate(
     rate_limit::recovery_initiate_by_ip_user(&state.store, &ip, &body.user_id.to_string())?;
     rate_limit::recovery_initiate_by_user(&state.store, &body.user_id.to_string())?;
 
-    // Effect: observe availability, decode the stored credential and probe the
-    // generated attempt slot. Every fact the checked initiation policy needs is
-    // an observation; the driver owns the historical precedence.
-    let availability = observe_recovery_share(&state, body.user_id).await?;
-    let credential = crate::recovery::webauthn::observe_recovery_credential(&state, body.user_id)
-        .await?;
-    let recovery_id = Uuid::new_v4();
-    // Observe freshness for the policy. Storage checks it atomically again:
-    // another insertion may win after this preflight observation.
-    let attempt_id_fresh = !state
-        .store
-        .exists(&auth_state_key(body.user_id, recovery_id))?;
-
-    let start = begin_auth_start();
-    debug_assert_eq!(start.effect, AuthStartEffect::Observe);
-    let transition = on_auth_start_observed(
-        start.driver,
-        AuthStartObservation {
-            account_present: availability.account_present,
-            share_present: availability.share_present,
-            credential: credential.credential,
-            attempt_id_fresh,
-            ttl_secs: AUTH_STATE_TTL_SECS,
-        },
-    );
-    match transition.effect {
-        AuthStartEffect::StartCeremony => {}
-        AuthStartEffect::Fail(failure) => {
-            return Err(auth_start_failure(failure, credential.decode_error))
-        }
-        _ => {
-            return Err(AppError::Internal(
-                "authentication-start driver produced an unexpected observation effect".into(),
-            ))
-        }
-    }
-    let passkey = credential.passkey.ok_or_else(|| {
-        AppError::Internal("authentication-start driver admitted a missing credential".into())
-    })?;
-    let credential_id = B64.encode(passkey.cred_id().as_slice());
-
-    let ceremony = state.webauthn.start_passkey_authentication(&[passkey]);
-    let (challenge, auth_state) = match ceremony {
-        Ok(value) => value,
-        Err(e) => {
-            let failed =
-                on_auth_ceremony_started(transition.driver, CeremonyStartObservation::Failed);
-            debug_assert_eq!(
-                failed.effect,
-                AuthStartEffect::Fail(AuthStartFailure::CeremonyFailed)
-            );
-            return Err(AppError::BadRequest(format!(
-                "failed to start WebAuthn recovery: {e:?}"
-            )));
-        }
-    };
-    let transition = on_auth_ceremony_started(
-        transition.driver,
-        CeremonyStartObservation::Started,
-    );
-    if !matches!(transition.effect, AuthStartEffect::StoreChallenge) {
-        return Err(AppError::Internal(
-            "authentication-start driver produced an unexpected ceremony effect".into(),
-        ));
-    }
-
-    let envelope = RecoveryAuthState {
+    // Effect: observe availability, decode the stored credential, probe the
+    // generated attempt slot, start the authentication ceremony and store the
+    // attempt state. Every post-preflight decision and effect goes through the
+    // proved `auth_start_interpreter!` loop; this handler only supplies the I/O
+    // and renders the terminal effect.
+    let mut io = InitiateIo {
+        state: &state,
         user_id: body.user_id,
-        recovery_id,
-        credential_id,
-        auth_state,
+        recovery_id: None,
+        passkey: None,
+        decode_error: None,
+        challenge: None,
+        auth_state: None,
+        credential_id: None,
+        ceremony_error: None,
+        store_error: None,
+        error: None,
     };
-    let written = store_auth_state(&state, &envelope);
-    let observation = match &written {
-        Ok(()) => ChallengeStoreObservation::Stored,
-        Err(AppError::Conflict(_)) => ChallengeStoreObservation::Lost,
-        Err(_) => ChallengeStoreObservation::StorageFailed,
+    let Some(transition) = vela_recovery_policy::auth_start_interpreter!(io, await) else {
+        return Err(io.error.take().unwrap_or_else(|| {
+            AppError::Internal("authentication-start aborted without an error".into())
+        }));
     };
-    let transition = on_auth_start_stored(transition.driver, observation);
     match transition.effect {
         AuthStartEffect::Complete => {}
-        AuthStartEffect::Fail(AuthStartFailure::AttemptCollision) => {
-            return Err(AppError::Conflict(
-                "recovery challenge id is already in use".into(),
-            ))
+        AuthStartEffect::Fail(AuthStartFailure::CeremonyFailed) => {
+            return Err(io.ceremony_error.take().unwrap_or_else(|| {
+                AppError::BadRequest("failed to start WebAuthn recovery".into())
+            }))
         }
         AuthStartEffect::Fail(AuthStartFailure::StateStorage) => {
-            return Err(written.err().unwrap_or_else(|| {
+            return Err(io.store_error.take().unwrap_or_else(|| {
                 AppError::Internal("failed to store recovery challenge state".into())
             }))
         }
+        AuthStartEffect::Fail(failure) => {
+            return Err(auth_start_failure(failure, io.decode_error.take()))
+        }
         _ => {
             return Err(AppError::Internal(
-                "authentication-start driver produced an unexpected store effect".into(),
+                "authentication-start driver reached no verdict".into(),
             ))
         }
     }
+    let recovery_id = io.recovery_id.ok_or_else(|| {
+        AppError::Internal("authentication-start completed without an attempt id".into())
+    })?;
+    let challenge = io.challenge.take().ok_or_else(|| {
+        AppError::Internal("authentication-start completed without a challenge".into())
+    })?;
 
     Ok(Json(InitiateResponse {
         recovery_id,
         public_key: challenge,
     }))
+}
+
+/// The I/O behind each authentication-start effect. The driver decides which
+/// method runs and when (through the shared `auth_start_interpreter!` loop,
+/// proved in F* as `run_auth_start`); each method only performs its effect and
+/// reports the observation. `None` aborts with `error`.
+struct InitiateIo<'a> {
+    state: &'a AppState,
+    user_id: Uuid,
+    recovery_id: Option<Uuid>,
+    passkey: Option<webauthn_rs::prelude::Passkey>,
+    decode_error: Option<AppError>,
+    challenge: Option<RequestChallengeResponse>,
+    auth_state: Option<PasskeyAuthentication>,
+    credential_id: Option<String>,
+    ceremony_error: Option<AppError>,
+    store_error: Option<AppError>,
+    error: Option<AppError>,
+}
+
+impl InitiateIo<'_> {
+    /// Observe availability and the stored credential, then probe the freshly
+    /// generated attempt slot. A storage error has no observation.
+    async fn auth_start_observe(&mut self) -> Option<AuthStartObservation> {
+        let availability = match observe_recovery_share(self.state, self.user_id).await {
+            Ok(availability) => availability,
+            Err(error) => {
+                self.error = Some(error);
+                return None;
+            }
+        };
+        let credential =
+            match crate::recovery::webauthn::observe_recovery_credential(self.state, self.user_id)
+                .await
+            {
+                Ok(credential) => credential,
+                Err(error) => {
+                    self.error = Some(error);
+                    return None;
+                }
+            };
+        let recovery_id = Uuid::new_v4();
+        // Observe freshness for the policy. Storage checks it atomically again:
+        // another insertion may win after this preflight observation.
+        let attempt_id_fresh = match self
+            .state
+            .store
+            .exists(&auth_state_key(self.user_id, recovery_id))
+        {
+            Ok(occupied) => !occupied,
+            Err(error) => {
+                self.error = Some(error);
+                return None;
+            }
+        };
+        self.recovery_id = Some(recovery_id);
+        self.passkey = credential.passkey;
+        self.decode_error = credential.decode_error;
+        Some(AuthStartObservation {
+            account_present: availability.account_present,
+            share_present: availability.share_present,
+            credential: credential.credential,
+            attempt_id_fresh,
+            ttl_secs: AUTH_STATE_TTL_SECS,
+        })
+    }
+
+    /// Start the authentication ceremony for the observed credential.
+    async fn auth_start_ceremony(&mut self) -> Option<CeremonyStartObservation> {
+        let Some(passkey) = self.passkey.take() else {
+            self.error = Some(AppError::Internal(
+                "authentication-start driver admitted a missing credential".into(),
+            ));
+            return None;
+        };
+        let credential_id = B64.encode(passkey.cred_id().as_slice());
+        let ceremony = self.state.webauthn.start_passkey_authentication(&[passkey]);
+        match ceremony {
+            Ok((challenge, auth_state)) => {
+                self.challenge = Some(challenge);
+                self.auth_state = Some(auth_state);
+                self.credential_id = Some(credential_id);
+                Some(CeremonyStartObservation::Started)
+            }
+            Err(error) => {
+                self.ceremony_error = Some(AppError::BadRequest(format!(
+                    "failed to start WebAuthn recovery: {error:?}"
+                )));
+                Some(CeremonyStartObservation::Failed)
+            }
+        }
+    }
+
+    /// Atomically store the attempt state with `set_ex_nx`.
+    async fn auth_start_store(&mut self) -> Option<ChallengeStoreObservation> {
+        let (Some(recovery_id), Some(auth_state), Some(credential_id)) = (
+            self.recovery_id,
+            self.auth_state.take(),
+            self.credential_id.take(),
+        ) else {
+            self.error = Some(AppError::Internal(
+                "authentication-start driver admitted an incomplete ceremony".into(),
+            ));
+            return None;
+        };
+        let envelope = RecoveryAuthState {
+            user_id: self.user_id,
+            recovery_id,
+            credential_id,
+            auth_state,
+        };
+        let written = store_auth_state(self.state, &envelope);
+        let observation = match &written {
+            Ok(()) => ChallengeStoreObservation::Stored,
+            Err(AppError::Conflict(_)) => ChallengeStoreObservation::Lost,
+            Err(_) => ChallengeStoreObservation::StorageFailed,
+        };
+        self.store_error = written.err();
+        Some(observation)
+    }
 }
 
 /// Render an initiation failure with the handler's historical status and

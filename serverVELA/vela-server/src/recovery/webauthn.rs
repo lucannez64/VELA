@@ -3,13 +3,10 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use vela_recovery_policy::webauthn_driver::{
-    begin_registration, begin_registration_start, on_credential_looked_up,
-    on_credential_persisted, on_registration_attempt_counted, on_registration_ceremony_started,
-    on_registration_start_observed, on_registration_start_stored, on_registration_state_consumed,
-    on_registration_verified, AttemptBudgetObservation, CeremonyStartObservation,
-    ChallengeStoreObservation, CredentialPersistObservation, CredentialUniquenessObservation,
-    RegistrationEffect, RegistrationFailure, RegistrationStartEffect,
-    RegistrationStartFailure, RegistrationStartObservation, RegistrationStateObservation,
+    AttemptBudgetObservation, CeremonyStartObservation, ChallengeStoreObservation,
+    CredentialPersistObservation, CredentialUniquenessObservation, RegistrationEffect,
+    RegistrationFailure, RegistrationStartEffect, RegistrationStartFailure,
+    RegistrationStartObservation, RegistrationStateObservation,
     RegistrationVerificationObservation, StoredCredentialObservation,
 };
 use webauthn_rs::prelude::{
@@ -214,92 +211,52 @@ pub async fn post_register_start(
     session: DeviceSession,
     Json(body): Json<RegisterStartRequest>,
 ) -> Result<(HeaderMap, Json<RegisterStartResponse>)> {
-    // Effect: observe the currently stored credential (or its absence).
-    let observed = observe_recovery_credential(&state, session.user_id).await?;
-
-    let start = begin_registration_start();
-    debug_assert_eq!(start.effect, RegistrationStartEffect::Observe);
-    let transition = on_registration_start_observed(
-        start.driver,
-        RegistrationStartObservation {
-            account_present: observed.account_present,
-            credential: observed.credential,
-        },
-    );
-    match transition.effect {
-        RegistrationStartEffect::StartCeremony => {}
-        RegistrationStartEffect::Fail(failure) => {
-            return Err(registration_start_failure(failure, observed.decode_error))
-        }
-        _ => {
-            return Err(AppError::Internal(
-                "registration-start driver produced an unexpected observation effect".into(),
-            ))
-        }
-    }
-    let exclude_credentials: Option<Vec<CredentialID>> =
-        observed.passkey.map(|pk| vec![pk.cred_id().clone()]);
-    let user_name = body
-        .user_name
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| session.user_id.to_string());
-    let user_display_name = body
-        .user_display_name
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "VELA recovery key".to_string());
-
-    let ceremony = state.webauthn.start_passkey_registration(
-        session.user_id,
-        &user_name,
-        &user_display_name,
-        exclude_credentials,
-    );
-    let (challenge, reg_state) = match ceremony {
-        Ok(value) => value,
-        Err(e) => {
-            let failed = on_registration_ceremony_started(
-                transition.driver,
-                CeremonyStartObservation::Failed,
-            );
-            debug_assert_eq!(
-                failed.effect,
-                RegistrationStartEffect::Fail(RegistrationStartFailure::CeremonyFailed)
-            );
-            return Err(AppError::BadRequest(format!(
-                "failed to start WebAuthn registration: {e:?}"
-            )));
-        }
+    // Effect: observe the currently stored credential, start the registration
+    // ceremony and store its state. Every post-preflight decision and effect
+    // goes through the proved `registration_start_interpreter!` loop; this
+    // handler only supplies the I/O and renders the terminal effect.
+    let mut io = RegisterStartIo {
+        state: &state,
+        user_id: session.user_id,
+        user_name: body.user_name,
+        user_display_name: body.user_display_name,
+        passkey: None,
+        decode_error: None,
+        challenge: None,
+        reg_state: None,
+        ceremony_error: None,
+        store_error: None,
+        error: None,
     };
-    let transition = on_registration_ceremony_started(
-        transition.driver,
-        CeremonyStartObservation::Started,
-    );
-    if !matches!(transition.effect, RegistrationStartEffect::StoreState) {
-        return Err(AppError::Internal(
-            "registration-start driver produced an unexpected ceremony effect".into(),
-        ));
-    }
-
-    let write = store_register_state(&state, session.user_id, &reg_state);
-    let observation = if write.is_ok() {
-        ChallengeStoreObservation::Stored
-    } else {
-        ChallengeStoreObservation::StorageFailed
+    let Some(transition) = vela_recovery_policy::registration_start_interpreter!(io, await) else {
+        return Err(io.error.take().unwrap_or_else(|| {
+            AppError::Internal("registration-start aborted without an error".into())
+        }));
     };
-    let transition = on_registration_start_stored(transition.driver, observation);
     match transition.effect {
         RegistrationStartEffect::Complete => {}
+        RegistrationStartEffect::Fail(RegistrationStartFailure::CeremonyFailed) => {
+            return Err(io.ceremony_error.take().unwrap_or_else(|| {
+                AppError::BadRequest("failed to start WebAuthn registration".into())
+            }))
+        }
         RegistrationStartEffect::Fail(RegistrationStartFailure::StateStorage) => {
-            return Err(write.err().unwrap_or_else(|| {
+            return Err(io.store_error.take().unwrap_or_else(|| {
                 AppError::Internal("failed to store registration state".into())
             }))
         }
+        RegistrationStartEffect::Fail(failure) => {
+            return Err(registration_start_failure(failure, io.decode_error.take()))
+        }
         _ => {
             return Err(AppError::Internal(
-                "registration-start driver produced an unexpected store effect".into(),
+                "registration-start driver reached no verdict".into(),
             ))
         }
     }
+    let challenge = io.challenge.take().ok_or_else(|| {
+        AppError::Internal("registration-start completed without a challenge".into())
+    })?;
 
     let mut headers = HeaderMap::new();
     maybe_append_new_token(&mut headers, &session);
@@ -309,6 +266,96 @@ pub async fn post_register_start(
             public_key: challenge,
         }),
     ))
+}
+
+/// The I/O behind each registration-start effect. The driver decides which
+/// method runs and when (through the shared `registration_start_interpreter!`
+/// loop, proved in F* as `run_registration_start`); each method only performs
+/// its effect and reports the observation. `None` aborts with `error`.
+struct RegisterStartIo<'a> {
+    state: &'a AppState,
+    user_id: Uuid,
+    user_name: Option<String>,
+    user_display_name: Option<String>,
+    passkey: Option<Passkey>,
+    decode_error: Option<AppError>,
+    challenge: Option<CreationChallengeResponse>,
+    reg_state: Option<PasskeyRegistration>,
+    ceremony_error: Option<AppError>,
+    store_error: Option<AppError>,
+    error: Option<AppError>,
+}
+
+impl RegisterStartIo<'_> {
+    /// Observe the currently stored recovery credential (or its absence).
+    async fn registration_start_observe(&mut self) -> Option<RegistrationStartObservation> {
+        let observed = match observe_recovery_credential(self.state, self.user_id).await {
+            Ok(observed) => observed,
+            Err(error) => {
+                self.error = Some(error);
+                return None;
+            }
+        };
+        self.passkey = observed.passkey;
+        self.decode_error = observed.decode_error;
+        Some(RegistrationStartObservation {
+            account_present: observed.account_present,
+            credential: observed.credential,
+        })
+    }
+
+    /// Start the registration ceremony, excluding the observed credential.
+    async fn registration_start_ceremony(&mut self) -> Option<CeremonyStartObservation> {
+        let exclude_credentials: Option<Vec<CredentialID>> =
+            self.passkey.take().map(|pk| vec![pk.cred_id().clone()]);
+        let user_name = self
+            .user_name
+            .take()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| self.user_id.to_string());
+        let user_display_name = self
+            .user_display_name
+            .take()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "VELA recovery key".to_string());
+        let ceremony = self.state.webauthn.start_passkey_registration(
+            self.user_id,
+            &user_name,
+            &user_display_name,
+            exclude_credentials,
+        );
+        match ceremony {
+            Ok((challenge, reg_state)) => {
+                self.challenge = Some(challenge);
+                self.reg_state = Some(reg_state);
+                Some(CeremonyStartObservation::Started)
+            }
+            Err(error) => {
+                self.ceremony_error = Some(AppError::BadRequest(format!(
+                    "failed to start WebAuthn registration: {error:?}"
+                )));
+                Some(CeremonyStartObservation::Failed)
+            }
+        }
+    }
+
+    /// Write the registration state with `set_ex`.
+    async fn registration_start_store(&mut self) -> Option<ChallengeStoreObservation> {
+        let Some(reg_state) = self.reg_state.take() else {
+            self.error = Some(AppError::Internal(
+                "registration-start driver admitted an incomplete ceremony".into(),
+            ));
+            return None;
+        };
+        let write = store_register_state(self.state, self.user_id, &reg_state);
+        let observation = if write.is_ok() {
+            ChallengeStoreObservation::Stored
+        } else {
+            ChallengeStoreObservation::StorageFailed
+        };
+        self.store_error = write.err();
+        Some(observation)
+    }
 }
 
 /// Render a registration-start failure with the handler's historical status and
@@ -339,181 +386,34 @@ pub async fn post_register_finish(
     Json(credential): Json<RegisterPublicKeyCredential>,
 ) -> Result<(HeaderMap, Json<RegisterFinishResponse>)> {
     // Registration ceremonies are rare in normal use (one per recovery-key
-    // setup); this bounds how often any single account can drive the
-    // duplicate-credential lookup below, independent of the generic
-    // per-JTI request limiter.
-    let limited = rate_limit::webauthn_register_by_user(&state.store, &session.user_id.to_string())
-        .err();
-    let start = begin_registration();
-    debug_assert_eq!(start.effect, RegistrationEffect::CountAttempt);
-    let budget = if limited.is_some() {
-        AttemptBudgetObservation::Limited
-    } else {
-        AttemptBudgetObservation::Admitted
+    // setup). Count the attempt, consume the state, verify the ceremony, check
+    // credential uniqueness and persist. Every post-preflight decision and
+    // effect goes through the proved `registration_interpreter!` loop; this
+    // handler only supplies the I/O and renders the terminal effect.
+    let mut io = RegisterFinishIo {
+        state: &state,
+        user_id: session.user_id,
+        credential,
+        limited_error: None,
+        reg_state: None,
+        state_error: None,
+        passkey: None,
+        verification_error: None,
+        uniqueness_error: None,
+        persist_error: None,
+        error: None,
     };
-    let transition = on_registration_attempt_counted(start.driver, budget);
-    let mut driver = transition.driver;
-    match (transition.effect, limited) {
-        (RegistrationEffect::ConsumeState, None) => {}
-        (RegistrationEffect::Fail(RegistrationFailure::AttemptLimited), Some(error)) => {
-            return Err(error)
-        }
-        _ => {
-            return Err(AppError::Internal(
-                "registration driver produced an unexpected budget effect".into(),
-            ))
-        }
-    }
-
-    let (observation, reg_state, state_error) = match take_register_state(&state, session.user_id)? {
-        StoredRegisterState::Missing => (RegistrationStateObservation::Missing, None, None),
-        StoredRegisterState::Corrupt(error) => {
-            (RegistrationStateObservation::Corrupt, None, Some(error))
-        }
-        StoredRegisterState::Present(reg_state) => {
-            (RegistrationStateObservation::Present, Some(reg_state), None)
-        }
+    let Some(transition) = vela_recovery_policy::registration_interpreter!(io, await) else {
+        return Err(io.error.take().unwrap_or_else(|| {
+            AppError::Internal("registration aborted without an error".into())
+        }));
     };
-    let transition = on_registration_state_consumed(driver, observation);
-    driver = transition.driver;
-    match transition.effect {
-        RegistrationEffect::VerifyRegistration => {}
-        RegistrationEffect::Fail(RegistrationFailure::StateUnavailable) => {
-            return Err(AppError::BadRequest(
-                "registration challenge expired or already used".into(),
-            ))
-        }
-        RegistrationEffect::Fail(RegistrationFailure::StateCorrupt) => {
-            return Err(state_error.unwrap_or_else(|| {
-                AppError::BadRequest("invalid registration state".into())
-            }))
-        }
-        _ => {
-            return Err(AppError::Internal(
-                "registration driver produced an unexpected consumption effect".into(),
-            ))
-        }
-    }
-    let reg_state = reg_state.ok_or_else(|| {
-        AppError::Internal("registration driver admitted an undecoded state".into())
-    })?;
-
-    let verification = state
-        .webauthn
-        .finish_passkey_registration(&credential, &reg_state);
-    let (passkey, verification_error) = match verification {
-        Ok(passkey) => (Some(passkey), None),
-        Err(e) => (
-            None,
-            Some(AppError::Unauthorized(format!(
-                "WebAuthn registration failed: {e:?}"
-            ))),
-        ),
-    };
-    let transition = on_registration_verified(
-        driver,
-        RegistrationVerificationObservation {
-            credential_valid: passkey.is_some(),
-        },
-    );
-    driver = transition.driver;
-    match transition.effect {
-        RegistrationEffect::CheckCredentialUniqueness => {}
-        RegistrationEffect::Fail(RegistrationFailure::VerificationFailed) => {
-            return Err(verification_error.unwrap_or_else(|| {
-                AppError::Unauthorized("WebAuthn registration failed".into())
-            }))
-        }
-        _ => {
-            return Err(AppError::Internal(
-                "registration driver produced an unexpected verification effect".into(),
-            ))
-        }
-    }
-    let passkey = passkey.ok_or_else(|| {
-        AppError::Internal("registration driver admitted an unverified credential".into())
-    })?;
-
-    let (observation, uniqueness_error) =
-        match assert_credential_not_registered_elsewhere(&state, session.user_id, &passkey).await {
-            Ok(()) => (CredentialUniquenessObservation::Unique, None),
-            Err(AppError::Conflict(message)) => {
-                let _ = message;
-                (CredentialUniquenessObservation::RegisteredElsewhere, None)
-            }
-            Err(error) => (CredentialUniquenessObservation::LookupFailed, Some(error)),
-        };
-    let transition = on_credential_looked_up(driver, observation);
-    driver = transition.driver;
-    match transition.effect {
-        RegistrationEffect::PersistCredential => {}
-        RegistrationEffect::Fail(RegistrationFailure::UniquenessConflict) => {
-            return Err(AppError::Conflict(
-                "WebAuthn credential is already registered to another account".into(),
-            ))
-        }
-        RegistrationEffect::Fail(RegistrationFailure::UniquenessStorage) => {
-            return Err(uniqueness_error.unwrap_or_else(|| {
-                AppError::Internal("failed to check credential uniqueness".into())
-            }))
-        }
-        _ => {
-            return Err(AppError::Internal(
-                "registration driver produced an unexpected uniqueness effect".into(),
-            ))
-        }
-    }
-
-    // Effect: serialize and write the credential. Serialization failure, a
-    // storage error and a zero-row update are observations the driver
-    // classifies; the original error is rendered unchanged.
-    let (observation, persist_error) = match serde_json::to_string(&passkey) {
-        Err(e) => (
-            CredentialPersistObservation::EncodingFailed,
-            Some(AppError::Internal(format!("failed to serialize passkey: {e}"))),
-        ),
-        Ok(passkey_json) => {
-            let cred_id = cred_id_b64(&passkey);
-            match state
-                .sqldb
-                .execute(
-                    "UPDATE users SET recovery_webauthn_credential = ?, recovery_webauthn_cred_id = ? WHERE id = ?",
-                    vec![
-                        TursoValue::Text(passkey_json),
-                        TursoValue::Text(cred_id),
-                        TursoValue::Text(session.user_id.to_string()),
-                    ],
-                )
-                .await
-            {
-                Err(e) => (
-                    CredentialPersistObservation::StorageFailed,
-                    Some(AppError::Internal(e.to_string())),
-                ),
-                Ok(1) => (CredentialPersistObservation::Persisted, None),
-                Ok(_) => (CredentialPersistObservation::AccountGone, None),
-            }
-        }
-    };
-    let transition = on_credential_persisted(driver, observation);
     match transition.effect {
         RegistrationEffect::Complete => {}
-        RegistrationEffect::Fail(RegistrationFailure::AccountGone) => {
-            return Err(AppError::NotFound("account no longer exists".into()))
-        }
-        RegistrationEffect::Fail(RegistrationFailure::PersistEncoding) => {
-            return Err(persist_error.unwrap_or_else(|| {
-                AppError::Internal("failed to serialize recovery passkey".into())
-            }))
-        }
-        RegistrationEffect::Fail(RegistrationFailure::PersistStorage) => {
-            return Err(persist_error.unwrap_or_else(|| {
-                AppError::Internal("failed to store the recovery passkey".into())
-            }))
-        }
+        RegistrationEffect::Fail(failure) => return Err(registration_failure_error(failure, &mut io)),
         _ => {
             return Err(AppError::Internal(
-                "registration driver produced an unexpected persist effect".into(),
+                "registration driver reached no verdict".into(),
             ))
         }
     }
@@ -521,6 +421,196 @@ pub async fn post_register_finish(
     let mut headers = HeaderMap::new();
     maybe_append_new_token(&mut headers, &session);
     Ok((headers, Json(RegisterFinishResponse { registered: true })))
+}
+
+/// Render a registration failure with the handler's historical status and
+/// message, preferring the original error captured by the effect.
+fn registration_failure_error(failure: RegistrationFailure, io: &mut RegisterFinishIo<'_>) -> AppError {
+    match failure {
+        RegistrationFailure::AttemptLimited => io.limited_error.take().unwrap_or_else(|| {
+            AppError::Internal("registration attempt was limited".into())
+        }),
+        RegistrationFailure::StateUnavailable => AppError::BadRequest(
+            "registration challenge expired or already used".into(),
+        ),
+        RegistrationFailure::StateCorrupt => io.state_error.take().unwrap_or_else(|| {
+            AppError::BadRequest("invalid registration state".into())
+        }),
+        RegistrationFailure::VerificationFailed => {
+            io.verification_error.take().unwrap_or_else(|| {
+                AppError::Unauthorized("WebAuthn registration failed".into())
+            })
+        }
+        RegistrationFailure::UniquenessConflict => AppError::Conflict(
+            "WebAuthn credential is already registered to another account".into(),
+        ),
+        RegistrationFailure::UniquenessStorage => {
+            io.uniqueness_error.take().unwrap_or_else(|| {
+                AppError::Internal("failed to check credential uniqueness".into())
+            })
+        }
+        RegistrationFailure::AccountGone => {
+            AppError::NotFound("account no longer exists".into())
+        }
+        RegistrationFailure::PersistEncoding => io.persist_error.take().unwrap_or_else(|| {
+            AppError::Internal("failed to serialize recovery passkey".into())
+        }),
+        RegistrationFailure::PersistStorage => io.persist_error.take().unwrap_or_else(|| {
+            AppError::Internal("failed to store the recovery passkey".into())
+        }),
+        RegistrationFailure::PolicyRejected => AppError::Internal(
+            "verified recovery policy rejected credential registration".into(),
+        ),
+    }
+}
+
+/// The I/O behind each registration-finish effect. The driver decides which
+/// method runs and when (through the shared `registration_interpreter!` loop,
+/// proved in F* as `run_registration`); each method only performs its effect
+/// and reports the observation. `None` aborts with `error`.
+struct RegisterFinishIo<'a> {
+    state: &'a AppState,
+    user_id: Uuid,
+    credential: RegisterPublicKeyCredential,
+    limited_error: Option<AppError>,
+    reg_state: Option<PasskeyRegistration>,
+    state_error: Option<AppError>,
+    passkey: Option<Passkey>,
+    verification_error: Option<AppError>,
+    uniqueness_error: Option<AppError>,
+    persist_error: Option<AppError>,
+    error: Option<AppError>,
+}
+
+impl RegisterFinishIo<'_> {
+    /// Count one attempt against the registration limiter.
+    async fn registration_count_attempt(&mut self) -> Option<AttemptBudgetObservation> {
+        let limited = rate_limit::webauthn_register_by_user(
+            &self.state.store,
+            &self.user_id.to_string(),
+        )
+        .err();
+        let observation = if limited.is_some() {
+            AttemptBudgetObservation::Limited
+        } else {
+            AttemptBudgetObservation::Admitted
+        };
+        self.limited_error = limited;
+        Some(observation)
+    }
+
+    /// Perform the atomic single-use `get_del` of the registration state.
+    async fn registration_consume_state(&mut self) -> Option<RegistrationStateObservation> {
+        let observed = match take_register_state(self.state, self.user_id) {
+            Ok(observed) => observed,
+            Err(error) => {
+                self.error = Some(error);
+                return None;
+            }
+        };
+        let observation = match observed {
+            StoredRegisterState::Missing => RegistrationStateObservation::Missing,
+            StoredRegisterState::Corrupt(error) => {
+                self.state_error = Some(error);
+                RegistrationStateObservation::Corrupt
+            }
+            StoredRegisterState::Present(reg_state) => {
+                self.reg_state = Some(reg_state);
+                RegistrationStateObservation::Present
+            }
+        };
+        Some(observation)
+    }
+
+    /// Verify the presented registration ceremony.
+    async fn registration_verify(&mut self) -> Option<RegistrationVerificationObservation> {
+        let Some(reg_state) = self.reg_state.as_ref() else {
+            self.error = Some(AppError::Internal(
+                "registration driver admitted an undecoded state".into(),
+            ));
+            return None;
+        };
+        match self
+            .state
+            .webauthn
+            .finish_passkey_registration(&self.credential, reg_state)
+        {
+            Ok(passkey) => {
+                self.passkey = Some(passkey);
+                Some(RegistrationVerificationObservation {
+                    credential_valid: true,
+                })
+            }
+            Err(error) => {
+                self.verification_error = Some(AppError::Unauthorized(format!(
+                    "WebAuthn registration failed: {error:?}"
+                )));
+                Some(RegistrationVerificationObservation {
+                    credential_valid: false,
+                })
+            }
+        }
+    }
+
+    /// Look the credential up across accounts.
+    async fn registration_check_uniqueness(&mut self) -> Option<CredentialUniquenessObservation> {
+        let Some(passkey) = self.passkey.as_ref() else {
+            self.error = Some(AppError::Internal(
+                "registration driver admitted an unverified credential".into(),
+            ));
+            return None;
+        };
+        match assert_credential_not_registered_elsewhere(self.state, self.user_id, passkey).await {
+            Ok(()) => Some(CredentialUniquenessObservation::Unique),
+            Err(AppError::Conflict(_)) => {
+                Some(CredentialUniquenessObservation::RegisteredElsewhere)
+            }
+            Err(error) => {
+                self.uniqueness_error = Some(error);
+                Some(CredentialUniquenessObservation::LookupFailed)
+            }
+        }
+    }
+
+    /// Serialize and write the credential after the checked policy permit.
+    async fn registration_persist(&mut self) -> Option<CredentialPersistObservation> {
+        let Some(passkey) = self.passkey.as_ref() else {
+            self.error = Some(AppError::Internal(
+                "registration driver admitted an unverified credential".into(),
+            ));
+            return None;
+        };
+        match serde_json::to_string(passkey) {
+            Err(error) => {
+                self.persist_error =
+                    Some(AppError::Internal(format!("failed to serialize passkey: {error}")));
+                Some(CredentialPersistObservation::EncodingFailed)
+            }
+            Ok(passkey_json) => {
+                let cred_id = cred_id_b64(passkey);
+                match self
+                    .state
+                    .sqldb
+                    .execute(
+                        "UPDATE users SET recovery_webauthn_credential = ?, recovery_webauthn_cred_id = ? WHERE id = ?",
+                        vec![
+                            TursoValue::Text(passkey_json),
+                            TursoValue::Text(cred_id),
+                            TursoValue::Text(self.user_id.to_string()),
+                        ],
+                    )
+                    .await
+                {
+                    Err(error) => {
+                        self.persist_error = Some(AppError::Internal(error.to_string()));
+                        Some(CredentialPersistObservation::StorageFailed)
+                    }
+                    Ok(1) => Some(CredentialPersistObservation::Persisted),
+                    Ok(_) => Some(CredentialPersistObservation::AccountGone),
+                }
+            }
+        }
+    }
 }
 
 fn store_register_state(
