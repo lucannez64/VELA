@@ -79,7 +79,7 @@ atomicity, PASETO and rate limits, in-flight handlers of a revoked actor and
 effect fidelity remain assumptions. The [bd765ab workflow](https://github.com/lucannez64/VELA/actions/runs/40230607902) reproduced
 it. [Evidence](proof-logs/current/revocation-driver/README.md).
 
-## Handler-to-driver link (pilot: account deletion, local)
+## Handler-to-driver link (pilot: account deletion, hosted on f947ef7)
 
 The drivers above prove what each request *decides*; until now, that a handler
 performs exactly the driver's effects, in order, and nothing else was a manual
@@ -98,8 +98,8 @@ loop (a wrong executor method; a call after the verdict) are rejected. A
 source test pins the handler to one `await` expansion and forbids direct driver
 calls. What remains assumed: each executor method performs the I/O its name
 says and reports it honestly, the macro expansion in the server (it differs
-only by `.await`), and the store/SQL semantics.
-[Evidence](proof-logs/current/deletion-interpreter/README.md).
+only by `.await`), and the store/SQL semantics. The [f947ef7 workflow](https://github.com/lucannez64/VELA/actions/runs/40488103343)
+reproduced it. [Evidence](proof-logs/current/deletion-interpreter/README.md).
 
 ## Account deletion driver (hosted on cdffe46)
 
