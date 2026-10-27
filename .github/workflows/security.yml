@@ -409,6 +409,8 @@ jobs:
           SCRIPT_ARGS: ${{ matrix.args }}
           FRESH: ${{ matrix.fresh }}
           LOG_NAME: ${{ matrix.name }}
+          # The box may be shared with local proof work; the job keeps its 90-minute cap.
+          VELA_STEP_TIMEOUT: "3600"
         run: |
           mkdir -p "$RUNNER_TEMP/refinement-logs"
           # Require fresh output even when the repository contains extractions.

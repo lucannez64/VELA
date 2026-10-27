@@ -187,6 +187,10 @@ prove the device-enroll and send-link decisions per request, and the send
 links' single use, deletion finality and owner-only deletion under any
 interleaving.
 
+The [recovery-share driver](recovery-share-driver/README.md) proves the share
+lifecycle per request and, composed with the WebAuthn and possession
+drivers, no stale or superseded release under any interleaving.
+
 The [revocation driver](revocation-driver/README.md) proves the revoke,
 logout and revocation-admission decisions per request and under any
 interleaving (13 contracts, 84 lemmas, three load-bearing mutations).
@@ -199,8 +203,9 @@ The [login](login-interpreter/README.md),
 [redemption](redemption-interpreter/README.md),
 [possession](possession-interpreter/README.md),
 [WebAuthn](webauthn-interpreter/README.md),
-[enroll](enroll-interpreter/README.md) and
-[send](send-interpreter/README.md) interpreters extend the same check to
+[enroll](enroll-interpreter/README.md),
+[send](send-interpreter/README.md) and
+[recovery share](recovery-share-interpreter/README.md) interpreters extend the same check to
 those handlers.
 
 The [deletion interpreter](deletion-interpreter/README.md) checks the loop
