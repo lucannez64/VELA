@@ -73,3 +73,13 @@ fstar.exe \
 # They consume the driver extraction above and keep their own interpreter
 # extraction.
 "$proof_root/verify-fstar-webauthn-interpreter.sh"
+
+# F-2 recovery-share lifecycle (stage/finalize/delete/read) driver and its
+# composition with the WebAuthn release and possession drivers. This
+# regenerates its own partial extraction into
+# proofs/fstar/extraction-recovery-share-driver, so it must also run in its own
+# fstar.exe invocation.
+"$proof_root/verify-fstar-recovery-share-driver.sh"
+
+# F-2 recovery-share handler-to-driver interpreter for all four handlers.
+"$proof_root/verify-fstar-recovery-share-interpreter.sh"

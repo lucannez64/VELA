@@ -125,6 +125,13 @@ WIRED = [
         'serverVELA/vela-recovery-policy/src/webauthn_interpreter.rs',
         1,
     ),
+    (
+        'serverVELA/vela-server/src/recovery/mod.rs',
+        'recovery_share_interpreter',
+        'recovery_share_driver',
+        'serverVELA/vela-recovery-policy/src/recovery_share_interpreter.rs',
+        4,
+    ),
 ]
 
 TRANSITIONS = re.compile(r'\b(?:begin_\w+|step|on_\w+_event|on_\w+)\s*\(')
