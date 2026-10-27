@@ -1,0 +1,26 @@
+# security workflow 40538488807 on 6be552c (all 15 PR checks passed)
+test login_interpreter::tests::a_challenge_refusal_performs_nothing_else ... ok
+test login_interpreter::tests::a_failed_track_never_reaches_respond ... ok
+test login_interpreter::tests::final_driver_matches_the_replayed_trace ... ok
+test login_interpreter::tests::interpreter_performs_exactly_the_driver_effects_for_every_outcome ... ok
+test login_interpreter::tests::a_challenge_refusal_performs_nothing_else ... ok
+test login_interpreter::tests::a_failed_track_never_reaches_respond ... ok
+test login_interpreter::tests::final_driver_matches_the_replayed_trace ... ok
+test login_interpreter::tests::interpreter_performs_exactly_the_driver_effects_for_every_outcome ... ok
+test login_interpreter::tests::a_challenge_refusal_performs_nothing_else ... ok
+test login_interpreter::tests::a_failed_track_never_reaches_respond ... ok
+test login_interpreter::tests::final_driver_matches_the_replayed_trace ... ok
+test login_interpreter::tests::interpreter_performs_exactly_the_driver_effects_for_every_outcome ... ok
+Verified module: Vela_session_policy_login_interpreter_lemmas
+login interpreter: the handler's loop calls only the executor method for the driver's current effect, stops at the verdict within 6 turns, and ends in the driver state the per-request login theorems cover
+4d1bdbb1122715a6da96c68043e51961ba1a7a142f9cc719c6f43d0731106af3  proofs/fstar/extraction-login-interpreter/Vela_session_policy.Login_interpreter.fst
+b11b4877599d6565140f77d94f4438828d6049962015358ccd3b875a41ed311d  proofs/fstar/login-interpreter-lemmas/Vela_session_policy_login_interpreter_lemmas.fst
+8f423881e9d98dde48c4fa04ee7079febda6d9e72ca71587560eb55db79d432d  src/login_interpreter.rs
+test login_interpreter::tests::a_challenge_refusal_performs_nothing_else ... ok
+test login_interpreter::tests::a_failed_track_never_reaches_respond ... ok
+test login_interpreter::tests::final_driver_matches_the_replayed_trace ... ok
+test login_interpreter::tests::interpreter_performs_exactly_the_driver_effects_for_every_outcome ... ok
+test login_interpreter::tests::a_challenge_refusal_performs_nothing_else ... ok
+test login_interpreter::tests::a_failed_track_never_reaches_respond ... ok
+test login_interpreter::tests::final_driver_matches_the_replayed_trace ... ok
+test login_interpreter::tests::interpreter_performs_exactly_the_driver_effects_for_every_outcome ... ok

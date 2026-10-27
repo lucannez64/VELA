@@ -127,3 +127,10 @@ python3 -m unittest discover -s security/formal/tests -p 'test_*.py'
 ```
 
 `interpreter-gate.log` is the local run (F* 2025.10.06, Z3 4.13.3, hax 0.3.7).
+
+## Hosted reproduction
+
+The [6be552c security workflow](https://github.com/lucannez64/VELA/actions/runs/40538488807) re-extracted and verified
+this interpreter and its lemmas in its crate's chain; all fifteen PR checks
+passed. `hosted-6be552c.log` holds the summary and hashes, which match the
+local run.

@@ -1,0 +1,18 @@
+# security workflow 40538488807 on 6be552c (all 15 PR checks passed)
+test pairing_interpreter::tests::a_completion_take_mismatch_restores_and_stops ... ok
+test pairing_interpreter::tests::a_terminal_begin_performs_nothing ... ok
+test pairing_interpreter::tests::an_ambiguous_insert_error_consumes_the_ceremony ... ok
+test pairing_interpreter::tests::interpreter_performs_exactly_the_driver_effects_for_every_outcome ... ok
+test pairing_interpreter::tests::a_completion_take_mismatch_restores_and_stops ... ok
+test pairing_interpreter::tests::a_terminal_begin_performs_nothing ... ok
+test pairing_interpreter::tests::an_ambiguous_insert_error_consumes_the_ceremony ... ok
+test pairing_interpreter::tests::interpreter_performs_exactly_the_driver_effects_for_every_outcome ... ok
+test pairing_interpreter::tests::a_completion_take_mismatch_restores_and_stops ... ok
+test pairing_interpreter::tests::a_terminal_begin_performs_nothing ... ok
+test pairing_interpreter::tests::an_ambiguous_insert_error_consumes_the_ceremony ... ok
+test pairing_interpreter::tests::interpreter_performs_exactly_the_driver_effects_for_every_outcome ... ok
+Verified module: Vela_enrollment_policy_pairing_interpreter_lemmas
+pairing interpreter: the handler's loop calls only the executor method for the driver's current effect, stops at the verdict within 5 turns, and ends in the driver state the per-request pairing theorems cover
+3209cf14dc55f969b0f9a12c50bb0d5e96b1de0e64f11b2f0ef456dc82e72772  proofs/fstar/extraction-pairing-interpreter/Vela_enrollment_policy.Pairing_interpreter.fst
+7de896af302d2115fa80142cc3cc92b7b1b311e8b8be3832a776958b4936fbd5  proofs/fstar/pairing-interpreter-lemmas/Vela_enrollment_policy_pairing_interpreter_lemmas.fst
+8d8586c9579a6531f7fe53edad233f37e844d4621fda2afac55cddcc9960dc1d  src/pairing_interpreter.rs

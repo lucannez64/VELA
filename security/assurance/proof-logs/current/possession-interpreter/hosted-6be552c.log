@@ -1,0 +1,10 @@
+# security workflow 40538488807 on 6be552c (all 15 PR checks passed)
+test possession_interpreter::tests::initiation_performs_exactly_the_driver_effects ... ok
+test possession_interpreter::tests::recover_performs_exactly_the_driver_effects_for_every_outcome ... ok
+test possession_interpreter::tests::initiation_performs_exactly_the_driver_effects ... ok
+test possession_interpreter::tests::recover_performs_exactly_the_driver_effects_for_every_outcome ... ok
+Verified module: Vela_recovery_policy_possession_interpreter_lemmas
+possession interpreter: both handlers' loops call only the executor method for the driver's current effect, stop at a verdict (or abort) within their budgets, and end in the driver state the per-request theorems cover
+46c1afc4e7a6e051412b61ff0827401c9a716296920bbc93bbf1a093cc8ad41c  proofs/fstar/extraction-possession-interpreter/Vela_recovery_policy.Possession_interpreter.fst
+eca469e21ca893a21d7b8af1ac3d195fe3fcb92e436893e6c39c1e9560351d4b  proofs/fstar/possession-interpreter-lemmas/Vela_recovery_policy_possession_interpreter_lemmas.fst
+ce360e9c804f1c55062858dc3905418ef9db69b667e3b367291ace29c2b269ea  src/possession_interpreter.rs

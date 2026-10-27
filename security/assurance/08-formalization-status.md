@@ -101,7 +101,7 @@ says and reports it honestly, the macro expansion in the server (it differs
 only by `.await`), and the store/SQL semantics. The [f947ef7 workflow](https://github.com/lucannez64/VELA/actions/runs/40488103343)
 reproduced it. [Evidence](proof-logs/current/deletion-interpreter/README.md).
 
-## Handler-to-driver interpreters (local, after 5c82971)
+## Handler-to-driver interpreters (hosted on 6be552c)
 
 The same construction now covers the login, device-revocation, logout,
 pairing and sharing handlers. Each policy crate defines one interpreter macro
@@ -142,7 +142,8 @@ performs nothing more and the request fails with that error, and the proofs
 cover that exit. The four WebAuthn handlers (registration start/finish,
 `/recovery/initiate`, `/recovery/recover`) already run their interpreter
 macros, but those loops are not yet proved; their driver proofs stand, and
-the link from handler to driver remains a reviewed obligation there.
+the link from handler to driver remains a reviewed obligation there. The [6be552c workflow](https://github.com/lucannez64/VELA/actions/runs/40538488807) reproduced every
+proved interpreter in the table.
 
 ## Account deletion driver (hosted on cdffe46)
 
