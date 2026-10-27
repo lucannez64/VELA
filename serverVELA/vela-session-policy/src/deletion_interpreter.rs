@@ -35,35 +35,6 @@ pub fn deletion_effect_is_terminal(effect: DeletionEffect) -> bool {
     )
 }
 
-/// Declares an executor trait from one list of method signatures. Under hax
-/// every method gets `requires(true)` (the proof assumes nothing about the
-/// executor); ordinary builds get the same trait without the attributes, so
-/// `hax-lib` stays a hax-only dependency.
-macro_rules! executor_trait {
-    (
-        $(#[$doc:meta])*
-        pub trait $name:ident {
-            $(fn $method:ident(&mut self $(, $arg:ident: $ty:ty)*) -> $ret:ty;)*
-        }
-    ) => {
-        $(#[$doc])*
-        #[cfg(hax)]
-        #[hax_lib::attributes]
-        pub trait $name {
-            $(
-                #[hax_lib::requires(true)]
-                fn $method(&mut self $(, $arg: $ty)*) -> $ret;
-            )*
-        }
-
-        $(#[$doc])*
-        #[cfg(not(hax))]
-        pub trait $name {
-            $(fn $method(&mut self $(, $arg: $ty)*) -> $ret;)*
-        }
-    };
-}
-
 executor_trait! {
     /// The I/O behind each non-terminal effect. Each method returns only the
     /// observation its effect expects.

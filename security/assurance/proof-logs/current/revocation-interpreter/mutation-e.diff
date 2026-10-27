@@ -1,0 +1,19 @@
+--- proofs/fstar/extraction-revocation-interpreter/Vela_session_policy.Revocation_interpreter.fst	2026-10-27 13:25:53.068388887 +0100
++++ /tmp/vela-mut-revocation/e/Vela_session_policy.Revocation_interpreter.fst	2026-10-27 13:41:19.843580808 +0100
+@@ -247,15 +247,11 @@
+               logout_effect_of transition <: Vela_session_policy.Revocation_driver.t_LogoutEffect
+             with
+             | Vela_session_policy.Revocation_driver.LogoutEffect_RevokeJti  ->
+-              let (tmp0: v_Io), (out: Vela_session_policy.Revocation_driver.t_LogoutObservation) =
+-                f_revoke_jti #v_Io #FStar.Tactics.Typeclasses.solve io
+-              in
+-              let io:v_Io = tmp0 in
+               io,
+               Vela_session_policy.Revocation_driver.logout_step (logout_driver_of transition
+                   <:
+                   Vela_session_policy.Revocation_driver.t_LogoutDriver)
+-                out
++                (Vela_session_policy.Revocation_driver.LogoutObservation_Applied)
+               <:
+               (v_Io & Vela_session_policy.Revocation_driver.t_LogoutTransition)
+             | Vela_session_policy.Revocation_driver.LogoutEffect_Complete

@@ -5,11 +5,16 @@
 //! into the facts below and may sign a token only from the private [`TokenPlan`]
 //! returned here. hax extracts these exact decisions to F*.
 
+#[macro_use]
+mod executor_trait;
+
 pub mod challenge;
 pub mod deletion_driver;
 pub mod deletion_interpreter;
 pub mod login_driver;
+pub mod login_interpreter;
 pub mod revocation_driver;
+pub mod revocation_interpreter;
 
 pub const TOKEN_LIFETIME_SECS: i64 = 15 * 60;
 pub const DEVICE_HARD_CAP_SECS: i64 = 8 * 60 * 60;
