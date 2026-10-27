@@ -125,6 +125,69 @@ WIRED = [
         'serverVELA/vela-recovery-policy/src/webauthn_interpreter.rs',
         1,
     ),
+    (
+        'serverVELA/vela-server/src/vault/rekey.rs',
+        'rekey_start_interpreter',
+        'rekey_driver',
+        'serverVELA/vela-rekey-policy/src/rekey_interpreter.rs',
+        1,
+    ),
+    (
+        'serverVELA/vela-server/src/vault/rekey.rs',
+        'rekey_capsules_interpreter',
+        'rekey_driver',
+        'serverVELA/vela-rekey-policy/src/rekey_interpreter.rs',
+        1,
+    ),
+    (
+        'serverVELA/vela-server/src/vault/rekey.rs',
+        'rekey_commit_interpreter',
+        'rekey_driver',
+        'serverVELA/vela-rekey-policy/src/rekey_interpreter.rs',
+        1,
+    ),
+    (
+        'serverVELA/vela-server/src/vault/rekey.rs',
+        'rekey_abort_interpreter',
+        'rekey_driver',
+        'serverVELA/vela-rekey-policy/src/rekey_interpreter.rs',
+        1,
+    ),
+    (
+        'serverVELA/vela-server/src/vault/chunk.rs',
+        'chunk_delete_interpreter',
+        'vault_mutation_driver',
+        'serverVELA/vela-rekey-policy/src/vault_mutation_interpreter.rs',
+        1,
+    ),
+    (
+        'serverVELA/vela-server/src/vault/oram.rs',
+        'oram_interpreter',
+        'vault_mutation_driver',
+        'serverVELA/vela-rekey-policy/src/vault_mutation_interpreter.rs',
+        1,
+    ),
+    (
+        'serverVELA/vela-server/src/vault/schema.rs',
+        'schema_interpreter',
+        'vault_mutation_driver',
+        'serverVELA/vela-rekey-policy/src/vault_mutation_interpreter.rs',
+        1,
+    ),
+    (
+        'serverVELA/vela-server/src/device/capsule.rs',
+        'capsule_ack_interpreter',
+        'vault_mutation_driver',
+        'serverVELA/vela-rekey-policy/src/vault_mutation_interpreter.rs',
+        1,
+    ),
+    (
+        'serverVELA/vela-server/src/device/list.rs',
+        'rekey_capable_interpreter',
+        'vault_mutation_driver',
+        'serverVELA/vela-rekey-policy/src/vault_mutation_interpreter.rs',
+        1,
+    ),
 ]
 
 TRANSITIONS = re.compile(r'\b(?:begin_\w+|step|on_\w+_event|on_\w+)\s*\(')
@@ -134,7 +197,9 @@ def code_only(text):
     """Drop comments and string literals."""
     text = re.sub(r'/\*.*?\*/', '', text, flags=re.S)
     text = re.sub(r'//[^\n]*', '', text)
-    return re.sub(r'"(?:\\.|[^"\\])*"', '""', text)
+    # `re.S` so a backslash-newline string continuation is consumed as part of
+    # the literal instead of leaving the rest of the file quote-unbalanced.
+    return re.sub(r'"(?:\\.|[^"\\])*"', '""', text, flags=re.S)
 
 
 class HandlerInterpreterTest(unittest.TestCase):

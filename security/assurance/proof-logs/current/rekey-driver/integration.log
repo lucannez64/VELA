@@ -1,0 +1,128 @@
+   Compiling vela-rekey-policy v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-5dd9794e/serverVELA/vela-rekey-policy)
+   Compiling vela-server v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-5dd9794e/serverVELA/vela-server)
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> vela-server/src/sqldb.rs:76:5
+   |
+76 |     async fn query(&self, sql: &str, params: Vec<turso::Value>) -> anyhow::Result<Vec<VelaRow>>;
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+   = note: `#[warn(async_fn_in_trait)]` on by default
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+76 -     async fn query(&self, sql: &str, params: Vec<turso::Value>) -> anyhow::Result<Vec<VelaRow>>;
+76 +     fn query(&self, sql: &str, params: Vec<turso::Value>) -> impl std::future::Future<Output = anyhow::Result<Vec<VelaRow>>> + Send;
+   |
+
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> vela-server/src/sqldb.rs:78:5
+   |
+78 |     async fn execute(&self, sql: &str, params: Vec<turso::Value>) -> anyhow::Result<u64>;
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+78 -     async fn execute(&self, sql: &str, params: Vec<turso::Value>) -> anyhow::Result<u64>;
+78 +     fn execute(&self, sql: &str, params: Vec<turso::Value>) -> impl std::future::Future<Output = anyhow::Result<u64>> + Send;
+   |
+
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> vela-server/src/sqldb.rs:80:5
+   |
+80 |     async fn execute_batch(&self, sql: &str) -> anyhow::Result<()>;
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+80 -     async fn execute_batch(&self, sql: &str) -> anyhow::Result<()>;
+80 +     fn execute_batch(&self, sql: &str) -> impl std::future::Future<Output = anyhow::Result<()>> + Send;
+   |
+
+warning: `vela-server` (lib) generated 3 warnings
+warning: unused import: `vela_server::auth::token::TokenScope`
+    --> vela-server/tests/integration.rs:2628:9
+     |
+2628 |     use vela_server::auth::token::TokenScope;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `vela-server` (test "integration") generated 1 warning (run `cargo fix --test "integration" -p vela-server` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.71s
+     Running tests/integration.rs (target-own/debug/build/vela-server/86ddea0f3c15b454/out/integration-86ddea0f3c15b454)
+
+running 68 tests
+test a_previously_admitted_web_grant_is_refused_by_the_live_sql_guard ... ok
+test account_delete_without_token_returns_401 ... ok
+test auth_signature_succeeds_once_and_replay_fails ... ok
+test challenge_is_bound_to_its_purpose_and_spent_on_misuse ... ok
+test challenge_returns_nonce ... ok
+test committed_approver_can_decline_a_pending_session ... ok
+test delete_chunk_without_token_returns_401 ... ok
+test device_existence_is_not_revealed_by_auth_failures ... ok
+test device_token_issuance_carries_device_scope ... ok
+test device_token_still_reaches_permanent_power_routes ... ok
+test devices_without_token_returns_401 ... ok
+test enroll_device_missing_grant_returns_401_before_account_state ... ok
+test enroll_device_redeems_grant_exactly_once ... ok
+test enroll_device_validates_keys_before_the_grant_lookup_and_consumption ... ok
+test enroll_device_without_grant_returns_401 ... ok
+test enrollment_preflight_handles_missing_and_malformed_state_in_order ... ok
+test extracted_web_session_cannot_mutate_after_a_concurrent_epoch_commit ... ok
+test failed_account_deletion_rolls_back_every_table ... ok
+test health_returns_ok ... ok
+test hsts_header_absent_on_cleartext_requests ... ok
+test hsts_header_present_on_https_requests ... ok
+test logout_without_token_returns_401 ... ok
+test oram_writes_declare_and_accept_post_rotation_epoch ... ok
+test possession_grant_requires_a_staged_commitment_but_restaging_revives_it ... ok
+test possession_initiation_rejects_an_empty_decoded_commitment ... ok
+test possession_proof_recovery_grants_enrollment_without_webauthn ... ok
+test production_auth_accepts_https_from_trusted_loopback_proxy ... ok
+test production_auth_rejects_forwarded_https_from_untrusted_proxy ... ok
+test production_auth_requires_https_when_proxy_headers_are_not_trusted ... ok
+test recovery_enroll_device_limit_cannot_be_burned_for_someone_else ... ok
+test recovery_enrollment_grant_is_invalid_after_key_rotation ... ok
+test recovery_initiate_existing_account_without_share_returns_404 ... ok
+test recovery_initiate_limit_cannot_be_burned_for_someone_else ... ok
+test recovery_initiate_still_bounds_distributed_churn_per_user ... ok
+test recovery_initiate_unknown_user_returns_404 ... ok
+test recovery_initiate_without_credential_returns_404 ... ok
+test recovery_publication_finalizes_exactly_the_current_staged_split ... ok
+test recovery_recover_limit_cannot_be_burned_for_someone_else ... ok
+test recovery_share_upload_cannot_survive_a_concurrent_epoch_commit ... ok
+test recovery_share_writes_are_epoch_bound_and_refuse_freezing_accounts ... ok
+test register_creates_account_and_device ... ok
+test register_rejects_bad_key_size ... ok
+test rekey_commit_replay_is_bound_to_the_completed_attempt ... ok
+test rekey_rotation_lifecycle_end_to_end ... ok
+test rekey_start_refuses_accounts_with_oram_buckets ... ok
+test renewing_a_web_session_token_keeps_it_a_web_session_token ... ok
+test replacing_a_recovery_credential_blocks_a_grant_without_consuming_it ... ok
+test revoking_a_device_revokes_the_web_sessions_it_approved ... ok
+test rich_schema_activation_blocks_legacy_uploads_and_deletes_without_mutation ... ok
+test rich_schema_activation_waits_for_an_in_flight_account_write ... ok
+test share_ek_registration_requires_device_signed_binding ... ok
+test share_send_without_token_returns_401 ... ok
+test the_capsule_is_delivered_once_even_under_concurrent_polls ... ok
+test two_users_can_store_same_chunk_id ... ok
+test v2_and_v3_enrollment_capsules_are_atomically_epoch_bound ... ok
+test vault_events_streams_hello_then_changes ... ok
+test vault_sync_without_token_returns_401 ... ok
+test web_session_grant_rejects_a_capsule_from_an_old_key_epoch ... ok
+test web_session_grant_rejects_wrong_link_nonce ... ok
+test web_session_grant_requires_auth ... ok
+test web_session_is_bound_to_the_committed_approver ... ok
+test web_session_poll_requires_the_browsers_secret ... ok
+test web_session_start_and_poll_pending ... ok
+test web_session_start_rejects_bad_key_length ... ok
+test web_session_start_requires_an_approver_account ... ok
+test web_session_token_budget_cannot_be_burned_by_an_onlooker ... ok
+test web_session_token_is_refused_on_permanent_power_routes ... ok
+test web_session_token_still_reaches_the_vault ... ok
+
+test result: ok. 68 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.42s
+
+EXIT=0

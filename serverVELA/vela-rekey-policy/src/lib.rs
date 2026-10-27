@@ -7,6 +7,10 @@
 //! every write and lifecycle decision has the epoch, readiness, completeness,
 //! and authority shape claimed by the Tamarin M11/M11c models.
 
+pub mod rekey_driver;
+pub mod rekey_interpreter;
+pub mod vault_mutation_driver;
+pub mod vault_mutation_interpreter;
 pub mod vault_upload_driver;
 pub mod vault_upload_interpreter;
 

@@ -1,0 +1,129 @@
+F* 2025.10.06
+platform=Linux_x86_64
+compiler=OCaml 4.14.2
+date=2025-10-06 12:00:42 -0700
+commit=7b347386330d0e5a331a220535b6f15288903234
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.10s
+     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-5dd9794e/target-own/debug/build/vela-rekey-policy/e298c9bf57839bbb/out/vela_rekey_policy-e298c9bf57839bbb)
+
+running 76 tests
+test rekey_driver::tests::a_lost_timeout_race_continues_with_the_winning_state ... ok
+test rekey_driver::tests::a_web_session_never_starts_commits_or_aborts ... ok
+test rekey_driver::tests::abort_requires_the_starter_and_the_live_rotation ... ok
+test rekey_driver::tests::abort_rolls_back_without_advancing_the_epoch ... ok
+test rekey_driver::tests::an_unauthenticated_request_performs_nothing ... ok
+test rekey_driver::tests::bfs_reachable_states_preserve_the_invariant ... ok
+test rekey_driver::tests::capsule_failures_stop_before_the_remaining_entries ... ok
+test rekey_driver::tests::capsules_require_starter_rotation_id_and_authority ... ok
+test rekey_driver::tests::capsules_write_every_entry_and_only_then_complete ... ok
+test rekey_driver::tests::commit_cas_race_is_terminal_and_never_claims_a_commit ... ok
+test rekey_driver::tests::commit_replay_accepts_only_the_recorded_attempt ... ok
+test rekey_driver::tests::commit_requires_both_completeness_observations ... ok
+test rekey_driver::tests::commit_sweeps_after_the_cas_and_publishes_before_complete ... ok
+test rekey_driver::tests::exhaustive_stage_times_event_is_total_and_sound ... ok
+test rekey_driver::tests::out_of_order_events_are_inert ... ok
+test rekey_driver::tests::start_readiness_refusals_keep_the_handlers_precedence ... ok
+test rekey_driver::tests::start_refuses_an_already_freezing_account ... ok
+test rekey_driver::tests::start_storage_failures_are_terminal_without_a_freeze ... ok
+test rekey_driver::tests::start_walks_pacing_load_readiness_freeze_and_cleanup ... ok
+test rekey_driver::tests::timeout_rollback_restores_the_active_state_at_the_same_epoch ... ok
+test rekey_driver::tests::too_many_capsules_is_refused_before_any_write ... ok
+test rekey_interpreter::tests::an_unauthenticated_or_web_request_performs_nothing ... ok
+test rekey_interpreter::tests::capsules_perform_one_write_per_entry ... ok
+test rekey_interpreter::tests::commit_and_abort_reach_their_verdicts ... ok
+test rekey_interpreter::tests::start_performs_exactly_the_driver_effects_for_every_outcome ... ok
+test tests::abort_preserves_epoch_and_requires_attempt_authority ... ok
+test tests::active_accepts_only_current_epoch_with_epoch_one_legacy_exception ... ok
+test tests::active_guard_rejects_freezing_and_stale_permits ... ok
+test tests::commit_replay_must_name_the_exact_recorded_attempt ... ok
+test tests::commit_requires_attempt_authority_and_both_completeness_witnesses ... ok
+test tests::every_shadow_authority_fact_is_required ... ok
+test tests::freezing_routes_only_next_epoch_writes_while_reading_current ... ok
+test tests::integer_boundary_and_invalid_epochs_fail_closed ... ok
+test tests::mutation_permits_bind_epoch_and_authority_class ... ok
+test tests::start_requires_every_readiness_gate_and_exact_successor ... ok
+test tests::timeout_rolls_back_only_expired_well_formed_attempts ... ok
+test vault_mutation_driver::tests::capsule_ack_clears_and_accepts_a_replay ... ok
+test vault_mutation_driver::tests::capsule_ack_refuses_a_different_pending_epoch_and_missing_device ... ok
+test vault_mutation_driver::tests::chunk_delete_exhaustive_stage_times_event_is_sound ... ok
+test vault_mutation_driver::tests::chunk_delete_refuses_freezing_rekey_and_version_mismatch ... ok
+test vault_mutation_driver::tests::chunk_delete_walks_schema_route_version_delete_publish ... ok
+test vault_mutation_driver::tests::chunk_delete_web_token_must_be_pinned_to_the_route_epoch ... ok
+test vault_mutation_driver::tests::oram_exhaustive_stage_times_event_is_sound ... ok
+test vault_mutation_driver::tests::oram_refuses_freezing_and_oversized_paths ... ok
+test vault_mutation_driver::tests::oram_update_miss_rechecks_but_create_miss_is_terminal ... ok
+test vault_mutation_driver::tests::oram_writes_every_bucket_then_publishes ... ok
+test vault_mutation_driver::tests::rekey_capable_attests_once_and_refuses_missing_devices ... ok
+test vault_mutation_driver::tests::route_observations_agree_with_the_phase_and_epoch_rules ... ok
+test vault_mutation_driver::tests::schema_writes_once_and_refuses_web_sessions ... ok
+test vault_mutation_interpreter::tests::chunk_delete_interpreter_matches_the_driver_for_every_outcome ... ok
+test vault_mutation_interpreter::tests::oram_interpreter_writes_and_rechecks_in_order ... ok
+test vault_mutation_interpreter::tests::refused_requests_perform_no_effect ... ok
+test vault_mutation_interpreter::tests::schema_capsule_and_capability_interpreters_match_their_drivers ... ok
+test vault_upload_driver::tests::a_failed_attempt_lookup_fails_closed_without_a_write ... ok
+test vault_upload_driver::tests::a_failed_epoch_lookup_fails_closed_before_the_row_query ... ok
+test vault_upload_driver::tests::a_web_session_may_hold_a_shadow_route_but_never_leaves_it ... ok
+test vault_upload_driver::tests::active_create_walks_resolve_quota_write_reread_publish_complete ... ok
+test vault_upload_driver::tests::bfs_reachable_states_preserve_the_invariant ... ok
+test vault_upload_driver::tests::create_conflicts_are_terminal_and_never_read_back ... ok
+test vault_upload_driver::tests::exhaustive_stage_times_event_is_total_and_sound ... ok
+test vault_upload_driver::tests::out_of_order_events_are_inert ... ok
+test vault_upload_driver::tests::read_rejects_invalid_epochs_and_unauthenticated_callers ... ok
+test vault_upload_driver::tests::read_serves_only_the_current_account_and_epoch ... ok
+test vault_upload_driver::tests::shadow_skipped_never_rechecks_and_reports_rotation_end ... ok
+test vault_upload_driver::tests::shadow_success_records_activity_and_publishes_nothing ... ok
+test vault_upload_driver::tests::shadow_write_requires_the_starting_device_and_a_rotation_id ... ok
+test vault_upload_driver::tests::skipped_update_rechecks_and_classifies_version_vs_epoch ... ok
+test vault_upload_driver::tests::unauthenticated_and_invalid_epochs_fail_closed ... ok
+test vault_upload_driver::tests::web_session_never_authorizes_a_shadow_write ... ok
+test vault_upload_driver::tests::web_writer_must_be_pinned_to_the_resolved_epoch ... ok
+test vault_upload_interpreter::tests::a_scripted_activity_failure_stops_at_the_verdict ... ok
+test vault_upload_interpreter::tests::an_unauthenticated_read_performs_nothing ... ok
+test vault_upload_interpreter::tests::an_unauthenticated_upload_performs_nothing ... ok
+test vault_upload_interpreter::tests::read_performs_exactly_the_driver_effects_for_every_lookup_outcome ... ok
+test vault_upload_interpreter::tests::the_longest_upload_path_uses_the_whole_budget_and_only_one_write ... ok
+test vault_upload_interpreter::tests::upload_performs_exactly_the_driver_effects_for_every_outcome_kind ... ok
+
+test result: ok. 76 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+   Doc-tests vela_rekey_policy
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-vault-mutation-driver/Vela_rekey_policy.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-vault-mutation-driver/Vela_rekey_policy.Vault_mutation_driver.fst[0m
+stripped 0 unused hax derived-instance assumption(s)
+Driver source policy: 1 extracted modules, 1 proof modules; no unreviewed escapes/options
+F* vault-mutation-driver argv: --cmi --cache_off --warn_error -331 --z3rlimit 16000 --z3version 4.13.3 --already_cached +Prims+FStar+LowStar+C+Spec.Loops+TestLib --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/core --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proofs/fstar/extraction --include proofs/fstar/extraction-vault-mutation-driver-root --include proofs/fstar/extraction-vault-mutation-driver --include proofs/fstar/vault-mutation-driver-lemmas proofs/fstar/extraction-vault-mutation-driver/Vela_rekey_policy.Vault_mutation_driver.fst proofs/fstar/vault-mutation-driver-lemmas/Vela_rekey_policy_vault_mutation_driver_lemmas.fst
+* Warning 271 at /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Error 19 at proofs/fstar/extraction-vault-mutation-driver/Vela_rekey_policy.Vault_mutation_driver.fst(276,2-381,59):
+  - Could not prove post-condition
+  - The SMT solver could not prove the query. Use --query_stats for more
+    details.
+  - Also see: proofs/fstar/extraction-vault-mutation-driver/Vela_rekey_policy.Vault_mutation_driver.fst(276,2-381,59)
+  - Other related locations: proofs/fstar/extraction-vault-mutation-driver/Vela_rekey_policy.Vault_mutation_driver.fst(273,10-275,70)
+
+1 error was reported (see above)
+EXIT=1

@@ -141,12 +141,262 @@ pub async fn get_path(
     ))
 }
 
+/// The I/O behind `PUT /vault/oram/:tree_id/path/:leaf`.
+struct PutOramIo<'a> {
+    state: &'a AppState,
+    session: &'a AuthSession,
+    tree_id: String,
+    user_id: String,
+    buckets: Vec<PutOramBucket>,
+    now: String,
+    declared: Option<i64>,
+    epoch: i64,
+    read_epoch: i64,
+    current_index: i64,
+    responses: Vec<PutOramBucketResponse>,
+    error: Option<AppError>,
+}
+
+impl PutOramIo<'_> {
+    async fn resolve_epoch(
+        &mut self,
+    ) -> vela_rekey_policy::vault_mutation_driver::RouteObservation {
+        use vela_rekey_policy::vault_mutation_driver::RouteObservation as O;
+        match crate::vault::rekey::resolve_write_epoch(self.state, &self.user_id, self.declared)
+            .await
+        {
+            Ok((write_epoch, read_epoch)) if write_epoch == read_epoch => {
+                self.epoch = write_epoch;
+                self.read_epoch = read_epoch;
+                O::Active { epoch: write_epoch }
+            }
+            Ok(_) => O::Freezing,
+            Err(error @ AppError::Rekeyed(_)) => {
+                self.error = Some(error);
+                O::Rejected
+            }
+            Err(error) => {
+                self.error = Some(error);
+                O::Storage
+            }
+        }
+    }
+
+    async fn enforce_quota(
+        &mut self,
+    ) -> vela_rekey_policy::vault_mutation_driver::QuotaObservation {
+        use vela_rekey_policy::vault_mutation_driver::QuotaObservation as O;
+        let incoming: u64 = self
+            .buckets
+            .iter()
+            .map(|b| b.ciphertext.len() as u64)
+            .sum();
+        match crate::vault::enforce_storage_quota(self.state, &self.user_id, incoming).await {
+            Ok(()) => O::Allowed,
+            Err(error) => {
+                let observation = if matches!(error, AppError::PayloadTooLarge(_)) {
+                    O::Exceeded
+                } else {
+                    O::Storage
+                };
+                self.error = Some(error);
+                observation
+            }
+        }
+    }
+
+    async fn write_bucket(
+        &mut self,
+        index: i64,
+    ) -> vela_rekey_policy::vault_mutation_driver::BucketObservation {
+        use vela_rekey_policy::vault_mutation_driver::BucketObservation as O;
+        self.current_index = index;
+        let bucket = match self.buckets.get(index as usize) {
+            Some(bucket) => bucket,
+            None => {
+                self.error = Some(AppError::Internal("missing ORAM bucket".into()));
+                return O::Storage;
+            }
+        };
+        let ciphertext = match B64.decode(&bucket.ciphertext) {
+            Ok(ciphertext) => ciphertext,
+            Err(_) => {
+                self.error = Some(AppError::BadRequest(
+                    "bucket ciphertext is not valid base64".into(),
+                ));
+                return O::Invalid;
+            }
+        };
+        if ciphertext.len() > self.state.config.max_chunk_bytes {
+            self.error = Some(AppError::BadRequest(format!(
+                "bucket exceeds maximum size of {} bytes",
+                self.state.config.max_chunk_bytes
+            )));
+            return O::Invalid;
+        }
+        let bucket_index_i64 = match i64::try_from(bucket.bucket_index) {
+            Ok(index) => index,
+            Err(_) => {
+                self.error = Some(AppError::BadRequest("bucket index too large".into()));
+                return O::Invalid;
+            }
+        };
+        let if_match = bucket.if_match;
+        let lamport_clock = bucket.lamport_clock;
+        let bucket_index = bucket.bucket_index;
+
+        if if_match == 0 {
+            let existing = self
+                .state
+                .sqldb
+                .query(
+                    "SELECT 1 FROM oram_buckets
+                 WHERE user_id = ? AND tree_id = ? AND bucket_index = ? AND epoch = ?",
+                    vec![
+                        TursoValue::Text(self.user_id.clone()),
+                        TursoValue::Text(self.tree_id.clone()),
+                        TursoValue::Integer(bucket_index_i64),
+                        TursoValue::Integer(self.epoch),
+                    ],
+                )
+                .await;
+            match existing {
+                Err(error) => {
+                    self.error = Some(AppError::Internal(error.to_string()));
+                    return O::Storage;
+                }
+                Ok(rows) if rows.first().is_some() => return O::Existing,
+                Ok(_) => {}
+            }
+            let inserted = self
+                .state
+                .sqldb
+                .execute(
+                    "INSERT INTO oram_buckets
+                 (user_id, tree_id, bucket_index, version, lamport_clock, last_writer, ciphertext, epoch, created_at, updated_at)
+                 SELECT ?, ?, ?, 1, ?, ?, ?, ?, ?, ? FROM users
+                 WHERE id = ? AND key_epoch = ? AND rekey_state IS NULL",
+                    vec![
+                        TursoValue::Text(self.user_id.clone()),
+                        TursoValue::Text(self.tree_id.clone()),
+                        TursoValue::Integer(bucket_index_i64),
+                        TursoValue::Integer(lamport_clock),
+                        TursoValue::Text(self.session.device_id.to_string()),
+                        TursoValue::Text(crate::db::encode_b64(&ciphertext)),
+                        TursoValue::Integer(self.epoch),
+                        TursoValue::Text(self.now.clone()),
+                        TursoValue::Text(self.now.clone()),
+                        TursoValue::Text(self.user_id.clone()),
+                        TursoValue::Integer(self.epoch),
+                    ],
+                )
+                .await;
+            match inserted {
+                Err(error) => {
+                    self.error = Some(AppError::Internal(error.to_string()));
+                    O::Storage
+                }
+                Ok(1) => {
+                    self.responses.push(PutOramBucketResponse {
+                        bucket_index,
+                        version: 1,
+                    });
+                    O::Written
+                }
+                Ok(_) => O::Skipped,
+            }
+        } else {
+            let updated = self
+                .state
+                .sqldb
+                .execute(
+                    "UPDATE oram_buckets
+                 SET version = version + 1,
+                     lamport_clock = ?,
+                     last_writer = ?,
+                     ciphertext = ?,
+                     updated_at = ?
+                 WHERE user_id = ?
+                   AND tree_id = ?
+                   AND bucket_index = ?
+                   AND version = ?
+                   AND epoch = ?
+                   AND EXISTS (
+                     SELECT 1 FROM users
+                     WHERE users.id = oram_buckets.user_id
+                       AND users.key_epoch = ? AND users.rekey_state IS NULL
+                   )",
+                    vec![
+                        TursoValue::Integer(lamport_clock),
+                        TursoValue::Text(self.session.device_id.to_string()),
+                        TursoValue::Text(crate::db::encode_b64(&ciphertext)),
+                        TursoValue::Text(self.now.clone()),
+                        TursoValue::Text(self.user_id.clone()),
+                        TursoValue::Text(self.tree_id.clone()),
+                        TursoValue::Integer(bucket_index_i64),
+                        TursoValue::Integer(if_match),
+                        TursoValue::Integer(self.epoch),
+                        TursoValue::Integer(self.epoch),
+                    ],
+                )
+                .await;
+            match updated {
+                Err(error) => {
+                    self.error = Some(AppError::Internal(error.to_string()));
+                    O::Storage
+                }
+                Ok(0) => O::Skipped,
+                Ok(_) => {
+                    self.responses.push(PutOramBucketResponse {
+                        bucket_index,
+                        version: if_match + 1,
+                    });
+                    O::Written
+                }
+            }
+        }
+    }
+
+    async fn recheck_bucket(
+        &mut self,
+        _index: i64,
+    ) -> vela_rekey_policy::vault_mutation_driver::BucketRecheckObservation {
+        use vela_rekey_policy::vault_mutation_driver::BucketRecheckObservation as O;
+        match crate::vault::rekey::resolve_write_epoch(self.state, &self.user_id, self.declared)
+            .await
+        {
+            Ok(current) if current == (self.epoch, self.read_epoch) => O::Unchanged,
+            Ok(_) => O::Changed,
+            Err(error @ AppError::Rekeyed(_)) => {
+                self.error = Some(error);
+                O::Changed
+            }
+            Err(error) => {
+                self.error = Some(AppError::Internal(error.to_string()));
+                O::Failed
+            }
+        }
+    }
+
+    async fn publish(&mut self) {
+        self.state.vault_events.publish(
+            self.session.user_id,
+            self.session.device_id,
+            self.epoch,
+            crate::vault::events::VaultChangeKind::Oram,
+        );
+    }
+}
+
 pub async fn put_path(
     State(state): State<AppState>,
     Path((tree_id, leaf)): Path<(String, u64)>,
     session: AuthSession,
     Json(body): Json<PutOramPathRequest>,
 ) -> Result<(HeaderMap, Json<PutOramPathResponse>)> {
+    use vela_rekey_policy::vault_mutation_driver::{
+        OramEffect, OramFailure, OramRequest,
+    };
     let tree_id = crate::ids::validate_id("tree_id", &tree_id)?.to_string();
     let expected_indices = path_bucket_indices(body.height, leaf)?;
 
@@ -168,163 +418,108 @@ pub async fn put_path(
     }
 
     let now = Utc::now().to_rfc3339();
-    let mut updated = Vec::with_capacity(body.buckets.len());
-
-    // ORAM paths rewrite whole buckets, so they cannot be shadowed the way
-    // vault chunks can. Rather than risk a mixed-epoch tree, writes are simply
-    // refused for the (bounded) freeze window; clients retry after adopting.
-    let declared = body.epoch;
-    let (write_epoch, read_epoch) =
-        crate::vault::rekey::resolve_write_epoch(&state, &session.user_id.to_string(), declared)
-            .await?;
-    if write_epoch != read_epoch {
-        return Err(AppError::Rekeyed(
-            "ORAM writes are unavailable while a re-key is in progress".into(),
-        ));
-    }
-    let mutation_permit = session.write_mutation_permit(write_epoch)?;
-
-    let incoming: u64 = body.buckets.iter().map(|b| b.ciphertext.len() as u64).sum();
-    crate::vault::enforce_storage_quota(&state, &session.user_id.to_string(), incoming).await?;
-
-    for bucket in body.buckets {
-        let ciphertext = B64
-            .decode(&bucket.ciphertext)
-            .map_err(|_| AppError::BadRequest("bucket ciphertext is not valid base64".into()))?;
-        if ciphertext.len() > state.config.max_chunk_bytes {
-            return Err(AppError::BadRequest(format!(
-                "bucket exceeds maximum size of {} bytes",
-                state.config.max_chunk_bytes
-            )));
+    let mut create_mask = 0u64;
+    for (index, bucket) in body.buckets.iter().enumerate() {
+        if bucket.if_match == 0 && index < 64 {
+            create_mask |= 1u64 << index;
         }
-
-        let bucket_index_i64 = i64::try_from(bucket.bucket_index)
-            .map_err(|_| AppError::BadRequest("bucket index too large".into()))?;
-        let version = if bucket.if_match == 0 {
-            let existing = state
-                .sqldb
-                .query(
-                    "SELECT 1 FROM oram_buckets
-                 WHERE user_id = ? AND tree_id = ? AND bucket_index = ? AND epoch = ?",
-                    vec![
-                        TursoValue::Text(session.user_id.to_string()),
-                        TursoValue::Text(tree_id.clone()),
-                        TursoValue::Integer(bucket_index_i64),
-                        TursoValue::Integer(write_epoch),
-                    ],
-                )
-                .await
-                .map_err(|e| AppError::Internal(e.to_string()))?;
-
-            if existing.first().is_some() {
-                return Err(AppError::Conflict(format!(
-                    "ORAM bucket {} already exists",
-                    bucket.bucket_index
-                )));
-            }
-
-            let inserted = state.sqldb.execute(
-                "INSERT INTO oram_buckets
-                 (user_id, tree_id, bucket_index, version, lamport_clock, last_writer, ciphertext, epoch, created_at, updated_at)
-                 SELECT ?, ?, ?, 1, ?, ?, ?, ?, ?, ? FROM users
-                 WHERE id = ? AND key_epoch = ? AND rekey_state IS NULL",
-                vec![
-                    TursoValue::Text(session.user_id.to_string()),
-                    TursoValue::Text(tree_id.clone()),
-                    TursoValue::Integer(bucket_index_i64),
-                    TursoValue::Integer(bucket.lamport_clock),
-                    TursoValue::Text(session.device_id.to_string()),
-                    TursoValue::Text(crate::db::encode_b64(&ciphertext)),
-                    TursoValue::Integer(write_epoch),
-                    TursoValue::Text(now.clone()),
-                    TursoValue::Text(now.clone()),
-                    TursoValue::Text(session.user_id.to_string()),
-                    TursoValue::Integer(mutation_permit.epoch()),
-                ],
-            ).await.map_err(|e| AppError::Internal(e.to_string()))?;
-            if inserted != 1 {
-                return Err(AppError::Rekeyed(
-                    "vault epoch changed before the ORAM write completed".into(),
-                ));
-            }
-            1
-        } else {
-            let n = state
-                .sqldb
-                .execute(
-                    "UPDATE oram_buckets
-                 SET version = version + 1,
-                     lamport_clock = ?,
-                     last_writer = ?,
-                     ciphertext = ?,
-                     updated_at = ?
-                 WHERE user_id = ?
-                   AND tree_id = ?
-                   AND bucket_index = ?
-                   AND version = ?
-                   AND epoch = ?
-                   AND EXISTS (
-                     SELECT 1 FROM users
-                     WHERE users.id = oram_buckets.user_id
-                       AND users.key_epoch = ? AND users.rekey_state IS NULL
-                   )",
-                    vec![
-                        TursoValue::Integer(bucket.lamport_clock),
-                        TursoValue::Text(session.device_id.to_string()),
-                        TursoValue::Text(crate::db::encode_b64(&ciphertext)),
-                        TursoValue::Text(now.clone()),
-                        TursoValue::Text(session.user_id.to_string()),
-                        TursoValue::Text(tree_id.clone()),
-                        TursoValue::Integer(bucket_index_i64),
-                        TursoValue::Integer(bucket.if_match),
-                        TursoValue::Integer(write_epoch),
-                        TursoValue::Integer(mutation_permit.epoch()),
-                    ],
-                )
-                .await
-                .map_err(|e| AppError::Internal(e.to_string()))?;
-
-            if n == 0 {
-                // Distinguish a genuine If-Match miss from a rotation which
-                // froze or advanced the account after the initial epoch probe.
-                // The latter must drive adoption, not a fruitless version retry.
-                let current = crate::vault::rekey::resolve_write_epoch(
-                    &state,
-                    &session.user_id.to_string(),
-                    declared,
-                )
-                .await?;
-                if current != (write_epoch, read_epoch) {
-                    return Err(AppError::Rekeyed(
-                        "vault epoch changed before the ORAM write completed".into(),
-                    ));
-                }
-                return Err(AppError::Conflict(format!(
-                    "ORAM bucket {} version mismatch",
-                    bucket.bucket_index
-                )));
-            }
-            bucket.if_match + 1
-        };
-
-        updated.push(PutOramBucketResponse {
-            bucket_index: bucket.bucket_index,
-            version,
-        });
     }
-
-    // ORAM path writes are the reads/writes of a vault above the chunk
-    // threshold, so they notify exactly like chunk writes do.
-    state.vault_events.publish(
-        session.user_id,
-        session.device_id,
-        write_epoch,
-        crate::vault::events::VaultChangeKind::Oram,
+    let bucket_count = body.buckets.len() as i64;
+    let mut io = PutOramIo {
+        state: &state,
+        session: &session,
+        tree_id,
+        user_id: session.user_id.to_string(),
+        buckets: body.buckets,
+        now,
+        declared: body.epoch,
+        epoch: 0,
+        read_epoch: 0,
+        current_index: 0,
+        responses: Vec::new(),
+        error: None,
+    };
+    let transition = vela_rekey_policy::oram_interpreter!(
+        io,
+        OramRequest {
+            authenticated: true,
+            web: session.scope == crate::auth::token::TokenScope::WebSession,
+            web_epoch: session.key_epoch,
+            bucket_count,
+            create_mask,
+        },
+        await
     );
-
-    let mut headers = HeaderMap::new();
-    maybe_append_new_token(&mut headers, &session);
-    Ok((headers, Json(PutOramPathResponse { buckets: updated })))
+    match transition.effect {
+        OramEffect::Complete => {
+            let mut headers = HeaderMap::new();
+            maybe_append_new_token(&mut headers, &session);
+            Ok((
+                headers,
+                Json(PutOramPathResponse {
+                    buckets: io.responses,
+                }),
+            ))
+        }
+        OramEffect::Fail(failure) => {
+            let recorded = io.error.take();
+            Err(recorded.unwrap_or_else(|| match failure {
+                OramFailure::Unauthenticated => {
+                    AppError::Unauthorized("not authenticated".into())
+                }
+                OramFailure::EpochMismatch => {
+                    AppError::Rekeyed("vault epoch changed before the ORAM write completed".into())
+                }
+                OramFailure::RekeyInProgress => AppError::Rekeyed(
+                    "ORAM writes are unavailable while a re-key is in progress".into(),
+                ),
+                OramFailure::EpochStorage => {
+                    AppError::Internal("vault epoch lookup failed".into())
+                }
+                OramFailure::AuthorityEpochMismatch => {
+                    let authority_epoch = if session.scope == crate::auth::token::TokenScope::WebSession
+                    {
+                        session.key_epoch.unwrap_or(1)
+                    } else {
+                        transition.driver.epoch
+                    };
+                    AppError::Rekeyed(format!(
+                        "caller authority is at vault epoch {authority_epoch}, not write epoch {}",
+                        transition.driver.epoch
+                    ))
+                }
+                OramFailure::QuotaExceeded => {
+                    AppError::PayloadTooLarge("storage quota exceeded".into())
+                }
+                OramFailure::QuotaStorage => {
+                    AppError::Internal("storage quota query failed".into())
+                }
+                OramFailure::BucketInvalid => {
+                    AppError::BadRequest("invalid ORAM bucket".into())
+                }
+                OramFailure::BucketExists => AppError::Conflict(format!(
+                    "ORAM bucket {} already exists",
+                    transition.driver.written
+                )),
+                OramFailure::Rekeyed => {
+                    AppError::Rekeyed("vault epoch changed before the ORAM write completed".into())
+                }
+                OramFailure::BucketStorage => {
+                    AppError::Internal("ORAM bucket write failed".into())
+                }
+                OramFailure::VersionMismatch => AppError::Conflict(format!(
+                    "ORAM bucket {} version mismatch",
+                    transition.driver.recheck_index
+                )),
+                OramFailure::RecheckStorage => {
+                    AppError::Internal("ORAM write state recheck failed".into())
+                }
+            }))
+        }
+        _ => Err(AppError::Internal(
+            "ORAM path write did not reach a terminal decision".into(),
+        )),
+    }
 }
 
 fn path_bucket_indices(height: u32, leaf: u64) -> Result<Vec<u64>> {
