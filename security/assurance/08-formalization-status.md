@@ -119,7 +119,7 @@ covered by the driver's per-request theorem):
 | `PUT /vault/chunk/:id`, `GET /vault/chunk/:id` | `upload_interpreter!`, `read_interpreter!` | 7, 2 | [vault](proof-logs/current/vault-upload-interpreter/README.md) |
 | `POST /recovery/enroll-device` | `redemption_interpreter!` | 5 | [redemption](proof-logs/current/redemption-interpreter/README.md) |
 | `/recovery/initiate-proof`, `/recovery/recover/proof` | `possession_initiation_interpreter!`, `possession_recover_interpreter!` | 3, 6 | [possession](proof-logs/current/possession-interpreter/README.md) |
-| WebAuthn registration start/finish, `/recovery/initiate`, `/recovery/recover` | `registration_start_interpreter!`, `registration_interpreter!`, `auth_start_interpreter!`, `auth_finish_interpreter!` | 3, 5, 3, 8 | [WebAuthn](proof-logs/current/webauthn-interpreter/README.md) (local) |
+| WebAuthn registration start/finish, `/recovery/initiate`, `/recovery/recover` | `registration_start_interpreter!`, `registration_interpreter!`, `auth_start_interpreter!`, `auth_finish_interpreter!` | 3, 5, 3, 8 | [WebAuthn](proof-logs/current/webauthn-interpreter/README.md) (hosted on 36b877e) |
 
 Each crate's mutations (a wrong executor method, a call after the verdict,
 and for logout a skipped or doubled marker write) are rejected. The pairing

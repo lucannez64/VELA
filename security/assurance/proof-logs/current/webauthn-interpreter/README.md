@@ -93,3 +93,10 @@ python3 -m unittest discover -s security/formal/tests -p 'test_*.py'
 ```
 
 `interpreter-gate.log` is the local run (F* 2025.10.06, Z3 4.13.3, hax 0.3.7).
+
+## Hosted reproduction
+
+The [36b877e security workflow](https://github.com/lucannez64/VELA/actions/runs/40550521146) re-extracted and verified the four
+WebAuthn interpreters and their lemmas in the recovery-policy job (run on the
+owner's self-hosted runner); all security checks passed. `hosted-36b877e.log`
+holds the summary and hashes, which match the local run.

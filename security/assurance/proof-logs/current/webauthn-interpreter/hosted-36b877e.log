@@ -1,0 +1,15 @@
+# security workflow 40550521146 on 36b877e (proof matrix on the vela-box runners; all checks passed)
+test webauthn_interpreter::tests::auth_finish_performs_exactly_the_driver_effects ... ok
+test webauthn_interpreter::tests::auth_start_performs_exactly_the_driver_effects ... ok
+test webauthn_interpreter::tests::registration_performs_exactly_the_driver_effects ... ok
+test webauthn_interpreter::tests::registration_start_performs_exactly_the_driver_effects ... ok
+test webauthn_interpreter::tests::auth_finish_performs_exactly_the_driver_effects ... ok
+test webauthn_interpreter::tests::auth_start_performs_exactly_the_driver_effects ... ok
+test webauthn_interpreter::tests::registration_performs_exactly_the_driver_effects ... ok
+test webauthn_interpreter::tests::registration_start_performs_exactly_the_driver_effects ... ok
+Verified module: Vela_recovery_policy.Webauthn_interpreter
+Verified module: Vela_recovery_policy_webauthn_interpreter_lemmas
+webauthn interpreter: all four handlers' loops call only the executor method for the driver's current effect, stop at a verdict (or abort) within their budgets, and end in the driver state the per-request theorems cover
+bff9112ed5510f4562a85bdcf7747851f77e9f6d2b2549818655c21bf7a9836b  proofs/fstar/extraction-webauthn-interpreter/Vela_recovery_policy.Webauthn_interpreter.fst
+c2e6a26ee5cca95ea1f2675f19c2752d660a63695824e7b69e432b1902de3109  proofs/fstar/webauthn-interpreter-lemmas/Vela_recovery_policy_webauthn_interpreter_lemmas.fst
+7bfcbf823a25eca061078d26435ed3a73c68b1145a67b08c1328cfb2acc7f094  src/webauthn_interpreter.rs
