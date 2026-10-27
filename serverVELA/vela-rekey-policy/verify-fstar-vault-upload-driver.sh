@@ -116,7 +116,7 @@ printf ' %q' "${fstar_args[@]}"
 printf '\n'
 fstar.exe "${fstar_args[@]}"
 
-echo "vault upload driver: 14 focused Rust functions, 2 soundness postconditions"
+echo "vault upload driver: 14 focused Rust functions, 4 soundness postconditions (two entry points, two transition relations)"
 echo "per-request trace: every active write follows an ACTIVE non-rotation route; shadow writes require the starting device; success implies a matched guarded write; at most one success/failure"
 echo "read trace: only a current-epoch, same-account row is served"
 echo "upload composition: arbitrary interleavings never authorize a stale active write or a web-session shadow write, and the shared-store composition never commits a stale active row, an unauthorized shadow row, or a success response without its own commit"

@@ -380,6 +380,10 @@ let step_sound (d: t_UploadDriver) (e: t_UploadEvent)
   | UploadStage_Shadow ->
       (match e <: t_UploadEvent with
        | UploadEvent_Attempt authority -> on_attempt_sound d authority
+       | UploadEvent_AttemptStorage ->
+           assert ((upload_step d e).f_driver =
+                   (terminal d UploadFailure_AttemptStorage).f_driver);
+           terminal_sound d UploadFailure_AttemptStorage
        | _ -> ())
   | UploadStage_Quota ->
       (match e <: t_UploadEvent with
@@ -417,6 +421,7 @@ let step_after_done (d: t_UploadDriver) (e: t_UploadEvent)
   match e <: t_UploadEvent with
   | UploadEvent_Rekey _ -> ()
   | UploadEvent_Attempt _ -> ()
+  | UploadEvent_AttemptStorage -> ()
   | UploadEvent_Quota _ -> ()
   | UploadEvent_Write _ -> ()
   | UploadEvent_Recheck _ -> ()
@@ -672,14 +677,17 @@ let read_step_sound (r: t_ReadDriver) (e: t_ReadEvent)
   | ReadStage_Epoch ->
       (match e <: t_ReadEvent with
        | ReadEvent_Epoch _ -> ()
+       | ReadEvent_EpochStorage -> ()
        | ReadEvent_Lookup _ -> ())
   | ReadStage_Lookup ->
       (match e <: t_ReadEvent with
        | ReadEvent_Epoch _ -> ()
+       | ReadEvent_EpochStorage -> ()
        | ReadEvent_Lookup _ -> ())
   | ReadStage_Done ->
       (match e <: t_ReadEvent with
        | ReadEvent_Epoch _ -> ()
+       | ReadEvent_EpochStorage -> ()
        | ReadEvent_Lookup _ -> ())
 
 let rec read_run (r: t_ReadDriver) (events: list t_ReadEvent)

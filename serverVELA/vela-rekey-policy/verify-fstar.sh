@@ -65,3 +65,8 @@ fstar.exe \
 # fstar.exe invocation and never share an include directory with the
 # historical artifact checked above.
 "$proof_root/verify-fstar-vault-upload-driver.sh"
+
+# Handler-to-driver link for PUT and GET /vault/chunk: the interpreter loops
+# both handlers expand, proved to perform exactly the drivers' effects. Needs
+# the vault upload driver extraction above.
+"$proof_root/verify-fstar-vault-upload-interpreter.sh"

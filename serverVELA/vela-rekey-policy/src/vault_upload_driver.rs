@@ -147,6 +147,10 @@ pub enum ActivityObservation {
 pub enum UploadEvent {
     Rekey(RekeyObservation),
     Attempt(AttemptAuthority),
+    /// The live rotation attempt could not be loaded (storage failure). The
+    /// handler renders its original error; the driver only decides that this
+    /// effect cannot continue.
+    AttemptStorage,
     Quota(QuotaObservation),
     Write(WriteObservation),
     Recheck(RecheckObservation),
@@ -168,6 +172,8 @@ pub enum UploadFailure {
     ShadowRotationIdRequired,
     /// The shadow writer is not the device that started the rotation.
     ShadowStarterForbidden,
+    /// The live rotation attempt could not be loaded.
+    AttemptStorage,
     /// The writer's authority epoch is not the resolved write epoch.
     AuthorityEpochMismatch,
     /// The storage quota would be exceeded.
@@ -297,8 +303,12 @@ pub fn upload_state_is_sound(d: UploadDriver) -> bool {
         && d.read_epoch == d.state_epoch
         && match d.state_phase {
             Phase::Active => !d.shadow && d.write_epoch == d.state_epoch,
+            // A web session may resolve a freezing account's successor route:
+            // that only reaches the `AuthorizeShadow` effect, which refuses it
+            // (`on_attempt`). The web exclusion applies to leaving the shadow
+            // stage, not to holding the route.
             Phase::Freezing => {
-                d.shadow && !d.web && next_epoch(d.state_epoch) == Some(d.write_epoch)
+                d.shadow && next_epoch(d.state_epoch) == Some(d.write_epoch)
             }
         };
     let permitted = resolved && d.permit_epoch == d.write_epoch;
@@ -354,7 +364,14 @@ pub fn upload_state_is_sound(d: UploadDriver) -> bool {
         && (!matches!(d.stage, UploadStage::Activity) || activity_clean)
         && (!matches!(d.stage, UploadStage::Publish) || publish_clean)
         && (!matches!(d.stage, UploadStage::Done) || done_clean)
-        && (!d.shadow || !d.web)
+        // A temporary web session must never take a shadow route past the
+        // authorisation step: `AuthorizeShadow` is where it is refused. The
+        // shadow stage itself (and the failed verdict it produces) is allowed
+        // to hold that route, exactly like the F* trace invariant.
+        && (!d.shadow
+            || !d.web
+            || matches!(d.stage, UploadStage::Shadow)
+            || d.failed)
         && (!d.write_matched || d.write_epoch >= INITIAL_EPOCH)
         && (!d.activity_done || d.shadow)
         && (!d.published || (!d.shadow && d.write_matched))
@@ -539,6 +556,12 @@ fn on_rekey(driver: UploadDriver, observation: RekeyObservation) -> UploadTransi
     }
 }
 
+/// The attempt lookup failed. Like every terminal category, this only records
+/// the verdict; the handler keeps the storage error for rendering.
+fn on_attempt_storage(driver: UploadDriver) -> UploadTransition {
+    terminal(driver, UploadFailure::AttemptStorage)
+}
+
 fn on_attempt(driver: UploadDriver, authority: AttemptAuthority) -> UploadTransition {
     // Defense in depth: a web session can never write shadow ciphertext even
     // if an observation incorrectly claimed device scope. The handler derives
@@ -681,6 +704,11 @@ fn on_publish(driver: UploadDriver) -> UploadTransition {
 
 /// The complete, total upload transition relation. Events that do not match
 /// the current stage (and every event after `Done`) are ignored.
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    !upload_state_is_sound(driver)
+        || (upload_state_is_sound(result.driver)
+            && upload_effect_is_sound(result.driver, result.effect))
+}))]
 pub fn upload_step(driver: UploadDriver, event: UploadEvent) -> UploadTransition {
     match event {
         UploadEvent::Rekey(observation) => {
@@ -693,6 +721,13 @@ pub fn upload_step(driver: UploadDriver, event: UploadEvent) -> UploadTransition
         UploadEvent::Attempt(authority) => {
             if matches!(driver.stage, UploadStage::Shadow) {
                 on_attempt(driver, authority)
+            } else {
+                idle(driver)
+            }
+        }
+        UploadEvent::AttemptStorage => {
+            if matches!(driver.stage, UploadStage::Shadow) {
+                on_attempt_storage(driver)
             } else {
                 idle(driver)
             }
@@ -826,6 +861,8 @@ pub enum ReadLookupObservation {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReadEvent {
     Epoch(ReadEpochObservation),
+    /// The served epoch could not be loaded (storage failure).
+    EpochStorage,
     Lookup(ReadLookupObservation),
 }
 
@@ -833,6 +870,8 @@ pub enum ReadEvent {
 pub enum ReadFailure {
     Unauthenticated,
     InvalidEpoch,
+    /// The served-epoch lookup failed.
+    EpochStorage,
     NotFound,
     QueryStorage,
     ParseStorage,
@@ -885,11 +924,13 @@ pub fn read_state_is_sound(r: ReadDriver) -> bool {
         && r.lamport_clock == 0
         && !r.responded
         && !r.failed;
+    // `version` is the row's stored version echoed back to the client; the
+    // decoder owns its validity (a negative value cannot be produced by the
+    // schema's `INSERT`/`UPDATE` statements), so the driver does not claim it.
     let served = r.authenticated
         && r.epoch >= INITIAL_EPOCH
         && r.responded
-        && !r.failed
-        && r.version >= 0;
+        && !r.failed;
     (!matches!(r.stage, ReadStage::Epoch) || (r.authenticated && fresh))
         && (!matches!(r.stage, ReadStage::Lookup) || lookup_clean)
         && (!matches!(r.stage, ReadStage::Done)
@@ -947,6 +988,11 @@ pub fn begin_read(request: ReadRequest) -> ReadTransition {
     }
 }
 
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    !read_state_is_sound(driver)
+        || (read_state_is_sound(result.driver)
+            && read_effect_is_sound(result.driver, result.effect))
+}))]
 pub fn read_step(driver: ReadDriver, event: ReadEvent) -> ReadTransition {
     match event {
         ReadEvent::Epoch(observation) => {
@@ -965,6 +1011,12 @@ pub fn read_step(driver: ReadDriver, event: ReadEvent) -> ReadTransition {
                     ReadEffect::LookupChunk,
                 )
             }
+        }
+        ReadEvent::EpochStorage => {
+            if !matches!(driver.stage, ReadStage::Epoch) {
+                return read_transition(driver, ReadEffect::Idle);
+            }
+            read_terminal(driver, ReadFailure::EpochStorage)
         }
         ReadEvent::Lookup(observation) => {
             if !matches!(driver.stage, ReadStage::Lookup) {
@@ -1102,6 +1154,7 @@ mod tests {
         ] {
             out.push(UploadEvent::Attempt(authority));
         }
+        out.push(UploadEvent::AttemptStorage);
         for observation in [
             QuotaObservation::Allowed,
             QuotaObservation::Exceeded,
@@ -1253,6 +1306,7 @@ mod tests {
                 let matching = match (stage, &event) {
                     (UploadStage::Resolve, UploadEvent::Rekey(_)) => true,
                     (UploadStage::Shadow, UploadEvent::Attempt(_)) => true,
+                    (UploadStage::Shadow, UploadEvent::AttemptStorage) => true,
                     (UploadStage::Quota, UploadEvent::Quota(_)) => true,
                     (UploadStage::Write, UploadEvent::Write(_)) => true,
                     (UploadStage::Recheck, UploadEvent::Recheck(_)) => true,
@@ -1298,6 +1352,42 @@ mod tests {
         let t = on_published_observed(t.driver);
         assert_eq!(t.effect, UploadEffect::Complete);
         assert!(t.driver.responded && t.driver.published && !t.driver.failed);
+    }
+
+    /// A web session that resolves a freezing account's successor route holds
+    /// a *legal* intermediate state: the `AuthorizeShadow` effect is how it is
+    /// refused, and `upload_state_is_sound` must not pretend the route cannot
+    /// be observed. It must still never leave the shadow stage as a web writer.
+    #[test]
+    fn a_web_session_may_hold_a_shadow_route_but_never_leaves_it() {
+        let start = begin_upload(UploadRequest {
+            writer: web(1),
+            intent: WriteIntent::Create,
+            declared_epoch: Some(2),
+        });
+        assert!(upload_state_is_sound(start.driver));
+        let t = on_rekey_observed(
+            start.driver,
+            RekeyObservation::State { epoch: 1, phase: Phase::Freezing },
+        );
+        assert!(t.driver.shadow && t.driver.web);
+        assert!(upload_state_is_sound(t.driver));
+        assert!(upload_effect_is_sound(t.driver, t.effect));
+        let rejected = on_attempt_observed(
+            t.driver,
+            AttemptAuthority {
+                device_scope: false,
+                starter_matches: true,
+                rotation_id_present: true,
+                rotation_id_matches: true,
+            },
+        );
+        assert_eq!(
+            rejected.effect,
+            UploadEffect::Fail(UploadFailure::ShadowWebSessionForbidden)
+        );
+        assert!(upload_state_is_sound(rejected.driver));
+        assert!(!rejected.driver.shadow || !rejected.driver.web || rejected.driver.failed);
     }
 
     #[test]
@@ -1463,6 +1553,26 @@ mod tests {
         let t = on_quota_observed(t.driver, QuotaObservation::Allowed);
         let t = on_write_observed(t.driver, WriteObservation::Skipped);
         assert_eq!(t.effect, UploadEffect::Fail(UploadFailure::RekeyEnded));
+    }
+
+    #[test]
+    fn a_failed_attempt_lookup_fails_closed_without_a_write() {
+        let start = begin_upload(request(WriteIntent::Create, Some(2)));
+        let t = on_rekey_observed(
+            start.driver,
+            RekeyObservation::State { epoch: 1, phase: Phase::Freezing },
+        );
+        assert_eq!(t.effect, UploadEffect::AuthorizeShadow);
+        let t = upload_step(t.driver, UploadEvent::AttemptStorage);
+        assert_eq!(t.effect, UploadEffect::Fail(UploadFailure::AttemptStorage));
+        assert!(!t.driver.write_matched);
+        assert!(upload_state_is_sound(t.driver));
+        // Outside the shadow stage the observation is out of order.
+        let quota = sample_driver(UploadStage::Quota);
+        assert_eq!(
+            upload_step(quota, UploadEvent::AttemptStorage).effect,
+            UploadEffect::Idle
+        );
     }
 
     #[test]
@@ -1637,9 +1747,25 @@ mod tests {
         );
         for event in [
             ReadEvent::Epoch(ReadEpochObservation { epoch: 1 }),
+            ReadEvent::EpochStorage,
             ReadEvent::Lookup(ReadLookupObservation::Missing),
         ] {
             assert_eq!(read_step(start.driver, event).effect, ReadEffect::Idle);
         }
+    }
+
+    #[test]
+    fn a_failed_epoch_lookup_fails_closed_before_the_row_query() {
+        let start = begin_read(ReadRequest { authenticated: true });
+        let t = read_step(start.driver, ReadEvent::EpochStorage);
+        assert_eq!(t.effect, ReadEffect::Fail(ReadFailure::EpochStorage));
+        assert!(read_state_is_sound(t.driver));
+        assert!(read_effect_is_sound(t.driver, t.effect));
+        // Only the epoch stage consults it.
+        let lookup = read_step(start.driver, ReadEvent::Epoch(ReadEpochObservation { epoch: 1 }));
+        assert_eq!(
+            read_step(lookup.driver, ReadEvent::EpochStorage).effect,
+            ReadEffect::Idle
+        );
     }
 }
