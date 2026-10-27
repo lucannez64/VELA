@@ -10,6 +10,7 @@
 //! invitation and rendezvous handlers follow between their effects.
 
 pub mod pairing_driver;
+pub mod pairing_interpreter;
 
 /// Decoded length of a hybrid encapsulation key (`X25519` + `ML-KEM`).
 pub const HYBRID_EK_LEN: usize = 1568 + 32;

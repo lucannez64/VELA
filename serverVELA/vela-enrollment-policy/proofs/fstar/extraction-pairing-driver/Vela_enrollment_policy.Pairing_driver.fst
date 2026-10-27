@@ -203,21 +203,6 @@ type t_PairingDriver = {
   f_signature_verified:bool
 }
 
-/// One driver event. The handler feeds exactly the observation it obtained
-/// from the corresponding effect.
-type t_PairingEvent =
-  | PairingEvent_PackageWritten : t_StoreObservation -> t_PairingEvent
-  | PairingEvent_PackageRedeemed : t_RedeemObservation -> t_PairingEvent
-  | PairingEvent_GrantWritten : t_StoreObservation -> t_PairingEvent
-  | PairingEvent_ClaimChecked : Vela_enrollment_policy.t_ClaimObservation -> t_PairingEvent
-  | PairingEvent_ClaimWritten : t_ClaimWriteObservation -> t_PairingEvent
-  | PairingEvent_CompletionReady : t_CompletionPreflightObservation -> t_PairingEvent
-  | PairingEvent_CeremonyTaken : t_TakeObservation -> t_PairingEvent
-  | PairingEvent_DeviceInserted : t_DeviceInsertObservation -> t_PairingEvent
-  | PairingEvent_ResultWritten : t_StoreObservation -> t_PairingEvent
-  | PairingEvent_ResultRead : t_ResultReadObservation -> t_PairingEvent
-  | PairingEvent_ClaimRead : t_ClaimReadObservation -> t_PairingEvent
-
 type t_PairingTransition = {
   f_driver:t_PairingDriver;
   f_effect:t_PairingEffect
@@ -845,6 +830,22 @@ type t_CompletionAccountObservation = {
   f_rekey_permitted:bool
 }
 
+/// One driver event. The handler feeds exactly the observation it obtained
+/// from the corresponding effect.
+type t_PairingEvent =
+  | PairingEvent_PackageWritten : t_StoreObservation -> t_PairingEvent
+  | PairingEvent_PackageRedeemed : t_RedeemObservation -> t_PairingEvent
+  | PairingEvent_GrantWritten : t_StoreObservation -> t_PairingEvent
+  | PairingEvent_ClaimChecked : Vela_enrollment_policy.t_ClaimObservation -> t_PairingEvent
+  | PairingEvent_ClaimWritten : t_ClaimWriteObservation -> t_PairingEvent
+  | PairingEvent_AccountChecked : t_CompletionAccountObservation -> t_PairingEvent
+  | PairingEvent_CompletionReady : t_CompletionPreflightObservation -> t_PairingEvent
+  | PairingEvent_CeremonyTaken : t_TakeObservation -> t_PairingEvent
+  | PairingEvent_DeviceInserted : t_DeviceInsertObservation -> t_PairingEvent
+  | PairingEvent_ResultWritten : t_StoreObservation -> t_PairingEvent
+  | PairingEvent_ResultRead : t_ResultReadObservation -> t_PairingEvent
+  | PairingEvent_ClaimRead : t_ClaimReadObservation -> t_PairingEvent
+
 /// Start a completion request. Only a grant bound to this user *and* this
 /// device may continue; the handler then reads the account row.
 let begin_completion (grant: t_GrantObservation)
@@ -1245,6 +1246,7 @@ let step (driver: t_PairingDriver) (event: t_PairingEvent)
         | _ -> false)
     then on_claim_written driver observation
     else idle driver
+  | PairingEvent_AccountChecked observation -> on_completion_account driver observation
   | PairingEvent_CompletionReady observation ->
     if
       stage_start driver && ~.driver.f_wrote &&

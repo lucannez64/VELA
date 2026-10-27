@@ -369,6 +369,11 @@ pub enum PairingEvent {
     GrantWritten(StoreObservation),
     ClaimChecked(ClaimObservation),
     ClaimWritten(ClaimWriteObservation),
+    /// The account-epoch and rekey preflight for a completion. It is its own
+    /// event so the total `step` relation covers every effect the handler
+    /// performs, including the one that directly calls
+    /// `on_completion_account`.
+    AccountChecked(CompletionAccountObservation),
     CompletionReady(CompletionPreflightObservation),
     CeremonyTaken(TakeObservation),
     DeviceInserted(DeviceInsertObservation),
@@ -1216,6 +1221,9 @@ pub fn step(driver: PairingDriver, event: PairingEvent) -> PairingTransition {
                 idle(driver)
             }
         }
+        PairingEvent::AccountChecked(observation) => {
+            on_completion_account(driver, observation)
+        }
         PairingEvent::CompletionReady(observation) => {
             if stage_start(driver)
                 && !driver.wrote
@@ -1453,6 +1461,30 @@ mod tests {
             ClaimWriteObservation::KeyExists,
         ] {
             out.push(PairingEvent::ClaimWritten(observation));
+        }
+        for observation in [
+            CompletionAccountObservation {
+                account_query_ok: true,
+                declared_epoch_positive: true,
+                rekey_permitted: true,
+            },
+            CompletionAccountObservation {
+                account_query_ok: false,
+                declared_epoch_positive: true,
+                rekey_permitted: true,
+            },
+            CompletionAccountObservation {
+                account_query_ok: true,
+                declared_epoch_positive: false,
+                rekey_permitted: true,
+            },
+            CompletionAccountObservation {
+                account_query_ok: true,
+                declared_epoch_positive: true,
+                rekey_permitted: false,
+            },
+        ] {
+            out.push(PairingEvent::AccountChecked(observation));
         }
         for observation in [TakeObservation::Missing, TakeObservation::Taken {
             grant_matches: true,

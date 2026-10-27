@@ -8,6 +8,7 @@
 //! these exact decisions to F*.
 
 pub mod driver;
+pub mod interpreter;
 
 pub const INITIAL_SEQ: i64 = 1;
 
