@@ -119,6 +119,6 @@ fstar.exe "${fstar_args[@]}"
 echo "vault upload driver: 14 focused Rust functions, 2 soundness postconditions"
 echo "per-request trace: every active write follows an ACTIVE non-rotation route; shadow writes require the starting device; success implies a matched guarded write; at most one success/failure"
 echo "read trace: only a current-epoch, same-account row is served"
-echo "upload composition: arbitrary interleavings never authorize a stale active write or a web-session shadow write, and the extracted epoch guards reject stale commits and non-device shadow writers"
+echo "upload composition: arbitrary interleavings never authorize a stale active write or a web-session shadow write, and the shared-store composition never commits a stale active row, an unauthorized shadow row, or a success response without its own commit"
 sha256sum proofs/fstar/extraction-vault-upload-driver-root/Vela_rekey_policy.fst \
   "${proof_files[@]}" "${lemma_files[@]}" "${composition_files[@]}" src/vault_upload_driver.rs

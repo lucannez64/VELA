@@ -1,0 +1,11 @@
+--- /home/hirew/.t3/worktrees/VELA/t3-d0ca44cd/serverVELA/vela-rekey-policy/proofs/fstar/vault-upload-driver-composition/Vela_rekey_policy_vault_upload_driver_composition.fst	2026-10-27 00:19:56.661995313 +0100
++++ /tmp/opencode/mutants/guard-epoch/vault-upload-driver-composition/Vela_rekey_policy_vault_upload_driver_composition.fst	2026-10-27 00:45:13.506252794 +0100
+@@ -320,7 +320,7 @@
+ /// `WHERE users.id = ? AND users.key_epoch = permit.permit_epoch AND
+ /// users.rekey_state IS NULL`.
+ let sql_active_guard (a: account) (p: t_UploadWritePermit) : bool =
+-  a.a_epoch = p.f_permit_epoch && a.a_phase = Phase_Active
++  a.a_phase = Phase_Active
+ 
+ /// `WHERE id = ? AND key_epoch = ? AND rekey_state = 'freezing'
+ /// AND rekey_starter = ? AND rekey_id = ?` with the read epoch, the writer's

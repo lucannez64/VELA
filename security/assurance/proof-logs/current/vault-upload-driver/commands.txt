@@ -6,29 +6,47 @@
 export CARGO_HOME=/tmp/vela-hax-cargo
 export OPAMROOT=$HOME/.local/opt/vela-tools/opam
 export PATH=/tmp/vela-fstar-prebuilt/fstar/bin:$HOME/.local/opt/vela-tools/bin:$HOME/.local/opt/vela-tools/opam/vela-hax/bin:$PATH
-export CARGO_TARGET_DIR=/home/hirew/.t3/worktrees/VELA/t3-700776df/target
+export CARGO_TARGET_DIR=/home/hirew/.t3/worktrees/VELA/t3-d0ca44cd/target-own
 export CARGO_PROFILE_DEV_CODEGEN_BACKEND=llvm
 
 # Focused proof (writes focused-verify.log)
 cd serverVELA/vela-rekey-policy
 ~/.local/opt/vela-tools/bin/vela-heavy ./verify-fstar-vault-upload-driver.sh
 
-# Full crate gate, including the historical extraction
+# Full crate gate, including the historical extraction (writes full-verify.log)
 ~/.local/opt/vela-tools/bin/vela-heavy ./verify-fstar.sh
 
 # Rust tests (server-tests.log)
 cd ../..
-~/.local/opt/vela-tools/bin/vela-heavy cargo test -p vela-rekey-policy --lib
-~/.local/opt/vela-tools/bin/vela-heavy cargo test -p vela-server --test rekey_state_model
-~/.local/opt/vela-tools/bin/vela-heavy cargo test -p vela-server --test session_capability_model
-~/.local/opt/vela-tools/bin/vela-heavy cargo test -p vela-server --test account_deletion_model
-~/.local/opt/vela-tools/bin/vela-heavy cargo test -p vela-server --test integration
+~/.local/opt/vela-tools/bin/vela-heavy cargo test --manifest-path serverVELA/Cargo.toml -p vela-rekey-policy --lib
+~/.local/opt/vela-tools/bin/vela-heavy cargo test --manifest-path serverVELA/Cargo.toml -p vela-server --test rekey_state_model
+~/.local/opt/vela-tools/bin/vela-heavy cargo test --manifest-path serverVELA/Cargo.toml -p vela-server --test session_capability_model
+~/.local/opt/vela-tools/bin/vela-heavy cargo test --manifest-path serverVELA/Cargo.toml -p vela-server --test account_deletion_model
+~/.local/opt/vela-tools/bin/vela-heavy cargo test --manifest-path serverVELA/Cargo.toml -p vela-server --test integration
 
 # Static gates
 python3 security/assurance/check-proof-boundary.py
 python3 -m unittest discover -s security/formal/tests -p 'test_*.py'
 
-# Mutation checks: copies of the regenerated extraction under /tmp/opencode are
-# edited; the checked-in extraction is never modified. Diffs are next to their
-# logs. Each fstar.exe invocation includes the mutant directories instead of
-# the checked-in ones.
+# Mutation checks: copies of the regenerated extraction / proof modules under
+# /tmp/opencode/mutants/<name> are edited; the checked-in sources are never
+# modified. Diffs are next to their logs. Each fstar.exe invocation includes
+# the mutant directories instead of the checked-in ones:
+#
+#   fstar.exe --cmi --cache_off --warn_error -331 --z3rlimit 16000 \
+#     --z3version 4.13.3 \
+#     --already_cached '+Prims+FStar+LowStar+C+Spec.Loops+TestLib' \
+#     --include <hax-lib>/proof-libs/fstar/core \
+#     --include <hax-lib>/proof-libs/fstar/rust_primitives \
+#     --include <hax-lib>/proofs/fstar/extraction \
+#     --include <tree>/extraction-vault-upload-driver-root \
+#     --include <tree>/extraction-vault-upload-driver \
+#     --include <tree>/vault-upload-driver-lemmas \
+#     --include <tree>/vault-upload-driver-composition \
+#     <tree>/extraction-vault-upload-driver/*.fst \
+#     <tree>/vault-upload-driver-lemmas/*.fst \
+#     <tree>/vault-upload-driver-composition/*.fst
+#
+# The four `*-witness` trees additionally admit (only in the /tmp copy) the
+# proof obligation the mutation kills, so that the module checks and the
+# counter can be evaluated on the concrete schedule named in the diff.

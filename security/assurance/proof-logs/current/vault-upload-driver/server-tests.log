@@ -1,20 +1,17 @@
-=== rekey_state_model
-test verified_mutation_permit_matches_the_m11c_authority_relation ... ok
+=== cargo test -p vela-rekey-policy --lib
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
-test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+=== cargo test -p vela-server --test rekey_state_model
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.28s
 
-=== session_capability_model
-test route_matrix_never_gives_web_sessions_permanent_authority ... ok
-
+=== cargo test -p vela-server --test session_capability_model
 test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
-=== account_deletion_model
-test every_bounded_account_deletion_trace_matches_the_model ... ok
+=== cargo test -p vela-server --test account_deletion_model
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 210.43s
 
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 221.60s
+=== cargo test -p vela-server --test integration
+test result: ok. 68 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.69s
 
-=== integration
-test web_session_token_still_reaches_the_vault ... ok
-
-test result: ok. 68 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.67s
-
+Rust handler behaviour is unchanged: no source file under serverVELA/vela-server
+was modified by this round.
