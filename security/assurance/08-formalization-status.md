@@ -79,6 +79,28 @@ atomicity, PASETO and rate limits, in-flight handlers of a revoked actor and
 effect fidelity remain assumptions. The [bd765ab workflow](https://github.com/lucannez64/VELA/actions/runs/40230607902) reproduced
 it. [Evidence](proof-logs/current/revocation-driver/README.md).
 
+## Handler-to-driver link (pilot: account deletion, local)
+
+The drivers above prove what each request *decides*; until now, that a handler
+performs exactly the driver's effects, in order, and nothing else was a manual
+review obligation ("effect fidelity"). `DELETE /account` now closes most of it
+mechanically. `vela-session-policy::deletion_interpreter` defines the loop once,
+as the `deletion_interpreter!` macro. The crate expands it into the synchronous
+`run_deletion`, generic over an executor trait with one typed method per
+effect; the handler expands the same macro text with `.await` over an async
+executor that holds all of the request's I/O. For every executor, F* proves
+that `run_deletion` calls exactly the method for the effect the driver just
+emitted (with that effect's table argument), calls nothing after the verdict,
+reaches a verdict within its 14-turn budget, and ends in `run_from_actor actor
+evs` for the observations the executor returned; the deletion trace theorems
+therefore hold for the handler's final state. Two mutations of the extracted
+loop (a wrong executor method; a call after the verdict) are rejected. A
+source test pins the handler to one `await` expansion and forbids direct driver
+calls. What remains assumed: each executor method performs the I/O its name
+says and reports it honestly, the macro expansion in the server (it differs
+only by `.await`), and the store/SQL semantics.
+[Evidence](proof-logs/current/deletion-interpreter/README.md).
+
 ## Account deletion driver (hosted on cdffe46)
 
 `DELETE /account` now takes every decision from an extracted driver in

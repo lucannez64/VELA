@@ -62,3 +62,8 @@ fstar.exe \
 # middleware admission decision it composes with) and is checked in its own
 # fstar.exe invocation.
 "$proof_root/verify-fstar-deletion-driver.sh"
+
+# Handler-to-driver link for DELETE /account: the interpreter loop the handler
+# expands, proved to perform exactly the driver's effects. Needs the deletion
+# driver extraction above.
+"$proof_root/verify-fstar-deletion-interpreter.sh"

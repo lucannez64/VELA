@@ -96,3 +96,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tower = { version = "0.4", features = ["util"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "blocking"] }
 serde_json = "1"
+
+# The proved interpreter macros from the policy crates contain a `cfg(hax)`
+# loop invariant; it is always off in this crate.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(hax)"] }

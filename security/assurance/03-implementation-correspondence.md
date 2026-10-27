@@ -250,6 +250,15 @@ composition lemmas; [evidence](proof-logs/current/deletion-driver/README.md)).
 The SQL transaction's atomicity, store linearizability and handler effect
 fidelity are assumed.
 
+## Handler-to-driver interpreters
+
+`DELETE /account` runs `vela_session_policy::deletion_interpreter!`, the same
+loop F* checks as `run_deletion` for every executor
+([evidence](proof-logs/current/deletion-interpreter/README.md)). The handler's
+review surface is reduced to the executor methods in `account/delete.rs`, one
+per effect; `security/formal/tests/test_handler_interpreters.py` refuses a
+handler that calls the driver outside the macro.
+
 ## Vault upload driver
 
 `vela-rekey-policy::vault_upload_driver` holds the authentication, epoch-route,

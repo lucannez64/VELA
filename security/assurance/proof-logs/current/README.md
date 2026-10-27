@@ -186,6 +186,10 @@ The [revocation driver](revocation-driver/README.md) proves the revoke,
 logout and revocation-admission decisions per request and under any
 interleaving (13 contracts, 84 lemmas, three load-bearing mutations).
 
+The [deletion interpreter](deletion-interpreter/README.md) checks the loop
+`DELETE /account` runs: for every executor it performs exactly the driver's
+effects, stops at the verdict and ends in a state the deletion theorems cover.
+
 The [deletion driver](deletion-driver/README.md) proves the lockout-first,
 fixed-order, commit-only-after-`users` deletion per request and no
 cross-account deletion, second commit or locked-out admission under any

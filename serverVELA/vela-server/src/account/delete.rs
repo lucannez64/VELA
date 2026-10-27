@@ -25,19 +25,16 @@
 
 use axum::{extract::State, http::HeaderMap, Json};
 use vela_session_policy::deletion_driver::{
-    begin_deletion, on_commit_event, on_device_lockout_event, on_devices_scanned_event,
-    on_table_deleted_event, on_transaction_observed_event, on_users_deleted_event,
-    on_web_session_lockout_event, on_web_sessions_scanned_event, CommitObservation,
-    DeletionActorObservation, DeletionDriver, DeletionEffect, DeletionFailure, DeletionStage,
-    DeletionTable, LockoutObservation, ScanObservation, TableDeleteObservation,
-    TransactionObservation, UsersDeleteObservation,
+    CommitObservation, DeletionActorObservation, DeletionEffect, DeletionFailure, DeletionTable,
+    LockoutObservation, ScanObservation, TableDeleteObservation, TransactionObservation,
+    UsersDeleteObservation,
 };
 
 use crate::{
     error::{AppError, Result},
     middleware::DeviceSession,
     rate_limit,
-    sqldb::{Db as _, TursoValue},
+    sqldb::{Db as _, TursoValue, TxGuard},
     state::AppState,
 };
 
@@ -66,69 +63,58 @@ fn deletion_failure_error(failure: DeletionFailure) -> AppError {
     }
 }
 
-/// Perform the effect the driver returned, or return the driver's terminal
-/// failure. `driver` is threaded through so an out-of-order effect can never be
-/// executed.
-fn next_step(driver: DeletionDriver, effect: DeletionEffect) -> Result<DeletionDriver> {
-    match effect {
-        DeletionEffect::Idle => Err(AppError::Internal(
-            "account deletion driver produced no effect".into(),
-        )),
-        DeletionEffect::Fail(failure) => Err(deletion_failure_error(failure)),
-        _ => Ok(driver),
-    }
+/// The I/O behind each deletion effect. The driver decides which method runs
+/// and when (through the shared `deletion_interpreter!` loop, proved in F* as
+/// `run_deletion`); each method only performs its effect and reports the
+/// outcome. The first storage error is kept so the response carries the
+/// original message.
+struct DeleteAccountIo<'a> {
+    state: &'a AppState,
+    account: String,
+    device_ids: Vec<String>,
+    web_session_ids: Vec<String>,
+    tx: Option<TxGuard>,
+    error: Option<AppError>,
 }
 
-pub async fn delete_account(
-    State(state): State<AppState>,
-    session: DeviceSession,
-) -> Result<(HeaderMap, Json<serde_json::Value>)> {
-    // One account id scopes the device scan, the web-session scan, all eight
-    // deletes and the existence check. The driver re-checks the actor facts and
-    // the single-account scope so a rewired caller cannot authorize an effect
-    // for a second account; a revoked actor gets no effect at all.
-    let start = begin_deletion(DeletionActorObservation {
-        authenticated: true,
-        device_active: true,
-        scoped_to_session_account: true,
-    });
-    debug_assert!(matches!(start.effect, DeletionEffect::ScanDevices));
-    let mut driver = next_step(start.driver, start.effect)?;
-
-    let account = session.user_id.to_string();
-
-    // ── 1. Lock every device out before touching the database ──────────────
-    let device_rows = match state
-        .sqldb
-        .query(
-            "SELECT id FROM devices WHERE user_id = ?",
-            vec![TursoValue::Text(account.clone())],
-        )
-        .await
-    {
-        Ok(rows) => rows,
-        Err(error) => {
-            let transition = on_devices_scanned_event(driver, ScanObservation::QueryFailed);
-            debug_assert!(matches!(
-                transition.effect,
-                DeletionEffect::Fail(DeletionFailure::DeviceScanStorage)
-            ));
-            return Err(AppError::Internal(error.to_string()));
-        }
-    };
-    let transition = on_devices_scanned_event(driver, ScanObservation::Rows);
-    driver = next_step(transition.driver, transition.effect)?;
-
-    // Both writes are one logical lockout. A store error is ignored, as it
-    // always was: the rows are about to be deleted, so a failed lockout can
-    // only shorten the window in which a stolen token still works.
-    for row in &device_rows {
-        if let Some(id) = row.text(0) {
-            let _ = rate_limit::revoke_all_device_jtis(&state.store, id);
+impl DeleteAccountIo<'_> {
+    fn fail(&mut self, error: impl ToString) {
+        if self.error.is_none() {
+            self.error = Some(AppError::Internal(error.to_string()));
         }
     }
-    let transition = on_device_lockout_event(driver, LockoutObservation::Applied);
-    driver = next_step(transition.driver, transition.effect)?;
+
+    async fn scan_ids(&mut self, sql: &str, params: Vec<TursoValue>) -> (ScanObservation, Vec<String>) {
+        match self.state.sqldb.query(sql, params).await {
+            Ok(rows) => (
+                ScanObservation::Rows,
+                rows.iter().filter_map(|row| row.text(0).map(String::from)).collect(),
+            ),
+            Err(error) => {
+                self.fail(error);
+                (ScanObservation::QueryFailed, Vec::new())
+            }
+        }
+    }
+
+    // ── 1. Lock every device out before touching the database ──────────────
+
+    async fn scan_devices(&mut self) -> ScanObservation {
+        let params = vec![TursoValue::Text(self.account.clone())];
+        let (observation, ids) = self.scan_ids("SELECT id FROM devices WHERE user_id = ?", params).await;
+        self.device_ids = ids;
+        observation
+    }
+
+    /// A store error is ignored, as it always was: the rows are about to be
+    /// deleted, so a failed lockout can only shorten the window in which a
+    /// stolen token still works.
+    async fn lockout_devices(&mut self) -> LockoutObservation {
+        for id in &self.device_ids {
+            let _ = rate_limit::revoke_all_device_jtis(&self.state.store, id);
+        }
+        LockoutObservation::Applied
+    }
 
     // ── 2. Lock every web session out (owned or approved) ──────────────────
     //
@@ -137,68 +123,55 @@ pub async fn delete_account(
     // unauthenticated). They can never be granted once the account is gone, so
     // they are part of the account's footprint too — otherwise a deleted user
     // id lingers in the table for the pending TTL.
-    let web_session_rows = match state
-        .sqldb
-        .query(
-            "SELECT id FROM web_sessions WHERE user_id = ? OR approver_user_id = ?",
-            vec![
-                TursoValue::Text(account.clone()),
-                TursoValue::Text(account.clone()),
-            ],
-        )
-        .await
-    {
-        Ok(rows) => rows,
-        Err(error) => {
-            let transition = on_web_sessions_scanned_event(driver, ScanObservation::QueryFailed);
-            debug_assert!(matches!(
-                transition.effect,
-                DeletionEffect::Fail(DeletionFailure::WebSessionScanStorage)
-            ));
-            return Err(AppError::Internal(error.to_string()));
-        }
-    };
-    let transition = on_web_sessions_scanned_event(driver, ScanObservation::Rows);
-    driver = next_step(transition.driver, transition.effect)?;
 
-    for row in &web_session_rows {
-        if let Some(id) = row.text(0) {
-            let _ = state.store.set_ex(
+    async fn scan_web_sessions(&mut self) -> ScanObservation {
+        let params = vec![
+            TursoValue::Text(self.account.clone()),
+            TursoValue::Text(self.account.clone()),
+        ];
+        let (observation, ids) = self
+            .scan_ids(
+                "SELECT id FROM web_sessions WHERE user_id = ? OR approver_user_id = ?",
+                params,
+            )
+            .await;
+        self.web_session_ids = ids;
+        observation
+    }
+
+    async fn lockout_web_sessions(&mut self) -> LockoutObservation {
+        for id in &self.web_session_ids {
+            let _ = self.state.store.set_ex(
                 &format!("device:revoked:{id}"),
                 &[1u8],
                 crate::web_session::MAX_TTL_SECS as u64,
             );
-            let _ = rate_limit::revoke_all_device_jtis(&state.store, id);
+            let _ = rate_limit::revoke_all_device_jtis(&self.state.store, id);
         }
+        LockoutObservation::Applied
     }
-    let transition = on_web_session_lockout_event(driver, LockoutObservation::Applied);
-    driver = next_step(transition.driver, transition.effect)?;
 
     // ── 3. One SQL transaction for every deletion ──────────────────────────
     //
     // A crash or database error part-way leaves the account intact instead of
     // partly deleted. The store-side revocations above run first and only ever
     // lock out, so they are safe to leave in place if this transaction rolls
-    // back.
-    let tx = match state.sqldb.tx().await {
-        Ok(tx) => tx,
-        Err(error) => {
-            let transition = on_transaction_observed_event(driver, TransactionObservation::Failed);
-            debug_assert!(matches!(
-                transition.effect,
-                DeletionEffect::Fail(DeletionFailure::TransactionStorage)
-            ));
-            return Err(AppError::Internal(error.to_string()));
-        }
-    };
-    let transition = on_transaction_observed_event(driver, TransactionObservation::Begun);
-    driver = next_step(transition.driver, transition.effect)?;
+    // back (dropping `tx` rolls it back).
 
-    loop {
-        let table = match driver.stage {
-            DeletionStage::DeleteTable(table) => table,
-            _ => break,
-        };
+    async fn begin_transaction(&mut self) -> TransactionObservation {
+        match self.state.sqldb.tx().await {
+            Ok(tx) => {
+                self.tx = Some(tx);
+                TransactionObservation::Begun
+            }
+            Err(error) => {
+                self.fail(error);
+                TransactionObservation::Failed
+            }
+        }
+    }
+
+    async fn delete_table(&mut self, table: DeletionTable) -> TableDeleteObservation {
         let sql = match table {
             DeletionTable::WebSessions => {
                 "DELETE FROM web_sessions WHERE user_id = ? OR approver_user_id = ?"
@@ -214,103 +187,103 @@ pub async fn delete_account(
             DeletionTable::OramBuckets => "DELETE FROM oram_buckets WHERE user_id = ?",
             DeletionTable::Devices => "DELETE FROM devices WHERE user_id = ?",
         };
-        // The four two-sided tables name the account in both columns.
+        // The three two-sided tables name the account in both columns.
         let params = match table {
-            DeletionTable::WebSessions
-            | DeletionTable::ShareInbox
-            | DeletionTable::SharedItems => vec![
-                TursoValue::Text(account.clone()),
-                TursoValue::Text(account.clone()),
-            ],
-            _ => vec![TursoValue::Text(account.clone())],
+            DeletionTable::WebSessions | DeletionTable::ShareInbox | DeletionTable::SharedItems => {
+                vec![
+                    TursoValue::Text(self.account.clone()),
+                    TursoValue::Text(self.account.clone()),
+                ]
+            }
+            _ => vec![TursoValue::Text(self.account.clone())],
         };
-        let delete = tx.execute(sql, params).await;
-        let observation = match &delete {
+        let Some(tx) = self.tx.as_ref() else {
+            self.fail("account deletion transaction is not open");
+            return TableDeleteObservation::Failed;
+        };
+        match tx.execute(sql, params).await {
             Ok(_) => TableDeleteObservation::Deleted,
-            Err(_) => TableDeleteObservation::Failed,
+            Err(error) => {
+                self.fail(error);
+                TableDeleteObservation::Failed
+            }
+        }
+    }
+
+    /// Web-session-only accounts legitimately have zero rows in `devices` (a
+    /// web-session RW token uses session_id as device_id and carries no devices
+    /// row — see the comment in middleware.rs), so device count is not a valid
+    /// existence signal. The `users` delete's own affected-row count is the
+    /// account record.
+    async fn delete_users(&mut self) -> UsersDeleteObservation {
+        let Some(tx) = self.tx.as_ref() else {
+            self.fail("account deletion transaction is not open");
+            return UsersDeleteObservation::Failed;
         };
-        let transition = on_table_deleted_event(driver, observation);
-        driver = transition.driver;
-        if let Err(error) = delete {
-            debug_assert!(matches!(
-                transition.effect,
-                DeletionEffect::Fail(DeletionFailure::TableStorage)
-            ));
-            return Err(AppError::Internal(error.to_string()));
-        }
-        if let DeletionEffect::Fail(failure) = transition.effect {
-            return Err(deletion_failure_error(failure));
-        }
-    }
-
-    // Web-session-only accounts legitimately have zero rows in `devices` (a
-    // web-session RW token uses session_id as device_id and carries no devices
-    // row — see the comment in middleware.rs), so device count is not a valid
-    // existence signal: it previously reported "account not found" for such
-    // accounts even though the delete above just genuinely deleted them. The
-    // `users` delete's own affected-row count is the account record.
-    if !matches!(driver.stage, DeletionStage::DeleteUsers) {
-        return Err(AppError::Internal(
-            "account deletion driver produced an unexpected table sequence".into(),
-        ));
-    }
-    let users_n = match tx
-        .execute(
-            "DELETE FROM users WHERE id = ?",
-            vec![TursoValue::Text(account.clone())],
-        )
-        .await
-    {
-        Ok(n) => n,
-        Err(error) => {
-            let transition = on_users_deleted_event(driver, UsersDeleteObservation::Failed);
-            debug_assert!(matches!(
-                transition.effect,
-                DeletionEffect::Fail(DeletionFailure::UsersStorage)
-            ));
-            return Err(AppError::Internal(error.to_string()));
-        }
-    };
-    let observation = if users_n == 0 {
-        UsersDeleteObservation::Absent
-    } else {
-        UsersDeleteObservation::Deleted
-    };
-    let transition = on_users_deleted_event(driver, observation);
-    driver = transition.driver;
-    match transition.effect {
-        DeletionEffect::CommitTransaction => {}
-        DeletionEffect::Fail(failure) => {
-            // Dropping `tx` rolls the transaction back.
-            return Err(deletion_failure_error(failure));
-        }
-        _ => {
-            return Err(AppError::Internal(
-                "account deletion driver produced an unexpected users effect".into(),
-            ));
+        match tx
+            .execute(
+                "DELETE FROM users WHERE id = ?",
+                vec![TursoValue::Text(self.account.clone())],
+            )
+            .await
+        {
+            Ok(0) => UsersDeleteObservation::Absent,
+            Ok(_) => UsersDeleteObservation::Deleted,
+            Err(error) => {
+                self.fail(error);
+                UsersDeleteObservation::Failed
+            }
         }
     }
 
-    let commit = tx.commit().await;
-    let observation = match &commit {
-        Ok(()) => CommitObservation::Committed,
-        Err(_) => CommitObservation::Failed,
-    };
-    let transition = on_commit_event(driver, observation);
-    if let Err(error) = commit {
-        debug_assert!(matches!(
-            transition.effect,
-            DeletionEffect::Fail(DeletionFailure::CommitStorage)
-        ));
-        return Err(AppError::Internal(error.to_string()));
+    async fn commit(&mut self) -> CommitObservation {
+        let Some(tx) = self.tx.take() else {
+            self.fail("account deletion transaction is not open");
+            return CommitObservation::Failed;
+        };
+        match tx.commit().await {
+            Ok(()) => CommitObservation::Committed,
+            Err(error) => {
+                self.fail(error);
+                CommitObservation::Failed
+            }
+        }
     }
+}
+
+pub async fn delete_account(
+    State(state): State<AppState>,
+    session: DeviceSession,
+) -> Result<(HeaderMap, Json<serde_json::Value>)> {
+    // One account id scopes the device scan, the web-session scan, all eight
+    // deletes and the existence check. The driver re-checks the actor facts and
+    // the single-account scope so a rewired caller cannot authorize an effect
+    // for a second account; a revoked actor gets no effect at all.
+    let actor = DeletionActorObservation {
+        authenticated: true,
+        device_active: true,
+        scoped_to_session_account: true,
+    };
+    let mut io = DeleteAccountIo {
+        state: &state,
+        account: session.user_id.to_string(),
+        device_ids: Vec::new(),
+        web_session_ids: Vec::new(),
+        tx: None,
+        error: None,
+    };
+    // The proved loop: only the effect the driver just emitted is performed,
+    // and nothing after its verdict.
+    let transition = vela_session_policy::deletion_interpreter!(io, actor, await);
+    // Dropping an uncommitted transaction rolls it back.
+    drop(io.tx.take());
+
     match transition.effect {
         DeletionEffect::Complete => {
             tracing::warn!(
                 user_id = %session.user_id,
                 "account permanently deleted"
             );
-
             Ok((
                 HeaderMap::new(),
                 Json(serde_json::json!({
@@ -319,9 +292,17 @@ pub async fn delete_account(
                 })),
             ))
         }
+        DeletionEffect::Fail(
+            DeletionFailure::DeviceScanStorage
+            | DeletionFailure::WebSessionScanStorage
+            | DeletionFailure::TransactionStorage
+            | DeletionFailure::TableStorage
+            | DeletionFailure::UsersStorage
+            | DeletionFailure::CommitStorage,
+        ) if io.error.is_some() => Err(io.error.take().expect("checked above")),
         DeletionEffect::Fail(failure) => Err(deletion_failure_error(failure)),
         _ => Err(AppError::Internal(
-            "account deletion driver produced an unexpected commit effect".into(),
+            "account deletion driver reached no verdict".into(),
         )),
     }
 }

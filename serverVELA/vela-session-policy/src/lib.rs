@@ -7,6 +7,7 @@
 
 pub mod challenge;
 pub mod deletion_driver;
+pub mod deletion_interpreter;
 pub mod login_driver;
 pub mod revocation_driver;
 
