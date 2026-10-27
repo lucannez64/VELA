@@ -8,10 +8,12 @@
 
 pub mod driver;
 pub mod possession_driver;
+pub mod recovery_share_driver;
 pub mod webauthn_driver;
 
 mod interpreter_support;
 pub mod possession_interpreter;
+pub mod recovery_share_interpreter;
 pub mod redemption_interpreter;
 pub mod webauthn_interpreter;
 
@@ -210,6 +212,70 @@ pub fn already_finalized_epoch_can_finalize(
 ) -> bool {
     state.active_share_absent = false;
     pending_publication_can_commit(permit, state)
+}
+
+/// `DELETE /recovery/share`: the request names the epoch it believes is
+/// current and the rekey policy issued a device-authority permit for it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ShareDeletionRequest {
+    pub declared_epoch: i64,
+    pub device_authority: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ShareDeletionPermit {
+    epoch: i64,
+    clears_share_and_pending: bool,
+}
+
+impl ShareDeletionPermit {
+    pub const fn epoch(self) -> i64 {
+        self.epoch
+    }
+
+    pub const fn clears_share_and_pending(self) -> bool {
+        self.clears_share_and_pending
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ShareDeletionDecision {
+    Delete(ShareDeletionPermit),
+    Reject,
+}
+
+pub fn share_deletion_is_authorized(request: ShareDeletionRequest) -> bool {
+    request.declared_epoch >= INITIAL_EPOCH && request.device_authority
+}
+
+pub fn share_deletion_decision_matches_spec(
+    request: ShareDeletionRequest,
+    decision: ShareDeletionDecision,
+) -> bool {
+    match decision {
+        ShareDeletionDecision::Delete(permit) => {
+            share_deletion_is_authorized(request)
+                && permit.epoch == request.declared_epoch
+                && permit.clears_share_and_pending
+        }
+        ShareDeletionDecision::Reject => !share_deletion_is_authorized(request),
+    }
+}
+
+/// The single guarded statement clears the active share and the staged split
+/// together; the permit records that indivisibility.
+#[cfg_attr(hax, hax_lib::ensures(|decision| {
+    share_deletion_decision_matches_spec(request, decision)
+}))]
+pub fn plan_share_deletion(request: ShareDeletionRequest) -> ShareDeletionDecision {
+    if share_deletion_is_authorized(request) {
+        ShareDeletionDecision::Delete(ShareDeletionPermit {
+            epoch: request.declared_epoch,
+            clears_share_and_pending: true,
+        })
+    } else {
+        ShareDeletionDecision::Reject
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
