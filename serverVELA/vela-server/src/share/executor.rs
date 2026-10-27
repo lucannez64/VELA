@@ -5,9 +5,9 @@
 //! `run_share`; the server's handlers are async. This trait mirrors the same
 //! eight methods with `.await` available, and gives every method a default body
 //! so a handler implements only the effects its request kind can reach. The
-//! driver never emits an effect outside that request kind, so a default body is
-//! unreachable; the integration and model tests exercise every reachable
-//! effect.
+//! driver should never emit an effect outside that request kind; if it ever
+//! did, the default reports a refusal or storage failure so the request fails
+//! closed instead of panicking.
 
 use vela_share_policy::driver::{
     CleanupObservation, EkDeviceObservation, InboxDeletePermit, LinkUpdatePermit, RowsObservation,
@@ -17,27 +17,39 @@ use vela_share_policy::{EkRegistrationPermit, LinkMutationObservation};
 
 pub trait ShareExecutor {
     async fn observe_link(&mut self) -> LinkMutationObservation {
-        unreachable!("sharing request cannot reach this effect")
+        LinkMutationObservation { item_present: false, caller_matches_sender: false, item_not_revoked: false }
     }
     async fn observe_device(&mut self) -> EkDeviceObservation {
-        unreachable!("sharing request cannot reach this effect")
+        EkDeviceObservation {
+            registration: vela_share_policy::EkRegistrationObservation {
+                ek_len: 0,
+                signature_verified: false,
+                device_row_present: false,
+                device_user_matches: false,
+                device_active: false,
+                signed_at_is_fresher: false,
+                binding_exists: false,
+            },
+            stored_identity_vk_decode_failed: true,
+            signature_decode_failed: true,
+        }
     }
     async fn insert_capsule(&mut self, _permit: SendInsertPermit) -> SendResultObservation {
-        unreachable!("sharing request cannot reach this effect")
+        SendResultObservation::StorageFailed
     }
     async fn update_linked_item(&mut self, _permit: LinkUpdatePermit) -> RowsObservation {
-        unreachable!("sharing request cannot reach this effect")
+        RowsObservation { rows: 0 }
     }
     async fn revoke_linked_item(&mut self) -> RowsObservation {
-        unreachable!("sharing request cannot reach this effect")
+        RowsObservation { rows: 0 }
     }
     async fn delete_linked_inbox(&mut self) -> CleanupObservation {
-        unreachable!("sharing request cannot reach this effect")
+        CleanupObservation { storage_failed: true }
     }
     async fn delete_inbox_item(&mut self, _permit: InboxDeletePermit) -> RowsObservation {
-        unreachable!("sharing request cannot reach this effect")
+        RowsObservation { rows: 0 }
     }
     async fn update_share_ek(&mut self, _permit: EkRegistrationPermit) -> RowsObservation {
-        unreachable!("sharing request cannot reach this effect")
+        RowsObservation { rows: 0 }
     }
 }

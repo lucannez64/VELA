@@ -5,11 +5,13 @@
 //! `run_pairing`; the server's handlers are async. This trait mirrors the same
 //! twelve methods with `.await` available, and gives every method a default
 //! body so a handler implements only the effects its ceremony can reach. The
-//! driver never emits an effect outside that ceremony, so a default body is
-//! unreachable; the integration tests exercise every reachable effect.
+//! driver should never emit an effect outside that ceremony; if it ever did,
+//! the default reports a missing, refused or failed observation so the request
+//! fails closed instead of panicking.
 
 use vela_enrollment_policy::pairing_driver::{
-    ClaimReadObservation, ClaimWriteObservation, CompletionAccountObservation,
+    ClaimMaterialObservation, ClaimReadObservation, ClaimWriteObservation,
+    CompletionAccountObservation, OpenerObservation, SignatureObservation,
     CompletionPreflightObservation, DeviceInsertObservation, RedeemObservation,
     ResultReadObservation, StoreObservation, TakeObservation,
 };
@@ -17,39 +19,49 @@ use vela_enrollment_policy::ClaimObservation;
 
 pub trait PairingExecutor {
     async fn store_package(&mut self) -> StoreObservation {
-        unreachable!("package store handler cannot reach this pairing effect")
+        StoreObservation::Failed
     }
     async fn redeem_package(&mut self) -> RedeemObservation {
-        unreachable!("package fetch handler cannot reach this pairing effect")
+        RedeemObservation::Missing
     }
     async fn store_grant(&mut self) -> StoreObservation {
-        unreachable!("grant-open handler cannot reach this pairing effect")
+        StoreObservation::Failed
     }
     async fn check_claim(&mut self) -> ClaimObservation {
-        unreachable!("claim handler cannot reach this pairing effect")
+        ClaimObservation { grant_live: false, claim_exists: false, hybrid_ek_len: 0, hybrid_vk_len: 0 }
     }
     async fn write_claim(&mut self) -> ClaimWriteObservation {
-        unreachable!("claim handler cannot reach this pairing effect")
+        ClaimWriteObservation::GuardMissing
     }
     async fn check_account(&mut self) -> CompletionAccountObservation {
-        unreachable!("completion handler cannot reach this pairing effect")
+        CompletionAccountObservation { account_query_ok: false, declared_epoch_positive: false, rekey_permitted: false }
     }
     async fn prepare_completion(&mut self) -> CompletionPreflightObservation {
-        unreachable!("completion handler cannot reach this pairing effect")
+        CompletionPreflightObservation {
+            claim: ClaimMaterialObservation::Error,
+            capsule_valid: false,
+            signature_field_valid: false,
+            opener: OpenerObservation::Error,
+            signature: SignatureObservation::Failed,
+            account_epoch: 0,
+            declared_epoch: 0,
+            rotation_in_progress: true,
+            account_epoch_active: false,
+        }
     }
     async fn take_ceremony(&mut self) -> TakeObservation {
-        unreachable!("completion handler cannot reach this pairing effect")
+        TakeObservation::Missing
     }
     async fn insert_device(&mut self) -> DeviceInsertObservation {
-        unreachable!("completion handler cannot reach this pairing effect")
+        DeviceInsertObservation::Failed
     }
     async fn write_result(&mut self) -> StoreObservation {
-        unreachable!("completion handler cannot reach this pairing effect")
+        StoreObservation::Failed
     }
     async fn read_result(&mut self) -> ResultReadObservation {
-        unreachable!("result handler cannot reach this pairing effect")
+        ResultReadObservation::Unreadable
     }
     async fn read_claim(&mut self) -> ClaimReadObservation {
-        unreachable!("result handler cannot reach this pairing effect")
+        ClaimReadObservation::Unreadable
     }
 }
