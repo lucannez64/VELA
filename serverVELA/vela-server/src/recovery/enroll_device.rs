@@ -23,10 +23,9 @@ use std::net::SocketAddr;
 use uuid::Uuid;
 use vela_recovery_policy::{
     driver::{
-        begin_redemption, on_authority_rechecked, on_final_policy_observed, on_grant_consumed,
-        on_insert_completed, AuthorityRecheckObservation, ConsumedGrantObservation,
-        ConsumptionObservation, FinalPolicyObservation, InsertObservation, RedemptionEffect,
-        RedemptionFailure, RekeyObservation,
+        AuthorityRecheckObservation, ConsumedGrantObservation, ConsumptionObservation,
+        FinalPolicyObservation, InsertObservation, RedemptionEffect, RedemptionFailure,
+        RedemptionInsertPermit, RekeyObservation,
     },
     observed_recovery_epoch, plan_enrollment_preflight, EnrollmentAccountFacts,
     EnrollmentAccountObservation, EnrollmentGrantFacts, EnrollmentObservation,
@@ -198,266 +197,265 @@ pub async fn post_enroll_device(
     // Consume only after validation and the fast rotation check. The guarded
     // insert below remains the authority for a concurrent rotation; if that
     // race is lost, the grant is restored so the user can retry afterwards.
-    // Every post-preflight decision is delegated to the pure driver in
-    // `vela_recovery_policy::driver`; this handler only supplies observations
-    // and performs the returned effect.
-    let start = begin_redemption(ready);
-    let mut driver = start.driver;
-    debug_assert_eq!(start.effect, RedemptionEffect::Consume);
-
-    let consumed_observed = crate::recovery::recover::take_enroll_grant_observed(
-        &state,
-        body.user_id,
-        body.recovery_grant,
-    )?;
-    let grant_consumed = consumed_observed.is_some();
-    let consumed_matches_observed = consumed_observed.as_ref() == Some(&grant);
-    let consumption = match consumed_observed.as_ref() {
-        None => ConsumptionObservation::Missing,
-        Some(consumed) => ConsumptionObservation::Present(ConsumedGrantObservation {
-            key_epoch: consumed.key_epoch,
-            possession: consumed.possession,
-            matches_observed_grant: consumed == &grant,
-        }),
+    // Every post-preflight decision and every effect between consumption and
+    // the verdict goes through the proved `redemption_interpreter!` loop; this
+    // handler only supplies the I/O and renders the terminal effect.
+    let mut io = EnrollDeviceIo {
+        state: &state,
+        user_id: body.user_id,
+        recovery_grant: body.recovery_grant,
+        hybrid_ek,
+        hybrid_vk,
+        device_name: body
+            .device_name
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "Recovered Device".to_string()),
+        device_type: body
+            .device_type
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "unknown".to_string()),
+        grant,
+        grant_present,
+        account,
+        account_present,
+        consumed_grant: None,
+        grant_consumed: false,
+        consumed_matches_observed: false,
+        new_device_id: None,
+        insert_error: None,
+        error: None,
     };
-    let transition = on_grant_consumed(driver, consumption);
-    driver = transition.driver;
-    let consumed_grant = match transition.effect {
-        RedemptionEffect::FinalPolicy => match consumed_observed {
-            Some(consumed) => consumed,
-            None => {
-                return Err(AppError::Internal(
-                    "redemption driver admitted an unobserved grant".into(),
-                ));
-            }
-        },
-        RedemptionEffect::Fail(failure) => return Err(redemption_failure_error(failure)),
-        RedemptionEffect::RestoreAndFail(failure) => {
-            if let Some(consumed) = consumed_observed.as_ref() {
-                crate::recovery::recover::restore_enroll_grant(
-                    &state,
-                    body.user_id,
-                    body.recovery_grant,
-                    consumed,
-                )?;
-            }
-            return Err(redemption_failure_error(failure));
-        }
-        _ => {
-            return Err(AppError::Internal(
-                "redemption driver produced an unexpected consumption effect".into(),
-            ));
-        }
-    };
-    let consumed_epoch = consumed_grant.key_epoch;
-    // The final permit is built only from the actual consumed/matching grant
-    // and the live observations: single-use consumption, credential or
-    // commitment authority, decoded key lengths, the rekey column and the
-    // normalized epochs. Preflight never supplies fabricated consumption.
-    let rekey = match vela_rekey_policy::plan_active_mutation(MutationRequest {
-        declared_epoch: consumed_epoch,
-        authority_epoch: consumed_epoch,
-        kind: MutationKind::Enrollment,
-        authority: MutationAuthority::RecoveryGrant,
-    }) {
-        MutationDecision::Permit(permit) => RekeyObservation::Permit {
-            epoch: permit.epoch(),
-        },
-        MutationDecision::Reject => RekeyObservation::Reject,
-    };
-    let transition = on_final_policy_observed(
-        driver,
-        FinalPolicyObservation {
-            enrollment: EnrollmentObservation {
-                grant_present,
-                grant_consumed,
-                consumed_matches_observed,
-                account_present,
-                grant_possession: consumed_grant.possession,
-                grant_epoch: consumed_epoch,
-                stored_epoch: account.stored_epoch,
-                account_epoch_active: account.epoch_active,
-                credential_id_matches: account.credential_id_matches,
-                commitment_len: account.commitment_len,
-                hybrid_ek_len: hybrid_ek.len(),
-                hybrid_vk_len: hybrid_vk.len(),
-            },
-            rekey,
-        },
-    );
-    driver = transition.driver;
-    let insert_permit = match transition.effect {
-        RedemptionEffect::Insert(permit) => permit,
-        RedemptionEffect::Fail(failure) => return Err(redemption_failure_error(failure)),
-        RedemptionEffect::RestoreAndFail(failure) => {
-            crate::recovery::recover::restore_enroll_grant(
-                &state,
-                body.user_id,
-                body.recovery_grant,
-                &consumed_grant,
-            )?;
-            return Err(redemption_failure_error(failure));
-        }
-        _ => {
-            return Err(AppError::Internal(
-                "redemption driver produced an unexpected policy effect".into(),
-            ));
-        }
+    let Some(transition) = vela_recovery_policy::redemption_interpreter!(io, ready, await) else {
+        return Err(io.error.take().unwrap_or_else(|| {
+            AppError::Internal("recovery enrollment aborted without an error".into())
+        }));
     };
 
-    let new_device_id = Uuid::new_v4();
-    let now = Utc::now().to_rfc3339();
-    let device_name = body
-        .device_name
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "Recovered Device".to_string());
-    let device_type = body
-        .device_type
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "unknown".to_string());
-
-    let inserted = if insert_permit.possession {
-        insert_recovered_device(
-            &state,
-            &InsertRecoveredDevice {
-                device_id: new_device_id,
-                user_id: body.user_id.clone(),
-                device_name: &device_name,
-                device_type: &device_type,
-                hybrid_ek_b64: crate::db::encode_b64(&hybrid_ek),
-                hybrid_vk_b64: crate::db::encode_b64(&hybrid_vk),
-                created_at: now.clone(),
-                epoch: insert_permit.epoch,
-                guard_credential: None,
-            },
-        )
-        .await
-    } else {
-        insert_recovered_device(
-            &state,
-            &InsertRecoveredDevice {
-                device_id: new_device_id,
-                user_id: body.user_id.clone(),
-                device_name: &device_name,
-                device_type: &device_type,
-                hybrid_ek_b64: crate::db::encode_b64(&hybrid_ek),
-                hybrid_vk_b64: crate::db::encode_b64(&hybrid_vk),
-                created_at: now.clone(),
-                epoch: insert_permit.epoch,
-                guard_credential: Some(consumed_grant.credential_id.clone()),
-            },
-        )
-        .await
-    };
-    let (insert_observation, insert_error) = match inserted {
-        Ok(inserted) if inserted > 0 => (InsertObservation::Inserted, None),
-        Ok(_) => (InsertObservation::Skipped, None),
-        Err(error) => (InsertObservation::Failed, Some(error)),
-    };
-    let transition = on_insert_completed(driver, insert_observation);
-    driver = transition.driver;
     match transition.effect {
-        RedemptionEffect::Complete => {}
-        RedemptionEffect::Recheck => {
-            let current = match state
-                .sqldb
-                .query(
-                    "SELECT recovery_webauthn_cred_id, recovery_auth_hash FROM users WHERE id = ?",
-                    vec![TursoValue::Text(body.user_id.to_string())],
-                )
-                .await
-            {
-                Ok(current) => current,
-                Err(error) => {
-                    let transition =
-                        on_authority_rechecked(driver, AuthorityRecheckObservation::QueryFailed);
-                    debug_assert!(matches!(
-                        transition.effect,
-                        RedemptionEffect::RestoreAndFail(RedemptionFailure::RecheckStorage)
-                    ));
-                    crate::recovery::recover::restore_enroll_grant(
-                        &state,
-                        body.user_id,
-                        body.recovery_grant,
-                        &consumed_grant,
-                    )?;
-                    return Err(AppError::Internal(error.to_string()));
-                }
-            };
-            let observation = match current.first() {
-                None => AuthorityRecheckObservation::AccountAbsent,
-                Some(row) if insert_permit.possession => {
-                    if row.text(1).is_some_and(|commitment| !commitment.is_empty()) {
-                        AuthorityRecheckObservation::StillRotating
-                    } else {
-                        // Setup deletion is revocation, not a retryable
-                        // rotation: leave the old grant consumed.
-                        AuthorityRecheckObservation::CommitmentRevoked
-                    }
-                }
-                Some(row) if row.text(0) != Some(consumed_grant.credential_id.as_str()) => {
-                    // Credential replacement is revocation, not a retryable
-                    // rotation: leave the old grant consumed.
-                    AuthorityRecheckObservation::CredentialReplaced
-                }
-                Some(_) => AuthorityRecheckObservation::StillRotating,
-            };
-            let transition = on_authority_rechecked(driver, observation);
-            match transition.effect {
-                RedemptionEffect::RestoreAndFail(failure) => {
-                    crate::recovery::recover::restore_enroll_grant(
-                        &state,
-                        body.user_id,
-                        body.recovery_grant,
-                        &consumed_grant,
-                    )?;
-                    return Err(redemption_failure_error(failure));
-                }
-                RedemptionEffect::Fail(failure) => {
-                    return Err(redemption_failure_error(failure));
-                }
-                _ => {
-                    return Err(AppError::Internal(
-                        "redemption driver produced an unexpected recheck effect".into(),
-                    ));
-                }
-            }
-        }
-        RedemptionEffect::RestoreAndFail(failure) => {
-            crate::recovery::recover::restore_enroll_grant(
-                &state,
-                body.user_id,
-                body.recovery_grant,
-                &consumed_grant,
-            )?;
-            return Err(redemption_failure_error(failure));
+        RedemptionEffect::Complete => {
+            let new_device_id = io.new_device_id.ok_or_else(|| {
+                AppError::Internal("redemption driver completed without a device id".into())
+            })?;
+            tracing::info!(
+                new_device_id = %new_device_id,
+                user_id = %body.user_id,
+                "device enrolled via account recovery"
+            );
+            Ok(Json(EnrollDeviceResponse { device_id: new_device_id }))
         }
         // An insert error may hide a committed row, so the grant stays
         // consumed; the user restarts recovery instead of reusing it.
-        RedemptionEffect::Fail(failure) => {
-            return Err(match (failure, insert_error) {
-                (RedemptionFailure::InsertStorage, Some(error)) => {
-                    AppError::Internal(error.to_string())
-                }
-                _ => redemption_failure_error(failure),
-            });
+        RedemptionEffect::Fail(RedemptionFailure::InsertStorage)
+            if io.insert_error.is_some() =>
+        {
+            Err(io.insert_error.take().expect("checked above"))
         }
-        _ => {
-            return Err(AppError::Internal(
-                "redemption driver produced an unexpected insert effect".into(),
-            ));
+        RedemptionEffect::Fail(failure) | RedemptionEffect::RestoreAndFail(failure) => {
+            Err(redemption_failure_error(failure))
         }
+        _ => Err(AppError::Internal(
+            "redemption driver reached no verdict".into(),
+        )),
+    }
+}
+
+/// The I/O behind each enrollment-redemption effect. The driver decides which
+/// method runs and when (through the shared `redemption_interpreter!` loop,
+/// proved in F* as `run_redemption`); each method only performs its effect and
+/// reports the observation. `None` aborts the request with `error`, which is
+/// rendered unchanged.
+struct EnrollDeviceIo<'a> {
+    state: &'a AppState,
+    user_id: Uuid,
+    recovery_grant: Uuid,
+    hybrid_ek: Vec<u8>,
+    hybrid_vk: Vec<u8>,
+    device_name: String,
+    device_type: String,
+    /// The decoded grant from the non-consuming preflight lookup.
+    grant: crate::recovery::recover::RecoveryEnrollGrant,
+    grant_present: bool,
+    account: EnrollmentAccountFacts,
+    account_present: bool,
+    /// The grant removed by the atomic consumption, when one was removed.
+    consumed_grant: Option<crate::recovery::recover::RecoveryEnrollGrant>,
+    grant_consumed: bool,
+    consumed_matches_observed: bool,
+    new_device_id: Option<Uuid>,
+    insert_error: Option<AppError>,
+    /// The first error from an effect that has no observation to report.
+    error: Option<AppError>,
+}
+
+impl EnrollDeviceIo<'_> {
+    /// The atomic single-use consumption. A store failure has no observation:
+    /// it aborts with the store's own error, exactly as the inline effect did.
+    async fn consume_grant(&mut self) -> Option<ConsumptionObservation> {
+        let observed = match crate::recovery::recover::take_enroll_grant_observed(
+            self.state,
+            self.user_id,
+            self.recovery_grant,
+        ) {
+            Ok(observed) => observed,
+            Err(error) => {
+                self.error = Some(error);
+                return None;
+            }
+        };
+        self.grant_consumed = observed.is_some();
+        self.consumed_matches_observed = observed.as_ref() == Some(&self.grant);
+        let observation = match observed.as_ref() {
+            None => ConsumptionObservation::Missing,
+            Some(consumed) => ConsumptionObservation::Present(ConsumedGrantObservation {
+                key_epoch: consumed.key_epoch,
+                possession: consumed.possession,
+                matches_observed_grant: consumed == &self.grant,
+            }),
+        };
+        self.consumed_grant = observed;
+        Some(observation)
     }
 
-    tracing::info!(
-        new_device_id = %new_device_id,
-        user_id = %body.user_id,
-        "device enrolled via account recovery"
-    );
+    /// The final enrollment and rekey policy decision. It is pure: the driver
+    /// still decides whether the returned permits may authorize an insert.
+    async fn final_policy(&mut self) -> Option<FinalPolicyObservation> {
+        let Some(consumed) = self.consumed_grant.as_ref() else {
+            self.error = Some(AppError::Internal(
+                "redemption driver admitted an unobserved grant".into(),
+            ));
+            return None;
+        };
+        let consumed_epoch = consumed.key_epoch;
+        let rekey = match vela_rekey_policy::plan_active_mutation(MutationRequest {
+            declared_epoch: consumed_epoch,
+            authority_epoch: consumed_epoch,
+            kind: MutationKind::Enrollment,
+            authority: MutationAuthority::RecoveryGrant,
+        }) {
+            MutationDecision::Permit(permit) => RekeyObservation::Permit {
+                epoch: permit.epoch(),
+            },
+            MutationDecision::Reject => RekeyObservation::Reject,
+        };
+        Some(FinalPolicyObservation {
+            enrollment: EnrollmentObservation {
+                grant_present: self.grant_present,
+                grant_consumed: self.grant_consumed,
+                consumed_matches_observed: self.consumed_matches_observed,
+                account_present: self.account_present,
+                grant_possession: consumed.possession,
+                grant_epoch: consumed_epoch,
+                stored_epoch: self.account.stored_epoch,
+                account_epoch_active: self.account.epoch_active,
+                credential_id_matches: self.account.credential_id_matches,
+                commitment_len: self.account.commitment_len,
+                hybrid_ek_len: self.hybrid_ek.len(),
+                hybrid_vk_len: self.hybrid_vk.len(),
+            },
+            rekey,
+        })
+    }
 
-    Ok(Json(EnrollDeviceResponse {
-        device_id: new_device_id,
-    }))
+    /// Exactly one guarded device insert with the driver's permit.
+    async fn insert_device(&mut self, permit: RedemptionInsertPermit) -> Option<InsertObservation> {
+        let Some(consumed) = self.consumed_grant.as_ref() else {
+            self.error = Some(AppError::Internal(
+                "redemption driver admitted an unobserved grant".into(),
+            ));
+            return None;
+        };
+        let new_device_id = Uuid::new_v4();
+        self.new_device_id = Some(new_device_id);
+        let body = InsertRecoveredDevice {
+            device_id: new_device_id,
+            user_id: self.user_id,
+            device_name: &self.device_name,
+            device_type: &self.device_type,
+            hybrid_ek_b64: crate::db::encode_b64(&self.hybrid_ek),
+            hybrid_vk_b64: crate::db::encode_b64(&self.hybrid_vk),
+            created_at: Utc::now().to_rfc3339(),
+            epoch: permit.epoch,
+            guard_credential: if permit.possession {
+                None
+            } else {
+                Some(consumed.credential_id.clone())
+            },
+        };
+        let inserted = insert_recovered_device(self.state, &body).await;
+        Some(match inserted {
+            Ok(inserted) if inserted > 0 => InsertObservation::Inserted,
+            Ok(_) => InsertObservation::Skipped,
+            Err(error) => {
+                self.insert_error = Some(error);
+                InsertObservation::Failed
+            }
+        })
+    }
+
+    /// The live authority recheck after a zero-row insert. A query failure is
+    /// an observation (`QueryFailed`); the driver decides that it restores the
+    /// grant, and the original error is kept for the response.
+    async fn recheck_authority(&mut self) -> Option<AuthorityRecheckObservation> {
+        let Some(consumed) = self.consumed_grant.as_ref() else {
+            self.error = Some(AppError::Internal(
+                "redemption driver admitted an unobserved grant".into(),
+            ));
+            return None;
+        };
+        let current = match self
+            .state
+            .sqldb
+            .query(
+                "SELECT recovery_webauthn_cred_id, recovery_auth_hash FROM users WHERE id = ?",
+                vec![TursoValue::Text(self.user_id.to_string())],
+            )
+            .await
+        {
+            Ok(current) => current,
+            Err(error) => {
+                self.error = Some(AppError::Internal(error.to_string()));
+                return Some(AuthorityRecheckObservation::QueryFailed);
+            }
+        };
+        Some(match current.first() {
+            None => AuthorityRecheckObservation::AccountAbsent,
+            Some(row) if consumed.possession => {
+                if row.text(1).is_some_and(|commitment| !commitment.is_empty()) {
+                    AuthorityRecheckObservation::StillRotating
+                } else {
+                    // Setup deletion is revocation, not a retryable rotation:
+                    // leave the old grant consumed.
+                    AuthorityRecheckObservation::CommitmentRevoked
+                }
+            }
+            Some(row) if row.text(0) != Some(consumed.credential_id.as_str()) => {
+                // Credential replacement is revocation, not a retryable
+                // rotation: leave the old grant consumed.
+                AuthorityRecheckObservation::CredentialReplaced
+            }
+            Some(_) => AuthorityRecheckObservation::StillRotating,
+        })
+    }
+
+    /// Restore the consumed grant before returning the driver's failure. A
+    /// store error replaces the failure, exactly as the inline `?` did.
+    async fn restore_grant(&mut self) -> Option<()> {
+        let Some(consumed) = self.consumed_grant.as_ref() else {
+            return Some(());
+        };
+        match crate::recovery::recover::restore_enroll_grant(
+            self.state,
+            self.user_id,
+            self.recovery_grant,
+            consumed,
+        ) {
+            Ok(()) => Some(()),
+            Err(error) => {
+                self.error = Some(error);
+                None
+            }
+        }
+    }
 }
 
 /// Map the checked preflight rejection to the handler's historical status and

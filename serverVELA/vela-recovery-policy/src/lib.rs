@@ -10,6 +10,11 @@ pub mod driver;
 pub mod possession_driver;
 pub mod webauthn_driver;
 
+mod interpreter_support;
+pub mod possession_interpreter;
+pub mod redemption_interpreter;
+pub mod webauthn_interpreter;
+
 pub const INITIAL_EPOCH: i64 = 1;
 pub const HYBRID_EK_LEN: usize = 1568 + 32;
 pub const HYBRID_VK_LEN: usize = 2592 + 32;

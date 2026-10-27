@@ -44,11 +44,9 @@ use super::recover::store_possession_grant;
 use vela_recovery_policy::{
     observed_recovery_epoch,
     possession_driver::{
-        begin_initiation, begin_proof_recover, on_account_observed, on_attempt_consumed,
-        on_attempt_counted, on_challenge_stored, on_grant_stored, on_initiation_observed,
-        on_proof_observed, AttemptBudgetObservation, AttemptConsumptionObservation,
-        ChallengeStoreObservation, CommitmentObservation, GrantStoreObservation, InitiateEffect,
-        InitiateFailure, InitiateObservation, ProofAccountObservation, ProofObservation,
+        AttemptBudgetObservation, AttemptConsumptionObservation, ChallengeStoreObservation,
+        CommitmentObservation, GrantStoreObservation, InitiateEffect, InitiateFailure,
+        InitiateObservation, ProofAccountObservation, ProofGrantPermit, ProofObservation,
         ProofRecoverEffect, ProofRecoverFailure,
     },
 };
@@ -182,119 +180,172 @@ pub async fn post_initiate_proof(
     rate_limit::recovery_initiate_by_ip_user(&state.store, &ip, &body.user_id.to_string())?;
     rate_limit::recovery_initiate_by_user(&state.store, &body.user_id.to_string())?;
 
-    // Effect: read the live row and decode the staged commitment. Decode
-    // failures are observations (`Corrupt`), not decisions; the driver owns
-    // the historical precedence and error class.
-    let rows = state
-        .sqldb
-        .query(
-            "SELECT recovery_share, recovery_auth_hash, key_epoch, rekey_state
-             FROM users WHERE id = ?",
-            vec![TursoValue::Text(body.user_id.to_string())],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    let mut commitment_decode_error = None;
-    let (account_present, share_present, commitment, rotation_active, key_epoch) =
-        match rows.first() {
-            None => (
-                false,
-                false,
-                CommitmentObservation::Missing,
-                false,
-                observed_recovery_epoch(None),
-            ),
-            Some(row) => {
-                let rotation_active = row.text(3).is_some();
-                let commitment = match row.get(1) {
-                    Some(TursoValue::Text(text)) => match crate::db::decode_b64(&text) {
-                        Ok(bytes) => CommitmentObservation::Present { len: bytes.len() },
-                        Err(error) => {
-                            commitment_decode_error = Some(error);
-                            CommitmentObservation::Corrupt
-                        }
-                    },
-                    _ => CommitmentObservation::Missing,
-                };
-                let share_present = !matches!(row.get(0), Some(TursoValue::Null) | None);
-                (
-                    true,
-                    share_present,
-                    commitment,
-                    rotation_active,
-                    observed_recovery_epoch(row.i64(2)),
-                )
+    // Effect: read the live row and decode the staged commitment, probe the
+    // generated attempt slot, and (once the driver authorizes it) draw and
+    // atomically store the challenge. Every post-preflight decision and effect
+    // goes through the proved `possession_initiation_interpreter!` loop; this
+    // handler only supplies the I/O and renders the terminal effect.
+    let mut io = InitiateProofIo {
+        state: &state,
+        user_id: body.user_id,
+        recovery_id: Uuid::new_v4(),
+        key_epoch: observed_recovery_epoch(None),
+        commitment_decode_error: None,
+        challenge: None,
+        error: None,
+    };
+    let Some(transition) = vela_recovery_policy::possession_initiation_interpreter!(io, await) else {
+        return Err(io.error.take().unwrap_or_else(|| {
+            AppError::Internal("possession initiation aborted without an error".into())
+        }));
+    };
+    match transition.effect {
+        InitiateEffect::Complete => {}
+        InitiateEffect::Fail(failure) => {
+            return Err(initiate_failure_error(
+                failure,
+                io.commitment_decode_error.take(),
+            ))
+        }
+        _ => {
+            return Err(AppError::Internal(
+                "possession initiation driver reached no verdict".into(),
+            ))
+        }
+    }
+    let challenge = io.challenge.take().ok_or_else(|| {
+        AppError::Internal("possession initiation completed without a challenge".into())
+    })?;
+
+    tracing::info!(user_id = %body.user_id, "possession-proof recovery initiated");
+
+    Ok(Json(InitiateProofResponse {
+        recovery_id: io.recovery_id,
+        challenge_b64: B64.encode(&challenge),
+        key_epoch: io.key_epoch,
+    }))
+}
+
+/// The I/O behind each possession-initiation effect. The driver decides which
+/// method runs and when (through the shared
+/// `possession_initiation_interpreter!` loop, proved in F* as
+/// `run_possession_initiation`); each method only performs its effect and
+/// reports the observation. `None` aborts with `error`.
+struct InitiateProofIo<'a> {
+    state: &'a AppState,
+    user_id: Uuid,
+    recovery_id: Uuid,
+    key_epoch: i64,
+    commitment_decode_error: Option<AppError>,
+    challenge: Option<Vec<u8>>,
+    error: Option<AppError>,
+}
+
+impl InitiateProofIo<'_> {
+    /// Read the live row, decode the staged commitment and probe the attempt
+    /// slot. Decode failures are observations (`Corrupt`), not decisions.
+    async fn observe(&mut self) -> Option<InitiateObservation> {
+        let rows = match self
+            .state
+            .sqldb
+            .query(
+                "SELECT recovery_share, recovery_auth_hash, key_epoch, rekey_state
+                 FROM users WHERE id = ?",
+                vec![TursoValue::Text(self.user_id.to_string())],
+            )
+            .await
+        {
+            Ok(rows) => rows,
+            Err(error) => {
+                self.error = Some(AppError::Internal(error.to_string()));
+                return None;
             }
         };
-
-    let recovery_id = Uuid::new_v4();
-    // Observe freshness for the policy; the insert below checks it atomically
-    // again, because another request may win after this observation.
-    let attempt_id_fresh = !state
-        .store
-        .exists(&proof_state_key(&body.user_id, &recovery_id))?;
-
-    let start = begin_initiation();
-    debug_assert_eq!(start.effect, InitiateEffect::Observe);
-    let transition = on_initiation_observed(
-        start.driver,
-        InitiateObservation {
+        let (account_present, share_present, commitment, rotation_active, key_epoch) =
+            match rows.first() {
+                None => (
+                    false,
+                    false,
+                    CommitmentObservation::Missing,
+                    false,
+                    observed_recovery_epoch(None),
+                ),
+                Some(row) => {
+                    let rotation_active = row.text(3).is_some();
+                    let commitment = match row.get(1) {
+                        Some(TursoValue::Text(text)) => match crate::db::decode_b64(&text) {
+                            Ok(bytes) => CommitmentObservation::Present { len: bytes.len() },
+                            Err(error) => {
+                                self.commitment_decode_error = Some(error);
+                                CommitmentObservation::Corrupt
+                            }
+                        },
+                        _ => CommitmentObservation::Missing,
+                    };
+                    let share_present = !matches!(row.get(0), Some(TursoValue::Null) | None);
+                    (
+                        true,
+                        share_present,
+                        commitment,
+                        rotation_active,
+                        observed_recovery_epoch(row.i64(2)),
+                    )
+                }
+            };
+        self.key_epoch = key_epoch;
+        // Observe freshness for the policy; the store below checks it
+        // atomically again, because another request may win after this
+        // observation.
+        let attempt_id_fresh = match self
+            .state
+            .store
+            .exists(&proof_state_key(&self.user_id, &self.recovery_id))
+        {
+            Ok(occupied) => !occupied,
+            Err(error) => {
+                self.error = Some(error);
+                return None;
+            }
+        };
+        Some(InitiateObservation {
             account_present,
             share_present,
             commitment,
             rotation_active,
             attempt_id_fresh,
             ttl_secs: PROOF_STATE_TTL_SECS,
-        },
-    );
-    let driver = transition.driver;
-    match transition.effect {
-        InitiateEffect::StoreChallenge => {}
-        InitiateEffect::Fail(failure) => {
-            return Err(initiate_failure_error(failure, commitment_decode_error))
-        }
-        _ => {
-            return Err(AppError::Internal(
-                "possession initiation driver produced an unexpected effect".into(),
-            ))
-        }
+        })
     }
 
-    let mut challenge = vec![0u8; CHALLENGE_LEN];
-    getrandom::getrandom(&mut challenge)
-        .map_err(|e| AppError::Internal(format!("failed to draw challenge: {e}")))?;
-
-    let stored = on_challenge_stored(
-        driver,
-        store_proof_state(
-            &state,
+    /// Draw and atomically store the challenge the driver authorized.
+    async fn store_challenge(&mut self) -> Option<ChallengeStoreObservation> {
+        let mut challenge = vec![0u8; CHALLENGE_LEN];
+        if let Err(error) = getrandom::getrandom(&mut challenge) {
+            self.error = Some(AppError::Internal(format!(
+                "failed to draw challenge: {error}"
+            )));
+            return None;
+        }
+        let stored = store_proof_state(
+            self.state,
             &PossessionProofState {
-                user_id: body.user_id,
-                recovery_id,
+                user_id: self.user_id,
+                recovery_id: self.recovery_id,
                 challenge: challenge.clone(),
-                key_epoch,
+                key_epoch: self.key_epoch,
             },
-        )?,
-    );
-    match stored.effect {
-        InitiateEffect::Complete => {}
-        InitiateEffect::Fail(failure) => {
-            return Err(initiate_failure_error(failure, None));
-        }
-        _ => {
-            return Err(AppError::Internal(
-                "possession initiation driver produced an unexpected store effect".into(),
-            ))
+        );
+        match stored {
+            Ok(observation) => {
+                self.challenge = Some(challenge);
+                Some(observation)
+            }
+            Err(error) => {
+                self.error = Some(error);
+                None
+            }
         }
     }
-
-    tracing::info!(user_id = %body.user_id, "possession-proof recovery initiated");
-
-    Ok(Json(InitiateProofResponse {
-        recovery_id,
-        challenge_b64: B64.encode(&challenge),
-        key_epoch,
-    }))
 }
 
 #[derive(Deserialize)]
@@ -321,213 +372,252 @@ pub async fn post_recover_proof(
 ) -> Result<Json<RecoverProofResponse>> {
     let ip = net::client_ip(&headers, addr.map(|ConnectInfo(a)| a.ip()), &state.config);
 
-    // Effect: count the attempt. The checked driver requires an admitted
-    // count before it will consume the single-use proof state; the limiter's
-    // own error is rendered unchanged.
-    let start = begin_proof_recover();
-    debug_assert_eq!(start.effect, ProofRecoverEffect::CountAttempt);
-    let limited_error =
-        match rate_limit::recovery_recover_by_ip_user(&state.store, &ip, &body.user_id.to_string())
-        {
+    // Effect: count the attempt, consume the single-use proof state, query the
+    // live row, verify the proof and issue the grant. Every post-preflight
+    // decision and effect goes through the proved
+    // `possession_recover_interpreter!` loop; this handler only supplies the
+    // I/O and renders the terminal effect.
+    let mut io = RecoverProofIo {
+        state: &state,
+        ip,
+        user_id: body.user_id,
+        recovery_id: body.recovery_id,
+        proof_b64: body.proof_b64,
+        presented: None,
+        limited_error: None,
+        attempt_state: None,
+        attempt_decode_error: None,
+        commitment_bytes: None,
+        commitment_decode_error: None,
+        grant: None,
+        grant_error: None,
+        error: None,
+    };
+    let Some(transition) = vela_recovery_policy::possession_recover_interpreter!(io, await) else {
+        return Err(io.error.take().unwrap_or_else(|| {
+            AppError::Internal("possession recovery aborted without an error".into())
+        }));
+    };
+    match transition.effect {
+        ProofRecoverEffect::Complete => {
+            let (key_epoch, recovery_grant) = io.grant.take().ok_or_else(|| {
+                AppError::Internal("possession recovery completed without a grant".into())
+            })?;
+            tracing::info!(
+                user_id = %body.user_id,
+                "recovery grant issued from RMS possession proof"
+            );
+            Ok(Json(RecoverProofResponse {
+                key_epoch,
+                recovery_grant,
+            }))
+        }
+        ProofRecoverEffect::Fail(failure) => Err(match failure {
+            ProofRecoverFailure::AttemptLimited => io.limited_error.take().unwrap_or_else(|| {
+                AppError::Internal("possession recovery attempt was limited".into())
+            }),
+            ProofRecoverFailure::AttemptMissing => AppError::BadRequest(
+                "recovery challenge expired or already used".into(),
+            ),
+            ProofRecoverFailure::AttemptCorrupt => {
+                io.attempt_decode_error.take().unwrap_or_else(|| {
+                    AppError::Internal("possession challenge state did not decode".into())
+                })
+            }
+            ProofRecoverFailure::BindingMismatch => AppError::Unauthorized(
+                "possession challenge binding does not match this attempt".into(),
+            ),
+            ProofRecoverFailure::AccountAbsent => {
+                AppError::NotFound(RECOVERY_UNAVAILABLE.into())
+            }
+            ProofRecoverFailure::RotationPaused => AppError::Conflict(
+                "account recovery is paused during vault key rotation".into(),
+            ),
+            ProofRecoverFailure::CommitmentMissing => AppError::Unauthorized(
+                "no possession commitment is staged for this account".into(),
+            ),
+            ProofRecoverFailure::CommitmentCorrupt => {
+                io.commitment_decode_error.take().unwrap_or_else(|| {
+                    AppError::Internal("possession commitment did not decode".into())
+                })
+            }
+            ProofRecoverFailure::ProofRejected => AppError::Unauthorized(
+                "RMS possession proof failed for this attempt".into(),
+            ),
+            ProofRecoverFailure::GrantStorage => io.grant_error.take().unwrap_or_else(|| {
+                AppError::Internal("failed to store the recovery grant".into())
+            }),
+        }),
+        _ => Err(AppError::Internal(
+            "possession recovery driver reached no verdict".into(),
+        )),
+    }
+}
+
+/// The I/O behind each proof-recovery effect. The driver decides which method
+/// runs and when (through the shared `possession_recover_interpreter!` loop,
+/// proved in F* as `run_possession_recover`); each method only performs its
+/// effect and reports the observation. `None` aborts with `error`.
+struct RecoverProofIo<'a> {
+    state: &'a AppState,
+    ip: String,
+    user_id: Uuid,
+    recovery_id: Uuid,
+    proof_b64: String,
+    presented: Option<Vec<u8>>,
+    limited_error: Option<AppError>,
+    attempt_state: Option<PossessionProofState>,
+    attempt_decode_error: Option<AppError>,
+    commitment_bytes: Option<Vec<u8>>,
+    commitment_decode_error: Option<AppError>,
+    grant: Option<(i64, Uuid)>,
+    grant_error: Option<AppError>,
+    error: Option<AppError>,
+}
+
+impl RecoverProofIo<'_> {
+    /// Count one attempt. The limiter's own error is kept for the response.
+    async fn count_attempt(&mut self) -> Option<AttemptBudgetObservation> {
+        let limited_error = match rate_limit::recovery_recover_by_ip_user(
+            &self.state.store,
+            &self.ip,
+            &self.user_id.to_string(),
+        ) {
             Ok(()) => {
-                rate_limit::recovery_recover_by_user(&state.store, &body.user_id.to_string()).err()
+                rate_limit::recovery_recover_by_user(&self.state.store, &self.user_id.to_string())
+                    .err()
             }
             Err(error) => Some(error),
         };
-    let budget_observation = if limited_error.is_some() {
-        AttemptBudgetObservation::Limited
-    } else {
-        AttemptBudgetObservation::Admitted
-    };
-    let transition = on_attempt_counted(start.driver, budget_observation);
-    let mut driver = transition.driver;
-    match (transition.effect, limited_error) {
-        (ProofRecoverEffect::ConsumeAttempt, None) => {}
-        (ProofRecoverEffect::Fail(ProofRecoverFailure::AttemptLimited), Some(error)) => {
-            return Err(error);
-        }
-        _ => {
-            return Err(AppError::Internal(
-                "possession recovery driver produced an unexpected budget effect".into(),
-            ))
-        }
+        let observation = if limited_error.is_some() {
+            AttemptBudgetObservation::Limited
+        } else {
+            AttemptBudgetObservation::Admitted
+        };
+        self.limited_error = limited_error;
+        Some(observation)
     }
 
-    let proof_bytes = B64
-        .decode(&body.proof_b64)
-        .map_err(|_| AppError::BadRequest("proof is not valid base64".into()))?;
-    let presented = proof_bytes; // length checked by verify (v1: 32 B, v2: 4659 B)
-
-    let observed_attempt = observe_proof_attempt(&state, &body.user_id, &body.recovery_id)?;
-    let (observation, attempt_state, attempt_decode_error) = match observed_attempt {
-        StoredProofAttempt::Missing => (AttemptConsumptionObservation::Missing, None, None),
-        StoredProofAttempt::Corrupt(message) => (
-            AttemptConsumptionObservation::Corrupt,
-            None,
-            Some(AppError::BadRequest(format!(
-                "invalid possession challenge state: {message}"
-            ))),
-        ),
-        StoredProofAttempt::Present(envelope) => (
-            AttemptConsumptionObservation::Present {
-                user_matches: envelope.user_id == body.user_id,
-                attempt_matches: envelope.recovery_id == body.recovery_id,
-                key_epoch: envelope.key_epoch,
-            },
-            Some(envelope),
-            None,
-        ),
-    };
-    let transition = on_attempt_consumed(driver, observation);
-    driver = transition.driver;
-    match transition.effect {
-        ProofRecoverEffect::QueryAccount => {}
-        ProofRecoverEffect::Fail(ProofRecoverFailure::AttemptMissing) => {
-            return Err(AppError::BadRequest(
-                "recovery challenge expired or already used".into(),
-            ));
-        }
-        ProofRecoverEffect::Fail(ProofRecoverFailure::AttemptCorrupt) => {
-            return Err(attempt_decode_error.unwrap_or_else(|| {
-                AppError::Internal("possession challenge state did not decode".into())
-            }));
-        }
-        ProofRecoverEffect::Fail(ProofRecoverFailure::BindingMismatch) => {
-            return Err(AppError::Unauthorized(
-                "possession challenge binding does not match this attempt".into(),
-            ));
-        }
-        _ => {
-            return Err(AppError::Internal(
-                "possession recovery driver produced an unexpected consumption effect".into(),
-            ))
-        }
+    /// Decode the presented proof and consume the exact attempt state once. A
+    /// decode failure still consumed the state: the driver records the
+    /// corruption as terminal rather than assuming the store returned nothing.
+    async fn consume_attempt(&mut self) -> Option<AttemptConsumptionObservation> {
+        let proof_bytes = match B64.decode(&self.proof_b64) {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                self.error = Some(AppError::BadRequest("proof is not valid base64".into()));
+                return None;
+            }
+        };
+        self.presented = Some(proof_bytes);
+        let observed = match observe_proof_attempt(self.state, &self.user_id, &self.recovery_id) {
+            Ok(observed) => observed,
+            Err(error) => {
+                self.error = Some(error);
+                return None;
+            }
+        };
+        let observation = match observed {
+            StoredProofAttempt::Missing => AttemptConsumptionObservation::Missing,
+            StoredProofAttempt::Corrupt(message) => {
+                self.attempt_decode_error = Some(AppError::BadRequest(format!(
+                    "invalid possession challenge state: {message}"
+                )));
+                AttemptConsumptionObservation::Corrupt
+            }
+            StoredProofAttempt::Present(envelope) => {
+                let observation = AttemptConsumptionObservation::Present {
+                    user_matches: envelope.user_id == self.user_id,
+                    attempt_matches: envelope.recovery_id == self.recovery_id,
+                    key_epoch: envelope.key_epoch,
+                };
+                self.attempt_state = Some(envelope);
+                observation
+            }
+        };
+        Some(observation)
     }
-    let attempt = attempt_state.ok_or_else(|| {
-        AppError::Internal("possession recovery driver admitted an undecoded attempt".into())
-    })?;
 
-    let rows = state
-        .sqldb
-        .query(
-            "SELECT recovery_auth_hash, key_epoch, rekey_state
-             FROM users WHERE id = ?",
-            vec![TursoValue::Text(body.user_id.to_string())],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    let mut commitment_bytes = None;
-    let mut commitment_decode_error = None;
-    let (account_present, account_epoch_active, commitment, stored_epoch) = match rows.first() {
-        None => (false, false, CommitmentObservation::Missing, None),
-        Some(row) => {
-            let account_epoch_active = row.text(2).is_none();
-            let stored_epoch = row.i64(1);
-            let commitment = match row.get(0) {
-                Some(TursoValue::Text(text)) => match crate::db::decode_b64(&text) {
-                    Ok(bytes) => {
-                        commitment_bytes = Some(bytes.clone());
-                        CommitmentObservation::Present { len: bytes.len() }
-                    }
-                    Err(error) => {
-                        commitment_decode_error = Some(error);
-                        CommitmentObservation::Corrupt
-                    }
-                },
-                _ => CommitmentObservation::Missing,
-            };
-            (true, account_epoch_active, commitment, stored_epoch)
-        }
-    };
-    let transition = on_account_observed(
-        driver,
-        ProofAccountObservation {
+    /// Query the live row and decode the staged commitment.
+    async fn query_account(&mut self) -> Option<ProofAccountObservation> {
+        let rows = match self
+            .state
+            .sqldb
+            .query(
+                "SELECT recovery_auth_hash, key_epoch, rekey_state
+                 FROM users WHERE id = ?",
+                vec![TursoValue::Text(self.user_id.to_string())],
+            )
+            .await
+        {
+            Ok(rows) => rows,
+            Err(error) => {
+                self.error = Some(AppError::Internal(error.to_string()));
+                return None;
+            }
+        };
+        let (account_present, account_epoch_active, commitment, stored_epoch) = match rows.first() {
+            None => (false, false, CommitmentObservation::Missing, None),
+            Some(row) => {
+                let account_epoch_active = row.text(2).is_none();
+                let stored_epoch = row.i64(1);
+                let commitment = match row.get(0) {
+                    Some(TursoValue::Text(text)) => match crate::db::decode_b64(&text) {
+                        Ok(bytes) => {
+                            self.commitment_bytes = Some(bytes.clone());
+                            CommitmentObservation::Present { len: bytes.len() }
+                        }
+                        Err(error) => {
+                            self.commitment_decode_error = Some(error);
+                            CommitmentObservation::Corrupt
+                        }
+                    },
+                    _ => CommitmentObservation::Missing,
+                };
+                (true, account_epoch_active, commitment, stored_epoch)
+            }
+        };
+        Some(ProofAccountObservation {
             account_present,
             account_epoch_active,
             commitment,
             stored_epoch,
-        },
-    );
-    driver = transition.driver;
-    match transition.effect {
-        ProofRecoverEffect::VerifyProof => {}
-        ProofRecoverEffect::Fail(ProofRecoverFailure::AccountAbsent) => {
-            return Err(AppError::NotFound(RECOVERY_UNAVAILABLE.into()));
-        }
-        ProofRecoverEffect::Fail(ProofRecoverFailure::RotationPaused) => {
-            return Err(AppError::Conflict(
-                "account recovery is paused during vault key rotation".into(),
-            ));
-        }
-        ProofRecoverEffect::Fail(ProofRecoverFailure::CommitmentMissing) => {
-            return Err(AppError::Unauthorized(
-                "no possession commitment is staged for this account".into(),
-            ));
-        }
-        ProofRecoverEffect::Fail(ProofRecoverFailure::CommitmentCorrupt) => {
-            return Err(commitment_decode_error.unwrap_or_else(|| {
-                AppError::Internal("possession commitment did not decode".into())
-            }));
-        }
-        _ => {
-            return Err(AppError::Internal(
-                "possession recovery driver produced an unexpected account effect".into(),
-            ))
-        }
+        })
     }
-    let commitment = commitment_bytes.ok_or_else(|| {
-        AppError::Internal("possession recovery driver admitted an undecoded commitment".into())
-    })?;
 
-    let proof_verified = verify_possession_proof(&state, &commitment, &attempt, &presented);
-    let transition = on_proof_observed(
-        driver,
-        ProofObservation {
-            verified: proof_verified,
-        },
-    );
-    driver = transition.driver;
-    let (key_epoch, recovery_grant) = match transition.effect {
-        ProofRecoverEffect::IssueGrant(permit) => {
-            let recovery_grant = Uuid::new_v4();
-            let store_result =
-                store_possession_grant(&state, body.user_id, recovery_grant, permit.epoch);
-            let observation = if store_result.is_ok() {
-                GrantStoreObservation::Stored
-            } else {
-                GrantStoreObservation::Failed
-            };
-            let stored = on_grant_stored(driver, observation);
-            match (stored.effect, store_result) {
-                (ProofRecoverEffect::Complete, Ok(())) => (permit.epoch, recovery_grant),
-                (ProofRecoverEffect::Fail(ProofRecoverFailure::GrantStorage), Err(error)) => {
-                    return Err(error);
-                }
-                _ => {
-                    return Err(AppError::Internal(
-                        "possession recovery driver produced an unexpected grant effect".into(),
-                    ))
-                }
-            }
-        }
-        ProofRecoverEffect::Fail(ProofRecoverFailure::ProofRejected) => {
-            return Err(AppError::Unauthorized(
-                "RMS possession proof failed for this attempt".into(),
+    /// Verify the presented proof against the staged public commitment.
+    async fn verify_proof(&mut self) -> Option<ProofObservation> {
+        let (Some(commitment), Some(attempt), Some(presented)) = (
+            self.commitment_bytes.as_ref(),
+            self.attempt_state.as_ref(),
+            self.presented.as_ref(),
+        ) else {
+            self.error = Some(AppError::Internal(
+                "possession recovery driver admitted an unverified observation".into(),
             ));
-        }
-        _ => {
-            return Err(AppError::Internal(
-                "possession recovery driver produced an unexpected proof effect".into(),
-            ))
-        }
-    };
+            return None;
+        };
+        Some(ProofObservation {
+            verified: verify_possession_proof(self.state, commitment, attempt, presented),
+        })
+    }
 
-    tracing::info!(user_id = %body.user_id, "recovery grant issued from RMS possession proof");
-
-    Ok(Json(RecoverProofResponse {
-        key_epoch,
-        recovery_grant,
-    }))
+    /// Store exactly one single-use grant at the driver's epoch.
+    async fn issue_grant(&mut self, permit: ProofGrantPermit) -> Option<GrantStoreObservation> {
+        let recovery_grant = Uuid::new_v4();
+        let store_result =
+            store_possession_grant(self.state, self.user_id, recovery_grant, permit.epoch);
+        let observation = if store_result.is_ok() {
+            GrantStoreObservation::Stored
+        } else {
+            GrantStoreObservation::Failed
+        };
+        self.grant = Some((permit.epoch, recovery_grant));
+        if let Err(error) = store_result {
+            self.grant_error = Some(error);
+        }
+        Some(observation)
+    }
 }
 
 /// Render an initiation driver failure with the handler's historical status and
