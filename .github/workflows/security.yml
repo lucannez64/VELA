@@ -316,15 +316,19 @@ jobs:
       matrix:
         include:
           # Slowest first, so they start before the runners fill up.
-          - { name: vela-session-policy, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, fresh: true }
-          - { name: vela-recovery-policy, dir: serverVELA/vela-recovery-policy, script: verify-fstar.sh, fresh: true }
-          - { name: vela-rekey-policy, dir: serverVELA/vela-rekey-policy, script: verify-fstar.sh, fresh: true }
-          - { name: vela-enrollment-policy, dir: serverVELA/vela-enrollment-policy, script: verify-fstar.sh, fresh: true }
-          - { name: vela-share-policy, dir: serverVELA/vela-share-policy, script: verify-fstar.sh, fresh: true }
-          - { name: share-facts, dir: libVELA/vela-crypto, script: verify-share-facts-fstar.sh, fresh: false }
-          - { name: vela-sync-policy, dir: libVELA/vela-sync-policy, script: verify-fstar.sh, fresh: true }
-          - { name: vela-client-recovery-policy, dir: libVELA/vela-client-recovery-policy, script: verify-fstar.sh, fresh: true }
-          - { name: vela-client-share-policy, dir: libVELA/vela-client-share-policy, script: verify-fstar.sh, fresh: true }
+          # vela-session-policy is split into its independent gate groups.
+          - { name: vela-session-policy-login, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: login, fresh: false, ships: false }
+          - { name: vela-session-policy-deletion, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: deletion, fresh: false, ships: false }
+          - { name: vela-session-policy-revocation, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: revocation, fresh: false, ships: false }
+          - { name: vela-session-policy-core, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: core, fresh: true, ships: true }
+          - { name: vela-recovery-policy, dir: serverVELA/vela-recovery-policy, script: verify-fstar.sh, fresh: true, ships: true }
+          - { name: vela-rekey-policy, dir: serverVELA/vela-rekey-policy, script: verify-fstar.sh, fresh: true, ships: true }
+          - { name: vela-enrollment-policy, dir: serverVELA/vela-enrollment-policy, script: verify-fstar.sh, fresh: true, ships: true }
+          - { name: vela-share-policy, dir: serverVELA/vela-share-policy, script: verify-fstar.sh, fresh: true, ships: true }
+          - { name: share-facts, dir: libVELA/vela-crypto, script: verify-share-facts-fstar.sh, fresh: false, ships: true }
+          - { name: vela-sync-policy, dir: libVELA/vela-sync-policy, script: verify-fstar.sh, fresh: true, ships: true }
+          - { name: vela-client-recovery-policy, dir: libVELA/vela-client-recovery-policy, script: verify-fstar.sh, fresh: true, ships: true }
+          - { name: vela-client-share-policy, dir: libVELA/vela-client-share-policy, script: verify-fstar.sh, fresh: true, ships: true }
     env:
       CARGO_BUILD_JOBS: 1
       OPAMJOBS: 1
@@ -401,6 +405,7 @@ jobs:
         env:
           CRATE_DIR: ${{ matrix.dir }}
           SCRIPT: ${{ matrix.script }}
+          SCRIPT_ARGS: ${{ matrix.args }}
           FRESH: ${{ matrix.fresh }}
           LOG_NAME: ${{ matrix.name }}
         run: |
@@ -410,7 +415,8 @@ jobs:
             find "$CRATE_DIR/proofs/fstar/extraction" -maxdepth 1 -type f \( -name '*.fst' -o -name '*.fsti' \) -delete
           fi
           log="$RUNNER_TEMP/refinement-logs/$LOG_NAME.log"
-          if ! security/assurance/bounded.sh "$CRATE_DIR/$SCRIPT" > "$log" 2>&1; then
+          # shellcheck disable=SC2086 # SCRIPT_ARGS is empty or one word
+          if ! security/assurance/bounded.sh "$CRATE_DIR/$SCRIPT" $SCRIPT_ARGS > "$log" 2>&1; then
             tail -n 100 "$log"
             exit 1
           fi
@@ -419,10 +425,15 @@ jobs:
         if: always()
         env:
           CRATE_DIR: ${{ matrix.dir }}
+          SHIPS: ${{ matrix.ships }}
         run: |
           out="$RUNNER_TEMP/refinement-extractions"
           mkdir -p "$out"
-          find "$CRATE_DIR/proofs/fstar" -type f -name '*.fst' \
+          # Only the job that regenerated a crate's historical extraction ships
+          # it, so a committed copy never overwrites the checked one.
+          skip=()
+          [[ $SHIPS == true ]] || skip=(-not -path '*/extraction/*')
+          find "$CRATE_DIR/proofs/fstar" -type f -name '*.fst' "${skip[@]}" \
             \( -path '*/extraction/*' -o -path '*/extraction-*' -o -path '*-lemmas/*' -o -path '*-composition/*' -o -path '*/models/*' \) \
             -exec cp --parents {} "$out" \; 2>/dev/null || true
       - uses: actions/upload-artifact@v4

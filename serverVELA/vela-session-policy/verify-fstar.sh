@@ -4,6 +4,18 @@ set -euo pipefail
 proof_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cd "$proof_root"
 
+# Optional part, so CI can check the crate's independent gate groups in
+# parallel jobs: core (the historical extraction), login, revocation, deletion.
+# Each driver gate runs with its interpreter gate, which reads the driver
+# extraction it just regenerated. No argument runs everything, in order.
+part=${1:-all}
+case $part in
+  all|core|login|revocation|deletion) ;;
+  *) echo "usage: $0 [all|core|login|revocation|deletion]" >&2; exit 2 ;;
+esac
+wants() { [[ $part == all || $part == "$1" ]]; }
+
+if wants core; then
 for command_name in cargo-hax driver-hax-frontend-exporter hax-engine fstar.exe z3-4.13.3; do
   command -v "$command_name" >/dev/null || {
     echo "$command_name is missing; follow README.md" >&2
@@ -44,36 +56,37 @@ fstar.exe \
   --include "$hax_lib_root/proofs/fstar/extraction" \
   --include proofs/fstar/extraction \
   "${proof_files[@]}"
+fi
 
 # F-1/F-2 focused challenge-purpose and login-driver gate. It regenerates a
 # partial extraction with the same root module name into
 # proofs/fstar/extraction-login-driver, so it must run in its own fstar.exe
 # invocation and never share an include directory with the historical artifact
 # checked above.
-"$proof_root/verify-fstar-login-driver.sh"
+if wants login; then "$proof_root/verify-fstar-login-driver.sh"; fi
 
 # Handler-to-driver link for POST /auth/verify: the interpreter loop the
 # handler expands, proved to perform exactly the driver's effects. Needs the
 # login driver extraction above.
-"$proof_root/verify-fstar-login-interpreter.sh"
+if wants login; then "$proof_root/verify-fstar-login-interpreter.sh"; fi
 
 # F-3 focused device-revocation/logout/admission driver gate. It regenerates
 # its own partial extraction into proofs/fstar/extraction-revocation-driver and
 # is checked in its own fstar.exe invocation.
-"$proof_root/verify-fstar-revocation-driver.sh"
+if wants revocation; then "$proof_root/verify-fstar-revocation-driver.sh"; fi
 
 # Handler-to-driver link for POST /device/revoke and POST /auth/logout: the
 # interpreter loops the handlers expand. Needs the revocation driver extraction
 # above.
-"$proof_root/verify-fstar-revocation-interpreter.sh"
+if wants revocation; then "$proof_root/verify-fstar-revocation-interpreter.sh"; fi
 
 # F-4 focused account-deletion driver gate. It regenerates its own partial
 # extraction into proofs/fstar/extraction-deletion-driver (including the
 # middleware admission decision it composes with) and is checked in its own
 # fstar.exe invocation.
-"$proof_root/verify-fstar-deletion-driver.sh"
+if wants deletion; then "$proof_root/verify-fstar-deletion-driver.sh"; fi
 
 # Handler-to-driver link for DELETE /account: the interpreter loop the handler
 # expands, proved to perform exactly the driver's effects. Needs the deletion
 # driver extraction above.
-"$proof_root/verify-fstar-deletion-interpreter.sh"
+if wants deletion; then "$proof_root/verify-fstar-deletion-interpreter.sh"; fi
