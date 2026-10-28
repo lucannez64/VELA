@@ -187,6 +187,10 @@ prove the device-enroll and send-link decisions per request, and the send
 links' single use, deletion finality and owner-only deletion under any
 interleaving.
 
+The [cancellation evidence](cancellation/README.md) proves every interpreter
+loop leaves a sound driver state when cancelled after any turn, and reviews
+what each handler has already written at that point (found U-23; U-20 closed).
+
 The [cross-driver composition](cross-driver/README.md) runs the login,
 revocation, deletion, pairing and recovery drivers together over one shared
 world and proves the cross-request safety properties for any schedule.
