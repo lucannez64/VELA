@@ -1,0 +1,51 @@
+--- a/serverVELA/vela-session-policy/proofs/fstar/extraction-f2-cross/Vela_session_policy.Login_driver.fst
++++ b/serverVELA/vela-session-policy/proofs/fstar/extraction-f2-cross/Vela_session_policy.Login_driver.fst
+@@ -453,7 +453,14 @@
+         t_LoginDriver)
+       (LoginEffect_ObserveDevice <: t_LoginEffect)
+   | ChallengeObservation_Observed (Vela_session_policy.Challenge.ChallengeConsumption_Missing ) ->
+-    terminal driver (LoginFailure_ChallengeMissing <: t_LoginFailure)
++    transition ({
++          driver with
++          f_stage = LoginStage_Device <: t_LoginStage;
++          f_challenge_accepted = true
++        }
++        <:
++        t_LoginDriver)
++      (LoginEffect_ObserveDevice <: t_LoginEffect)
+   | ChallengeObservation_Observed (Vela_session_policy.Challenge.ChallengeConsumption_WrongPurpose ) ->
+     terminal driver (LoginFailure_ChallengeWrongPurpose <: t_LoginFailure)
+   | ChallengeObservation_StorageFailed  ->
+--- a/serverVELA/vela-enrollment-policy/proofs/fstar/extraction-f2-cross/Vela_enrollment_policy.Pairing_driver.fst
++++ b/serverVELA/vela-enrollment-policy/proofs/fstar/extraction-f2-cross/Vela_enrollment_policy.Pairing_driver.fst
+@@ -877,7 +877,11 @@
+           pairing_effect_is_sound result.f_driver result.f_effect &&
+           (~.(pairing_state_is_sound d <: bool) || pairing_state_is_sound result.f_driver)) =
+   match observation <: t_TakeObservation with
+-  | TakeObservation_Missing  -> terminal d (PairingFailure_CeremonyConsumed <: t_PairingFailure)
++  | TakeObservation_Missing  ->
++    transition ({ d with f_stage = PairingStage_InFlight <: t_PairingStage; f_consumed = true }
++        <:
++        t_PairingDriver)
++      (PairingEffect_InsertDevice <: t_PairingEffect)
+   | TakeObservation_Taken { f_grant_matches = grant_matches ; f_claim_matches = claim_matches } ->
+     if grant_matches && claim_matches
+     then
+--- a/serverVELA/vela-recovery-policy/proofs/fstar/extraction-f2-cross/Vela_recovery_policy.Driver.fst
++++ b/serverVELA/vela-recovery-policy/proofs/fstar/extraction-f2-cross/Vela_recovery_policy.Driver.fst
+@@ -277,7 +277,14 @@
+     : t_RedemptionTransition =
+   match observation <: t_ConsumptionObservation with
+   | ConsumptionObservation_Missing  ->
+-    terminal driver (RedemptionFailure_GrantUnavailable <: t_RedemptionFailure)
++    transition ({
++          driver with
++          f_stage = RedemptionStage_FinalPolicy <: t_RedemptionStage;
++          f_consumed_matched = true
++        }
++        <:
++        t_RedemptionDriver)
++      (RedemptionEffect_FinalPolicy <: t_RedemptionEffect)
+   | ConsumptionObservation_Present consumed ->
+     let matched:bool =
+       consumed.f_matches_observed_grant && consumed.f_key_epoch =. driver.f_epoch &&

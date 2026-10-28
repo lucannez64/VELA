@@ -1,0 +1,11 @@
+--- a/security/formal/cross-driver/Vela_cross_driver_composition.fst
++++ b/security/formal/cross-driver/Vela_cross_driver_composition.fst
+@@ -225,7 +225,7 @@
+ let account_epoch (w: world) (i: nat) : i64 = (account_at w i).ac_epoch
+ 
+ let insert_guard (w: world) (acct: nat) (epoch: i64) : bool =
+-  account_present w acct && account_active w acct && account_epoch w acct =. epoch
++  account_active w acct && account_epoch w acct =. epoch
+ 
+ // ── World mutations ────────────────────────────────────────────────────────
+ 
