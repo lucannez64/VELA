@@ -241,8 +241,10 @@ are byte-identical to a run that already passed. The key is the git object id
 of the crate, the outside files its scripts read (`deps` in the matrix), the
 workspace `Cargo.toml` and `Cargo.lock`, the two shared source checkers
 (`security/formal/check-driver-proof-sources.py`, `check-sync-chunk-proof.py`),
-the proof-tool pins and the boundary checker, and the workflow itself. Docs
-and the correspondence map are not inputs, so editing them reruns nothing. A hit restores that run's logs and
+the proof-tool pins and the boundary checker, and the workflow itself. Global assurance docs
+and the correspondence map are not shared proof inputs. Crate-local docs,
+including a README inside a keyed crate tree or an explicitly declared `deps`
+path, still invalidate the affected jobs when changed. A hit restores that run's logs and
 checked extractions, adds `reused.txt` to the logs, and the boundary job audits
 them as usual. `security/formal/tests/test_proof_inputs.py` fails if a script
 reads an outside path or local crate that the key does not cover. To force a
