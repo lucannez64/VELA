@@ -187,6 +187,9 @@ prove the device-enroll and send-link decisions per request, and the send
 links' single use, deletion finality and owner-only deletion under any
 interleaving.
 
+The [web-session driver](websession-driver/README.md) proves the start,
+grant, token and delete decisions per request (found U-25).
+
 The [cancellation evidence](cancellation/README.md) proves every interpreter
 loop leaves a sound driver state when cancelled after any turn, and reviews
 what each handler has already written at that point (found U-23; U-20 closed).
@@ -220,8 +223,9 @@ The [login](login-interpreter/README.md),
 [enroll](enroll-interpreter/README.md),
 [send](send-interpreter/README.md),
 [recovery share](recovery-share-interpreter/README.md),
-[registration](registration-interpreter/README.md) and
-[challenge issue](challenge-issue-interpreter/README.md) interpreters extend the same check to
+[registration](registration-interpreter/README.md),
+[challenge issue](challenge-issue-interpreter/README.md) and
+[web session](websession-interpreter/README.md) interpreters extend the same check to
 those handlers.
 
 The [deletion interpreter](deletion-interpreter/README.md) checks the loop

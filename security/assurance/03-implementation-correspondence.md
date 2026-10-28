@@ -256,7 +256,7 @@ fidelity are assumed.
 `POST /auth/logout`, the pairing handlers in `device/invitation.rs` and
 `device/rendezvous.rs`, the sharing handlers in `share/mod.rs` and the vault chunk handlers in
 `vault/chunk.rs`, `recovery/enroll_device.rs`, `recovery/possess.rs` and the WebAuthn recovery
-handlers in `recovery/{webauthn,initiate,recover}.rs`, `device/enroll.rs`, `send.rs`, `recovery/mod.rs`, `account/mod.rs` (registration) and `auth/challenge.rs` each run
+handlers in `recovery/{webauthn,initiate,recover}.rs`, `device/enroll.rs`, `send.rs`, `recovery/mod.rs`, `account/mod.rs` (registration), `auth/challenge.rs` and `web_session/mod.rs` each run
 their policy crate's interpreter macro, the same loop F* checks for every
 executor ([deletion](proof-logs/current/deletion-interpreter/README.md),
 [login](proof-logs/current/login-interpreter/README.md),
@@ -271,7 +271,8 @@ executor ([deletion](proof-logs/current/deletion-interpreter/README.md),
 [send](proof-logs/current/send-interpreter/README.md),
 [recovery share](proof-logs/current/recovery-share-interpreter/README.md),
 [registration](proof-logs/current/registration-interpreter/README.md),
-[challenge issue](proof-logs/current/challenge-issue-interpreter/README.md)). The handler's
+[challenge issue](proof-logs/current/challenge-issue-interpreter/README.md),
+[web session](proof-logs/current/websession-interpreter/README.md)). The handler's
 review surface is reduced to the executor methods in `account/delete.rs`, one
 per effect; `security/formal/tests/test_handler_interpreters.py` refuses a
 handler that calls the driver outside the macro.
