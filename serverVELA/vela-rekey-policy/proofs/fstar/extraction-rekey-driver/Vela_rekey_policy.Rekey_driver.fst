@@ -264,6 +264,11 @@ let rekey_state_is_sound (d: t_RekeyDriver) : bool =
   (match d.f_stage <: t_RekeyStage with
     | RekeyStage_Done  -> true
     | _ -> false)) &&
+  (~.d.f_responded ||
+  ~.(match d.f_op <: t_RekeyOp with
+    | RekeyOp_Capsules  -> true
+    | _ -> false) ||
+  d.f_capsules_complete) &&
   (~.d.f_failed ||
   (match d.f_stage <: t_RekeyStage with
     | RekeyStage_Done  -> true
@@ -311,6 +316,7 @@ let rekey_state_is_sound (d: t_RekeyDriver) : bool =
     | _ -> false) ||
   d.f_timeout_rollback) &&
   d.f_capsules_written <=. d.f_capsule_count &&
+  d.f_capsules_written <=. mk_i64 64 &&
   (~.(match d.f_op <: t_RekeyOp with
     | RekeyOp_Start  | RekeyOp_Commit  | RekeyOp_Abort  -> true
     | _ -> false) ||
@@ -325,7 +331,7 @@ let rekey_state_is_sound (d: t_RekeyDriver) : bool =
   d.f_capsules_written =. d.f_capsule_count) &&
   (~.d.f_capsules_complete || d.f_capsules_written =. d.f_capsule_count) &&
   (~.(match d.f_stage <: t_RekeyStage with
-    | RekeyStage_RateLimit  | RekeyStage_Load  -> true
+    | RekeyStage_RateLimit  | RekeyStage_Load  | RekeyStage_Timeout  -> true
     | _ -> false) ||
   d.f_capsules_written =. mk_i64 0) &&
   (~.(match d.f_stage <: t_RekeyStage with
@@ -541,7 +547,16 @@ let rekey_effect_is_sound (d: t_RekeyDriver) (v_effect: t_RekeyEffect) : bool =
 let transition (driver: t_RekeyDriver) (v_effect: t_RekeyEffect) : t_RekeyTransition =
   { f_driver = driver; f_effect = v_effect } <: t_RekeyTransition
 
-let idle (driver: t_RekeyDriver) : t_RekeyTransition =
+let idle (driver: t_RekeyDriver)
+    : Prims.Pure t_RekeyTransition
+      (requires rekey_state_is_sound driver)
+      (ensures
+        fun result ->
+          let result:t_RekeyTransition = result in
+          rekey_state_is_sound result.f_driver &&
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
   transition driver (RekeyEffect_Idle <: t_RekeyEffect)
 
 let terminal (driver: t_RekeyDriver) (failure: t_RekeyFailure)
@@ -551,7 +566,9 @@ let terminal (driver: t_RekeyDriver) (failure: t_RekeyFailure)
         fun result ->
           let result:t_RekeyTransition = result in
           rekey_state_is_sound result.f_driver &&
-          rekey_effect_is_sound result.f_driver result.f_effect) =
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
   transition ({ driver with f_stage = RekeyStage_Done <: t_RekeyStage; f_failed = true }
       <:
       t_RekeyDriver)
@@ -577,7 +594,9 @@ let complete (driver: t_RekeyDriver)
         fun result ->
           let result:t_RekeyTransition = result in
           rekey_state_is_sound result.f_driver &&
-          rekey_effect_is_sound result.f_driver result.f_effect) =
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
   transition ({ driver with f_stage = RekeyStage_Done <: t_RekeyStage; f_responded = true }
       <:
       t_RekeyDriver)
@@ -601,7 +620,9 @@ let complete_replay (driver: t_RekeyDriver)
         fun result ->
           let result:t_RekeyTransition = result in
           rekey_state_is_sound result.f_driver &&
-          rekey_effect_is_sound result.f_driver result.f_effect) =
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
   transition ({ driver with f_stage = RekeyStage_Done <: t_RekeyStage; f_responded = true }
       <:
       t_RekeyDriver)
@@ -742,7 +763,9 @@ let finish_capsules (driver: t_RekeyDriver)
         fun result ->
           let result:t_RekeyTransition = result in
           rekey_state_is_sound result.f_driver &&
-          rekey_effect_is_sound result.f_driver result.f_effect) =
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
   if
     Core_models.Option.impl__is_none #i64
       (Vela_rekey_policy.next_epoch driver.f_epoch <: Core_models.Option.t_Option i64)
@@ -777,7 +800,9 @@ let finish_commit (driver: t_RekeyDriver)
         fun result ->
           let result:t_RekeyTransition = result in
           rekey_state_is_sound result.f_driver &&
-          rekey_effect_is_sound result.f_driver result.f_effect) =
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
   if
     Core_models.Option.impl__is_none #i64
       (Vela_rekey_policy.next_epoch driver.f_epoch <: Core_models.Option.t_Option i64)
@@ -806,7 +831,9 @@ let finish_abort (driver: t_RekeyDriver)
         fun result ->
           let result:t_RekeyTransition = result in
           rekey_state_is_sound result.f_driver &&
-          rekey_effect_is_sound result.f_driver result.f_effect) =
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
   let authority:Vela_rekey_policy.t_AttemptAuthority =
     {
       Vela_rekey_policy.f_device_scope = driver.f_device_scope;
@@ -857,7 +884,9 @@ let after_freeze_checks (driver: t_RekeyDriver)
         fun result ->
           let result:t_RekeyTransition = result in
           rekey_state_is_sound result.f_driver &&
-          rekey_effect_is_sound result.f_driver result.f_effect) =
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
   if driver.f_active
   then terminal driver (RekeyFailure_NoRekeyInProgress <: t_RekeyFailure)
   else
@@ -913,7 +942,9 @@ let on_oram (driver: t_RekeyDriver) (observation: t_ProbeObservation)
         fun result ->
           let result:t_RekeyTransition = result in
           rekey_state_is_sound result.f_driver &&
-          rekey_effect_is_sound result.f_driver result.f_effect) =
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
   match observation <: t_ProbeObservation with
   | ProbeObservation_Empty  ->
     transition ({ driver with f_stage = RekeyStage_Capable <: t_RekeyStage; f_no_oram = true }
@@ -936,7 +967,9 @@ let on_capable (driver: t_RekeyDriver) (observation: t_ProbeObservation)
         fun result ->
           let result:t_RekeyTransition = result in
           rekey_state_is_sound result.f_driver &&
-          rekey_effect_is_sound result.f_driver result.f_effect) =
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
   match observation <: t_ProbeObservation with
   | ProbeObservation_Empty  ->
     transition ({ driver with f_stage = RekeyStage_Acknowledged <: t_RekeyStage; f_capable = true }
@@ -959,7 +992,9 @@ let start_plan (driver: t_RekeyDriver)
         fun result ->
           let result:t_RekeyTransition = result in
           rekey_state_is_sound result.f_driver &&
-          rekey_effect_is_sound result.f_driver result.f_effect) =
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
   let facts:Vela_rekey_policy.t_StartFacts =
     {
       Vela_rekey_policy.f_no_oram = driver.f_no_oram;
@@ -1004,7 +1039,9 @@ let on_acknowledged (driver: t_RekeyDriver) (observation: t_ProbeObservation)
         fun result ->
           let result:t_RekeyTransition = result in
           rekey_state_is_sound result.f_driver &&
-          rekey_effect_is_sound result.f_driver result.f_effect) =
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
   match observation <: t_ProbeObservation with
   | ProbeObservation_Empty  -> start_plan ({ driver with f_acknowledged = true } <: t_RekeyDriver)
   | ProbeObservation_Found  ->
@@ -1023,7 +1060,9 @@ let on_transaction (driver: t_RekeyDriver) (observation: t_TransactionObservatio
         fun result ->
           let result:t_RekeyTransition = result in
           rekey_state_is_sound result.f_driver &&
-          rekey_effect_is_sound result.f_driver result.f_effect) =
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
   if
     match observation <: t_TransactionObservation with
     | TransactionObservation_Failed  -> true
@@ -1052,7 +1091,9 @@ let on_inventory (driver: t_RekeyDriver) (observation: t_InventoryObservation)
         fun result ->
           let result:t_RekeyTransition = result in
           rekey_state_is_sound result.f_driver &&
-          rekey_effect_is_sound result.f_driver result.f_effect) =
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
   match observation <: t_InventoryObservation with
   | InventoryObservation_Read  ->
     transition ({ driver with f_stage = RekeyStage_FreezeCas <: t_RekeyStage } <: t_RekeyDriver)
@@ -1071,7 +1112,9 @@ let on_freeze_cas (driver: t_RekeyDriver) (observation: t_CasObservation)
         fun result ->
           let result:t_RekeyTransition = result in
           rekey_state_is_sound result.f_driver &&
-          rekey_effect_is_sound result.f_driver result.f_effect) =
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
   match observation <: t_CasObservation with
   | CasObservation_Updated  ->
     transition ({ driver with f_stage = RekeyStage_Cleanup <: t_RekeyStage } <: t_RekeyDriver)
@@ -1090,7 +1133,9 @@ let on_cleanup (driver: t_RekeyDriver) (observation: t_CleanupObservation)
         fun result ->
           let result:t_RekeyTransition = result in
           rekey_state_is_sound result.f_driver &&
-          rekey_effect_is_sound result.f_driver result.f_effect) =
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
   match observation <: t_CleanupObservation with
   | CleanupObservation_Done  ->
     transition ({ driver with f_stage = RekeyStage_TxCommit <: t_RekeyStage } <: t_RekeyDriver)
@@ -1108,7 +1153,9 @@ let on_capsule (driver: t_RekeyDriver) (observation: t_CapsuleObservation)
         fun result ->
           let result:t_RekeyTransition = result in
           rekey_state_is_sound result.f_driver &&
-          rekey_effect_is_sound result.f_driver result.f_effect) =
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
   match observation <: t_CapsuleObservation with
   | CapsuleObservation_Stored  ->
     let next:i64 =
@@ -1116,27 +1163,30 @@ let on_capsule (driver: t_RekeyDriver) (observation: t_CapsuleObservation)
       then driver.f_capsules_written +! mk_i64 1
       else driver.f_capsules_written
     in
-    if next =. driver.f_capsule_count
-    then
-      transition ({
-            driver with
-            f_stage = RekeyStage_Done <: t_RekeyStage;
-            f_capsules_written = next;
-            f_capsules_complete = true;
-            f_responded = true
-          }
-          <:
-          t_RekeyDriver)
-        (RekeyEffect_Complete <: t_RekeyEffect)
+    if next >. mk_i64 64
+    then terminal driver (RekeyFailure_TooManyCapsules <: t_RekeyFailure)
     else
-      transition ({
-            driver with
-            f_capsules_written = next;
-            f_stage = RekeyStage_Capsule <: t_RekeyStage
-          }
-          <:
-          t_RekeyDriver)
-        (RekeyEffect_WriteCapsule ({ f_index = next }) <: t_RekeyEffect)
+      if next =. driver.f_capsule_count
+      then
+        transition ({
+              driver with
+              f_stage = RekeyStage_Done <: t_RekeyStage;
+              f_capsules_written = next;
+              f_capsules_complete = true;
+              f_responded = true
+            }
+            <:
+            t_RekeyDriver)
+          (RekeyEffect_Complete <: t_RekeyEffect)
+      else
+        transition ({
+              driver with
+              f_capsules_written = next;
+              f_stage = RekeyStage_Capsule <: t_RekeyStage
+            }
+            <:
+            t_RekeyDriver)
+          (RekeyEffect_WriteCapsule ({ f_index = next }) <: t_RekeyEffect)
   | CapsuleObservation_Invalid
   | CapsuleObservation_NotTarget  ->
     terminal driver (RekeyFailure_CapsuleTargetInvalid <: t_RekeyFailure)
@@ -1153,7 +1203,9 @@ let on_chunks (driver: t_RekeyDriver) (observation: t_ProbeObservation)
         fun result ->
           let result:t_RekeyTransition = result in
           rekey_state_is_sound result.f_driver &&
-          rekey_effect_is_sound result.f_driver result.f_effect) =
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
   match observation <: t_ProbeObservation with
   | ProbeObservation_Empty  ->
     transition ({
@@ -1180,7 +1232,9 @@ let commit_plan (driver: t_RekeyDriver)
         fun result ->
           let result:t_RekeyTransition = result in
           rekey_state_is_sound result.f_driver &&
-          rekey_effect_is_sound result.f_driver result.f_effect) =
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
   let authority:Vela_rekey_policy.t_AttemptAuthority =
     {
       Vela_rekey_policy.f_device_scope = driver.f_device_scope;
@@ -1235,7 +1289,9 @@ let on_devices (driver: t_RekeyDriver) (observation: t_ProbeObservation)
         fun result ->
           let result:t_RekeyTransition = result in
           rekey_state_is_sound result.f_driver &&
-          rekey_effect_is_sound result.f_driver result.f_effect) =
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
   match observation <: t_ProbeObservation with
   | ProbeObservation_Empty  ->
     commit_plan ({ driver with f_capsules_complete = true } <: t_RekeyDriver)
@@ -1271,7 +1327,9 @@ let on_commit_cas (driver: t_RekeyDriver) (observation: t_CasObservation)
         fun result ->
           let result:t_RekeyTransition = result in
           rekey_state_is_sound result.f_driver &&
-          rekey_effect_is_sound result.f_driver result.f_effect) =
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
   match observation <: t_CasObservation with
   | CasObservation_Updated  ->
     transition ({
@@ -1298,9 +1356,35 @@ let on_sweep (driver: t_RekeyDriver) (e_observation: t_SweepObservation)
         fun result ->
           let result:t_RekeyTransition = result in
           rekey_state_is_sound result.f_driver &&
-          rekey_effect_is_sound result.f_driver result.f_effect) =
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
   transition ({ driver with f_stage = RekeyStage_Publish <: t_RekeyStage } <: t_RekeyDriver)
     (RekeyEffect_PublishEpoch <: t_RekeyEffect)
+
+let on_published (driver: t_RekeyDriver)
+    : Prims.Pure t_RekeyTransition
+      (requires
+        rekey_state_is_sound driver &&
+        (match driver.f_stage <: t_RekeyStage with
+          | RekeyStage_Publish  -> true
+          | _ -> false))
+      (ensures
+        fun result ->
+          let result:t_RekeyTransition = result in
+          rekey_state_is_sound result.f_driver &&
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
+  transition ({
+        driver with
+        f_stage = RekeyStage_Done <: t_RekeyStage;
+        f_published = true;
+        f_responded = true
+      }
+      <:
+      t_RekeyDriver)
+    (RekeyEffect_Complete <: t_RekeyEffect)
 
 let on_rollback (driver: t_RekeyDriver) (observation: t_RollbackObservation)
     : Prims.Pure t_RekeyTransition
@@ -1313,7 +1397,9 @@ let on_rollback (driver: t_RekeyDriver) (observation: t_RollbackObservation)
         fun result ->
           let result:t_RekeyTransition = result in
           rekey_state_is_sound result.f_driver &&
-          rekey_effect_is_sound result.f_driver result.f_effect) =
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
   match observation <: t_RollbackObservation with
   | RollbackObservation_RolledBack  ->
     complete ({ driver with f_active = true; f_rolled_back = true } <: t_RekeyDriver)
@@ -1337,7 +1423,9 @@ let on_replay_state (driver: t_RekeyDriver)
         fun result ->
           let result:t_RekeyTransition = result in
           rekey_state_is_sound result.f_driver &&
-          rekey_effect_is_sound result.f_driver result.f_effect) =
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
   let facts:Vela_rekey_policy.t_CommitReplayFacts =
     {
       Vela_rekey_policy.f_target_epoch = driver.f_replay_target;
@@ -1386,7 +1474,9 @@ let dispatch_after_timeout (driver: t_RekeyDriver)
         fun result ->
           let result:t_RekeyTransition = result in
           rekey_state_is_sound result.f_driver &&
-          rekey_effect_is_sound result.f_driver result.f_effect) =
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
   match driver.f_op <: t_RekeyOp with
   | RekeyOp_Start  ->
     if ~.driver.f_active
@@ -1415,19 +1505,40 @@ let after_state (driver: t_RekeyDriver) (state: t_KeyStateObs)
         fun result ->
           let result:t_RekeyTransition = result in
           rekey_state_is_sound result.f_driver &&
-          rekey_effect_is_sound result.f_driver result.f_effect) =
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
   let observed:t_RekeyDriver =
     {
-      driver with
+      f_op = driver.f_op;
+      f_stage = RekeyStage_Load <: t_RekeyStage;
+      f_authenticated = driver.f_authenticated;
+      f_device_scope = driver.f_device_scope;
       f_epoch = state.f_epoch;
       f_active = ~.state.f_freezing;
+      f_timeout_done = driver.f_timeout_done;
       f_starter_matches = state.f_starter_matches;
       f_rotation_present = state.f_rotation_id_present;
       f_header_present = state.f_header_present;
       f_rotation_matches = state.f_header_matches;
       f_replay_target = state.f_replay_target;
       f_replay_recorded = state.f_replay_recorded;
-      f_replay_id_matches = state.f_replay_id_matches
+      f_replay_id_matches = state.f_replay_id_matches;
+      f_capsule_count = driver.f_capsule_count;
+      f_capsules_written = mk_i64 0;
+      f_no_oram = false;
+      f_capable = false;
+      f_acknowledged = false;
+      f_from_epoch = mk_i64 0;
+      f_to_epoch = mk_i64 0;
+      f_chunks_complete = false;
+      f_capsules_complete = false;
+      f_committed = false;
+      f_rolled_back = false;
+      f_timeout_rollback = false;
+      f_published = false;
+      f_responded = false;
+      f_failed = false
     }
     <:
     t_RekeyDriver
@@ -1475,7 +1586,9 @@ let on_state (driver: t_RekeyDriver) (observation: t_StateObservation)
         fun result ->
           let result:t_RekeyTransition = result in
           rekey_state_is_sound result.f_driver &&
-          rekey_effect_is_sound result.f_driver result.f_effect) =
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
   match observation <: t_StateObservation with
   | StateObservation_Loaded state -> after_state driver state
   | StateObservation_Storage  -> terminal driver (RekeyFailure_StateStorage <: t_RekeyFailure)
@@ -1492,7 +1605,9 @@ let on_timeout (driver: t_RekeyDriver) (observation: t_TimeoutObservation)
         fun result ->
           let result:t_RekeyTransition = result in
           rekey_state_is_sound result.f_driver &&
-          rekey_effect_is_sound result.f_driver result.f_effect) =
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
   match observation <: t_TimeoutObservation with
   | TimeoutObservation_RolledBack  ->
     let restored:t_RekeyDriver =
@@ -1517,145 +1632,342 @@ let on_timeout (driver: t_RekeyDriver) (observation: t_TimeoutObservation)
     after_state raced state
   | TimeoutObservation_Storage  -> terminal driver (RekeyFailure_RollbackStorage <: t_RekeyFailure)
 
-/// The complete, total transition relation. Events that do not match the
-/// current stage (and every event after `Done`) are ignored.
-let rekey_step (driver: t_RekeyDriver) (event: t_RekeyEvent)
+let step_rate_limit (driver: t_RekeyDriver) (observation: t_RateLimitObservation)
     : Prims.Pure t_RekeyTransition
-      Prims.l_True
+      (requires rekey_state_is_sound driver)
       (ensures
         fun result ->
           let result:t_RekeyTransition = result in
-          ~.(rekey_state_is_sound driver <: bool) ||
           rekey_state_is_sound result.f_driver &&
-          rekey_effect_is_sound result.f_driver result.f_effect) =
-  match event <: t_RekeyEvent with
-  | RekeyEvent_RateLimit observation ->
-    if
-      match driver.f_stage <: t_RekeyStage with
-      | RekeyStage_RateLimit  -> true
-      | _ -> false
-    then on_rate_limit driver observation
-    else idle driver
-  | RekeyEvent_State observation ->
-    if
-      match driver.f_stage <: t_RekeyStage with
-      | RekeyStage_Load  -> true
-      | _ -> false
-    then on_state driver observation
-    else idle driver
-  | RekeyEvent_Timeout observation ->
-    if
-      match driver.f_stage <: t_RekeyStage with
-      | RekeyStage_Timeout  -> true
-      | _ -> false
-    then on_timeout driver observation
-    else idle driver
-  | RekeyEvent_Oram observation ->
-    if
-      match driver.f_stage <: t_RekeyStage with
-      | RekeyStage_Oram  -> true
-      | _ -> false
-    then on_oram driver observation
-    else idle driver
-  | RekeyEvent_Capable observation ->
-    if
-      match driver.f_stage <: t_RekeyStage with
-      | RekeyStage_Capable  -> true
-      | _ -> false
-    then on_capable driver observation
-    else idle driver
-  | RekeyEvent_Acknowledged observation ->
-    if
-      match driver.f_stage <: t_RekeyStage with
-      | RekeyStage_Acknowledged  -> true
-      | _ -> false
-    then on_acknowledged driver observation
-    else idle driver
-  | RekeyEvent_Transaction observation ->
-    if
-      match driver.f_stage <: t_RekeyStage with
-      | RekeyStage_BeginTx  | RekeyStage_TxCommit  -> true
-      | _ -> false
-    then on_transaction driver observation
-    else idle driver
-  | RekeyEvent_Inventory observation ->
-    if
-      match driver.f_stage <: t_RekeyStage with
-      | RekeyStage_Inventory  -> true
-      | _ -> false
-    then on_inventory driver observation
-    else idle driver
-  | RekeyEvent_FreezeCas observation ->
-    if
-      match driver.f_stage <: t_RekeyStage with
-      | RekeyStage_FreezeCas  -> true
-      | _ -> false
-    then on_freeze_cas driver observation
-    else idle driver
-  | RekeyEvent_Cleanup observation ->
-    if
-      match driver.f_stage <: t_RekeyStage with
-      | RekeyStage_Cleanup  -> true
-      | _ -> false
-    then on_cleanup driver observation
-    else idle driver
-  | RekeyEvent_TxCommit observation ->
-    if
-      match driver.f_stage <: t_RekeyStage with
-      | RekeyStage_TxCommit  -> true
-      | _ -> false
-    then on_transaction driver observation
-    else idle driver
-  | RekeyEvent_Capsule observation ->
-    if
-      match driver.f_stage <: t_RekeyStage with
-      | RekeyStage_Capsule  -> true
-      | _ -> false
-    then on_capsule driver observation
-    else idle driver
-  | RekeyEvent_Chunks observation ->
-    if
-      match driver.f_stage <: t_RekeyStage with
-      | RekeyStage_Chunks  -> true
-      | _ -> false
-    then on_chunks driver observation
-    else idle driver
-  | RekeyEvent_Devices observation ->
-    if
-      match driver.f_stage <: t_RekeyStage with
-      | RekeyStage_Devices  -> true
-      | _ -> false
-    then on_devices driver observation
-    else idle driver
-  | RekeyEvent_CommitCas observation ->
-    if
-      match driver.f_stage <: t_RekeyStage with
-      | RekeyStage_CommitCas  -> true
-      | _ -> false
-    then on_commit_cas driver observation
-    else idle driver
-  | RekeyEvent_Sweep observation ->
-    if
-      match driver.f_stage <: t_RekeyStage with
-      | RekeyStage_Sweep  -> true
-      | _ -> false
-    then on_sweep driver observation
-    else idle driver
-  | RekeyEvent_Published  ->
-    if
-      match driver.f_stage <: t_RekeyStage with
-      | RekeyStage_Publish  -> true
-      | _ -> false
-    then complete ({ driver with f_published = true } <: t_RekeyDriver)
-    else idle driver
-  | RekeyEvent_Rollback observation ->
-    if
-      match driver.f_stage <: t_RekeyStage with
-      | RekeyStage_Rollback  -> true
-      | _ -> false
-    then on_rollback driver observation
-    else idle driver
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
+  if
+    match driver.f_stage <: t_RekeyStage with
+    | RekeyStage_RateLimit  -> true
+    | _ -> false
+  then on_rate_limit driver observation
+  else idle driver
 
-/// The commit-replay decision is part of the post-load dispatch; it is exposed
-/// separately so the Rust conformance tests can exercise it directly.
-let commit_replay (driver: t_RekeyDriver) : t_RekeyTransition = on_replay_state driver
+let step_state (driver: t_RekeyDriver) (observation: t_StateObservation)
+    : Prims.Pure t_RekeyTransition
+      (requires rekey_state_is_sound driver)
+      (ensures
+        fun result ->
+          let result:t_RekeyTransition = result in
+          rekey_state_is_sound result.f_driver &&
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
+  if
+    match driver.f_stage <: t_RekeyStage with
+    | RekeyStage_Load  -> true
+    | _ -> false
+  then on_state driver observation
+  else idle driver
+
+let step_timeout (driver: t_RekeyDriver) (observation: t_TimeoutObservation)
+    : Prims.Pure t_RekeyTransition
+      (requires rekey_state_is_sound driver)
+      (ensures
+        fun result ->
+          let result:t_RekeyTransition = result in
+          rekey_state_is_sound result.f_driver &&
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
+  if
+    match driver.f_stage <: t_RekeyStage with
+    | RekeyStage_Timeout  -> true
+    | _ -> false
+  then on_timeout driver observation
+  else idle driver
+
+let step_oram (driver: t_RekeyDriver) (observation: t_ProbeObservation)
+    : Prims.Pure t_RekeyTransition
+      (requires rekey_state_is_sound driver)
+      (ensures
+        fun result ->
+          let result:t_RekeyTransition = result in
+          rekey_state_is_sound result.f_driver &&
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
+  if
+    match driver.f_stage <: t_RekeyStage with
+    | RekeyStage_Oram  -> true
+    | _ -> false
+  then on_oram driver observation
+  else idle driver
+
+let step_capable (driver: t_RekeyDriver) (observation: t_ProbeObservation)
+    : Prims.Pure t_RekeyTransition
+      (requires rekey_state_is_sound driver)
+      (ensures
+        fun result ->
+          let result:t_RekeyTransition = result in
+          rekey_state_is_sound result.f_driver &&
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
+  if
+    match driver.f_stage <: t_RekeyStage with
+    | RekeyStage_Capable  -> true
+    | _ -> false
+  then on_capable driver observation
+  else idle driver
+
+let step_acknowledged (driver: t_RekeyDriver) (observation: t_ProbeObservation)
+    : Prims.Pure t_RekeyTransition
+      (requires rekey_state_is_sound driver)
+      (ensures
+        fun result ->
+          let result:t_RekeyTransition = result in
+          rekey_state_is_sound result.f_driver &&
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
+  if
+    match driver.f_stage <: t_RekeyStage with
+    | RekeyStage_Acknowledged  -> true
+    | _ -> false
+  then on_acknowledged driver observation
+  else idle driver
+
+let step_transaction (driver: t_RekeyDriver) (observation: t_TransactionObservation)
+    : Prims.Pure t_RekeyTransition
+      (requires rekey_state_is_sound driver)
+      (ensures
+        fun result ->
+          let result:t_RekeyTransition = result in
+          rekey_state_is_sound result.f_driver &&
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
+  if
+    match driver.f_stage <: t_RekeyStage with
+    | RekeyStage_BeginTx  | RekeyStage_TxCommit  -> true
+    | _ -> false
+  then on_transaction driver observation
+  else idle driver
+
+let step_tx_commit (driver: t_RekeyDriver) (observation: t_TransactionObservation)
+    : Prims.Pure t_RekeyTransition
+      (requires rekey_state_is_sound driver)
+      (ensures
+        fun result ->
+          let result:t_RekeyTransition = result in
+          rekey_state_is_sound result.f_driver &&
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
+  if
+    match driver.f_stage <: t_RekeyStage with
+    | RekeyStage_TxCommit  -> true
+    | _ -> false
+  then on_transaction driver observation
+  else idle driver
+
+let step_inventory (driver: t_RekeyDriver) (observation: t_InventoryObservation)
+    : Prims.Pure t_RekeyTransition
+      (requires rekey_state_is_sound driver)
+      (ensures
+        fun result ->
+          let result:t_RekeyTransition = result in
+          rekey_state_is_sound result.f_driver &&
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
+  if
+    match driver.f_stage <: t_RekeyStage with
+    | RekeyStage_Inventory  -> true
+    | _ -> false
+  then on_inventory driver observation
+  else idle driver
+
+let step_freeze_cas (driver: t_RekeyDriver) (observation: t_CasObservation)
+    : Prims.Pure t_RekeyTransition
+      (requires rekey_state_is_sound driver)
+      (ensures
+        fun result ->
+          let result:t_RekeyTransition = result in
+          rekey_state_is_sound result.f_driver &&
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
+  if
+    match driver.f_stage <: t_RekeyStage with
+    | RekeyStage_FreezeCas  -> true
+    | _ -> false
+  then on_freeze_cas driver observation
+  else idle driver
+
+let step_cleanup (driver: t_RekeyDriver) (observation: t_CleanupObservation)
+    : Prims.Pure t_RekeyTransition
+      (requires rekey_state_is_sound driver)
+      (ensures
+        fun result ->
+          let result:t_RekeyTransition = result in
+          rekey_state_is_sound result.f_driver &&
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
+  if
+    match driver.f_stage <: t_RekeyStage with
+    | RekeyStage_Cleanup  -> true
+    | _ -> false
+  then on_cleanup driver observation
+  else idle driver
+
+let step_capsule (driver: t_RekeyDriver) (observation: t_CapsuleObservation)
+    : Prims.Pure t_RekeyTransition
+      (requires rekey_state_is_sound driver)
+      (ensures
+        fun result ->
+          let result:t_RekeyTransition = result in
+          rekey_state_is_sound result.f_driver &&
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
+  if
+    match driver.f_stage <: t_RekeyStage with
+    | RekeyStage_Capsule  -> true
+    | _ -> false
+  then on_capsule driver observation
+  else idle driver
+
+let step_chunks (driver: t_RekeyDriver) (observation: t_ProbeObservation)
+    : Prims.Pure t_RekeyTransition
+      (requires rekey_state_is_sound driver)
+      (ensures
+        fun result ->
+          let result:t_RekeyTransition = result in
+          rekey_state_is_sound result.f_driver &&
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
+  if
+    match driver.f_stage <: t_RekeyStage with
+    | RekeyStage_Chunks  -> true
+    | _ -> false
+  then on_chunks driver observation
+  else idle driver
+
+let step_devices (driver: t_RekeyDriver) (observation: t_ProbeObservation)
+    : Prims.Pure t_RekeyTransition
+      (requires rekey_state_is_sound driver)
+      (ensures
+        fun result ->
+          let result:t_RekeyTransition = result in
+          rekey_state_is_sound result.f_driver &&
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
+  if
+    match driver.f_stage <: t_RekeyStage with
+    | RekeyStage_Devices  -> true
+    | _ -> false
+  then on_devices driver observation
+  else idle driver
+
+let step_commit_cas (driver: t_RekeyDriver) (observation: t_CasObservation)
+    : Prims.Pure t_RekeyTransition
+      (requires rekey_state_is_sound driver)
+      (ensures
+        fun result ->
+          let result:t_RekeyTransition = result in
+          rekey_state_is_sound result.f_driver &&
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
+  if
+    match driver.f_stage <: t_RekeyStage with
+    | RekeyStage_CommitCas  -> true
+    | _ -> false
+  then on_commit_cas driver observation
+  else idle driver
+
+let step_sweep (driver: t_RekeyDriver) (observation: t_SweepObservation)
+    : Prims.Pure t_RekeyTransition
+      (requires rekey_state_is_sound driver)
+      (ensures
+        fun result ->
+          let result:t_RekeyTransition = result in
+          rekey_state_is_sound result.f_driver &&
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
+  if
+    match driver.f_stage <: t_RekeyStage with
+    | RekeyStage_Sweep  -> true
+    | _ -> false
+  then on_sweep driver observation
+  else idle driver
+
+let step_rollback (driver: t_RekeyDriver) (observation: t_RollbackObservation)
+    : Prims.Pure t_RekeyTransition
+      (requires rekey_state_is_sound driver)
+      (ensures
+        fun result ->
+          let result:t_RekeyTransition = result in
+          rekey_state_is_sound result.f_driver &&
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
+  if
+    match driver.f_stage <: t_RekeyStage with
+    | RekeyStage_Rollback  -> true
+    | _ -> false
+  then on_rollback driver observation
+  else idle driver
+
+let step_published (driver: t_RekeyDriver)
+    : Prims.Pure t_RekeyTransition
+      (requires rekey_state_is_sound driver)
+      (ensures
+        fun result ->
+          let result:t_RekeyTransition = result in
+          rekey_state_is_sound result.f_driver &&
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
+  if
+    match driver.f_stage <: t_RekeyStage with
+    | RekeyStage_Publish  -> true
+    | _ -> false
+  then on_published driver
+  else idle driver
+
+/// The complete, total transition relation. Events that do not match the
+/// current stage (and every event after `Done`) are ignored. Each event is
+/// dispatched to one contracted helper, so this function has no decision of
+/// its own.
+let rekey_step (driver: t_RekeyDriver) (event: t_RekeyEvent)
+    : Prims.Pure t_RekeyTransition
+      (requires rekey_state_is_sound driver)
+      (ensures
+        fun result ->
+          let result:t_RekeyTransition = result in
+          rekey_state_is_sound result.f_driver &&
+          rekey_effect_is_sound result.f_driver result.f_effect &&
+          (~.driver.f_committed || result.f_driver.f_committed) &&
+          result.f_driver.f_op =. driver.f_op) =
+  match event <: t_RekeyEvent with
+  | RekeyEvent_RateLimit observation -> step_rate_limit driver observation
+  | RekeyEvent_State observation -> step_state driver observation
+  | RekeyEvent_Timeout observation -> step_timeout driver observation
+  | RekeyEvent_Oram observation -> step_oram driver observation
+  | RekeyEvent_Capable observation -> step_capable driver observation
+  | RekeyEvent_Acknowledged observation -> step_acknowledged driver observation
+  | RekeyEvent_Transaction observation -> step_transaction driver observation
+  | RekeyEvent_Inventory observation -> step_inventory driver observation
+  | RekeyEvent_FreezeCas observation -> step_freeze_cas driver observation
+  | RekeyEvent_Cleanup observation -> step_cleanup driver observation
+  | RekeyEvent_TxCommit observation -> step_tx_commit driver observation
+  | RekeyEvent_Capsule observation -> step_capsule driver observation
+  | RekeyEvent_Chunks observation -> step_chunks driver observation
+  | RekeyEvent_Devices observation -> step_devices driver observation
+  | RekeyEvent_CommitCas observation -> step_commit_cas driver observation
+  | RekeyEvent_Sweep observation -> step_sweep driver observation
+  | RekeyEvent_Published  -> step_published driver
+  | RekeyEvent_Rollback observation -> step_rollback driver observation

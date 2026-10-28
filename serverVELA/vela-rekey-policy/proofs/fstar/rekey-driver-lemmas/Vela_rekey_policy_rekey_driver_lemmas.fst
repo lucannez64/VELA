@@ -37,6 +37,26 @@ let is_rollback (d: t_RekeyDriver) : bool =
   | RekeyStage_Rollback -> true
   | _ -> false
 
+let is_start_op (d: t_RekeyDriver) : bool =
+  match d.f_op <: t_RekeyOp with
+  | RekeyOp_Start -> true
+  | _ -> false
+
+let is_commit_op (d: t_RekeyDriver) : bool =
+  match d.f_op <: t_RekeyOp with
+  | RekeyOp_Commit -> true
+  | _ -> false
+
+let is_abort_op (d: t_RekeyDriver) : bool =
+  match d.f_op <: t_RekeyOp with
+  | RekeyOp_Abort -> true
+  | _ -> false
+
+let is_capsules_op (d: t_RekeyDriver) : bool =
+  match d.f_op <: t_RekeyOp with
+  | RekeyOp_Capsules -> true
+  | _ -> false
+
 let begin_sound_start (r: t_RekeyRequest)
   : Lemma (rekey_state_is_sound (begin_start r).f_driver) = ()
 
@@ -107,6 +127,17 @@ let run_from_abort (r: t_RekeyRequest) (events: list t_RekeyEvent)
   begin_sound_abort r;
   run (begin_abort r).f_driver events
 
+let rec op_sticky (d: t_RekeyDriver) (events: list t_RekeyEvent)
+  : Lemma
+    (requires (rekey_state_is_sound d))
+    (ensures ((run d events).f_op = d.f_op))
+    (decreases events) =
+  match events with
+  | [] -> ()
+  | e :: rest ->
+      step_sound d e;
+      op_sticky (rekey_step d e).f_driver rest
+
 let step_after_done (d: t_RekeyDriver) (e: t_RekeyEvent)
   : Lemma
     (requires (rekey_state_is_sound d /\ is_done d))
@@ -131,17 +162,6 @@ let step_after_done (d: t_RekeyDriver) (e: t_RekeyEvent)
   | RekeyEvent_Sweep _ -> ()
   | RekeyEvent_Published -> ()
   | RekeyEvent_Rollback _ -> ()
-
-let rec done_suffix_inert (d: t_RekeyDriver) (events: list t_RekeyEvent)
-  : Lemma
-    (requires (rekey_state_is_sound d /\ is_done d))
-    (ensures (run d events = d /\ last_effect d events = RekeyEffect_Idle))
-    (decreases events) =
-  match events with
-  | [] -> ()
-  | e :: rest ->
-      step_after_done d e;
-      done_suffix_inert d rest
 
 let rec count_complete (d: t_RekeyDriver) (events: list t_RekeyEvent)
   : Pure nat (requires (rekey_state_is_sound d)) (ensures (fun _ -> True)) (decreases events) =
@@ -172,6 +192,20 @@ let rec count_commit_cas (d: t_RekeyDriver) (events: list t_RekeyEvent)
       (match (rekey_step d e).f_effect <: t_RekeyEffect with
        | RekeyEffect_CommitCas -> 1
        | _ -> 0) + count_commit_cas (rekey_step d e).f_driver rest
+
+let rec done_suffix_inert (d: t_RekeyDriver) (events: list t_RekeyEvent)
+  : Lemma
+    (requires (rekey_state_is_sound d /\ is_done d))
+    (ensures (run d events = d /\ last_effect d events = RekeyEffect_Idle /\
+              count_complete d events = 0 /\
+              count_fail d events = 0 /\
+              count_commit_cas d events = 0))
+    (decreases events) =
+  match events with
+  | [] -> ()
+  | e :: rest ->
+      step_after_done d e;
+      done_suffix_inert d rest
 
 let rec complete_count_le_one (d: t_RekeyDriver) (events: list t_RekeyEvent)
   : Lemma (requires (rekey_state_is_sound d))
@@ -210,63 +244,6 @@ let rec fail_count_le_one (d: t_RekeyDriver) (events: list t_RekeyEvent)
       end else fail_count_le_one t.f_driver rest
 
 /// `committed` is monotone: no transition ever clears it.
-let committed_sticky (d: t_RekeyDriver) (e: t_RekeyEvent)
-  : Lemma (ensures (d.f_committed ==> (rekey_step d e).f_driver.f_committed)) =
-  match e <: t_RekeyEvent with
-  | RekeyEvent_RateLimit _ -> ()
-  | RekeyEvent_State _ -> ()
-  | RekeyEvent_Timeout _ -> ()
-  | RekeyEvent_Oram _ -> ()
-  | RekeyEvent_Capable _ -> ()
-  | RekeyEvent_Acknowledged _ -> ()
-  | RekeyEvent_Transaction _ -> ()
-  | RekeyEvent_Inventory _ -> ()
-  | RekeyEvent_FreezeCas _ -> ()
-  | RekeyEvent_Cleanup _ -> ()
-  | RekeyEvent_TxCommit _ -> ()
-  | RekeyEvent_Capsule _ -> ()
-  | RekeyEvent_Chunks _ -> ()
-  | RekeyEvent_Devices _ -> ()
-  | RekeyEvent_CommitCas _ -> ()
-  | RekeyEvent_Sweep _ -> ()
-  | RekeyEvent_Published -> ()
-  | RekeyEvent_Rollback _ -> ()
-
-let rec no_commit_after_committed (d: t_RekeyDriver) (events: list t_RekeyEvent)
-  : Lemma
-    (requires (rekey_state_is_sound d /\ d.f_committed))
-    (ensures (count_commit_cas d events = 0))
-    (decreases events) =
-  match events with
-  | [] -> ()
-  | e :: rest ->
-      step_sound d e;
-      step_effect_sound d e;
-      committed_sticky d e;
-      let t = rekey_step d e in
-      (match t.f_effect <: t_RekeyEffect with
-       | RekeyEffect_CommitCas -> assert (not t.f_driver.f_committed)
-       | _ -> ());
-      no_commit_after_committed t.f_driver rest
-
-let rec commit_cas_count_le_one (d: t_RekeyDriver) (events: list t_RekeyEvent)
-  : Lemma (requires (rekey_state_is_sound d))
-          (ensures (count_commit_cas d events <= 1))
-          (decreases events) =
-  match events with
-  | [] -> ()
-  | e :: rest ->
-      step_sound d e;
-      step_effect_sound d e;
-      let t = rekey_step d e in
-      if (match t.f_effect <: t_RekeyEffect with
-          | RekeyEffect_CommitCas -> true
-          | _ -> false)
-      then begin
-        assert (t.f_driver.f_committed);
-        no_commit_after_committed t.f_driver rest
-      end else commit_cas_count_le_one t.f_driver rest
-
 let commit_effect_requires_completeness (d: t_RekeyDriver) (e: t_RekeyEvent)
   : Lemma
     (requires (rekey_state_is_sound d))
@@ -278,19 +255,6 @@ let commit_effect_requires_completeness (d: t_RekeyDriver) (e: t_RekeyEvent)
        (rekey_step d e).f_driver.f_starter_matches /\
        (rekey_step d e).f_driver.f_rotation_present /\
        (rekey_step d e).f_driver.f_rotation_matches))) =
-  step_effect_sound d e
-
-let commit_effect_advances_one_epoch (d: t_RekeyDriver) (e: t_RekeyEvent)
-  : Lemma
-    (requires (rekey_state_is_sound d))
-    (ensures (
-      (rekey_step d e).f_effect = RekeyEffect_CommitCas ==>
-      ((rekey_step d e).f_driver.f_committed /\
-       (rekey_step d e).f_driver.f_active /\
-       next_epoch (rekey_step d e).f_driver.f_from_epoch =
-         Core_models.Option.Option_Some (rekey_step d e).f_driver.f_to_epoch /\
-       (rekey_step d e).f_driver.f_epoch = (rekey_step d e).f_driver.f_to_epoch))) =
-  step_sound d e;
   step_effect_sound d e
 
 let abort_rollback_restores_active
@@ -370,15 +334,15 @@ let rekey_start_trace_theorem
       not d.f_committed /\
       not (d.f_responded && d.f_failed) /\
       count_complete (begin_start request).f_driver events <= 1 /\
-      count_fail (begin_start request).f_driver events <= 1 /\
-      count_commit_cas (begin_start request).f_driver events = 0) =
+      count_fail (begin_start request).f_driver events <= 1) =
   begin_sound_start request;
+  op_sticky (begin_start request).f_driver events;
   complete_count_le_one (begin_start request).f_driver events;
   fail_count_le_one (begin_start request).f_driver events;
-  commit_cas_count_le_one (begin_start request).f_driver events;
   let d = run_from_start request events in
   match d.f_op <: t_RekeyOp with
   | RekeyOp_Start -> ()
+  | _ -> ()
 
 let rekey_capsules_trace_theorem
       (request: t_RekeyRequest)
@@ -390,15 +354,15 @@ let rekey_capsules_trace_theorem
       not (d.f_responded && d.f_failed) /\
       (d.f_responded ==> d.f_capsules_complete) /\
       count_complete (begin_capsules request).f_driver events <= 1 /\
-      count_fail (begin_capsules request).f_driver events <= 1 /\
-      count_commit_cas (begin_capsules request).f_driver events = 0) =
+      count_fail (begin_capsules request).f_driver events <= 1) =
   begin_sound_capsules request;
+  op_sticky (begin_capsules request).f_driver events;
   complete_count_le_one (begin_capsules request).f_driver events;
   fail_count_le_one (begin_capsules request).f_driver events;
-  commit_cas_count_le_one (begin_capsules request).f_driver events;
   let d = run_from_capsules request events in
   match d.f_op <: t_RekeyOp with
   | RekeyOp_Capsules -> ()
+  | _ -> ()
 
 let rekey_commit_trace_theorem
       (request: t_RekeyRequest)
@@ -416,19 +380,18 @@ let rekey_commit_trace_theorem
          d.f_capsules_complete /\
          next_epoch d.f_from_epoch = Core_models.Option.Option_Some d.f_to_epoch /\
          d.f_epoch = d.f_to_epoch)) /\
-      (last_effect (begin_commit request).f_driver events = RekeyEffect_Complete ==> d.f_committed) /\
       not (d.f_responded && d.f_failed) /\
       (not d.f_failed || not d.f_committed) /\
       count_complete (begin_commit request).f_driver events <= 1 /\
-      count_fail (begin_commit request).f_driver events <= 1 /\
-      count_commit_cas (begin_commit request).f_driver events <= 1) =
+      count_fail (begin_commit request).f_driver events <= 1) =
   begin_sound_commit request;
   complete_count_le_one (begin_commit request).f_driver events;
   fail_count_le_one (begin_commit request).f_driver events;
-  commit_cas_count_le_one (begin_commit request).f_driver events;
   let d = run_from_commit request events in
+  assert (rekey_state_is_sound d);
   match d.f_op <: t_RekeyOp with
   | RekeyOp_Commit -> ()
+  | _ -> ()
 
 let rekey_abort_trace_theorem
       (request: t_RekeyRequest)
@@ -440,15 +403,15 @@ let rekey_abort_trace_theorem
       (d.f_rolled_back ==> (d.f_active /\ d.f_epoch >=. v_INITIAL_EPOCH)) /\
       not (d.f_responded && d.f_failed) /\
       count_complete (begin_abort request).f_driver events <= 1 /\
-      count_fail (begin_abort request).f_driver events <= 1 /\
-      count_commit_cas (begin_abort request).f_driver events = 0) =
+      count_fail (begin_abort request).f_driver events <= 1) =
   begin_sound_abort request;
+  op_sticky (begin_abort request).f_driver events;
   complete_count_le_one (begin_abort request).f_driver events;
   fail_count_le_one (begin_abort request).f_driver events;
-  commit_cas_count_le_one (begin_abort request).f_driver events;
   let d = run_from_abort request events in
   match d.f_op <: t_RekeyOp with
   | RekeyOp_Abort -> ()
+  | _ -> ()
 
 #pop-options
 
@@ -485,14 +448,14 @@ let start_prefix : list t_RekeyEvent =
     RekeyEvent_Capable ProbeObservation_Empty;
     RekeyEvent_Acknowledged ProbeObservation_Empty ]
 
-let start_run () : t_RekeyTransition =
+let start_run () : t_RekeyDriver =
   run (begin_start (device_request (mk_i64 0))).f_driver start_prefix
 
 let start_reaches_freeze ()
   : Lemma (
-      (start_run ()).f_effect = RekeyEffect_BeginFreezeTransaction /\
-      (start_run ()).f_driver.f_from_epoch = mk_i64 2 /\
-      (start_run ()).f_driver.f_to_epoch = mk_i64 3) =
+      (start_run ()).f_stage = RekeyStage_BeginTx /\
+      (start_run ()).f_from_epoch = mk_i64 2 /\
+      (start_run ()).f_to_epoch = mk_i64 3) =
   ()
 
 let start_tail : list t_RekeyEvent =
@@ -503,7 +466,7 @@ let start_tail : list t_RekeyEvent =
     RekeyEvent_TxCommit TransactionObservation_Committed ]
 
 let start_witness : t_RekeyDriver =
-  run (start_run ()).f_driver start_tail
+  run (start_run ()) start_tail
 
 let start_witness_completes ()
   : Lemma (

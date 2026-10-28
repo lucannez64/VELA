@@ -23,6 +23,7 @@ module Vela_rekey_policy_rekey_interpreter_lemmas
 
 open FStar.Mul
 open Core_models
+open Vela_rekey_policy
 open Vela_rekey_policy.Rekey_driver
 open Vela_rekey_policy.Rekey_interpreter
 open Vela_rekey_policy_rekey_driver_lemmas
@@ -133,7 +134,7 @@ let turn_ev (#io_t: Type0) {| i: t_RekeyIo io_t |} (s: io_t) (t: t_RekeyTransiti
       let ev = RekeyEvent_Sweep o in
       (s', rekey_step t.f_driver ev, Some ev)
   | RekeyEffect_PublishEpoch ->
-      let (s', ()) = f_publish_epoch #io_t #i s t.f_driver.f_to_epoch in
+      let s' = f_publish_epoch #io_t #i s t.f_driver.f_to_epoch in
       let ev = RekeyEvent_Published in
       (s', rekey_step t.f_driver ev, Some ev)
   | RekeyEffect_RollbackAttempt ->
@@ -214,39 +215,39 @@ let rec iter_turn_is_run_ev (#io_t: Type0) {| i: t_RekeyIo io_t |} (n: nat) (s: 
 
 let run_start_is_run_ev (#io_t: Type0) {| i: t_RekeyIo io_t |} (s: io_t)
   (request: t_RekeyRequest)
-  : Lemma (let (s2, t2, _) = run_ev #io_t #i 67 s (begin_start request) in
+  : Lemma (let (s2, t2, _) = run_ev #io_t #i 12 s (begin_start request) in
            run_start #io_t #i s request == (s2, t2)) =
   let t0 = begin_start request in
-  iter_turn_is_run_ev #io_t #i 67 s t0;
-  assert (v v_REKEY_MAX_EFFECTS = 67);
-  assert (run_start #io_t #i s request == iter_turn #io_t #i 67 (s, t0))
+  iter_turn_is_run_ev #io_t #i 12 s t0;
+  assert (v v_START_MAX_EFFECTS = 12);
+  assert (run_start #io_t #i s request == iter_turn #io_t #i 12 (s, t0))
 
 let run_capsules_is_run_ev (#io_t: Type0) {| i: t_RekeyIo io_t |} (s: io_t)
   (request: t_RekeyRequest)
-  : Lemma (let (s2, t2, _) = run_ev #io_t #i 67 s (begin_capsules request) in
+  : Lemma (let (s2, t2, _) = run_ev #io_t #i 68 s (begin_capsules request) in
            run_capsules #io_t #i s request == (s2, t2)) =
   let t0 = begin_capsules request in
-  iter_turn_is_run_ev #io_t #i 67 s t0;
-  assert (v v_REKEY_MAX_EFFECTS = 67);
-  assert (run_capsules #io_t #i s request == iter_turn #io_t #i 67 (s, t0))
+  iter_turn_is_run_ev #io_t #i 68 s t0;
+  assert (v v_CAPSULES_MAX_EFFECTS = 68);
+  assert (run_capsules #io_t #i s request == iter_turn #io_t #i 68 (s, t0))
 
 let run_commit_is_run_ev (#io_t: Type0) {| i: t_RekeyIo io_t |} (s: io_t)
   (request: t_RekeyRequest)
-  : Lemma (let (s2, t2, _) = run_ev #io_t #i 67 s (begin_commit request) in
+  : Lemma (let (s2, t2, _) = run_ev #io_t #i 10 s (begin_commit request) in
            run_commit #io_t #i s request == (s2, t2)) =
   let t0 = begin_commit request in
-  iter_turn_is_run_ev #io_t #i 67 s t0;
-  assert (v v_REKEY_MAX_EFFECTS = 67);
-  assert (run_commit #io_t #i s request == iter_turn #io_t #i 67 (s, t0))
+  iter_turn_is_run_ev #io_t #i 10 s t0;
+  assert (v v_COMMIT_MAX_EFFECTS = 10);
+  assert (run_commit #io_t #i s request == iter_turn #io_t #i 10 (s, t0))
 
 let run_abort_is_run_ev (#io_t: Type0) {| i: t_RekeyIo io_t |} (s: io_t)
   (request: t_RekeyRequest)
-  : Lemma (let (s2, t2, _) = run_ev #io_t #i 67 s (begin_abort request) in
+  : Lemma (let (s2, t2, _) = run_ev #io_t #i 4 s (begin_abort request) in
            run_abort #io_t #i s request == (s2, t2)) =
   let t0 = begin_abort request in
-  iter_turn_is_run_ev #io_t #i 67 s t0;
-  assert (v v_REKEY_MAX_EFFECTS = 67);
-  assert (run_abort #io_t #i s request == iter_turn #io_t #i 67 (s, t0))
+  iter_turn_is_run_ev #io_t #i 4 s t0;
+  assert (v v_ABORT_MAX_EFFECTS = 4);
+  assert (run_abort #io_t #i s request == iter_turn #io_t #i 4 (s, t0))
 
 // ── 2. The observations drive the extracted driver ────────────────────────
 
@@ -277,41 +278,79 @@ let rec run_ev_follows_the_driver (#io_t: Type0) {| i: t_RekeyIo io_t |} (n: nat
 
 // ── 3. A verdict within the budget ────────────────────────────────────────
 
-/// Effects still to perform before a verdict. The capsule index strictly
-/// decreases the bound on every write.
-let remaining (e: t_RekeyEffect) : nat =
+/// Effects still to perform before a verdict, per entry point. The extracted
+/// loops have separate budgets, so the measure is selected by the driver's
+/// operation.
+let start_remaining (e: t_RekeyEffect) : nat =
   match e with
-  | RekeyEffect_RateLimit -> 700
-  | RekeyEffect_LoadState -> 699
-  | RekeyEffect_TimeoutRollback -> 698
-  | RekeyEffect_CheckOram -> 697
-  | RekeyEffect_CheckCapable -> 696
-  | RekeyEffect_CheckAcknowledged -> 695
-  | RekeyEffect_BeginFreezeTransaction -> 694
-  | RekeyEffect_ReadInventory -> 693
-  | RekeyEffect_FreezeCas -> 692
-  | RekeyEffect_CleanupChunks -> 691
-  | RekeyEffect_CommitFreezeTransaction -> 690
-  | RekeyEffect_WriteCapsule { f_index = index } -> 500 - index
-  | RekeyEffect_CheckChunkShadows -> 680
-  | RekeyEffect_CheckDeviceCapsules -> 679
-  | RekeyEffect_CommitCas -> 678
-  | RekeyEffect_SweepOldChunks -> 677
-  | RekeyEffect_PublishEpoch -> 676
-  | RekeyEffect_RollbackAttempt -> 675
-  | RekeyEffect_Complete | RekeyEffect_CompleteReplay | RekeyEffect_Fail _ | RekeyEffect_Idle -> 0
+  | RekeyEffect_RateLimit -> 12
+  | RekeyEffect_LoadState -> 11
+  | RekeyEffect_TimeoutRollback -> 10
+  | RekeyEffect_CheckOram -> 9
+  | RekeyEffect_CheckCapable -> 8
+  | RekeyEffect_CheckAcknowledged -> 7
+  | RekeyEffect_BeginFreezeTransaction -> 6
+  | RekeyEffect_ReadInventory -> 5
+  | RekeyEffect_FreezeCas -> 4
+  | RekeyEffect_CleanupChunks -> 3
+  | RekeyEffect_CommitFreezeTransaction -> 2
+  | _ -> 0
+
+let commit_remaining (e: t_RekeyEffect) : nat =
+  match e with
+  | RekeyEffect_RateLimit -> 10
+  | RekeyEffect_LoadState -> 9
+  | RekeyEffect_TimeoutRollback -> 8
+  | RekeyEffect_CheckChunkShadows -> 7
+  | RekeyEffect_CheckDeviceCapsules -> 6
+  | RekeyEffect_CommitCas -> 5
+  | RekeyEffect_SweepOldChunks -> 4
+  | RekeyEffect_PublishEpoch -> 3
+  | _ -> 0
+
+let abort_remaining (e: t_RekeyEffect) : nat =
+  match e with
+  | RekeyEffect_RateLimit -> 4
+  | RekeyEffect_LoadState -> 3
+  | RekeyEffect_TimeoutRollback -> 2
+  | RekeyEffect_RollbackAttempt -> 1
+  | _ -> 0
+
+let capsules_remaining (e: t_RekeyEffect) : nat =
+  match e with
+  | RekeyEffect_RateLimit -> 68
+  | RekeyEffect_LoadState -> 67
+  | RekeyEffect_TimeoutRollback -> 66
+  | RekeyEffect_WriteCapsule { f_index = index } ->
+      if v index <= 64 then 64 - v index else 0
+  | _ -> 0
+
+let remaining_at (op: t_RekeyOp) (e: t_RekeyEffect) : nat =
+  match op with
+  | RekeyOp_Start -> start_remaining e
+  | RekeyOp_Capsules -> capsules_remaining e
+  | RekeyOp_Commit -> commit_remaining e
+  | RekeyOp_Abort -> abort_remaining e
 
 /// Answering the current effect moves strictly closer to a verdict.
 let step_decreases (t: t_RekeyTransition) (ev: t_RekeyEvent)
   : Lemma (requires sound_transition t /\ not (terminal t.f_effect) /\ responds_to t.f_effect ev)
-          (ensures remaining (rekey_step t.f_driver ev).f_effect < remaining t.f_effect) =
-  match t.f_effect <: t_RekeyEffect with
-  | RekeyEffect_WriteCapsule { f_index = index } -> ()
-  | _ -> ()
+          (ensures (remaining_at (rekey_step t.f_driver ev).f_driver.f_op
+                                 (rekey_step t.f_driver ev).f_effect
+                    < remaining_at t.f_driver.f_op t.f_effect)) =
+  match t.f_driver.f_op <: t_RekeyOp with
+  | RekeyOp_Start -> ()
+  | RekeyOp_Capsules ->
+      (match t.f_effect <: t_RekeyEffect with
+       | RekeyEffect_WriteCapsule { f_index = index } ->
+           assert (v index < 64)
+       | _ -> ())
+  | RekeyOp_Commit -> ()
+  | RekeyOp_Abort -> ()
 
 let rec run_ev_reaches_a_verdict (#io_t: Type0) {| i: t_RekeyIo io_t |} (n: nat) (s: io_t)
   (t: t_RekeyTransition)
-  : Lemma (requires sound_transition t /\ remaining t.f_effect <= n)
+  : Lemma (requires sound_transition t /\ remaining_at t.f_driver.f_op t.f_effect <= n)
           (ensures (let (_, t2, _) = run_ev #io_t #i n s t in terminal t2.f_effect))
           (decreases n) =
   if n = 0 then ()
@@ -339,9 +378,9 @@ let run_start_theorem (#io_t: Type0) {| i: t_RekeyIo io_t |} (s: io_t)
          not (d.f_responded && d.f_failed))) =
   let t0 = begin_start request in
   run_start_is_run_ev #io_t #i s request;
-  run_ev_follows_the_driver #io_t #i 67 s t0;
-  run_ev_reaches_a_verdict #io_t #i 67 s t0;
-  let (_, t2, evs) = run_ev #io_t #i 67 s t0 in
+  run_ev_follows_the_driver #io_t #i 12 s t0;
+  run_ev_reaches_a_verdict #io_t #i 12 s t0;
+  let (_, t2, evs) = run_ev #io_t #i 12 s t0 in
   rekey_start_trace_theorem request evs
 
 let run_capsules_theorem (#io_t: Type0) {| i: t_RekeyIo io_t |} (s: io_t)
@@ -359,9 +398,9 @@ let run_capsules_theorem (#io_t: Type0) {| i: t_RekeyIo io_t |} (s: io_t)
          not (d.f_responded && d.f_failed))) =
   let t0 = begin_capsules request in
   run_capsules_is_run_ev #io_t #i s request;
-  run_ev_follows_the_driver #io_t #i 67 s t0;
-  run_ev_reaches_a_verdict #io_t #i 67 s t0;
-  let (_, t2, evs) = run_ev #io_t #i 67 s t0 in
+  run_ev_follows_the_driver #io_t #i 68 s t0;
+  run_ev_reaches_a_verdict #io_t #i 68 s t0;
+  let (_, t2, evs) = run_ev #io_t #i 68 s t0 in
   rekey_capsules_trace_theorem request evs
 
 let run_commit_theorem (#io_t: Type0) {| i: t_RekeyIo io_t |} (s: io_t)
@@ -383,9 +422,9 @@ let run_commit_theorem (#io_t: Type0) {| i: t_RekeyIo io_t |} (s: io_t)
          (not d.f_failed || not d.f_committed))) =
   let t0 = begin_commit request in
   run_commit_is_run_ev #io_t #i s request;
-  run_ev_follows_the_driver #io_t #i 67 s t0;
-  run_ev_reaches_a_verdict #io_t #i 67 s t0;
-  let (_, t2, evs) = run_ev #io_t #i 67 s t0 in
+  run_ev_follows_the_driver #io_t #i 10 s t0;
+  run_ev_reaches_a_verdict #io_t #i 10 s t0;
+  let (_, t2, evs) = run_ev #io_t #i 10 s t0 in
   rekey_commit_trace_theorem request evs
 
 let run_abort_theorem (#io_t: Type0) {| i: t_RekeyIo io_t |} (s: io_t)
@@ -403,7 +442,7 @@ let run_abort_theorem (#io_t: Type0) {| i: t_RekeyIo io_t |} (s: io_t)
          not (d.f_responded && d.f_failed))) =
   let t0 = begin_abort request in
   run_abort_is_run_ev #io_t #i s request;
-  run_ev_follows_the_driver #io_t #i 67 s t0;
-  run_ev_reaches_a_verdict #io_t #i 67 s t0;
-  let (_, t2, evs) = run_ev #io_t #i 67 s t0 in
+  run_ev_follows_the_driver #io_t #i 4 s t0;
+  run_ev_reaches_a_verdict #io_t #i 4 s t0;
+  let (_, t2, evs) = run_ev #io_t #i 4 s t0 in
   rekey_abort_trace_theorem request evs

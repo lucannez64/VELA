@@ -31,7 +31,12 @@ use crate::rekey_driver::{
 /// rollback, the readiness probes, the freeze transaction, the inventory, the
 /// freeze CAS, the cleanup, the transaction commit — or 64 capsule writes, or
 /// the two completeness probes, the commit CAS, the sweep and the publication.
-pub const REKEY_MAX_EFFECTS: usize = 67;
+pub const START_MAX_EFFECTS: usize = 12;
+pub const CAPSULES_MAX_EFFECTS: usize = 68;
+pub const COMMIT_MAX_EFFECTS: usize = 10;
+pub const ABORT_MAX_EFFECTS: usize = 4;
+/// Largest of the four budgets, used by the scripted conformance tests.
+pub const REKEY_MAX_EFFECTS: usize = 68;
 
 /// The state invariant every loop keeps.
 pub fn rekey_loop_is_sound(transition: RekeyTransition) -> bool {
@@ -110,7 +115,7 @@ macro_rules! rekey_start_interpreter {
             begin_start as __begin, rekey_step as __step, RekeyEffect as __E, RekeyEvent as __V,
         };
         let mut transition = __begin($request);
-        for _ in 0..$crate::rekey_interpreter::REKEY_MAX_EFFECTS {
+        for _ in 0..$crate::rekey_interpreter::START_MAX_EFFECTS {
             #[cfg(hax)]
             hax_lib::loop_invariant!(|_: usize| {
                 $crate::rekey_interpreter::rekey_loop_is_sound(transition)
@@ -201,7 +206,7 @@ macro_rules! rekey_capsules_interpreter {
             RekeyEvent as __V,
         };
         let mut transition = __begin($request);
-        for _ in 0..$crate::rekey_interpreter::REKEY_MAX_EFFECTS {
+        for _ in 0..$crate::rekey_interpreter::CAPSULES_MAX_EFFECTS {
             #[cfg(hax)]
             hax_lib::loop_invariant!(|_: usize| {
                 $crate::rekey_interpreter::rekey_loop_is_sound(transition)
@@ -291,7 +296,7 @@ macro_rules! rekey_commit_interpreter {
             begin_commit as __begin, rekey_step as __step, RekeyEffect as __E, RekeyEvent as __V,
         };
         let mut transition = __begin($request);
-        for _ in 0..$crate::rekey_interpreter::REKEY_MAX_EFFECTS {
+        for _ in 0..$crate::rekey_interpreter::COMMIT_MAX_EFFECTS {
             #[cfg(hax)]
             hax_lib::loop_invariant!(|_: usize| {
                 $crate::rekey_interpreter::rekey_loop_is_sound(transition)
@@ -381,7 +386,7 @@ macro_rules! rekey_abort_interpreter {
             begin_abort as __begin, rekey_step as __step, RekeyEffect as __E, RekeyEvent as __V,
         };
         let mut transition = __begin($request);
-        for _ in 0..$crate::rekey_interpreter::REKEY_MAX_EFFECTS {
+        for _ in 0..$crate::rekey_interpreter::ABORT_MAX_EFFECTS {
             #[cfg(hax)]
             hax_lib::loop_invariant!(|_: usize| {
                 $crate::rekey_interpreter::rekey_loop_is_sound(transition)

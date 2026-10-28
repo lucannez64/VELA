@@ -394,6 +394,9 @@ pub fn rekey_state_is_sound(d: RekeyDriver) -> bool {
         && (!d.committed || committed_stage)
         && (!d.responded || !d.failed)
         && (!d.responded || matches!(d.stage, RekeyStage::Done))
+        && (!d.responded
+            || !matches!(d.op, RekeyOp::Capsules)
+            || d.capsules_complete)
         && (!d.failed || matches!(d.stage, RekeyStage::Done))
         // A commit is exactly a completed `plan_commit` on this request's own
         // observed state, after both completeness observations.
@@ -436,6 +439,7 @@ pub fn rekey_state_is_sound(d: RekeyDriver) -> bool {
         // Capsule progress never exceeds the request's list and completeness
         // only counts the whole list.
         && (d.capsules_written <= d.capsule_count)
+        && d.capsules_written <= 64
         && (!matches!(d.op, RekeyOp::Start | RekeyOp::Commit | RekeyOp::Abort)
             || d.capsule_count == 0)
         && (!matches!(
@@ -447,8 +451,10 @@ pub fn rekey_state_is_sound(d: RekeyDriver) -> bool {
                 | RekeyStage::Publish
         ) || d.capsules_written == d.capsule_count)
         && (!d.capsules_complete || d.capsules_written == d.capsule_count)
-        && (!matches!(d.stage, RekeyStage::RateLimit | RekeyStage::Load)
-            || d.capsules_written == 0)
+        && (!matches!(
+            d.stage,
+            RekeyStage::RateLimit | RekeyStage::Load | RekeyStage::Timeout
+        ) || d.capsules_written == 0)
         && (!matches!(d.stage, RekeyStage::Capsule)
             || (matches!(d.op, RekeyOp::Capsules)
                 && d.capsules_written < d.capsule_count))
@@ -569,6 +575,13 @@ fn transition(driver: RekeyDriver, effect: RekeyEffect) -> RekeyTransition {
     RekeyTransition { driver, effect }
 }
 
+#[cfg_attr(hax, hax_lib::requires(rekey_state_is_sound(driver)))]
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    rekey_state_is_sound(result.driver)
+        && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
+}))]
 fn idle(driver: RekeyDriver) -> RekeyTransition {
     transition(driver, RekeyEffect::Idle)
 }
@@ -579,6 +592,8 @@ fn idle(driver: RekeyDriver) -> RekeyTransition {
 #[cfg_attr(hax, hax_lib::ensures(|result| {
     rekey_state_is_sound(result.driver)
         && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
 }))]
 fn terminal(driver: RekeyDriver, failure: RekeyFailure) -> RekeyTransition {
     transition(
@@ -602,6 +617,8 @@ fn terminal(driver: RekeyDriver, failure: RekeyFailure) -> RekeyTransition {
 #[cfg_attr(hax, hax_lib::ensures(|result| {
     rekey_state_is_sound(result.driver)
         && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
 }))]
 fn complete(driver: RekeyDriver) -> RekeyTransition {
     transition(
@@ -626,6 +643,8 @@ fn complete(driver: RekeyDriver) -> RekeyTransition {
 #[cfg_attr(hax, hax_lib::ensures(|result| {
     rekey_state_is_sound(result.driver)
         && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
 }))]
 fn complete_replay(driver: RekeyDriver) -> RekeyTransition {
     transition(
@@ -752,11 +771,22 @@ fn on_rate_limit(driver: RekeyDriver, observation: RateLimitObservation) -> Reke
 #[cfg_attr(hax, hax_lib::ensures(|result| {
     rekey_state_is_sound(result.driver)
         && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
 }))]
 fn after_state(driver: RekeyDriver, state: KeyStateObs) -> RekeyTransition {
+    // Rebuild the loaded state explicitly. Historical flags from the previous
+    // load (a lost timeout race, a completed write) are not part of the
+    // authoritative row this observation names, and the effect sequence restarts
+    // from the readiness probes.
     let observed = RekeyDriver {
+        op: driver.op,
+        stage: RekeyStage::Load,
+        authenticated: driver.authenticated,
+        device_scope: driver.device_scope,
         epoch: state.epoch,
         active: !state.freezing,
+        timeout_done: driver.timeout_done,
         starter_matches: state.starter_matches,
         rotation_present: state.rotation_id_present,
         header_present: state.header_present,
@@ -764,7 +794,21 @@ fn after_state(driver: RekeyDriver, state: KeyStateObs) -> RekeyTransition {
         replay_target: state.replay_target,
         replay_recorded: state.replay_recorded,
         replay_id_matches: state.replay_id_matches,
-        ..driver
+        capsule_count: driver.capsule_count,
+        capsules_written: 0,
+        no_oram: false,
+        capable: false,
+        acknowledged: false,
+        from_epoch: 0,
+        to_epoch: 0,
+        chunks_complete: false,
+        capsules_complete: false,
+        committed: false,
+        rolled_back: false,
+        timeout_rollback: false,
+        published: false,
+        responded: false,
+        failed: false,
     };
     if observed.epoch < INITIAL_EPOCH {
         return terminal(observed, RekeyFailure::InvalidEpoch);
@@ -801,6 +845,8 @@ fn after_state(driver: RekeyDriver, state: KeyStateObs) -> RekeyTransition {
 #[cfg_attr(hax, hax_lib::ensures(|result| {
     rekey_state_is_sound(result.driver)
         && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
 }))]
 fn dispatch_after_timeout(driver: RekeyDriver) -> RekeyTransition {
     match driver.op {
@@ -840,6 +886,8 @@ fn dispatch_after_timeout(driver: RekeyDriver) -> RekeyTransition {
 #[cfg_attr(hax, hax_lib::ensures(|result| {
     rekey_state_is_sound(result.driver)
         && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
 }))]
 fn after_freeze_checks(driver: RekeyDriver) -> RekeyTransition {
     if driver.active {
@@ -893,6 +941,8 @@ fn after_freeze_checks(driver: RekeyDriver) -> RekeyTransition {
 #[cfg_attr(hax, hax_lib::ensures(|result| {
     rekey_state_is_sound(result.driver)
         && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
 }))]
 fn finish_capsules(driver: RekeyDriver) -> RekeyTransition {
     if next_epoch(driver.epoch).is_none() {
@@ -931,6 +981,8 @@ fn finish_capsules(driver: RekeyDriver) -> RekeyTransition {
 #[cfg_attr(hax, hax_lib::ensures(|result| {
     rekey_state_is_sound(result.driver)
         && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
 }))]
 fn finish_commit(driver: RekeyDriver) -> RekeyTransition {
     if next_epoch(driver.epoch).is_none() {
@@ -960,6 +1012,8 @@ fn finish_commit(driver: RekeyDriver) -> RekeyTransition {
 #[cfg_attr(hax, hax_lib::ensures(|result| {
     rekey_state_is_sound(result.driver)
         && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
 }))]
 fn finish_abort(driver: RekeyDriver) -> RekeyTransition {
     let authority = AttemptAuthority {
@@ -991,6 +1045,8 @@ fn finish_abort(driver: RekeyDriver) -> RekeyTransition {
 #[cfg_attr(hax, hax_lib::ensures(|result| {
     rekey_state_is_sound(result.driver)
         && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
 }))]
 fn on_state(driver: RekeyDriver, observation: StateObservation) -> RekeyTransition {
     match observation {
@@ -1004,6 +1060,8 @@ fn on_state(driver: RekeyDriver, observation: StateObservation) -> RekeyTransiti
 #[cfg_attr(hax, hax_lib::ensures(|result| {
     rekey_state_is_sound(result.driver)
         && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
 }))]
 fn on_timeout(driver: RekeyDriver, observation: TimeoutObservation) -> RekeyTransition {
     match observation {
@@ -1036,6 +1094,8 @@ fn on_timeout(driver: RekeyDriver, observation: TimeoutObservation) -> RekeyTran
 #[cfg_attr(hax, hax_lib::ensures(|result| {
     rekey_state_is_sound(result.driver)
         && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
 }))]
 fn on_oram(driver: RekeyDriver, observation: ProbeObservation) -> RekeyTransition {
     match observation {
@@ -1064,6 +1124,8 @@ fn on_oram(driver: RekeyDriver, observation: ProbeObservation) -> RekeyTransitio
 #[cfg_attr(hax, hax_lib::ensures(|result| {
     rekey_state_is_sound(result.driver)
         && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
 }))]
 fn on_capable(driver: RekeyDriver, observation: ProbeObservation) -> RekeyTransition {
     match observation {
@@ -1090,6 +1152,8 @@ fn on_capable(driver: RekeyDriver, observation: ProbeObservation) -> RekeyTransi
 #[cfg_attr(hax, hax_lib::ensures(|result| {
     rekey_state_is_sound(result.driver)
         && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
 }))]
 fn on_acknowledged(driver: RekeyDriver, observation: ProbeObservation) -> RekeyTransition {
     match observation {
@@ -1112,6 +1176,8 @@ fn on_acknowledged(driver: RekeyDriver, observation: ProbeObservation) -> RekeyT
 #[cfg_attr(hax, hax_lib::ensures(|result| {
     rekey_state_is_sound(result.driver)
         && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
 }))]
 fn start_plan(driver: RekeyDriver) -> RekeyTransition {
     let facts = StartFacts {
@@ -1143,6 +1209,8 @@ fn start_plan(driver: RekeyDriver) -> RekeyTransition {
 #[cfg_attr(hax, hax_lib::ensures(|result| {
     rekey_state_is_sound(result.driver)
         && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
 }))]
 fn on_transaction(driver: RekeyDriver, observation: TransactionObservation) -> RekeyTransition {
     if matches!(observation, TransactionObservation::Failed) {
@@ -1169,6 +1237,8 @@ fn on_transaction(driver: RekeyDriver, observation: TransactionObservation) -> R
 #[cfg_attr(hax, hax_lib::ensures(|result| {
     rekey_state_is_sound(result.driver)
         && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
 }))]
 fn on_inventory(driver: RekeyDriver, observation: InventoryObservation) -> RekeyTransition {
     match observation {
@@ -1187,6 +1257,8 @@ fn on_inventory(driver: RekeyDriver, observation: InventoryObservation) -> Rekey
 #[cfg_attr(hax, hax_lib::ensures(|result| {
     rekey_state_is_sound(result.driver)
         && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
 }))]
 fn on_freeze_cas(driver: RekeyDriver, observation: CasObservation) -> RekeyTransition {
     match observation {
@@ -1206,6 +1278,8 @@ fn on_freeze_cas(driver: RekeyDriver, observation: CasObservation) -> RekeyTrans
 #[cfg_attr(hax, hax_lib::ensures(|result| {
     rekey_state_is_sound(result.driver)
         && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
 }))]
 fn on_cleanup(driver: RekeyDriver, observation: CleanupObservation) -> RekeyTransition {
     match observation {
@@ -1224,6 +1298,8 @@ fn on_cleanup(driver: RekeyDriver, observation: CleanupObservation) -> RekeyTran
 #[cfg_attr(hax, hax_lib::ensures(|result| {
     rekey_state_is_sound(result.driver)
         && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
 }))]
 fn on_capsule(driver: RekeyDriver, observation: CapsuleObservation) -> RekeyTransition {
     match observation {
@@ -1233,6 +1309,9 @@ fn on_capsule(driver: RekeyDriver, observation: CapsuleObservation) -> RekeyTran
             } else {
                 driver.capsules_written
             };
+            if next > 64 {
+                return terminal(driver, RekeyFailure::TooManyCapsules);
+            }
             if next == driver.capsule_count {
                 transition(
                     RekeyDriver {
@@ -1266,6 +1345,8 @@ fn on_capsule(driver: RekeyDriver, observation: CapsuleObservation) -> RekeyTran
 #[cfg_attr(hax, hax_lib::ensures(|result| {
     rekey_state_is_sound(result.driver)
         && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
 }))]
 fn on_chunks(driver: RekeyDriver, observation: ProbeObservation) -> RekeyTransition {
     match observation {
@@ -1292,6 +1373,8 @@ fn on_chunks(driver: RekeyDriver, observation: ProbeObservation) -> RekeyTransit
 #[cfg_attr(hax, hax_lib::ensures(|result| {
     rekey_state_is_sound(result.driver)
         && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
 }))]
 fn on_devices(driver: RekeyDriver, observation: ProbeObservation) -> RekeyTransition {
     match observation {
@@ -1314,6 +1397,8 @@ fn on_devices(driver: RekeyDriver, observation: ProbeObservation) -> RekeyTransi
 #[cfg_attr(hax, hax_lib::ensures(|result| {
     rekey_state_is_sound(result.driver)
         && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
 }))]
 fn commit_plan(driver: RekeyDriver) -> RekeyTransition {
     let authority = AttemptAuthority {
@@ -1368,6 +1453,8 @@ fn commit_plan(driver: RekeyDriver) -> RekeyTransition {
 #[cfg_attr(hax, hax_lib::ensures(|result| {
     rekey_state_is_sound(result.driver)
         && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
 }))]
 fn on_commit_cas(driver: RekeyDriver, observation: CasObservation) -> RekeyTransition {
     match observation {
@@ -1392,6 +1479,8 @@ fn on_commit_cas(driver: RekeyDriver, observation: CasObservation) -> RekeyTrans
 #[cfg_attr(hax, hax_lib::ensures(|result| {
     rekey_state_is_sound(result.driver)
         && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
 }))]
 fn on_sweep(driver: RekeyDriver, _observation: SweepObservation) -> RekeyTransition {
     // The handler logs a failed sweep and still returns success.
@@ -1404,10 +1493,33 @@ fn on_sweep(driver: RekeyDriver, _observation: SweepObservation) -> RekeyTransit
     )
 }
 
+#[cfg_attr(hax, hax_lib::requires(
+    rekey_state_is_sound(driver) && matches!(driver.stage, RekeyStage::Publish)
+))]
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    rekey_state_is_sound(result.driver)
+        && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
+}))]
+fn on_published(driver: RekeyDriver) -> RekeyTransition {
+    transition(
+        RekeyDriver {
+            stage: RekeyStage::Done,
+            published: true,
+            responded: true,
+            ..driver
+        },
+        RekeyEffect::Complete,
+    )
+}
+
 #[cfg_attr(hax, hax_lib::requires(rekey_state_is_sound(driver) && matches!(driver.stage, RekeyStage::Rollback)))]
 #[cfg_attr(hax, hax_lib::ensures(|result| {
     rekey_state_is_sound(result.driver)
         && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
 }))]
 fn on_rollback(driver: RekeyDriver, observation: RollbackObservation) -> RekeyTransition {
     match observation {
@@ -1426,6 +1538,8 @@ fn on_rollback(driver: RekeyDriver, observation: RollbackObservation) -> RekeyTr
 #[cfg_attr(hax, hax_lib::ensures(|result| {
     rekey_state_is_sound(result.driver)
         && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
 }))]
 fn on_replay_state(driver: RekeyDriver) -> RekeyTransition {
     let facts = CommitReplayFacts {
@@ -1456,146 +1570,307 @@ fn on_replay_state(driver: RekeyDriver) -> RekeyTransition {
     }
 }
 
-/// The complete, total transition relation. Events that do not match the
-/// current stage (and every event after `Done`) are ignored.
+#[cfg_attr(hax, hax_lib::requires(rekey_state_is_sound(driver)))]
 #[cfg_attr(hax, hax_lib::ensures(|result| {
-    !rekey_state_is_sound(driver)
-        || (rekey_state_is_sound(result.driver)
-            && rekey_effect_is_sound(result.driver, result.effect))
+    rekey_state_is_sound(result.driver)
+        && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
+}))]
+fn step_rate_limit(driver: RekeyDriver, observation: RateLimitObservation) -> RekeyTransition {
+    if matches!(driver.stage, RekeyStage::RateLimit) {
+        on_rate_limit(driver, observation)
+    } else {
+        idle(driver)
+    }
+}
+
+#[cfg_attr(hax, hax_lib::requires(rekey_state_is_sound(driver)))]
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    rekey_state_is_sound(result.driver)
+        && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
+}))]
+fn step_state(driver: RekeyDriver, observation: StateObservation) -> RekeyTransition {
+    if matches!(driver.stage, RekeyStage::Load) {
+        on_state(driver, observation)
+    } else {
+        idle(driver)
+    }
+}
+
+#[cfg_attr(hax, hax_lib::requires(rekey_state_is_sound(driver)))]
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    rekey_state_is_sound(result.driver)
+        && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
+}))]
+fn step_timeout(driver: RekeyDriver, observation: TimeoutObservation) -> RekeyTransition {
+    if matches!(driver.stage, RekeyStage::Timeout) {
+        on_timeout(driver, observation)
+    } else {
+        idle(driver)
+    }
+}
+
+#[cfg_attr(hax, hax_lib::requires(rekey_state_is_sound(driver)))]
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    rekey_state_is_sound(result.driver)
+        && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
+}))]
+fn step_oram(driver: RekeyDriver, observation: ProbeObservation) -> RekeyTransition {
+    if matches!(driver.stage, RekeyStage::Oram) {
+        on_oram(driver, observation)
+    } else {
+        idle(driver)
+    }
+}
+
+#[cfg_attr(hax, hax_lib::requires(rekey_state_is_sound(driver)))]
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    rekey_state_is_sound(result.driver)
+        && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
+}))]
+fn step_capable(driver: RekeyDriver, observation: ProbeObservation) -> RekeyTransition {
+    if matches!(driver.stage, RekeyStage::Capable) {
+        on_capable(driver, observation)
+    } else {
+        idle(driver)
+    }
+}
+
+#[cfg_attr(hax, hax_lib::requires(rekey_state_is_sound(driver)))]
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    rekey_state_is_sound(result.driver)
+        && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
+}))]
+fn step_acknowledged(driver: RekeyDriver, observation: ProbeObservation) -> RekeyTransition {
+    if matches!(driver.stage, RekeyStage::Acknowledged) {
+        on_acknowledged(driver, observation)
+    } else {
+        idle(driver)
+    }
+}
+
+#[cfg_attr(hax, hax_lib::requires(rekey_state_is_sound(driver)))]
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    rekey_state_is_sound(result.driver)
+        && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
+}))]
+fn step_transaction(driver: RekeyDriver, observation: TransactionObservation) -> RekeyTransition {
+    if matches!(driver.stage, RekeyStage::BeginTx | RekeyStage::TxCommit) {
+        on_transaction(driver, observation)
+    } else {
+        idle(driver)
+    }
+}
+
+#[cfg_attr(hax, hax_lib::requires(rekey_state_is_sound(driver)))]
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    rekey_state_is_sound(result.driver)
+        && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
+}))]
+fn step_tx_commit(driver: RekeyDriver, observation: TransactionObservation) -> RekeyTransition {
+    if matches!(driver.stage, RekeyStage::TxCommit) {
+        on_transaction(driver, observation)
+    } else {
+        idle(driver)
+    }
+}
+
+#[cfg_attr(hax, hax_lib::requires(rekey_state_is_sound(driver)))]
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    rekey_state_is_sound(result.driver)
+        && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
+}))]
+fn step_inventory(driver: RekeyDriver, observation: InventoryObservation) -> RekeyTransition {
+    if matches!(driver.stage, RekeyStage::Inventory) {
+        on_inventory(driver, observation)
+    } else {
+        idle(driver)
+    }
+}
+
+#[cfg_attr(hax, hax_lib::requires(rekey_state_is_sound(driver)))]
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    rekey_state_is_sound(result.driver)
+        && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
+}))]
+fn step_freeze_cas(driver: RekeyDriver, observation: CasObservation) -> RekeyTransition {
+    if matches!(driver.stage, RekeyStage::FreezeCas) {
+        on_freeze_cas(driver, observation)
+    } else {
+        idle(driver)
+    }
+}
+
+#[cfg_attr(hax, hax_lib::requires(rekey_state_is_sound(driver)))]
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    rekey_state_is_sound(result.driver)
+        && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
+}))]
+fn step_cleanup(driver: RekeyDriver, observation: CleanupObservation) -> RekeyTransition {
+    if matches!(driver.stage, RekeyStage::Cleanup) {
+        on_cleanup(driver, observation)
+    } else {
+        idle(driver)
+    }
+}
+
+#[cfg_attr(hax, hax_lib::requires(rekey_state_is_sound(driver)))]
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    rekey_state_is_sound(result.driver)
+        && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
+}))]
+fn step_capsule(driver: RekeyDriver, observation: CapsuleObservation) -> RekeyTransition {
+    if matches!(driver.stage, RekeyStage::Capsule) {
+        on_capsule(driver, observation)
+    } else {
+        idle(driver)
+    }
+}
+
+#[cfg_attr(hax, hax_lib::requires(rekey_state_is_sound(driver)))]
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    rekey_state_is_sound(result.driver)
+        && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
+}))]
+fn step_chunks(driver: RekeyDriver, observation: ProbeObservation) -> RekeyTransition {
+    if matches!(driver.stage, RekeyStage::Chunks) {
+        on_chunks(driver, observation)
+    } else {
+        idle(driver)
+    }
+}
+
+#[cfg_attr(hax, hax_lib::requires(rekey_state_is_sound(driver)))]
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    rekey_state_is_sound(result.driver)
+        && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
+}))]
+fn step_devices(driver: RekeyDriver, observation: ProbeObservation) -> RekeyTransition {
+    if matches!(driver.stage, RekeyStage::Devices) {
+        on_devices(driver, observation)
+    } else {
+        idle(driver)
+    }
+}
+
+#[cfg_attr(hax, hax_lib::requires(rekey_state_is_sound(driver)))]
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    rekey_state_is_sound(result.driver)
+        && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
+}))]
+fn step_commit_cas(driver: RekeyDriver, observation: CasObservation) -> RekeyTransition {
+    if matches!(driver.stage, RekeyStage::CommitCas) {
+        on_commit_cas(driver, observation)
+    } else {
+        idle(driver)
+    }
+}
+
+#[cfg_attr(hax, hax_lib::requires(rekey_state_is_sound(driver)))]
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    rekey_state_is_sound(result.driver)
+        && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
+}))]
+fn step_sweep(driver: RekeyDriver, observation: SweepObservation) -> RekeyTransition {
+    if matches!(driver.stage, RekeyStage::Sweep) {
+        on_sweep(driver, observation)
+    } else {
+        idle(driver)
+    }
+}
+
+#[cfg_attr(hax, hax_lib::requires(rekey_state_is_sound(driver)))]
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    rekey_state_is_sound(result.driver)
+        && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
+}))]
+fn step_rollback(driver: RekeyDriver, observation: RollbackObservation) -> RekeyTransition {
+    if matches!(driver.stage, RekeyStage::Rollback) {
+        on_rollback(driver, observation)
+    } else {
+        idle(driver)
+    }
+}
+
+#[cfg_attr(hax, hax_lib::requires(rekey_state_is_sound(driver)))]
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    rekey_state_is_sound(result.driver)
+        && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
+}))]
+fn step_published(driver: RekeyDriver) -> RekeyTransition {
+    if matches!(driver.stage, RekeyStage::Publish) {
+        on_published(driver)
+    } else {
+        idle(driver)
+    }
+}
+
+/// The complete, total transition relation. Events that do not match the
+/// current stage (and every event after `Done`) are ignored. Each event is
+/// dispatched to one contracted helper, so this function has no decision of
+/// its own.
+#[cfg_attr(hax, hax_lib::requires(rekey_state_is_sound(driver)))]
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    rekey_state_is_sound(result.driver)
+        && rekey_effect_is_sound(result.driver, result.effect)
+        && (!driver.committed || result.driver.committed)
+        && result.driver.op == driver.op
 }))]
 pub fn rekey_step(driver: RekeyDriver, event: RekeyEvent) -> RekeyTransition {
     match event {
-        RekeyEvent::RateLimit(observation) => {
-            if matches!(driver.stage, RekeyStage::RateLimit) {
-                on_rate_limit(driver, observation)
-            } else {
-                idle(driver)
-            }
-        }
-        RekeyEvent::State(observation) => {
-            if matches!(driver.stage, RekeyStage::Load) {
-                on_state(driver, observation)
-            } else {
-                idle(driver)
-            }
-        }
-        RekeyEvent::Timeout(observation) => {
-            if matches!(driver.stage, RekeyStage::Timeout) {
-                on_timeout(driver, observation)
-            } else {
-                idle(driver)
-            }
-        }
-        RekeyEvent::Oram(observation) => {
-            if matches!(driver.stage, RekeyStage::Oram) {
-                on_oram(driver, observation)
-            } else {
-                idle(driver)
-            }
-        }
-        RekeyEvent::Capable(observation) => {
-            if matches!(driver.stage, RekeyStage::Capable) {
-                on_capable(driver, observation)
-            } else {
-                idle(driver)
-            }
-        }
-        RekeyEvent::Acknowledged(observation) => {
-            if matches!(driver.stage, RekeyStage::Acknowledged) {
-                on_acknowledged(driver, observation)
-            } else {
-                idle(driver)
-            }
-        }
-        RekeyEvent::Transaction(observation) => {
-            if matches!(driver.stage, RekeyStage::BeginTx | RekeyStage::TxCommit) {
-                on_transaction(driver, observation)
-            } else {
-                idle(driver)
-            }
-        }
-        RekeyEvent::Inventory(observation) => {
-            if matches!(driver.stage, RekeyStage::Inventory) {
-                on_inventory(driver, observation)
-            } else {
-                idle(driver)
-            }
-        }
-        RekeyEvent::FreezeCas(observation) => {
-            if matches!(driver.stage, RekeyStage::FreezeCas) {
-                on_freeze_cas(driver, observation)
-            } else {
-                idle(driver)
-            }
-        }
-        RekeyEvent::Cleanup(observation) => {
-            if matches!(driver.stage, RekeyStage::Cleanup) {
-                on_cleanup(driver, observation)
-            } else {
-                idle(driver)
-            }
-        }
-        RekeyEvent::TxCommit(observation) => {
-            if matches!(driver.stage, RekeyStage::TxCommit) {
-                on_transaction(driver, observation)
-            } else {
-                idle(driver)
-            }
-        }
-        RekeyEvent::Capsule(observation) => {
-            if matches!(driver.stage, RekeyStage::Capsule) {
-                on_capsule(driver, observation)
-            } else {
-                idle(driver)
-            }
-        }
-        RekeyEvent::Chunks(observation) => {
-            if matches!(driver.stage, RekeyStage::Chunks) {
-                on_chunks(driver, observation)
-            } else {
-                idle(driver)
-            }
-        }
-        RekeyEvent::Devices(observation) => {
-            if matches!(driver.stage, RekeyStage::Devices) {
-                on_devices(driver, observation)
-            } else {
-                idle(driver)
-            }
-        }
-        RekeyEvent::CommitCas(observation) => {
-            if matches!(driver.stage, RekeyStage::CommitCas) {
-                on_commit_cas(driver, observation)
-            } else {
-                idle(driver)
-            }
-        }
-        RekeyEvent::Sweep(observation) => {
-            if matches!(driver.stage, RekeyStage::Sweep) {
-                on_sweep(driver, observation)
-            } else {
-                idle(driver)
-            }
-        }
-        RekeyEvent::Published => {
-            if matches!(driver.stage, RekeyStage::Publish) {
-                // The commit handler performs `publish` then immediately
-                // completes; there is no separate publication observation.
-                complete(RekeyDriver {
-                    published: true,
-                    ..driver
-                })
-            } else {
-                idle(driver)
-            }
-        }
-        RekeyEvent::Rollback(observation) => {
-            if matches!(driver.stage, RekeyStage::Rollback) {
-                on_rollback(driver, observation)
-            } else {
-                idle(driver)
-            }
-        }
+        RekeyEvent::RateLimit(observation) => step_rate_limit(driver, observation),
+        RekeyEvent::State(observation) => step_state(driver, observation),
+        RekeyEvent::Timeout(observation) => step_timeout(driver, observation),
+        RekeyEvent::Oram(observation) => step_oram(driver, observation),
+        RekeyEvent::Capable(observation) => step_capable(driver, observation),
+        RekeyEvent::Acknowledged(observation) => step_acknowledged(driver, observation),
+        RekeyEvent::Transaction(observation) => step_transaction(driver, observation),
+        RekeyEvent::Inventory(observation) => step_inventory(driver, observation),
+        RekeyEvent::FreezeCas(observation) => step_freeze_cas(driver, observation),
+        RekeyEvent::Cleanup(observation) => step_cleanup(driver, observation),
+        RekeyEvent::TxCommit(observation) => step_tx_commit(driver, observation),
+        RekeyEvent::Capsule(observation) => step_capsule(driver, observation),
+        RekeyEvent::Chunks(observation) => step_chunks(driver, observation),
+        RekeyEvent::Devices(observation) => step_devices(driver, observation),
+        RekeyEvent::CommitCas(observation) => step_commit_cas(driver, observation),
+        RekeyEvent::Sweep(observation) => step_sweep(driver, observation),
+        RekeyEvent::Published => step_published(driver),
+        RekeyEvent::Rollback(observation) => step_rollback(driver, observation),
     }
 }
 
@@ -1678,11 +1953,6 @@ pub fn on_rollback_event(
     rekey_step(driver, RekeyEvent::Rollback(observation))
 }
 
-/// The commit-replay decision is part of the post-load dispatch; it is exposed
-/// separately so the Rust conformance tests can exercise it directly.
-pub fn commit_replay(driver: RekeyDriver) -> RekeyTransition {
-    on_replay_state(driver)
-}
 
 // ── Rust conformance tests ─────────────────────────────────────────────────
 

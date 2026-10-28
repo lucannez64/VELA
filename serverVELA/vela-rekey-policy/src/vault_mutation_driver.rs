@@ -246,6 +246,10 @@ pub fn begin_chunk_delete(request: ChunkDeleteRequest) -> ChunkDeleteTransition 
     }
 }
 
+#[cfg_attr(hax, hax_lib::ensures(|result| match result {
+    Ok(epoch) => epoch == driver.epoch && epoch >= INITIAL_EPOCH,
+    Err(_) => true,
+}))]
 fn chunk_permit(driver: ChunkDeleteDriver) -> Result<i64, ChunkDeleteFailure> {
     let authority = if driver.web {
         MutationAuthority::WebSession
@@ -335,7 +339,7 @@ pub fn chunk_delete_step(
             }
             match observation {
                 VersionObservation::Found { version } => {
-                    if version != driver.if_match {
+                    if version != driver.if_match || version < 0 {
                         return chunk_terminal(driver, ChunkDeleteFailure::VersionMismatch);
                     }
                     chunk_transition(

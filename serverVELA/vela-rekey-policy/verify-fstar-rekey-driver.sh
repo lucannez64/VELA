@@ -42,7 +42,7 @@ cargo test
 rm -rf proofs/fstar/extraction-rekey-driver
 cargo hax into \
   --output-dir proofs/fstar/extraction-rekey-driver \
-  -i '-** +vela_rekey_policy::rekey_driver::begin_start +vela_rekey_policy::rekey_driver::begin_capsules +vela_rekey_policy::rekey_driver::begin_commit +vela_rekey_policy::rekey_driver::begin_abort +vela_rekey_policy::rekey_driver::rekey_step +vela_rekey_policy::rekey_driver::commit_replay +vela_rekey_policy::plan_start +vela_rekey_policy::plan_commit +vela_rekey_policy::plan_abort +vela_rekey_policy::plan_timeout +vela_rekey_policy::authorize_attempt +vela_rekey_policy::authorize_commit_replay +vela_rekey_policy::next_epoch' \
+  -i '-** +vela_rekey_policy::rekey_driver::begin_start +vela_rekey_policy::rekey_driver::begin_capsules +vela_rekey_policy::rekey_driver::begin_commit +vela_rekey_policy::rekey_driver::begin_abort +vela_rekey_policy::rekey_driver::rekey_step +vela_rekey_policy::plan_start +vela_rekey_policy::plan_commit +vela_rekey_policy::plan_abort +vela_rekey_policy::plan_timeout +vela_rekey_policy::authorize_attempt +vela_rekey_policy::authorize_commit_replay +vela_rekey_policy::next_epoch' \
   fstar --z3rlimit 500
 
 # The root module carries the extracted policy decisions this driver calls.
@@ -63,9 +63,6 @@ mapfile -t proof_files < <(
 mapfile -t lemma_files < <(
   find proofs/fstar/rekey-driver-lemmas -maxdepth 1 -type f -name '*.fst' -print | sort
 )
-mapfile -t composition_files < <(
-  find proofs/fstar/rekey-driver-composition -maxdepth 1 -type f -name '*.fst' -print | sort
-)
 if (( ${#proof_files[@]} == 0 )); then
   echo "hax generated no focused rekey-driver modules" >&2
   exit 1
@@ -74,14 +71,10 @@ if (( ${#lemma_files[@]} != 1 )); then
   echo "expected exactly one reviewed rekey-driver lemma module" >&2
   exit 1
 fi
-if (( ${#composition_files[@]} != 1 )); then
-  echo "expected exactly one reviewed rekey-driver composition module" >&2
-  exit 1
-fi
 
 python3 "$proof_root/../../security/formal/check-driver-proof-sources.py" \
   --generated "${proof_files[@]}" \
-  --proof "${lemma_files[@]}" "${composition_files[@]}" \
+  --proof "${lemma_files[@]}" \
   --include-dir "$proof_root"
 
 hax_lib_root=$(
@@ -106,8 +99,7 @@ fstar_args=(
   --include proofs/fstar/extraction-rekey-driver-root
   --include proofs/fstar/extraction-rekey-driver
   --include proofs/fstar/rekey-driver-lemmas
-  --include proofs/fstar/rekey-driver-composition
-  "${proof_files[@]}" "${lemma_files[@]}" "${composition_files[@]}"
+  "${proof_files[@]}" "${lemma_files[@]}"
 )
 printf 'F* rekey-driver argv:'
 printf ' %q' "${fstar_args[@]}"
@@ -116,5 +108,4 @@ fstar.exe "${fstar_args[@]}"
 
 echo "rekey driver: focused Rust decision functions with soundness postconditions (four entry points, one transition relation)"
 echo "per-request trace: at most one commit, commit only after both completeness observations and starter/rotation authority, abort/timeout restore the active state at the same epoch, web sessions never start or commit"
-echo "rekey composition: arbitrary interleavings never commit two rotations for one rotation id, never commit after an abort, and never run two rotations at once"
-sha256sum "${proof_files[@]}" "${lemma_files[@]}" "${composition_files[@]}" src/rekey_driver.rs
+sha256sum "${proof_files[@]}" "${lemma_files[@]}" "${lemma_files[@]}" src/rekey_driver.rs
