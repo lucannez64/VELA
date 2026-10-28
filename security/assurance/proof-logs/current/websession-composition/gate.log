@@ -1,0 +1,42 @@
+F* 2025.10.06
+platform=Linux_x86_64
+compiler=OCaml 4.14.2
+date=2025-10-06 12:00:42 -0700
+commit=7b347386330d0e5a331a220535b6f15288903234
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.09s
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-websession-revocation/Vela_session_policy.Revocation_driver.fst[0m
+Driver source policy: 4 extracted modules, 1 proof modules; no unreviewed escapes/options
+F* web-session-composition argv: --cmi --cache_off --warn_error -331 --z3rlimit 16000 --z3version 4.13.3 --already_cached +Prims+FStar+LowStar+C+Spec.Loops+TestLib --include /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/core --include /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives --include /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proofs/fstar/extraction --include proofs/fstar/extraction-websession-driver --include proofs/fstar/extraction-websession-revocation --include proofs/fstar/websession-composition proofs/fstar/extraction-websession-driver/Vela_session_policy.Challenge.fst proofs/fstar/extraction-websession-driver/Vela_session_policy.Websession_driver.fst proofs/fstar/extraction-websession-driver/Vela_session_policy.fst proofs/fstar/extraction-websession-revocation/Vela_session_policy.Revocation_driver.fst proofs/fstar/websession-composition/Vela_session_policy_websession_composition.fst
+* Warning 271 at /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+Verified module: Vela_session_policy.Challenge
+Verified module: Vela_session_policy
+Verified module: Vela_session_policy.Websession_driver
+Verified module: Vela_session_policy.Revocation_driver
+Verified module: Vela_session_policy_websession_composition
+All verification conditions discharged successfully
+web-session composition: for every schedule at most one token per session, no token after the session's delete or approver-cascade revocation, grants only from the owning active approver and only for pending rows, start inserts only a pending row, no cross-account delete
+6087cb902d16a8720d187221a6bacb32d65a50505cece9aff7b12155b8377b3e  proofs/fstar/extraction-websession-driver/Vela_session_policy.Challenge.fst
+ad6dd733adc164a7ecaef1d6477ac2b0c9420114f6a4c83d9fbb76165c125b90  proofs/fstar/extraction-websession-driver/Vela_session_policy.Websession_driver.fst
+2d62964f3f986b5bb4114888e9ba61cc76014f14314cd68d1bd07094f5ae2cad  proofs/fstar/extraction-websession-driver/Vela_session_policy.fst
+a821ec8c038897686631bc7aef0dff8316861edd0c0bfa185de9b73f42945f52  proofs/fstar/extraction-websession-revocation/Vela_session_policy.Revocation_driver.fst
+4dfff44c6dbbfb4f0936e3768ea6e405298c96aaf05970b146900f24c8fb013b  proofs/fstar/websession-composition/Vela_session_policy_websession_composition.fst
+956ed074c9f39b99bd7a876846e888b30bcff3dc7ae52046117a5438fd634ef0  src/websession_driver.rs

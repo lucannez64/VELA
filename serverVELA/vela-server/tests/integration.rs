@@ -4038,6 +4038,121 @@ async fn web_session_issues_at_most_one_token_per_grant() {
     );
 }
 
+/// An exchange that loaded a granted row before a revocation must not release
+/// a token after the lockout. Both `DELETE /web-session/:id` and the
+/// approving-device revocation cascade write `device:revoked:<session_id>`
+/// before the SQL row flips; the issue step re-checks that sentinel and fails
+/// closed. Without the re-check this request returns a token (composition
+/// counter `w_token_after_delete`).
+#[tokio::test]
+async fn web_session_token_is_not_issued_after_its_lockout() {
+    use vela_crypto::signing::{auth_message, generate_keypair, sign, HybridSigningKey};
+    use vela_server::sqldb::{Db as _, TursoValue};
+
+    fn with_big_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(f)
+            .unwrap()
+            .join()
+            .unwrap()
+    }
+
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
+    let user_id = Uuid::new_v4();
+    let session_id = Uuid::new_v4();
+    let device_id = Uuid::new_v4();
+    insert_user(&state, user_id).await;
+    let now = chrono::Utc::now();
+    let (web_vk, web_sk) = with_big_stack(generate_keypair).unwrap();
+    let web_sk_bytes = web_sk.into_bytes();
+
+    state
+        .sqldb
+        .execute(
+            "INSERT INTO web_sessions
+             (id, user_id, approver_user_id, poll_secret_hash, ephemeral_pk,
+              web_vk, link_nonce, mode, status, capsule, approved_by,
+              key_epoch, created_at, expires_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'rw', 'granted', NULL, ?, 1, ?, ?)",
+            vec![
+                TursoValue::Text(session_id.to_string()),
+                TursoValue::Text(user_id.to_string()),
+                TursoValue::Text(user_id.to_string()),
+                TursoValue::Text(B64.encode([2u8; 32])),
+                TursoValue::Text(B64.encode([3u8; 1568 + 32])),
+                TursoValue::Text(B64.encode(web_vk.to_bytes())),
+                TursoValue::Text(B64.encode([4u8; 32])),
+                TursoValue::Text(device_id.to_string()),
+                TursoValue::Text(now.to_rfc3339()),
+                TursoValue::Text((now + chrono::Duration::hours(1)).to_rfc3339()),
+            ],
+        )
+        .await
+        .unwrap();
+
+    // The row is still `granted`, but the delete/cascade lockout sentinel was
+    // written first: this is the in-flight window the composition proof
+    // models as a token issue after the session's lockout.
+    state
+        .store
+        .set_ex(&format!("device:revoked:{session_id}"), &[1u8], 900)
+        .unwrap();
+
+    let challenge_req = Request::builder()
+        .uri("/auth/challenge?purpose=web_token")
+        .extension(ConnectInfo(SocketAddr::from(([198, 51, 100, 43], 40100))))
+        .body(Body::empty())
+        .unwrap();
+    let response = app.clone().oneshot(challenge_req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let challenge: String =
+        serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["challenge"]
+            .as_str()
+            .unwrap()
+            .to_string();
+    let challenge_bytes = B64.decode(&challenge).unwrap();
+    let signature = with_big_stack(move || {
+        let session = session_id.to_string();
+        let sk = HybridSigningKey::from_bytes(&web_sk_bytes).unwrap();
+        B64.encode(
+            sign(&sk, &auth_message(&session, &challenge_bytes))
+                .unwrap()
+                .to_bytes(),
+        )
+    });
+    let request = Request::builder()
+        .method("POST")
+        .uri(format!("/web-session/{session_id}/token"))
+        .extension(ConnectInfo(SocketAddr::from(([198, 51, 100, 43], 40101))))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({ "challenge": challenge, "signature": signature }).to_string(),
+        ))
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "a locked-out session must not release a token: {}",
+        String::from_utf8_lossy(&bytes)
+    );
+    let value: serde_json::Value =
+        serde_json::from_slice(&bytes).expect("error body is JSON");
+    assert!(
+        value.get("token").is_none(),
+        "no token may be returned after the lockout: {value}"
+    );
+}
+
 /// Model the exact extraction/commit interleaving directly: middleware has
 /// already accepted an epoch-1 web session, then another device commits epoch
 /// 2 before the handler resolves and performs its mutation. The immutable
