@@ -1,0 +1,18 @@
+--- serverVELA/vela-session-policy/proofs/fstar/extraction-registration-driver/Vela_session_policy.Registration_driver.fst	2026-10-28 00:24:52.329639310 +0100
++++ /tmp/vela-f2-account-a-mut/registration-driver/extraction/Vela_session_policy.Registration_driver.fst	2026-10-28 00:38:22.922538447 +0100
+@@ -610,7 +610,14 @@
+           registration_state_is_sound result.f_driver)) =
+   match observation <: t_InsertObservation with
+   | InsertObservation_Failed  ->
+-    terminal driver (RegistrationFailure_DeviceInsertStorage <: t_RegistrationFailure)
++    transition ({
++          driver with
++          f_stage = RegistrationStage_Commit <: t_RegistrationStage;
++          f_device_inserted = true
++        }
++        <:
++        t_RegistrationDriver)
++      (RegistrationEffect_CommitTransaction <: t_RegistrationEffect)
+   | InsertObservation_Inserted  ->
+     transition ({
+           driver with

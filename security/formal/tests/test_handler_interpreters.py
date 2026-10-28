@@ -21,6 +21,20 @@ WIRED = [
         1,
     ),
     (
+        'serverVELA/vela-server/src/account/mod.rs',
+        'registration_interpreter',
+        'registration_driver',
+        'serverVELA/vela-session-policy/src/registration_interpreter.rs',
+        1,
+    ),
+    (
+        'serverVELA/vela-server/src/auth/challenge.rs',
+        'challenge_issue_interpreter',
+        'challenge_issue_driver',
+        'serverVELA/vela-session-policy/src/challenge_issue_interpreter.rs',
+        1,
+    ),
+    (
         'serverVELA/vela-server/src/device/invitation.rs',
         'pairing_interpreter',
         'pairing_driver',

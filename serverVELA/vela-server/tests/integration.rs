@@ -123,6 +123,51 @@ async fn register_rejects_bad_key_size() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
+/// A failure after the account insert (here: the device table is gone) must
+/// roll the account row back. The handler used to insert both rows outside a
+/// transaction, leaving an account with no device.
+#[tokio::test]
+async fn failed_registration_rolls_back_the_account() {
+    use vela_server::sqldb::Db as _;
+
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
+    state
+        .sqldb
+        .execute("DROP TABLE devices", vec![])
+        .await
+        .unwrap();
+
+    let body = serde_json::to_string(&json!({
+        "hybrid_ek": B64.encode(vec![0u8; 1600]),
+        "hybrid_vk": B64.encode(vec![0u8; 2624]),
+    }))
+    .unwrap();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/account/register")
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    let users = state
+        .sqldb
+        .query("SELECT id FROM users", vec![])
+        .await
+        .unwrap();
+    assert!(
+        users.is_empty(),
+        "the account insert was not rolled back: {} row(s) left",
+        users.len()
+    );
+}
+
 /// U-16: a challenge only works at the endpoint it was issued for, and
 /// presenting it anywhere spends it.
 #[tokio::test]

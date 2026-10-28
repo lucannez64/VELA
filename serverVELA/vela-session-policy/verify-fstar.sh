@@ -5,13 +5,14 @@ proof_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cd "$proof_root"
 
 # Optional part, so CI can check the crate's independent gate groups in
-# parallel jobs: core (the historical extraction), login, revocation, deletion.
+# parallel jobs: core (the historical extraction), login, revocation, deletion,
+# account (registration and challenge issue plus the challenge composition).
 # Each driver gate runs with its interpreter gate, which reads the driver
 # extraction it just regenerated. No argument runs everything, in order.
 part=${1:-all}
 case $part in
-  all|core|login|revocation|deletion) ;;
-  *) echo "usage: $0 [all|core|login|revocation|deletion]" >&2; exit 2 ;;
+  all|core|login|revocation|deletion|account) ;;
+  *) echo "usage: $0 [all|core|login|revocation|deletion|account]" >&2; exit 2 ;;
 esac
 wants() { [[ $part == all || $part == "$1" ]]; }
 
@@ -79,6 +80,20 @@ if wants revocation; then "$proof_root/verify-fstar-revocation-driver.sh"; fi
 # interpreter loops the handlers expand. Needs the revocation driver extraction
 # above.
 if wants revocation; then "$proof_root/verify-fstar-revocation-interpreter.sh"; fi
+
+# F-2 account-registration and challenge-issue driver gates. Each regenerates
+# its own partial extraction and is checked in its own fstar.exe invocation.
+if wants account; then "$proof_root/verify-fstar-challenge-issue-driver.sh"; fi
+if wants account; then "$proof_root/verify-fstar-registration-driver.sh"; fi
+
+# Handler-to-driver links for GET /auth/challenge and POST /account/register:
+# the interpreter loops the handlers expand. Need their driver extractions.
+if wants account; then "$proof_root/verify-fstar-challenge-issue-interpreter.sh"; fi
+if wants account; then "$proof_root/verify-fstar-registration-interpreter.sh"; fi
+
+# Composition of the extracted issue driver with the shared take adapter:
+# one issued nonce is consumed by at most one request, only for its purpose.
+if wants account; then "$proof_root/verify-fstar-challenge-issue-composition.sh"; fi
 
 # F-4 focused account-deletion driver gate. It regenerates its own partial
 # extraction into proofs/fstar/extraction-deletion-driver (including the
