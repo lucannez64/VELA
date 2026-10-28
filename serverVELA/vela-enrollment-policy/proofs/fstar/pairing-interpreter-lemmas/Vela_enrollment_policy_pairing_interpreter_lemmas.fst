@@ -51,7 +51,8 @@ let responds_to (e: t_PairingEffect) (ev: t_PairingEvent) : bool =
   | PairingEffect_InsertDevice, PairingEvent_DeviceInserted _
   | PairingEffect_WriteResult, PairingEvent_ResultWritten _
   | PairingEffect_ReadResult, PairingEvent_ResultRead _
-  | PairingEffect_ReadClaim, PairingEvent_ClaimRead _ -> true
+  | PairingEffect_ReadClaim, PairingEvent_ClaimRead _
+  | PairingEffect_ReadEnrolledDevice, PairingEvent_EnrolledDeviceRead _ -> true
   | _ -> false
 
 let sound_transition (t: t_PairingTransition) : bool =
@@ -112,6 +113,10 @@ let turn_ev (#io_t: Type0) {| i: t_PairingIo io_t |} (s: io_t) (t: t_PairingTran
   | PairingEffect_ReadClaim ->
       let (s', o) = f_read_claim #io_t #i s in
       let ev = PairingEvent_ClaimRead o in
+      (s', step t.f_driver ev, Some ev)
+  | PairingEffect_ReadEnrolledDevice ->
+      let (s', o) = f_read_enrolled_device #io_t #i s in
+      let ev = PairingEvent_EnrolledDeviceRead o in
       (s', step t.f_driver ev, Some ev)
   | PairingEffect_Complete | PairingEffect_ReturnResult _ | PairingEffect_Fail _
   | PairingEffect_RestoreAndFail _ | PairingEffect_Idle -> (s, t, None)
@@ -198,6 +203,22 @@ let run_pairing_is_run_ev (#io_t: Type0) {| i: t_PairingIo io_t |} (s: io_t)
   assert (v v_PAIRING_MAX_EFFECTS = 5);
   assert (run_pairing #io_t #i s start == iter_turn #io_t #i 5 (s, start))
 
+// ── 1b. Cancellation: every prefix is a sound driver state ────────────────
+
+/// A dropped handler future stops the pairing loop after an arbitrary prefix
+/// of turns. For every executor, every `k` and every sound start, the state
+/// after `k` turns is sound: `pairing_state_is_sound` carries the per-request
+/// state invariants (an inserted device implies a stored claim, a live opener,
+/// a verified signature and matching user/opener bindings; a restored takeover
+/// implies a failed, uninserted completion; a record implies an insert), and
+/// the next effect agrees with the state that produced it.
+let cancellation (#io_t: Type0) {| i: t_PairingIo io_t |} (k: nat) (s: io_t)
+  (t: t_PairingTransition)
+  : Lemma (requires sound_transition t)
+          (ensures (let (_, t2) = iter_turn #io_t #i k (s, t) in sound_transition t2)) =
+  let (_, t2, _) = run_ev #io_t #i k s t in
+  iter_turn_is_run_ev #io_t #i k s t
+
 // ── 2. The observations drive the extracted driver ────────────────────────
 
 /// Each observation answers the effect it was returned for, and no
@@ -243,8 +264,9 @@ let remaining (e: t_PairingEffect) : nat =
   | PairingEffect_TakeCeremony -> 3
   | PairingEffect_InsertDevice -> 2
   | PairingEffect_WriteResult -> 1
-  | PairingEffect_ReadResult -> 2
-  | PairingEffect_ReadClaim -> 1
+  | PairingEffect_ReadResult -> 3
+  | PairingEffect_ReadClaim -> 2
+  | PairingEffect_ReadEnrolledDevice -> 1
   | PairingEffect_Complete | PairingEffect_ReturnResult _ | PairingEffect_Fail _
   | PairingEffect_RestoreAndFail _ | PairingEffect_Idle -> 0
 
@@ -265,6 +287,7 @@ let step_decreases (t: t_PairingTransition) (ev: t_PairingEvent)
   | PairingEffect_WriteResult, PairingEvent_ResultWritten _ -> ()
   | PairingEffect_ReadResult, PairingEvent_ResultRead _ -> ()
   | PairingEffect_ReadClaim, PairingEvent_ClaimRead _ -> ()
+  | PairingEffect_ReadEnrolledDevice, PairingEvent_EnrolledDeviceRead _ -> ()
   | _ -> ()
 
 let rec run_ev_reaches_a_verdict (#io_t: Type0) {| i: t_PairingIo io_t |} (n: nat) (s: io_t)

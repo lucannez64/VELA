@@ -1,0 +1,12 @@
+--- /tmp/vela-f2-cancel-mut/rekey/pristine.fst	2026-10-27 22:16:34.116466020 +0100
++++ serverVELA/vela-rekey-policy/proofs/fstar/extraction-vault-upload-driver/Vela_rekey_policy.Vault_upload_driver.fst	2026-10-27 22:16:34.262379515 +0100
+@@ -547,7 +547,8 @@
+     transition ({
+           driver with
+           f_stage = UploadStage_Reread <: t_UploadStage;
+-          f_write_matched = true
++          f_write_matched = true;
++          f_activity_done = true
+         }
+         <:
+         t_UploadDriver)

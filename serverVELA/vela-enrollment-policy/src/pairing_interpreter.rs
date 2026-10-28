@@ -25,9 +25,9 @@
 use crate::ClaimObservation;
 use crate::pairing_driver::{
     ClaimReadObservation, ClaimWriteObservation,
-    CompletionAccountObservation, CompletionPreflightObservation, DeviceInsertObservation,
-    PairingEffect, PairingTransition, RedeemObservation, ResultReadObservation,
-    StoreObservation, TakeObservation,
+    CompletionAccountObservation, CompletionPreflightObservation, DeviceGrantObservation,
+    DeviceInsertObservation, PairingEffect, PairingTransition, RedeemObservation,
+    ResultReadObservation, StoreObservation, TakeObservation,
 };
 
 /// Most effects one request performs: the account preflight, the verified
@@ -91,6 +91,7 @@ executor_trait! {
         fn write_result(&mut self) -> StoreObservation;
         fn read_result(&mut self) -> ResultReadObservation;
         fn read_claim(&mut self) -> ClaimReadObservation;
+        fn read_enrolled_device(&mut self) -> DeviceGrantObservation;
     }
 }
 
@@ -150,6 +151,10 @@ macro_rules! pairing_interpreter {
                 __E::ReadClaim => {
                     __step(transition.driver, __V::ClaimRead($io.read_claim()$(.$aw)?))
                 }
+                __E::ReadEnrolledDevice => __step(
+                    transition.driver,
+                    __V::EnrolledDeviceRead($io.read_enrolled_device()$(.$aw)?),
+                ),
                 // The driver has decided: perform nothing, keep the verdict.
                 __E::Complete
                 | __E::ReturnResult(_)
@@ -273,6 +278,20 @@ mod tests {
                 },
                 2 => ResultReadObservation::Absent,
                 _ => ResultReadObservation::Unreadable,
+            }
+        }
+        fn device_grant_kind(pick: u8) -> DeviceGrantObservation {
+            match pick % 4 {
+                0 => DeviceGrantObservation::Enrolled {
+                    claimed_key_len: HYBRID_VK_LEN,
+                    signature_verified: true,
+                },
+                1 => DeviceGrantObservation::Enrolled {
+                    claimed_key_len: HYBRID_VK_LEN,
+                    signature_verified: false,
+                },
+                2 => DeviceGrantObservation::Absent,
+                _ => DeviceGrantObservation::Unreadable,
             }
         }
         fn preflight_kind(pick: u8) -> CompletionPreflightObservation {
@@ -443,6 +462,11 @@ mod tests {
         fn read_claim(&mut self) -> ClaimReadObservation {
             let o = Self::claim_read_kind(self.record(PairingEffect::ReadClaim));
             self.events.push(PairingEvent::ClaimRead(o));
+            o
+        }
+        fn read_enrolled_device(&mut self) -> DeviceGrantObservation {
+            let o = Self::device_grant_kind(self.record(PairingEffect::ReadEnrolledDevice));
+            self.events.push(PairingEvent::EnrolledDeviceRead(o));
             o
         }
     }

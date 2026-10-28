@@ -105,6 +105,19 @@ type t_ClaimReadObservation =
   | ClaimReadObservation_Absent : t_ClaimReadObservation
   | ClaimReadObservation_Unreadable : t_ClaimReadObservation
 
+/// The fallback read of the result collector, when neither a result record nor
+/// a claim exists. U-20: a committed device insert whose result write was lost
+/// (storage failure or a cancelled request) leaves the claim consumed and no
+/// result record. The inserted row carries the grant id, so the collector can
+/// still find it and answer under the same result-signature check.
+type t_DeviceGrantObservation =
+  | DeviceGrantObservation_Enrolled {
+    f_claimed_key_len:usize;
+    f_signature_verified:bool
+  }: t_DeviceGrantObservation
+  | DeviceGrantObservation_Absent : t_DeviceGrantObservation
+  | DeviceGrantObservation_Unreadable : t_DeviceGrantObservation
+
 /// Which ceremony this per-request driver belongs to.
 type t_PairingCeremony =
   | PairingCeremony_StorePackage : t_PairingCeremony
@@ -161,6 +174,7 @@ type t_PairingFailure =
   | PairingFailure_ClaimRecordUnreadable : t_PairingFailure
   | PairingFailure_ResultSignatureRejected : t_PairingFailure
   | PairingFailure_ResultNotAuthorized : t_PairingFailure
+  | PairingFailure_EnrolledDeviceUnreadable : t_PairingFailure
 
 /// The effect the handler must perform next (`Idle` means "do nothing").
 type t_PairingEffect =
@@ -176,6 +190,7 @@ type t_PairingEffect =
   | PairingEffect_WriteResult : t_PairingEffect
   | PairingEffect_ReadResult : t_PairingEffect
   | PairingEffect_ReadClaim : t_PairingEffect
+  | PairingEffect_ReadEnrolledDevice : t_PairingEffect
   | PairingEffect_Complete : t_PairingEffect
   | PairingEffect_ReturnResult : Vela_enrollment_policy.t_ResultKind -> t_PairingEffect
   | PairingEffect_Fail : t_PairingFailure -> t_PairingEffect
@@ -473,6 +488,15 @@ let pairing_effect_is_sound (d: t_PairingDriver) (v_effect: t_PairingEffect) : b
     d.f_authorized &&
     ~.d.f_wrote
   | PairingEffect_ReadClaim  ->
+    (match d.f_ceremony <: t_PairingCeremony with
+      | PairingCeremony_CollectResult  -> true
+      | _ -> false) &&
+    (match d.f_stage <: t_PairingStage with
+      | PairingStage_ResultClaim  -> true
+      | _ -> false) &&
+    d.f_authorized &&
+    ~.d.f_wrote
+  | PairingEffect_ReadEnrolledDevice  ->
     (match d.f_ceremony <: t_PairingCeremony with
       | PairingCeremony_CollectResult  -> true
       | _ -> false) &&
@@ -845,6 +869,7 @@ type t_PairingEvent =
   | PairingEvent_ResultWritten : t_StoreObservation -> t_PairingEvent
   | PairingEvent_ResultRead : t_ResultReadObservation -> t_PairingEvent
   | PairingEvent_ClaimRead : t_ClaimReadObservation -> t_PairingEvent
+  | PairingEvent_EnrolledDeviceRead : t_DeviceGrantObservation -> t_PairingEvent
 
 /// Start a completion request. Only a grant bound to this user *and* this
 /// device may continue; the handler then reads the account row.
@@ -1155,9 +1180,63 @@ let on_claim_read (d: t_PairingDriver) (observation: t_ClaimReadObservation)
             Vela_enrollment_policy.t_ResultKind)
       | Vela_enrollment_policy.ResultDecision_Reject  ->
         terminal d (result_failure signature_verified <: t_PairingFailure))
-  | ClaimReadObservation_Absent  -> terminal d (PairingFailure_GrantUnavailable <: t_PairingFailure)
+  | ClaimReadObservation_Absent  ->
+    transition ({ d with f_stage = PairingStage_ResultClaim <: t_PairingStage } <: t_PairingDriver)
+      (PairingEffect_ReadEnrolledDevice <: t_PairingEffect)
   | ClaimReadObservation_Unreadable  ->
     terminal d (PairingFailure_ClaimRecordUnreadable <: t_PairingFailure)
+
+/// U-20 fallback: the result record and the claim are both gone, but the
+/// committed device row still records the grant it came from. Answer under the
+/// same verified result policy and the same result-signature check the stored
+/// result uses; only an `Enrolled` observation with a verified proof under the
+/// row\'s stored key can produce `ReturnResult Enrolled`.
+let on_enrolled_device_read (d: t_PairingDriver) (observation: t_DeviceGrantObservation)
+    : Prims.Pure t_PairingTransition
+      (requires
+        pairing_state_is_sound d &&
+        (match d.f_stage <: t_PairingStage with
+          | PairingStage_ResultClaim  -> true
+          | _ -> false) &&
+        (match d.f_ceremony <: t_PairingCeremony with
+          | PairingCeremony_CollectResult  -> true
+          | _ -> false))
+      (ensures
+        fun result ->
+          let result:t_PairingTransition = result in
+          pairing_effect_is_sound result.f_driver result.f_effect &&
+          (~.(pairing_state_is_sound d <: bool) || pairing_state_is_sound result.f_driver)) =
+  match observation <: t_DeviceGrantObservation with
+  | DeviceGrantObservation_Enrolled
+    { f_claimed_key_len = claimed_key_len ; f_signature_verified = signature_verified } ->
+    (match
+        Vela_enrollment_policy.authorize_result (Vela_enrollment_policy.result_facts ({
+                  Vela_enrollment_policy.f_source
+                  =
+                  Vela_enrollment_policy.ResultSource_CompletedResult
+                  <:
+                  Vela_enrollment_policy.t_ResultSource;
+                  Vela_enrollment_policy.f_claimed_key_len = claimed_key_len;
+                  Vela_enrollment_policy.f_signature_verified = signature_verified
+                }
+                <:
+                Vela_enrollment_policy.t_ResultObservation)
+            <:
+            Vela_enrollment_policy.t_ResultFacts)
+        <:
+        Vela_enrollment_policy.t_ResultDecision
+      with
+      | Vela_enrollment_policy.ResultDecision_Return permit ->
+        complete_result d
+          (Vela_enrollment_policy.impl_ResultPermit__kind permit
+            <:
+            Vela_enrollment_policy.t_ResultKind)
+      | Vela_enrollment_policy.ResultDecision_Reject  ->
+        terminal d (result_failure signature_verified <: t_PairingFailure))
+  | DeviceGrantObservation_Absent  ->
+    terminal d (PairingFailure_GrantUnavailable <: t_PairingFailure)
+  | DeviceGrantObservation_Unreadable  ->
+    terminal d (PairingFailure_EnrolledDeviceUnreadable <: t_PairingFailure)
 
 let stage_start (d: t_PairingDriver) : bool =
   match d.f_stage <: t_PairingStage with
@@ -1297,6 +1376,16 @@ let step (driver: t_PairingDriver) (event: t_PairingEvent)
         | _ -> false)
     then on_claim_read driver observation
     else idle driver
+  | PairingEvent_EnrolledDeviceRead observation ->
+    if
+      (match driver.f_stage <: t_PairingStage with
+        | PairingStage_ResultClaim  -> true
+        | _ -> false) &&
+      (match driver.f_ceremony <: t_PairingCeremony with
+        | PairingCeremony_CollectResult  -> true
+        | _ -> false)
+    then on_enrolled_device_read driver observation
+    else idle driver
 
 /// Total wrapper: the handler feeds the store/redeem outcome.
 let on_package_written_event (driver: t_PairingDriver) (observation: t_StoreObservation)
@@ -1423,3 +1512,15 @@ let on_claim_read_event (driver: t_PairingDriver) (observation: t_ClaimReadObser
           pairing_effect_is_sound result.f_driver result.f_effect &&
           (~.(pairing_state_is_sound driver <: bool) || pairing_state_is_sound result.f_driver)) =
   step driver (PairingEvent_ClaimRead observation <: t_PairingEvent)
+
+/// Total wrapper: the handler feeds the fallback device-row read after an
+/// absent result record and claim.
+let on_enrolled_device_read_event (driver: t_PairingDriver) (observation: t_DeviceGrantObservation)
+    : Prims.Pure t_PairingTransition
+      (requires pairing_state_is_sound driver)
+      (ensures
+        fun result ->
+          let result:t_PairingTransition = result in
+          pairing_effect_is_sound result.f_driver result.f_effect &&
+          (~.(pairing_state_is_sound driver <: bool) || pairing_state_is_sound result.f_driver)) =
+  step driver (PairingEvent_EnrolledDeviceRead observation <: t_PairingEvent)

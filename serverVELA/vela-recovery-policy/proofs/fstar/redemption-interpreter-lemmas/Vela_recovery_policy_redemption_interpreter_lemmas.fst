@@ -210,6 +210,24 @@ let run_redemption_is_run_ev (#io_t: Type0) {| i: t_RedemptionIo io_t |} (s: io_
           (let (a2, s2, r2, t2, _) = run_ev #io_t #i 5 (false, s, false, t0) in
            (s2, (if a2 then Core_models.Option.Option_None else Core_models.Option.Option_Some t2))))
 
+// ── 1b. Cancellation: every prefix is a sound driver state ────────────────
+
+/// A dropped handler future stops the redemption loop after an arbitrary
+/// prefix of turns. For every executor, every `k` and every sound start, the
+/// transition after `k` turns is sound: `redemption_state_is_sound` carries the
+/// per-request state invariants (an emitted insert implies a matched
+/// consumption, a policy permit and a recorded attempt; a successful insert
+/// implies exactly those facts and no restoration; a restoration is only
+/// decided after a failed insert), and the next effect agrees with the state
+/// that produced it.
+let redemption_cancellation (#io_t: Type0) {| i: t_RedemptionIo io_t |}
+      (k: nat) (acc: bool & io_t & bool & t_RedemptionTransition)
+  : Lemma (requires sound_transition (acc_transition acc) /\ flag_sound acc)
+          (ensures (let (_, _, _, t2) = iter_turn #io_t #i k acc in
+                    sound_transition t2)) =
+  let (_, _, _, _, _) = run_ev #io_t #i k acc in
+  iter_turn_is_run_ev #io_t #i k acc
+
 // ── 2. The observations drive the extracted driver ────────────────────────
 
 /// Each observation answers the effect it was returned for, and no

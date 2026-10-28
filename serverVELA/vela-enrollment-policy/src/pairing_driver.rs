@@ -199,6 +199,25 @@ pub enum ClaimReadObservation {
     Unreadable,
 }
 
+/// The fallback read of the result collector, when neither a result record nor
+/// a claim exists. U-20: a committed device insert whose result write was lost
+/// (storage failure or a cancelled request) leaves the claim consumed and no
+/// result record. The inserted row carries the grant id, so the collector can
+/// still find it and answer under the same result-signature check.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DeviceGrantObservation {
+    /// A device row inserted by this grant exists and its stored `hybrid_vk`
+    /// decoded.
+    Enrolled {
+        claimed_key_len: usize,
+        signature_verified: bool,
+    },
+    /// No device row carries this grant id.
+    Absent,
+    /// The row or its stored key did not decode; the handler retains the error.
+    Unreadable,
+}
+
 // ── The decision state machine ──────────────────────────────────────────────
 
 /// Which ceremony this per-request driver belongs to.
@@ -282,6 +301,8 @@ pub enum PairingFailure {
     ClaimRecordUnreadable,
     ResultSignatureRejected,
     ResultNotAuthorized,
+    /// The fallback device-row read failed (U-20).
+    EnrolledDeviceUnreadable,
 }
 
 /// The effect the handler must perform next (`Idle` means "do nothing").
@@ -311,6 +332,9 @@ pub enum PairingEffect {
     ReadResult,
     /// Read the claim record after the result was absent.
     ReadClaim,
+    /// Read the device row inserted by this grant after both the result record
+    /// and the claim were absent (U-20 fallback).
+    ReadEnrolledDevice,
     /// Terminal success (a stored/redeemed package, an opened grant, a claimed
     /// grant, a completed enrollment).
     Complete,
@@ -380,6 +404,8 @@ pub enum PairingEvent {
     ResultWritten(StoreObservation),
     ResultRead(ResultReadObservation),
     ClaimRead(ClaimReadObservation),
+    /// The fallback device-row read after an absent result and claim (U-20).
+    EnrolledDeviceRead(DeviceGrantObservation),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -575,6 +601,12 @@ pub fn pairing_effect_is_sound(d: PairingDriver, effect: PairingEffect) -> bool 
                 && !d.wrote
         }
         PairingEffect::ReadClaim => {
+            matches!(d.ceremony, PairingCeremony::CollectResult)
+                && matches!(d.stage, PairingStage::ResultClaim)
+                && d.authorized
+                && !d.wrote
+        }
+        PairingEffect::ReadEnrolledDevice => {
             matches!(d.ceremony, PairingCeremony::CollectResult)
                 && matches!(d.stage, PairingStage::ResultClaim)
                 && d.authorized
@@ -1152,8 +1184,44 @@ fn on_claim_read(d: PairingDriver, observation: ClaimReadObservation) -> Pairing
             ResultDecision::Return(permit) => complete_result(d, permit.kind()),
             ResultDecision::Reject => terminal(d, result_failure(signature_verified)),
         },
-        ClaimReadObservation::Absent => terminal(d, PairingFailure::GrantUnavailable),
+        ClaimReadObservation::Absent => transition(
+            PairingDriver {
+                stage: PairingStage::ResultClaim,
+                ..d
+            },
+            PairingEffect::ReadEnrolledDevice,
+        ),
         ClaimReadObservation::Unreadable => terminal(d, PairingFailure::ClaimRecordUnreadable),
+    }
+}
+
+/// U-20 fallback: the result record and the claim are both gone, but the
+/// committed device row still records the grant it came from. Answer under the
+/// same verified result policy and the same result-signature check the stored
+/// result uses; only an `Enrolled` observation with a verified proof under the
+/// row's stored key can produce `ReturnResult Enrolled`.
+#[cfg_attr(hax, hax_lib::requires(pairing_state_is_sound(d) && matches!(d.stage, PairingStage::ResultClaim) && matches!(d.ceremony, PairingCeremony::CollectResult)))]
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    pairing_effect_is_sound(result.driver, result.effect)
+        && (!pairing_state_is_sound(d) || pairing_state_is_sound(result.driver))
+}))]
+fn on_enrolled_device_read(d: PairingDriver, observation: DeviceGrantObservation) -> PairingTransition {
+    match observation {
+        DeviceGrantObservation::Enrolled {
+            claimed_key_len,
+            signature_verified,
+        } => match authorize_result(result_facts(ResultObservation {
+            source: ResultSource::CompletedResult,
+            claimed_key_len,
+            signature_verified,
+        })) {
+            ResultDecision::Return(permit) => complete_result(d, permit.kind()),
+            ResultDecision::Reject => terminal(d, result_failure(signature_verified)),
+        },
+        DeviceGrantObservation::Absent => terminal(d, PairingFailure::GrantUnavailable),
+        DeviceGrantObservation::Unreadable => {
+            terminal(d, PairingFailure::EnrolledDeviceUnreadable)
+        }
     }
 }
 
@@ -1272,6 +1340,15 @@ pub fn step(driver: PairingDriver, event: PairingEvent) -> PairingTransition {
                 && matches!(driver.ceremony, PairingCeremony::CollectResult)
             {
                 on_claim_read(driver, observation)
+            } else {
+                idle(driver)
+            }
+        }
+        PairingEvent::EnrolledDeviceRead(observation) => {
+            if matches!(driver.stage, PairingStage::ResultClaim)
+                && matches!(driver.ceremony, PairingCeremony::CollectResult)
+            {
+                on_enrolled_device_read(driver, observation)
             } else {
                 idle(driver)
             }
@@ -1425,6 +1502,20 @@ pub fn on_claim_read_event(
     step(driver, PairingEvent::ClaimRead(observation))
 }
 
+/// Total wrapper: the handler feeds the fallback device-row read after an
+/// absent result record and claim.
+#[cfg_attr(hax, hax_lib::requires(pairing_state_is_sound(driver)))]
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    pairing_effect_is_sound(result.driver, result.effect)
+        && (!pairing_state_is_sound(driver) || pairing_state_is_sound(result.driver))
+}))]
+pub fn on_enrolled_device_read_event(
+    driver: PairingDriver,
+    observation: DeviceGrantObservation,
+) -> PairingTransition {
+    step(driver, PairingEvent::EnrolledDeviceRead(observation))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1529,6 +1620,20 @@ mod tests {
             ClaimReadObservation::Unreadable,
         ] {
             out.push(PairingEvent::ClaimRead(observation));
+        }
+        for observation in [
+            DeviceGrantObservation::Enrolled {
+                claimed_key_len: HYBRID_VK_LEN,
+                signature_verified: true,
+            },
+            DeviceGrantObservation::Enrolled {
+                claimed_key_len: HYBRID_VK_LEN,
+                signature_verified: false,
+            },
+            DeviceGrantObservation::Absent,
+            DeviceGrantObservation::Unreadable,
+        ] {
+            out.push(PairingEvent::EnrolledDeviceRead(observation));
         }
         out
     }

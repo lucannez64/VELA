@@ -166,6 +166,22 @@ let run_revocation_is_run_ev (#io_t: Type0) {| i: t_RevocationIo io_t |} (s: io_
   assert (v v_REVOCATION_MAX_EFFECTS = 4);
   assert (run_revocation #io_t #i s actor == iter_turn #io_t #i 4 (s, t0))
 
+// ── 1b. Cancellation: every prefix is a sound driver state ────────────────
+
+/// A dropped handler future stops the revocation loop after an arbitrary
+/// prefix of turns. For every executor, every `k` and every sound start, the
+/// state after `k` turns is sound: `revocation_state_is_sound` carries the
+/// per-request state invariants (a recorded revocation implies the lockout and
+/// the target were observed, a cascade implies the lockout, and a terminal
+/// verdict never claims both success and failure), and the next effect agrees
+/// with the state that produced it.
+let revocation_cancellation (#io_t: Type0) {| i: t_RevocationIo io_t |} (k: nat)
+  (s: io_t) (t: t_RevocationTransition)
+  : Lemma (requires sound_transition t)
+          (ensures (let (_, t2) = iter_turn #io_t #i k (s, t) in sound_transition t2)) =
+  let (_, t2, _) = run_ev #io_t #i k s t in
+  iter_turn_is_run_ev #io_t #i k s t
+
 // ── 2. The observations drive the extracted driver ────────────────────────
 
 /// Each observation answers the effect it was returned for, and no
@@ -370,6 +386,18 @@ let run_logout_is_run_ev (#io_t: Type0) {| i: t_LogoutIo io_t |} (s: io_t)
   logout_iter_turn_is_run_ev #io_t #i 1 s t0;
   assert (v v_LOGOUT_MAX_EFFECTS = 1);
   assert (run_logout #io_t #i s == logout_iter_turn #io_t #i 1 (s, t0))
+
+/// A dropped logout future stops the loop after the single marker write, or
+/// before it. For every executor and every `k`, the state after `k` turns is
+/// sound; `logout_state_is_sound` carries the per-request invariant that a
+/// completed logout wrote the JTI marker and a failure wrote nothing.
+let logout_cancellation (#io_t: Type0) {| i: t_LogoutIo io_t |} (k: nat) (s: io_t)
+  (t: t_LogoutTransition)
+  : Lemma (requires logout_sound_transition t)
+          (ensures (let (_, t2) = logout_iter_turn #io_t #i k (s, t) in
+                    logout_sound_transition t2)) =
+  let (_, t2, _) = logout_run_ev #io_t #i k s t in
+  logout_iter_turn_is_run_ev #io_t #i k s t
 
 // ── 2. The observations drive the extracted driver ────────────────────────
 

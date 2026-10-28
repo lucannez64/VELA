@@ -53,9 +53,9 @@ use vela_enrollment_policy::{
 };
 use vela_enrollment_policy::pairing_driver::{
     ClaimMaterialObservation, ClaimReadObservation, ClaimWriteObservation,
-    CompletionAccountObservation, CompletionPreflightObservation, DeviceInsertObservation,
-    GrantObservation, OpenerObservation, PairingEffect, PairingFailure, ResultReadObservation,
-    SignatureObservation, StoreObservation, TakeObservation,
+    CompletionAccountObservation, CompletionPreflightObservation, DeviceGrantObservation,
+    DeviceInsertObservation, GrantObservation, OpenerObservation, PairingEffect, PairingFailure,
+    ResultReadObservation, SignatureObservation, StoreObservation, TakeObservation,
 };
 use vela_rekey_policy::{
     MutationAuthority, MutationDecision, MutationKind, MutationRequest, Phase as PolicyPhase,
@@ -725,8 +725,8 @@ impl PairingExecutor for CompleteIo<'_> {
         let now = Utc::now().to_rfc3339();
         let (insert_observation, insert_error) = match self.state.sqldb.execute(
             "INSERT INTO devices
-         (id, user_id, device_name, device_type, last_active, hybrid_ek, hybrid_vk, enrolled_by, rms_capsule, created_at)
-         SELECT ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?
+         (id, user_id, device_name, device_type, last_active, hybrid_ek, hybrid_vk, enrolled_by, enrollment_grant_id, rms_capsule, created_at)
+         SELECT ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?
          WHERE EXISTS (
              SELECT 1 FROM users
              WHERE id = ? AND key_epoch = ? AND rekey_state IS NULL
@@ -739,6 +739,7 @@ impl PairingExecutor for CompleteIo<'_> {
                 TursoValue::Text(crate::db::encode_b64(&hybrid_ek)),
                 TursoValue::Text(crate::db::encode_b64(&hybrid_vk)),
                 TursoValue::Text(self.grant.device_id.clone()),
+                TursoValue::Text(self.grant_id.clone()),
                 TursoValue::Text(crate::db::encode_b64(
                     &self.rms_capsule_value(),
                 )),
@@ -1066,6 +1067,7 @@ struct ResultIo<'a> {
     result_record: Option<EnrollmentResult>,
     result_error: Option<AppError>,
     claim_error: Option<AppError>,
+    device_grant_error: Option<AppError>,
     claim_read_attempted: bool,
 }
 
@@ -1145,6 +1147,58 @@ impl PairingExecutor for ResultIo<'_> {
             None => ClaimReadObservation::Absent,
         }
     }
+
+    /// U-20 fallback. The claim and the result record are both gone, which is
+    /// what a committed insert plus a lost result write leaves behind. The
+    /// inserted row records the grant id, so read it back and answer under the
+    /// same signature check the stored result uses; the row's `hybrid_vk` is
+    /// the key the joining device claimed with.
+    async fn read_enrolled_device(&mut self) -> DeviceGrantObservation {
+        let rows = match self
+            .state
+            .sqldb
+            .query(
+                "SELECT id, hybrid_vk FROM devices WHERE enrollment_grant_id = ?",
+                vec![TursoValue::Text(self.grant_id.clone())],
+            )
+            .await
+        {
+            Ok(rows) => rows,
+            Err(error) => {
+                self.device_grant_error = Some(AppError::Internal(error.to_string()));
+                return DeviceGrantObservation::Unreadable;
+            }
+        };
+        let Some(row) = rows.first() else {
+            return DeviceGrantObservation::Absent;
+        };
+        let (Some(device_id), Some(hybrid_vk)) = (row.text(0), row.text(1)) else {
+            self.device_grant_error = Some(AppError::Internal(
+                "enrolled device row is missing its id or key".into(),
+            ));
+            return DeviceGrantObservation::Unreadable;
+        };
+        let vk = match crate::db::decode_b64(hybrid_vk) {
+            Ok(vk) => vk,
+            Err(error) => {
+                self.device_grant_error = Some(error);
+                return DeviceGrantObservation::Unreadable;
+            }
+        };
+        let signature_result = verify_result_signature(&vk, &self.grant_id, &self.signature);
+        let signature_verified = signature_result.is_ok();
+        self.device_grant_error = signature_result.err();
+        if signature_verified {
+            self.result_record = Some(EnrollmentResult {
+                device_id: device_id.to_string(),
+                hybrid_vk: hybrid_vk.to_string(),
+            });
+        }
+        DeviceGrantObservation::Enrolled {
+            claimed_key_len: vk.len(),
+            signature_verified,
+        }
+    }
 }
 
 /// Tell a device that claimed a grant which device it became.
@@ -1177,6 +1231,7 @@ pub async fn post_result(
         result_record: None,
         result_error: None,
         claim_error: None,
+        device_grant_error: None,
         claim_read_attempted: false,
     };
     let transition = vela_enrollment_policy::pairing_interpreter!(io, start, await);
@@ -1201,12 +1256,19 @@ pub async fn post_result(
                 AppError::Internal("stored claim is unreadable".into())
             }))
         }
+        PairingEffect::Fail(PairingFailure::EnrolledDeviceUnreadable) => {
+            Err(io.device_grant_error.take().unwrap_or_else(|| {
+                AppError::Internal("enrolled device row is unreadable".into())
+            }))
+        }
         PairingEffect::Fail(
             PairingFailure::ResultSignatureRejected | PairingFailure::ResultNotAuthorized,
         ) => {
             // Preserve the signature verifier's own error, if any, before the
             // policy's generic refusal.
-            let retained = if io.claim_read_attempted {
+            let retained = if io.device_grant_error.is_some() {
+                io.device_grant_error.take()
+            } else if io.claim_read_attempted {
                 io.claim_error.take()
             } else {
                 io.result_error.take()

@@ -1,0 +1,6 @@
+$ fstar.exe <deletion interpreter gate args>  (mutated extraction-deletion-driver)
+* Error 19 at proofs/fstar/extraction-deletion-driver/Vela_session_policy.Deletion_driver.fst(688,2-741,20):
+  - Could not prove post-condition
+  - The SMT solver could not prove the query.
+1 error was reported
+exit=1

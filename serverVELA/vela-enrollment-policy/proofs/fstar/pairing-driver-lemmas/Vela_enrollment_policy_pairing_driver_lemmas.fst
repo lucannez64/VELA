@@ -208,6 +208,7 @@ let step_after_done (d: t_PairingDriver) (e: t_PairingEvent)
   | PairingEvent_ResultWritten _ -> ()
   | PairingEvent_ResultRead _ -> ()
   | PairingEvent_ClaimRead _ -> ()
+  | PairingEvent_EnrolledDeviceRead _ -> ()
 
 // ── Unbounded trace execution ───────────────────────────────────────────────
 
@@ -472,6 +473,38 @@ let claim_return_requires_proof
   assert (pairing_state_is_sound d = true);
   ()
 
+/// U-20 fallback: when neither the result record nor the claim exists, the
+/// collector may still answer `Enrolled` from the device row this grant
+/// inserted. The same verified result policy must accept a present key and a
+/// proof under it, so the fallback does not widen the result theorem.
+let enrolled_device_return_requires_proof
+      (d: t_PairingDriver) (observation: t_DeviceGrantObservation)
+  : Lemma
+    (requires (trace_sound d))
+    (ensures (
+      (step d (PairingEvent_EnrolledDeviceRead observation)).f_effect
+        = PairingEffect_ReturnResult ResultKind_Enrolled ==>
+      (match observation <: t_DeviceGrantObservation with
+       | DeviceGrantObservation_Enrolled c ->
+           c.f_claimed_key_len >. mk_usize 0 /\ c.f_signature_verified
+       | _ -> False))) =
+  trace_sound_matches_rust d;
+  assert (pairing_state_is_sound d = true);
+  ()
+
+/// An absent fallback row never answers `Enrolled`: it is the same uniform
+/// "grant unavailable" refusal as an absent claim.
+let enrolled_device_absent_is_not_enrolled
+      (d: t_PairingDriver)
+  : Lemma
+    (requires (trace_sound d /\ is_result_claim d /\ is_collect d))
+    (ensures (
+      (step d (PairingEvent_EnrolledDeviceRead DeviceGrantObservation_Absent)).f_effect
+        = PairingEffect_Fail PairingFailure_GrantUnavailable)) =
+  trace_sound_matches_rust d;
+  assert (pairing_state_is_sound d = true);
+  ()
+
 /// A terminal success of a completion implies the insert *and* the result
 /// record, so a client that saw "enrolled" cannot have seen a half ceremony.
 let complete_success_implies_insert_and_record
@@ -586,6 +619,7 @@ let step_keeps_not_start (d: t_PairingDriver) (e: t_PairingEvent)
   | PairingEvent_ResultWritten _ -> ()
   | PairingEvent_ResultRead _ -> ()
   | PairingEvent_ClaimRead _ -> ()
+  | PairingEvent_EnrolledDeviceRead _ -> ()
 
 /// After the take, the driver is `Applied`; when it is at least that far along
 /// it stays there. This is the structural reason a second destructive effect
@@ -610,6 +644,7 @@ let step_keeps_not_start_not_applied (d: t_PairingDriver) (e: t_PairingEvent)
   | PairingEvent_ResultWritten _ -> ()
   | PairingEvent_ResultRead _ -> ()
   | PairingEvent_ClaimRead _ -> ()
+  | PairingEvent_EnrolledDeviceRead _ -> ()
 
 /// `TakeCeremony` and `WriteClaim` are only ever emitted from `Start`, so a
 /// trace whose first event already left `Start` contains none.

@@ -51,6 +51,7 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
             hybrid_ek   TEXT NOT NULL,
             hybrid_vk   TEXT NOT NULL,
             enrolled_by TEXT,
+            enrollment_grant_id TEXT,
             rms_capsule TEXT,
             rms_capsule_epoch INTEGER,
             rekey_capable BOOLEAN NOT NULL DEFAULT FALSE,
@@ -267,6 +268,7 @@ fn migrate_rekey_schema(db: &Database) -> anyhow::Result<()> {
         "ALTER TABLE oram_buckets ADD COLUMN epoch INTEGER NOT NULL DEFAULT 1",
         "ALTER TABLE devices ADD COLUMN rms_capsule_epoch INTEGER",
         "ALTER TABLE devices ADD COLUMN rekey_capable BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE devices ADD COLUMN enrollment_grant_id TEXT",
         "ALTER TABLE web_sessions ADD COLUMN key_epoch INTEGER",
     ];
     for sql in ALTERS {
@@ -296,6 +298,11 @@ fn migrate_rekey_schema(db: &Database) -> anyhow::Result<()> {
     db.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_oram_buckets_user_tree_bucket_epoch
          ON oram_buckets(user_id, tree_id, bucket_index, epoch)",
+        (),
+    )?;
+    db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_enrollment_grant_id
+         ON devices(enrollment_grant_id)",
         (),
     )?;
     Ok(())
