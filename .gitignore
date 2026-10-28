@@ -85,3 +85,6 @@ extension/fuzz/slow-unit-*
 # libFuzzer corpora are generated at run time, not source
 libVELA/vela-core/fuzz/corpus/
 extension/fuzz/corpus/
+
+# CI proof-reuse cache contents
+.proof-out/

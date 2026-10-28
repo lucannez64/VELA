@@ -233,3 +233,15 @@ The manifest includes untracked new artifacts that are not ignored in the workin
 what is included before publishing. It excludes itself and does not replace
 a signed release tag. Review source/model changes before updating
 `correspondence.json`; blindly updating hashes defeats its purpose.
+
+## Reused CI proof verdicts
+
+Each CI proof job (`refinement` in `security.yml`) is skipped when its inputs
+are byte-identical to a run that already passed. The key is the git object id
+of the crate, the outside files its scripts read (`deps` in the matrix), the
+workspace `Cargo.toml` and `Cargo.lock`, `security/formal`, the proof-tool pins
+and checkers, and the workflow itself. A hit restores that run's logs and
+checked extractions, adds `reused.txt` to the logs, and the boundary job audits
+them as usual. `security/formal/tests/test_proof_inputs.py` fails if a script
+reads an outside path or local crate that the key does not cover. To force a
+full rerun, change the `proof-verdict-v1` prefix in the workflow.

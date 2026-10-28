@@ -131,6 +131,9 @@ jobs:
       - name: Check driver proof source-policy regressions
         run: python3 -m unittest discover -s security/formal/tests -p 'test_driver_proof_sources.py'
 
+      - name: Check the proof jobs' reuse keys cover their inputs
+        run: python3 -m unittest discover -s security/formal/tests -p 'test_proof_inputs.py'
+
       - name: Prove malicious-server enrollment, shares, and device authentication
         run: VELA_PROOF_OUT="$RUNNER_TEMP/network-proofs" security/formal/run-network-boundary-proofs.sh
 
@@ -204,6 +207,7 @@ jobs:
           cargo test --manifest-path serverVELA/Cargo.toml -p vela-session-policy --lib revocation_driver
           cargo test --manifest-path serverVELA/Cargo.toml -p vela-session-policy --lib deletion_driver
           cargo test --manifest-path serverVELA/Cargo.toml -p vela-session-policy --lib deletion_interpreter
+          cargo test --manifest-path serverVELA/Cargo.toml -p vela-session-policy --lib
           cargo test --manifest-path serverVELA/Cargo.toml --test account_deletion_model
           cargo test --manifest-path serverVELA/Cargo.toml --test device_revocation_model
           cargo test --manifest-path serverVELA/Cargo.toml -p vela-recovery-policy --test redemption_driver
@@ -318,27 +322,62 @@ jobs:
         include:
           # Slowest first, so they start before the runners fill up.
           # vela-session-policy is split into its independent gate groups.
-          - { name: vela-session-policy-login, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: login, fresh: false, ships: false }
-          - { name: vela-session-policy-deletion, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: deletion, fresh: false, ships: false }
-          - { name: vela-session-policy-revocation, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: revocation, fresh: false, ships: false }
-          - { name: vela-session-policy-core, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: core, fresh: true, ships: true }
-          - { name: vela-recovery-policy, dir: serverVELA/vela-recovery-policy, script: verify-fstar.sh, fresh: true, ships: true }
-          - { name: vela-rekey-policy, dir: serverVELA/vela-rekey-policy, script: verify-fstar.sh, fresh: true, ships: true }
-          - { name: vela-enrollment-policy, dir: serverVELA/vela-enrollment-policy, script: verify-fstar.sh, fresh: true, ships: true }
-          - { name: vela-share-policy, dir: serverVELA/vela-share-policy, script: verify-fstar.sh, fresh: true, ships: true }
-          - { name: share-facts, dir: libVELA/vela-crypto, script: verify-share-facts-fstar.sh, fresh: false, ships: true }
-          - { name: vela-sync-policy, dir: libVELA/vela-sync-policy, script: verify-fstar.sh, fresh: true, ships: true }
-          - { name: vela-client-recovery-policy, dir: libVELA/vela-client-recovery-policy, script: verify-fstar.sh, fresh: true, ships: true }
-          - { name: vela-client-share-policy, dir: libVELA/vela-client-share-policy, script: verify-fstar.sh, fresh: true, ships: true }
+          - { name: vela-session-policy-login, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: login, fresh: false, ships: false, deps: 'serverVELA/vela-server/src/auth/challenge.rs' }
+          - { name: vela-session-policy-deletion, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: deletion, fresh: false, ships: false, deps: 'serverVELA/vela-server/src/auth/challenge.rs' }
+          - { name: vela-session-policy-revocation, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: revocation, fresh: false, ships: false, deps: 'serverVELA/vela-server/src/auth/challenge.rs' }
+          - { name: vela-session-policy-account, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: account, fresh: false, ships: false, deps: 'serverVELA/vela-server/src/auth/challenge.rs' }
+          - { name: vela-session-policy-core, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: core, fresh: true, ships: true, deps: 'serverVELA/vela-server/src/auth/challenge.rs' }
+          - { name: vela-recovery-policy, dir: serverVELA/vela-recovery-policy, script: verify-fstar.sh, fresh: true, ships: true, deps: '' }
+          - { name: vela-rekey-policy, dir: serverVELA/vela-rekey-policy, script: verify-fstar.sh, fresh: true, ships: true, deps: '' }
+          - { name: vela-enrollment-policy, dir: serverVELA/vela-enrollment-policy, script: verify-fstar.sh, fresh: true, ships: true, deps: '' }
+          - { name: vela-share-policy, dir: serverVELA/vela-share-policy, script: verify-fstar.sh, fresh: true, ships: true, deps: 'serverVELA/vela-rekey-policy/README.md' }
+          - { name: share-facts, dir: libVELA/vela-crypto, script: verify-share-facts-fstar.sh, fresh: false, ships: true, deps: 'libVELA/vela-client-recovery-policy libVELA/vela-client-share-policy' }
+          - { name: vela-sync-policy, dir: libVELA/vela-sync-policy, script: verify-fstar.sh, fresh: true, ships: true, deps: 'libVELA/vela-client-recovery-policy/README.md' }
+          - { name: vela-client-recovery-policy, dir: libVELA/vela-client-recovery-policy, script: verify-fstar.sh, fresh: true, ships: true, deps: '' }
+          - { name: vela-client-share-policy, dir: libVELA/vela-client-share-policy, script: verify-fstar.sh, fresh: true, ships: true, deps: '' }
     env:
       CARGO_BUILD_JOBS: 1
       OPAMJOBS: 1
       MAKEFLAGS: -j1
     steps:
       - uses: actions/checkout@v4
+      # A proof whose inputs are byte-identical to a run that already passed is
+      # not rerun: the key is the git object id of every input (the crate, the
+      # outside files its scripts read, the workspace lockfile, the shared proof
+      # checkers and tool pins, and this workflow), and a hit restores that
+      # run's logs and checked extractions for the boundary job.
+      # test_proof_inputs.py fails if a script reads an outside path the key
+      # does not cover.
+      - name: Compute proof input key
+        id: inputs
+        env:
+          CRATE_DIR: ${{ matrix.dir }}
+          DEPS: ${{ matrix.deps }}
+          NAME: ${{ matrix.name }}
+        run: |
+          set -euo pipefail
+          root=${CRATE_DIR%%/*}
+          # shellcheck disable=SC2206 # DEPS is a space-separated path list
+          paths=("$CRATE_DIR" $DEPS "$root/Cargo.toml" "$root/Cargo.lock" security/formal \
+                 security/assurance/bounded.sh security/assurance/install-hax.sh \
+                 security/assurance/check-proof-boundary.py .github/workflows/security.yml)
+          key=$(for p in "${paths[@]}"; do printf '%s %s\n' "$p" "$(git rev-parse --verify "HEAD:$p")"; done | sha256sum | cut -c1-40)
+          echo "key=proof-verdict-v1-$NAME-$key" >> "$GITHUB_OUTPUT"
+          echo "proof input key for $NAME: $key"
+      - name: Reuse a passing proof with the same inputs
+        id: verdict
+        uses: actions/cache/restore@v4
+        with:
+          path: .proof-out
+          key: ${{ steps.inputs.outputs.key }}
+      - name: Note the reused proof
+        if: steps.verdict.outputs.cache-hit == 'true'
+        run: |
+          echo "Inputs unchanged since a passing run; proof not rerun (key ${{ steps.inputs.outputs.key }})." | tee -a .proof-out/logs/reused.txt
       - uses: dtolnay/rust-toolchain@1.99.1
+        if: steps.verdict.outputs.cache-hit != 'true'
       - name: Install build prerequisites
-        if: runner.environment == 'github-hosted'
+        if: runner.environment == 'github-hosted' && steps.verdict.outputs.cache-hit != 'true'
         timeout-minutes: 15
         run: |
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
@@ -346,7 +385,7 @@ jobs:
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends opam libgmp-dev pkg-config unzip jq clang nodejs
       - name: Restore pinned proof toolchain
         id: refinement-toolchain-cache
-        if: runner.environment == 'github-hosted'
+        if: runner.environment == 'github-hosted' && steps.verdict.outputs.cache-hit != 'true'
         uses: actions/cache/restore@v4
         with:
           path: |
@@ -354,12 +393,13 @@ jobs:
             ~/.rustup/toolchains/nightly-2025-11-08-x86_64-unknown-linux-gnu
           key: refinement-toolchain-v1-${{ runner.os }}-${{ runner.arch }}-ubuntu24-${{ hashFiles('security/assurance/install-hax.sh') }}
       - name: Install pinned hax, F* and Z3
-        if: runner.environment == 'github-hosted' && steps.refinement-toolchain-cache.outputs.cache-hit != 'true'
+        if: runner.environment == 'github-hosted' && steps.verdict.outputs.cache-hit != 'true' && steps.refinement-toolchain-cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/refinement-logs"
           VELA_MEMORY_MAX=6G VELA_STEP_TIMEOUT=5400 security/assurance/bounded.sh security/assurance/install-hax.sh 2>&1 | tee "$RUNNER_TEMP/refinement-logs/toolchain-install-${{ matrix.name }}.log"
       - name: Activate and check pinned proof tools
+        if: steps.verdict.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/refinement-logs"
@@ -379,7 +419,7 @@ jobs:
             rustc +nightly-2025-11-08 --version
           } 2>&1 | tee "$RUNNER_TEMP/refinement-logs/toolchain-activation-${{ matrix.name }}.log"
       - name: Cache completed proof toolchain
-        if: runner.environment == 'github-hosted' && steps.refinement-toolchain-cache.outputs.cache-hit != 'true'
+        if: runner.environment == 'github-hosted' && steps.verdict.outputs.cache-hit != 'true' && steps.refinement-toolchain-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: |
@@ -388,14 +428,10 @@ jobs:
           key: ${{ steps.refinement-toolchain-cache.outputs.cache-primary-key }}
       # Installed tools are immutable above; application dependencies need their
       # own evolving cache. Activate CARGO_HOME before restoring this cache.
-      # Keep proof outputs fresh: this action caches dependency build artifacts,
-      # not successful VELA proof verdicts or workspace crate artifacts.
-      # Installed tools are immutable above; application dependencies need their
-      # own evolving cache. Activate CARGO_HOME before restoring this cache.
-      # Keep proof outputs fresh: this action caches dependency build artifacts,
-      # not successful VELA proof verdicts or workspace crate artifacts.
+      # This action caches dependency build artifacts only; reused verdicts
+      # come from the exact-input key above.
       - name: Cache refinement Rust dependencies
-        if: runner.environment == 'github-hosted'
+        if: runner.environment == 'github-hosted' && steps.verdict.outputs.cache-hit != 'true'
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: ${{ matrix.dir }} -> ../../target
@@ -403,6 +439,7 @@ jobs:
           key: ${{ hashFiles('security/assurance/install-hax.sh') }}
           cache-bin: false
       - name: Extract and check ${{ matrix.name }}
+        if: steps.verdict.outputs.cache-hit != 'true'
         env:
           CRATE_DIR: ${{ matrix.dir }}
           SCRIPT: ${{ matrix.script }}
@@ -425,13 +462,14 @@ jobs:
           fi
       # Keep repository-relative paths so the boundary job can lay them back.
       - name: Collect checked extractions
-        if: always()
+        if: always() && steps.verdict.outputs.cache-hit != 'true'
         env:
           CRATE_DIR: ${{ matrix.dir }}
           SHIPS: ${{ matrix.ships }}
         run: |
-          out="$RUNNER_TEMP/refinement-extractions"
-          mkdir -p "$out"
+          out="$GITHUB_WORKSPACE/.proof-out/extractions"
+          mkdir -p "$out" .proof-out/logs
+          cp -r "$RUNNER_TEMP/refinement-logs/." .proof-out/logs/ 2>/dev/null || true
           # Only the job that regenerated a crate's historical extraction ships
           # it, so a committed copy never overwrites the checked one.
           skip=()
@@ -439,16 +477,22 @@ jobs:
           find "$CRATE_DIR/proofs/fstar" -type f -name '*.fst' "${skip[@]}" \
             \( -path '*/extraction/*' -o -path '*/extraction-*' -o -path '*-lemmas/*' -o -path '*-composition/*' -o -path '*/models/*' \) \
             -exec cp --parents {} "$out" \; 2>/dev/null || true
+      - name: Remember this passing proof
+        if: success() && steps.verdict.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .proof-out
+          key: ${{ steps.inputs.outputs.key }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: refinement-logs-${{ matrix.name }}
-          path: ${{ runner.temp }}/refinement-logs
+          path: .proof-out/logs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: refinement-extractions-${{ matrix.name }}
-          path: ${{ runner.temp }}/refinement-extractions
+          path: .proof-out/extractions
 
   # Audits the selected postconditions and reviewed assumptions across every
   # crate, over the extractions the matrix jobs just regenerated and checked,
