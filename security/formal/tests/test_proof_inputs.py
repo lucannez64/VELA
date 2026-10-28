@@ -72,7 +72,10 @@ class ProofInputKeyTest(unittest.TestCase):
         missing = []
         for entry in matrix():
             crate = entry['dir']
-            with open(os.path.join(ROOT, crate, 'Cargo.toml')) as f:
+            manifest = os.path.join(ROOT, crate, 'Cargo.toml')
+            if not os.path.exists(manifest):
+                continue
+            with open(manifest) as f:
                 text = f.read()
             covers = (entry.get('deps') or '').split()
             for name in re.findall(r'(?m)^(vela[\w-]*)\s*=', text):

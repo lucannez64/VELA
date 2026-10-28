@@ -352,7 +352,7 @@
       "boundary": "focused-driver source-policy gate: reviewed proof-search budgets only; a drift/escape guard, not a proof checker or semantic correspondence certificate",
       "artifacts": {
         "security/formal/check-driver-proof-sources.py": "2d28feef4e9be7396be1752deac799098d92c32dd44e3622619db090f757f527",
-        "security/formal/tests/test_driver_proof_sources.py": "4feec17915fed0f3649de4b19b1c5a0ec926970f4dbbbed0ccd02cb6be91b56a"
+        "security/formal/tests/test_driver_proof_sources.py": "471fc70f3910588091dc7621697fb4e6d4b987fc7583b0f07722442d3861b5f4"
       }
     },
     {
@@ -638,6 +638,15 @@
         "serverVELA/vela-session-policy/proofs/fstar/challenge-issue-interpreter-lemmas/Vela_session_policy_challenge_issue_interpreter_lemmas.fst": "62d971b9286469b35bc04ee76d07c127ff07749e02b50eada0153a103b0e48b4",
         "serverVELA/vela-server/src/account/mod.rs": "ca11ec5295dd51f3221f4069088cc131157b0f50b8943d9c5bde183e6f990314",
         "serverVELA/vela-server/src/auth/challenge.rs": "1f9d4048f6791a84d492b2c2c8a25dbd284397334f06dd8a5f18cea9d396409c"
+      }
+    },
+    {
+      "boundary": "cross-driver concurrent composition (login, revocation, deletion, pairing, recovery redemption over one shared world): for any schedule of requests, no token admitted for a revoked device or deleted account, no pairing or recovery insert for an absent account, no pairing insert after a decision with a revoked opener, no cross-account or revoked-actor revocation, no off-session deletion, at most one login token per challenge and one device per pairing or recovery grant, counted on the extracted drivers' decisions; SQL/store linearizability, the atomic deletion commit, admission's four reads as one step, spawn-time revocation actor activity, decision-time opener activity and crypto/TTL remain assumptions",
+      "artifacts": {
+        "security/formal/cross-driver/verify.sh": "fb0fab4d28cfbb170e9223a715f746d4620ed583dd80da1713a59bef69d820ae",
+        "security/formal/cross-driver/Vela_cross_driver_composition.fst": "a2b49eebd98375725667cbefe326a46358fcb15d4fda11657900f820aab17e2a",
+        "serverVELA/vela-session-policy/proofs/fstar/extraction-f2-cross/Vela_session_policy.Login_driver.fst": "ab5f233536bd6e98fe5b34433b4b7665f89906fac0ac900588926723bac72bb5",
+        "serverVELA/vela-session-policy/proofs/fstar/extraction-f2-cross/Vela_session_policy.Revocation_driver.fst": "b790022190b787f397c5198850bfe34d474bce329a5dbe4307d607851f568e0a"
       }
     }
   ]
