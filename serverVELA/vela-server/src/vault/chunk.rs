@@ -685,14 +685,138 @@ fn upload_error(
     }
 }
 
+/// The I/O behind `DELETE /vault/chunk/:id`.
+struct DeleteChunkIo<'a> {
+    state: &'a AppState,
+    session: &'a AuthSession,
+    id: String,
+    user_id: String,
+    declared_epoch: Option<i64>,
+    headers: &'a HeaderMap,
+    epoch: i64,
+    error: Option<AppError>,
+}
+
+impl DeleteChunkIo<'_> {
+    async fn check_schema(
+        &mut self,
+    ) -> vela_rekey_policy::vault_mutation_driver::SchemaObservation {
+        use vela_rekey_policy::vault_mutation_driver::SchemaObservation as O;
+        match crate::vault::schema::check_write(self.state, &self.user_id, self.headers) {
+            Ok(()) => O::Allowed,
+            Err(error) => {
+                self.error = Some(error);
+                O::Refused
+            }
+        }
+    }
+
+    async fn resolve_epoch(
+        &mut self,
+    ) -> vela_rekey_policy::vault_mutation_driver::RouteObservation {
+        use vela_rekey_policy::vault_mutation_driver::RouteObservation as O;
+        match crate::vault::rekey::resolve_write_epoch(
+            self.state,
+            &self.user_id,
+            self.declared_epoch,
+        )
+        .await
+        {
+            Ok((write_epoch, read_epoch)) if write_epoch == read_epoch => {
+                self.epoch = write_epoch;
+                O::Active { epoch: write_epoch }
+            }
+            Ok(_) => O::Freezing,
+            Err(error @ AppError::Rekeyed(_)) => {
+                self.error = Some(error);
+                O::Rejected
+            }
+            Err(error) => {
+                self.error = Some(error);
+                O::Storage
+            }
+        }
+    }
+
+    async fn read_version(
+        &mut self,
+    ) -> vela_rekey_policy::vault_mutation_driver::VersionObservation {
+        use vela_rekey_policy::vault_mutation_driver::VersionObservation as O;
+        let rows = self
+            .state
+            .sqldb
+            .query(
+                "SELECT version FROM vault_chunks WHERE chunk_id = ? AND user_id = ? AND epoch = ?",
+                vec![
+                    TursoValue::Text(self.id.clone()),
+                    TursoValue::Text(self.user_id.clone()),
+                    TursoValue::Integer(self.epoch),
+                ],
+            )
+            .await;
+        match rows {
+            Err(error) => {
+                self.error = Some(AppError::Internal(error.to_string()));
+                O::Storage
+            }
+            Ok(rows) => match rows.first().and_then(|r| r.i64(0)) {
+                Some(version) => O::Found { version },
+                None => O::Missing,
+            },
+        }
+    }
+
+    async fn delete_row(&mut self) -> vela_rekey_policy::vault_mutation_driver::DeleteObservation {
+        use vela_rekey_policy::vault_mutation_driver::DeleteObservation as O;
+        let deleted = self
+            .state
+            .sqldb
+            .execute(
+                "DELETE FROM vault_chunks
+             WHERE chunk_id = ? AND user_id = ? AND epoch = ?
+               AND EXISTS (
+                 SELECT 1 FROM users
+                 WHERE users.id = vault_chunks.user_id
+                   AND users.key_epoch = ? AND users.rekey_state IS NULL
+               )",
+                vec![
+                    TursoValue::Text(self.id.clone()),
+                    TursoValue::Text(self.user_id.clone()),
+                    TursoValue::Integer(self.epoch),
+                    TursoValue::Integer(self.epoch),
+                ],
+            )
+            .await;
+        match deleted {
+            Err(error) => {
+                self.error = Some(AppError::Internal(error.to_string()));
+                O::Storage
+            }
+            Ok(1) => O::Deleted,
+            Ok(_) => O::Skipped,
+        }
+    }
+
+    async fn publish(&mut self) {
+        self.state.vault_events.publish(
+            self.session.user_id,
+            self.session.device_id,
+            self.epoch,
+            crate::vault::events::VaultChangeKind::Chunk,
+        );
+    }
+}
+
 pub async fn delete_chunk(
     State(state): State<AppState>,
     Path(id): Path<String>,
     session: AuthSession,
     headers_in: HeaderMap,
 ) -> Result<impl IntoResponse> {
+    use vela_rekey_policy::vault_mutation_driver::{
+        ChunkDeleteEffect, ChunkDeleteFailure, ChunkDeleteRequest,
+    };
     let _schema_guard = crate::vault::schema::lock(&session.user_id.to_string()).await;
-    crate::vault::schema::check_write(&state, &session.user_id.to_string(), &headers_in)?;
     let id = crate::ids::validate_id("chunk_id", &id)?.to_string();
     let if_match: i64 = headers_in
         .get("if-match")
@@ -702,88 +826,83 @@ pub async fn delete_chunk(
         .ok_or_else(|| AppError::BadRequest("If-Match header is required".into()))?;
 
     let declared_epoch = parse_declared_epoch(&headers_in)?;
-    let (write_epoch, read_epoch) = crate::vault::rekey::resolve_write_epoch(
-        &state,
-        &session.user_id.to_string(),
+    let mut io = DeleteChunkIo {
+        state: &state,
+        session: &session,
+        id: id.clone(),
+        user_id: session.user_id.to_string(),
         declared_epoch,
-    )
-    .await?;
-    if write_epoch != read_epoch {
-        return Err(AppError::Rekeyed(
-            "chunk deletes are unavailable while a re-key is in progress".into(),
-        ));
-    }
-    let mutation_permit = session.write_mutation_permit(write_epoch)?;
-
-    let rows = state
-        .sqldb
-        .query(
-            "SELECT version FROM vault_chunks WHERE chunk_id = ? AND user_id = ? AND epoch = ?",
-            vec![
-                TursoValue::Text(id.clone()),
-                TursoValue::Text(session.user_id.to_string()),
-                TursoValue::Integer(write_epoch),
-            ],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-
-    let current_version: i64 = rows
-        .first()
-        .and_then(|r| r.i64(0))
-        .ok_or_else(|| AppError::NotFound(format!("chunk {id} not found")))?;
-
-    if current_version != if_match {
-        return Err(AppError::Conflict(
-            "version mismatch — re-sync before deleting".into(),
-        ));
-    }
-
-    let deleted = state
-        .sqldb
-        .execute(
-            "DELETE FROM vault_chunks
-             WHERE chunk_id = ? AND user_id = ? AND epoch = ?
-               AND EXISTS (
-                 SELECT 1 FROM users
-                 WHERE users.id = vault_chunks.user_id
-                   AND users.key_epoch = ? AND users.rekey_state IS NULL
-               )",
-            vec![
-                TursoValue::Text(id.clone()),
-                TursoValue::Text(session.user_id.to_string()),
-                TursoValue::Integer(write_epoch),
-                TursoValue::Integer(mutation_permit.epoch()),
-            ],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    if deleted != 1 {
-        return Err(AppError::Rekeyed(
-            "vault epoch changed before the chunk delete completed".into(),
-        ));
-    }
-
-    tracing::info!(
-        chunk_id = %id,
-        user_id = %session.user_id,
-        version = current_version,
-        "vault chunk deleted"
+        headers: &headers_in,
+        epoch: 0,
+        error: None,
+    };
+    let transition = vela_rekey_policy::chunk_delete_interpreter!(
+        io,
+        ChunkDeleteRequest {
+            authenticated: true,
+            web: session.scope == TokenScope::WebSession,
+            web_epoch: session.key_epoch,
+            if_match,
+        },
+        await
     );
-
-    state.vault_events.publish(
-        session.user_id,
-        session.device_id,
-        write_epoch,
-        crate::vault::events::VaultChangeKind::Chunk,
-    );
-
-    let mut resp_headers = HeaderMap::new();
-    maybe_append_new_token(&mut resp_headers, &session);
-
-    Ok((
-        StatusCode::OK,
-        resp_headers,
-        Json(serde_json::json!({ "deleted": true, "version": current_version })),
-    ))
+    match transition.effect {
+        ChunkDeleteEffect::Complete => {
+            let current_version = transition.driver.current_version;
+            tracing::info!(
+                chunk_id = %id,
+                user_id = %session.user_id,
+                version = current_version,
+                "vault chunk deleted"
+            );
+            let mut resp_headers = HeaderMap::new();
+            maybe_append_new_token(&mut resp_headers, &session);
+            Ok((
+                StatusCode::OK,
+                resp_headers,
+                Json(serde_json::json!({ "deleted": true, "version": current_version })),
+            ))
+        }
+        ChunkDeleteEffect::Fail(failure) => {
+            let recorded = io.error.take();
+            Err(recorded.unwrap_or_else(|| match failure {
+                ChunkDeleteFailure::Unauthenticated => {
+                    AppError::Unauthorized("not authenticated".into())
+                }
+                ChunkDeleteFailure::SchemaRefused => {
+                    AppError::Conflict("This vault uses folders and richer fields. Upgrade this client before syncing changes.".into())
+                }
+                ChunkDeleteFailure::SchemaStorage => {
+                    AppError::Internal("Invalid vault schema floor".into())
+                }
+                ChunkDeleteFailure::EpochMismatch => {
+                    AppError::Rekeyed("vault epoch changed before the chunk delete completed".into())
+                }
+                ChunkDeleteFailure::RekeyInProgress => AppError::Rekeyed(
+                    "chunk deletes are unavailable while a re-key is in progress".into(),
+                ),
+                ChunkDeleteFailure::EpochStorage => {
+                    AppError::Internal("vault epoch lookup failed".into())
+                }
+                ChunkDeleteFailure::AuthorityEpochMismatch => AppError::Rekeyed(
+                    "caller authority epoch does not match the vault epoch".into(),
+                ),
+                ChunkDeleteFailure::NotFound => {
+                    AppError::NotFound(format!("chunk {id} not found"))
+                }
+                ChunkDeleteFailure::VersionMismatch => {
+                    AppError::Conflict("version mismatch — re-sync before deleting".into())
+                }
+                ChunkDeleteFailure::Rekeyed => AppError::Rekeyed(
+                    "vault epoch changed before the chunk delete completed".into(),
+                ),
+                ChunkDeleteFailure::DeleteStorage => {
+                    AppError::Internal("chunk delete failed".into())
+                }
+            }))
+        }
+        _ => Err(AppError::Internal(
+            "chunk delete did not reach a terminal decision".into(),
+        )),
+    }
 }
