@@ -10,8 +10,8 @@ cd "$proof_root"
 # extraction it just regenerated. No argument runs everything, in order.
 part=${1:-all}
 case $part in
-  all|core|login|revocation|deletion) ;;
-  *) echo "usage: $0 [all|core|login|revocation|deletion]" >&2; exit 2 ;;
+  all|core|login|revocation|deletion|websession) ;;
+  *) echo "usage: $0 [all|core|login|revocation|deletion|websession]" >&2; exit 2 ;;
 esac
 wants() { [[ $part == all || $part == "$1" ]]; }
 
@@ -90,3 +90,12 @@ if wants deletion; then "$proof_root/verify-fstar-deletion-driver.sh"; fi
 # expands, proved to perform exactly the driver's effects. Needs the deletion
 # driver extraction above.
 if wants deletion; then "$proof_root/verify-fstar-deletion-interpreter.sh"; fi
+
+# F-2 focused web-session start/grant/token/delete driver gate. It regenerates
+# its own partial extraction into proofs/fstar/extraction-websession-driver and
+# is checked in its own fstar.exe invocation.
+if wants websession; then "$proof_root/verify-fstar-websession-driver.sh"; fi
+
+# Handler-to-driver link for the four web-session transitions: the interpreter
+# loops the handlers expand. Needs the web-session driver extraction above.
+if wants websession; then "$proof_root/verify-fstar-websession-interpreter.sh"; fi

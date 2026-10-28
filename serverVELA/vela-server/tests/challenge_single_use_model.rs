@@ -229,6 +229,10 @@ struct Model {
     purpose: BTreeMap<(usize, usize), Endpoint>,
     /// Successful presentations per nonce. Must never exceed 1.
     successes: BTreeMap<(usize, usize), u32>,
+    /// The granted session may issue at most one token. The token handler
+    /// claims it first-writer-wins before signing, so a second valid
+    /// `web_token` proof gets a conflict rather than a second token.
+    web_token_issued: bool,
 }
 
 impl Model {
@@ -269,6 +273,12 @@ impl Model {
                         // issued for.
                         self.issued.insert((slot, index), ChallengeState::Consumed);
                         if honest && self.purpose.get(&(slot, index)) == Some(&endpoint) {
+                            if endpoint == Endpoint::WebToken && self.web_token_issued {
+                                return Some(StatusCode::CONFLICT);
+                            }
+                            if endpoint == Endpoint::WebToken {
+                                self.web_token_issued = true;
+                            }
                             *self.successes.entry((slot, index)).or_insert(0) += 1;
                             Some(StatusCode::OK)
                         } else {
@@ -610,6 +620,10 @@ impl Fixture {
             .store
             .del(&format!("rl:websession:token:{}", self.web_session_id))
             .expect("clear web-token budget");
+        self.state
+            .store
+            .del(&format!("web_session:token_issued:{}", self.web_session_id))
+            .expect("clear web-token claim");
     }
 
     fn present_request(
