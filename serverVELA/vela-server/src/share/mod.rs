@@ -374,6 +374,9 @@ pub struct InboxResponse {
     pub has_more: bool,
 }
 
+/// Lists the caller's inbox. A linked share's inbox copy is skipped once the
+/// share is revoked: revocation deletes that copy in a separate cleanup step,
+/// and a failed or interrupted cleanup must not leave the capsule fetchable.
 pub async fn get_inbox(
     State(state): State<AppState>,
     session: AuthSession,
@@ -414,6 +417,9 @@ pub async fn get_inbox(
              FROM share_inbox
              WHERE recipient_user_id = ?
                AND created_at < ?
+               AND NOT EXISTS (SELECT 1 FROM shared_items
+                               WHERE shared_items.id = share_inbox.id
+                                 AND shared_items.revoked = 1)
              ORDER BY created_at DESC
              LIMIT ?",
                 vec![
@@ -431,6 +437,9 @@ pub async fn get_inbox(
                 "SELECT id, sender_user_id, capsule, created_at
              FROM share_inbox
              WHERE recipient_user_id = ?
+               AND NOT EXISTS (SELECT 1 FROM shared_items
+                               WHERE shared_items.id = share_inbox.id
+                                 AND shared_items.revoked = 1)
              ORDER BY created_at DESC
              LIMIT ?",
                 vec![

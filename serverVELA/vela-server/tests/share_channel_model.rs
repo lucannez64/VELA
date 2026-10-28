@@ -470,3 +470,42 @@ async fn every_bounded_share_trace_matches_the_m19_m21_state_machine() {
     }
     eprintln!("share channel model: {} traces, {} steps, depth {}", traces.len(), steps, depth);
 }
+
+/// Revocation marks the linked share revoked, then deletes the recipient's
+/// inbox copy in a separate cleanup step. If that cleanup fails or the request
+/// is dropped in between, the inbox must still stop serving the capsule.
+#[tokio::test(flavor = "current_thread")]
+async fn a_revoked_share_leaves_the_inbox_even_if_cleanup_never_ran() {
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
+    let mut real = Real::new(&state, app.clone()).await;
+
+    let send = Command::Send { from: User::Alice, to: User::Carol };
+    assert_eq!(real.apply(send).await, StatusCode::OK);
+    assert_eq!(real.apply(send).await, StatusCode::OK);
+    let (revoked, kept) = (real.slot_id(0), real.slot_id(1));
+    assert_eq!(real.inbox(User::Carol).await.len(), 2);
+
+    // The state an interrupted revocation leaves: revoked, inbox row present.
+    state
+        .sqldb
+        .execute(
+            "UPDATE shared_items SET revoked = 1 WHERE id = ?",
+            vec![TursoValue::Text(revoked.to_string())],
+        )
+        .await
+        .unwrap();
+    let rows = state
+        .sqldb
+        .query(
+            "SELECT COUNT(*) FROM share_inbox WHERE id = ?",
+            vec![TursoValue::Text(revoked.to_string())],
+        )
+        .await
+        .unwrap();
+    assert_eq!(rows[0].i64(0), Some(1), "the inbox row must still exist for this test");
+
+    let inbox = real.inbox(User::Carol).await;
+    assert_eq!(inbox.len(), 1, "a revoked share must not be listed: {inbox:?}");
+    assert!(inbox.contains_key(&real.slot_of(kept)));
+}
