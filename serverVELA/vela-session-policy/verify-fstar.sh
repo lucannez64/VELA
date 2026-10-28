@@ -114,3 +114,9 @@ if wants websession; then "$proof_root/verify-fstar-websession-driver.sh"; fi
 # Handler-to-driver link for the four web-session transitions: the interpreter
 # loops the handlers expand. Needs the web-session driver extraction above.
 if wants websession; then "$proof_root/verify-fstar-websession-interpreter.sh"; fi
+
+# Concurrent composition of the four extracted web-session drivers with the
+# extracted device-revocation driver over one shared session/challenge/store
+# world: one token per session, no token after revocation, owner-only grants
+# and deletes, and no authority from start. Needs the driver extraction above.
+if wants websession; then "$proof_root/verify-fstar-websession-composition.sh"; fi

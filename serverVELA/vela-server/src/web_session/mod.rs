@@ -1031,6 +1031,26 @@ impl TokenIo<'_> {
         // `device:revoked:<session_id>` applies.
         match ts.issue_from_plan(user_id, self.id, plan) {
             Ok((token, jti)) => {
+                // `DELETE /web-session/:id` and the approving-device
+                // revocation cascade write `device:revoked:<session_id>`
+                // *before* the SQL row flips. An exchange that observed the
+                // granted row before that lockout must not release a token
+                // after it: re-check the sentinel at the point of issue and
+                // fail closed on a storage error too. This is the
+                // composition proof's issue-time lockout guard.
+                match self.state.store.exists(&format!("device:revoked:{}", self.id)) {
+                    Ok(false) => {}
+                    Ok(true) => {
+                        self.error = Some(AppError::Unauthorized(
+                            "web session was revoked during token issuance".into(),
+                        ));
+                        return TokenIssueObservation::Failed;
+                    }
+                    Err(error) => {
+                        self.error = Some(error);
+                        return TokenIssueObservation::Failed;
+                    }
+                }
                 // Track the JTI before the driver may respond. A tracking
                 // failure is a failed exchange, exactly as the historical
                 // separate step was.

@@ -42,6 +42,17 @@ class DriverGuardTests(unittest.TestCase):
         self.assertTrue(composition.exists())
         guard.check_files(generated, [composition], [composition.parent])
 
+    def test_websession_composition_passes_source_guard(self):
+        root = Path(__file__).resolve().parents[3]
+        policy = root / 'serverVELA/vela-session-policy'
+        generated = list((policy / 'proofs/fstar/extraction-websession-driver').glob('*.fst'))
+        generated += list((policy / 'proofs/fstar/extraction-websession-revocation').glob('*.fst'))
+        composition = (policy / 'proofs/fstar/websession-composition' /
+                       'Vela_session_policy_websession_composition.fst')
+        self.assertTrue(generated)
+        self.assertTrue(composition.exists())
+        guard.check_files(generated, [composition], [composition.parent])
+
     def test_focused_driver_runners_are_executable_in_git(self):
         root = Path(__file__).resolve().parents[3]
         runners = list(root.glob('serverVELA/vela-*-policy/verify-fstar*.sh'))
