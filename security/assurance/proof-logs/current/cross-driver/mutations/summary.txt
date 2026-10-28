@@ -1,0 +1,18 @@
+F-2 cross-driver mutations (checked-in extraction unchanged)
+============================================================
+
+Each mutant theorem run exits 1; each witness run exits 0.
+
+mutant         removed check                                             theorem failure
+admission      plan_admission always Admit; admission_is_authorized true  Error 19 at Vela_cross_driver_composition.fst(2121,10-2121,16)  [deliver_use_inv]
+               witness: w_admit_revoked > 0 and w_admit_deleted > 0        admission-Vela_cross_admission_witness.log: exit 0
+pair-opener    on_completion_ready sets opener_active := true             Error 19 at Vela_cross_driver_composition.fst(1283,24-1291,11)  [pair_preflight_take_opener]
+               witness: w_pair_revoked_approver > 0                        pair-opener-Vela_cross_pair_opener_witness.log: exit 0
+guard          insert_guard drops account_present                         Error 19 at Vela_cross_driver_composition.fst(1925,17-1925,23)  [deliver_pair_insert_inv]
+               witness: w_pair_insert_deleted > 0, w_rec_insert_deleted > 0 guard-Vela_cross_guard_witness.log: exit 0
+revoke-delete  same-account refusal, actor-activity check, session-scope  Error 19 at Vela_cross_driver_composition.fst(1490,2-1498,11)   [revocation_lookup_account]
+               witness: w_cross_account > 0, w_revoked_actor > 0,           revoke-delete-Vela_cross_revoke_delete_witness.log: exit 0
+                        w_cross_delete > 0
+missing        login/pairing/recovery Missing branches proceed            Error 19 at Vela_cross_driver_composition.fst(1227,2-1244,35)  [login_step_accepted_origin]
+               witness: w_double_login > 0, w_double_pair > 0,             missing-Vela_cross_missing_witness.log: exit 0
+                        w_double_rec > 0

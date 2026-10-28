@@ -31,10 +31,26 @@ class DriverGuardTests(unittest.TestCase):
             self.assertTrue(proof_files)
             guard.check_files(list(directory.glob('*.fst')), proof_files, [base.parents[1]])
 
+    def test_cross_driver_composition_passes_source_guard(self):
+        root = Path(__file__).resolve().parents[3]
+        generated = []
+        for crate in ['vela-session-policy', 'vela-enrollment-policy', 'vela-recovery-policy']:
+            generated += list((root / 'serverVELA' / crate /
+                               'proofs/fstar/extraction-f2-cross').glob('*.fst'))
+        composition = root / 'security/formal/cross-driver/Vela_cross_driver_composition.fst'
+        self.assertEqual(len(generated), 8)
+        self.assertTrue(composition.exists())
+        guard.check_files(generated, [composition], [composition.parent])
+
     def test_focused_driver_runners_are_executable_in_git(self):
         root = Path(__file__).resolve().parents[3]
         runners = list(root.glob('serverVELA/vela-*-policy/verify-fstar*.sh'))
-        self.assertGreaterEqual(len(runners), 4)
+        runners += [
+            root / 'security/formal/cross-driver/verify.sh',
+            root / 'security/formal/cross-driver/verify-fstar-cross-driver.sh',
+            root / 'security/formal/cross-driver/verify-fstar-cross-driver-mutations.sh',
+        ]
+        self.assertGreaterEqual(len(runners), 7)
         for runner in runners:
             relative = str(runner.relative_to(root))
             with self.subTest(runner=relative):

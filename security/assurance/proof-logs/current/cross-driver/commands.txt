@@ -1,0 +1,33 @@
+Commands used for this evidence directory. Run from the repository root unless
+noted. Every cargo/hax/fstar/gate command went through
+~/.local/opt/vela-tools/bin/vela-heavy from inside this worktree, with
+CARGO_TARGET_DIR=$PWD/target-own.
+
+# Environment
+export CARGO_HOME=/tmp/vela-hax-cargo
+export OPAMROOT=$HOME/.local/opt/vela-tools/opam
+export PATH=/tmp/vela-fstar-prebuilt/fstar/bin:$HOME/.local/opt/vela-tools/bin:$HOME/.local/opt/vela-tools/opam/vela-hax/bin:$PATH
+export CARGO_TARGET_DIR=$PWD/target-own
+export CARGO_PROFILE_DEV_CODEGEN_BACKEND=llvm
+export CARGO_PROFILE_TEST_CODEGEN_BACKEND=llvm
+
+# Cross-driver gate (regenerates the three focused extractions and checks the
+# composition). writes focused-verify.log
+~/.local/opt/vela-tools/bin/vela-heavy security/formal/cross-driver/verify-fstar-cross-driver.sh
+
+# Mutation checks (merged mutant extraction under /tmp/vela-f2-cross-mut)
+~/.local/opt/vela-tools/bin/vela-heavy security/formal/cross-driver/verify-fstar-cross-driver-mutations.sh admission
+~/.local/opt/vela-tools/bin/vela-heavy security/formal/cross-driver/verify-fstar-cross-driver-mutations.sh pair-opener
+~/.local/opt/vela-tools/bin/vela-heavy security/formal/cross-driver/verify-fstar-cross-driver-mutations.sh guard
+~/.local/opt/vela-tools/bin/vela-heavy security/formal/cross-driver/verify-fstar-cross-driver-mutations.sh revoke-delete
+~/.local/opt/vela-tools/bin/vela-heavy security/formal/cross-driver/verify-fstar-cross-driver-mutations.sh missing
+
+# Regenerate the gitignored historical extraction the proof-boundary gate reads,
+# and re-run that crate's own gate (no tracked file changed).
+cd serverVELA/vela-rekey-policy
+~/.local/opt/vela-tools/bin/vela-heavy ./verify-fstar.sh
+cd ../..
+
+# Static gates
+python3 -m unittest discover -s security/formal/tests -p 'test_*.py'
+python3 security/assurance/check-proof-boundary.py
