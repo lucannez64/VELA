@@ -163,7 +163,7 @@
         "serverVELA/vela-recovery-policy/proofs/fstar/extraction/Vela_recovery_policy.fst": "eaf1148be9567b8d8d6dbca8ceca3a4369df8b3c3856f19afc2de9eeee070327",
         "serverVELA/vela-server/src/recovery/initiate.rs": "df66dfb74fbd58b7d8e0ebcf3688cf2c064a6c323012003655dcf17dc02342ee",
         "serverVELA/vela-server/src/recovery/recover.rs": "3cbca150fbf07aa820859e8cf3f6f12a3e20ecd7ffaa3e5ce2d80c55321b3c4f",
-        "serverVELA/vela-server/tests/integration.rs": "45ddd18ba5b541f272efa8c231d51cbc969502dc06a773cde9d05ffc580230e1",
+        "serverVELA/vela-server/tests/integration.rs": "fd025421b33defcf1a1b956156b787f1c3ee319481a3f25244e646320db9a917",
         "security/assurance/13-recovery-fact-refinement.md": "fd64f81ba6bff10f0a73c621c419464990d0c968a1790a3a2641d1186028eab0"
       }
     },
@@ -172,9 +172,9 @@
       "artifacts": {
         "serverVELA/vela-session-policy/src/lib.rs": "6f2aca8c63e7e722f4bd1bd459cbf7c113b4225a8d4b6a4ed749a0652d65f745",
         "serverVELA/vela-session-policy/README.md": "8baf43669c2475b5281f145476ce4b47d3610939570413674f9e5a0fd4832fd3",
-        "serverVELA/vela-session-policy/verify-fstar.sh": "505b3b55a401d40bce0db825b016351ada355fbef394621f230a986b8b30ad36",
+        "serverVELA/vela-session-policy/verify-fstar.sh": "62cc9ed8ad553b0c711c8309f72e06dfacac4663eac352179624d66a89a33edb",
         "serverVELA/vela-session-policy/proofs/fstar/extraction/Vela_session_policy.fst": "f558711ac3d165952846d03d1d7b2b91186fa3ff1925a0780b35fdf824f2dd1d",
-        "serverVELA/vela-server/src/web_session/mod.rs": "97a14a9f754f980af66ece5bb2404133a3657381580b01b3ba7a58f1b6af2f5f",
+        "serverVELA/vela-server/src/web_session/mod.rs": "9a7737e40a08a80afc232cad87acb78398515d2ee4bb82580a72b074abfc2b18",
         "security/assurance/14-session-observation-refinement.md": "f910e98ded01e1641eaacb534ab9a1668628eabd0e60836342803068c21239d4"
       }
     },
@@ -189,7 +189,7 @@
         "serverVELA/vela-server/src/recovery/possess.rs": "89edb9b3ffefe8ca913698da2f4268cf273c5fd834ef2081883a45ecb8dc990e",
         "serverVELA/vela-server/src/recovery/enroll_device.rs": "f9349e9b3028a60b8836300f03eb1176c6bf8bfa63109fbf8cbd3aa8211de925",
         "serverVELA/vela-server/src/recovery/recover.rs": "3cbca150fbf07aa820859e8cf3f6f12a3e20ecd7ffaa3e5ce2d80c55321b3c4f",
-        "serverVELA/vela-server/tests/integration.rs": "45ddd18ba5b541f272efa8c231d51cbc969502dc06a773cde9d05ffc580230e1",
+        "serverVELA/vela-server/tests/integration.rs": "fd025421b33defcf1a1b956156b787f1c3ee319481a3f25244e646320db9a917",
         "security/assurance/15-recovery-possession-enrollment.md": "b311b885bc4910000bddcfca8ccfba081d720b5dc2ee502262743c5d716ff3f1",
         "security/assurance/16-enrollment-preflight.md": "2d8f5aeb5031f5fafc5f7be30a900de2bf87f91b6191d705437430feb88d41e3"
       }
@@ -303,7 +303,7 @@
         "serverVELA/vela-server/src/auth/challenge.rs": "1f9d4048f6791a84d492b2c2c8a25dbd284397334f06dd8a5f18cea9d396409c",
         "serverVELA/vela-server/src/auth/verify.rs": "4195ec9d4063274f1e1fb04b8197205d2124c4bc8cbd94489712c50c06a2c975",
         "serverVELA/vela-server/src/device/enroll.rs": "49762df698a2bf7f1636d0a220b50bcd48e56e52ea5738e55efbd4c5d33d2b7d",
-        "serverVELA/vela-server/src/web_session/mod.rs": "97a14a9f754f980af66ece5bb2404133a3657381580b01b3ba7a58f1b6af2f5f"
+        "serverVELA/vela-server/src/web_session/mod.rs": "9a7737e40a08a80afc232cad87acb78398515d2ee4bb82580a72b074abfc2b18"
       }
     },
     {
@@ -321,7 +321,7 @@
         "serverVELA/vela-server/src/device/revoke.rs": "b6bb2a392345b16d8112ee28d294357bfbed9e58651af767b6add8d16ff24765",
         "serverVELA/vela-server/src/auth/logout.rs": "dffa901e9def36a80942d0593fd0e699615ba4c9e6aa4c3d8b4576411a9938c8",
         "serverVELA/vela-server/src/middleware.rs": "28a8cd7a590fbec494b513a35fb0c14153c48c3afdd2f7beaabcce23a9fe2d05",
-        "serverVELA/vela-server/tests/integration.rs": "45ddd18ba5b541f272efa8c231d51cbc969502dc06a773cde9d05ffc580230e1"
+        "serverVELA/vela-server/tests/integration.rs": "fd025421b33defcf1a1b956156b787f1c3ee319481a3f25244e646320db9a917"
       }
     },
     {
@@ -352,7 +352,7 @@
       "boundary": "focused-driver source-policy gate: reviewed proof-search budgets only; a drift/escape guard, not a proof checker or semantic correspondence certificate",
       "artifacts": {
         "security/formal/check-driver-proof-sources.py": "2d28feef4e9be7396be1752deac799098d92c32dd44e3622619db090f757f527",
-        "security/formal/tests/test_driver_proof_sources.py": "471fc70f3910588091dc7621697fb4e6d4b987fc7583b0f07722442d3861b5f4"
+        "security/formal/tests/test_driver_proof_sources.py": "ae37168365fc7eea84d836d29f88493e59b871ba66a443eec92630be7bda0268"
       }
     },
     {
@@ -663,12 +663,20 @@
       "artifacts": {
         "serverVELA/vela-session-policy/src/websession_interpreter.rs": "aae9af75fc24bf234629e9f420a0147d19cf6a44671f1fe4073562547119d454",
         "serverVELA/vela-session-policy/verify-fstar-websession-interpreter.sh": "2fa921447ac5db0e862233dbcd56573c6c675f373ab698f37682eb2e717eeb0e",
-        "serverVELA/vela-server/src/web_session/mod.rs": "97a14a9f754f980af66ece5bb2404133a3657381580b01b3ba7a58f1b6af2f5f",
+        "serverVELA/vela-server/src/web_session/mod.rs": "9a7737e40a08a80afc232cad87acb78398515d2ee4bb82580a72b074abfc2b18",
         "serverVELA/vela-session-policy/proofs/fstar/websession-interpreter-lemmas/Vela_session_policy_websession_delete_interpreter_lemmas.fst": "00162897255122555e32e807b72e90155b2c8fc4df4c76925f2f1793c52859f8",
         "serverVELA/vela-session-policy/proofs/fstar/websession-interpreter-lemmas/Vela_session_policy_websession_grant_interpreter_lemmas.fst": "f1f83350936f118659ab30234597b8638079791e4b75965dd6838d601db28d68",
         "serverVELA/vela-session-policy/proofs/fstar/websession-interpreter-lemmas/Vela_session_policy_websession_start_interpreter_lemmas.fst": "1c56d4a57a2b58402bbea3b757d5442d6b81f95e6d25140398631f68485374ea",
         "serverVELA/vela-session-policy/proofs/fstar/websession-interpreter-lemmas/Vela_session_policy_websession_token_interpreter_lemmas.fst": "4b501ba0440df1ddeb61632a10c8ea4bdcb4a1a59ccb467a8afa1393aa28e035",
         "serverVELA/vela-session-policy/proofs/fstar/extraction-websession-interpreter/Vela_session_policy.Websession_interpreter.fst": "9d881eb51b4fa5ce8499289facc798890eb6e2a9f40d45b75c87fde9e8440992"
+      }
+    },
+    {
+      "boundary": "web-session concurrent composition: for any schedule of start, grant, token, delete and approver-device revocation requests over shared session rows, the web_token challenge store, the per-session token claim and the lockout sentinels, at most one token issue decision per session, no token after the session's delete or its approver's revocation, no grant from another account, an inactive device or for a non-pending session, no token from a pending session, no cross-account delete and no authority from start, counted on the extracted drivers' decisions (found U-26); SQL/CAS and store set-if-absent/take atomicity, honest executor outcomes, PASETO, TTLs and multi-node visibility remain assumptions",
+      "artifacts": {
+        "serverVELA/vela-session-policy/proofs/fstar/websession-composition/Vela_session_policy_websession_composition.fst": "4dfff44c6dbbfb4f0936e3768ea6e405298c96aaf05970b146900f24c8fb013b",
+        "serverVELA/vela-session-policy/verify-fstar-websession-composition.sh": "dcdf708b4ccd2fd01f332c87aefc8d037e22362319c5e949f10a6c11a70a0530",
+        "serverVELA/vela-session-policy/proofs/fstar/extraction-websession-revocation/Vela_session_policy.Revocation_driver.fst": "a821ec8c038897686631bc7aef0dff8316861edd0c0bfa185de9b73f42945f52"
       }
     }
   ]

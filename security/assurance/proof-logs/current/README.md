@@ -188,7 +188,9 @@ links' single use, deletion finality and owner-only deletion under any
 interleaving.
 
 The [web-session driver](websession-driver/README.md) proves the start,
-grant, token and delete decisions per request (found U-25).
+grant, token and delete decisions per request (found U-25), and the
+[web-session composition](websession-composition/README.md) proves them under
+any interleaving with deletes and approver revocation (found U-26).
 
 The [cancellation evidence](cancellation/README.md) proves every interpreter
 loop leaves a sound driver state when cancelled after any turn, and reviews
