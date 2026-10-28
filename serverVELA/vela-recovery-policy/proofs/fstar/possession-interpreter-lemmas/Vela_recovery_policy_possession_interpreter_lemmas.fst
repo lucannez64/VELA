@@ -167,6 +167,22 @@ let run_possession_initiation_is_run_ev (#io_t: Type0)
           (let (a2, s2, t2, _) = initiation_run_ev #io_t #i 3 (false, s, t0) in
            (s2, (if a2 then Core_models.Option.Option_None else Core_models.Option.Option_Some t2))))
 
+/// A dropped handler future stops the challenge-initiation loop after an
+/// arbitrary prefix of turns. For every executor, every `k` and every sound
+/// start, the transition after `k` turns is sound: `initiation_state_is_sound`
+/// carries the per-request state invariants (a stored challenge implies the
+/// observed account/share facts and an authorization; nothing is stored before
+/// the store effect was emitted), and the next effect agrees with the state
+/// that produced it.
+let initiation_cancellation (#io_t: Type0)
+      {| i: t_PossessionInitiationIo io_t |} (k: nat)
+      (acc: bool & io_t & t_InitiateTransition)
+  : Lemma (requires initiation_sound (initiation_acc_transition acc))
+          (ensures (let (_, _, t2) = initiation_iter_turn #io_t #i k acc in
+                    initiation_sound t2)) =
+  let (_, _, _, _) = initiation_run_ev #io_t #i k acc in
+  initiation_iter_turn_is_run_ev #io_t #i k acc
+
 let rec initiation_responds (t: t_InitiateTransition) (evs: list t_InitiateEvent)
   : Pure bool (requires initiation_sound t) (ensures fun _ -> True) (decreases evs) =
   match evs with
@@ -465,6 +481,21 @@ let run_possession_recover_is_run_ev (#io_t: Type0)
   assert (run_possession_recover #io_t #i s ==
           (let (a2, s2, t2, _) = recover_run_ev #io_t #i 6 (false, s, t0) in
            (s2, (if a2 then Core_models.Option.Option_None else Core_models.Option.Option_Some t2))))
+
+/// A dropped handler future stops the proof-recovery loop after an arbitrary
+/// prefix of turns. For every executor, every `k` and every sound start, the
+/// transition after `k` turns is sound: `proof_recover_state_is_sound` carries
+/// the per-request state invariants (issuing a grant implies the consumed,
+/// matched attempt, the verified proof and all live release facts; a stored
+/// grant implies an issued one), and the next effect agrees with the state that
+/// produced it.
+let recover_cancellation (#io_t: Type0) {| i: t_PossessionRecoverIo io_t |}
+      (k: nat) (acc: bool & io_t & t_ProofRecoverTransition)
+  : Lemma (requires recover_sound (recover_acc_transition acc))
+          (ensures (let (_, _, t2) = recover_iter_turn #io_t #i k acc in
+                    recover_sound t2)) =
+  let (_, _, _, _) = recover_run_ev #io_t #i k acc in
+  recover_iter_turn_is_run_ev #io_t #i k acc
 
 let rec recover_responds (t: t_ProofRecoverTransition) (evs: list t_ProofRecoverEvent)
   : Pure bool (requires recover_sound t) (ensures fun _ -> True) (decreases evs) =

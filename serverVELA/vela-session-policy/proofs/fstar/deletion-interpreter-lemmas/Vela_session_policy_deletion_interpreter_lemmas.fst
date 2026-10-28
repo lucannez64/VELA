@@ -174,6 +174,24 @@ let run_deletion_is_run_ev (#io_t: Type0) {| i: t_DeletionIo io_t |} (s: io_t)
   assert (v v_DELETION_MAX_EFFECTS = 14);
   assert (run_deletion #io_t #i s actor == iter_turn #io_t #i 14 (s, t0))
 
+// ── 1b. Cancellation: every prefix is a sound driver state ────────────────
+
+/// The handler is async: if the client disconnects, the handler future is
+/// dropped after any executor call and the loop stops after an arbitrary
+/// prefix of turns. For every executor, every budget `k` and every sound start
+/// transition, the state after `k` turns is still sound. `sound_transition`
+/// conjoins `deletion_state_is_sound` (which carries the per-request state
+/// invariants: a committed delete implies the `users` delete and a started
+/// transaction, a response implies a commit, and a failure never claims a
+/// commit) and `deletion_effect_is_sound` (the next effect agrees with the
+/// state that produced it).
+let cancellation (#io_t: Type0) {| i: t_DeletionIo io_t |} (k: nat) (s: io_t)
+  (t: t_DeletionTransition)
+  : Lemma (requires sound_transition t)
+          (ensures (let (_, t2) = iter_turn #io_t #i k (s, t) in sound_transition t2)) =
+  let (_, t2, _) = run_ev #io_t #i k s t in
+  iter_turn_is_run_ev #io_t #i k s t
+
 // ── 2. The observations drive the extracted driver ────────────────────────
 
 /// Each observation answers the effect it was returned for, and no

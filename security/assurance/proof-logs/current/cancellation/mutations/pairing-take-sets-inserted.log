@@ -1,0 +1,8 @@
+$ fstar.exe <pairing interpreter gate args; mutated driver file passed explicitly>
+* Error 19 at proofs/fstar/extraction-pairing-driver/Vela_enrollment_policy.Pairing_driver.fst(1021,2-1030,81):
+  - Could not prove post-condition
+  - The SMT solver could not prove the query.
+1 error was reported
+exit=1
+(Also shows the interpreter gate uses the cached .checked driver: the mutation is only
+load-bearing when the mutated driver is passed explicitly, as hax regeneration does.)

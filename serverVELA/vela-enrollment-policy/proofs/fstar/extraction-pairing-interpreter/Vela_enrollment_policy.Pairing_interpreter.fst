@@ -117,7 +117,16 @@ class t_PairingIo (v_Self: Type0) = {
   f_read_claim:x0: v_Self
     -> Prims.Pure (v_Self & Vela_enrollment_policy.Pairing_driver.t_ClaimReadObservation)
         (f_read_claim_pre x0)
-        (fun result -> f_read_claim_post x0 result)
+        (fun result -> f_read_claim_post x0 result);
+  f_read_enrolled_device_pre:self_: v_Self -> pred: Type0{true ==> pred};
+  f_read_enrolled_device_post:
+      v_Self ->
+      (v_Self & Vela_enrollment_policy.Pairing_driver.t_DeviceGrantObservation)
+    -> Type0;
+  f_read_enrolled_device:x0: v_Self
+    -> Prims.Pure (v_Self & Vela_enrollment_policy.Pairing_driver.t_DeviceGrantObservation)
+        (f_read_enrolled_device_pre x0)
+        (fun result -> f_read_enrolled_device_post x0 result)
 }
 
 /// The synchronous expansion of [`pairing_interpreter!`]: the artifact hax
@@ -151,7 +160,7 @@ let run_pairing
             temp_0_
           in
           let _:usize = temp_1_ in
-          let (io: v_Io), (hoist26: Vela_enrollment_policy.Pairing_driver.t_PairingTransition) =
+          let (io: v_Io), (hoist28: Vela_enrollment_policy.Pairing_driver.t_PairingTransition) =
             match
               transition.Vela_enrollment_policy.Pairing_driver.f_effect
               <:
@@ -321,6 +330,20 @@ let run_pairing
                   Vela_enrollment_policy.Pairing_driver.t_PairingEvent)
               <:
               (v_Io & Vela_enrollment_policy.Pairing_driver.t_PairingTransition)
+            | Vela_enrollment_policy.Pairing_driver.PairingEffect_ReadEnrolledDevice  ->
+              let
+              (tmp0: v_Io), (out: Vela_enrollment_policy.Pairing_driver.t_DeviceGrantObservation) =
+                f_read_enrolled_device #v_Io #FStar.Tactics.Typeclasses.solve io
+              in
+              let io:v_Io = tmp0 in
+              io,
+              Vela_enrollment_policy.Pairing_driver.step transition
+                  .Vela_enrollment_policy.Pairing_driver.f_driver
+                (Vela_enrollment_policy.Pairing_driver.PairingEvent_EnrolledDeviceRead out
+                  <:
+                  Vela_enrollment_policy.Pairing_driver.t_PairingEvent)
+              <:
+              (v_Io & Vela_enrollment_policy.Pairing_driver.t_PairingTransition)
             | Vela_enrollment_policy.Pairing_driver.PairingEffect_Complete
             | Vela_enrollment_policy.Pairing_driver.PairingEffect_ReturnResult _
             | Vela_enrollment_policy.Pairing_driver.PairingEffect_Fail _
@@ -328,7 +351,7 @@ let run_pairing
             | Vela_enrollment_policy.Pairing_driver.PairingEffect_Idle  ->
               io, transition <: (v_Io & Vela_enrollment_policy.Pairing_driver.t_PairingTransition)
           in
-          let transition:Vela_enrollment_policy.Pairing_driver.t_PairingTransition = hoist26 in
+          let transition:Vela_enrollment_policy.Pairing_driver.t_PairingTransition = hoist28 in
           io, transition <: (v_Io & Vela_enrollment_policy.Pairing_driver.t_PairingTransition))
   in
   let hax_temp_output:Vela_enrollment_policy.Pairing_driver.t_PairingTransition = transition in

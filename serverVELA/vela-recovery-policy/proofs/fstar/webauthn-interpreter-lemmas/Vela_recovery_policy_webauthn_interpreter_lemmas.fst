@@ -197,6 +197,20 @@ let run_registration_start_is_run_ev (#io_t: Type0)
            (s2, (if a2 then Core_models.Option.Option_None
                  else Core_models.Option.Option_Some t2))))
 
+/// A dropped handler future stops this loop after an arbitrary prefix of
+/// turns. For every executor, every `k` and every sound start, the transition
+/// after `k` turns is sound: `registration_start_state_is_sound` carries the
+/// per-request state invariants (a stored ceremony state implies an authorized
+/// observation and nothing stored before the store effect; a completed start
+/// stores exactly once), and the next effect agrees with the state that
+/// produced it.
+let rs_cancellation (#io_t: Type0) {| i: t_RegistrationStartIo io_t |}
+      (k: nat) (acc: bool & io_t & t_RegistrationStartTransition)
+  : Lemma (requires rs_sound (rs_acc_transition acc))
+          (ensures (let (_, _, t2) = rs_iter_turn #io_t #i k acc in rs_sound t2)) =
+  let (_, _, _, _) = rs_run_ev #io_t #i k acc in
+  rs_iter_turn_is_run_ev #io_t #i k acc
+
 let rec rs_responds (t: t_RegistrationStartTransition)
                     (evs: list t_RegistrationStartEvent)
   : Pure bool (requires rs_sound t) (ensures fun _ -> True) (decreases evs) =
@@ -522,6 +536,20 @@ let run_registration_is_run_ev (#io_t: Type0)
            (s2, (if a2 then Core_models.Option.Option_None
                  else Core_models.Option.Option_Some t2))))
 
+/// A dropped handler future stops this loop after an arbitrary prefix of
+/// turns. For every executor, every `k` and every sound start, the transition
+/// after `k` turns is sound: `registration_state_is_sound` carries the
+/// per-request state invariants (a stored credential implies a consumed
+/// ceremony state, a valid and unique credential and the policy's persist
+/// permit; nothing is stored before the persist effect), and the next effect
+/// agrees with the state that produced it.
+let reg_cancellation (#io_t: Type0) {| i: t_RegistrationIo io_t |}
+      (k: nat) (acc: bool & io_t & t_RegistrationTransition)
+  : Lemma (requires reg_sound (reg_acc_transition acc))
+          (ensures (let (_, _, t2) = reg_iter_turn #io_t #i k acc in reg_sound t2)) =
+  let (_, _, _, _) = reg_run_ev #io_t #i k acc in
+  reg_iter_turn_is_run_ev #io_t #i k acc
+
 let rec reg_responds (t: t_RegistrationTransition)
                      (evs: list t_RegistrationEvent)
   : Pure bool (requires reg_sound t) (ensures fun _ -> True) (decreases evs) =
@@ -836,6 +864,20 @@ let run_auth_start_is_run_ev (#io_t: Type0)
           (let (a2, s2, t2, _) = as_run_ev #io_t #i 3 (false, s, t0) in
            (s2, (if a2 then Core_models.Option.Option_None
                  else Core_models.Option.Option_Some t2))))
+
+/// A dropped handler future stops this loop after an arbitrary prefix of
+/// turns. For every executor, every `k` and every sound start, the transition
+/// after `k` turns is sound: `auth_start_state_is_sound` carries the
+/// per-request state invariants (a stored challenge implies an authorized
+/// observation and nothing stored before the store effect; a completed start
+/// stores exactly once), and the next effect agrees with the state that
+/// produced it.
+let as_cancellation (#io_t: Type0) {| i: t_AuthStartIo io_t |}
+      (k: nat) (acc: bool & io_t & t_AuthStartTransition)
+  : Lemma (requires as_sound (as_acc_transition acc))
+          (ensures (let (_, _, t2) = as_iter_turn #io_t #i k acc in as_sound t2)) =
+  let (_, _, _, _) = as_run_ev #io_t #i k acc in
+  as_iter_turn_is_run_ev #io_t #i k acc
 
 let rec as_responds (t: t_AuthStartTransition) (evs: list t_AuthStartEvent)
   : Pure bool (requires as_sound t) (ensures fun _ -> True) (decreases evs) =
@@ -1180,6 +1222,20 @@ let run_auth_finish_is_run_ev (#io_t: Type0)
           (let (a2, s2, t2, _) = af_run_ev #io_t #i 8 (false, s, t0) in
            (s2, (if a2 then Core_models.Option.Option_None
                  else Core_models.Option.Option_Some t2))))
+
+/// A dropped handler future stops this loop after an arbitrary prefix of
+/// turns. For every executor, every `k` and every sound start, the transition
+/// after `k` turns is sound: `auth_finish_state_is_sound` carries the
+/// per-request state invariants (an issued grant implies the consumed,
+/// verified attempt and every live account/share release fact; a stored grant
+/// implies a decoded share; a credential update implies a needed update), and
+/// the next effect agrees with the state that produced it.
+let af_cancellation (#io_t: Type0) {| i: t_AuthFinishIo io_t |}
+      (k: nat) (acc: bool & io_t & t_AuthFinishTransition)
+  : Lemma (requires af_sound (af_acc_transition acc))
+          (ensures (let (_, _, t2) = af_iter_turn #io_t #i k acc in af_sound t2)) =
+  let (_, _, _, _) = af_run_ev #io_t #i k acc in
+  af_iter_turn_is_run_ev #io_t #i k acc
 
 let rec af_responds (t: t_AuthFinishTransition) (evs: list t_AuthFinishEvent)
   : Pure bool (requires af_sound t) (ensures fun _ -> True) (decreases evs) =

@@ -43,7 +43,7 @@ cargo test
 rm -rf proofs/fstar/extraction-pairing-driver
 cargo hax into \
   --output-dir proofs/fstar/extraction-pairing-driver \
-  -i '-** +vela_enrollment_policy::pairing_driver::begin_store_package +vela_enrollment_policy::pairing_driver::begin_redeem_package +vela_enrollment_policy::pairing_driver::begin_open_grant +vela_enrollment_policy::pairing_driver::begin_claim +vela_enrollment_policy::pairing_driver::begin_completion +vela_enrollment_policy::pairing_driver::begin_result +vela_enrollment_policy::pairing_driver::step +vela_enrollment_policy::pairing_driver::on_package_written_event +vela_enrollment_policy::pairing_driver::on_package_redeemed_event +vela_enrollment_policy::pairing_driver::on_grant_written_event +vela_enrollment_policy::pairing_driver::on_claim_checked_event +vela_enrollment_policy::pairing_driver::on_claim_written_event +vela_enrollment_policy::pairing_driver::on_completion_account +vela_enrollment_policy::pairing_driver::on_completion_ready_event +vela_enrollment_policy::pairing_driver::on_ceremony_taken_event +vela_enrollment_policy::pairing_driver::on_device_inserted_event +vela_enrollment_policy::pairing_driver::on_result_written_event +vela_enrollment_policy::pairing_driver::on_result_read_event +vela_enrollment_policy::pairing_driver::on_claim_read_event' \
+  -i '-** +vela_enrollment_policy::pairing_driver::begin_store_package +vela_enrollment_policy::pairing_driver::begin_redeem_package +vela_enrollment_policy::pairing_driver::begin_open_grant +vela_enrollment_policy::pairing_driver::begin_claim +vela_enrollment_policy::pairing_driver::begin_completion +vela_enrollment_policy::pairing_driver::begin_result +vela_enrollment_policy::pairing_driver::step +vela_enrollment_policy::pairing_driver::on_package_written_event +vela_enrollment_policy::pairing_driver::on_package_redeemed_event +vela_enrollment_policy::pairing_driver::on_grant_written_event +vela_enrollment_policy::pairing_driver::on_claim_checked_event +vela_enrollment_policy::pairing_driver::on_claim_written_event +vela_enrollment_policy::pairing_driver::on_completion_account +vela_enrollment_policy::pairing_driver::on_completion_ready_event +vela_enrollment_policy::pairing_driver::on_ceremony_taken_event +vela_enrollment_policy::pairing_driver::on_device_inserted_event +vela_enrollment_policy::pairing_driver::on_result_written_event +vela_enrollment_policy::pairing_driver::on_result_read_event +vela_enrollment_policy::pairing_driver::on_claim_read_event +vela_enrollment_policy::pairing_driver::on_enrolled_device_read_event' \
   fstar --z3rlimit 500
 
 mapfile -t proof_files < <(
@@ -119,7 +119,7 @@ printf ' %q' "${composition_args[@]}"
 printf '\n'
 fstar.exe "${composition_args[@]}"
 
-echo "pairing driver: 30 extracted Rust functions (19 selected + 11 private decisions), 30 effect/state postconditions, 24 preconditions"
+echo "pairing driver: 32 extracted Rust functions (20 selected + 12 private decisions), 32 effect/state postconditions, 25 preconditions"
 echo "invitation trace: one destructive redemption per request, a refused/replayed token never completes"
 echo "claim trace: at most one guarded claim write, only on a live unclaimed grant with exact key lengths"
 echo "completion trace: at most one take and one insert, inserted implies stored claim + active opener + verified signature + matching bindings"

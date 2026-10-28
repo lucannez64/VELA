@@ -167,6 +167,23 @@ let run_login_is_run_ev (#io_t: Type0) {| i: t_LoginIo io_t |} (s: io_t)
   assert (v v_LOGIN_MAX_EFFECTS = 6);
   assert (run_login #io_t #i s == iter_turn #io_t #i 6 (s, t0))
 
+// ── 1b. Cancellation: every prefix is a sound driver state ────────────────
+
+/// If the client disconnects the handler future is dropped after any executor
+/// call, so the loop stops after an arbitrary prefix of turns. For every
+/// executor, every `k` and every sound start, the state after `k` turns is
+/// sound: `login_state_is_sound` carries the per-request state invariants (a
+/// response implies an accepted challenge, a present device, a valid verifier,
+/// a reset backoff, an issued and tracked token; a tracked token implies an
+/// issued one, and a failure never claims a response), and the next effect
+/// still agrees with the state that produced it.
+let cancellation (#io_t: Type0) {| i: t_LoginIo io_t |} (k: nat) (s: io_t)
+  (t: t_LoginTransition)
+  : Lemma (requires sound_transition t)
+          (ensures (let (_, t2) = iter_turn #io_t #i k (s, t) in sound_transition t2)) =
+  let (_, t2, _) = run_ev #io_t #i k s t in
+  iter_turn_is_run_ev #io_t #i k s t
+
 // ── 2. The observations drive the extracted driver ────────────────────────
 
 /// Each observation answers the effect it was returned for, and no

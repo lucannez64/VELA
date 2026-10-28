@@ -89,9 +89,9 @@ a new ceremony. See "Open obligations".
 
 ## Contract and theorem statements
 
-Focused extraction: `proofs/fstar/extraction-pairing-driver/` (19 selected
-entry points plus 11 private decisions = 30 extracted functions, 30
-effect/state postconditions, 24 preconditions). Per-request module:
+Focused extraction: `proofs/fstar/extraction-pairing-driver/` (20 selected
+entry points plus 12 private decisions = 32 extracted functions, 32
+effect/state postconditions, 25 preconditions). Per-request module:
 `proofs/fstar/pairing-driver-lemmas/`. Composition:
 `proofs/fstar/pairing-driver-composition/`.
 
@@ -334,3 +334,83 @@ The [54b38b3 security workflow](https://github.com/lucannez64/VELA/actions/runs/
 per-request lemmas and composition, and ran the enrollment policy tests and the
 full 68-test integration suite; all fifteen PR checks passed.
 `hosted-54b38b3.log` holds the summary and hashes, which match the local run.
+
+## U-20: result lost after a committed enrollment (fixed)
+
+`POST /device/enrollment-grant/:id/complete` could commit the `devices` row and
+then fail (or be cancelled) before the sled result record was written. The
+claim is consumed by the single-use take, so `/result` then read neither a
+result nor a claim and answered not-found: the joining device never learned its
+`device_id`, although its row existed. That was a liveness loss, not a
+cross-account or unsigned enrollment, but it left a device the user could not
+use without another ceremony.
+
+### Design as implemented
+
+- **Schema.** `devices.enrollment_grant_id TEXT` is nullable (old rows keep
+  `NULL`) with a unique index `idx_devices_enrollment_grant_id`. Fresh
+  databases get the column from `SCHEMA`; upgraded databases get it from
+  `backfill_rekey_columns`, and the index is created after the ALTER (so opening
+  a pre-U-20 database never fails on a missing column). The legacy stoolap
+  schema in `db.rs` carries the same column/index.
+- **Commit.** `CompleteIo::insert_device` writes the validated grant id on the
+  inserted row (the same `grant_id` the take consumed).
+- **Driver.** The result ceremony gains a third read: after
+  `ResultReadObservation::Absent` it reads the claim; after
+  `ClaimReadObservation::Absent` it emits `PairingEffect::ReadEnrolledDevice`
+  and consumes `PairingEvent::EnrolledDeviceRead(DeviceGrantObservation)`.
+  `DeviceGrantObservation::Enrolled { claimed_key_len, signature_verified }`
+  goes through the same `authorize_result` policy as a stored result; `Absent`
+  is the uniform `GrantUnavailable` refusal; `Unreadable` is
+  `EnrolledDeviceUnreadable`.
+- **Handler.** `ResultIo::read_enrolled_device` queries
+  `SELECT id, hybrid_vk FROM devices WHERE enrollment_grant_id = ?`, decodes
+  the stored `hybrid_vk`, and runs the same `verify_result_signature` over the
+  grant id. Only on success does it stage the `EnrollmentResult` the existing
+  `ReturnResult(Enrolled)` arm returns. A wrong signature is refused with the
+  existing 401; no row is 404.
+- **Budget.** The result ceremony now has three effects, still within the
+  five-turn loop budget; `remaining` gives the new effect one turn.
+
+### Theorems changed / added
+
+- `enrolled_device_return_requires_proof`: an `Enrolled` fallback answer
+  implies a non-empty claimed key and `signature_verified` under the stored
+  key (same result theorem as the stored-result path).
+- `enrolled_device_absent_is_not_enrolled`: an absent fallback row is exactly
+  `Fail GrantUnavailable`.
+- The composition models the new `ResultDevice` action and the
+  `device_grant_observation` (an inserted row yields the verified claimed key,
+  otherwise absent), so the invariant covers the fallback it did not have
+  before.
+- `pairing_interpreter_lemmas` covers the new effect/event; the 5-turn budget
+  is unchanged.
+
+No safety theorem was weakened: the fallback is a read of a row this grant
+committed, and the signature check is the same one the stored result uses.
+`enrollment_grant_id` is unique, so the fallback can never select a different
+ceremony's row.
+
+### Tests
+
+`serverVELA/vela-server/tests/pairing_model.rs`:
+
+- `a_lost_result_record_is_recovered_from_the_enrolled_device_row`: complete
+  the ceremony, delete the sled result record (the failed-write state), poll
+  `/result` with the claimant's signature, get `enrolled` and the committed
+  `device_id`.
+- `a_lost_result_record_is_not_returned_for_a_wrong_signature`: the same lost
+  result, a non-claimant's signature, 401 with no `device_id`.
+- `a_grant_without_a_result_or_device_row_is_not_found`: consumed claim and
+  no device row, 404.
+
+The reference model in the same file still asserts the observable result
+behaviour for the normal path; the new tests exercise the lost-result state
+directly.
+
+### Mutation
+
+`mutation-u20-fallback-skips-signature.diff`/`.log`: forcing the fallback
+observation's `signature_verified` to `true` (i.e. dropping the signature
+check) makes `enrolled_device_return_requires_proof` fail (F* error 19 at the
+lemma). This is the load-bearing check for the result path.

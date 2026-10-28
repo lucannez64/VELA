@@ -443,6 +443,16 @@ let claim_read_observation (w: world) : t_ClaimReadObservation =
     ({ f_claimed_key_len = v_HYBRID_VK_LEN; f_signature_verified = true })
   else ClaimReadObservation_Absent
 
+/// U-20 fallback observation: the inserted device row is the only remaining
+/// record once the result write is lost. The composition models its key as the
+/// same claimed key and a verified signature, so the result policy authorizes
+/// the same `Enrolled` answer.
+let device_grant_observation (w: world) : t_DeviceGrantObservation =
+  if w.w_grant.g_enrolled > 0
+  then DeviceGrantObservation_Enrolled
+    ({ f_claimed_key_len = v_HYBRID_VK_LEN; f_signature_verified = true })
+  else DeviceGrantObservation_Absent
+
 // ── Arbitrary schedules ────────────────────────────────────────────────────
 
 type action =
@@ -458,6 +468,7 @@ type action =
   | SpawnResult : action
   | ResultRead : nat -> action
   | ResultClaim : nat -> action
+  | ResultDevice : nat -> action
 
 let account_observation : t_CompletionAccountObservation =
   ({ f_account_query_ok = true;
@@ -666,6 +677,18 @@ let world_step (w: world) (a: action) : Tot world (decreases a) =
              if pairing_state_is_sound d
              then
                let t = on_claim_read_event d (claim_read_observation w) in
+               { w with w_reqs = update w.w_reqs i (ResultReq t.f_driver) }
+             else w
+         | _ -> w)
+      else w
+  | ResultDevice i ->
+      if i < FStar.List.Tot.length w.w_reqs
+      then
+        (match FStar.List.Tot.index w.w_reqs i with
+         | ResultReq d ->
+             if pairing_state_is_sound d
+             then
+               let t = on_enrolled_device_read_event d (device_grant_observation w) in
                { w with w_reqs = update w.w_reqs i (ResultReq t.f_driver) }
              else w
          | _ -> w)
@@ -990,6 +1013,18 @@ let result_claim_inv (w: world) (i: nat)
         count_inflight_update_same w.w_reqs i (ResultReq t.f_driver)
     | _ -> ()
 
+let result_device_inv (w: world) (i: nat)
+  : Lemma (requires (inv w)) (ensures (inv (world_step w (ResultDevice i)))) =
+  if i < FStar.List.Tot.length w.w_reqs
+  then
+    match FStar.List.Tot.index w.w_reqs i with
+    | ResultReq d ->
+        all_requests_ok_index w.w_reqs i;
+        let t = on_enrolled_device_read_event d (device_grant_observation w) in
+        all_requests_ok_update w.w_reqs i (ResultReq t.f_driver);
+        count_inflight_update_same w.w_reqs i (ResultReq t.f_driver)
+    | _ -> ()
+
 let world_step_inv (w: world) (a: action)
   : Lemma (requires (inv w)) (ensures (inv (world_step w a))) =
   match a with
@@ -1006,6 +1041,7 @@ let world_step_inv (w: world) (a: action)
   | SpawnResult -> spawn_result_inv w
   | ResultRead i -> result_read_inv w i
   | ResultClaim i -> result_claim_inv w i
+  | ResultDevice i -> result_device_inv w i
 
 let rec run_world_inv (w: world) (schedule: list action)
   : Lemma (requires (inv w)) (ensures (inv (run_world w schedule)))

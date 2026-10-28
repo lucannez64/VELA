@@ -1,0 +1,10 @@
+$ fstar.exe <pairing per-request lemma gate args; mutated driver file passed explicitly>
+* Error 19 at proofs/fstar/pairing-driver-lemmas/Vela_enrollment_policy_pairing_driver_lemmas.fst(491,2-493,4):
+  - Could not prove post-condition
+  - The SMT solver could not prove the query.
+1 error was reported
+exit=1
+
+Line 491 is `enrolled_device_return_requires_proof`: forcing the fallback's
+observation to `signature_verified = true` makes the result theorem fail, so
+the U-20 fallback still answers only the holder of the claimed key.

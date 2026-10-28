@@ -175,6 +175,22 @@ let run_share_is_run_ev (#io_t: Type0) {| i: t_ShareIo io_t |} (s: io_t)
   assert (v v_SHARE_MAX_EFFECTS = 3);
   assert (run_share #io_t #i s start == iter_turn #io_t #i 3 (s, start))
 
+// ── 1b. Cancellation: every prefix is a sound driver state ────────────────
+
+/// A dropped handler future stops the sharing loop after an arbitrary prefix
+/// of turns. For every executor, every `k` and every sound start, the state
+/// after `k` turns is sound: `share_state_is_sound` carries the per-request
+/// state invariants (a committed send/update was authorized for the request
+/// kind and cannot be revoked; a revoke commit implies the linked row was
+/// revoked and its cleanup issued; an inbox delete is recipient-scoped), and
+/// the next effect agrees with the state that produced it.
+let cancellation (#io_t: Type0) {| i: t_ShareIo io_t |} (k: nat) (s: io_t)
+  (t: t_ShareTransition)
+  : Lemma (requires sound_transition t)
+          (ensures (let (_, t2) = iter_turn #io_t #i k (s, t) in sound_transition t2)) =
+  let (_, t2, _) = run_ev #io_t #i k s t in
+  iter_turn_is_run_ev #io_t #i k s t
+
 // ── 2. The observations drive the extracted driver ────────────────────────
 
 /// Each observation answers the effect it was returned for, and no

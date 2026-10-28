@@ -11,9 +11,9 @@
 
 use vela_enrollment_policy::pairing_driver::{
     ClaimMaterialObservation, ClaimReadObservation, ClaimWriteObservation,
-    CompletionAccountObservation, OpenerObservation, SignatureObservation,
-    CompletionPreflightObservation, DeviceInsertObservation, RedeemObservation,
-    ResultReadObservation, StoreObservation, TakeObservation,
+    CompletionAccountObservation, DeviceGrantObservation, OpenerObservation,
+    SignatureObservation, CompletionPreflightObservation, DeviceInsertObservation,
+    RedeemObservation, ResultReadObservation, StoreObservation, TakeObservation,
 };
 use vela_enrollment_policy::ClaimObservation;
 
@@ -63,5 +63,8 @@ pub trait PairingExecutor {
     }
     async fn read_claim(&mut self) -> ClaimReadObservation {
         ClaimReadObservation::Unreadable
+    }
+    async fn read_enrolled_device(&mut self) -> DeviceGrantObservation {
+        DeviceGrantObservation::Unreadable
     }
 }

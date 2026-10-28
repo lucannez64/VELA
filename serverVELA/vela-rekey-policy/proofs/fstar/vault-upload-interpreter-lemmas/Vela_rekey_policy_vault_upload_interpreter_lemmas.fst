@@ -182,6 +182,23 @@ let run_upload_is_run_ev (#io_t: Type0) {| i: t_UploadIo io_t |} (s: io_t)
   assert (v v_UPLOAD_MAX_EFFECTS = 7);
   assert (run_upload #io_t #i s request == iter_turn #io_t #i 7 (s, begin_upload request))
 
+// ── 1b. Cancellation: every prefix is a sound driver state ────────────────
+
+/// A dropped handler future stops the upload loop after an arbitrary prefix of
+/// turns. For every executor, every `k` and every sound start, the transition
+/// after `k` turns is sound: `upload_state_is_sound` carries the per-request
+/// state invariants (a matched write implies a resolved write route with a
+/// clean permit epoch, no web session ever takes a shadow route past the
+/// authorisation point, and a success implies a matched write plus its
+/// publication or shadow refresh), and the next effect agrees with the state
+/// that produced it.
+let upload_cancellation (#io_t: Type0) {| i: t_UploadIo io_t |} (k: nat)
+  (s: io_t) (t: t_UploadTransition)
+  : Lemma (requires loop_sound t)
+          (ensures (let (_, t2) = iter_turn #io_t #i k (s, t) in loop_sound t2)) =
+  let (_, t2, _) = run_upload_ev #io_t #i k s t in
+  iter_turn_is_run_upload_ev #io_t #i k s t
+
 // ── 2. The observations drive the extracted driver ────────────────────────
 
 /// Each observation answers the effect it was returned for, and no
@@ -419,6 +436,20 @@ let run_read_is_run_ev (#io_t: Type0) {| i: t_ReadIo io_t |} (s: io_t)
   read_iter_turn_is_run_ev #io_t #i 2 s (begin_read request);
   assert (v v_READ_MAX_EFFECTS = 2);
   assert (run_read #io_t #i s request == read_iter_turn #io_t #i 2 (s, begin_read request))
+
+/// A dropped handler future stops the read loop after an arbitrary prefix of
+/// turns. For every executor, every `k` and every sound start, the transition
+/// after `k` turns is sound: `read_state_is_sound` carries the per-request
+/// state invariants (a served row was read at the served epoch and the lookup
+/// matched the request's account and epoch), and the next effect agrees with
+/// the state that produced it.
+let read_cancellation (#io_t: Type0) {| i: t_ReadIo io_t |} (k: nat) (s: io_t)
+  (t: t_ReadTransition)
+  : Lemma (requires read_loop_sound t)
+          (ensures (let (_, t2) = read_iter_turn #io_t #i k (s, t) in
+                    read_loop_sound t2)) =
+  let (_, t2, _) = run_read_ev #io_t #i k s t in
+  read_iter_turn_is_run_ev #io_t #i k s t
 
 let rec read_responds (t: t_ReadTransition) (evs: list t_ReadEvent)
   : Pure bool (requires read_trace_sound t.f_driver) (ensures fun _ -> True) (decreases evs) =

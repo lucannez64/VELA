@@ -1212,3 +1212,131 @@ async fn a_pairing_ceremony_completes_once_and_replays_are_refused() {
     assert_eq!(model.enrolled(), vec![Joiner::J2]);
     assert!(coverage.result_views.contains("enrolled"));
 }
+
+/// U-20: a committed insert whose result write was lost must still let the
+/// joining device collect its `device_id`. Deleting the sled result record
+/// after a successful completion is exactly the observable state a failed
+/// `set_ex` (or a cancelled handler future) leaves: the claim and grant are
+/// consumed, no result exists, and the device row carries the grant id.
+#[tokio::test(flavor = "current_thread")]
+async fn a_lost_result_record_is_recovered_from_the_enrolled_device_row() {
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
+    let keys = Keys::new();
+    let mut real = Real::new(&state, app.clone(), &keys).await;
+
+    for command in [
+        Command::StorePackage,
+        Command::FetchPackage,
+        Command::OpenGrant,
+        Command::Claim(Joiner::J1),
+        Command::Complete,
+    ] {
+        let (status, body) = real.apply(command).await;
+        assert!(status.is_success(), "{command:?} failed: {body}");
+    }
+    let grant_id = real.grant_id(0);
+    let (claimant, device_id) = real.enrolled[0];
+    assert_eq!(claimant, Joiner::J1);
+
+    // Simulate the failed result write: the row committed, the record did not.
+    real.state
+        .store
+        .del(&format!("enroll_result:{grant_id}"))
+        .expect("delete the result record");
+    assert!(real
+        .state
+        .store
+        .get(&format!("enroll_result:{grant_id}"))
+        .unwrap()
+        .is_none());
+
+    let signature = real.result_signature(grant_id, Joiner::J1);
+    let (status, body) = call(
+        &real.app,
+        "POST",
+        &format!("/device/enrollment-grant/{grant_id}/result"),
+        None,
+        Some(json!({ "signature": signature })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "fallback result failed: {body}");
+    assert_eq!(body["status"], "enrolled");
+    assert_eq!(body["device_id"], device_id.to_string());
+}
+
+/// U-20 keeps the result proof: the fallback answers only the holder of the
+/// claimed key, exactly like the stored-result path.
+#[tokio::test(flavor = "current_thread")]
+async fn a_lost_result_record_is_not_returned_for_a_wrong_signature() {
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
+    let keys = Keys::new();
+    let mut real = Real::new(&state, app.clone(), &keys).await;
+
+    for command in [
+        Command::StorePackage,
+        Command::FetchPackage,
+        Command::OpenGrant,
+        Command::Claim(Joiner::J1),
+        Command::Complete,
+    ] {
+        let (status, body) = real.apply(command).await;
+        assert!(status.is_success(), "{command:?} failed: {body}");
+    }
+    let grant_id = real.grant_id(0);
+    real.state
+        .store
+        .del(&format!("enroll_result:{grant_id}"))
+        .unwrap();
+
+    // J2 did not claim this grant, so its key cannot prove the result.
+    let signature = real.result_signature(grant_id, Joiner::J2);
+    let (status, body) = call(
+        &real.app,
+        "POST",
+        &format!("/device/enrollment-grant/{grant_id}/result"),
+        None,
+        Some(json!({ "signature": signature })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "wrong key was accepted: {body}");
+    assert!(body.get("device_id").is_none());
+}
+
+/// U-20: if no device row carries the grant id, the fallback is the same
+/// uniform not-found answer as a missing claim.
+#[tokio::test(flavor = "current_thread")]
+async fn a_grant_without_a_result_or_device_row_is_not_found() {
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
+    let keys = Keys::new();
+    let mut real = Real::new(&state, app.clone(), &keys).await;
+
+    for command in [
+        Command::StorePackage,
+        Command::FetchPackage,
+        Command::OpenGrant,
+        Command::Claim(Joiner::J1),
+    ] {
+        let (status, body) = real.apply(command).await;
+        assert!(status.is_success(), "{command:?} failed: {body}");
+    }
+    let grant_id = real.grant_id(0);
+    // A consumed claim with no committed device row: the result record, the
+    // claim and the fallback row are all absent.
+    real.state
+        .store
+        .del(&format!("enroll_claim:{grant_id}"))
+        .expect("consume the claim record");
+    let signature = real.result_signature(grant_id, Joiner::J1);
+    let (status, body) = call(
+        &real.app,
+        "POST",
+        &format!("/device/enrollment-grant/{grant_id}/result"),
+        None,
+        Some(json!({ "signature": signature })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "unexpected answer: {body}");
+}
