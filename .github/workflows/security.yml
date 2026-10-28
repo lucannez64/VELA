@@ -326,13 +326,14 @@ jobs:
           - { name: vela-session-policy-deletion, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: deletion, fresh: false, ships: false, deps: 'serverVELA/vela-server/src/auth/challenge.rs' }
           - { name: vela-session-policy-revocation, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: revocation, fresh: false, ships: false, deps: 'serverVELA/vela-server/src/auth/challenge.rs' }
           - { name: vela-session-policy-account, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: account, fresh: false, ships: false, deps: 'serverVELA/vela-server/src/auth/challenge.rs' }
+          - { name: vela-session-policy-websession, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: websession, fresh: false, ships: false, deps: 'serverVELA/vela-server/src/auth/challenge.rs' }
           - { name: vela-session-policy-core, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: core, fresh: true, ships: true, deps: 'serverVELA/vela-server/src/auth/challenge.rs' }
           - { name: vela-recovery-policy, dir: serverVELA/vela-recovery-policy, script: verify-fstar.sh, fresh: true, ships: true, deps: '' }
           - { name: vela-rekey-policy, dir: serverVELA/vela-rekey-policy, script: verify-fstar.sh, fresh: true, ships: true, deps: '' }
           - { name: vela-enrollment-policy, dir: serverVELA/vela-enrollment-policy, script: verify-fstar.sh, fresh: true, ships: true, deps: '' }
           - { name: vela-share-policy, dir: serverVELA/vela-share-policy, script: verify-fstar.sh, fresh: true, ships: true, deps: 'serverVELA/vela-rekey-policy/README.md' }
           - { name: share-facts, dir: libVELA/vela-crypto, script: verify-share-facts-fstar.sh, fresh: false, ships: true, deps: 'libVELA/vela-client-recovery-policy libVELA/vela-client-share-policy' }
-          - { name: vela-sync-policy, dir: libVELA/vela-sync-policy, script: verify-fstar.sh, fresh: true, ships: true, deps: 'libVELA/vela-client-recovery-policy/README.md' }
+          - { name: vela-sync-policy, dir: libVELA/vela-sync-policy, script: verify-fstar.sh, fresh: true, ships: true, deps: 'libVELA/vela-client-recovery-policy/README.md security/formal/tests' }
           - { name: vela-client-recovery-policy, dir: libVELA/vela-client-recovery-policy, script: verify-fstar.sh, fresh: true, ships: true, deps: '' }
           - { name: vela-client-share-policy, dir: libVELA/vela-client-share-policy, script: verify-fstar.sh, fresh: true, ships: true, deps: '' }
           - { name: cross-driver, dir: security/formal/cross-driver, script: verify.sh, fresh: false, ships: false, deps: 'serverVELA/vela-session-policy serverVELA/vela-enrollment-policy serverVELA/vela-recovery-policy serverVELA/Cargo.toml serverVELA/Cargo.lock' }
@@ -344,8 +345,8 @@ jobs:
       - uses: actions/checkout@v4
       # A proof whose inputs are byte-identical to a run that already passed is
       # not rerun: the key is the git object id of every input (the crate, the
-      # outside files its scripts read, the workspace lockfile, the shared proof
-      # checkers and tool pins, and this workflow), and a hit restores that
+      # outside files its scripts read, the workspace lockfile, the two shared
+      # source checkers, the tool pins, and this workflow), and a hit restores that
       # run's logs and checked extractions for the boundary job.
       # test_proof_inputs.py fails if a script reads an outside path the key
       # does not cover.
@@ -359,7 +360,7 @@ jobs:
           set -euo pipefail
           root=${CRATE_DIR%%/*}
           # shellcheck disable=SC2206 # DEPS is a space-separated path list
-          paths=("$CRATE_DIR" $DEPS security/formal \
+          paths=("$CRATE_DIR" $DEPS security/formal/check-driver-proof-sources.py security/formal/check-sync-chunk-proof.py \
                  security/assurance/bounded.sh security/assurance/install-hax.sh \
                  security/assurance/check-proof-boundary.py .github/workflows/security.yml)
           for f in "$root/Cargo.toml" "$root/Cargo.lock"; do [[ -e $f ]] && paths+=("$f"); done

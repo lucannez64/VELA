@@ -14,7 +14,8 @@ WORKFLOW = os.path.join(ROOT, '.github', 'workflows', 'security.yml')
 
 # Covered for every job by the "Compute proof input key" step.
 SHARED = [
-    'security/formal',
+    'security/formal/check-driver-proof-sources.py',
+    'security/formal/check-sync-chunk-proof.py',
     'security/assurance/bounded.sh',
     'security/assurance/install-hax.sh',
     'security/assurance/check-proof-boundary.py',
@@ -42,7 +43,8 @@ def outside_paths(crate_dir):
     found = set()
     for path in scripts(crate_dir):
         with open(path) as f:
-            text = f.read()
+            # Comments name paths without reading them.
+            text = '\n'.join(l for l in f.read().split('\n') if not l.lstrip().startswith('#'))
         for m in RELATIVE.finditer(text):
             rel = os.path.normpath(os.path.join(crate_dir, m.group(1).rstrip('/.')))
             found.add((os.path.basename(path), rel))
