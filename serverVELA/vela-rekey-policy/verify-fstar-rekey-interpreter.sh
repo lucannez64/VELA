@@ -7,11 +7,20 @@ set -euo pipefail
 # (`rekey_start_interpreter!` etc.). The server's handlers expand them with
 # `.await`; this crate expands them into the synchronous `run_start`,
 # `run_capsules`, `run_commit` and `run_abort`, which hax extracts here. The
-# lemma module proves, for every executor, that each loop calls exactly the
+# lemma modules prove, for every executor, that each loop calls exactly the
 # executor method for the effect the driver just emitted, stops at the verdict,
-# reaches a verdict within its budget, and ends in `run_from_* request evs` for
-# the observations returned, so the per-request rotation theorems hold for the
-# handler.
+# reaches a verdict within its budget (12/68/10/4 turns), and ends in
+# `run_from_* request evs` for the observations returned, so the per-request
+# rotation theorems hold for the handler.
+#
+# `Vela_rekey_policy_rekey_interpreter_lemmas` holds the shared turn
+# specification and the inductive loop lemmas; each loop has its own module
+# (`..._rekey_{start,capsules,commit,abort}_interpreter_lemmas`), checked in its
+# own fstar.exe invocation so the SMT pattern of one loop's fold lemma cannot
+# interact with another loop. No lemma unrolls a loop, so the solver budget is
+# small: fuel 1, ifuel 1, rlimit 100 per split query; the only wider scope is
+# the reviewed `--fuel 4 --ifuel 2` around the per-operation state/timeout
+# progress lemmas.
 #
 # The driver module itself is taken from `extraction-rekey-driver` (regenerated
 # by verify-fstar-rekey-driver.sh, which runs first); this extraction keeps only
@@ -51,7 +60,17 @@ python3 "$proof_root/strip-hax-instances.py" proofs/fstar/extraction-rekey-inter
 generated=(proofs/fstar/extraction-rekey-interpreter/Vela_rekey_policy.Rekey_interpreter.fst)
 driver=("$driver_module")
 driver_lemmas=(proofs/fstar/rekey-driver-lemmas/Vela_rekey_policy_rekey_driver_lemmas.fst)
-lemmas=(proofs/fstar/rekey-interpreter-lemmas/Vela_rekey_policy_rekey_interpreter_lemmas.fst)
+common=proofs/fstar/rekey-interpreter-lemmas/Vela_rekey_policy_rekey_interpreter_lemmas.fst
+loops=()
+for loop in start capsules commit abort; do
+  loops+=("proofs/fstar/rekey-interpreter-lemmas/Vela_rekey_policy_rekey_${loop}_interpreter_lemmas.fst")
+done
+lemmas=("$common" "${loops[@]}")
+mapfile -t present < <(find proofs/fstar/rekey-interpreter-lemmas -maxdepth 1 -type f -name '*.fst' -print | sort)
+if (( ${#present[@]} != ${#lemmas[@]} )); then
+  echo "expected exactly the five reviewed rekey interpreter lemma modules" >&2
+  exit 1
+fi
 for f in "${generated[@]}" "${lemmas[@]}"; do
   [[ -f $f ]] || { echo "missing $f" >&2; exit 1; }
 done
@@ -74,7 +93,10 @@ fstar_args=(
   --cmi
   --cache_off
   --warn_error -331
-  --z3rlimit 16000
+  --z3rlimit 100
+  --fuel 1
+  --ifuel 1
+  --split_queries always
   --z3version 4.13.3
   --already_cached '+Prims+FStar+LowStar+C+Spec.Loops+TestLib'
   --include "$hax_lib_root/proof-libs/fstar/core"
@@ -85,12 +107,19 @@ fstar_args=(
   --include proofs/fstar/rekey-driver-lemmas
   --include proofs/fstar/extraction-rekey-interpreter
   --include proofs/fstar/rekey-interpreter-lemmas
-  "${driver[@]}" "${generated[@]}" "${driver_lemmas[@]}" "${lemmas[@]}"
 )
+# The driver and its lemmas are verified by verify-fstar-rekey-driver.sh and
+# are only loaded here. The first invocation verifies the extracted loops and
+# the shared lemmas; each loop module is then verified on its own.
 printf 'F* rekey-interpreter argv:'
 printf ' %q' "${fstar_args[@]}"
 printf '\n'
-fstar.exe "${fstar_args[@]}"
+printf 'F* rekey-interpreter module %s:\n' "$common"
+fstar.exe "${fstar_args[@]}" "${generated[@]}" "$common"
+for lemma in "${loops[@]}"; do
+  printf 'F* rekey-interpreter module %s:\n' "$lemma"
+  fstar.exe "${fstar_args[@]}" "$lemma"
+done
 
-echo "rekey interpreter: the four handlers' loops call only the executor method for the driver's current effect, stop at the verdict within 67 turns, and end in the driver state the per-request theorems cover"
+echo "rekey interpreter: the four handlers' loops call only the executor method for the driver's current effect, stop at the verdict within 12/68/10/4 turns, and end in the driver state the per-request theorems cover"
 sha256sum "${generated[@]}" "${driver[@]}" "${lemmas[@]}" src/rekey_interpreter.rs

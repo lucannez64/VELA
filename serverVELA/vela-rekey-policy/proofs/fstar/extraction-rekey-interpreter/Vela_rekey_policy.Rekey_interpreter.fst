@@ -7,7 +7,16 @@ open Core_models
 /// rollback, the readiness probes, the freeze transaction, the inventory, the
 /// freeze CAS, the cleanup, the transaction commit — or 64 capsule writes, or
 /// the two completeness probes, the commit CAS, the sweep and the publication.
-let v_REKEY_MAX_EFFECTS: usize = mk_usize 67
+let v_START_MAX_EFFECTS: usize = mk_usize 12
+
+let v_CAPSULES_MAX_EFFECTS: usize = mk_usize 68
+
+let v_COMMIT_MAX_EFFECTS: usize = mk_usize 10
+
+let v_ABORT_MAX_EFFECTS: usize = mk_usize 4
+
+/// Largest of the four budgets, used by the scripted conformance tests.
+let v_REKEY_MAX_EFFECTS: usize = mk_usize 68
 
 /// The state invariant every loop keeps.
 let rekey_loop_is_sound (transition: Vela_rekey_policy.Rekey_driver.t_RekeyTransition) : bool =
@@ -192,7 +201,7 @@ let run_start
   in
   let (io: v_Io), (transition: Vela_rekey_policy.Rekey_driver.t_RekeyTransition) =
     Rust_primitives.Hax.Folds.fold_range (mk_usize 0)
-      v_REKEY_MAX_EFFECTS
+      v_START_MAX_EFFECTS
       (fun temp_0_ temp_1_ ->
           let (io: v_Io), (transition: Vela_rekey_policy.Rekey_driver.t_RekeyTransition) =
             temp_0_
@@ -205,7 +214,7 @@ let run_start
             temp_0_
           in
           let _:usize = temp_1_ in
-          let (io: v_Io), (hoist44: Vela_rekey_policy.Rekey_driver.t_RekeyTransition) =
+          let (io: v_Io), (hoist45: Vela_rekey_policy.Rekey_driver.t_RekeyTransition) =
             match
               transition.Vela_rekey_policy.Rekey_driver.f_effect
               <:
@@ -479,7 +488,7 @@ let run_start
             | Vela_rekey_policy.Rekey_driver.RekeyEffect_Idle  ->
               io, transition <: (v_Io & Vela_rekey_policy.Rekey_driver.t_RekeyTransition)
           in
-          let transition:Vela_rekey_policy.Rekey_driver.t_RekeyTransition = hoist44 in
+          let transition:Vela_rekey_policy.Rekey_driver.t_RekeyTransition = hoist45 in
           io, transition <: (v_Io & Vela_rekey_policy.Rekey_driver.t_RekeyTransition))
   in
   let hax_temp_output:Vela_rekey_policy.Rekey_driver.t_RekeyTransition = transition in
@@ -497,7 +506,7 @@ let run_capsules
   in
   let (io: v_Io), (transition: Vela_rekey_policy.Rekey_driver.t_RekeyTransition) =
     Rust_primitives.Hax.Folds.fold_range (mk_usize 0)
-      v_REKEY_MAX_EFFECTS
+      v_CAPSULES_MAX_EFFECTS
       (fun temp_0_ temp_1_ ->
           let (io: v_Io), (transition: Vela_rekey_policy.Rekey_driver.t_RekeyTransition) =
             temp_0_
@@ -510,7 +519,7 @@ let run_capsules
             temp_0_
           in
           let _:usize = temp_1_ in
-          let (io: v_Io), (hoist79: Vela_rekey_policy.Rekey_driver.t_RekeyTransition) =
+          let (io: v_Io), (hoist80: Vela_rekey_policy.Rekey_driver.t_RekeyTransition) =
             match
               transition.Vela_rekey_policy.Rekey_driver.f_effect
               <:
@@ -784,7 +793,7 @@ let run_capsules
             | Vela_rekey_policy.Rekey_driver.RekeyEffect_Idle  ->
               io, transition <: (v_Io & Vela_rekey_policy.Rekey_driver.t_RekeyTransition)
           in
-          let transition:Vela_rekey_policy.Rekey_driver.t_RekeyTransition = hoist79 in
+          let transition:Vela_rekey_policy.Rekey_driver.t_RekeyTransition = hoist80 in
           io, transition <: (v_Io & Vela_rekey_policy.Rekey_driver.t_RekeyTransition))
   in
   let hax_temp_output:Vela_rekey_policy.Rekey_driver.t_RekeyTransition = transition in
@@ -802,7 +811,7 @@ let run_commit
   in
   let (io: v_Io), (transition: Vela_rekey_policy.Rekey_driver.t_RekeyTransition) =
     Rust_primitives.Hax.Folds.fold_range (mk_usize 0)
-      v_REKEY_MAX_EFFECTS
+      v_COMMIT_MAX_EFFECTS
       (fun temp_0_ temp_1_ ->
           let (io: v_Io), (transition: Vela_rekey_policy.Rekey_driver.t_RekeyTransition) =
             temp_0_
@@ -815,7 +824,7 @@ let run_commit
             temp_0_
           in
           let _:usize = temp_1_ in
-          let (io: v_Io), (hoist114: Vela_rekey_policy.Rekey_driver.t_RekeyTransition) =
+          let (io: v_Io), (hoist115: Vela_rekey_policy.Rekey_driver.t_RekeyTransition) =
             match
               transition.Vela_rekey_policy.Rekey_driver.f_effect
               <:
@@ -1089,7 +1098,7 @@ let run_commit
             | Vela_rekey_policy.Rekey_driver.RekeyEffect_Idle  ->
               io, transition <: (v_Io & Vela_rekey_policy.Rekey_driver.t_RekeyTransition)
           in
-          let transition:Vela_rekey_policy.Rekey_driver.t_RekeyTransition = hoist114 in
+          let transition:Vela_rekey_policy.Rekey_driver.t_RekeyTransition = hoist115 in
           io, transition <: (v_Io & Vela_rekey_policy.Rekey_driver.t_RekeyTransition))
   in
   let hax_temp_output:Vela_rekey_policy.Rekey_driver.t_RekeyTransition = transition in
@@ -1107,7 +1116,7 @@ let run_abort
   in
   let (io: v_Io), (transition: Vela_rekey_policy.Rekey_driver.t_RekeyTransition) =
     Rust_primitives.Hax.Folds.fold_range (mk_usize 0)
-      v_REKEY_MAX_EFFECTS
+      v_ABORT_MAX_EFFECTS
       (fun temp_0_ temp_1_ ->
           let (io: v_Io), (transition: Vela_rekey_policy.Rekey_driver.t_RekeyTransition) =
             temp_0_
@@ -1120,7 +1129,7 @@ let run_abort
             temp_0_
           in
           let _:usize = temp_1_ in
-          let (io: v_Io), (hoist149: Vela_rekey_policy.Rekey_driver.t_RekeyTransition) =
+          let (io: v_Io), (hoist150: Vela_rekey_policy.Rekey_driver.t_RekeyTransition) =
             match
               transition.Vela_rekey_policy.Rekey_driver.f_effect
               <:
@@ -1394,7 +1403,7 @@ let run_abort
             | Vela_rekey_policy.Rekey_driver.RekeyEffect_Idle  ->
               io, transition <: (v_Io & Vela_rekey_policy.Rekey_driver.t_RekeyTransition)
           in
-          let transition:Vela_rekey_policy.Rekey_driver.t_RekeyTransition = hoist149 in
+          let transition:Vela_rekey_policy.Rekey_driver.t_RekeyTransition = hoist150 in
           io, transition <: (v_Io & Vela_rekey_policy.Rekey_driver.t_RekeyTransition))
   in
   let hax_temp_output:Vela_rekey_policy.Rekey_driver.t_RekeyTransition = transition in

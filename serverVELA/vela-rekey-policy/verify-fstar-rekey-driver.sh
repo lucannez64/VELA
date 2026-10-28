@@ -71,10 +71,17 @@ if (( ${#lemma_files[@]} != 1 )); then
   echo "expected exactly one reviewed rekey-driver lemma module" >&2
   exit 1
 fi
+mapfile -t composition_files < <(
+  find proofs/fstar/rekey-driver-composition -maxdepth 1 -type f -name '*.fst' -print | sort
+)
+if (( ${#composition_files[@]} != 1 )); then
+  echo "expected exactly one reviewed rekey-driver composition module" >&2
+  exit 1
+fi
 
 python3 "$proof_root/../../security/formal/check-driver-proof-sources.py" \
   --generated "${proof_files[@]}" \
-  --proof "${lemma_files[@]}" \
+  --proof "${lemma_files[@]}" "${composition_files[@]}" \
   --include-dir "$proof_root"
 
 hax_lib_root=$(
@@ -106,6 +113,37 @@ printf ' %q' "${fstar_args[@]}"
 printf '\n'
 fstar.exe "${fstar_args[@]}"
 
+# The concurrent composition over the shared key row. The driver and its
+# lemmas were verified above and are only loaded here. Every invariant is
+# proved by one lemma per handler step and induction over the schedule, so the
+# solver budget is small: fuel 1, ifuel 1, rlimit 100 per split query; the only
+# wider scope is the reviewed `--fuel 4 --ifuel 2` around the per-event frame
+# lemmas and the witnesses.
+composition_args=(
+  --cmi
+  --cache_off
+  --warn_error -331
+  --z3rlimit 100
+  --fuel 1
+  --ifuel 1
+  --split_queries always
+  --z3version 4.13.3
+  --already_cached '+Prims+FStar+LowStar+C+Spec.Loops+TestLib'
+  --include "$hax_lib_root/proof-libs/fstar/core"
+  --include "$hax_lib_root/proof-libs/fstar/rust_primitives"
+  --include "$hax_lib_root/proofs/fstar/extraction"
+  --include proofs/fstar/extraction-rekey-driver-root
+  --include proofs/fstar/extraction-rekey-driver
+  --include proofs/fstar/rekey-driver-lemmas
+  --include proofs/fstar/rekey-driver-composition
+  "${composition_files[@]}"
+)
+printf 'F* rekey-driver-composition argv:'
+printf ' %q' "${composition_args[@]}"
+printf '\n'
+fstar.exe "${composition_args[@]}"
+
 echo "rekey driver: focused Rust decision functions with soundness postconditions (four entry points, one transition relation)"
 echo "per-request trace: at most one commit, commit only after both completeness observations and starter/rotation authority, abort/timeout restore the active state at the same epoch, web sessions never start or commit"
-sha256sum "${proof_files[@]}" "${lemma_files[@]}" "${lemma_files[@]}" src/rekey_driver.rs
+echo "composition: for every interleaving of start/capsules/commit/abort requests, at most one commit per epoch, no commit after an abort of the same rotation, unique committed ids, committed and aborted ids disjoint, commits only after both completeness probes passed, only the starter commits or aborts, no executor call for a web session"
+sha256sum "${proof_files[@]}" "${lemma_files[@]}" "${composition_files[@]}" src/rekey_driver.rs

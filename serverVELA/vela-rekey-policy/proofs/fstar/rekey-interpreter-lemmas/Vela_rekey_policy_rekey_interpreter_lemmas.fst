@@ -1,21 +1,31 @@
 module Vela_rekey_policy_rekey_interpreter_lemmas
 
+/// Shared specification of the four rotation handler loops.
+///
 /// The extracted `run_start`, `run_capsules`, `run_commit` and `run_abort` are
 /// the loops the four rotation handlers run: the server expands the same
 /// `rekey_*_interpreter!` macro text, adding only `.await` after each executor
-/// call. This module proves, for every executor implementation (any
-/// `t_RekeyIo` instance, any behaviour):
+/// call. This module defines one interpreter turn (`turn_ev`), its iteration
+/// (`iter_turn`, `run_ev`) and proves, by induction on the number of turns and
+/// for every executor implementation (any `t_RekeyIo` instance, any
+/// behaviour):
 ///
-/// 1. each loop calls the executor exactly as `run_ev` does: one method per
-///    turn, chosen by the effect the driver has just emitted, with that
-///    effect's argument (the capsule index), and nothing once the driver
-///    reached a verdict;
+/// 1. `iter_turn n` and `run_ev n` agree (`iter_turn_is_run_ev`);
 /// 2. the observations the executor returned form a list `evs` in which each
 ///    observation answers the effect it was returned for, and the final driver
-///    is `run_from_* request evs`;
-/// 3. the driver always reaches a verdict within the loop budget of 67 turns;
-/// 4. hence every per-request rotation theorem holds for the state the real
-///    handler ends in.
+///    is `run d evs` (`run_ev_follows_the_driver`);
+/// 3. answering the current effect strictly decreases a per-entry-point
+///    measure bounded by the loop budget (`step_progress`), so the driver
+///    reaches a verdict within the budget (`run_ev_reaches_a_verdict`).
+///
+/// The per-loop modules (`Vela_rekey_policy_rekey_{start,capsules,commit,
+/// abort}_interpreter_lemmas`) each connect one extracted loop to `iter_turn`
+/// and conclude the per-request theorems. They are checked in separate
+/// fstar.exe invocations so the SMT pattern of each fold lemma cannot interact
+/// with the other loops.
+///
+/// No lemma unrolls a loop: every statement about `n` turns is proved by
+/// induction on `n` from a one-turn lemma.
 ///
 /// What remains outside: each executor method's I/O (that it performs what its
 /// name says and reports the outcome honestly), and the macro expansion (the
@@ -27,6 +37,7 @@ open Vela_rekey_policy
 open Vela_rekey_policy.Rekey_driver
 open Vela_rekey_policy.Rekey_interpreter
 open Vela_rekey_policy_rekey_driver_lemmas
+
 
 // ── The specification of one interpreter turn ─────────────────────────────
 
@@ -58,8 +69,20 @@ let responds_to (e: t_RekeyEffect) (ev: t_RekeyEvent) : bool =
   | RekeyEffect_RollbackAttempt, RekeyEvent_Rollback _ -> true
   | _ -> false
 
+/// The extracted loop invariant (`rekey_loop_is_sound`).
 let sound_transition (t: t_RekeyTransition) : bool =
   rekey_state_is_sound t.f_driver && rekey_effect_is_sound t.f_driver t.f_effect
+
+/// What one turn did: nothing at a verdict, otherwise one observation that
+/// answers the current effect, fed to the extracted `rekey_step`.
+let turn_post (#io_t: Type0) (s: io_t) (t: t_RekeyTransition{rekey_state_is_sound t.f_driver})
+  (r: io_t & t_RekeyTransition & option t_RekeyEvent) : prop =
+  let (s1, t1, o) = r in
+  match o with
+  | None -> terminal t.f_effect /\ s1 == s /\ t1 == t
+  | Some ev ->
+      not (terminal t.f_effect) /\ responds_to t.f_effect ev /\
+      t1 == rekey_step t.f_driver ev
 
 /// One turn: call the executor method for the current effect, feed its
 /// observation to the extracted `rekey_step`, and report the event. A verdict
@@ -67,7 +90,7 @@ let sound_transition (t: t_RekeyTransition) : bool =
 let turn_ev (#io_t: Type0) {| i: t_RekeyIo io_t |} (s: io_t) (t: t_RekeyTransition)
   : Pure (io_t & t_RekeyTransition & option t_RekeyEvent)
     (requires (rekey_state_is_sound t.f_driver))
-    (ensures fun _ -> True) =
+    (ensures fun r -> turn_post s t r) =
   match t.f_effect with
   | RekeyEffect_RateLimit ->
       let (s', o) = f_rate_limit #io_t #i s in
@@ -176,30 +199,7 @@ let rec run_ev (#io_t: Type0) {| i: t_RekeyIo io_t |} (n: nat) (s: io_t)
     let (s2, t2, evs) = run_ev #io_t #i (n - 1) s1 t1 in
     (s2, t2, cons_opt o evs)
 
-// ── 1. The extracted loops are `run_ev` ───────────────────────────────────
-
-let rec fold_range_is_iter_turn
-  (#io_t: Type0) {| i: t_RekeyIo io_t |}
-  (n: nat)
-  (start end_: usize)
-  (inv: (io_t & t_RekeyTransition) -> (k: usize{Rust_primitives.Hax.Folds.fold_range_wf_index start end_ false (v k)}) -> Type0)
-  (init: (io_t & t_RekeyTransition){~(Rust_primitives.Hax.Folds.range_empty start end_) ==> inv init start})
-  (f: (acc: (io_t & t_RekeyTransition) ->
-       k: usize{v k <= v end_ /\ Rust_primitives.Hax.Folds.fold_range_wf_index start end_ true (v k) /\ inv acc k} ->
-       acc': (io_t & t_RekeyTransition){inv acc' (mk_int (v k + 1))}))
-  : Lemma
-    (requires (v start <= v end_ /\ n = v end_ - v start /\
-               (forall (acc: (io_t & t_RekeyTransition))
-                  (k: usize{v k <= v end_ /\ Rust_primitives.Hax.Folds.fold_range_wf_index start end_ true (v k) /\ inv acc k}).
-                  f acc k == turn #io_t #i acc)))
-    (ensures (Rust_primitives.Hax.Folds.fold_range start end_ inv init f ==
-              iter_turn #io_t #i n init))
-    (decreases n)
-    [SMTPat (Rust_primitives.Hax.Folds.fold_range start end_ inv init f);
-     SMTPat (iter_turn #io_t #i n init)] =
-  if v start < v end_
-  then fold_range_is_iter_turn #io_t #i (n - 1) (start +! mk_int 1) end_ inv (f init start) f
-  else ()
+// ── 1. `iter_turn` is `run_ev` ─────────────────────────────────────────────
 
 let rec iter_turn_is_run_ev (#io_t: Type0) {| i: t_RekeyIo io_t |} (n: nat) (s: io_t)
   (t: t_RekeyTransition)
@@ -210,44 +210,9 @@ let rec iter_turn_is_run_ev (#io_t: Type0) {| i: t_RekeyIo io_t |} (n: nat) (s: 
   if n = 0 then ()
   else begin
     let (s1, t1, _) = turn_ev #io_t #i s t in
+    assert (turn #io_t #i (s, t) == (s1, t1));
     iter_turn_is_run_ev #io_t #i (n - 1) s1 t1
   end
-
-let run_start_is_run_ev (#io_t: Type0) {| i: t_RekeyIo io_t |} (s: io_t)
-  (request: t_RekeyRequest)
-  : Lemma (let (s2, t2, _) = run_ev #io_t #i 12 s (begin_start request) in
-           run_start #io_t #i s request == (s2, t2)) =
-  let t0 = begin_start request in
-  iter_turn_is_run_ev #io_t #i 12 s t0;
-  assert (v v_START_MAX_EFFECTS = 12);
-  assert (run_start #io_t #i s request == iter_turn #io_t #i 12 (s, t0))
-
-let run_capsules_is_run_ev (#io_t: Type0) {| i: t_RekeyIo io_t |} (s: io_t)
-  (request: t_RekeyRequest)
-  : Lemma (let (s2, t2, _) = run_ev #io_t #i 68 s (begin_capsules request) in
-           run_capsules #io_t #i s request == (s2, t2)) =
-  let t0 = begin_capsules request in
-  iter_turn_is_run_ev #io_t #i 68 s t0;
-  assert (v v_CAPSULES_MAX_EFFECTS = 68);
-  assert (run_capsules #io_t #i s request == iter_turn #io_t #i 68 (s, t0))
-
-let run_commit_is_run_ev (#io_t: Type0) {| i: t_RekeyIo io_t |} (s: io_t)
-  (request: t_RekeyRequest)
-  : Lemma (let (s2, t2, _) = run_ev #io_t #i 10 s (begin_commit request) in
-           run_commit #io_t #i s request == (s2, t2)) =
-  let t0 = begin_commit request in
-  iter_turn_is_run_ev #io_t #i 10 s t0;
-  assert (v v_COMMIT_MAX_EFFECTS = 10);
-  assert (run_commit #io_t #i s request == iter_turn #io_t #i 10 (s, t0))
-
-let run_abort_is_run_ev (#io_t: Type0) {| i: t_RekeyIo io_t |} (s: io_t)
-  (request: t_RekeyRequest)
-  : Lemma (let (s2, t2, _) = run_ev #io_t #i 4 s (begin_abort request) in
-           run_abort #io_t #i s request == (s2, t2)) =
-  let t0 = begin_abort request in
-  iter_turn_is_run_ev #io_t #i 4 s t0;
-  assert (v v_ABORT_MAX_EFFECTS = 4);
-  assert (run_abort #io_t #i s request == iter_turn #io_t #i 4 (s, t0))
 
 // ── 2. The observations drive the extracted driver ────────────────────────
 
@@ -263,7 +228,6 @@ let rec run_ev_follows_the_driver (#io_t: Type0) {| i: t_RekeyIo io_t |} (n: nat
   (t: t_RekeyTransition)
   : Lemma (requires sound_transition t)
           (ensures (let (_, t2, evs) = run_ev #io_t #i n s t in
-                    rekey_state_is_sound t.f_driver /\
                     responds t evs /\
                     t2.f_driver == run t.f_driver evs))
           (decreases n) =
@@ -278,9 +242,14 @@ let rec run_ev_follows_the_driver (#io_t: Type0) {| i: t_RekeyIo io_t |} (n: nat
 
 // ── 3. A verdict within the budget ────────────────────────────────────────
 
+/// A capsule write at index `k` has at most `65 - k` effects left: the writes
+/// `k..64`. The driver refuses the 65th write.
+let capsule_remaining (index: i64) : nat =
+  if 0 <= v index && v index <= 64 then 65 - v index else 0
+
 /// Effects still to perform before a verdict, per entry point. The extracted
 /// loops have separate budgets, so the measure is selected by the driver's
-/// operation.
+/// operation. Each entry point's first effect is exactly its budget.
 let start_remaining (e: t_RekeyEffect) : nat =
   match e with
   | RekeyEffect_RateLimit -> 12
@@ -294,6 +263,14 @@ let start_remaining (e: t_RekeyEffect) : nat =
   | RekeyEffect_FreezeCas -> 4
   | RekeyEffect_CleanupChunks -> 3
   | RekeyEffect_CommitFreezeTransaction -> 2
+  | _ -> 0
+
+let capsules_remaining (e: t_RekeyEffect) : nat =
+  match e with
+  | RekeyEffect_RateLimit -> 68
+  | RekeyEffect_LoadState -> 67
+  | RekeyEffect_TimeoutRollback -> 66
+  | RekeyEffect_WriteCapsule { f_index = index } -> capsule_remaining index
   | _ -> 0
 
 let commit_remaining (e: t_RekeyEffect) : nat =
@@ -316,15 +293,6 @@ let abort_remaining (e: t_RekeyEffect) : nat =
   | RekeyEffect_RollbackAttempt -> 1
   | _ -> 0
 
-let capsules_remaining (e: t_RekeyEffect) : nat =
-  match e with
-  | RekeyEffect_RateLimit -> 68
-  | RekeyEffect_LoadState -> 67
-  | RekeyEffect_TimeoutRollback -> 66
-  | RekeyEffect_WriteCapsule { f_index = index } ->
-      if v index <= 64 then 64 - v index else 0
-  | _ -> 0
-
 let remaining_at (op: t_RekeyOp) (e: t_RekeyEffect) : nat =
   match op with
   | RekeyOp_Start -> start_remaining e
@@ -332,117 +300,280 @@ let remaining_at (op: t_RekeyOp) (e: t_RekeyEffect) : nat =
   | RekeyOp_Commit -> commit_remaining e
   | RekeyOp_Abort -> abort_remaining e
 
-/// Answering the current effect moves strictly closer to a verdict.
-let step_decreases (t: t_RekeyTransition) (ev: t_RekeyEvent)
-  : Lemma (requires sound_transition t /\ not (terminal t.f_effect) /\ responds_to t.f_effect ev)
-          (ensures (remaining_at (rekey_step t.f_driver ev).f_driver.f_op
-                                 (rekey_step t.f_driver ev).f_effect
-                    < remaining_at t.f_driver.f_op t.f_effect)) =
-  match t.f_driver.f_op <: t_RekeyOp with
-  | RekeyOp_Start -> ()
-  | RekeyOp_Capsules ->
-      (match t.f_effect <: t_RekeyEffect with
-       | RekeyEffect_WriteCapsule { f_index = index } ->
-           assert (v index < 64)
-       | _ -> ())
-  | RekeyOp_Commit -> ()
-  | RekeyOp_Abort -> ()
+let remaining (t: t_RekeyTransition) : nat = remaining_at t.f_driver.f_op t.f_effect
 
+/// The capsule counter never goes negative. The driver's own invariant bounds
+/// it from above only; this lemma module carries the lower bound so the
+/// capsule measure is positive at every write.
+let counter_ok (d: t_RekeyDriver) : bool = v d.f_capsules_written >= 0
+
+let progress_ok (t: t_RekeyTransition) : bool =
+  sound_transition t && counter_ok t.f_driver
+
+/// The one-step obligation: answering the current effect keeps the counter
+/// bound and strictly decreases the measure.
+let progresses (t: t_RekeyTransition) (t': t_RekeyTransition) : prop =
+  counter_ok t'.f_driver /\ remaining t' < remaining t
+
+/// Every non-terminal effect a sound driver emits has a positive measure.
+let positive_remaining (t: t_RekeyTransition)
+  : Lemma (requires progress_ok t /\ not (terminal t.f_effect))
+          (ensures remaining t > 0) =
+  match t.f_effect with
+  | RekeyEffect_WriteCapsule { f_index = index } -> ()
+  | RekeyEffect_SweepOldChunks -> ()
+  | RekeyEffect_PublishEpoch -> ()
+  | _ -> ()
+
+// One lemma per effect: the driver's answer to that effect's observation.
+
+let progress_rate_limit (t: t_RekeyTransition) (o: t_RateLimitObservation)
+  : Lemma (requires progress_ok t /\ t.f_effect == RekeyEffect_RateLimit)
+          (ensures progresses t (rekey_step t.f_driver (RekeyEvent_RateLimit o))) =
+  match o with
+  | RateLimitObservation_Allowed -> ()
+  | RateLimitObservation_Limited -> ()
+
+#push-options "--fuel 4 --ifuel 2"
+let progress_state_start (t: t_RekeyTransition) (o: t_StateObservation)
+  : Lemma (requires progress_ok t /\ t.f_effect == RekeyEffect_LoadState /\
+                    t.f_driver.f_op == RekeyOp_Start)
+          (ensures progresses t (rekey_step t.f_driver (RekeyEvent_State o))) =
+  match o with
+  | StateObservation_Loaded _ -> ()
+  | StateObservation_Storage -> ()
+  | StateObservation_NotFound -> ()
+
+let progress_state_capsules (t: t_RekeyTransition) (o: t_StateObservation)
+  : Lemma (requires progress_ok t /\ t.f_effect == RekeyEffect_LoadState /\
+                    t.f_driver.f_op == RekeyOp_Capsules)
+          (ensures progresses t (rekey_step t.f_driver (RekeyEvent_State o))) =
+  match o with
+  | StateObservation_Loaded _ -> ()
+  | StateObservation_Storage -> ()
+  | StateObservation_NotFound -> ()
+
+let progress_state_commit (t: t_RekeyTransition) (o: t_StateObservation)
+  : Lemma (requires progress_ok t /\ t.f_effect == RekeyEffect_LoadState /\
+                    t.f_driver.f_op == RekeyOp_Commit)
+          (ensures progresses t (rekey_step t.f_driver (RekeyEvent_State o))) =
+  match o with
+  | StateObservation_Loaded _ -> ()
+  | StateObservation_Storage -> ()
+  | StateObservation_NotFound -> ()
+
+let progress_state_abort (t: t_RekeyTransition) (o: t_StateObservation)
+  : Lemma (requires progress_ok t /\ t.f_effect == RekeyEffect_LoadState /\
+                    t.f_driver.f_op == RekeyOp_Abort)
+          (ensures progresses t (rekey_step t.f_driver (RekeyEvent_State o))) =
+  match o with
+  | StateObservation_Loaded _ -> ()
+  | StateObservation_Storage -> ()
+  | StateObservation_NotFound -> ()
+
+let progress_timeout_start (t: t_RekeyTransition) (o: t_TimeoutObservation)
+  : Lemma (requires progress_ok t /\ t.f_effect == RekeyEffect_TimeoutRollback /\
+                    t.f_driver.f_op == RekeyOp_Start)
+          (ensures progresses t (rekey_step t.f_driver (RekeyEvent_Timeout o))) =
+  match o with
+  | TimeoutObservation_RolledBack -> ()
+  | TimeoutObservation_Raced _ -> ()
+  | TimeoutObservation_Storage -> ()
+
+let progress_timeout_capsules (t: t_RekeyTransition) (o: t_TimeoutObservation)
+  : Lemma (requires progress_ok t /\ t.f_effect == RekeyEffect_TimeoutRollback /\
+                    t.f_driver.f_op == RekeyOp_Capsules)
+          (ensures progresses t (rekey_step t.f_driver (RekeyEvent_Timeout o))) =
+  match o with
+  | TimeoutObservation_RolledBack -> ()
+  | TimeoutObservation_Raced _ -> ()
+  | TimeoutObservation_Storage -> ()
+
+let progress_timeout_commit (t: t_RekeyTransition) (o: t_TimeoutObservation)
+  : Lemma (requires progress_ok t /\ t.f_effect == RekeyEffect_TimeoutRollback /\
+                    t.f_driver.f_op == RekeyOp_Commit)
+          (ensures progresses t (rekey_step t.f_driver (RekeyEvent_Timeout o))) =
+  match o with
+  | TimeoutObservation_RolledBack -> ()
+  | TimeoutObservation_Raced _ -> ()
+  | TimeoutObservation_Storage -> ()
+
+let progress_timeout_abort (t: t_RekeyTransition) (o: t_TimeoutObservation)
+  : Lemma (requires progress_ok t /\ t.f_effect == RekeyEffect_TimeoutRollback /\
+                    t.f_driver.f_op == RekeyOp_Abort)
+          (ensures progresses t (rekey_step t.f_driver (RekeyEvent_Timeout o))) =
+  match o with
+  | TimeoutObservation_RolledBack -> ()
+  | TimeoutObservation_Raced _ -> ()
+  | TimeoutObservation_Storage -> ()
+#pop-options
+
+let progress_state (t: t_RekeyTransition) (o: t_StateObservation)
+  : Lemma (requires progress_ok t /\ t.f_effect == RekeyEffect_LoadState)
+          (ensures progresses t (rekey_step t.f_driver (RekeyEvent_State o))) =
+  match t.f_driver.f_op with
+  | RekeyOp_Start -> progress_state_start t o
+  | RekeyOp_Capsules -> progress_state_capsules t o
+  | RekeyOp_Commit -> progress_state_commit t o
+  | RekeyOp_Abort -> progress_state_abort t o
+
+let progress_timeout (t: t_RekeyTransition) (o: t_TimeoutObservation)
+  : Lemma (requires progress_ok t /\ t.f_effect == RekeyEffect_TimeoutRollback)
+          (ensures progresses t (rekey_step t.f_driver (RekeyEvent_Timeout o))) =
+  match t.f_driver.f_op with
+  | RekeyOp_Start -> progress_timeout_start t o
+  | RekeyOp_Capsules -> progress_timeout_capsules t o
+  | RekeyOp_Commit -> progress_timeout_commit t o
+  | RekeyOp_Abort -> progress_timeout_abort t o
+
+let progress_probe (t: t_RekeyTransition) (ev: t_RekeyEvent)
+  : Lemma (requires progress_ok t /\
+                    (match t.f_effect, ev with
+                     | RekeyEffect_CheckOram, RekeyEvent_Oram _
+                     | RekeyEffect_CheckCapable, RekeyEvent_Capable _
+                     | RekeyEffect_CheckAcknowledged, RekeyEvent_Acknowledged _
+                     | RekeyEffect_CheckChunkShadows, RekeyEvent_Chunks _
+                     | RekeyEffect_CheckDeviceCapsules, RekeyEvent_Devices _ -> True
+                     | _ -> False))
+          (ensures progresses t (rekey_step t.f_driver ev)) =
+  match ev with
+  | RekeyEvent_Oram ProbeObservation_Empty -> ()
+  | RekeyEvent_Oram ProbeObservation_Found -> ()
+  | RekeyEvent_Oram ProbeObservation_Storage -> ()
+  | RekeyEvent_Capable ProbeObservation_Empty -> ()
+  | RekeyEvent_Capable ProbeObservation_Found -> ()
+  | RekeyEvent_Capable ProbeObservation_Storage -> ()
+  | RekeyEvent_Acknowledged ProbeObservation_Empty -> ()
+  | RekeyEvent_Acknowledged ProbeObservation_Found -> ()
+  | RekeyEvent_Acknowledged ProbeObservation_Storage -> ()
+  | RekeyEvent_Chunks ProbeObservation_Empty -> ()
+  | RekeyEvent_Chunks ProbeObservation_Found -> ()
+  | RekeyEvent_Chunks ProbeObservation_Storage -> ()
+  | RekeyEvent_Devices ProbeObservation_Empty -> ()
+  | RekeyEvent_Devices ProbeObservation_Found -> ()
+  | RekeyEvent_Devices ProbeObservation_Storage -> ()
+  | _ -> ()
+
+let progress_freeze (t: t_RekeyTransition) (ev: t_RekeyEvent)
+  : Lemma (requires progress_ok t /\
+                    (match t.f_effect, ev with
+                     | RekeyEffect_BeginFreezeTransaction, RekeyEvent_Transaction _
+                     | RekeyEffect_ReadInventory, RekeyEvent_Inventory _
+                     | RekeyEffect_FreezeCas, RekeyEvent_FreezeCas _
+                     | RekeyEffect_CleanupChunks, RekeyEvent_Cleanup _
+                     | RekeyEffect_CommitFreezeTransaction, RekeyEvent_TxCommit _ -> True
+                     | _ -> False))
+          (ensures progresses t (rekey_step t.f_driver ev)) =
+  match ev with
+  | RekeyEvent_Transaction TransactionObservation_Committed -> ()
+  | RekeyEvent_Transaction TransactionObservation_Failed -> ()
+  | RekeyEvent_Inventory InventoryObservation_Read -> ()
+  | RekeyEvent_Inventory InventoryObservation_Failed -> ()
+  | RekeyEvent_FreezeCas CasObservation_Updated -> ()
+  | RekeyEvent_FreezeCas CasObservation_Skipped -> ()
+  | RekeyEvent_FreezeCas CasObservation_Storage -> ()
+  | RekeyEvent_Cleanup CleanupObservation_Done -> ()
+  | RekeyEvent_Cleanup CleanupObservation_Storage -> ()
+  | RekeyEvent_TxCommit TransactionObservation_Committed -> ()
+  | RekeyEvent_TxCommit TransactionObservation_Failed -> ()
+  | _ -> ()
+
+let progress_capsule (t: t_RekeyTransition) (index: i64) (o: t_CapsuleObservation)
+  : Lemma (requires progress_ok t /\ t.f_effect == RekeyEffect_WriteCapsule ({ f_index = index }))
+          (ensures progresses t (rekey_step t.f_driver (RekeyEvent_Capsule o))) =
+  match o with
+  | CapsuleObservation_Stored -> ()
+  | CapsuleObservation_Invalid -> ()
+  | CapsuleObservation_NotTarget -> ()
+  | CapsuleObservation_Storage -> ()
+
+let progress_commit (t: t_RekeyTransition) (ev: t_RekeyEvent)
+  : Lemma (requires progress_ok t /\
+                    (match t.f_effect, ev with
+                     | RekeyEffect_CommitCas, RekeyEvent_CommitCas _
+                     | RekeyEffect_SweepOldChunks, RekeyEvent_Sweep _
+                     | RekeyEffect_PublishEpoch, RekeyEvent_Published
+                     | RekeyEffect_RollbackAttempt, RekeyEvent_Rollback _ -> True
+                     | _ -> False))
+          (ensures progresses t (rekey_step t.f_driver ev)) =
+  match ev with
+  | RekeyEvent_CommitCas CasObservation_Updated -> ()
+  | RekeyEvent_CommitCas CasObservation_Skipped -> ()
+  | RekeyEvent_CommitCas CasObservation_Storage -> ()
+  | RekeyEvent_Sweep SweepObservation_Done -> ()
+  | RekeyEvent_Sweep SweepObservation_Failed -> ()
+  | RekeyEvent_Published -> ()
+  | RekeyEvent_Rollback RollbackObservation_RolledBack -> ()
+  | RekeyEvent_Rollback RollbackObservation_Raced -> ()
+  | RekeyEvent_Rollback RollbackObservation_Storage -> ()
+  | _ -> ()
+
+/// Answering the current effect moves strictly closer to a verdict.
+let step_progress (t: t_RekeyTransition) (ev: t_RekeyEvent)
+  : Lemma (requires progress_ok t /\ not (terminal t.f_effect) /\ responds_to t.f_effect ev)
+          (ensures progresses t (rekey_step t.f_driver ev)) =
+  match t.f_effect, ev with
+  | RekeyEffect_RateLimit, RekeyEvent_RateLimit o -> progress_rate_limit t o
+  | RekeyEffect_LoadState, RekeyEvent_State o -> progress_state t o
+  | RekeyEffect_TimeoutRollback, RekeyEvent_Timeout o -> progress_timeout t o
+  | RekeyEffect_WriteCapsule { f_index = index }, RekeyEvent_Capsule o ->
+      progress_capsule t index o
+  | RekeyEffect_CheckOram, _
+  | RekeyEffect_CheckCapable, _
+  | RekeyEffect_CheckAcknowledged, _
+  | RekeyEffect_CheckChunkShadows, _
+  | RekeyEffect_CheckDeviceCapsules, _ -> progress_probe t ev
+  | RekeyEffect_BeginFreezeTransaction, _
+  | RekeyEffect_ReadInventory, _
+  | RekeyEffect_FreezeCas, _
+  | RekeyEffect_CleanupChunks, _
+  | RekeyEffect_CommitFreezeTransaction, _ -> progress_freeze t ev
+  | RekeyEffect_CommitCas, _
+  | RekeyEffect_SweepOldChunks, _
+  | RekeyEffect_PublishEpoch, _
+  | RekeyEffect_RollbackAttempt, _ -> progress_commit t ev
+  | _ -> ()
+
+/// One turn keeps `progress_ok`; it stays put at a verdict and otherwise
+/// strictly decreases the measure.
+let turn_progress (#io_t: Type0) {| i: t_RekeyIo io_t |} (s: io_t) (t: t_RekeyTransition)
+  : Lemma (requires progress_ok t)
+          (ensures (let (_, t1, _) = turn_ev #io_t #i s t in
+                    progress_ok t1 /\
+                    (terminal t.f_effect ==> t1 == t) /\
+                    (not (terminal t.f_effect) ==> remaining t1 < remaining t))) =
+  let (_, t1, o) = turn_ev #io_t #i s t in
+  match o with
+  | None -> ()
+  | Some ev -> step_progress t ev
+
+/// `n + 1` turns are one turn followed by `n` turns.
+let run_ev_unfold (#io_t: Type0) {| i: t_RekeyIo io_t |} (n: nat) (s: io_t)
+  (t: t_RekeyTransition)
+  : Lemma (requires sound_transition t /\ n > 0)
+          (ensures (let (s1, t1, _) = turn_ev #io_t #i s t in
+                    let (_, t2, _) = run_ev #io_t #i n s t in
+                    let (_, t2', _) = run_ev #io_t #i (n - 1) s1 t1 in
+                    t2 == t2')) = ()
+
+/// The induction over the loop: no unrolling, one `turn_progress` per turn.
 let rec run_ev_reaches_a_verdict (#io_t: Type0) {| i: t_RekeyIo io_t |} (n: nat) (s: io_t)
   (t: t_RekeyTransition)
-  : Lemma (requires sound_transition t /\ remaining_at t.f_driver.f_op t.f_effect <= n)
+  : Lemma (requires progress_ok t /\ remaining t <= n)
           (ensures (let (_, t2, _) = run_ev #io_t #i n s t in terminal t2.f_effect))
           (decreases n) =
-  if n = 0 then ()
-  else begin
-    let (s1, t1, o) = turn_ev #io_t #i s t in
-    (match o with
-     | None -> ()
-     | Some ev -> step_decreases t ev);
-    run_ev_reaches_a_verdict #io_t #i (n - 1) s1 t1
+  if n = 0 then begin
+    if not (terminal t.f_effect) then positive_remaining t
+  end else begin
+    let (s1, t1, _) = turn_ev #io_t #i s t in
+    turn_progress #io_t #i s t;
+    run_ev_reaches_a_verdict #io_t #i (n - 1) s1 t1;
+    run_ev_unfold #io_t #i n s t
   end
 
-// ── 4. The handler's final state satisfies the per-request theorems ───────
-
-let run_start_theorem (#io_t: Type0) {| i: t_RekeyIo io_t |} (s: io_t)
-  (request: t_RekeyRequest)
-  : Lemma (
-      let (_, t) = run_start #io_t #i s request in
-      exists (evs: list t_RekeyEvent).
-        responds (begin_start request) evs /\
-        t.f_driver == run_from_start request evs /\
-        terminal t.f_effect /\
-        rekey_effect_is_sound t.f_driver t.f_effect /\
-        (let d = t.f_driver in
-         rekey_state_is_sound d /\ not d.f_committed /\
-         not (d.f_responded && d.f_failed))) =
-  let t0 = begin_start request in
-  run_start_is_run_ev #io_t #i s request;
-  run_ev_follows_the_driver #io_t #i 12 s t0;
-  run_ev_reaches_a_verdict #io_t #i 12 s t0;
-  let (_, t2, evs) = run_ev #io_t #i 12 s t0 in
-  rekey_start_trace_theorem request evs
-
-let run_capsules_theorem (#io_t: Type0) {| i: t_RekeyIo io_t |} (s: io_t)
-  (request: t_RekeyRequest)
-  : Lemma (
-      let (_, t) = run_capsules #io_t #i s request in
-      exists (evs: list t_RekeyEvent).
-        responds (begin_capsules request) evs /\
-        t.f_driver == run_from_capsules request evs /\
-        terminal t.f_effect /\
-        rekey_effect_is_sound t.f_driver t.f_effect /\
-        (let d = t.f_driver in
-         rekey_state_is_sound d /\ not d.f_committed /\
-         (d.f_responded ==> d.f_capsules_complete) /\
-         not (d.f_responded && d.f_failed))) =
-  let t0 = begin_capsules request in
-  run_capsules_is_run_ev #io_t #i s request;
-  run_ev_follows_the_driver #io_t #i 68 s t0;
-  run_ev_reaches_a_verdict #io_t #i 68 s t0;
-  let (_, t2, evs) = run_ev #io_t #i 68 s t0 in
-  rekey_capsules_trace_theorem request evs
-
-let run_commit_theorem (#io_t: Type0) {| i: t_RekeyIo io_t |} (s: io_t)
-  (request: t_RekeyRequest)
-  : Lemma (
-      let (_, t) = run_commit #io_t #i s request in
-      exists (evs: list t_RekeyEvent).
-        responds (begin_commit request) evs /\
-        t.f_driver == run_from_commit request evs /\
-        terminal t.f_effect /\
-        rekey_effect_is_sound t.f_driver t.f_effect /\
-        (let d = t.f_driver in
-         rekey_state_is_sound d /\
-         (d.f_committed ==>
-           (d.f_active /\ d.f_starter_matches /\ d.f_rotation_matches /\
-            d.f_chunks_complete /\ d.f_capsules_complete)) /\
-         (d.f_responded ==> d.f_committed) /\
-         not (d.f_responded && d.f_failed) /\
-         (not d.f_failed || not d.f_committed))) =
-  let t0 = begin_commit request in
-  run_commit_is_run_ev #io_t #i s request;
-  run_ev_follows_the_driver #io_t #i 10 s t0;
-  run_ev_reaches_a_verdict #io_t #i 10 s t0;
-  let (_, t2, evs) = run_ev #io_t #i 10 s t0 in
-  rekey_commit_trace_theorem request evs
-
-let run_abort_theorem (#io_t: Type0) {| i: t_RekeyIo io_t |} (s: io_t)
-  (request: t_RekeyRequest)
-  : Lemma (
-      let (_, t) = run_abort #io_t #i s request in
-      exists (evs: list t_RekeyEvent).
-        responds (begin_abort request) evs /\
-        t.f_driver == run_from_abort request evs /\
-        terminal t.f_effect /\
-        rekey_effect_is_sound t.f_driver t.f_effect /\
-        (let d = t.f_driver in
-         rekey_state_is_sound d /\ not d.f_committed /\
-         (d.f_rolled_back ==> (d.f_active /\ d.f_epoch >=. v_INITIAL_EPOCH)) /\
-         not (d.f_responded && d.f_failed))) =
-  let t0 = begin_abort request in
-  run_abort_is_run_ev #io_t #i s request;
-  run_ev_follows_the_driver #io_t #i 4 s t0;
-  run_ev_reaches_a_verdict #io_t #i 4 s t0;
-  let (_, t2, evs) = run_ev #io_t #i 4 s t0 in
-  rekey_abort_trace_theorem request evs
+/// Every entry point starts within its budget.
+let begin_progress_ok (r: t_RekeyRequest)
+  : Lemma (progress_ok (begin_start r) /\ remaining (begin_start r) <= 12 /\
+           progress_ok (begin_capsules r) /\ remaining (begin_capsules r) <= 68 /\
+           progress_ok (begin_commit r) /\ remaining (begin_commit r) <= 10 /\
+           progress_ok (begin_abort r) /\ remaining (begin_abort r) <= 4) = ()

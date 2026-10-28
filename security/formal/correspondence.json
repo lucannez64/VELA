@@ -78,7 +78,7 @@
         "security/formal/signed-share-commit-correspondence.md": "8b1a5ae7bc8dbedd8c83c6a979fd82470706c87703d73503cc1f70ea6f582822",
         "serverVELA/vela-enrollment-policy/src/lib.rs": "6a22aac099f4bf1009fa6c5126dd0455ce1439eea909aaba19c28b42023b62d5",
         "serverVELA/vela-recovery-policy/src/lib.rs": "392b58525380c856222cf4ae6417a2823009fb0d5d298b5d30b89b8a542e488b",
-        "serverVELA/vela-rekey-policy/src/lib.rs": "b1407ca78c911c1519cbdc3f78496af146a5ed1ebac4a8586c80aba79252f1e7",
+        "serverVELA/vela-rekey-policy/src/lib.rs": "05094e92a32a8c5a7158abeaff650fe36ba615754247e51c5c6e158b084a1295",
         "serverVELA/vela-session-policy/src/lib.rs": "6f2aca8c63e7e722f4bd1bd459cbf7c113b4225a8d4b6a4ed749a0652d65f745",
         "serverVELA/vela-share-policy/src/lib.rs": "4af04578c50b55404a248d7a07c2ae6d201d09ea48c11738c2386a9afa806359"
       }
@@ -430,8 +430,8 @@
         "serverVELA/vela-rekey-policy/proofs/fstar/extraction-vault-upload-driver/Vela_rekey_policy.Vault_upload_driver.fst": "de21fb5e61ce9270d1e324d3775364e3562d14a4777d95178d8f62c26140f894",
         "serverVELA/vela-rekey-policy/proofs/fstar/vault-upload-driver-lemmas/Vela_rekey_policy_vault_upload_driver_lemmas.fst": "fea986169ec7c34c4c522afe689142399b2ea14a8cd4d0616e67709b5368baed",
         "serverVELA/vela-rekey-policy/proofs/fstar/vault-upload-driver-composition/Vela_rekey_policy_vault_upload_driver_composition.fst": "f786c5f37a5ae086b11bf205cae99fa37af639bce87097221ea4185d77b014b5",
-        "serverVELA/vela-server/src/vault/chunk.rs": "efa4301f0439e17a4870a510a100390eae65f76582737b5890062a88416673b5",
-        "serverVELA/vela-server/src/vault/rekey.rs": "032b483561f637d5e2b05623a018f538a43c20d6fcac88e446feecb95afccc13"
+        "serverVELA/vela-server/src/vault/chunk.rs": "9f630b5f45954e6848e90cecae02457df67a9b1566d49cfe781127b9c252fe2f",
+        "serverVELA/vela-server/src/vault/rekey.rs": "038fb891abe76544650c90936362e9e1e2a4be84c1a24e4fd9f6adef84949349"
       }
     },
     {
@@ -454,7 +454,7 @@
         "serverVELA/vela-session-policy/proofs/fstar/extraction-deletion-interpreter/Vela_session_policy.Deletion_interpreter.fst": "4d134c09e43113412fadf01a435f30b08fd470b6992233c04d2ecab799c05c3d",
         "serverVELA/vela-session-policy/proofs/fstar/deletion-interpreter-lemmas/Vela_session_policy_deletion_interpreter_lemmas.fst": "5e8c5cbc214253c1a7ed8e951fd95b06e10daaccf0f7d3a82924bda65ba21123",
         "serverVELA/vela-server/src/account/delete.rs": "b8320b3afe874ca932169a20b3c828dc4ccb16d94c921529e677abfcd00a20ce",
-        "security/formal/tests/test_handler_interpreters.py": "24b7f00b447ece510e7489cffadc3de187740b4cd9dcd47dae6407884aa173e5"
+        "security/formal/tests/test_handler_interpreters.py": "2349769eaf46749b83bfccc61c4ee8820c2276e6b2d8f83af01fee7aba6998b5"
       }
     },
     {
@@ -508,7 +508,7 @@
         "serverVELA/vela-rekey-policy/verify-fstar-vault-upload-interpreter.sh": "d3e76fcc8cc57ebc9bfb1d3770c43a5a641ad7445c64dfb55a5d300759225a66",
         "serverVELA/vela-rekey-policy/proofs/fstar/extraction-vault-upload-interpreter/Vela_rekey_policy.Vault_upload_interpreter.fst": "1bb850f5a06282d219d040ddef6076b20acb6de7c5dbd2604e88e02cd30fbda4",
         "serverVELA/vela-rekey-policy/proofs/fstar/vault-upload-interpreter-lemmas/Vela_rekey_policy_vault_upload_interpreter_lemmas.fst": "b557d0eabc6d71d0d17ca387dec51883f1e5da4942e173ca110653b0e794c057",
-        "serverVELA/vela-server/src/vault/chunk.rs": "efa4301f0439e17a4870a510a100390eae65f76582737b5890062a88416673b5"
+        "serverVELA/vela-server/src/vault/chunk.rs": "9f630b5f45954e6848e90cecae02457df67a9b1566d49cfe781127b9c252fe2f"
       }
     },
     {
