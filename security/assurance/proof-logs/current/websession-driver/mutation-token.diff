@@ -1,0 +1,11 @@
+--- serverVELA/vela-session-policy/proofs/fstar/extraction-websession-driver/Vela_session_policy.Websession_driver.fst	2026-10-28 10:51:43.398233033 +0100
++++ /tmp/vela-f2-websession-mut/token/Vela_session_policy.Websession_driver.fst	2026-10-28 11:07:48.520489533 +0100
+@@ -1380,7 +1380,7 @@
+           token_transition ({
+                 driver with
+                 f_stage = TokenStage_Issue <: t_TokenStage;
+-                f_token_claimed = true;
++                f_token_claimed = false;
+                 f_plan_authorized = true
+               }
+               <:

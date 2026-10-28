@@ -18,12 +18,53 @@ F* and checks their postconditions for every input.
 | `challenge::classify_stored_tag` | Exact stored-tag bytes are recognized only as `login`, `enroll` or `web_token`; every other length/byte pattern is `Unknown`. |
 | `challenge::classify_consumption` | A present tag is accepted only for its own purpose; a present wrong/unknown tag is `WrongPurpose` and the take has already spent it; absence is `Missing`. |
 | `login_driver::begin_login` / `step` | `/auth/verify` can respond only after an accepted login challenge, a present unrevoked device, a valid actual verifier result, a successful backoff reset, issuance and JTI tracking; a failure is terminal and never responds. |
+| `websession_driver::begin_start` / `start_step` | An unauthenticated browser start can only insert the one `pending` row, and only after the IP limiter and key validation; the driver has no grant, token or revoke effect. |
+| `websession_driver::begin_grant` / `grant_step` | A grant update is emitted only from the checked `plan_observed_grant` permit for an authenticated, active device, with a pending session, matching approver/nonce, a web key for RW and the policy-clamped TTL; a response requires the CAS to report updated. |
+| `websession_driver::begin_token` / `token_step` | A token issue is emitted only for a live granted RW session with both accounts bound, a consumed `web_token` challenge, a valid signature and a first-writer-wins claim; the plan comes from `plan_observed_web_token`, and at most one issue effect occurs per request. |
+| `websession_driver::begin_delete` / `delete_step` | A lockout and revocation record are emitted only for the authenticated account that owns (or is committed to) the session; the SQL row is updated only after the sentinel write. |
 
 The proof boundary excludes PASETO cryptography, HTTP parsing, signature
 verification, clocks, SQL execution, and storage atomicity. Production code
 turns those observations into policy facts and signs only the private
 `TokenPlan` returned by the policy. Handler, state-model, and concurrency tests
 cover the boundary to Turso and sled.
+
+## Web-session handler drivers (F-2)
+
+`websession_driver` owns the decisions of the four state-transition handlers in
+`../vela-server/src/web_session/mod.rs`:
+
+- `post_start` expands `websession_start_interpreter!` over a `StartIo`; the
+  driver can only reach `InsertPending` after the rate limiter and validation.
+- `post_grant` expands `websession_grant_interpreter!` over a `GrantIo`; the
+  update carries only the permit returned by `plan_observed_grant` and the
+  `clamp_web_ttl` value.
+- `post_token` expands `websession_token_interpreter!` over a `TokenIo`; the
+  driver consumes the purpose-bound `web_token` challenge, verifies the
+  signature, claims the grant's one token first-writer-wins, and signs only the
+  plan returned by `plan_observed_web_token`. The JTI is tracked inside the
+  issue effect before a response.
+- `delete_session` expands `websession_delete_interpreter!` over a
+  `DeleteSessionIo`; only the owning account can write the
+  `device:revoked:<session_id>` sentinel or the revocation row.
+
+Per-request traces are checked in
+`proofs/fstar/websession-driver-lemmas/`: every event list keeps the state
+sound, success/failure (and token issue) are each at most once, and every
+emitted effect satisfies the invariant that produced it. The handler link is in
+`proofs/fstar/websession-interpreter-lemmas/` (one module per loop, each in its
+own `fstar.exe` invocation). The focused gates are
+`verify-fstar-websession-driver.sh` and
+`verify-fstar-websession-interpreter.sh`; `./verify-fstar.sh websession` runs
+both, and the default `./verify-fstar.sh` still runs every part.
+
+The read-only endpoints are not state transitions and were left unchanged:
+
+| Endpoint | Authorization check |
+|---|---|
+| `GET /web-sessions` | `DeviceSession` extractor: authenticated, durable unrevoked device; SQL is scoped to `session.user_id`. |
+| `GET /web-session/:id` | Unauthenticated browser poll, but the request must present the poll secret whose SHA-256 equals the row's `poll_secret_hash`; missing session and wrong secret both return the same unauthorized response. |
+| `GET /web-session/:id/keys` | `DeviceSession` extractor plus SQL `WHERE id = ? AND approver_user_id = ?`; only the committed approver account sees the pending keys. |
 
 ## Run
 
@@ -37,8 +78,10 @@ export PATH="$(opam var bin --switch vela-hax):$(opam var bin --switch vela-fsta
 ```
 
 The runner tests the crate, extracts the historical 21 production/theorem
-entry points, checks them without `--lax`, and then invokes
-`verify-fstar-login-driver.sh` in a separate `cargo hax`/`fstar.exe` invocation.
+entry points, checks them without `--lax`, and then invokes the focused gates
+(`core`, `login`, `revocation`, `deletion`, `websession`) in separate
+`cargo hax`/`fstar.exe` invocations. Pass a part name to run one group, for
+example `./verify-fstar.sh websession`.
 That focused gate extracts `challenge` and `login_driver` into
 `proofs/fstar/extraction-login-driver/` (never mixed with the historical
 `proofs/fstar/extraction/` root module) and checks the two hand-written

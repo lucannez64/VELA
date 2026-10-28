@@ -3922,6 +3922,122 @@ async fn web_session_token_still_reaches_the_vault() {
     }
 }
 
+/// A granted RW session may redeem at most one token. A second valid proof,
+/// with a fresh `web_token` challenge, is refused: the handler claims the one
+/// token first-writer-wins before signing, so a leaked browser key cannot mint
+/// an unbounded family of tokens for one grant.
+#[tokio::test]
+async fn web_session_issues_at_most_one_token_per_grant() {
+    use vela_crypto::signing::{auth_message, generate_keypair, sign, HybridSigningKey};
+    use vela_server::sqldb::{Db as _, TursoValue};
+
+    // ML-DSA keygen/signing is stack hungry; give it 8 MiB like the other tests.
+    fn with_big_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(f)
+            .unwrap()
+            .join()
+            .unwrap()
+    }
+
+    let state = helpers::test_state().await;
+    let app = vela_server::routes::build(state.clone());
+    let user_id = Uuid::new_v4();
+    let session_id = Uuid::new_v4();
+    let device_id = Uuid::new_v4();
+    insert_user(&state, user_id).await;
+    let now = chrono::Utc::now();
+    let (web_vk, web_sk) = with_big_stack(generate_keypair).unwrap();
+    let web_sk_bytes = web_sk.into_bytes();
+
+    state
+        .sqldb
+        .execute(
+            "INSERT INTO web_sessions
+             (id, user_id, approver_user_id, poll_secret_hash, ephemeral_pk,
+              web_vk, link_nonce, mode, status, capsule, approved_by,
+              key_epoch, created_at, expires_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'rw', 'granted', NULL, ?, 1, ?, ?)",
+            vec![
+                TursoValue::Text(session_id.to_string()),
+                TursoValue::Text(user_id.to_string()),
+                TursoValue::Text(user_id.to_string()),
+                TursoValue::Text(B64.encode([2u8; 32])),
+                TursoValue::Text(B64.encode([3u8; 1568 + 32])),
+                TursoValue::Text(B64.encode(web_vk.to_bytes())),
+                TursoValue::Text(B64.encode([4u8; 32])),
+                TursoValue::Text(device_id.to_string()),
+                TursoValue::Text(now.to_rfc3339()),
+                TursoValue::Text((now + chrono::Duration::hours(1)).to_rfc3339()),
+            ],
+        )
+        .await
+        .unwrap();
+
+    let mut redeem = |ip: [u8; 4]| {
+        let app = app.clone();
+        let web_sk_bytes = web_sk_bytes.clone();
+        let user_id = user_id;
+        let session_id = session_id;
+        async move {
+            let challenge_req = Request::builder()
+                .uri("/auth/challenge?purpose=web_token")
+                .extension(ConnectInfo(SocketAddr::from((ip, 40100))))
+                .body(Body::empty())
+                .unwrap();
+            let response = app.clone().oneshot(challenge_req).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let challenge: String =
+                serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["challenge"]
+                    .as_str()
+                    .unwrap()
+                    .to_string();
+            let challenge_bytes = B64.decode(&challenge).unwrap();
+            let signature = with_big_stack(move || {
+                let session = session_id.to_string();
+                let sk = HybridSigningKey::from_bytes(&web_sk_bytes).unwrap();
+                B64.encode(
+                    sign(&sk, &auth_message(&session, &challenge_bytes))
+                        .unwrap()
+                        .to_bytes(),
+                )
+            });
+            let request = Request::builder()
+                .method("POST")
+                .uri(format!("/web-session/{session_id}/token"))
+                .extension(ConnectInfo(SocketAddr::from((ip, 40101))))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "challenge": challenge, "signature": signature }).to_string(),
+                ))
+                .unwrap();
+            let response = app.oneshot(request).await.unwrap();
+            let status = response.status();
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            (status, bytes, user_id)
+        }
+    };
+
+    let (status, body, _) = redeem([198, 51, 100, 41]).await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(value["user_id"].as_str(), Some(user_id.to_string().as_str()));
+
+    let (status, body, _) = redeem([198, 51, 100, 42]).await;
+    assert_eq!(
+        status,
+        StatusCode::CONFLICT,
+        "a second token for the same grant must be refused: {}",
+        String::from_utf8_lossy(&body)
+    );
+}
+
 /// Model the exact extraction/commit interleaving directly: middleware has
 /// already accepted an epoch-1 web session, then another device commits epoch
 /// 2 before the handler resolves and performs its mutation. The immutable

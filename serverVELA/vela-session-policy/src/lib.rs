@@ -19,6 +19,8 @@ pub mod registration_driver;
 pub mod registration_interpreter;
 pub mod revocation_driver;
 pub mod revocation_interpreter;
+pub mod websession_driver;
+pub mod websession_interpreter;
 
 pub const TOKEN_LIFETIME_SECS: i64 = 15 * 60;
 pub const DEVICE_HARD_CAP_SECS: i64 = 8 * 60 * 60;
