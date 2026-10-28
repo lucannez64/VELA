@@ -9,10 +9,14 @@
 mod executor_trait;
 
 pub mod challenge;
+pub mod challenge_issue_driver;
+pub mod challenge_issue_interpreter;
 pub mod deletion_driver;
 pub mod deletion_interpreter;
 pub mod login_driver;
 pub mod login_interpreter;
+pub mod registration_driver;
+pub mod registration_interpreter;
 pub mod revocation_driver;
 pub mod revocation_interpreter;
 

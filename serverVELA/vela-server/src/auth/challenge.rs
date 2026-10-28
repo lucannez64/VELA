@@ -1,6 +1,6 @@
 //! GET /auth/challenge
 //!
-//! Returns a single-use 32-byte random nonce (base64-encoded) for use in a
+//! Returns a single-use 32-byte random nonce (base64-encoded) for use in an
 //! authentication signature. The nonce is stored in sled with a 60-second TTL and is
 //! consumed on first use.
 //!
@@ -10,6 +10,15 @@
 //! be redeemed at `/device/enroll` or `/web-session/:id/token`.
 //!
 //! Rate limit: 20 requests / minute per IP.
+//!
+//! Every post-parse decision lives in the pure
+//! [`vela_session_policy::challenge_issue_driver`] driver: whether the limiter
+//! allowed the request, whether the random source returned exactly 32 bytes,
+//! whether the key was fresh, and therefore whether one challenge is issued.
+//! The handler expands the same `challenge_issue_interpreter!` loop the policy
+//! crate extracts and proves. The write is first-writer-wins (`set_ex_nx`): a
+//! nonce collision never overwrites another live challenge, and a store failure
+//! issues nothing.
 
 use axum::{
     extract::{ConnectInfo, Query, State},
@@ -27,6 +36,10 @@ use crate::{
 };
 use vela_session_policy::challenge::{
     classify_taken_challenge, purpose_tag_bytes, ChallengeConsumption,
+};
+use vela_session_policy::challenge_issue_driver::{
+    IssueEffect, IssueFailure, NonceObservation, PurposeObservation, RateLimitObservation,
+    StoreObservation, NONCE_LEN,
 };
 
 const CHALLENGE_TTL_SECS: u64 = 60;
@@ -114,32 +127,174 @@ pub struct ChallengeResponse {
     pub challenge: String,
 }
 
+/// The I/O behind each issue effect. The driver decides which method runs and
+/// when (through the shared `challenge_issue_interpreter!` loop, proved in F*
+/// as `run_issue`); each method only performs its effect and reports the
+/// outcome. The first failure keeps the handler's original error so the
+/// response carries the same status and message.
+struct ChallengeIssueIo<'a> {
+    state: &'a AppState,
+    ip: String,
+    nonce: Option<[u8; NONCE_LEN]>,
+    challenge_b64: Option<String>,
+    error: Option<AppError>,
+}
+
+impl ChallengeIssueIo<'_> {
+    /// Record the first error; later methods never replace the original.
+    fn fail(&mut self, error: AppError) {
+        if self.error.is_none() {
+            self.error = Some(error);
+        }
+    }
+
+    async fn check_rate_limit(&mut self) -> RateLimitObservation {
+        match rate_limit::challenge_by_ip(&self.state.store, &self.ip) {
+            Ok(()) => RateLimitObservation::Allowed,
+            Err(error) => {
+                self.fail(error);
+                RateLimitObservation::Denied
+            }
+        }
+    }
+
+    async fn generate_nonce(&mut self) -> NonceObservation {
+        let mut nonce = [0u8; NONCE_LEN];
+        match getrandom::getrandom(&mut nonce) {
+            Ok(()) => {
+                self.nonce = Some(nonce);
+                NonceObservation::Generated { len: NONCE_LEN }
+            }
+            Err(error) => {
+                self.fail(AppError::Internal(format!(
+                    "OS random source unavailable: {error}"
+                )));
+                NonceObservation::Unavailable
+            }
+        }
+    }
+
+    async fn store_nonce(
+        &mut self,
+        purpose: vela_session_policy::challenge::ChallengePurpose,
+    ) -> StoreObservation {
+        let Some(nonce) = self.nonce else {
+            self.fail(AppError::Internal(
+                "challenge nonce is not available".into(),
+            ));
+            return StoreObservation::Failed;
+        };
+        let nonce_b64 = B64.encode(nonce);
+        match self.state.store.set_ex_nx(
+            &format!("challenge:{nonce_b64}"),
+            purpose_tag_bytes(purpose),
+            CHALLENGE_TTL_SECS,
+        ) {
+            Ok(true) => {
+                self.challenge_b64 = Some(nonce_b64);
+                StoreObservation::Inserted
+            }
+            Ok(false) => {
+                // A fresh 32-byte nonce already had a live challenge under its
+                // key. Never overwrite it: nothing is issued for this request.
+                self.fail(AppError::Internal("challenge nonce collision".into()));
+                StoreObservation::KeyExists
+            }
+            Err(error) => {
+                self.fail(error);
+                StoreObservation::Failed
+            }
+        }
+    }
+}
+
+fn issue_failure_error(
+    failure: IssueFailure,
+    error: Option<AppError>,
+) -> AppError {
+    if let Some(error) = error {
+        return error;
+    }
+    match failure {
+        IssueFailure::RateLimited => {
+            AppError::RateLimited("challenge rate limit exceeded".into())
+        }
+        IssueFailure::InvalidPurpose => {
+            AppError::BadRequest("purpose must be login, enroll or web_token".into())
+        }
+        IssueFailure::RandomUnavailable => {
+            AppError::Internal("OS random source unavailable".into())
+        }
+        IssueFailure::NonceLength => {
+            AppError::Internal("OS random source returned the wrong nonce length".into())
+        }
+        IssueFailure::Collision => {
+            AppError::Internal("challenge nonce collision".into())
+        }
+        IssueFailure::Storage => AppError::Internal("challenge store failed".into()),
+    }
+}
+
 pub async fn get_challenge(
     State(state): State<AppState>,
     addr: Option<ConnectInfo<SocketAddr>>,
     headers: HeaderMap,
     Query(query): Query<ChallengeQuery>,
 ) -> Result<Json<ChallengeResponse>> {
-    let purpose = ChallengePurpose::parse(query.purpose.as_deref())?;
     let ip = net::client_ip(&headers, addr.map(|ConnectInfo(a)| a.ip()), &state.config);
+    // The driver owns the parse decision (`Invalid` is a terminal 400 with no
+    // limiter, random or store effect); the exact message stays in the slot.
+    let (purpose, parse_error) = match ChallengePurpose::parse(query.purpose.as_deref()) {
+        Ok(purpose) => (PurposeObservation::Requested(purpose.policy()), None),
+        Err(error) => (PurposeObservation::Invalid, Some(error)),
+    };
+    let mut io = ChallengeIssueIo {
+        state: &state,
+        ip,
+        nonce: None,
+        challenge_b64: None,
+        error: parse_error,
+    };
+    // The proved loop: only the effect the driver just emitted is performed,
+    // and nothing after its verdict.
+    let transition = vela_session_policy::challenge_issue_interpreter!(io, purpose, await);
 
-    // ── Rate limit ────────────────────────────────────────────────────────────
-    rate_limit::challenge_by_ip(&state.store, &ip)?;
+    match transition.effect {
+        IssueEffect::Issue => {
+            let challenge = io.challenge_b64.take().ok_or_else(|| {
+                AppError::Internal("challenge issue driver issued no nonce".into())
+            })?;
+            Ok(Json(ChallengeResponse { challenge }))
+        }
+        IssueEffect::Fail(failure) => Err(issue_failure_error(failure, io.error.take())),
+        _ => Err(AppError::Internal(
+            "challenge issue driver reached no verdict".into(),
+        )),
+    }
+}
 
-    // ── Generate nonce ────────────────────────────────────────────────────────
-    let mut nonce = [0u8; 32];
-    getrandom::getrandom(&mut nonce).map_err(|e| {
-        crate::error::AppError::Internal(format!("OS random source unavailable: {e}"))
-    })?;
-    let nonce_b64 = B64.encode(nonce);
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    // ── Store in sled (single-use, 60 s TTL) ──────────────────────────────────
-    let store_key = format!("challenge:{nonce_b64}");
-    state
-        .store
-        .set_ex(&store_key, purpose.tag(), CHALLENGE_TTL_SECS)?;
+    #[test]
+    fn every_purpose_maps_to_its_policy_tag() {
+        for (purpose, policy) in [
+            (ChallengePurpose::Login, vela_session_policy::challenge::ChallengePurpose::Login),
+            (ChallengePurpose::Enroll, vela_session_policy::challenge::ChallengePurpose::Enroll),
+            (
+                ChallengePurpose::WebToken,
+                vela_session_policy::challenge::ChallengePurpose::WebToken,
+            ),
+        ] {
+            assert_eq!(purpose.policy(), policy);
+            assert_eq!(purpose.tag(), purpose_tag_bytes(policy));
+        }
+    }
 
-    Ok(Json(ChallengeResponse {
-        challenge: nonce_b64,
-    }))
+    #[test]
+    fn the_default_purpose_is_login_and_unknown_purposes_are_refused() {
+        assert_eq!(ChallengePurpose::parse(None).unwrap(), ChallengePurpose::Login);
+        assert!(ChallengePurpose::parse(Some("admin")).is_err());
+    }
 }
