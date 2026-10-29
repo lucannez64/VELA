@@ -10,5 +10,15 @@ The synchronous expansions `run_chunk_delete`, `run_oram`, `run_schema`,
 one call per emitted effect (with the ORAM bucket index), no call after the
 verdict, a verdict within the budget, and the per-request driver state.
 
-Status: Rust interpreter tests pass; the F* gate is present but not yet run to
-completion because the upstream rekey driver gate is failing.
+## Status
+
+Not verified yet: it depends on the vault-mutation driver gate, which does
+not pass. Rust interpreter tests pass.
+
+## Reproduction
+
+```bash
+cd serverVELA/vela-rekey-policy
+~/.local/opt/vela-tools/bin/vela-heavy ./verify-fstar-vault-mutation-interpreter.sh
+```
+

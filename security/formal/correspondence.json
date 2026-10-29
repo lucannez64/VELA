@@ -678,6 +678,53 @@
         "serverVELA/vela-session-policy/verify-fstar-websession-composition.sh": "dcdf708b4ccd2fd01f332c87aefc8d037e22362319c5e949f10a6c11a70a0530",
         "serverVELA/vela-session-policy/proofs/fstar/extraction-websession-revocation/Vela_session_policy.Revocation_driver.fst": "a821ec8c038897686631bc7aef0dff8316861edd0c0bfa185de9b73f42945f52"
       }
+    },
+    {
+      "boundary": "vault key-rotation driver (POST /vault/rekey/{start,capsules,commit,abort}): per request, a commit only for an ACTIVE account, a device-scoped request from the starting device with the matching rotation id, after empty chunk-shadow and device-capsule completeness probes, publishing exactly the next epoch; a winning abort restores ACTIVE; at most one success or failure; a web session refused before any effect; SQL text, statement atomicity and executor fidelity remain assumptions",
+      "artifacts": {
+        "serverVELA/vela-rekey-policy/src/rekey_driver.rs": "64dc3daaf2d158c9fa2f078527e1ce5e5d5acc2f8d687dde97de46f87b15686d",
+        "serverVELA/vela-rekey-policy/verify-fstar-rekey-driver.sh": "e110a6898fb3f70fb106d4d9ef7ad40cbef9cb11eab6e7eaf521a0a196fc8928",
+        "serverVELA/vela-rekey-policy/proofs/fstar/extraction-rekey-driver/Vela_rekey_policy.Rekey_driver.fst": "1aad2bc777ef1415cb52594d682f8e7ad0e7e587d53cc31987fe95f09c2037d5",
+        "serverVELA/vela-rekey-policy/proofs/fstar/rekey-driver-lemmas/Vela_rekey_policy_rekey_driver_lemmas.fst": "2ba3396d46360467ac7dba0b826417463082de852f09874c9371d336420d86fb",
+        "serverVELA/vela-server/src/vault/rekey.rs": "038fb891abe76544650c90936362e9e1e2a4be84c1a24e4fd9f6adef84949349"
+      }
+    },
+    {
+      "boundary": "vault key-rotation interpreters (rekey_{start,capsules,commit,abort}_interpreter!, budgets 12/68/10/4): for every executor, only the method for the driver's current effect is called, nothing after the verdict, a verdict within the budget, and the final state is the per-request driver state; cancellation after a prefix is not yet covered",
+      "artifacts": {
+        "serverVELA/vela-rekey-policy/src/rekey_interpreter.rs": "46d1c0744c1e2c892f3675657a648e47e85637881d4466e48c46d50a243c37cb",
+        "serverVELA/vela-rekey-policy/verify-fstar-rekey-interpreter.sh": "6e705f3a1cfeb13857dc6f4b6054f05e658fe17a3e9c20a313124399d66f76f3",
+        "serverVELA/vela-rekey-policy/proofs/fstar/extraction-rekey-interpreter/Vela_rekey_policy.Rekey_interpreter.fst": "3f749312b154fdf419b58e17de721c1c7170850d62a3221b7844428f4275d53a",
+        "serverVELA/vela-rekey-policy/proofs/fstar/rekey-interpreter-lemmas/Vela_rekey_policy_rekey_abort_interpreter_lemmas.fst": "b700afe32b023966749a99442ca3c7a78aabab3d91b92c8d2d1eadd8f1c24795",
+        "serverVELA/vela-rekey-policy/proofs/fstar/rekey-interpreter-lemmas/Vela_rekey_policy_rekey_capsules_interpreter_lemmas.fst": "eada832cf163c5a524a0cfe65c7b23c78e9a5d17cb640866b932d50f33898ea2",
+        "serverVELA/vela-rekey-policy/proofs/fstar/rekey-interpreter-lemmas/Vela_rekey_policy_rekey_commit_interpreter_lemmas.fst": "86b61317fe373b9f4c50c5ec00a83e01598246aaae6c4606c3de909a6cba1c00",
+        "serverVELA/vela-rekey-policy/proofs/fstar/rekey-interpreter-lemmas/Vela_rekey_policy_rekey_interpreter_lemmas.fst": "dc22c5444c47b21e05ec136bfbb90ba26c9966ecb6cbaf5f1347d57ebb77f9d8",
+        "serverVELA/vela-rekey-policy/proofs/fstar/rekey-interpreter-lemmas/Vela_rekey_policy_rekey_start_interpreter_lemmas.fst": "65719e94c4765c4e28f39f3656e7bf60a97acc99791c7c47da3963a27e225b85",
+        "serverVELA/vela-server/src/vault/rekey.rs": "038fb891abe76544650c90936362e9e1e2a4be84c1a24e4fd9f6adef84949349"
+      }
+    },
+    {
+      "boundary": "vault key-rotation concurrent composition: for any interleaving of start, capsules, commit and abort requests from any device or web session over one account's shared key row, with the freeze CAS, commit CAS and rollback applied to the live row, at most one commit per epoch, no commit after an abort (explicit, timeout or failed freeze) and no rollback after a commit, unique committed ids disjoint from aborted ones, a commit only after both completeness probes passed, starter-only commit and abort, and no executor call for a web session, counted on the extracted driver's decisions; four driver mutations break it; SQL atomicity and linearizability, fresh rotation ids and honest executor outcomes remain assumptions",
+      "artifacts": {
+        "serverVELA/vela-rekey-policy/proofs/fstar/rekey-driver-composition/Vela_rekey_policy_rekey_driver_composition.fst": "4e2fd17e85d92ee4095a61111c0cc228f220f856eb616d4901d0536733e152ac",
+        "serverVELA/vela-rekey-policy/verify-fstar-rekey-driver-composition-mutations.sh": "7b9c02ca37b87ef3c731dbc38bb06527098f8a2a588ff7807e8c45ba8bde0ede",
+        "serverVELA/vela-rekey-policy/verify-fstar-rekey-driver.sh": "e110a6898fb3f70fb106d4d9ef7ad40cbef9cb11eab6e7eaf521a0a196fc8928"
+      }
+    },
+    {
+      "boundary": "vault and device mutation drivers and interpreters (chunk delete, ORAM path write, schema floor, capsule ack, rekey-capable): intended, not yet verified (chunk_delete_step fails): per request, every success follows its guarded write and at most one success or failure; the loops perform exactly the driver's effects within their budgets; cancellation after a prefix is not yet covered",
+      "artifacts": {
+        "serverVELA/vela-rekey-policy/src/vault_mutation_driver.rs": "054684c44b0b8e1a877daf74dab5e3246f68884a23494a4ec1fa79780ffd74e7",
+        "serverVELA/vela-rekey-policy/src/vault_mutation_interpreter.rs": "cb4cb22e0bb06b6461f9e999f007070a37768117073f1c6954f53df0aa534a07",
+        "serverVELA/vela-rekey-policy/verify-fstar-vault-mutation-driver.sh": "7cbff2b0136bee9460a197d29682405cd27953e83b49f0880ae17de04a9b0dd1",
+        "serverVELA/vela-rekey-policy/verify-fstar-vault-mutation-interpreter.sh": "84e158c9b36f13d6cb1a0021022192a282c3ae6abc734643e6e3c4b8b31f4693",
+        "serverVELA/vela-rekey-policy/proofs/fstar/vault-mutation-driver-lemmas/Vela_rekey_policy_vault_mutation_driver_lemmas.fst": "c0ced729d9964c8c26c77b08eb7eca089a3a10d21b2cb42b4e60fbeab974b0f7",
+        "serverVELA/vela-rekey-policy/proofs/fstar/vault-mutation-interpreter-lemmas/Vela_rekey_policy_vault_mutation_interpreter_lemmas.fst": "315d3c666ed978b476f4c404512258559d8fd1940013b8bd5dde2fc2961174a1",
+        "serverVELA/vela-server/src/vault/chunk.rs": "9f630b5f45954e6848e90cecae02457df67a9b1566d49cfe781127b9c252fe2f",
+        "serverVELA/vela-server/src/vault/oram.rs": "2f8d3235aa5da84911eabef132a4217c7af360225a554fc77db5ed898f74fe50",
+        "serverVELA/vela-server/src/vault/schema.rs": "a1345a87c93e3013a732e946ac591ca0aeea689a986b6f5c45ab76cf55f2e766",
+        "serverVELA/vela-server/src/device/capsule.rs": "8807042e15403c8884b43e43b3c81a3e3834df3b82278ae5dd789a3da48580dc"
+      }
     }
   ]
 }

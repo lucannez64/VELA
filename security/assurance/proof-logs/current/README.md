@@ -192,9 +192,18 @@ grant, token and delete decisions per request (found U-25), and the
 [web-session composition](websession-composition/README.md) proves them under
 any interleaving with deletes and approver revocation (found U-26).
 
-The [cancellation evidence](cancellation/README.md) proves every interpreter
-loop leaves a sound driver state when cancelled after any turn, and reviews
+The [rotation driver](rekey-driver/README.md) proves the start, capsules,
+commit and abort decisions per request, and the
+[rotation composition](rekey-composition/README.md) proves at most one commit
+per epoch, no commit after abort and starter-only authority under any
+interleaving. The [vault-mutation driver](vault-mutation-driver/README.md) for chunk
+delete, ORAM writes, the schema floor, capsule ack and rekey-capable is in use
+but its F* proof is not verified yet.
+
+The [cancellation evidence](cancellation/README.md) proves the first nine
+interpreter families' loops leave a sound driver state when cancelled after any turn, and reviews
 what each handler has already written at that point (found U-23; U-20 closed).
+The enroll, send, recovery share, registration, challenge issue, web session, vault rotation and the five vault-mutation loops loops are not yet covered.
 
 The [cross-driver composition](cross-driver/README.md) runs the login,
 revocation, deletion, pairing and recovery drivers together over one shared

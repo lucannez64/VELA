@@ -26,35 +26,39 @@ Statuses, messages, SQL text, store keys and effect order are unchanged.
   (`Vela_rekey_policy.Rekey_driver.fst`); the extracted policy root module is
   kept in the regenerated `extraction-rekey-driver-root/`.
 - Per-request lemmas: `proofs/fstar/rekey-driver-lemmas/`.
-- Concurrent composition: `proofs/fstar/rekey-driver-composition/`.
+- Concurrent composition: `proofs/fstar/rekey-driver-composition/`
+  ([evidence](../rekey-composition/README.md)).
 - Gate: `verify-fstar-rekey-driver.sh`, chained from `verify-fstar.sh`.
 
-The intended headline theorem is `rekey_commit_trace_theorem`: a commit implies
-the chunk-shadow and device-capsule completeness observations, the starting
-device's live rotation id, and an epoch advance by exactly one; a
-`CommitCas` effect occurs at most once; abort and timeout rollback restore the
-active phase at the same epoch; a web session never starts or commits. The
-composition counters are `w_two_rotations`, `w_second_commit` and
-`w_commit_after_abort`.
+## Exact theorems
 
-## Current status (honest)
+For every request and every finite event sequence the driver may observe:
 
-The Rust driver and interpreter are complete and their Rust conformance tests
-pass. The focused F* gate is **not green yet**: F* still rejects the
-`rekey_step` helper contracts (`on_replay_state` / dispatch branch). The
-committed artifacts are the current attempt; `gate.log` holds the last run.
-Because of that, the crate-level `verify-fstar.sh` also stops at this gate.
+- `rekey_start_trace_theorem`, `rekey_capsules_trace_theorem`,
+  `rekey_abort_trace_theorem`: the final state is sound, nothing is committed,
+  a request never both responds and fails, and at most one success and at most
+  one failure is emitted. A capsules response implies every capsule write
+  matched; a winning abort restores the ACTIVE phase at an epoch no lower than
+  the initial one.
+- `rekey_commit_trace_theorem`: a commit implies the account was ACTIVE at the
+  start, the request is device-scoped, its device is the starter, the rotation
+  id is present and matches, both completeness probes (chunk shadows, device
+  capsules) returned empty, and the published epoch is exactly
+  `next_epoch(from_epoch)`. A failed commit is never committed.
+- `web_start_is_refused`, `web_commit_is_refused`, `web_abort_is_refused`: a
+  web session gets `WebSessionForbidden` before any effect, and no later event
+  changes that.
 
-## Tests that do pass
+The lemmas are checked under `--z3rlimit 16000` set in the gate script (the
+global budget; the proof files carry only the one `--fuel 4 --ifuel 2` pragma
+the source-policy guard allows).
 
-- `cargo test -p vela-rekey-policy` (76 tests, including the driver/interpreter
-  tests).
-- `cargo test -p vela-server --test rekey_state_model`.
-- `cargo test -p vela-server --test integration` (68 tests).
-- `python3 -m unittest discover -s security/formal/tests -p 'test_*.py'`
-  (after staging the new gate scripts executable; the handler-interpreter
-  wiring test includes all new handlers).
-- `python3 security/assurance/check-proof-boundary.py` (249 postconditions).
+## Tests
+
+- `cargo test -p vela-rekey-policy` (76 tests, including scripted
+  driver/interpreter conformance tests).
+- `cargo test -p vela-server`, all suites including `rekey_state_model`
+  (`integration.log`, run on 8c46db3).
 
 ## Reproduction
 
@@ -63,5 +67,4 @@ cd serverVELA/vela-rekey-policy
 ~/.local/opt/vela-tools/bin/vela-heavy ./verify-fstar-rekey-driver.sh
 ```
 
-No mutation run was completed for this increment; nothing is claimed about
-load-bearing mutations.
+`gate.log` is the full `verify-fstar.sh` run on 8c46db3: every rotation module verifies; it ends at the vault-mutation driver failure described in [its README](../vault-mutation-driver/README.md), since unchained.

@@ -1,7 +1,9 @@
 # Cancellation of the security-handler interpreter loops (F-2)
 
 Every security handler reaches its decision driver only through one of the
-proved interpreter loops below. The loop is synchronous in the policy crate
+proved interpreter loops below.
+This evidence covers the loops that existed when it was written; the later
+enroll, send, recovery share, registration, challenge issue, web session, vault rotation and the five vault-mutation loops loops are not yet covered. The loop is synchronous in the policy crate
 (`run_*`) and hax/F* proves it performs exactly the driver's effects. The
 server expands the same macro with `.await` after each executor call.
 

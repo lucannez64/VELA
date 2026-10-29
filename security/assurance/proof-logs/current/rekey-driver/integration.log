@@ -1,5 +1,457 @@
-   Compiling vela-rekey-policy v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-5dd9794e/serverVELA/vela-rekey-policy)
-   Compiling vela-server v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-5dd9794e/serverVELA/vela-server)
+    Blocking waiting for file lock on package cache
+   Compiling proc-macro2 v1.0.106
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.45
+   Compiling cfg-if v1.0.4
+   Compiling libc v0.2.186
+   Compiling syn v2.0.117
+   Compiling find-msvc-tools v0.1.11
+   Compiling shlex v2.0.1
+   Compiling jobserver v0.1.34
+   Compiling version_check v0.9.5
+   Compiling cc v1.4.3
+   Compiling getrandom v0.2.17
+   Compiling typenum v1.20.1
+   Compiling smallvec v1.15.1
+   Compiling memchr v2.8.1
+   Compiling subtle v2.6.1
+   Compiling generic-array v0.14.7
+   Compiling pin-project-lite v0.2.17
+   Compiling once_cell v1.21.4
+   Compiling log v0.4.32
+   Compiling synstructure v0.13.2
+   Compiling rand_core v0.6.4
+   Compiling itoa v1.0.18
+   Compiling crypto-common v0.1.7
+   Compiling pkg-config v0.3.33
+   Compiling syn v3.0.3
+   Compiling autocfg v1.5.1
+   Compiling bitflags v2.13.0
+   Compiling tracing-core v0.1.36
+   Compiling scopeguard v1.2.0
+   Compiling lock_api v0.4.14
+   Compiling rand_core v0.10.1
+   Compiling parking_lot_core v0.9.12
+   Compiling serde_core v1.0.228
+   Compiling getrandom v0.4.2
+   Compiling bytes v1.11.1
+   Compiling stable_deref_trait v1.2.1
+   Compiling parking_lot v0.12.5
+   Compiling num-traits v0.2.19
+   Compiling writeable v0.6.4
+   Compiling cpufeatures v0.2.17
+   Compiling futures-core v0.3.32
+   Compiling serde v1.0.228
+   Compiling litemap v0.8.2
+   Compiling slab v0.4.12
+   Compiling futures-sink v0.3.32
+   Compiling cfg_aliases v0.2.1
+   Compiling utf8_iter v1.0.4
+   Compiling crossbeam-utils v0.8.21
+   Compiling semver v1.0.28
+   Compiling zerocopy v0.8.52
+   Compiling rustc_version v0.4.1
+   Compiling zerovec-derive v0.11.5
+   Compiling http v1.4.2
+   Compiling zeroize_derive v1.4.3
+   Compiling displaydoc v0.2.6
+   Compiling tracing-attributes v0.1.31
+   Compiling zeroize v1.8.2
+   Compiling zerofrom-derive v0.1.7
+   Compiling yoke-derive v0.8.2
+   Compiling tracing v0.1.44
+   Compiling serde_derive v1.0.228
+   Compiling zerocopy-derive v0.8.52
+   Compiling zerofrom v0.1.8
+   Compiling yoke v0.8.3
+   Compiling zerovec v0.11.8
+   Compiling tinystr v0.8.4
+   Compiling icu_locale_core v2.3.0
+   Compiling potential_utf v0.1.5
+   Compiling zerotrie v0.2.5
+   Compiling icu_collections v2.3.0
+   Compiling icu_provider v2.3.0
+   Compiling icu_normalizer_data v2.3.0
+   Compiling icu_properties_data v2.3.0
+   Compiling getrandom v0.3.4
+   Compiling futures-channel v0.3.32
+   Compiling errno v0.3.14
+   Compiling socket2 v0.6.4
+   Compiling rustix v1.1.4
+   Compiling futures-io v0.3.32
+   Compiling minimal-lexical v0.2.1
+   Compiling signal-hook-registry v1.4.8
+   Compiling futures-macro v0.3.32
+   Compiling tokio-macros v2.7.0
+   Compiling block-buffer v0.10.4
+   Compiling cmake v0.1.58
+   Compiling mio v1.2.1
+   Compiling futures-task v0.3.32
+   Compiling lazy_static v1.5.0
+   Compiling utf16_iter v1.0.5
+   Compiling linux-raw-sys v0.12.1
+   Compiling write16 v1.0.0
+   Compiling dunce v1.0.5
+   Compiling fs_extra v1.3.0
+   Compiling futures-util v0.3.32
+   Compiling aws-lc-sys v0.45.0
+   Compiling icu_normalizer v2.3.0
+   Compiling tokio v1.53.3
+   Compiling digest v0.10.7
+   Compiling icu_properties v2.3.0
+   Compiling rustversion v1.0.22
+   Compiling crossbeam-epoch v0.9.20
+   Compiling thiserror v2.0.18
+   Compiling time-core v0.1.8
+   Compiling libm v0.2.16
+   Compiling powerfmt v0.2.0
+   Compiling zmij v1.0.21
+   Compiling num-conv v0.2.2
+   Compiling time-macros v0.2.27
+   Compiling deranged v0.5.8
+   Compiling ppv-lite86 v0.2.21
+   Compiling rand_core v0.9.5
+   Compiling thiserror-impl v2.0.18
+   Compiling ring v0.17.14
+   Compiling inout v0.1.4
+   Compiling aho-corasick v1.1.4
+   Compiling percent-encoding v2.3.2
+   Compiling serde_json v1.0.150
+   Compiling regex-syntax v0.8.11
+   Compiling aws-lc-rs v1.18.1
+   Compiling either v1.16.0
+   Compiling cipher v0.4.4
+   Compiling regex-automata v0.4.14
+   Compiling rand_chacha v0.9.0
+   Compiling time v0.3.47
+   Compiling rustls-pki-types v1.14.1
+   Compiling num-integer v0.1.46
+   Compiling universal-hash v0.5.1
+   Compiling cmov v0.5.4
+   Compiling opaque-debug v0.3.1
+   Compiling heck v0.5.0
+   Compiling ctutils v0.4.4
+   Compiling num-bigint v0.4.6
+   Compiling rand v0.9.4
+   Compiling equivalent v1.0.2
+   Compiling untrusted v0.9.0
+   Compiling glob v0.3.4
+   Compiling siphasher v1.0.3
+   Compiling vcpkg v0.2.15
+   Compiling icu_locale_fallback_data v2.3.0
+   Compiling clang-sys v1.9.1
+   Compiling openssl-sys v0.9.116
+   Compiling hybrid-array v0.4.12
+   Compiling http-body v1.0.1
+   Compiling bytemuck_derive v1.12.0
+   Compiling libloading v0.8.9
+   Compiling prettyplease v0.2.37
+   Compiling rustix v0.38.44
+   Compiling thiserror v1.0.69
+   Compiling rustls v0.23.46
+   Compiling byteorder v1.5.0
+   Compiling home v0.5.12
+   Compiling tower-service v0.3.3
+   Compiling sha1_smol v1.0.1
+   Compiling uuid v1.23.3
+   Compiling matchers v0.2.0
+   Compiling form_urlencoded v1.2.2
+   Compiling tokio-util v0.7.18
+   Compiling sharded-slab v0.1.7
+   Compiling bytemuck v1.25.0
+   Compiling thiserror-impl v1.0.69
+   Compiling tracing-log v0.2.0
+   Compiling memoffset v0.9.1
+   Compiling aead v0.5.2
+   Compiling thread_local v1.1.9
+   Compiling icu_locale_data v2.3.0
+   Compiling linux-raw-sys v0.4.15
+   Compiling httparse v1.10.1
+   Compiling iana-time-zone v0.1.65
+   Compiling ryu v1.0.23
+   Compiling anyhow v1.0.104
+   Compiling hashbrown v0.17.1
+   Compiling icu_collator_data v2.3.0
+   Compiling nu-ansi-term v0.50.3
+   Compiling rustc-hash v2.1.2
+   Compiling fastrand v2.4.1
+   Compiling tracing-subscriber v0.3.23
+   Compiling indexmap v2.14.0
+   Compiling nom v7.1.3
+   Compiling chrono v0.4.45
+   Compiling icu_locale_fallback v2.3.0
+   Compiling twox-hash v2.1.2
+   Compiling strum_macros v0.26.4
+   Compiling polyval v0.6.2
+   Compiling regex v1.12.4
+   Compiling idna_adapter v1.2.2
+   Compiling turso_macros v0.7.2
+   Compiling miette-derive v7.6.0
+   Compiling branches v0.4.6
+   Compiling crc32c v0.6.8
+   Compiling bigdecimal v0.4.10
+   Compiling simsimd v6.5.16
+   Compiling aegis v0.9.15
+   Compiling uncased v0.9.10
+   Compiling foldhash v0.2.0
+   Compiling tower-layer v0.3.3
+   Compiling io-uring v0.7.14
+   Compiling rustc-hash v1.1.0
+   Compiling cpufeatures v0.3.0
+   Compiling unicode-width v0.1.14
+   Compiling bindgen v0.69.5
+   Compiling turso_ext v0.7.2
+   Compiling base64 v0.22.1
+   Compiling hex v0.4.3
+   Compiling miette v7.6.0
+   Compiling strum v0.26.3
+   Compiling rusticata-macros v4.1.0
+   Compiling idna v1.1.0
+   Compiling ghash v0.5.1
+   Compiling which v4.4.2
+   Compiling cexpr v0.6.0
+   Compiling roaring v0.11.4
+   Compiling crypto-common v0.2.2
+   Compiling ctr v0.9.2
+   Compiling rustls-webpki v0.103.16
+   Compiling aes v0.8.4
+   Compiling itertools v0.12.1
+   Compiling crossbeam-channel v0.5.15
+   Compiling asn1-rs-impl v0.2.0
+   Compiling aristo-macros v0.4.1
+   Compiling asn1-rs-derive v0.5.1
+   Compiling turso_core v0.7.2
+   Compiling lazycell v1.3.0
+   Compiling atomic-waker v1.1.2
+   Compiling shlex v1.3.0
+   Compiling fnv v1.0.7
+   Compiling softaes v0.1.5
+   Compiling portable-atomic v1.14.0
+   Compiling utf8parse v0.2.2
+   Compiling httpdate v1.0.3
+   Compiling try-lock v0.2.5
+   Compiling want v0.3.1
+   Compiling asn1-rs v0.6.2
+   Compiling h2 v0.4.16
+   Compiling aristo v0.4.1
+   Compiling aes-gcm v0.10.3
+   Compiling icu_collator v2.3.0
+   Compiling icu_locale v2.3.0
+   Compiling intrusive-collections v0.9.7
+   Compiling url v2.5.8
+   Compiling turso_parser v0.7.2
+   Compiling tempfile v3.27.0
+   Compiling pack1 v1.1.0
+   Compiling block-buffer v0.12.1
+   Compiling fastbloom v0.14.1
+   Compiling itertools v0.14.0
+   Compiling rapidhash v4.5.1
+   Compiling arc-swap v1.9.2
+   Compiling polling v3.11.0
+   Compiling curve25519-dalek v4.1.3
+   Compiling sync_wrapper v1.0.2
+   Compiling zstd-sys v2.1.2+zstd.1.5.7
+   Compiling allocator-api2 v0.4.0
+   Compiling cfg_block v0.1.1
+   Compiling pastey v0.2.3
+   Compiling openssl-probe v0.2.1
+   Compiling openssl v0.10.80
+   Compiling oid-registry v0.7.1
+   Compiling foreign-types-shared v0.1.1
+   Compiling bumpalo v3.20.3
+   Compiling base64 v0.21.7
+   Compiling mime v0.3.17
+   Compiling pastey v0.1.1
+   Compiling fallible-iterator v0.3.0
+   Compiling foreign-types v0.3.2
+   Compiling base64urlsafedata v0.5.5
+   Compiling rustls-native-certs v0.8.4
+   Compiling prost-derive v0.14.4
+   Compiling turso_sdk_kit v0.7.2
+   Compiling digest v0.11.3
+   Compiling hyper v1.10.1
+   Compiling anstyle-parse v1.0.0
+   Compiling chacha20 v0.10.1
+   Compiling http-body-util v0.1.3
+   Compiling crossbeam-deque v0.8.6
+   Compiling sha2 v0.10.9
+   Compiling curve25519-dalek-derive v0.1.1
+   Compiling openssl-macros v0.1.1
+   Compiling nix v0.30.1
+   Compiling quinn-udp v0.5.14
+   Compiling libmimalloc-sys v0.1.49
+   Compiling env_filter v2.0.0
+   Compiling crc32fast v1.5.0
+   Compiling ipnet v2.12.1
+   Compiling parking_lot_core v0.8.6
+   Compiling symlink v0.1.0
+   Compiling genawaiter-macro v0.99.1
+   Compiling unicase v2.9.0
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling anstyle v1.0.14
+   Compiling tinyvec_macros v0.1.1
+   Compiling anstyle-query v1.1.5
+   Compiling colorchoice v1.0.5
+   Compiling rayon-core v1.13.0
+   Compiling webauthn-attestation-ca v0.5.5
+   Compiling litrs v1.0.0
+   Compiling document-features v0.2.12
+   Compiling anstream v1.0.0
+   Compiling tinyvec v1.11.0
+   Compiling mime_guess v2.0.5
+   Compiling genawaiter v0.99.1
+   Compiling tracing-appender v0.2.5
+   Compiling hyper-util v0.1.20
+   Compiling env_logger v0.11.11
+   Compiling rand v0.10.2
+   Compiling fastbloom v0.17.0
+   Compiling prost v0.14.4
+   Compiling rustls-platform-verifier v0.7.0
+   Compiling tower v0.5.3
+   Compiling der-parser v9.0.0
+   Compiling half v2.7.1
+   Compiling turso_sdk_kit_macros v0.7.2
+   Compiling quinn v0.11.9
+   Compiling rand_pcg v0.10.2
+   Compiling blake3 v1.8.5
+   Compiling nibble_vec v0.1.0
+   Compiling multer v3.1.0
+   Compiling ahash v0.8.12
+   Compiling instant v0.1.13
+   Compiling keccak v0.2.0
+   Compiling zstd-safe v8.2.0
+   Compiling unicode-width v0.2.2
+   Compiling option-ext v0.2.0
+   Compiling keccak v0.1.6
+   Compiling webauthn-rs-core v0.5.5
+   Compiling allocator-api2 v0.2.21
+   Compiling endian-type v0.1.2
+   Compiling base64ct v1.8.3
+   Compiling signature v2.2.0
+   Compiling lru-slab v0.1.2
+   Compiling clap_lex v1.1.0
+   Compiling strsim v0.11.1
+   Compiling data-encoding v2.11.0
+   Compiling unicode-segmentation v1.13.3
+   Compiling x509-parser v0.16.0
+   Compiling clap_builder v4.6.0
+   Compiling quinn-proto v0.11.18
+   Compiling ed25519 v2.2.3
+   Compiling hashbrown v0.16.1
+   Compiling password-hash v0.5.0
+   Compiling radix_trie v0.2.1
+   Compiling sha3 v0.10.9
+   Compiling dirs-sys v0.5.0
+   Compiling sha3 v0.11.0
+   Compiling serde_cbor_2 v0.13.0
+   Compiling turso_sync_engine v0.7.2
+   Compiling crossterm v0.29.0
+   Compiling webauthn-rs-proto v0.5.5
+   Compiling tokio-rustls v0.26.4
+   Compiling kem v0.3.0
+   Compiling serde_urlencoded v0.7.1
+   Compiling module-lattice v0.2.3
+   Compiling clap_derive v4.6.1
+   Compiling poly1305 v0.8.0
+   Compiling chacha20 v0.9.1
+   Compiling fd-lock v4.0.4
+   Compiling hmac v0.12.1
+   Compiling blake2 v0.10.6
+   Compiling futures-executor v0.3.32
+   Compiling crossbeam-queue v0.3.12
+   Compiling async-trait v0.1.89
+   Compiling pin-project-internal v1.1.13
+   Compiling encoding_rs v0.8.35
+   Compiling hashbrown v0.14.5
+   Compiling stoolap v0.4.0
+   Compiling fiat-crypto v0.3.0
+   Compiling constant_time_eq v0.4.2
+   Compiling spin v0.9.8
+   Compiling arrayref v0.3.9
+   Compiling arrayvec v0.7.6
+   Compiling dashmap v6.2.1
+   Compiling pin-project v1.1.13
+   Compiling axum-core v0.4.5
+   Compiling clap v4.6.1
+   Compiling crossbeam v0.8.4
+   Compiling futures v0.3.32
+   Compiling argon2 v0.5.3
+   Compiling orion v0.17.15
+   Compiling hkdf v0.12.4
+   Compiling rustyline v17.0.2
+   Compiling chacha20poly1305 v0.10.1
+   Compiling ml-kem v0.3.2
+   Compiling comfy-table v7.2.2
+   Compiling rayon v1.12.0
+   Compiling mimalloc v0.1.52
+   Compiling parking_lot v0.11.2
+   Compiling dirs v6.0.0
+   Compiling fips204 v0.4.6
+   Compiling lru v0.16.4
+   Compiling ed25519-dalek v2.2.0
+   Compiling x25519-dalek v2.0.1
+   Compiling lz4_flex v0.13.1
+   Compiling h3 v0.0.8
+   Compiling fxhash v0.2.1
+   Compiling xattr v1.6.1
+   Compiling sha1 v0.10.6
+   Compiling md-5 v0.10.6
+   Compiling axum-macros v0.4.2
+   Compiling ordered-float v5.3.0
+   Compiling ed25519-compact v2.3.0
+   Compiling serde_path_to_error v0.1.20
+   Compiling rtoolbox v0.0.5
+   Compiling filetime v0.2.29
+   Compiling fs2 v0.4.3
+   Compiling http-range-header v0.4.2
+   Compiling ct-codecs v1.1.7
+   Compiling matchit v0.7.3
+   Compiling radsort v0.1.1
+   Compiling vela-client-recovery-policy v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-700776df/libVELA/vela-client-recovery-policy)
+   Compiling vela-client-share-policy v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-700776df/libVELA/vela-client-share-policy)
+   Compiling vela-crypto v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-700776df/libVELA/vela-crypto)
+   Compiling axum v0.7.9
+   Compiling pasetors v0.6.8
+   Compiling tower-http v0.5.2
+   Compiling sled v0.34.7
+   Compiling tar v0.4.46
+   Compiling rpassword v7.5.4
+   Compiling h3-quinn v0.0.10
+   Compiling zstd v0.14.3
+   Compiling webauthn-rs v0.5.5
+   Compiling tower v0.4.13
+   Compiling webpki-roots v1.0.10
+   Compiling vela-recovery-policy v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-700776df/serverVELA/vela-recovery-policy)
+   Compiling vela-session-policy v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-700776df/serverVELA/vela-session-policy)
+warning: function `same_issue_purpose` is never used
+   --> vela-session-policy/src/challenge_issue_driver.rs:158:4
+    |
+158 | fn same_issue_purpose(a: ChallengePurpose, b: ChallengePurpose) -> bool {
+    |    ^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `vela-session-policy` (lib) generated 1 warning
+   Compiling vela-share-policy v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-700776df/serverVELA/vela-share-policy)
+   Compiling dotenvy v0.15.7
+   Compiling vela-enrollment-policy v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-700776df/serverVELA/vela-enrollment-policy)
+   Compiling hyper-rustls v0.27.9
+   Compiling tower-http v0.6.11
+   Compiling reqwest v0.12.28
+   Compiling turso_sync_sdk_kit v0.7.2
+   Compiling turso v0.7.2
+   Compiling vela-server v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-700776df/serverVELA/vela-server)
+warning: method `tag` is never used
+  --> vela-server/src/auth/challenge.rs:60:8
+   |
+58 | impl ChallengePurpose {
+   | --------------------- method in this implementation
+59 |     /// The value stored under the nonce key.
+60 |     fn tag(self) -> &'static [u8] {
+   |        ^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
 warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
   --> vela-server/src/sqldb.rs:76:5
    |
@@ -40,20 +492,172 @@ help: you can alternatively desugar to a normal `fn` that returns `impl Future` 
 80 +     fn execute_batch(&self, sql: &str) -> impl std::future::Future<Output = anyhow::Result<()>> + Send;
    |
 
-warning: `vela-server` (lib) generated 3 warnings
+warning: `vela-server` (lib test) generated 3 warnings (3 duplicates)
+warning: `vela-server` (lib) generated 4 warnings
+warning: function `test_app` is never used
+  --> vela-server/tests/helpers/mod.rs:42:14
+   |
+42 | pub async fn test_app() -> Router {
+   |              ^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `vela-server` (test "rekey_state_model") generated 1 warning (1 duplicate)
+warning: `vela-server` (test "share_channel_model") generated 1 warning
+warning: `vela-server` (test "recovery_possession_model") generated 1 warning (1 duplicate)
 warning: unused import: `vela_server::auth::token::TokenScope`
-    --> vela-server/tests/integration.rs:2628:9
+    --> vela-server/tests/integration.rs:2673:9
      |
-2628 |     use vela_server::auth::token::TokenScope;
+2673 |     use vela_server::auth::token::TokenScope;
      |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
      |
      = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
 
-warning: `vela-server` (test "integration") generated 1 warning (run `cargo fix --test "integration" -p vela-server` to apply 1 suggestion)
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.71s
-     Running tests/integration.rs (target-own/debug/build/vela-server/86ddea0f3c15b454/out/integration-86ddea0f3c15b454)
+warning: `vela-server` (test "login_driver_handler") generated 1 warning (1 duplicate)
+warning: `vela-server` (test "pairing_model") generated 1 warning (1 duplicate)
+warning: variable does not need to be mutable
+    --> vela-server/tests/integration.rs:3978:9
+     |
+3978 |     let mut redeem = |ip: [u8; 4]| {
+     |         ----^^^^^^
+     |         |
+     |         help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
 
-running 68 tests
+warning: `vela-server` (test "device_revocation_model") generated 1 warning (1 duplicate)
+warning: unused import: `std::io::Write`
+  --> vela-server/examples/export_db.rs:15:5
+   |
+15 | use std::io::Write;
+   |     ^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `stoolap::Database`
+  --> vela-server/examples/export_db.rs:18:5
+   |
+18 | use stoolap::Database;
+   |     ^^^^^^^^^^^^^^^^^
+
+warning: `vela-server` (example "export_db") generated 2 warnings (run `cargo fix --example "export_db" -p vela-server` to apply 2 suggestions)
+warning: `vela-server` (test "integration") generated 2 warnings (run `cargo fix --test "integration" -p vela-server` to apply 2 suggestions)
+warning: `vela-server` (test "challenge_single_use_model") generated 1 warning (1 duplicate)
+warning: `vela-server` (test "account_deletion_model") generated 1 warning (1 duplicate)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5m 22s
+     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-server/cdccc4aaf14fc11e/out/vela_server-cdccc4aaf14fc11e)
+
+running 60 tests
+test account::tests::absent_share_key_is_valid ... ok
+test account::tests::short_identity_key_keeps_its_exact_length_message ... ok
+test account::tests::unsigned_share_key_is_refused_with_its_historical_message ... ok
+test auth::challenge::tests::every_purpose_maps_to_its_policy_tag ... ok
+test auth::challenge::tests::the_default_purpose_is_login_and_unknown_purposes_are_refused ... ok
+test config::tests::an_existing_key_is_never_silently_rotated ... ok
+test config::tests::an_over_broad_trusted_proxy_range_is_refused ... ok
+test config::tests::concurrent_key_creation_is_atomic_and_convergent ... ok
+test config::tests::malformed_proxy_ranges_are_still_refused ... ok
+test config::tests::ordinary_proxy_ranges_are_still_accepted ... ok
+test db::tests::bootstrap_stoolap_into_turso_copies_once_and_is_idempotent ... ok
+test db::tests::upgrades_a_pre_rekey_stoolap_schema_before_creating_epoch_indexes ... ok
+test db::tests::webauthn_cred_id_unique_index_rejects_cross_account_duplicates ... ok
+test device::list::tests::list_devices_query_returns_devices_for_user ... ok
+test device::rendezvous::tests::a_claim_carries_no_private_key_material ... ok
+test device::rendezvous::tests::a_grant_records_both_the_user_and_the_device ... ok
+test device::rendezvous::tests::a_result_keeps_the_key_its_signature_is_checked_against ... ok
+test device::rendezvous::tests::grants_claims_and_results_do_not_share_keys ... ok
+test ids::tests::accepts_the_ids_our_own_clients_generate ... ok
+test ids::tests::rejects_an_unbounded_id ... ok
+test ids::tests::rejects_empty ... ok
+test ids::tests::rejects_non_ascii_lookalikes ... ok
+test ids::tests::rejects_separators_that_could_reshape_a_key ... ok
+test ids::tests::rejects_traversal_shapes ... ok
+test ids::tests::the_error_names_the_field ... ok
+test migration::tests::export_can_include_deployment_config_explicitly ... ok
+test migration::tests::export_import_roundtrip_restores_data_and_identity ... ok
+test migration::tests::export_import_roundtrip_with_directory_db ... ok
+test migration::tests::wrong_passphrase_fails_verification ... ok
+test net::tests::cf_connecting_ip_wins_from_trusted_proxy ... ok
+test net::tests::cidr_matching ... ok
+test net::tests::direct_peer_when_proxy_untrusted ... ok
+test net::tests::garbage_forwarded_value_falls_back_to_peer ... ok
+test net::tests::x_forwarded_for_first_hop_when_no_cf_header ... ok
+test rate_limit::tests::backoff_from_one_ip_does_not_lock_out_device_from_another_ip ... ok
+test rate_limit::tests::single_failure_increments_fail_counter_once ... ok
+test recovery::initiate::tests::stale_freshness_observations_cannot_replace_the_winning_challenge ... ok
+test recovery::possess::tests::stale_possession_attempt_cannot_replace_the_winning_challenge ... ok
+test routes::cf_visitor_tests::accepts_what_cloudflare_actually_sends ... ok
+test routes::cf_visitor_tests::rejects_anything_that_is_not_an_object_with_that_field ... ok
+test routes::cf_visitor_tests::rejects_plain_http ... ok
+test routes::cf_visitor_tests::the_string_appearing_elsewhere_is_not_the_scheme ... ok
+test sqldb::tests::opens_and_upgrades_a_pre_rekey_database ... ok
+test sqldb::tests::schema_and_crud ... ok
+test sqldb::tests::transaction_commit_and_rollback ... ok
+test store::tests::a_claim_cannot_be_created_without_a_live_grant ... ok
+test store::tests::a_fixed_window_keeps_the_expiry_it_opened_with ... ok
+test store::tests::a_streak_counter_still_refreshes_its_ttl ... ok
+test store::tests::an_expired_claim_does_not_block_a_new_one ... ok
+test store::tests::exactly_one_racing_completion_takes_the_whole_pair ... ok
+test store::tests::get_del_redeems_a_one_shot_artifact_exactly_once_under_concurrency ... ok
+test store::tests::set_ex_nx_lets_exactly_one_writer_win ... ok
+test store::tests::set_ex_nx_wins_under_concurrency_exactly_once ... ok
+test store::tests::taking_a_pair_is_all_or_nothing ... ok
+test vault::events::tests::event_bus_numbers_revisions_monotonically ... ok
+test vault::events::tests::stream_slots_are_capped_per_account_and_released ... ok
+test vault::events::tests::subscribers_only_see_their_own_accounts_events ... ok
+test vault::events::tests::wire_payload_never_carries_the_owner_id ... ok
+test web_session::tests::expiry_check ... ok
+test web_session::tests::ttl_clamps_to_bounds ... ok
+
+test result: ok. 60 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.90s
+
+     Running unittests src/main.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-server/b422f786f65c321c/out/vela_server-b422f786f65c321c)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/account_deletion_model.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-server/aa185c13b02ce56e/out/account_deletion_model-aa185c13b02ce56e)
+
+running 1 test
+test every_bounded_account_deletion_trace_matches_the_model ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 235.19s
+
+     Running tests/challenge_single_use_model.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-server/b0ff2565f471179c/out/challenge_single_use_model-b0ff2565f471179c)
+
+running 3 tests
+test every_bounded_challenge_trace_matches_the_single_use_model ... ok
+test failed_or_unknown_or_expired_or_replayed_challenges_never_succeed ... ok
+test one_challenge_yields_exactly_one_success_under_concurrency ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.50s
+
+     Running tests/device_revocation_model.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-server/8d2bb00794ce7e47/out/device_revocation_model-8d2bb00794ce7e47)
+
+running 7 tests
+test automatic_renewal_stays_bound_to_the_device ... ok
+test device_token_admission_requires_a_matching_live_device_row ... ok
+test durable_revocation_refuses_a_late_login_token_after_sentinel_expiry ... ok
+test every_bounded_revocation_trace_matches_the_model ... ok
+test logout_schema_and_revoke_do_not_mint_undelivered_replacements ... ok
+test revoke_and_logout_invalidate_exactly_the_expected_authority ... ok
+test the_device_sentinel_stops_a_token_that_escaped_jti_enumeration ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 60.67s
+
+     Running tests/enrollment_ceremony_model.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-server/96dc81a89b788d98/out/enrollment_ceremony_model-96dc81a89b788d98)
+
+running 3 tests
+test every_bounded_completion_matches_m13 ... ok
+test every_bounded_open_claim_and_inspection_matches_m13 ... ok
+test every_bounded_result_decision_matches_m13 ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/integration.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-server/ded1326b904821d4/out/integration-ded1326b904821d4)
+
+running 71 tests
 test a_previously_admitted_web_grant_is_refused_by_the_live_sql_guard ... ok
 test account_delete_without_token_returns_401 ... ok
 test auth_signature_succeeds_once_and_replay_fails ... ok
@@ -72,6 +676,7 @@ test enroll_device_without_grant_returns_401 ... ok
 test enrollment_preflight_handles_missing_and_malformed_state_in_order ... ok
 test extracted_web_session_cannot_mutate_after_a_concurrent_epoch_commit ... ok
 test failed_account_deletion_rolls_back_every_table ... ok
+test failed_registration_rolls_back_the_account ... ok
 test health_returns_ok ... ok
 test hsts_header_absent_on_cleartext_requests ... ok
 test hsts_header_present_on_https_requests ... ok
@@ -115,14 +720,91 @@ test web_session_grant_rejects_a_capsule_from_an_old_key_epoch ... ok
 test web_session_grant_rejects_wrong_link_nonce ... ok
 test web_session_grant_requires_auth ... ok
 test web_session_is_bound_to_the_committed_approver ... ok
+test web_session_issues_at_most_one_token_per_grant ... ok
 test web_session_poll_requires_the_browsers_secret ... ok
 test web_session_start_and_poll_pending ... ok
 test web_session_start_rejects_bad_key_length ... ok
 test web_session_start_requires_an_approver_account ... ok
 test web_session_token_budget_cannot_be_burned_by_an_onlooker ... ok
+test web_session_token_is_not_issued_after_its_lockout ... ok
 test web_session_token_is_refused_on_permanent_power_routes ... ok
 test web_session_token_still_reaches_the_vault ... ok
 
-test result: ok. 68 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.42s
+test result: ok. 71 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.77s
+
+     Running tests/login_driver_handler.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-server/ee724be81ca59bf9/out/login_driver_handler-ee724be81ca59bf9)
+
+running 5 tests
+test failed_verifier_returns_no_token_and_records_the_failure_streak ... ok
+test malformed_consumed_nonce_is_bad_request_before_failure_counting ... ok
+test successful_login_tracks_the_jti_and_replay_is_refused ... ok
+test two_logins_with_one_nonce_yield_at_most_one_token ... ok
+test wrong_purpose_login_nonce_is_refused_and_spent ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/pairing_model.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-server/e8bec9fbe89204c3/out/pairing_model-e8bec9fbe89204c3)
+
+running 5 tests
+test a_grant_without_a_result_or_device_row_is_not_found ... ok
+test a_lost_result_record_is_not_returned_for_a_wrong_signature ... ok
+test a_lost_result_record_is_recovered_from_the_enrolled_device_row ... ok
+test a_pairing_ceremony_completes_once_and_replays_are_refused ... ok
+test every_bounded_pairing_trace_matches_the_m13_ceremony ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 23.82s
+
+     Running tests/recovery_lifecycle_model.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-server/e86a5e42c64badb1/out/recovery_lifecycle_model-e86a5e42c64badb1)
+
+running 6 tests
+test every_bounded_initiation_and_registration_matches_m14 ... ok
+test every_bounded_recovered_device_enrollment_matches_m14 ... ok
+test every_bounded_share_release_and_credential_update_matches_m14 ... ok
+test share_lifecycle::delete_removes_share_and_pending_together ... ok
+test share_lifecycle::every_bounded_lifecycle_trace_matches_the_share_state_model ... ok
+test share_lifecycle::freezing_blocks_every_lifecycle_operation ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/recovery_possession_model.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-server/2f41f14d098f03db/out/recovery_possession_model-2f41f14d098f03db)
+
+running 1 test
+test every_bounded_possession_recovery_trace_matches_the_m18_chain ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 66.65s
+
+     Running tests/rekey_state_model.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-server/b9cd105aa09a0c2a/out/rekey_state_model-b9cd105aa09a0c2a)
+
+running 5 tests
+test concurrent_start_and_active_write_have_a_lossless_linearization ... ok
+test every_bounded_reachable_state_preserves_epoch_invariants ... ok
+test every_completeness_order_matches_the_real_atomic_commit_guard ... ok
+test expired_rotation_beats_commit_and_cleans_every_attempt_artifact ... ok
+test verified_mutation_permit_matches_the_m11c_authority_relation ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+
+     Running tests/session_capability_model.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-server/69af9b8d1687809d/out/session_capability_model-69af9b8d1687809d)
+
+running 3 tests
+test every_bounded_grant_and_exchange_matches_the_m12_relation ... ok
+test every_bounded_renewal_preserves_capability_or_fails_closed ... ok
+test route_matrix_never_gives_web_sessions_permanent_authority ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/share_channel_model.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-server/950a4bb283ae8407/out/share_channel_model-950a4bb283ae8407)
+
+running 2 tests
+test a_revoked_share_leaves_the_inbox_even_if_cleanup_never_ran ... ok
+test every_bounded_share_trace_matches_the_m19_m21_state_machine ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 27.55s
+
+   Doc-tests vela_server
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
 EXIT=0

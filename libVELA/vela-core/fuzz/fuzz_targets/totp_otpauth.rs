@@ -30,10 +30,12 @@ fuzz_target!(|data: &[u8]| {
 
     // The full code path: Result either way, never a panic.
     if let Ok(code) = totp::generate_totp(input.clone()) {
+        // totp.rs accepts 6-10 digits (MIN_DIGITS..=MAX_DIGITS) to match the
+        // browser extension's parser; 9 and 10 are valid, not a bug.
         let digits = code.code.len();
         assert!(
-            (6..=8).contains(&digits),
-            "generated code width {digits} outside RFC bounds for {input:?}"
+            (6..=10).contains(&digits),
+            "generated code width {digits} outside the accepted 6-10 for {input:?}"
         );
         // verify_totp on the just-generated code must accept it.
         let verdict = totp::verify_totp(input, code.code).unwrap_or(false);

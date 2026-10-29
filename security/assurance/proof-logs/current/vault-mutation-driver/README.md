@@ -21,6 +21,25 @@ Focused extraction: `proofs/fstar/extraction-vault-mutation-driver/`; lemmas:
 `proofs/fstar/vault-mutation-driver-lemmas/`; gate:
 `verify-fstar-vault-mutation-driver.sh`.
 
-Status: Rust driver tests and the handler wiring pass. The F* gate has not been
-run to completion for this increment (the rekey driver gate is the current
-blocker); no mutation check is claimed.
+## Status
+
+The F* gate does not pass yet: `chunk_delete_step`'s postcondition fails
+(Error 19), so nothing below is claimed until it does. The gate is not chained
+from `verify-fstar.sh`. Rust driver tests and the handler wiring pass.
+
+## Intended theorems (not yet verified)
+
+`chunk_delete_theorem`, `oram_theorem`, `schema_theorem`, `ack_theorem` and
+`capable_theorem`: for every request and event sequence, the final driver
+state is sound, at most one success or failure is emitted, and every success
+follows the guarded write it depends on (the version CAS and delete for chunk
+deletion, every bucket write for ORAM, the floor write, the guarded clear,
+the attestation write).
+
+## Reproduction
+
+```bash
+cd serverVELA/vela-rekey-policy
+~/.local/opt/vela-tools/bin/vela-heavy ./verify-fstar-vault-mutation-driver.sh
+```
+

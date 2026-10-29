@@ -1,13 +1,6 @@
-F* 2025.10.06
-platform=Linux_x86_64
-compiler=OCaml 4.14.2
-date=2025-10-06 12:00:42 -0700
-commit=7b347386330d0e5a331a220535b6f15288903234
-rustc: rustc 1.101.0-nightly (e9bbadf68 2026-10-12)
-cargo hax: hax  version=0.3.7 commit=unknown 
-   Compiling vela-rekey-policy v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-5dd9794e/serverVELA/vela-rekey-policy)
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.47s
-     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-5dd9794e/target-own/debug/build/vela-rekey-policy/e298c9bf57839bbb/out/vela_rekey_policy-e298c9bf57839bbb)
+    Blocking waiting for file lock on package cache
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.11s
+     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-rekey-policy/e298c9bf57839bbb/out/vela_rekey_policy-e298c9bf57839bbb)
 
 running 76 tests
 test rekey_driver::tests::a_lost_timeout_race_continues_with_the_winning_state ... ok
@@ -95,37 +88,747 @@ running 0 tests
 
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
-    Checking vela-rekey-policy v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-5dd9794e/serverVELA/vela-rekey-policy)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.51s
-[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-rekey-driver/Vela_rekey_policy.fst[0m
-[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-rekey-driver/Vela_rekey_policy.Rekey_driver.fst[0m
-stripped 0 unused hax derived-instance assumption(s)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.11s
+[1m[94minfo[0m: [1mhax: unchanged file ./proofs/fstar/extraction/Vela_rekey_policy.fst[0m
+* Warning 241 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti(0,0-0,0):
+  - Unable to load
+    /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti.checked
+    since checked file
+    /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti.checked
+    does not exist; will recheck
+    /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti
+    (suppressing this warning for further modules)
+
+* Warning 239 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+Verified module: Vela_rekey_policy
+All verification conditions discharged successfully
+F* 2025.10.06
+platform=Linux_x86_64
+compiler=OCaml 4.14.2
+date=2025-10-06 12:00:42 -0700
+commit=7b347386330d0e5a331a220535b6f15288903234
+rustc: rustc 1.101.0-nightly (e9bbadf68 2026-10-12)
+cargo hax: hax  version=0.3.7 commit=unknown 
+    Blocking waiting for file lock on build directory
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5m 03s
+     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-rekey-policy/e298c9bf57839bbb/out/vela_rekey_policy-e298c9bf57839bbb)
+
+running 76 tests
+test rekey_driver::tests::a_lost_timeout_race_continues_with_the_winning_state ... ok
+test rekey_driver::tests::a_web_session_never_starts_commits_or_aborts ... ok
+test rekey_driver::tests::abort_requires_the_starter_and_the_live_rotation ... ok
+test rekey_driver::tests::abort_rolls_back_without_advancing_the_epoch ... ok
+test rekey_driver::tests::an_unauthenticated_request_performs_nothing ... ok
+test rekey_driver::tests::bfs_reachable_states_preserve_the_invariant ... ok
+test rekey_driver::tests::capsule_failures_stop_before_the_remaining_entries ... ok
+test rekey_driver::tests::capsules_require_starter_rotation_id_and_authority ... ok
+test rekey_driver::tests::capsules_write_every_entry_and_only_then_complete ... ok
+test rekey_driver::tests::commit_cas_race_is_terminal_and_never_claims_a_commit ... ok
+test rekey_driver::tests::commit_replay_accepts_only_the_recorded_attempt ... ok
+test rekey_driver::tests::commit_requires_both_completeness_observations ... ok
+test rekey_driver::tests::commit_sweeps_after_the_cas_and_publishes_before_complete ... ok
+test rekey_driver::tests::exhaustive_stage_times_event_is_total_and_sound ... ok
+test rekey_driver::tests::out_of_order_events_are_inert ... ok
+test rekey_driver::tests::start_readiness_refusals_keep_the_handlers_precedence ... ok
+test rekey_driver::tests::start_refuses_an_already_freezing_account ... ok
+test rekey_driver::tests::start_storage_failures_are_terminal_without_a_freeze ... ok
+test rekey_driver::tests::start_walks_pacing_load_readiness_freeze_and_cleanup ... ok
+test rekey_driver::tests::timeout_rollback_restores_the_active_state_at_the_same_epoch ... ok
+test rekey_driver::tests::too_many_capsules_is_refused_before_any_write ... ok
+test rekey_interpreter::tests::an_unauthenticated_or_web_request_performs_nothing ... ok
+test rekey_interpreter::tests::capsules_perform_one_write_per_entry ... ok
+test rekey_interpreter::tests::commit_and_abort_reach_their_verdicts ... ok
+test rekey_interpreter::tests::start_performs_exactly_the_driver_effects_for_every_outcome ... ok
+test tests::abort_preserves_epoch_and_requires_attempt_authority ... ok
+test tests::active_accepts_only_current_epoch_with_epoch_one_legacy_exception ... ok
+test tests::active_guard_rejects_freezing_and_stale_permits ... ok
+test tests::commit_replay_must_name_the_exact_recorded_attempt ... ok
+test tests::commit_requires_attempt_authority_and_both_completeness_witnesses ... ok
+test tests::every_shadow_authority_fact_is_required ... ok
+test tests::freezing_routes_only_next_epoch_writes_while_reading_current ... ok
+test tests::integer_boundary_and_invalid_epochs_fail_closed ... ok
+test tests::mutation_permits_bind_epoch_and_authority_class ... ok
+test tests::start_requires_every_readiness_gate_and_exact_successor ... ok
+test tests::timeout_rolls_back_only_expired_well_formed_attempts ... ok
+test vault_mutation_driver::tests::capsule_ack_clears_and_accepts_a_replay ... ok
+test vault_mutation_driver::tests::capsule_ack_refuses_a_different_pending_epoch_and_missing_device ... ok
+test vault_mutation_driver::tests::chunk_delete_exhaustive_stage_times_event_is_sound ... ok
+test vault_mutation_driver::tests::chunk_delete_refuses_freezing_rekey_and_version_mismatch ... ok
+test vault_mutation_driver::tests::chunk_delete_walks_schema_route_version_delete_publish ... ok
+test vault_mutation_driver::tests::chunk_delete_web_token_must_be_pinned_to_the_route_epoch ... ok
+test vault_mutation_driver::tests::oram_exhaustive_stage_times_event_is_sound ... ok
+test vault_mutation_driver::tests::oram_refuses_freezing_and_oversized_paths ... ok
+test vault_mutation_driver::tests::oram_update_miss_rechecks_but_create_miss_is_terminal ... ok
+test vault_mutation_driver::tests::oram_writes_every_bucket_then_publishes ... ok
+test vault_mutation_driver::tests::rekey_capable_attests_once_and_refuses_missing_devices ... ok
+test vault_mutation_driver::tests::route_observations_agree_with_the_phase_and_epoch_rules ... ok
+test vault_mutation_driver::tests::schema_writes_once_and_refuses_web_sessions ... ok
+test vault_mutation_interpreter::tests::chunk_delete_interpreter_matches_the_driver_for_every_outcome ... ok
+test vault_mutation_interpreter::tests::oram_interpreter_writes_and_rechecks_in_order ... ok
+test vault_mutation_interpreter::tests::refused_requests_perform_no_effect ... ok
+test vault_mutation_interpreter::tests::schema_capsule_and_capability_interpreters_match_their_drivers ... ok
+test vault_upload_driver::tests::a_failed_attempt_lookup_fails_closed_without_a_write ... ok
+test vault_upload_driver::tests::a_failed_epoch_lookup_fails_closed_before_the_row_query ... ok
+test vault_upload_driver::tests::a_web_session_may_hold_a_shadow_route_but_never_leaves_it ... ok
+test vault_upload_driver::tests::active_create_walks_resolve_quota_write_reread_publish_complete ... ok
+test vault_upload_driver::tests::bfs_reachable_states_preserve_the_invariant ... ok
+test vault_upload_driver::tests::create_conflicts_are_terminal_and_never_read_back ... ok
+test vault_upload_driver::tests::exhaustive_stage_times_event_is_total_and_sound ... ok
+test vault_upload_driver::tests::out_of_order_events_are_inert ... ok
+test vault_upload_driver::tests::read_rejects_invalid_epochs_and_unauthenticated_callers ... ok
+test vault_upload_driver::tests::read_serves_only_the_current_account_and_epoch ... ok
+test vault_upload_driver::tests::shadow_skipped_never_rechecks_and_reports_rotation_end ... ok
+test vault_upload_driver::tests::shadow_success_records_activity_and_publishes_nothing ... ok
+test vault_upload_driver::tests::shadow_write_requires_the_starting_device_and_a_rotation_id ... ok
+test vault_upload_driver::tests::skipped_update_rechecks_and_classifies_version_vs_epoch ... ok
+test vault_upload_driver::tests::unauthenticated_and_invalid_epochs_fail_closed ... ok
+test vault_upload_driver::tests::web_session_never_authorizes_a_shadow_write ... ok
+test vault_upload_driver::tests::web_writer_must_be_pinned_to_the_resolved_epoch ... ok
+test vault_upload_interpreter::tests::a_scripted_activity_failure_stops_at_the_verdict ... ok
+test vault_upload_interpreter::tests::an_unauthenticated_read_performs_nothing ... ok
+test vault_upload_interpreter::tests::an_unauthenticated_upload_performs_nothing ... ok
+test vault_upload_interpreter::tests::read_performs_exactly_the_driver_effects_for_every_lookup_outcome ... ok
+test vault_upload_interpreter::tests::the_longest_upload_path_uses_the_whole_budget_and_only_one_write ... ok
+test vault_upload_interpreter::tests::upload_performs_exactly_the_driver_effects_for_every_outcome_kind ... ok
+
+test result: ok. 76 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+   Doc-tests vela_rekey_policy
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.12s
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-vault-upload-driver/Vela_rekey_policy.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-vault-upload-driver/Vela_rekey_policy.Vault_upload_driver.fst[0m
 Driver source policy: 1 extracted modules, 2 proof modules; no unreviewed escapes/options
-F* rekey-driver argv: --cmi --cache_off --warn_error -331 --z3rlimit 16000 --z3version 4.13.3 --already_cached +Prims+FStar+LowStar+C+Spec.Loops+TestLib --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/core --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proofs/fstar/extraction --include proofs/fstar/extraction-rekey-driver-root --include proofs/fstar/extraction-rekey-driver --include proofs/fstar/rekey-driver-lemmas --include proofs/fstar/rekey-driver-composition proofs/fstar/extraction-rekey-driver/Vela_rekey_policy.Rekey_driver.fst proofs/fstar/rekey-driver-lemmas/Vela_rekey_policy_rekey_driver_lemmas.fst proofs/fstar/rekey-driver-composition/Vela_rekey_policy_rekey_driver_composition.fst
+F* vault-upload-driver argv: --cmi --cache_off --warn_error -331 --z3rlimit 16000 --z3version 4.13.3 --already_cached +Prims+FStar+LowStar+C+Spec.Loops+TestLib --include /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/core --include /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives --include /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proofs/fstar/extraction --include proofs/fstar/extraction-vault-upload-driver-root --include proofs/fstar/extraction-vault-upload-driver --include proofs/fstar/vault-upload-driver-lemmas --include proofs/fstar/vault-upload-driver-composition proofs/fstar/extraction-vault-upload-driver/Vela_rekey_policy.Vault_upload_driver.fst proofs/fstar/vault-upload-driver-lemmas/Vela_rekey_policy_vault_upload_driver_lemmas.fst proofs/fstar/vault-upload-driver-composition/Vela_rekey_policy_vault_upload_driver_composition.fst
 * Warning 271 at /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
   - Pattern uses these theory symbols or terms that should not be in an SMT
     pattern:
       Prims.op_Subtraction
 
-* Warning 239 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+* Warning 239 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
   - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
 
-* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+* Warning 242 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
   - Definitions of inner let-rec while_loop_internal and its enclosing top-level
     letbinding are not encoded to the solver, you will only be able to reason
     with their types
-  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+  - Also see: /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
 
-* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+* Warning 242 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
   - Definitions of inner let-rec while_loop_internal and its enclosing top-level
     letbinding are not encoded to the solver, you will only be able to reason
     with their types
-  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+  - Also see: /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
 
-* Error 19 at proofs/fstar/extraction-rekey-driver/Vela_rekey_policy.Rekey_driver.fst(1418,66-1465,40):
-  - Assertion failed
+* Warning 328 at proofs/fstar/vault-upload-driver-composition/Vela_rekey_policy_vault_upload_driver_composition.fst(276,8-276,28):
+  - Global binding
+        'Vela_rekey_policy_vault_upload_driver_composition.all_requests_ok_cons'
+    is recursive but not used in its body
+
+* Warning 328 at proofs/fstar/vault-upload-driver-composition/Vela_rekey_policy_vault_upload_driver_composition.fst(302,8-302,30):
+  - Global binding
+        'Vela_rekey_policy_vault_upload_driver_composition.requests_in_range_cons'
+    is recursive but not used in its body
+
+Verified module: Vela_rekey_policy.Vault_upload_driver
+Verified module: Vela_rekey_policy_vault_upload_driver_lemmas
+Verified module: Vela_rekey_policy_vault_upload_driver_composition
+All verification conditions discharged successfully
+vault upload driver: 14 focused Rust functions, 4 soundness postconditions (two entry points, two transition relations)
+per-request trace: every active write follows an ACTIVE non-rotation route; shadow writes require the starting device; success implies a matched guarded write; at most one success/failure
+read trace: only a current-epoch, same-account row is served
+upload composition: arbitrary interleavings never authorize a stale active write or a web-session shadow write, and the shared-store composition never commits a stale active row, an unauthorized shadow row, or a success response without its own commit
+b99aa83318ab074cbbf95f85ec6c3df0158bdc9149cd80eb7e8768560f00e3e8  proofs/fstar/extraction-vault-upload-driver-root/Vela_rekey_policy.fst
+de21fb5e61ce9270d1e324d3775364e3562d14a4777d95178d8f62c26140f894  proofs/fstar/extraction-vault-upload-driver/Vela_rekey_policy.Vault_upload_driver.fst
+fea986169ec7c34c4c522afe689142399b2ea14a8cd4d0616e67709b5368baed  proofs/fstar/vault-upload-driver-lemmas/Vela_rekey_policy_vault_upload_driver_lemmas.fst
+f786c5f37a5ae086b11bf205cae99fa37af639bce87097221ea4185d77b014b5  proofs/fstar/vault-upload-driver-composition/Vela_rekey_policy_vault_upload_driver_composition.fst
+808649a0e73f764ca28daec2931b67c6b92ad66509e567da1bb5c36136bec786  src/vault_upload_driver.rs
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-rekey-policy/e298c9bf57839bbb/out/vela_rekey_policy-e298c9bf57839bbb)
+
+running 6 tests
+test vault_upload_interpreter::tests::a_scripted_activity_failure_stops_at_the_verdict ... ok
+test vault_upload_interpreter::tests::an_unauthenticated_read_performs_nothing ... ok
+test vault_upload_interpreter::tests::an_unauthenticated_upload_performs_nothing ... ok
+test vault_upload_interpreter::tests::read_performs_exactly_the_driver_effects_for_every_lookup_outcome ... ok
+test vault_upload_interpreter::tests::the_longest_upload_path_uses_the_whole_budget_and_only_one_write ... ok
+test vault_upload_interpreter::tests::upload_performs_exactly_the_driver_effects_for_every_outcome_kind ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 70 filtered out; finished in 0.00s
+
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-vault-upload-interpreter/Vela_rekey_policy.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-vault-upload-interpreter/Vela_rekey_policy.Vault_upload_driver.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-vault-upload-interpreter/Vela_rekey_policy.Vault_upload_interpreter.fst[0m
+Driver source policy: 2 extracted modules, 2 proof modules; no unreviewed escapes/options
+F* vault-upload-interpreter argv: --cmi --cache_off --warn_error -331 --z3rlimit 16000 --z3version 4.13.3 --already_cached +Prims+FStar+LowStar+C+Spec.Loops+TestLib --include /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/core --include /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives --include /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proofs/fstar/extraction --include proofs/fstar/extraction-vault-upload-driver-root --include proofs/fstar/extraction-vault-upload-driver --include proofs/fstar/vault-upload-driver-lemmas --include proofs/fstar/extraction-vault-upload-interpreter --include proofs/fstar/vault-upload-interpreter-lemmas proofs/fstar/extraction-vault-upload-driver/Vela_rekey_policy.Vault_upload_driver.fst proofs/fstar/extraction-vault-upload-interpreter/Vela_rekey_policy.Vault_upload_interpreter.fst proofs/fstar/vault-upload-driver-lemmas/Vela_rekey_policy_vault_upload_driver_lemmas.fst proofs/fstar/vault-upload-interpreter-lemmas/Vela_rekey_policy_vault_upload_interpreter_lemmas.fst
+* Warning 271 at /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+Verified module: Vela_rekey_policy.Vault_upload_driver
+Verified module: Vela_rekey_policy.Vault_upload_interpreter
+Verified module: Vela_rekey_policy_vault_upload_driver_lemmas
+Verified module: Vela_rekey_policy_vault_upload_interpreter_lemmas
+All verification conditions discharged successfully
+vault upload interpreter: the handler's loops call only the executor method for the driver's current effect, stop at the verdict within 7 (upload) / 2 (read) turns, and end in the driver state the per-request theorems cover
+1bb850f5a06282d219d040ddef6076b20acb6de7c5dbd2604e88e02cd30fbda4  proofs/fstar/extraction-vault-upload-interpreter/Vela_rekey_policy.Vault_upload_interpreter.fst
+de21fb5e61ce9270d1e324d3775364e3562d14a4777d95178d8f62c26140f894  proofs/fstar/extraction-vault-upload-driver/Vela_rekey_policy.Vault_upload_driver.fst
+b557d0eabc6d71d0d17ca387dec51883f1e5da4942e173ca110653b0e794c057  proofs/fstar/vault-upload-interpreter-lemmas/Vela_rekey_policy_vault_upload_interpreter_lemmas.fst
+4574ddf4e3e4b756bb54af3926e9fe645346052f3e8261ea41b00c7bfb98dd00  src/vault_upload_interpreter.rs
+F* 2025.10.06
+platform=Linux_x86_64
+compiler=OCaml 4.14.2
+date=2025-10-06 12:00:42 -0700
+commit=7b347386330d0e5a331a220535b6f15288903234
+rustc: rustc 1.101.0-nightly (e9bbadf68 2026-10-12)
+cargo hax: hax  version=0.3.7 commit=unknown 
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-rekey-policy/e298c9bf57839bbb/out/vela_rekey_policy-e298c9bf57839bbb)
+
+running 76 tests
+test rekey_driver::tests::a_lost_timeout_race_continues_with_the_winning_state ... ok
+test rekey_driver::tests::a_web_session_never_starts_commits_or_aborts ... ok
+test rekey_driver::tests::abort_requires_the_starter_and_the_live_rotation ... ok
+test rekey_driver::tests::abort_rolls_back_without_advancing_the_epoch ... ok
+test rekey_driver::tests::an_unauthenticated_request_performs_nothing ... ok
+test rekey_driver::tests::bfs_reachable_states_preserve_the_invariant ... ok
+test rekey_driver::tests::capsule_failures_stop_before_the_remaining_entries ... ok
+test rekey_driver::tests::capsules_require_starter_rotation_id_and_authority ... ok
+test rekey_driver::tests::capsules_write_every_entry_and_only_then_complete ... ok
+test rekey_driver::tests::commit_cas_race_is_terminal_and_never_claims_a_commit ... ok
+test rekey_driver::tests::commit_replay_accepts_only_the_recorded_attempt ... ok
+test rekey_driver::tests::commit_requires_both_completeness_observations ... ok
+test rekey_driver::tests::commit_sweeps_after_the_cas_and_publishes_before_complete ... ok
+test rekey_driver::tests::exhaustive_stage_times_event_is_total_and_sound ... ok
+test rekey_driver::tests::out_of_order_events_are_inert ... ok
+test rekey_driver::tests::start_readiness_refusals_keep_the_handlers_precedence ... ok
+test rekey_driver::tests::start_refuses_an_already_freezing_account ... ok
+test rekey_driver::tests::start_storage_failures_are_terminal_without_a_freeze ... ok
+test rekey_driver::tests::start_walks_pacing_load_readiness_freeze_and_cleanup ... ok
+test rekey_driver::tests::timeout_rollback_restores_the_active_state_at_the_same_epoch ... ok
+test rekey_driver::tests::too_many_capsules_is_refused_before_any_write ... ok
+test rekey_interpreter::tests::an_unauthenticated_or_web_request_performs_nothing ... ok
+test rekey_interpreter::tests::capsules_perform_one_write_per_entry ... ok
+test rekey_interpreter::tests::commit_and_abort_reach_their_verdicts ... ok
+test rekey_interpreter::tests::start_performs_exactly_the_driver_effects_for_every_outcome ... ok
+test tests::abort_preserves_epoch_and_requires_attempt_authority ... ok
+test tests::active_accepts_only_current_epoch_with_epoch_one_legacy_exception ... ok
+test tests::active_guard_rejects_freezing_and_stale_permits ... ok
+test tests::commit_replay_must_name_the_exact_recorded_attempt ... ok
+test tests::commit_requires_attempt_authority_and_both_completeness_witnesses ... ok
+test tests::every_shadow_authority_fact_is_required ... ok
+test tests::freezing_routes_only_next_epoch_writes_while_reading_current ... ok
+test tests::integer_boundary_and_invalid_epochs_fail_closed ... ok
+test tests::mutation_permits_bind_epoch_and_authority_class ... ok
+test tests::start_requires_every_readiness_gate_and_exact_successor ... ok
+test tests::timeout_rolls_back_only_expired_well_formed_attempts ... ok
+test vault_mutation_driver::tests::capsule_ack_clears_and_accepts_a_replay ... ok
+test vault_mutation_driver::tests::capsule_ack_refuses_a_different_pending_epoch_and_missing_device ... ok
+test vault_mutation_driver::tests::chunk_delete_exhaustive_stage_times_event_is_sound ... ok
+test vault_mutation_driver::tests::chunk_delete_refuses_freezing_rekey_and_version_mismatch ... ok
+test vault_mutation_driver::tests::chunk_delete_walks_schema_route_version_delete_publish ... ok
+test vault_mutation_driver::tests::chunk_delete_web_token_must_be_pinned_to_the_route_epoch ... ok
+test vault_mutation_driver::tests::oram_exhaustive_stage_times_event_is_sound ... ok
+test vault_mutation_driver::tests::oram_refuses_freezing_and_oversized_paths ... ok
+test vault_mutation_driver::tests::oram_update_miss_rechecks_but_create_miss_is_terminal ... ok
+test vault_mutation_driver::tests::oram_writes_every_bucket_then_publishes ... ok
+test vault_mutation_driver::tests::rekey_capable_attests_once_and_refuses_missing_devices ... ok
+test vault_mutation_driver::tests::route_observations_agree_with_the_phase_and_epoch_rules ... ok
+test vault_mutation_driver::tests::schema_writes_once_and_refuses_web_sessions ... ok
+test vault_mutation_interpreter::tests::chunk_delete_interpreter_matches_the_driver_for_every_outcome ... ok
+test vault_mutation_interpreter::tests::oram_interpreter_writes_and_rechecks_in_order ... ok
+test vault_mutation_interpreter::tests::refused_requests_perform_no_effect ... ok
+test vault_mutation_interpreter::tests::schema_capsule_and_capability_interpreters_match_their_drivers ... ok
+test vault_upload_driver::tests::a_failed_attempt_lookup_fails_closed_without_a_write ... ok
+test vault_upload_driver::tests::a_failed_epoch_lookup_fails_closed_before_the_row_query ... ok
+test vault_upload_driver::tests::a_web_session_may_hold_a_shadow_route_but_never_leaves_it ... ok
+test vault_upload_driver::tests::active_create_walks_resolve_quota_write_reread_publish_complete ... ok
+test vault_upload_driver::tests::bfs_reachable_states_preserve_the_invariant ... ok
+test vault_upload_driver::tests::create_conflicts_are_terminal_and_never_read_back ... ok
+test vault_upload_driver::tests::exhaustive_stage_times_event_is_total_and_sound ... ok
+test vault_upload_driver::tests::out_of_order_events_are_inert ... ok
+test vault_upload_driver::tests::read_rejects_invalid_epochs_and_unauthenticated_callers ... ok
+test vault_upload_driver::tests::read_serves_only_the_current_account_and_epoch ... ok
+test vault_upload_driver::tests::shadow_skipped_never_rechecks_and_reports_rotation_end ... ok
+test vault_upload_driver::tests::shadow_success_records_activity_and_publishes_nothing ... ok
+test vault_upload_driver::tests::shadow_write_requires_the_starting_device_and_a_rotation_id ... ok
+test vault_upload_driver::tests::skipped_update_rechecks_and_classifies_version_vs_epoch ... ok
+test vault_upload_driver::tests::unauthenticated_and_invalid_epochs_fail_closed ... ok
+test vault_upload_driver::tests::web_session_never_authorizes_a_shadow_write ... ok
+test vault_upload_driver::tests::web_writer_must_be_pinned_to_the_resolved_epoch ... ok
+test vault_upload_interpreter::tests::a_scripted_activity_failure_stops_at_the_verdict ... ok
+test vault_upload_interpreter::tests::an_unauthenticated_read_performs_nothing ... ok
+test vault_upload_interpreter::tests::an_unauthenticated_upload_performs_nothing ... ok
+test vault_upload_interpreter::tests::read_performs_exactly_the_driver_effects_for_every_lookup_outcome ... ok
+test vault_upload_interpreter::tests::the_longest_upload_path_uses_the_whole_budget_and_only_one_write ... ok
+test vault_upload_interpreter::tests::upload_performs_exactly_the_driver_effects_for_every_outcome_kind ... ok
+
+test result: ok. 76 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+   Doc-tests vela_rekey_policy
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-rekey-driver/Vela_rekey_policy.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-rekey-driver/Vela_rekey_policy.Rekey_driver.fst[0m
+stripped 1 unused hax derived-instance assumption(s)
+Driver source policy: 1 extracted modules, 2 proof modules; no unreviewed escapes/options
+F* rekey-driver argv: --cmi --cache_off --warn_error -331 --z3rlimit 16000 --z3version 4.13.3 --already_cached +Prims+FStar+LowStar+C+Spec.Loops+TestLib --include /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/core --include /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives --include /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proofs/fstar/extraction --include proofs/fstar/extraction-rekey-driver-root --include proofs/fstar/extraction-rekey-driver --include proofs/fstar/rekey-driver-lemmas proofs/fstar/extraction-rekey-driver/Vela_rekey_policy.Rekey_driver.fst proofs/fstar/rekey-driver-lemmas/Vela_rekey_policy_rekey_driver_lemmas.fst
+* Warning 271 at /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 337 at proofs/fstar/rekey-driver-lemmas/Vela_rekey_policy_rekey_driver_lemmas.fst(488,19-488,20):
+  - The operator '@' has been resolved to FStar.List.Tot.append even though
+    FStar.List.Tot is not in scope. Please add an 'open FStar.List.Tot' to stop
+    relying on this deprecated, special treatment of '@'.
+
+Verified module: Vela_rekey_policy.Rekey_driver
+Verified module: Vela_rekey_policy_rekey_driver_lemmas
+All verification conditions discharged successfully
+F* rekey-driver-composition argv: --cmi --cache_off --warn_error -331 --z3rlimit 100 --fuel 1 --ifuel 1 --split_queries always --z3version 4.13.3 --already_cached +Prims+FStar+LowStar+C+Spec.Loops+TestLib --include /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/core --include /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives --include /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proofs/fstar/extraction --include proofs/fstar/extraction-rekey-driver-root --include proofs/fstar/extraction-rekey-driver --include proofs/fstar/rekey-driver-lemmas --include proofs/fstar/rekey-driver-composition proofs/fstar/rekey-driver-composition/Vela_rekey_policy_rekey_driver_composition.fst
+* Warning 271 at /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 337 at proofs/fstar/rekey-driver-lemmas/Vela_rekey_policy_rekey_driver_lemmas.fst(488,19-488,20):
+  - The operator '@' has been resolved to FStar.List.Tot.append even though
+    FStar.List.Tot is not in scope. Please add an 'open FStar.List.Tot' to stop
+    relying on this deprecated, special treatment of '@'.
+
+* Warning 337 at proofs/fstar/rekey-driver-composition/Vela_rekey_policy_rekey_driver_composition.fst(1122,53-1122,54):
+  - The operator '@' has been resolved to FStar.List.Tot.append even though
+    FStar.List.Tot is not in scope. Please add an 'open FStar.List.Tot' to stop
+    relying on this deprecated, special treatment of '@'.
+
+* Warning 337 at proofs/fstar/rekey-driver-composition/Vela_rekey_policy_rekey_driver_composition.fst(1122,66-1122,67):
+  - The operator '@' has been resolved to FStar.List.Tot.append even though
+    FStar.List.Tot is not in scope. Please add an 'open FStar.List.Tot' to stop
+    relying on this deprecated, special treatment of '@'.
+
+* Warning 337 at proofs/fstar/rekey-driver-composition/Vela_rekey_policy_rekey_driver_composition.fst(1123,58-1123,59):
+  - The operator '@' has been resolved to FStar.List.Tot.append even though
+    FStar.List.Tot is not in scope. Please add an 'open FStar.List.Tot' to stop
+    relying on this deprecated, special treatment of '@'.
+
+* Warning 337 at proofs/fstar/rekey-driver-composition/Vela_rekey_policy_rekey_driver_composition.fst(1141,61-1141,62):
+  - The operator '@' has been resolved to FStar.List.Tot.append even though
+    FStar.List.Tot is not in scope. Please add an 'open FStar.List.Tot' to stop
+    relying on this deprecated, special treatment of '@'.
+
+* Warning 337 at proofs/fstar/rekey-driver-composition/Vela_rekey_policy_rekey_driver_composition.fst(1154,56-1154,57):
+  - The operator '@' has been resolved to FStar.List.Tot.append even though
+    FStar.List.Tot is not in scope. Please add an 'open FStar.List.Tot' to stop
+    relying on this deprecated, special treatment of '@'.
+
+* Warning 337 at proofs/fstar/rekey-driver-composition/Vela_rekey_policy_rekey_driver_composition.fst(1154,69-1154,70):
+  - The operator '@' has been resolved to FStar.List.Tot.append even though
+    FStar.List.Tot is not in scope. Please add an 'open FStar.List.Tot' to stop
+    relying on this deprecated, special treatment of '@'.
+
+* Warning 337 at proofs/fstar/rekey-driver-composition/Vela_rekey_policy_rekey_driver_composition.fst(1155,60-1155,61):
+  - The operator '@' has been resolved to FStar.List.Tot.append even though
+    FStar.List.Tot is not in scope. Please add an 'open FStar.List.Tot' to stop
+    relying on this deprecated, special treatment of '@'.
+
+* Warning 337 at proofs/fstar/rekey-driver-composition/Vela_rekey_policy_rekey_driver_composition.fst(1155,72-1155,73):
+  - The operator '@' has been resolved to FStar.List.Tot.append even though
+    FStar.List.Tot is not in scope. Please add an 'open FStar.List.Tot' to stop
+    relying on this deprecated, special treatment of '@'.
+
+* Warning 337 at proofs/fstar/rekey-driver-composition/Vela_rekey_policy_rekey_driver_composition.fst(1156,60-1156,61):
+  - The operator '@' has been resolved to FStar.List.Tot.append even though
+    FStar.List.Tot is not in scope. Please add an 'open FStar.List.Tot' to stop
+    relying on this deprecated, special treatment of '@'.
+
+* Warning 337 at proofs/fstar/rekey-driver-composition/Vela_rekey_policy_rekey_driver_composition.fst(1156,72-1156,73):
+  - The operator '@' has been resolved to FStar.List.Tot.append even though
+    FStar.List.Tot is not in scope. Please add an 'open FStar.List.Tot' to stop
+    relying on this deprecated, special treatment of '@'.
+
+* Warning 337 at proofs/fstar/rekey-driver-composition/Vela_rekey_policy_rekey_driver_composition.fst(1157,61-1157,62):
+  - The operator '@' has been resolved to FStar.List.Tot.append even though
+    FStar.List.Tot is not in scope. Please add an 'open FStar.List.Tot' to stop
+    relying on this deprecated, special treatment of '@'.
+
+* Warning 337 at proofs/fstar/rekey-driver-composition/Vela_rekey_policy_rekey_driver_composition.fst(1174,71-1174,72):
+  - The operator '@' has been resolved to FStar.List.Tot.append even though
+    FStar.List.Tot is not in scope. Please add an 'open FStar.List.Tot' to stop
+    relying on this deprecated, special treatment of '@'.
+
+Verified module: Vela_rekey_policy_rekey_driver_composition
+All verification conditions discharged successfully
+rekey driver: focused Rust decision functions with soundness postconditions (four entry points, one transition relation)
+per-request trace: at most one commit, commit only after both completeness observations and starter/rotation authority, abort/timeout restore the active state at the same epoch, web sessions never start or commit
+composition: for every interleaving of start/capsules/commit/abort requests, at most one commit per epoch, no commit after an abort of the same rotation, unique committed ids, committed and aborted ids disjoint, commits only after both completeness probes passed, only the starter commits or aborts, no executor call for a web session
+1aad2bc777ef1415cb52594d682f8e7ad0e7e587d53cc31987fe95f09c2037d5  proofs/fstar/extraction-rekey-driver/Vela_rekey_policy.Rekey_driver.fst
+2ba3396d46360467ac7dba0b826417463082de852f09874c9371d336420d86fb  proofs/fstar/rekey-driver-lemmas/Vela_rekey_policy_rekey_driver_lemmas.fst
+4e2fd17e85d92ee4095a61111c0cc228f220f856eb616d4901d0536733e152ac  proofs/fstar/rekey-driver-composition/Vela_rekey_policy_rekey_driver_composition.fst
+64dc3daaf2d158c9fa2f078527e1ce5e5d5acc2f8d687dde97de46f87b15686d  src/rekey_driver.rs
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-rekey-policy/e298c9bf57839bbb/out/vela_rekey_policy-e298c9bf57839bbb)
+
+running 4 tests
+test rekey_interpreter::tests::an_unauthenticated_or_web_request_performs_nothing ... ok
+test rekey_interpreter::tests::capsules_perform_one_write_per_entry ... ok
+test rekey_interpreter::tests::commit_and_abort_reach_their_verdicts ... ok
+test rekey_interpreter::tests::start_performs_exactly_the_driver_effects_for_every_outcome ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 72 filtered out; finished in 0.00s
+
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-rekey-interpreter/Vela_rekey_policy.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-rekey-interpreter/Vela_rekey_policy.Rekey_driver.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-rekey-interpreter/Vela_rekey_policy.Rekey_interpreter.fst[0m
+stripped 0 unused hax derived-instance assumption(s)
+Driver source policy: 2 extracted modules, 6 proof modules; no unreviewed escapes/options
+F* rekey-interpreter argv: --cmi --cache_off --warn_error -331 --z3rlimit 100 --fuel 1 --ifuel 1 --split_queries always --z3version 4.13.3 --already_cached +Prims+FStar+LowStar+C+Spec.Loops+TestLib --include /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/core --include /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives --include /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proofs/fstar/extraction --include proofs/fstar/extraction-rekey-driver-root --include proofs/fstar/extraction-rekey-driver --include proofs/fstar/rekey-driver-lemmas --include proofs/fstar/extraction-rekey-interpreter --include proofs/fstar/rekey-interpreter-lemmas
+F* rekey-interpreter module proofs/fstar/rekey-interpreter-lemmas/Vela_rekey_policy_rekey_interpreter_lemmas.fst:
+* Warning 271 at /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 337 at proofs/fstar/rekey-driver-lemmas/Vela_rekey_policy_rekey_driver_lemmas.fst(488,19-488,20):
+  - The operator '@' has been resolved to FStar.List.Tot.append even though
+    FStar.List.Tot is not in scope. Please add an 'open FStar.List.Tot' to stop
+    relying on this deprecated, special treatment of '@'.
+
+Verified module: Vela_rekey_policy.Rekey_interpreter
+Verified module: Vela_rekey_policy_rekey_interpreter_lemmas
+All verification conditions discharged successfully
+F* rekey-interpreter module proofs/fstar/rekey-interpreter-lemmas/Vela_rekey_policy_rekey_start_interpreter_lemmas.fst:
+* Warning 271 at /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 337 at proofs/fstar/rekey-driver-lemmas/Vela_rekey_policy_rekey_driver_lemmas.fst(488,19-488,20):
+  - The operator '@' has been resolved to FStar.List.Tot.append even though
+    FStar.List.Tot is not in scope. Please add an 'open FStar.List.Tot' to stop
+    relying on this deprecated, special treatment of '@'.
+
+Verified module: Vela_rekey_policy_rekey_start_interpreter_lemmas
+All verification conditions discharged successfully
+F* rekey-interpreter module proofs/fstar/rekey-interpreter-lemmas/Vela_rekey_policy_rekey_capsules_interpreter_lemmas.fst:
+* Warning 271 at /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 337 at proofs/fstar/rekey-driver-lemmas/Vela_rekey_policy_rekey_driver_lemmas.fst(488,19-488,20):
+  - The operator '@' has been resolved to FStar.List.Tot.append even though
+    FStar.List.Tot is not in scope. Please add an 'open FStar.List.Tot' to stop
+    relying on this deprecated, special treatment of '@'.
+
+Verified module: Vela_rekey_policy_rekey_capsules_interpreter_lemmas
+All verification conditions discharged successfully
+F* rekey-interpreter module proofs/fstar/rekey-interpreter-lemmas/Vela_rekey_policy_rekey_commit_interpreter_lemmas.fst:
+* Warning 271 at /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 337 at proofs/fstar/rekey-driver-lemmas/Vela_rekey_policy_rekey_driver_lemmas.fst(488,19-488,20):
+  - The operator '@' has been resolved to FStar.List.Tot.append even though
+    FStar.List.Tot is not in scope. Please add an 'open FStar.List.Tot' to stop
+    relying on this deprecated, special treatment of '@'.
+
+Verified module: Vela_rekey_policy_rekey_commit_interpreter_lemmas
+All verification conditions discharged successfully
+F* rekey-interpreter module proofs/fstar/rekey-interpreter-lemmas/Vela_rekey_policy_rekey_abort_interpreter_lemmas.fst:
+* Warning 271 at /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 337 at proofs/fstar/rekey-driver-lemmas/Vela_rekey_policy_rekey_driver_lemmas.fst(488,19-488,20):
+  - The operator '@' has been resolved to FStar.List.Tot.append even though
+    FStar.List.Tot is not in scope. Please add an 'open FStar.List.Tot' to stop
+    relying on this deprecated, special treatment of '@'.
+
+Verified module: Vela_rekey_policy_rekey_abort_interpreter_lemmas
+All verification conditions discharged successfully
+rekey interpreter: the four handlers' loops call only the executor method for the driver's current effect, stop at the verdict within 12/68/10/4 turns, and end in the driver state the per-request theorems cover
+3f749312b154fdf419b58e17de721c1c7170850d62a3221b7844428f4275d53a  proofs/fstar/extraction-rekey-interpreter/Vela_rekey_policy.Rekey_interpreter.fst
+1aad2bc777ef1415cb52594d682f8e7ad0e7e587d53cc31987fe95f09c2037d5  proofs/fstar/extraction-rekey-driver/Vela_rekey_policy.Rekey_driver.fst
+dc22c5444c47b21e05ec136bfbb90ba26c9966ecb6cbaf5f1347d57ebb77f9d8  proofs/fstar/rekey-interpreter-lemmas/Vela_rekey_policy_rekey_interpreter_lemmas.fst
+65719e94c4765c4e28f39f3656e7bf60a97acc99791c7c47da3963a27e225b85  proofs/fstar/rekey-interpreter-lemmas/Vela_rekey_policy_rekey_start_interpreter_lemmas.fst
+eada832cf163c5a524a0cfe65c7b23c78e9a5d17cb640866b932d50f33898ea2  proofs/fstar/rekey-interpreter-lemmas/Vela_rekey_policy_rekey_capsules_interpreter_lemmas.fst
+86b61317fe373b9f4c50c5ec00a83e01598246aaae6c4606c3de909a6cba1c00  proofs/fstar/rekey-interpreter-lemmas/Vela_rekey_policy_rekey_commit_interpreter_lemmas.fst
+b700afe32b023966749a99442ca3c7a78aabab3d91b92c8d2d1eadd8f1c24795  proofs/fstar/rekey-interpreter-lemmas/Vela_rekey_policy_rekey_abort_interpreter_lemmas.fst
+46d1c0744c1e2c892f3675657a648e47e85637881d4466e48c46d50a243c37cb  src/rekey_interpreter.rs
+F* 2025.10.06
+platform=Linux_x86_64
+compiler=OCaml 4.14.2
+date=2025-10-06 12:00:42 -0700
+commit=7b347386330d0e5a331a220535b6f15288903234
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-rekey-policy/e298c9bf57839bbb/out/vela_rekey_policy-e298c9bf57839bbb)
+
+running 76 tests
+test rekey_driver::tests::a_lost_timeout_race_continues_with_the_winning_state ... ok
+test rekey_driver::tests::a_web_session_never_starts_commits_or_aborts ... ok
+test rekey_driver::tests::abort_requires_the_starter_and_the_live_rotation ... ok
+test rekey_driver::tests::abort_rolls_back_without_advancing_the_epoch ... ok
+test rekey_driver::tests::an_unauthenticated_request_performs_nothing ... ok
+test rekey_driver::tests::bfs_reachable_states_preserve_the_invariant ... ok
+test rekey_driver::tests::capsule_failures_stop_before_the_remaining_entries ... ok
+test rekey_driver::tests::capsules_require_starter_rotation_id_and_authority ... ok
+test rekey_driver::tests::capsules_write_every_entry_and_only_then_complete ... ok
+test rekey_driver::tests::commit_cas_race_is_terminal_and_never_claims_a_commit ... ok
+test rekey_driver::tests::commit_replay_accepts_only_the_recorded_attempt ... ok
+test rekey_driver::tests::commit_requires_both_completeness_observations ... ok
+test rekey_driver::tests::commit_sweeps_after_the_cas_and_publishes_before_complete ... ok
+test rekey_driver::tests::exhaustive_stage_times_event_is_total_and_sound ... ok
+test rekey_driver::tests::out_of_order_events_are_inert ... ok
+test rekey_driver::tests::start_readiness_refusals_keep_the_handlers_precedence ... ok
+test rekey_driver::tests::start_refuses_an_already_freezing_account ... ok
+test rekey_driver::tests::start_storage_failures_are_terminal_without_a_freeze ... ok
+test rekey_driver::tests::start_walks_pacing_load_readiness_freeze_and_cleanup ... ok
+test rekey_driver::tests::timeout_rollback_restores_the_active_state_at_the_same_epoch ... ok
+test rekey_driver::tests::too_many_capsules_is_refused_before_any_write ... ok
+test rekey_interpreter::tests::an_unauthenticated_or_web_request_performs_nothing ... ok
+test rekey_interpreter::tests::capsules_perform_one_write_per_entry ... ok
+test rekey_interpreter::tests::commit_and_abort_reach_their_verdicts ... ok
+test rekey_interpreter::tests::start_performs_exactly_the_driver_effects_for_every_outcome ... ok
+test tests::abort_preserves_epoch_and_requires_attempt_authority ... ok
+test tests::active_accepts_only_current_epoch_with_epoch_one_legacy_exception ... ok
+test tests::active_guard_rejects_freezing_and_stale_permits ... ok
+test tests::commit_replay_must_name_the_exact_recorded_attempt ... ok
+test tests::commit_requires_attempt_authority_and_both_completeness_witnesses ... ok
+test tests::every_shadow_authority_fact_is_required ... ok
+test tests::freezing_routes_only_next_epoch_writes_while_reading_current ... ok
+test tests::integer_boundary_and_invalid_epochs_fail_closed ... ok
+test tests::mutation_permits_bind_epoch_and_authority_class ... ok
+test tests::start_requires_every_readiness_gate_and_exact_successor ... ok
+test tests::timeout_rolls_back_only_expired_well_formed_attempts ... ok
+test vault_mutation_driver::tests::capsule_ack_clears_and_accepts_a_replay ... ok
+test vault_mutation_driver::tests::capsule_ack_refuses_a_different_pending_epoch_and_missing_device ... ok
+test vault_mutation_driver::tests::chunk_delete_exhaustive_stage_times_event_is_sound ... ok
+test vault_mutation_driver::tests::chunk_delete_refuses_freezing_rekey_and_version_mismatch ... ok
+test vault_mutation_driver::tests::chunk_delete_walks_schema_route_version_delete_publish ... ok
+test vault_mutation_driver::tests::chunk_delete_web_token_must_be_pinned_to_the_route_epoch ... ok
+test vault_mutation_driver::tests::oram_exhaustive_stage_times_event_is_sound ... ok
+test vault_mutation_driver::tests::oram_refuses_freezing_and_oversized_paths ... ok
+test vault_mutation_driver::tests::oram_update_miss_rechecks_but_create_miss_is_terminal ... ok
+test vault_mutation_driver::tests::oram_writes_every_bucket_then_publishes ... ok
+test vault_mutation_driver::tests::rekey_capable_attests_once_and_refuses_missing_devices ... ok
+test vault_mutation_driver::tests::route_observations_agree_with_the_phase_and_epoch_rules ... ok
+test vault_mutation_driver::tests::schema_writes_once_and_refuses_web_sessions ... ok
+test vault_mutation_interpreter::tests::chunk_delete_interpreter_matches_the_driver_for_every_outcome ... ok
+test vault_mutation_interpreter::tests::oram_interpreter_writes_and_rechecks_in_order ... ok
+test vault_mutation_interpreter::tests::refused_requests_perform_no_effect ... ok
+test vault_mutation_interpreter::tests::schema_capsule_and_capability_interpreters_match_their_drivers ... ok
+test vault_upload_driver::tests::a_failed_attempt_lookup_fails_closed_without_a_write ... ok
+test vault_upload_driver::tests::a_failed_epoch_lookup_fails_closed_before_the_row_query ... ok
+test vault_upload_driver::tests::a_web_session_may_hold_a_shadow_route_but_never_leaves_it ... ok
+test vault_upload_driver::tests::active_create_walks_resolve_quota_write_reread_publish_complete ... ok
+test vault_upload_driver::tests::bfs_reachable_states_preserve_the_invariant ... ok
+test vault_upload_driver::tests::create_conflicts_are_terminal_and_never_read_back ... ok
+test vault_upload_driver::tests::exhaustive_stage_times_event_is_total_and_sound ... ok
+test vault_upload_driver::tests::out_of_order_events_are_inert ... ok
+test vault_upload_driver::tests::read_rejects_invalid_epochs_and_unauthenticated_callers ... ok
+test vault_upload_driver::tests::read_serves_only_the_current_account_and_epoch ... ok
+test vault_upload_driver::tests::shadow_skipped_never_rechecks_and_reports_rotation_end ... ok
+test vault_upload_driver::tests::shadow_success_records_activity_and_publishes_nothing ... ok
+test vault_upload_driver::tests::shadow_write_requires_the_starting_device_and_a_rotation_id ... ok
+test vault_upload_driver::tests::skipped_update_rechecks_and_classifies_version_vs_epoch ... ok
+test vault_upload_driver::tests::unauthenticated_and_invalid_epochs_fail_closed ... ok
+test vault_upload_driver::tests::web_session_never_authorizes_a_shadow_write ... ok
+test vault_upload_driver::tests::web_writer_must_be_pinned_to_the_resolved_epoch ... ok
+test vault_upload_interpreter::tests::a_scripted_activity_failure_stops_at_the_verdict ... ok
+test vault_upload_interpreter::tests::an_unauthenticated_read_performs_nothing ... ok
+test vault_upload_interpreter::tests::an_unauthenticated_upload_performs_nothing ... ok
+test vault_upload_interpreter::tests::read_performs_exactly_the_driver_effects_for_every_lookup_outcome ... ok
+test vault_upload_interpreter::tests::the_longest_upload_path_uses_the_whole_budget_and_only_one_write ... ok
+test vault_upload_interpreter::tests::upload_performs_exactly_the_driver_effects_for_every_outcome_kind ... ok
+
+test result: ok. 76 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+   Doc-tests vela_rekey_policy
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-vault-mutation-driver/Vela_rekey_policy.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-vault-mutation-driver/Vela_rekey_policy.Vault_mutation_driver.fst[0m
+stripped 0 unused hax derived-instance assumption(s)
+Driver source policy: 1 extracted modules, 1 proof modules; no unreviewed escapes/options
+F* vault-mutation-driver argv: --cmi --cache_off --warn_error -331 --z3rlimit 16000 --z3version 4.13.3 --already_cached +Prims+FStar+LowStar+C+Spec.Loops+TestLib --include /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/core --include /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives --include /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proofs/fstar/extraction --include proofs/fstar/extraction-vault-mutation-driver-root --include proofs/fstar/extraction-vault-mutation-driver --include proofs/fstar/vault-mutation-driver-lemmas proofs/fstar/extraction-vault-mutation-driver/Vela_rekey_policy.Vault_mutation_driver.fst proofs/fstar/vault-mutation-driver-lemmas/Vela_rekey_policy_vault_mutation_driver_lemmas.fst
+* Warning 271 at /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Error 19 at proofs/fstar/extraction-vault-mutation-driver/Vela_rekey_policy.Vault_mutation_driver.fst(284,2-389,59):
+  - Could not prove post-condition
   - The SMT solver could not prove the query. Use --query_stats for more
     details.
+  - Also see: proofs/fstar/extraction-vault-mutation-driver/Vela_rekey_policy.Vault_mutation_driver.fst(284,2-389,59)
+  - Other related locations: proofs/fstar/extraction-vault-mutation-driver/Vela_rekey_policy.Vault_mutation_driver.fst(281,10-283,70)
 
 1 error was reported (see above)
 EXIT=1
