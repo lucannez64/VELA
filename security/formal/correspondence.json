@@ -730,7 +730,7 @@
       "boundary": "sharing executors (F-1): each executor method in vela-server/src/share/mod.rs is an extracted typed statement plan, a pinned SQL rendering and an extracted observation classifier; for every starting database and every failing statement, F* proves each observation reports exactly what the statements did to shared_items, share_inbox and users and that a failed run changes nothing, with mutation checks; the store model (statement and transaction semantics, statement atomicity), SQL rendering, row decoding and the thin loop are checked by bounded conformance against turso, not proved; crypto verdicts, concurrency between transactions and pre-driver reads remain open",
       "artifacts": {
         "serverVELA/vela-share-policy/src/store.rs": "3c90fce5093c28d64e65727b75d4359cfd09bdf23307621671e347f270606ab3",
-        "serverVELA/vela-share-policy/src/store_model.rs": "88a01450501eb83fdd7040576157eaba015538b0d6a3b4dfa272b70fb8b8f2f2",
+        "serverVELA/vela-share-policy/src/store_model.rs": "efae2a27dc985c16d35c9c775f19e015c047fedd1dfef825bd7ba8d182532502",
         "serverVELA/vela-share-policy/verify-fstar-share-executors.sh": "62bf68a93798a1ce991d2aa87f2d2e824780423a4dd3c06dd647cddaf87e3e27",
         "serverVELA/vela-share-policy/verify-fstar-share-executors-mutations.sh": "75cd14704c3bb4cc320a6c52eed25dea593adc71b8e5805b5cc5d65f4bb8f1c3",
         "serverVELA/vela-share-policy/proofs/fstar/extraction-store/Vela_share_policy.Store.fst": "9fa8f03269c036972703df95b9879a20089bbc2a3a61c0ffc96cf0214ce9a14f",

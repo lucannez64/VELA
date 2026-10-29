@@ -6,7 +6,7 @@
 //! predicts. The F* module proves the plans and classifiers against the same
 //! semantics. Each function here has a namesake there with the same case
 //! order; keep them in step. `tests::shared_vectors` checks the concrete
-//! vectors the F* module also checks by normalization (`vector_*`).
+//! runs the F* `vector_*` lemmas prove from the general theorems.
 //!
 //! Only the columns the sharing statements read or write are modelled. Every
 //! table is keyed by its `UNIQUE` id column, so a missing key is a missing
@@ -262,8 +262,8 @@ mod tests {
         x.to_string()
     }
 
-    /// The F* module checks the same vectors (`vector_send_*`,
-    /// `vector_revoke_*`, `vector_inbox_*`) by normalization.
+    /// The F* lemmas `vector_send_*`, `vector_revoke_*` and `vector_inbox_*`
+    /// prove the same runs.
     #[test]
     fn shared_vectors() {
         let mut pre = Db::default();
