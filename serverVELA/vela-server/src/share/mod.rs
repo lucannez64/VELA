@@ -9,22 +9,25 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
 mod executor;
+mod sql;
+#[cfg(test)]
+mod conformance;
 
 use executor::ShareExecutor;
+use sql::{device_row_view, link_row_view, run_read, run_writes, PoolSql, ShareSql, TxSql};
+use vela_share_policy::store::{self, DeviceVerdicts, ReadOutcome};
 use vela_share_policy::driver::{
     CleanupObservation, EkDeviceObservation, EkRegistrationStartObservation, InboxDeletePermit,
     LinkUpdatePermit, LinkUpdateStartObservation, RowsObservation, SendInsertPermit,
     SendRequestObservation, SendResultObservation, ShareEffect, ShareFailure,
 };
-use vela_share_policy::{
-    EkRegistrationObservation, EkRegistrationPermit, LinkMutationObservation, SendObservation,
-};
+use vela_share_policy::{EkRegistrationPermit, LinkMutationObservation, SendObservation};
 
 use crate::{
     db,
     error::{AppError, Result},
     middleware::{maybe_append_new_token, AuthSession, DeviceSession},
-    sqldb::{Db as _, TursoDb, TursoValue, TxGuard},
+    sqldb::{Db as _, TursoDb, TursoValue},
     state::AppState,
 };
 
@@ -125,70 +128,41 @@ fn share_failure_error(failure: ShareFailure) -> AppError {
 /// The I/O behind one capsule send. The quota reads and the transaction begin
 /// happen before the driver starts (they are its admission observations); the
 /// driver owns the admission order and the one guarded transaction.
-struct SendIo {
+struct SendIo<S = TxSql> {
     recipient_user_id: Uuid,
     sender_user_id: Uuid,
     capsule_bytes: Vec<u8>,
     inbox_id: Uuid,
     now: String,
-    tx: Option<TxGuard>,
+    tx: Option<S>,
     insert_error: Option<String>,
     commit_error: Option<String>,
 }
 
-impl ShareExecutor for SendIo {
+impl<S: ShareSql> ShareExecutor for SendIo<S> {
     async fn insert_capsule(&mut self, _permit: SendInsertPermit) -> SendResultObservation {
-        let Some(tx) = self.tx.take() else {
+        let Some(mut tx) = self.tx.take() else {
             self.insert_error = Some("share send driver authorized without a transaction".into());
             return SendResultObservation::StorageFailed;
         };
-        let capsule = db::encode_b64(&self.capsule_bytes);
-        match tx
-            .execute(
-                "INSERT INTO shared_items (id, sender_user_id, recipient_user_id, capsule, created_at, updated_at, revoked)
-             VALUES (?, ?, ?, ?, ?, ?, 0)",
-                vec![
-                    TursoValue::Text(self.inbox_id.to_string()),
-                    TursoValue::Text(self.sender_user_id.to_string()),
-                    TursoValue::Text(self.recipient_user_id.to_string()),
-                    TursoValue::Text(capsule.clone()),
-                    TursoValue::Text(self.now.clone()),
-                    TursoValue::Text(self.now.clone()),
-                ],
-            )
-            .await
-        {
-            Ok(_) => match tx
-                .execute(
-                    "INSERT INTO share_inbox (id, sender_user_id, recipient_user_id, capsule, created_at)
-                 VALUES (?, ?, ?, ?, ?)",
-                    vec![
-                        TursoValue::Text(self.inbox_id.to_string()),
-                        TursoValue::Text(self.sender_user_id.to_string()),
-                        TursoValue::Text(self.recipient_user_id.to_string()),
-                        TursoValue::Text(capsule),
-                        TursoValue::Text(self.now.clone()),
-                    ],
-                )
-                .await
-            {
-                Ok(_) => match tx.commit().await {
-                    Ok(()) => SendResultObservation::Committed,
-                    Err(error) => {
-                        self.commit_error = Some(error.to_string());
-                        SendResultObservation::CommitConflict
-                    }
-                },
-                Err(error) => {
-                    self.insert_error = Some(error.to_string());
-                    SendResultObservation::StorageFailed
-                }
-            },
-            Err(error) => {
+        let plan = store::plan_send_insert(
+            self.inbox_id.to_string(),
+            self.sender_user_id.to_string(),
+            self.recipient_user_id.to_string(),
+            db::encode_b64(&self.capsule_bytes),
+            self.now.clone(),
+        );
+        let (outcomes, error) = run_writes(&mut tx, &plan).await;
+        let observation = store::classify_send(&outcomes);
+        if let Some(error) = error {
+            if observation == SendResultObservation::CommitConflict {
+                self.commit_error = Some(error.to_string());
+            } else {
                 self.insert_error = Some(error.to_string());
-                SendResultObservation::StorageFailed
             }
         }
+        // An uncommitted transaction rolls back when `tx` drops here.
+        observation
     }
 }
 
@@ -303,7 +277,7 @@ pub async fn post_send(
         capsule_bytes,
         inbox_id,
         now,
-        tx,
+        tx: tx.map(|guard| TxSql(Some(guard))),
         insert_error: None,
         commit_error: None,
     };
@@ -493,34 +467,22 @@ pub async fn get_inbox(
 }
 
 /// The I/O behind the recipient-scoped inbox delete.
-struct InboxDeleteIo<'a> {
-    state: &'a AppState,
+struct InboxDeleteIo<S> {
+    sql: S,
     id: Uuid,
     user_id: Uuid,
     error: Option<AppError>,
 }
 
-impl ShareExecutor for InboxDeleteIo<'_> {
+impl<S: ShareSql> ShareExecutor for InboxDeleteIo<S> {
     async fn delete_inbox_item(&mut self, permit: InboxDeletePermit) -> RowsObservation {
         debug_assert!(permit.recipient_scoped);
-        match self
-            .state
-            .sqldb
-            .execute(
-                "DELETE FROM share_inbox WHERE id = ? AND recipient_user_id = ?",
-                vec![
-                    TursoValue::Text(self.id.to_string()),
-                    TursoValue::Text(self.user_id.to_string()),
-                ],
-            )
-            .await
-        {
-            Ok(rows) => RowsObservation { rows },
-            Err(error) => {
-                self.error = Some(AppError::Internal(error.to_string()));
-                RowsObservation { rows: 0 }
-            }
+        let plan = store::plan_inbox_delete(self.id.to_string(), self.user_id.to_string());
+        let (outcomes, error) = run_writes(&mut self.sql, &plan).await;
+        if let Some(error) = error {
+            self.error = Some(AppError::Internal(error.to_string()));
         }
+        store::classify_rows(&outcomes)
     }
 }
 
@@ -533,7 +495,7 @@ pub async fn delete_inbox_item(
     // classification. The handler performs exactly the one guarded effect.
     let start = vela_share_policy::interpreter::start_inbox_delete();
     let mut io = InboxDeleteIo {
-        state: &state,
+        sql: PoolSql(&state.sqldb),
         id,
         user_id: session.user_id,
         error: None,
@@ -629,54 +591,39 @@ pub struct UpdateLinkedShareRequest {
 
 /// The I/O behind a linked-item update: the linked-row observation and the one
 /// guarded UPDATE.
-struct LinkUpdateIo<'a> {
-    state: &'a AppState,
+struct LinkUpdateIo<S> {
+    sql: S,
     id: Uuid,
     user_id: Uuid,
     capsule_bytes: Vec<u8>,
+    /// The `updated_at` instant, read when the update runs.
+    clock: fn() -> String,
     error: Option<AppError>,
 }
 
-impl ShareExecutor for LinkUpdateIo<'_> {
+impl<S: ShareSql> ShareExecutor for LinkUpdateIo<S> {
     async fn observe_link(&mut self) -> LinkMutationObservation {
-        match observe_link_mutation(self.state, self.id, self.user_id).await {
-            Ok(observation) => observation,
-            Err(error) => {
-                self.error = Some(error);
-                LinkMutationObservation {
-                    item_present: false,
-                    caller_matches_sender: false,
-                    item_not_revoked: false,
-                }
-            }
-        }
+        observe_link_row(&mut self.sql, self.id, self.user_id, &mut self.error).await
     }
 
     async fn update_linked_item(&mut self, permit: LinkUpdatePermit) -> RowsObservation {
         debug_assert_eq!(permit.capsule_len, self.capsule_bytes.len() as i64);
-        match self
-            .state
-            .sqldb
-            .execute(
-                "UPDATE shared_items
-         SET capsule = ?, updated_at = ?
-         WHERE id = ? AND sender_user_id = ? AND revoked = 0",
-                vec![
-                    TursoValue::Text(db::encode_b64(&self.capsule_bytes)),
-                    TursoValue::Text(Utc::now().to_rfc3339()),
-                    TursoValue::Text(self.id.to_string()),
-                    TursoValue::Text(self.user_id.to_string()),
-                ],
-            )
-            .await
-        {
-            Ok(rows) => RowsObservation { rows },
-            Err(error) => {
-                self.error = Some(AppError::Internal(error.to_string()));
-                RowsObservation { rows: 0 }
-            }
+        let plan = store::plan_link_update(
+            self.id.to_string(),
+            self.user_id.to_string(),
+            db::encode_b64(&self.capsule_bytes),
+            (self.clock)(),
+        );
+        let (outcomes, error) = run_writes(&mut self.sql, &plan).await;
+        if let Some(error) = error {
+            self.error = Some(AppError::Internal(error.to_string()));
         }
+        store::classify_rows(&outcomes)
     }
+}
+
+fn now_rfc3339() -> String {
+    Utc::now().to_rfc3339()
 }
 
 pub async fn put_linked_item(
@@ -698,10 +645,11 @@ pub async fn put_linked_item(
         capsule_len: capsule_bytes.len() as i64,
     });
     let mut io = LinkUpdateIo {
-        state: &state,
+        sql: PoolSql(&state.sqldb),
         id,
         user_id: session.user_id,
         capsule_bytes,
+        clock: now_rfc3339,
         error: None,
     };
     let transition = vela_share_policy::share_interpreter!(io, start, await);
@@ -729,64 +677,34 @@ pub async fn put_linked_item(
 
 /// The I/O behind a linked-item revoke: the linked-row observation, the one
 /// guarded UPDATE and the post-revoke inbox cleanup.
-struct LinkRevokeIo<'a> {
-    state: &'a AppState,
+struct LinkRevokeIo<S> {
+    sql: S,
     id: Uuid,
     user_id: Uuid,
+    /// The `updated_at` instant, read when the revoke runs.
+    clock: fn() -> String,
     error: Option<AppError>,
 }
 
-impl ShareExecutor for LinkRevokeIo<'_> {
+impl<S: ShareSql> ShareExecutor for LinkRevokeIo<S> {
     async fn observe_link(&mut self) -> LinkMutationObservation {
-        match observe_link_mutation(self.state, self.id, self.user_id).await {
-            Ok(observation) => observation,
-            Err(error) => {
-                self.error = Some(error);
-                LinkMutationObservation {
-                    item_present: false,
-                    caller_matches_sender: false,
-                    item_not_revoked: false,
-                }
-            }
-        }
+        observe_link_row(&mut self.sql, self.id, self.user_id, &mut self.error).await
     }
 
     async fn revoke_linked_item(&mut self) -> RowsObservation {
-        match self
-            .state
-            .sqldb
-            .execute(
-                "UPDATE shared_items
-         SET revoked = 1, updated_at = ?
-         WHERE id = ? AND sender_user_id = ? AND revoked = 0",
-                vec![
-                    TursoValue::Text(Utc::now().to_rfc3339()),
-                    TursoValue::Text(self.id.to_string()),
-                    TursoValue::Text(self.user_id.to_string()),
-                ],
-            )
-            .await
-        {
-            Ok(rows) => RowsObservation { rows },
-            Err(error) => {
-                self.error = Some(AppError::Internal(error.to_string()));
-                RowsObservation { rows: 0 }
-            }
+        let plan =
+            store::plan_link_revoke(self.id.to_string(), self.user_id.to_string(), (self.clock)());
+        let (outcomes, error) = run_writes(&mut self.sql, &plan).await;
+        if let Some(error) = error {
+            self.error = Some(AppError::Internal(error.to_string()));
         }
+        store::classify_rows(&outcomes)
     }
 
     async fn delete_linked_inbox(&mut self) -> CleanupObservation {
-        CleanupObservation {
-            storage_failed: self
-                .state
-                .sqldb
-                .execute(
-                    "DELETE FROM share_inbox WHERE id = ?",
-                    vec![TursoValue::Text(self.id.to_string())],
-                )
-                .await
-                .is_err(),
-        }
+        let plan = store::plan_linked_inbox_cleanup(self.id.to_string());
+        let (outcomes, _error) = run_writes(&mut self.sql, &plan).await;
+        store::classify_cleanup(&outcomes)
     }
 }
 
@@ -801,9 +719,10 @@ pub async fn delete_linked_item(
     // classification and the post-revoke inbox cleanup.
     let start = vela_share_policy::interpreter::start_link_revoke();
     let mut io = LinkRevokeIo {
-        state: &state,
+        sql: PoolSql(&state.sqldb),
         id,
         user_id: session.user_id,
+        clock: now_rfc3339,
         error: None,
     };
     let transition = vela_share_policy::share_interpreter!(io, start, await);
@@ -833,36 +752,22 @@ pub async fn delete_linked_item(
 ///
 /// A missing row, a row owned by another sender and a revoked row all leave the
 /// verified policy in the same rejecting state, so the handler keeps one
-/// indistinguishable "not found" response.
-async fn observe_link_mutation(
-    state: &AppState,
+/// indistinguishable "not found" response. A failed read rejects too and
+/// leaves its error for the handler to report.
+async fn observe_link_row<S: ShareSql>(
+    sql: &mut S,
     id: Uuid,
     user_id: Uuid,
-) -> Result<LinkMutationObservation> {
-    let caller = user_id.to_string();
-    let rows = state
-        .sqldb
-        .query(
-            "SELECT sender_user_id, revoked FROM shared_items WHERE id = ?",
-            vec![TursoValue::Text(id.to_string())],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-
-    let Some(row) = rows.first() else {
-        return Ok(LinkMutationObservation {
-            item_present: false,
-            caller_matches_sender: false,
-            item_not_revoked: false,
-        });
+    error: &mut Option<AppError>,
+) -> LinkMutationObservation {
+    let outcome = match run_read(sql, &store::plan_link_read(id.to_string())).await {
+        Ok(rows) => ReadOutcome::Row(link_row_view(&rows)),
+        Err(e) => {
+            *error = Some(AppError::Internal(e.to_string()));
+            ReadOutcome::Failed
+        }
     };
-
-    Ok(LinkMutationObservation {
-        item_present: true,
-        caller_matches_sender: row.text(0) == Some(caller.as_str()),
-        // Mirror the SQL `revoked = 0` predicate: only a zero cell is live.
-        item_not_revoked: row.i64(1) == Some(0),
-    })
+    store::classify_link(&user_id.to_string(), &outcome)
 }
 
 /// Return the share encapsulation key registered by a given user.
@@ -924,8 +829,8 @@ pub struct PutShareEkRequest {
 
 /// The I/O behind a share-EK registration: the signing-device row read and the
 /// one guarded `users` update.
-struct ShareEkIo<'a> {
-    state: &'a AppState,
+struct ShareEkIo<S> {
+    sql: S,
     user_id: Uuid,
     device_id: Uuid,
     share_ek: String,
@@ -937,65 +842,39 @@ struct ShareEkIo<'a> {
     signature_decode_error: Option<AppError>,
 }
 
-fn rejecting_ek_observation() -> EkDeviceObservation {
-    EkDeviceObservation {
-        registration: EkRegistrationObservation {
-            ek_len: SHARE_EK_LEN,
-            signature_verified: false,
-            device_row_present: false,
-            device_user_matches: false,
-            device_active: false,
-            signed_at_is_fresher: false,
-            binding_exists: false,
-        },
-        stored_identity_vk_decode_failed: false,
-        signature_decode_failed: false,
-    }
-}
-
-impl ShareExecutor for ShareEkIo<'_> {
+impl<S: ShareSql> ShareExecutor for ShareEkIo<S> {
     async fn observe_device(&mut self) -> EkDeviceObservation {
         use crate::device::enroll::verify_hybrid_signature;
 
         let caller = self.user_id.to_string();
-        let rows = match self
-            .state
-            .sqldb
-            .query(
-                "SELECT d.hybrid_vk, d.revoked, u.share_ek_since, d.user_id
-             FROM devices d JOIN users u ON u.id = d.user_id
-             WHERE d.id = ? AND d.user_id = ?",
-                vec![
-                    TursoValue::Text(self.device_id.to_string()),
-                    TursoValue::Text(self.user_id.to_string()),
-                ],
-            )
-            .await
-        {
-            Ok(rows) => rows,
+        let read = store::plan_device_read(self.device_id.to_string(), caller.clone());
+        let row = match run_read(&mut self.sql, &read).await {
+            Ok(rows) => device_row_view(&rows),
             Err(error) => {
                 self.error = Some(AppError::Internal(error.to_string()));
-                return rejecting_ek_observation();
+                let unread = DeviceVerdicts {
+                    signature_verified: false,
+                    stored_vk_decode_failed: false,
+                    signature_decode_failed: false,
+                    signed_at_is_fresher: false,
+                };
+                return store::classify_device(
+                    &caller,
+                    self.ek_bytes.len(),
+                    &ReadOutcome::Failed,
+                    unread,
+                );
             }
         };
-        let row = rows.first();
-        let device_row_present = row.is_some();
-        let device_user_matches = row
-            .and_then(|r| r.text(3))
-            .is_some_and(|owner| owner == caller.as_str());
-        let device_active = row
-            .map(|r| !matches!(r.get(1), Some(TursoValue::Integer(1))) && r.text(1) != Some("1"))
-            .unwrap_or(false);
-        let current_since = row.and_then(|r| r.text(2));
-        let binding_exists = current_since.is_some();
-        let hybrid_vk = row.and_then(|r| r.text(0));
+        let current_since = row.as_ref().and_then(|r| r.share_ek_since.clone());
+        let hybrid_vk = row.as_ref().and_then(|r| r.hybrid_vk.clone());
 
         let message =
             vela_crypto::signing::share_ek_binding_message(&self.ek_bytes, &self.canonical_signed_at);
         // Retain the original decode errors so the rejecting branch can
         // reproduce them in the same order, after the verified policy has seen
         // the real observations.
-        let (stored_vk, stored_vk_error) = match hybrid_vk {
+        let (stored_vk, stored_vk_error) = match hybrid_vk.as_deref() {
             Some(vk) => match crate::db::decode_b64(vk) {
                 Ok(vk) => (Some(vk), None),
                 Err(error) => (None, Some(error)),
@@ -1033,24 +912,16 @@ impl ShareExecutor for ShareEkIo<'_> {
             self.canonical_signed_at.as_bytes(),
             current_since.as_deref().map(|c| c.as_bytes()),
         );
-        let stored_identity_vk_decode_failed = stored_vk_error.is_some();
-        let signature_decode_failed = signature_decode_error.is_some();
+        let verdicts = DeviceVerdicts {
+            signature_verified,
+            stored_vk_decode_failed: stored_vk_error.is_some(),
+            signature_decode_failed: signature_decode_error.is_some(),
+            signed_at_is_fresher,
+        };
         self.stored_vk_error = stored_vk_error;
         self.signature_decode_error = signature_decode_error;
 
-        EkDeviceObservation {
-            registration: EkRegistrationObservation {
-                ek_len: self.ek_bytes.len(),
-                signature_verified,
-                device_row_present,
-                device_user_matches,
-                device_active,
-                signed_at_is_fresher,
-                binding_exists,
-            },
-            stored_identity_vk_decode_failed,
-            signature_decode_failed,
-        }
+        store::classify_device(&caller, self.ek_bytes.len(), &ReadOutcome::Row(row), verdicts)
     }
 
     async fn update_share_ek(&mut self, permit: EkRegistrationPermit) -> RowsObservation {
@@ -1060,27 +931,17 @@ impl ShareExecutor for ShareEkIo<'_> {
             ));
             return RowsObservation { rows: 0 };
         }
-        match self
-            .state
-            .sqldb
-            .execute(
-                "UPDATE users SET share_ek = ?, share_ek_since = ?, share_ek_device_id = ?
-             WHERE id = ?",
-                vec![
-                    TursoValue::Text(self.share_ek.clone()),
-                    TursoValue::Text(self.canonical_signed_at.clone()),
-                    TursoValue::Text(self.device_id.to_string()),
-                    TursoValue::Text(self.user_id.to_string()),
-                ],
-            )
-            .await
-        {
-            Ok(rows) => RowsObservation { rows },
-            Err(error) => {
-                self.error = Some(AppError::Internal(error.to_string()));
-                RowsObservation { rows: 0 }
-            }
+        let plan = store::plan_share_ek_update(
+            self.user_id.to_string(),
+            self.share_ek.clone(),
+            self.canonical_signed_at.clone(),
+            self.device_id.to_string(),
+        );
+        let (outcomes, error) = run_writes(&mut self.sql, &plan).await;
+        if let Some(error) = error {
+            self.error = Some(AppError::Internal(error.to_string()));
         }
+        store::classify_rows(&outcomes)
     }
 }
 
@@ -1130,7 +991,7 @@ pub async fn put_my_ek(
         },
     );
     let mut io = ShareEkIo {
-        state: &state,
+        sql: PoolSql(&state.sqldb),
         user_id: session.user_id,
         device_id: body.device_id,
         share_ek: body.share_ek.clone(),

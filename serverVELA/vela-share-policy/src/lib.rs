@@ -11,6 +11,9 @@ pub mod driver;
 pub mod interpreter;
 pub mod send_driver;
 pub mod send_interpreter;
+pub mod store;
+#[cfg(not(hax))]
+pub mod store_model;
 
 pub const INITIAL_SEQ: i64 = 1;
 

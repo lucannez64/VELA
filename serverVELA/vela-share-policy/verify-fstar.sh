@@ -59,3 +59,9 @@ fstar.exe \
 # Handler-to-driver link for the one-off share-link endpoints; needs the send
 # driver extraction above.
 "$proof_root/verify-fstar-send-interpreter.sh"
+
+# F-1 for the sharing executors: each executor method's observation is the
+# truth about the database, proved against a store model for every starting
+# state and every failing statement, with mutation checks. Needs the driver
+# extraction above.
+"$proof_root/verify-fstar-share-executors.sh"
