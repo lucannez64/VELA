@@ -28,6 +28,10 @@ measure is `65 - index`, with the side invariant `capsules_written >= 0` proved
 in the lemma module. Global budget: fuel 1, ifuel 1, `--z3rlimit 100`,
 `--split_queries always`; the largest rlimit any query used was about 18.
 
+`rekey_{start,capsules,commit,abort}_cancellation`: every prefix of turns, for
+every executor, leaves a sound driver state
+([cancellation](../cancellation/README.md)).
+
 ## Reproduction
 
 ```bash

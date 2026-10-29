@@ -1,0 +1,7 @@
+$ fstar.exe <session interpreter gate args; mutated driver passed explicitly>
+* Error 19 at proofs/fstar/extraction-registration-driver/Vela_session_policy.Registration_driver.fst(611,2-623,68):
+  - Could not prove post-condition
+  - The SMT solver could not prove the query. Use --query_stats for more
+    details.
+1 error was reported (see above)
+exit=1

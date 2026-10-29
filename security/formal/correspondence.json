@@ -690,7 +690,7 @@
       }
     },
     {
-      "boundary": "vault key-rotation interpreters (rekey_{start,capsules,commit,abort}_interpreter!, budgets 12/68/10/4): for every executor, only the method for the driver's current effect is called, nothing after the verdict, a verdict within the budget, and the final state is the per-request driver state; cancellation after a prefix is not yet covered",
+      "boundary": "vault key-rotation interpreters (rekey_{start,capsules,commit,abort}_interpreter!, budgets 12/68/10/4): for every executor, only the method for the driver's current effect is called, nothing after the verdict, a verdict within the budget, and the final state is the per-request driver state; every prefix of turns leaves a sound driver state (cancellation)",
       "artifacts": {
         "serverVELA/vela-rekey-policy/src/rekey_interpreter.rs": "46d1c0744c1e2c892f3675657a648e47e85637881d4466e48c46d50a243c37cb",
         "serverVELA/vela-rekey-policy/verify-fstar-rekey-interpreter.sh": "6e705f3a1cfeb13857dc6f4b6054f05e658fe17a3e9c20a313124399d66f76f3",
@@ -712,7 +712,7 @@
       }
     },
     {
-      "boundary": "vault and device mutation drivers and interpreters (chunk delete, ORAM path write, schema floor, capsule ack, rekey-capable): intended, not yet verified (chunk_delete_step fails): per request, every success follows its guarded write and at most one success or failure; the loops perform exactly the driver's effects within their budgets; cancellation after a prefix is not yet covered",
+      "boundary": "vault and device mutation drivers and interpreters (chunk delete, ORAM path write, schema floor, capsule ack, rekey-capable): per request, every success follows its guarded write and at most one success or failure; the loops perform exactly the driver's effects within their budgets; every prefix of turns leaves a sound driver state (cancellation)",
       "artifacts": {
         "serverVELA/vela-rekey-policy/src/vault_mutation_driver.rs": "65776cca6ddbe333f1b3d56248c0013e48e421c697d99df5f6b07f84873ed247",
         "serverVELA/vela-rekey-policy/src/vault_mutation_interpreter.rs": "96192cab56141e26d51dbfe54844424eb1bc5d1b06f0c8befa69c5ed92980e89",

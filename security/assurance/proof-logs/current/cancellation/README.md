@@ -1,9 +1,8 @@
 # Cancellation of the security-handler interpreter loops (F-2)
 
 Every security handler reaches its decision driver only through one of the
-proved interpreter loops below.
-This evidence covers the loops that existed when it was written; the later
-enroll, send, recovery share, registration, challenge issue, web session, vault rotation and the five vault-mutation loops loops are not yet covered. The loop is synchronous in the policy crate
+proved interpreter loops below, and every one of those loops has a
+cancellation lemma. The loop is synchronous in the policy crate
 (`run_*`) and hax/F* proves it performs exactly the driver's effects. The
 server expands the same macro with `.await` after each executor call.
 
@@ -42,6 +41,19 @@ it; a turn that returns `None` leaves the previous (sound) transition in place.
 | `vela-recovery-policy` / `webauthn-interpreter-lemmas` | registration start/finish, auth start/finish | `rs_cancellation`, `reg_cancellation`, `as_cancellation`, `af_cancellation` |
 | `vela-rekey-policy` / `vault-upload-interpreter-lemmas` | upload and read | `upload_cancellation`, `read_cancellation` |
 | `vela-share-policy` / `interpreter-lemmas` | all five sharing handlers | `cancellation` |
+| `vela-enrollment-policy` / `enroll-interpreter-lemmas` | `run_enroll` (`POST /device/enroll`) | `enroll_cancellation` |
+| `vela-share-policy` / `send-interpreter-lemmas` | send create, view, delete | `send_cancellation` |
+| `vela-recovery-policy` / `recovery-share-interpreter-lemmas` | recovery-share put, get, delete, finalize (abort-flag form) | `recovery_share_cancellation` |
+| `vela-session-policy` / `registration-interpreter-lemmas` | `run_registration` (`POST /account/register`) | `registration_cancellation` |
+| `vela-session-policy` / `challenge-issue-interpreter-lemmas` | `run_challenge_issue` (`GET /auth/challenge`) | `challenge_issue_cancellation` |
+| `vela-session-policy` / `websession-interpreter-lemmas` | web-session start, grant, token, delete | `websession_{start,grant,token,delete}_cancellation` |
+| `vela-rekey-policy` / `rekey-interpreter-lemmas` | rotation start, capsules, commit, abort | `rekey_{start,capsules,commit,abort}_cancellation` |
+| `vela-rekey-policy` / `vault-mutation-interpreter-lemmas` | chunk delete, ORAM path write, schema floor, capsule ack, rekey-capable | `chunk_delete_cancellation`, `oram_cancellation`, `schema_cancellation`, `capsule_ack_cancellation`, `rekey_capable_cancellation` |
+
+The second group of rows (from `enroll` down) was added after the first nine
+loop families, on commit 4329328, with one mutation per crate (see
+[mutations](mutations/README.md)). The store/database review table below
+covers the first nine families only.
 
 ## Per-request state invariants carried by the sound state
 
@@ -218,6 +230,11 @@ changed: the minimal fix would be to exclude revoked `shared_items` in the inbox
 read (or to make cleanup first), which is a read-path/ordering change outside
 this task's driver-proof scope. It is not a second enrollment or an
 unauthorized send; it is an incomplete revocation window.
+
+**Since fixed (U-23):** both inbox queries now exclude items whose
+`shared_items` row is revoked, so a revoked share leaves the inbox even if the
+cleanup never ran (regression test
+`a_revoked_share_leaves_the_inbox_even_if_cleanup_never_ran`).
 
 No other cancellation point leaves a state the driver's soundness predicates
 reject, and no mutation of a driver step that sets a success flag before its

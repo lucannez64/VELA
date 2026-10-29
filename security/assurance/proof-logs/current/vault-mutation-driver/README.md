@@ -21,13 +21,20 @@ Focused extraction: `proofs/fstar/extraction-vault-mutation-driver/`; lemmas:
 `proofs/fstar/vault-mutation-driver-lemmas/`; gate:
 `verify-fstar-vault-mutation-driver.sh`.
 
-## Status
+## Verified on 4329328
 
-The F* gate does not pass yet: `chunk_delete_step`'s postcondition fails
-(Error 19), so nothing below is claimed until it does. The gate is not chained
-from `verify-fstar.sh`. Rust driver tests and the handler wiring pass.
+`chunk_delete_step` first failed its postcondition because the soundness
+predicates did not say that a stage before Done has not yet answered, failed or
+deleted, so an unreachable state the predicate accepted broke the step. No
+reachable trace was affected. The five predicates were strengthened, and the
+two larger steps split into per-event helpers with their own contracts. The
+new tests found that `begin_oram` accepted a negative `bucket_count` and would
+then never reach a verdict; the server always passes `buckets.len()`, so the
+handler could not hit it, but the driver now refuses any count `<= 0`
+(regression test `oram_refuses_a_non_positive_bucket_count`). Lemma budgets
+are `--z3rlimit 100`.
 
-## Intended theorems (not yet verified)
+## Exact theorems
 
 `chunk_delete_theorem`, `oram_theorem`, `schema_theorem`, `ack_theorem` and
 `capable_theorem`: for every request and event sequence, the final driver

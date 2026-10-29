@@ -1,0 +1,12 @@
+--- /tmp/vela-f2-cancel-mut2/recovery/pristine.fst
++++ vela-recovery-policy/proofs/fstar/extraction-recovery-share-driver/Vela_recovery_policy.Recovery_share_driver.fst
+@@ -652,7 +652,8 @@
+     transition ({
+           driver with
+           f_stage = ShareStage_StageAccount <: t_ShareStage;
+-          f_update_attempted = true
++          f_update_attempted = true;
++          f_update_applied = true
+         }
+         <:
+         t_ShareLifecycleDriver)

@@ -10,10 +10,10 @@ The synchronous expansions `run_chunk_delete`, `run_oram`, `run_schema`,
 one call per emitted effect (with the ORAM bucket index), no call after the
 verdict, a verdict within the budget, and the per-request driver state.
 
-## Status
-
-Not verified yet: it depends on the vault-mutation driver gate, which does
-not pass. Rust interpreter tests pass.
+Each loop also has a cancellation lemma (`chunk_delete_cancellation`,
+`oram_cancellation`, `schema_cancellation`, `capsule_ack_cancellation`,
+`rekey_capable_cancellation`): every prefix of turns leaves a sound driver
+state ([cancellation](../cancellation/README.md)).
 
 ## Reproduction
 
