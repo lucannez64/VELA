@@ -195,3 +195,12 @@ let start_run_theorem (#io_t: Type0) {| i: t_StartIo io_t |} (s: io_t)
   let (_, t2, evs) = start_run_ev #io_t #i 3 s t0 in
   start_trace_theorem evs
 
+/// Cancellation (web session start): the handler future may be dropped after any
+/// executor call, so the loop stops after an arbitrary prefix of turns. Every
+/// such prefix, for every executor and every `k`, ends in a sound driver state
+/// whose next effect agrees with it.
+let websession_start_cancellation (#io_t: Type0) {| i: t_StartIo io_t |} (k: nat) (s: io_t)
+  (t: t_StartTransition)
+  : Lemma (requires start_sound_transition t)
+          (ensures (let (_, t2) = start_iter_turn #io_t #i k (s, t) in start_sound_transition t2)) =
+  start_iter_turn_is_run_ev #io_t #i k s t

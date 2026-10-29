@@ -196,3 +196,12 @@ let grant_run_theorem (#io_t: Type0) {| i: t_GrantIo io_t |} (s: io_t)
   let (_, t2, evs) = grant_run_ev #io_t #i 3 s t0 in
   grant_trace_theorem actor evs ttl
 
+/// Cancellation (web session grant): the handler future may be dropped after any
+/// executor call, so the loop stops after an arbitrary prefix of turns. Every
+/// such prefix, for every executor and every `k`, ends in a sound driver state
+/// whose next effect agrees with it.
+let websession_grant_cancellation (#io_t: Type0) {| i: t_GrantIo io_t |} (k: nat) (s: io_t)
+  (t: t_GrantTransition)
+  : Lemma (requires grant_sound_transition t)
+          (ensures (let (_, t2) = grant_iter_turn #io_t #i k (s, t) in grant_sound_transition t2)) =
+  grant_iter_turn_is_run_ev #io_t #i k s t

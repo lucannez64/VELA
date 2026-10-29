@@ -259,3 +259,15 @@ let run_share_lifecycle_theorem (#io_t: Type0)
   let t0 = begin_share_lifecycle request in
   run_share_lifecycle_is_run_ev #io_t #i s request;
   rs_run_ev_follows_the_driver #io_t #i 3 (false, s, t0)
+
+/// Cancellation (the recovery-share handlers): the handler future may be
+/// dropped after any executor call, so the loop stops after an arbitrary prefix
+/// of turns. Every such prefix, for every executor and every `k`, leaves a
+/// sound transition in the accumulator (a turn whose executor returned `None`
+/// keeps the previous, sound one).
+let recovery_share_cancellation (#io_t: Type0) {| i: t_RecoveryShareIo io_t |}
+      (k: nat) (acc: bool & io_t & t_ShareTransition)
+  : Lemma (requires rs_sound (rs_acc_transition acc))
+          (ensures (let (_, _, t2) = rs_iter_turn #io_t #i k acc in rs_sound t2)) =
+  let (_, _, _, _) = rs_run_ev #io_t #i k acc in
+  rs_iter_turn_is_run_ev #io_t #i k acc

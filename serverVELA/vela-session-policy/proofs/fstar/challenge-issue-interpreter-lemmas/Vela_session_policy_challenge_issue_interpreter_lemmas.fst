@@ -239,3 +239,13 @@ let run_issue_theorem (#io_t: Type0) {| i: t_ChallengeIssueIo io_t |} (s: io_t)
   run_ev_reaches_a_verdict #io_t #i 3 s t0;
   let (_, t2, evs) = run_ev #io_t #i 3 s t0 in
   issue_trace_theorem purpose evs
+
+/// Cancellation (POST /auth/challenge): the handler future may be dropped after any
+/// executor call, so the loop stops after an arbitrary prefix of turns. Every
+/// such prefix, for every executor and every `k`, ends in a sound driver state
+/// whose next effect agrees with it.
+let challenge_issue_cancellation (#io_t: Type0) {| i: t_ChallengeIssueIo io_t |} (k: nat) (s: io_t)
+  (t: t_IssueTransition)
+  : Lemma (requires sound_transition t)
+          (ensures (let (_, t2) = iter_turn #io_t #i k (s, t) in sound_transition t2)) =
+  iter_turn_is_run_ev #io_t #i k s t

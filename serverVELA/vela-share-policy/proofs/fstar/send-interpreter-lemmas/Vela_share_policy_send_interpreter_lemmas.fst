@@ -317,3 +317,13 @@ let delete_interpreter_theorem (#io_t: Type0) {| i: t_SendIo io_t |} (s: io_t)
   deleted_implies_succeeded t.f_driver;
   success_excludes_failure t.f_driver;
   assert (run_from_delete owner_present evs == run t0.f_driver evs)
+
+/// Cancellation (the three send handlers): the handler future may be dropped after any
+/// executor call, so the loop stops after an arbitrary prefix of turns. Every
+/// such prefix, for every executor and every `k`, ends in a sound driver state
+/// whose next effect agrees with it.
+let send_cancellation (#io_t: Type0) {| i: t_SendIo io_t |} (k: nat) (s: io_t)
+  (t: t_SendTransition)
+  : Lemma (requires sound_transition t)
+          (ensures (let (_, t2) = iter_turn #io_t #i k (s, t) in sound_transition t2)) =
+  iter_turn_is_run_ev #io_t #i k s t

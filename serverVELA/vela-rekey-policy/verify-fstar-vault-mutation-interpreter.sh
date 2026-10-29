@@ -64,11 +64,14 @@ hax_lib_root=$(
   exit 1
 }
 
+# Every step is split into one contracted helper per event, so the budget is
+# small: the extracted modules keep hax's reviewed rlimit-500 header and the
+# hand-written lemmas run at rlimit 100.
 fstar_args=(
   --cmi
   --cache_off
   --warn_error -331
-  --z3rlimit 16000
+  --z3rlimit 100
   --z3version 4.13.3
   --already_cached '+Prims+FStar+LowStar+C+Spec.Loops+TestLib'
   --include "$hax_lib_root/proof-libs/fstar/core"
@@ -86,5 +89,5 @@ printf ' %q' "${fstar_args[@]}"
 printf '\n'
 fstar.exe "${fstar_args[@]}"
 
-echo "vault mutation interpreters: each handler's loop calls only the executor method for the driver's current effect, stops at the verdict within its budget, and ends in the driver state the per-request theorems cover"
+echo "vault mutation interpreters: each handler's loop calls only the executor method for the driver's current effect, stops at the verdict within its budget, ends in the driver state the per-request theorems cover, and every prefix of turns (a dropped handler future) leaves a sound driver state"
 sha256sum "${generated[@]}" "${driver[@]}" "${lemmas[@]}" src/vault_mutation_interpreter.rs

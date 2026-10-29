@@ -97,23 +97,18 @@ type t_ChunkDeleteTransition = {
   f_effect:t_ChunkDeleteEffect
 }
 
-let impl_ChunkDeleteDriver__permitted (self: t_ChunkDeleteDriver) : bool =
-  self.f_epoch >=. Vela_rekey_policy.v_INITIAL_EPOCH && self.f_permit_epoch =. self.f_epoch
-
 let chunk_delete_state_is_sound (d: t_ChunkDeleteDriver) : bool =
+  let clean:bool = ~.d.f_deleted && ~.d.f_published && ~.d.f_responded && ~.d.f_failed in
   let fresh:bool =
     d.f_epoch =. mk_i64 0 && d.f_permit_epoch =. mk_i64 0 && d.f_current_version =. mk_i64 0 &&
-    ~.d.f_deleted &&
-    ~.d.f_published &&
-    ~.d.f_responded &&
-    ~.d.f_failed
+    clean
   in
   let permitted:bool =
     d.f_epoch >=. Vela_rekey_policy.v_INITIAL_EPOCH && d.f_permit_epoch =. d.f_epoch
   in
   let done:bool =
     (d.f_responded || d.f_failed) && ~.(d.f_responded && d.f_failed) &&
-    (~.d.f_responded || impl_ChunkDeleteDriver__permitted d && d.f_deleted && d.f_published) &&
+    (~.d.f_responded || permitted && d.f_deleted && d.f_published) &&
     (~.d.f_failed || ~.d.f_deleted)
   in
   (~.(match d.f_stage <: t_ChunkDeleteStage with
@@ -127,21 +122,24 @@ let chunk_delete_state_is_sound (d: t_ChunkDeleteDriver) : bool =
   (~.(match d.f_stage <: t_ChunkDeleteStage with
     | ChunkDeleteStage_Version  -> true
     | _ -> false) ||
-  permitted) &&
+  permitted && clean) &&
   (~.(match d.f_stage <: t_ChunkDeleteStage with
     | ChunkDeleteStage_Delete  -> true
     | _ -> false) ||
-  permitted && d.f_current_version >=. mk_i64 0) &&
+  permitted && d.f_current_version >=. mk_i64 0 && clean) &&
   (~.(match d.f_stage <: t_ChunkDeleteStage with
     | ChunkDeleteStage_Publish  -> true
     | _ -> false) ||
-  permitted && d.f_deleted) &&
+  permitted && d.f_deleted && ~.d.f_published && ~.d.f_responded && ~.d.f_failed) &&
   (~.(match d.f_stage <: t_ChunkDeleteStage with
     | ChunkDeleteStage_Done  -> true
     | _ -> false) ||
   done) &&
   (~.d.f_deleted || permitted) &&
   (~.d.f_published || d.f_deleted)
+
+let impl_ChunkDeleteDriver__permitted (self: t_ChunkDeleteDriver) : bool =
+  self.f_epoch >=. Vela_rekey_policy.v_INITIAL_EPOCH && self.f_permit_epoch =. self.f_epoch
 
 let chunk_delete_effect_is_sound (d: t_ChunkDeleteDriver) (v_effect: t_ChunkDeleteEffect) : bool =
   match v_effect <: t_ChunkDeleteEffect with
@@ -187,8 +185,19 @@ let chunk_transition (driver: t_ChunkDeleteDriver) (v_effect: t_ChunkDeleteEffec
     : t_ChunkDeleteTransition =
   { f_driver = driver; f_effect = v_effect } <: t_ChunkDeleteTransition
 
+/// A refusal before the guarded delete: sound from any state that has neither
+/// deleted nor answered.
 let chunk_terminal (driver: t_ChunkDeleteDriver) (failure: t_ChunkDeleteFailure)
-    : t_ChunkDeleteTransition =
+    : Prims.Pure t_ChunkDeleteTransition
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:t_ChunkDeleteTransition = result in
+          ~.((~.driver.f_deleted <: bool) && (~.driver.f_published <: bool) &&
+            (~.driver.f_responded <: bool) &&
+            (~.driver.f_failed <: bool)) ||
+          chunk_delete_state_is_sound result.f_driver &&
+          chunk_delete_effect_is_sound result.f_driver result.f_effect) =
   chunk_transition ({
         driver with
         f_stage = ChunkDeleteStage_Done <: t_ChunkDeleteStage;
@@ -229,7 +238,15 @@ let begin_chunk_delete (request: t_ChunkDeleteRequest)
   else chunk_terminal driver (ChunkDeleteFailure_SchemaRefused <: t_ChunkDeleteFailure)
 
 let chunk_permit (driver: t_ChunkDeleteDriver)
-    : Core_models.Result.t_Result i64 t_ChunkDeleteFailure =
+    : Prims.Pure (Core_models.Result.t_Result i64 t_ChunkDeleteFailure)
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:Core_models.Result.t_Result i64 t_ChunkDeleteFailure = result in
+          match result <: Core_models.Result.t_Result i64 t_ChunkDeleteFailure with
+          | Core_models.Result.Result_Ok epoch ->
+            epoch =. driver.f_epoch && epoch >=. Vela_rekey_policy.v_INITIAL_EPOCH
+          | Core_models.Result.Result_Err _ -> true) =
   let authority:Vela_rekey_policy.t_MutationAuthority =
     if driver.f_web
     then Vela_rekey_policy.MutationAuthority_WebSession <: Vela_rekey_policy.t_MutationAuthority
@@ -264,6 +281,141 @@ let chunk_permit (driver: t_ChunkDeleteDriver)
     <:
     Core_models.Result.t_Result i64 t_ChunkDeleteFailure
 
+let chunk_on_schema (driver: t_ChunkDeleteDriver) (observation: t_SchemaObservation)
+    : Prims.Pure t_ChunkDeleteTransition
+      (requires
+        (match driver.f_stage <: t_ChunkDeleteStage with
+          | ChunkDeleteStage_Schema  -> true
+          | _ -> false))
+      (ensures
+        fun result ->
+          let result:t_ChunkDeleteTransition = result in
+          ~.(chunk_delete_state_is_sound driver <: bool) ||
+          chunk_delete_state_is_sound result.f_driver &&
+          chunk_delete_effect_is_sound result.f_driver result.f_effect) =
+  match observation <: t_SchemaObservation with
+  | SchemaObservation_Allowed  ->
+    chunk_transition ({ driver with f_stage = ChunkDeleteStage_Epoch <: t_ChunkDeleteStage }
+        <:
+        t_ChunkDeleteDriver)
+      (ChunkDeleteEffect_ResolveEpoch <: t_ChunkDeleteEffect)
+  | SchemaObservation_Refused  ->
+    chunk_terminal driver (ChunkDeleteFailure_SchemaRefused <: t_ChunkDeleteFailure)
+  | SchemaObservation_Storage  ->
+    chunk_terminal driver (ChunkDeleteFailure_SchemaStorage <: t_ChunkDeleteFailure)
+
+let chunk_on_route (driver: t_ChunkDeleteDriver) (observation: t_RouteObservation)
+    : Prims.Pure t_ChunkDeleteTransition
+      (requires
+        (match driver.f_stage <: t_ChunkDeleteStage with
+          | ChunkDeleteStage_Epoch  -> true
+          | _ -> false))
+      (ensures
+        fun result ->
+          let result:t_ChunkDeleteTransition = result in
+          ~.(chunk_delete_state_is_sound driver <: bool) ||
+          chunk_delete_state_is_sound result.f_driver &&
+          chunk_delete_effect_is_sound result.f_driver result.f_effect) =
+  match observation <: t_RouteObservation with
+  | RouteObservation_Active { f_epoch = epoch } ->
+    let routed:t_ChunkDeleteDriver = { driver with f_epoch = epoch } <: t_ChunkDeleteDriver in
+    (match chunk_permit routed <: Core_models.Result.t_Result i64 t_ChunkDeleteFailure with
+      | Core_models.Result.Result_Ok permit_epoch ->
+        chunk_transition ({
+              routed with
+              f_stage = ChunkDeleteStage_Version <: t_ChunkDeleteStage;
+              f_permit_epoch = permit_epoch
+            }
+            <:
+            t_ChunkDeleteDriver)
+          (ChunkDeleteEffect_ReadVersion <: t_ChunkDeleteEffect)
+      | Core_models.Result.Result_Err failure -> chunk_terminal routed failure)
+  | RouteObservation_Freezing  ->
+    chunk_terminal driver (ChunkDeleteFailure_RekeyInProgress <: t_ChunkDeleteFailure)
+  | RouteObservation_Rejected  ->
+    chunk_terminal driver (ChunkDeleteFailure_EpochMismatch <: t_ChunkDeleteFailure)
+  | RouteObservation_Storage  ->
+    chunk_terminal driver (ChunkDeleteFailure_EpochStorage <: t_ChunkDeleteFailure)
+
+let chunk_on_version (driver: t_ChunkDeleteDriver) (observation: t_VersionObservation)
+    : Prims.Pure t_ChunkDeleteTransition
+      (requires
+        (match driver.f_stage <: t_ChunkDeleteStage with
+          | ChunkDeleteStage_Version  -> true
+          | _ -> false))
+      (ensures
+        fun result ->
+          let result:t_ChunkDeleteTransition = result in
+          ~.(chunk_delete_state_is_sound driver <: bool) ||
+          chunk_delete_state_is_sound result.f_driver &&
+          chunk_delete_effect_is_sound result.f_driver result.f_effect) =
+  match observation <: t_VersionObservation with
+  | VersionObservation_Found { f_version = version } ->
+    if version <>. driver.f_if_match || version <. mk_i64 0
+    then chunk_terminal driver (ChunkDeleteFailure_VersionMismatch <: t_ChunkDeleteFailure)
+    else
+      chunk_transition ({
+            driver with
+            f_stage = ChunkDeleteStage_Delete <: t_ChunkDeleteStage;
+            f_current_version = version
+          }
+          <:
+          t_ChunkDeleteDriver)
+        (ChunkDeleteEffect_DeleteRow <: t_ChunkDeleteEffect)
+  | VersionObservation_Missing  ->
+    chunk_terminal driver (ChunkDeleteFailure_NotFound <: t_ChunkDeleteFailure)
+  | VersionObservation_Storage  ->
+    chunk_terminal driver (ChunkDeleteFailure_DeleteStorage <: t_ChunkDeleteFailure)
+
+let chunk_on_delete (driver: t_ChunkDeleteDriver) (observation: t_DeleteObservation)
+    : Prims.Pure t_ChunkDeleteTransition
+      (requires
+        (match driver.f_stage <: t_ChunkDeleteStage with
+          | ChunkDeleteStage_Delete  -> true
+          | _ -> false))
+      (ensures
+        fun result ->
+          let result:t_ChunkDeleteTransition = result in
+          ~.(chunk_delete_state_is_sound driver <: bool) ||
+          chunk_delete_state_is_sound result.f_driver &&
+          chunk_delete_effect_is_sound result.f_driver result.f_effect) =
+  match observation <: t_DeleteObservation with
+  | DeleteObservation_Deleted  ->
+    chunk_transition ({
+          driver with
+          f_stage = ChunkDeleteStage_Publish <: t_ChunkDeleteStage;
+          f_deleted = true
+        }
+        <:
+        t_ChunkDeleteDriver)
+      (ChunkDeleteEffect_Publish <: t_ChunkDeleteEffect)
+  | DeleteObservation_Skipped  ->
+    chunk_terminal driver (ChunkDeleteFailure_Rekeyed <: t_ChunkDeleteFailure)
+  | DeleteObservation_Storage  ->
+    chunk_terminal driver (ChunkDeleteFailure_DeleteStorage <: t_ChunkDeleteFailure)
+
+let chunk_on_published (driver: t_ChunkDeleteDriver)
+    : Prims.Pure t_ChunkDeleteTransition
+      (requires
+        (match driver.f_stage <: t_ChunkDeleteStage with
+          | ChunkDeleteStage_Publish  -> true
+          | _ -> false))
+      (ensures
+        fun result ->
+          let result:t_ChunkDeleteTransition = result in
+          ~.(chunk_delete_state_is_sound driver <: bool) ||
+          chunk_delete_state_is_sound result.f_driver &&
+          chunk_delete_effect_is_sound result.f_driver result.f_effect) =
+  chunk_transition ({
+        driver with
+        f_stage = ChunkDeleteStage_Done <: t_ChunkDeleteStage;
+        f_published = true;
+        f_responded = true
+      }
+      <:
+      t_ChunkDeleteDriver)
+    (ChunkDeleteEffect_Complete <: t_ChunkDeleteEffect)
+
 let chunk_delete_step (driver: t_ChunkDeleteDriver) (event: t_ChunkDeleteEvent)
     : Prims.Pure t_ChunkDeleteTransition
       Prims.l_True
@@ -276,109 +428,39 @@ let chunk_delete_step (driver: t_ChunkDeleteDriver) (event: t_ChunkDeleteEvent)
   match event <: t_ChunkDeleteEvent with
   | ChunkDeleteEvent_Schema observation ->
     if
-      ~.(match driver.f_stage <: t_ChunkDeleteStage with
-        | ChunkDeleteStage_Schema  -> true
-        | _ -> false)
-    then chunk_transition driver (ChunkDeleteEffect_Idle <: t_ChunkDeleteEffect)
-    else
-      (match observation <: t_SchemaObservation with
-        | SchemaObservation_Allowed  ->
-          chunk_transition ({ driver with f_stage = ChunkDeleteStage_Epoch <: t_ChunkDeleteStage }
-              <:
-              t_ChunkDeleteDriver)
-            (ChunkDeleteEffect_ResolveEpoch <: t_ChunkDeleteEffect)
-        | SchemaObservation_Refused  ->
-          chunk_terminal driver (ChunkDeleteFailure_SchemaRefused <: t_ChunkDeleteFailure)
-        | SchemaObservation_Storage  ->
-          chunk_terminal driver (ChunkDeleteFailure_SchemaStorage <: t_ChunkDeleteFailure))
+      match driver.f_stage <: t_ChunkDeleteStage with
+      | ChunkDeleteStage_Schema  -> true
+      | _ -> false
+    then chunk_on_schema driver observation
+    else chunk_transition driver (ChunkDeleteEffect_Idle <: t_ChunkDeleteEffect)
   | ChunkDeleteEvent_Route observation ->
     if
-      ~.(match driver.f_stage <: t_ChunkDeleteStage with
-        | ChunkDeleteStage_Epoch  -> true
-        | _ -> false)
-    then chunk_transition driver (ChunkDeleteEffect_Idle <: t_ChunkDeleteEffect)
-    else
-      (match observation <: t_RouteObservation with
-        | RouteObservation_Active { f_epoch = epoch } ->
-          let routed:t_ChunkDeleteDriver = { driver with f_epoch = epoch } <: t_ChunkDeleteDriver in
-          (match chunk_permit routed <: Core_models.Result.t_Result i64 t_ChunkDeleteFailure with
-            | Core_models.Result.Result_Ok permit_epoch ->
-              chunk_transition ({
-                    routed with
-                    f_stage = ChunkDeleteStage_Version <: t_ChunkDeleteStage;
-                    f_permit_epoch = permit_epoch
-                  }
-                  <:
-                  t_ChunkDeleteDriver)
-                (ChunkDeleteEffect_ReadVersion <: t_ChunkDeleteEffect)
-            | Core_models.Result.Result_Err failure -> chunk_terminal routed failure)
-        | RouteObservation_Freezing  ->
-          chunk_terminal driver (ChunkDeleteFailure_RekeyInProgress <: t_ChunkDeleteFailure)
-        | RouteObservation_Rejected  ->
-          chunk_terminal driver (ChunkDeleteFailure_EpochMismatch <: t_ChunkDeleteFailure)
-        | RouteObservation_Storage  ->
-          chunk_terminal driver (ChunkDeleteFailure_EpochStorage <: t_ChunkDeleteFailure))
+      match driver.f_stage <: t_ChunkDeleteStage with
+      | ChunkDeleteStage_Epoch  -> true
+      | _ -> false
+    then chunk_on_route driver observation
+    else chunk_transition driver (ChunkDeleteEffect_Idle <: t_ChunkDeleteEffect)
   | ChunkDeleteEvent_Version observation ->
     if
-      ~.(match driver.f_stage <: t_ChunkDeleteStage with
-        | ChunkDeleteStage_Version  -> true
-        | _ -> false)
-    then chunk_transition driver (ChunkDeleteEffect_Idle <: t_ChunkDeleteEffect)
-    else
-      (match observation <: t_VersionObservation with
-        | VersionObservation_Found { f_version = version } ->
-          if version <>. driver.f_if_match
-          then chunk_terminal driver (ChunkDeleteFailure_VersionMismatch <: t_ChunkDeleteFailure)
-          else
-            chunk_transition ({
-                  driver with
-                  f_stage = ChunkDeleteStage_Delete <: t_ChunkDeleteStage;
-                  f_current_version = version
-                }
-                <:
-                t_ChunkDeleteDriver)
-              (ChunkDeleteEffect_DeleteRow <: t_ChunkDeleteEffect)
-        | VersionObservation_Missing  ->
-          chunk_terminal driver (ChunkDeleteFailure_NotFound <: t_ChunkDeleteFailure)
-        | VersionObservation_Storage  ->
-          chunk_terminal driver (ChunkDeleteFailure_DeleteStorage <: t_ChunkDeleteFailure))
+      match driver.f_stage <: t_ChunkDeleteStage with
+      | ChunkDeleteStage_Version  -> true
+      | _ -> false
+    then chunk_on_version driver observation
+    else chunk_transition driver (ChunkDeleteEffect_Idle <: t_ChunkDeleteEffect)
   | ChunkDeleteEvent_Delete observation ->
     if
-      ~.(match driver.f_stage <: t_ChunkDeleteStage with
-        | ChunkDeleteStage_Delete  -> true
-        | _ -> false)
-    then chunk_transition driver (ChunkDeleteEffect_Idle <: t_ChunkDeleteEffect)
-    else
-      (match observation <: t_DeleteObservation with
-        | DeleteObservation_Deleted  ->
-          chunk_transition ({
-                driver with
-                f_stage = ChunkDeleteStage_Publish <: t_ChunkDeleteStage;
-                f_deleted = true
-              }
-              <:
-              t_ChunkDeleteDriver)
-            (ChunkDeleteEffect_Publish <: t_ChunkDeleteEffect)
-        | DeleteObservation_Skipped  ->
-          chunk_terminal driver (ChunkDeleteFailure_Rekeyed <: t_ChunkDeleteFailure)
-        | DeleteObservation_Storage  ->
-          chunk_terminal driver (ChunkDeleteFailure_DeleteStorage <: t_ChunkDeleteFailure))
+      match driver.f_stage <: t_ChunkDeleteStage with
+      | ChunkDeleteStage_Delete  -> true
+      | _ -> false
+    then chunk_on_delete driver observation
+    else chunk_transition driver (ChunkDeleteEffect_Idle <: t_ChunkDeleteEffect)
   | ChunkDeleteEvent_Published  ->
     if
-      ~.(match driver.f_stage <: t_ChunkDeleteStage with
-        | ChunkDeleteStage_Publish  -> true
-        | _ -> false)
-    then chunk_transition driver (ChunkDeleteEffect_Idle <: t_ChunkDeleteEffect)
-    else
-      chunk_transition ({
-            driver with
-            f_stage = ChunkDeleteStage_Done <: t_ChunkDeleteStage;
-            f_published = true;
-            f_responded = true
-          }
-          <:
-          t_ChunkDeleteDriver)
-        (ChunkDeleteEffect_Complete <: t_ChunkDeleteEffect)
+      match driver.f_stage <: t_ChunkDeleteStage with
+      | ChunkDeleteStage_Publish  -> true
+      | _ -> false
+    then chunk_on_published driver
+    else chunk_transition driver (ChunkDeleteEffect_Idle <: t_ChunkDeleteEffect)
 
 type t_OramRequest = {
   f_authenticated:bool;
@@ -462,13 +544,16 @@ type t_OramTransition = {
   f_effect:t_OramEffect
 }
 
+/// Most buckets an ORAM path holds (tree height 32).
+let v_ORAM_MAX_BUCKETS: i64 = mk_i64 33
+
 let oram_state_is_sound (d: t_OramDriver) : bool =
+  let clean:bool = ~.d.f_published && ~.d.f_responded && ~.d.f_failed in
+  let shaped:bool = d.f_bucket_count >. mk_i64 0 && d.f_bucket_count <=. v_ORAM_MAX_BUCKETS in
   let fresh:bool =
     d.f_epoch =. mk_i64 0 && d.f_permit_epoch =. mk_i64 0 && d.f_written =. mk_i64 0 &&
     ~.d.f_quota_allowed &&
-    ~.d.f_published &&
-    ~.d.f_responded &&
-    ~.d.f_failed
+    clean
   in
   let permitted:bool =
     d.f_epoch >=. Vela_rekey_policy.v_INITIAL_EPOCH && d.f_permit_epoch =. d.f_epoch
@@ -481,28 +566,32 @@ let oram_state_is_sound (d: t_OramDriver) : bool =
   (~.(match d.f_stage <: t_OramStage with
     | OramStage_Epoch  -> true
     | _ -> false) ||
-  d.f_authenticated && fresh) &&
+  d.f_authenticated && shaped && fresh) &&
   (~.(match d.f_stage <: t_OramStage with
     | OramStage_Quota  -> true
     | _ -> false) ||
-  permitted) &&
+  permitted && shaped && d.f_written =. mk_i64 0 && ~.d.f_quota_allowed && clean) &&
   (~.(match d.f_stage <: t_OramStage with
     | OramStage_Bucket  -> true
     | _ -> false) ||
-  permitted && d.f_quota_allowed && d.f_written <. d.f_bucket_count) &&
+  permitted && shaped && d.f_quota_allowed && d.f_written >=. mk_i64 0 &&
+  d.f_written <. d.f_bucket_count &&
+  clean) &&
   (~.(match d.f_stage <: t_OramStage with
     | OramStage_Recheck  -> true
     | _ -> false) ||
-  permitted && d.f_quota_allowed && d.f_recheck_index <. d.f_bucket_count) &&
+  permitted && shaped && d.f_quota_allowed && d.f_recheck_index >=. mk_i64 0 &&
+  d.f_recheck_index <. d.f_bucket_count &&
+  d.f_written =. d.f_recheck_index &&
+  clean) &&
   (~.(match d.f_stage <: t_OramStage with
     | OramStage_Publish  -> true
     | _ -> false) ||
-  permitted && d.f_written =. d.f_bucket_count && d.f_quota_allowed) &&
+  permitted && shaped && d.f_written =. d.f_bucket_count && d.f_quota_allowed && clean) &&
   (~.(match d.f_stage <: t_OramStage with
     | OramStage_Done  -> true
     | _ -> false) ||
   done) &&
-  d.f_written <=. d.f_bucket_count &&
   (~.d.f_published || d.f_written =. d.f_bucket_count)
 
 let oram_effect_is_sound (d: t_OramDriver) (v_effect: t_OramEffect) : bool =
@@ -549,7 +638,17 @@ let oram_effect_is_sound (d: t_OramDriver) (v_effect: t_OramEffect) : bool =
 let oram_transition (driver: t_OramDriver) (v_effect: t_OramEffect) : t_OramTransition =
   { f_driver = driver; f_effect = v_effect } <: t_OramTransition
 
-let oram_terminal (driver: t_OramDriver) (failure: t_OramFailure) : t_OramTransition =
+/// A refusal: sound from any state that has not published or answered.
+let oram_terminal (driver: t_OramDriver) (failure: t_OramFailure)
+    : Prims.Pure t_OramTransition
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:t_OramTransition = result in
+          ~.((~.driver.f_published <: bool) && (~.driver.f_responded <: bool) &&
+            (~.driver.f_failed <: bool)) ||
+          oram_state_is_sound result.f_driver &&
+          oram_effect_is_sound result.f_driver result.f_effect) =
   oram_transition ({ driver with f_stage = OramStage_Done <: t_OramStage; f_failed = true }
       <:
       t_OramDriver)
@@ -586,11 +685,20 @@ let begin_oram (request: t_OramRequest)
   if ~.request.f_authenticated
   then oram_terminal driver (OramFailure_Unauthenticated <: t_OramFailure)
   else
-    if request.f_bucket_count =. mk_i64 0 || request.f_bucket_count >. mk_i64 33
+    if request.f_bucket_count <=. mk_i64 0 || request.f_bucket_count >. v_ORAM_MAX_BUCKETS
     then oram_terminal driver (OramFailure_BucketInvalid <: t_OramFailure)
     else oram_transition driver (OramEffect_ResolveEpoch <: t_OramEffect)
 
-let oram_permit (driver: t_OramDriver) : Core_models.Result.t_Result i64 t_OramFailure =
+let oram_permit (driver: t_OramDriver)
+    : Prims.Pure (Core_models.Result.t_Result i64 t_OramFailure)
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:Core_models.Result.t_Result i64 t_OramFailure = result in
+          match result <: Core_models.Result.t_Result i64 t_OramFailure with
+          | Core_models.Result.Result_Ok epoch ->
+            epoch =. driver.f_epoch && epoch >=. Vela_rekey_policy.v_INITIAL_EPOCH
+          | Core_models.Result.Result_Err _ -> true) =
   let authority:Vela_rekey_policy.t_MutationAuthority =
     if driver.f_web
     then Vela_rekey_policy.MutationAuthority_WebSession <: Vela_rekey_policy.t_MutationAuthority
@@ -628,6 +736,147 @@ let oram_bucket_is_create (driver: t_OramDriver) (index: i64) : bool =
   index >=. mk_i64 0 && index <. mk_i64 64 &&
   (driver.f_create_mask &. (mk_u64 1 <<! index <: u64) <: u64) <>. mk_u64 0
 
+let oram_on_route (driver: t_OramDriver) (observation: t_RouteObservation)
+    : Prims.Pure t_OramTransition
+      (requires
+        (match driver.f_stage <: t_OramStage with
+          | OramStage_Epoch  -> true
+          | _ -> false))
+      (ensures
+        fun result ->
+          let result:t_OramTransition = result in
+          ~.(oram_state_is_sound driver <: bool) ||
+          oram_state_is_sound result.f_driver &&
+          oram_effect_is_sound result.f_driver result.f_effect) =
+  match observation <: t_RouteObservation with
+  | RouteObservation_Active { f_epoch = epoch } ->
+    if epoch <. Vela_rekey_policy.v_INITIAL_EPOCH
+    then oram_terminal driver (OramFailure_EpochMismatch <: t_OramFailure)
+    else
+      let routed:t_OramDriver = { driver with f_epoch = epoch } <: t_OramDriver in
+      (match oram_permit routed <: Core_models.Result.t_Result i64 t_OramFailure with
+        | Core_models.Result.Result_Ok permit_epoch ->
+          oram_transition ({
+                routed with
+                f_stage = OramStage_Quota <: t_OramStage;
+                f_permit_epoch = permit_epoch
+              }
+              <:
+              t_OramDriver)
+            (OramEffect_EnforceQuota <: t_OramEffect)
+        | Core_models.Result.Result_Err failure -> oram_terminal routed failure)
+  | RouteObservation_Freezing  ->
+    oram_terminal driver (OramFailure_RekeyInProgress <: t_OramFailure)
+  | RouteObservation_Rejected  -> oram_terminal driver (OramFailure_EpochMismatch <: t_OramFailure)
+  | RouteObservation_Storage  -> oram_terminal driver (OramFailure_EpochStorage <: t_OramFailure)
+
+let oram_on_quota (driver: t_OramDriver) (observation: t_QuotaObservation)
+    : Prims.Pure t_OramTransition
+      (requires
+        (match driver.f_stage <: t_OramStage with
+          | OramStage_Quota  -> true
+          | _ -> false))
+      (ensures
+        fun result ->
+          let result:t_OramTransition = result in
+          ~.(oram_state_is_sound driver <: bool) ||
+          oram_state_is_sound result.f_driver &&
+          oram_effect_is_sound result.f_driver result.f_effect) =
+  match observation <: t_QuotaObservation with
+  | QuotaObservation_Allowed  ->
+    oram_transition ({
+          driver with
+          f_stage = OramStage_Bucket <: t_OramStage;
+          f_quota_allowed = true
+        }
+        <:
+        t_OramDriver)
+      (OramEffect_WriteBucket ({ f_index = mk_i64 0 }) <: t_OramEffect)
+  | QuotaObservation_Exceeded  -> oram_terminal driver (OramFailure_QuotaExceeded <: t_OramFailure)
+  | QuotaObservation_Storage  -> oram_terminal driver (OramFailure_QuotaStorage <: t_OramFailure)
+
+let oram_on_bucket (driver: t_OramDriver) (observation: t_BucketObservation)
+    : Prims.Pure t_OramTransition
+      (requires
+        (match driver.f_stage <: t_OramStage with
+          | OramStage_Bucket  -> true
+          | _ -> false))
+      (ensures
+        fun result ->
+          let result:t_OramTransition = result in
+          ~.(oram_state_is_sound driver <: bool) ||
+          oram_state_is_sound result.f_driver &&
+          oram_effect_is_sound result.f_driver result.f_effect) =
+  let index:i64 = driver.f_written in
+  match observation <: t_BucketObservation with
+  | BucketObservation_Written  ->
+    let next:i64 = if index <. driver.f_bucket_count then index +! mk_i64 1 else index in
+    if next =. driver.f_bucket_count
+    then
+      oram_transition ({ driver with f_stage = OramStage_Publish <: t_OramStage; f_written = next }
+          <:
+          t_OramDriver)
+        (OramEffect_Publish <: t_OramEffect)
+    else
+      oram_transition ({ driver with f_written = next } <: t_OramDriver)
+        (OramEffect_WriteBucket ({ f_index = next }) <: t_OramEffect)
+  | BucketObservation_Skipped  ->
+    if oram_bucket_is_create driver index
+    then oram_terminal driver (OramFailure_Rekeyed <: t_OramFailure)
+    else
+      oram_transition ({
+            driver with
+            f_stage = OramStage_Recheck <: t_OramStage;
+            f_recheck_index = index
+          }
+          <:
+          t_OramDriver)
+        (OramEffect_RecheckBucket ({ f_index = index }) <: t_OramEffect)
+  | BucketObservation_Existing  -> oram_terminal driver (OramFailure_BucketExists <: t_OramFailure)
+  | BucketObservation_Invalid  -> oram_terminal driver (OramFailure_BucketInvalid <: t_OramFailure)
+  | BucketObservation_Storage  -> oram_terminal driver (OramFailure_BucketStorage <: t_OramFailure)
+
+let oram_on_recheck (driver: t_OramDriver) (observation: t_BucketRecheckObservation)
+    : Prims.Pure t_OramTransition
+      (requires
+        (match driver.f_stage <: t_OramStage with
+          | OramStage_Recheck  -> true
+          | _ -> false))
+      (ensures
+        fun result ->
+          let result:t_OramTransition = result in
+          ~.(oram_state_is_sound driver <: bool) ||
+          oram_state_is_sound result.f_driver &&
+          oram_effect_is_sound result.f_driver result.f_effect) =
+  match observation <: t_BucketRecheckObservation with
+  | BucketRecheckObservation_Unchanged  ->
+    oram_terminal driver (OramFailure_VersionMismatch <: t_OramFailure)
+  | BucketRecheckObservation_Changed  -> oram_terminal driver (OramFailure_Rekeyed <: t_OramFailure)
+  | BucketRecheckObservation_Failed  ->
+    oram_terminal driver (OramFailure_RecheckStorage <: t_OramFailure)
+
+let oram_on_published (driver: t_OramDriver)
+    : Prims.Pure t_OramTransition
+      (requires
+        (match driver.f_stage <: t_OramStage with
+          | OramStage_Publish  -> true
+          | _ -> false))
+      (ensures
+        fun result ->
+          let result:t_OramTransition = result in
+          ~.(oram_state_is_sound driver <: bool) ||
+          oram_state_is_sound result.f_driver &&
+          oram_effect_is_sound result.f_driver result.f_effect) =
+  oram_transition ({
+        driver with
+        f_stage = OramStage_Done <: t_OramStage;
+        f_published = true;
+        f_responded = true
+      }
+      <:
+      t_OramDriver)
+    (OramEffect_Complete <: t_OramEffect)
+
 let oram_step (driver: t_OramDriver) (event: t_OramEvent)
     : Prims.Pure t_OramTransition
       Prims.l_True
@@ -640,127 +889,39 @@ let oram_step (driver: t_OramDriver) (event: t_OramEvent)
   match event <: t_OramEvent with
   | OramEvent_Route observation ->
     if
-      ~.(match driver.f_stage <: t_OramStage with
-        | OramStage_Epoch  -> true
-        | _ -> false)
-    then oram_transition driver (OramEffect_Idle <: t_OramEffect)
-    else
-      (match observation <: t_RouteObservation with
-        | RouteObservation_Active { f_epoch = epoch } ->
-          if epoch <. Vela_rekey_policy.v_INITIAL_EPOCH
-          then oram_terminal driver (OramFailure_EpochMismatch <: t_OramFailure)
-          else
-            let routed:t_OramDriver = { driver with f_epoch = epoch } <: t_OramDriver in
-            (match oram_permit routed <: Core_models.Result.t_Result i64 t_OramFailure with
-              | Core_models.Result.Result_Ok permit_epoch ->
-                oram_transition ({
-                      routed with
-                      f_stage = OramStage_Quota <: t_OramStage;
-                      f_permit_epoch = permit_epoch
-                    }
-                    <:
-                    t_OramDriver)
-                  (OramEffect_EnforceQuota <: t_OramEffect)
-              | Core_models.Result.Result_Err failure -> oram_terminal routed failure)
-        | RouteObservation_Freezing  ->
-          oram_terminal driver (OramFailure_RekeyInProgress <: t_OramFailure)
-        | RouteObservation_Rejected  ->
-          oram_terminal driver (OramFailure_EpochMismatch <: t_OramFailure)
-        | RouteObservation_Storage  ->
-          oram_terminal driver (OramFailure_EpochStorage <: t_OramFailure))
+      match driver.f_stage <: t_OramStage with
+      | OramStage_Epoch  -> true
+      | _ -> false
+    then oram_on_route driver observation
+    else oram_transition driver (OramEffect_Idle <: t_OramEffect)
   | OramEvent_Quota observation ->
     if
-      ~.(match driver.f_stage <: t_OramStage with
-        | OramStage_Quota  -> true
-        | _ -> false)
-    then oram_transition driver (OramEffect_Idle <: t_OramEffect)
-    else
-      (match observation <: t_QuotaObservation with
-        | QuotaObservation_Allowed  ->
-          oram_transition ({
-                driver with
-                f_stage = OramStage_Bucket <: t_OramStage;
-                f_quota_allowed = true
-              }
-              <:
-              t_OramDriver)
-            (OramEffect_WriteBucket ({ f_index = mk_i64 0 }) <: t_OramEffect)
-        | QuotaObservation_Exceeded  ->
-          oram_terminal driver (OramFailure_QuotaExceeded <: t_OramFailure)
-        | QuotaObservation_Storage  ->
-          oram_terminal driver (OramFailure_QuotaStorage <: t_OramFailure))
+      match driver.f_stage <: t_OramStage with
+      | OramStage_Quota  -> true
+      | _ -> false
+    then oram_on_quota driver observation
+    else oram_transition driver (OramEffect_Idle <: t_OramEffect)
   | OramEvent_Bucket observation ->
     if
-      ~.(match driver.f_stage <: t_OramStage with
-        | OramStage_Bucket  -> true
-        | _ -> false)
-    then oram_transition driver (OramEffect_Idle <: t_OramEffect)
-    else
-      let index:i64 = driver.f_written in
-      (match observation <: t_BucketObservation with
-        | BucketObservation_Written  ->
-          let next:i64 = if index <. driver.f_bucket_count then index +! mk_i64 1 else index in
-          if next =. driver.f_bucket_count
-          then
-            oram_transition ({
-                  driver with
-                  f_stage = OramStage_Publish <: t_OramStage;
-                  f_written = next
-                }
-                <:
-                t_OramDriver)
-              (OramEffect_Publish <: t_OramEffect)
-          else
-            oram_transition ({ driver with f_written = next } <: t_OramDriver)
-              (OramEffect_WriteBucket ({ f_index = next }) <: t_OramEffect)
-        | BucketObservation_Skipped  ->
-          if oram_bucket_is_create driver index
-          then oram_terminal driver (OramFailure_Rekeyed <: t_OramFailure)
-          else
-            oram_transition ({
-                  driver with
-                  f_stage = OramStage_Recheck <: t_OramStage;
-                  f_recheck_index = index
-                }
-                <:
-                t_OramDriver)
-              (OramEffect_RecheckBucket ({ f_index = index }) <: t_OramEffect)
-        | BucketObservation_Existing  ->
-          oram_terminal driver (OramFailure_BucketExists <: t_OramFailure)
-        | BucketObservation_Invalid  ->
-          oram_terminal driver (OramFailure_BucketInvalid <: t_OramFailure)
-        | BucketObservation_Storage  ->
-          oram_terminal driver (OramFailure_BucketStorage <: t_OramFailure))
+      match driver.f_stage <: t_OramStage with
+      | OramStage_Bucket  -> true
+      | _ -> false
+    then oram_on_bucket driver observation
+    else oram_transition driver (OramEffect_Idle <: t_OramEffect)
   | OramEvent_Recheck observation ->
     if
-      ~.(match driver.f_stage <: t_OramStage with
-        | OramStage_Recheck  -> true
-        | _ -> false)
-    then oram_transition driver (OramEffect_Idle <: t_OramEffect)
-    else
-      (match observation <: t_BucketRecheckObservation with
-        | BucketRecheckObservation_Unchanged  ->
-          oram_terminal driver (OramFailure_VersionMismatch <: t_OramFailure)
-        | BucketRecheckObservation_Changed  ->
-          oram_terminal driver (OramFailure_Rekeyed <: t_OramFailure)
-        | BucketRecheckObservation_Failed  ->
-          oram_terminal driver (OramFailure_RecheckStorage <: t_OramFailure))
+      match driver.f_stage <: t_OramStage with
+      | OramStage_Recheck  -> true
+      | _ -> false
+    then oram_on_recheck driver observation
+    else oram_transition driver (OramEffect_Idle <: t_OramEffect)
   | OramEvent_Published  ->
     if
-      ~.(match driver.f_stage <: t_OramStage with
-        | OramStage_Publish  -> true
-        | _ -> false)
-    then oram_transition driver (OramEffect_Idle <: t_OramEffect)
-    else
-      oram_transition ({
-            driver with
-            f_stage = OramStage_Done <: t_OramStage;
-            f_published = true;
-            f_responded = true
-          }
-          <:
-          t_OramDriver)
-        (OramEffect_Complete <: t_OramEffect)
+      match driver.f_stage <: t_OramStage with
+      | OramStage_Publish  -> true
+      | _ -> false
+    then oram_on_published driver
+    else oram_transition driver (OramEffect_Idle <: t_OramEffect)
 
 type t_SchemaRequest = {
   f_authenticated:bool;
@@ -806,7 +967,7 @@ let schema_state_is_sound (d: t_SchemaDriver) : bool =
   (~.(match d.f_stage <: t_SchemaStage with
     | SchemaStage_Write  -> true
     | _ -> false) ||
-  d.f_authenticated && d.f_device_scope && ~.d.f_written) &&
+  d.f_authenticated && d.f_device_scope && ~.d.f_written && ~.d.f_responded && ~.d.f_failed) &&
   (~.(match d.f_stage <: t_SchemaStage with
     | SchemaStage_Done  -> true
     | _ -> false) ||
@@ -958,14 +1119,15 @@ type t_CapsuleAckTransition = {
 }
 
 let capsule_ack_state_is_sound (d: t_CapsuleAckDriver) : bool =
+  let v_open:bool = ~.d.f_responded && ~.d.f_failed in
   (~.(match d.f_stage <: t_CapsuleAckStage with
     | CapsuleAckStage_Ack  -> true
     | _ -> false) ||
-  d.f_authenticated && d.f_device_scope && ~.d.f_cleared) &&
+  d.f_authenticated && d.f_device_scope && ~.d.f_cleared && v_open) &&
   (~.(match d.f_stage <: t_CapsuleAckStage with
     | CapsuleAckStage_Pending  -> true
     | _ -> false) ||
-  d.f_authenticated && d.f_device_scope) &&
+  d.f_authenticated && d.f_device_scope && v_open) &&
   (~.(match d.f_stage <: t_CapsuleAckStage with
     | CapsuleAckStage_Done  -> true
     | _ -> false) ||
@@ -1146,7 +1308,7 @@ let rekey_capable_state_is_sound (d: t_RekeyCapableDriver) : bool =
   (~.(match d.f_stage <: t_RekeyCapableStage with
     | RekeyCapableStage_Attest  -> true
     | _ -> false) ||
-  d.f_authenticated && d.f_device_scope && ~.d.f_attested) &&
+  d.f_authenticated && d.f_device_scope && ~.d.f_attested && ~.d.f_responded && ~.d.f_failed) &&
   (~.(match d.f_stage <: t_RekeyCapableStage with
     | RekeyCapableStage_Done  -> true
     | _ -> false) ||

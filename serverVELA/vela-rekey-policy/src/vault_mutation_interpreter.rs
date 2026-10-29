@@ -142,11 +142,11 @@ executor_trait! {
 
 executor_trait! {
     pub trait OramIo {
-        fn resolve_epoch(&mut self) -> RouteObservation;
+        fn resolve_path_epoch(&mut self) -> RouteObservation;
         fn enforce_quota(&mut self) -> QuotaObservation;
         fn write_bucket(&mut self, index: i64) -> BucketObservation;
         fn recheck_bucket(&mut self, index: i64) -> BucketRecheckObservation;
-        fn publish(&mut self) -> ();
+        fn publish_path(&mut self) -> ();
     }
 }
 
@@ -220,7 +220,7 @@ macro_rules! oram_interpreter {
             });
             transition = match transition.effect {
                 __E::ResolveEpoch => {
-                    __step(transition.driver, __V::Route($io.resolve_epoch()$(.$aw)?))
+                    __step(transition.driver, __V::Route($io.resolve_path_epoch()$(.$aw)?))
                 }
                 __E::EnforceQuota => {
                     __step(transition.driver, __V::Quota($io.enforce_quota()$(.$aw)?))
@@ -234,7 +234,7 @@ macro_rules! oram_interpreter {
                     __V::Recheck($io.recheck_bucket(index)$(.$aw)?),
                 ),
                 __E::Publish => {
-                    $io.publish()$(.$aw)?;
+                    $io.publish_path()$(.$aw)?;
                     __step(transition.driver, __V::Published)
                 }
                 __E::Complete | __E::Fail(_) | __E::Idle => transition,
@@ -421,7 +421,7 @@ mod tests {
     }
 
     impl OramIo for OramScript {
-        fn resolve_epoch(&mut self) -> RouteObservation {
+        fn resolve_path_epoch(&mut self) -> RouteObservation {
             let n = self.calls.len();
             self.calls.push(OramEffect::ResolveEpoch);
             let observation = [
@@ -468,7 +468,7 @@ mod tests {
             self.events.push(OramEvent::Recheck(observation));
             observation
         }
-        fn publish(&mut self) {
+        fn publish_path(&mut self) {
             self.calls.push(OramEffect::Publish);
             self.events.push(OramEvent::Published);
         }

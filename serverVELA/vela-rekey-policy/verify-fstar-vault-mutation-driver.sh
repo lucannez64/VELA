@@ -70,11 +70,14 @@ if [[ -z $hax_lib_root || ! -d $hax_lib_root ]]; then
   exit 1
 fi
 
+# Every step is split into one contracted helper per event, so the budget is
+# small: the extracted modules keep hax's reviewed rlimit-500 header and the
+# hand-written lemmas run at rlimit 100.
 fstar_args=(
   --cmi
   --cache_off
   --warn_error -331
-  --z3rlimit 16000
+  --z3rlimit 100
   --z3version 4.13.3
   --already_cached '+Prims+FStar+LowStar+C+Spec.Loops+TestLib'
   --include "$hax_lib_root/proof-libs/fstar/core"

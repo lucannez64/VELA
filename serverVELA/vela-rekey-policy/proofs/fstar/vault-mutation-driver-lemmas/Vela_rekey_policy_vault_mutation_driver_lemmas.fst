@@ -96,6 +96,15 @@ let rec chunk_count_fail (d: t_ChunkDeleteDriver) (events: list t_ChunkDeleteEve
        | ChunkDeleteEffect_Fail _ -> 1
        | _ -> 0) + chunk_count_fail (chunk_delete_step d e).f_driver rest
 
+/// After the verdict every event is ignored, so nothing more is counted.
+let rec chunk_done_counts_nothing (d: t_ChunkDeleteDriver) (events: list t_ChunkDeleteEvent)
+  : Lemma (requires (chunk_delete_state_is_sound d /\ chunk_is_done d))
+          (ensures (chunk_count_complete d events = 0 /\ chunk_count_fail d events = 0))
+          (decreases events) =
+  match events with
+  | [] -> ()
+  | e :: rest -> chunk_step_after_done d e; chunk_done_counts_nothing d rest
+
 let rec chunk_complete_le_one (d: t_ChunkDeleteDriver) (events: list t_ChunkDeleteEvent)
   : Lemma (requires (chunk_delete_state_is_sound d))
           (ensures (chunk_count_complete d events <= 1)) (decreases events) =
@@ -108,7 +117,7 @@ let rec chunk_complete_le_one (d: t_ChunkDeleteDriver) (events: list t_ChunkDele
       if (match t.f_effect <: t_ChunkDeleteEffect with ChunkDeleteEffect_Complete -> true | _ -> false)
       then begin
         assert (chunk_is_done t.f_driver);
-        chunk_done_inert t.f_driver rest
+        chunk_done_counts_nothing t.f_driver rest
       end else chunk_complete_le_one t.f_driver rest
 
 let rec chunk_fail_le_one (d: t_ChunkDeleteDriver) (events: list t_ChunkDeleteEvent)
@@ -123,7 +132,7 @@ let rec chunk_fail_le_one (d: t_ChunkDeleteDriver) (events: list t_ChunkDeleteEv
       if (match t.f_effect <: t_ChunkDeleteEffect with ChunkDeleteEffect_Fail _ -> true | _ -> false)
       then begin
         assert (chunk_is_done t.f_driver);
-        chunk_done_inert t.f_driver rest
+        chunk_done_counts_nothing t.f_driver rest
       end else chunk_fail_le_one t.f_driver rest
 
 /// The publish effect exists only after the guarded delete was observed.
@@ -213,6 +222,15 @@ let rec oram_count_fail (d: t_OramDriver) (events: list t_OramEvent)
        | OramEffect_Fail _ -> 1
        | _ -> 0) + oram_count_fail (oram_step d e).f_driver rest
 
+/// After the verdict every event is ignored, so nothing more is counted.
+let rec oram_done_counts_nothing (d: t_OramDriver) (events: list t_OramEvent)
+  : Lemma (requires (oram_state_is_sound d /\ oram_is_done d))
+          (ensures (oram_count_complete d events = 0 /\ oram_count_fail d events = 0))
+          (decreases events) =
+  match events with
+  | [] -> ()
+  | e :: rest -> oram_step_after_done d e; oram_done_counts_nothing d rest
+
 let rec oram_complete_le_one (d: t_OramDriver) (events: list t_OramEvent)
   : Lemma (requires (oram_state_is_sound d))
           (ensures (oram_count_complete d events <= 1)) (decreases events) =
@@ -225,7 +243,7 @@ let rec oram_complete_le_one (d: t_OramDriver) (events: list t_OramEvent)
       if (match t.f_effect <: t_OramEffect with OramEffect_Complete -> true | _ -> false)
       then begin
         assert (oram_is_done t.f_driver);
-        oram_done_inert t.f_driver rest
+        oram_done_counts_nothing t.f_driver rest
       end else oram_complete_le_one t.f_driver rest
 
 let rec oram_fail_le_one (d: t_OramDriver) (events: list t_OramEvent)
@@ -240,7 +258,7 @@ let rec oram_fail_le_one (d: t_OramDriver) (events: list t_OramEvent)
       if (match t.f_effect <: t_OramEffect with OramEffect_Fail _ -> true | _ -> false)
       then begin
         assert (oram_is_done t.f_driver);
-        oram_done_inert t.f_driver rest
+        oram_done_counts_nothing t.f_driver rest
       end else oram_fail_le_one t.f_driver rest
 
 /// A bucket write is always the next index, and only a complete path
@@ -248,10 +266,11 @@ let rec oram_fail_le_one (d: t_OramDriver) (events: list t_OramEvent)
 let oram_write_is_next (d: t_OramDriver) (e: t_OramEvent)
   : Lemma (requires (oram_state_is_sound d))
           (ensures (
-            (match (oram_step d e).f_effect <: t_OramEffect with
+            let t = oram_step d e in
+            (match t.f_effect <: t_OramEffect with
              | OramEffect_WriteBucket { f_index = index } ->
-                 index = d.f_written /\ d.f_written < d.f_bucket_count
-             | OramEffect_Publish -> d.f_written = d.f_bucket_count
+                 index = t.f_driver.f_written /\ v index < v t.f_driver.f_bucket_count
+             | OramEffect_Publish -> t.f_driver.f_written = t.f_driver.f_bucket_count
              | _ -> True))) =
   oram_step_effect_sound d e
 

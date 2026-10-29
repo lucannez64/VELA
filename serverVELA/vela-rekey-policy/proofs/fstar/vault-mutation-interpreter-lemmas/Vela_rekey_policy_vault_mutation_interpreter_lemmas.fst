@@ -11,7 +11,9 @@ module Vela_rekey_policy_vault_mutation_interpreter_lemmas
 /// 2. feeds back observations that answer their effects and ends in
 ///    `run_from_* request evs`;
 /// 3. reaches a verdict within its budget;
-/// 4. hence satisfies the corresponding per-request driver theorem.
+/// 4. hence satisfies the corresponding per-request driver theorem;
+/// 5. stops in a sound driver state after any prefix of turns, i.e. when the
+///    handler future is dropped (`*_cancellation`).
 
 open FStar.Mul
 open Core_models
@@ -61,7 +63,7 @@ let cd_turn_ev (#io_t: Type0) {| i: t_ChunkDeleteIo io_t |} (s: io_t) (t: t_Chun
       let ev = ChunkDeleteEvent_Delete o in
       (s', chunk_delete_step t.f_driver ev, Some ev)
   | ChunkDeleteEffect_Publish ->
-      let (s', ()) = f_publish #io_t #i s in
+      let s' = f_publish #io_t #i s in
       let ev = ChunkDeleteEvent_Published in
       (s', chunk_delete_step t.f_driver ev, Some ev)
   | ChunkDeleteEffect_Complete | ChunkDeleteEffect_Fail _ | ChunkDeleteEffect_Idle -> (s, t, None)
@@ -128,6 +130,16 @@ let run_chunk_delete_is_run_ev (#io_t: Type0) {| i: t_ChunkDeleteIo io_t |} (s: 
   cd_iter_is_run_ev #io_t #i 5 s t0;
   assert (v v_CHUNK_DELETE_MAX_EFFECTS = 5);
   assert (run_chunk_delete #io_t #i s request == cd_iter #io_t #i 5 (s, t0))
+
+/// Cancellation (`DELETE /vault/chunk/:id`): the handler future may be dropped after any
+/// executor call, so the loop stops after an arbitrary prefix of turns. Every
+/// such prefix, for every executor and every `k`, ends in a sound driver
+/// state whose next effect agrees with it.
+let chunk_delete_cancellation (#io_t: Type0) {| i: t_ChunkDeleteIo io_t |} (k: nat) (s: io_t)
+  (t: t_ChunkDeleteTransition)
+  : Lemma (requires cd_sound t)
+          (ensures (let (_, t2) = cd_iter #io_t #i k (s, t) in cd_sound t2)) =
+  cd_iter_is_run_ev #io_t #i k s t
 
 let rec cd_responds (t: t_ChunkDeleteTransition) (evs: list t_ChunkDeleteEvent)
   : Pure bool (requires cd_sound t) (ensures fun _ -> True) (decreases evs) =
@@ -226,7 +238,7 @@ let oram_turn_ev (#io_t: Type0) {| i: t_OramIo io_t |} (s: io_t) (t: t_OramTrans
     (requires oram_state_is_sound t.f_driver) (ensures fun _ -> True) =
   match t.f_effect with
   | OramEffect_ResolveEpoch ->
-      let (s', o) = f_resolve_epoch #io_t #i s in
+      let (s', o) = f_resolve_path_epoch #io_t #i s in
       let ev = OramEvent_Route o in
       (s', oram_step t.f_driver ev, Some ev)
   | OramEffect_EnforceQuota ->
@@ -242,7 +254,7 @@ let oram_turn_ev (#io_t: Type0) {| i: t_OramIo io_t |} (s: io_t) (t: t_OramTrans
       let ev = OramEvent_Recheck o in
       (s', oram_step t.f_driver ev, Some ev)
   | OramEffect_Publish ->
-      let (s', ()) = f_publish #io_t #i s in
+      let s' = f_publish_path #io_t #i s in
       let ev = OramEvent_Published in
       (s', oram_step t.f_driver ev, Some ev)
   | OramEffect_Complete | OramEffect_Fail _ | OramEffect_Idle -> (s, t, None)
@@ -310,6 +322,16 @@ let run_oram_is_run_ev (#io_t: Type0) {| i: t_OramIo io_t |} (s: io_t)
   assert (v v_ORAM_MAX_EFFECTS = 69);
   assert (run_oram #io_t #i s request == oram_iter #io_t #i 69 (s, t0))
 
+/// Cancellation (`PUT /vault/oram/:tree_id/path/:leaf`): the handler future may be dropped after any
+/// executor call, so the loop stops after an arbitrary prefix of turns. Every
+/// such prefix, for every executor and every `k`, ends in a sound driver
+/// state whose next effect agrees with it.
+let oram_cancellation (#io_t: Type0) {| i: t_OramIo io_t |} (k: nat) (s: io_t)
+  (t: t_OramTransition)
+  : Lemma (requires oram_sound t)
+          (ensures (let (_, t2) = oram_iter #io_t #i k (s, t) in oram_sound t2)) =
+  oram_iter_is_run_ev #io_t #i k s t
+
 let rec oram_responds (t: t_OramTransition) (evs: list t_OramEvent)
   : Pure bool (requires oram_sound t) (ensures fun _ -> True) (decreases evs) =
   match evs with
@@ -332,18 +354,27 @@ let rec oram_run_ev_follows (#io_t: Type0) {| i: t_OramIo io_t |} (n: nat) (s: i
     match o with | None -> () | Some ev -> oram_step_sound t.f_driver ev
   end
 
-let oram_remaining (e: t_OramEffect) : nat =
-  match e with
-  | OramEffect_ResolveEpoch -> 1000
-  | OramEffect_EnforceQuota -> 999
-  | OramEffect_WriteBucket { f_index = index } -> 500 - index
-  | OramEffect_RecheckBucket { f_index = index } -> 400 - index
+/// Turns left before the verdict: the route, the quota, the remaining bucket
+/// writes, then one recheck or the publication. A path has at most 33
+/// buckets, so a fresh request needs at most 36 of the 69 turns.
+let clamp (x: int) : nat = if x < 0 then 0 else x
+
+let oram_remaining (t: t_OramTransition) : nat =
+  let bc = v t.f_driver.f_bucket_count in
+  match t.f_effect with
+  | OramEffect_ResolveEpoch -> clamp (bc + 3)
+  | OramEffect_EnforceQuota -> clamp (bc + 2)
+  | OramEffect_WriteBucket { f_index = index } -> clamp (bc - v index + 1)
+  | OramEffect_RecheckBucket _ -> 1
   | OramEffect_Publish -> 1
   | OramEffect_Complete | OramEffect_Fail _ | OramEffect_Idle -> 0
 
+let oram_begin_remaining (r: t_OramRequest)
+  : Lemma (oram_remaining (begin_oram r) <= 69) = ()
+
 let oram_step_decreases (t: t_OramTransition) (ev: t_OramEvent)
   : Lemma (requires oram_sound t /\ not (oram_terminal t.f_effect) /\ oram_responds_to t.f_effect ev)
-          (ensures oram_remaining (oram_step t.f_driver ev).f_effect < oram_remaining t.f_effect) =
+          (ensures oram_remaining (oram_step t.f_driver ev) < oram_remaining t) =
   match t.f_effect <: t_OramEffect with
   | OramEffect_ResolveEpoch -> ()
   | OramEffect_EnforceQuota -> ()
@@ -354,7 +385,7 @@ let oram_step_decreases (t: t_OramTransition) (ev: t_OramEvent)
 
 let rec oram_run_reaches_verdict (#io_t: Type0) {| i: t_OramIo io_t |} (n: nat) (s: io_t)
   (t: t_OramTransition)
-  : Lemma (requires oram_sound t /\ oram_remaining t.f_effect <= n)
+  : Lemma (requires oram_sound t /\ oram_remaining t <= n)
           (ensures (let (_, t2, _) = oram_run_ev #io_t #i n s t in oram_terminal t2.f_effect))
           (decreases n) =
   if n = 0 then () else begin
@@ -377,6 +408,7 @@ let run_oram_theorem (#io_t: Type0) {| i: t_OramIo io_t |} (s: io_t)
   let t0 = begin_oram request in
   run_oram_is_run_ev #io_t #i s request;
   oram_run_ev_follows #io_t #i 69 s t0;
+  oram_begin_remaining request;
   oram_run_reaches_verdict #io_t #i 69 s t0;
   let (_, _, evs) = oram_run_ev #io_t #i 69 s t0 in
   oram_theorem request evs
@@ -470,6 +502,16 @@ let run_schema_is_run_ev (#io_t: Type0) {| i: t_SchemaIo io_t |} (s: io_t)
   schema_iter_is_run_ev #io_t #i 1 s t0;
   assert (v v_SCHEMA_MAX_EFFECTS = 1);
   assert (run_schema #io_t #i s request == schema_iter #io_t #i 1 (s, t0))
+
+/// Cancellation (`POST /vault/schema`): the handler future may be dropped after any
+/// executor call, so the loop stops after an arbitrary prefix of turns. Every
+/// such prefix, for every executor and every `k`, ends in a sound driver
+/// state whose next effect agrees with it.
+let schema_cancellation (#io_t: Type0) {| i: t_SchemaIo io_t |} (k: nat) (s: io_t)
+  (t: t_SchemaTransition)
+  : Lemma (requires schema_sound t)
+          (ensures (let (_, t2) = schema_iter #io_t #i k (s, t) in schema_sound t2)) =
+  schema_iter_is_run_ev #io_t #i k s t
 
 let rec schema_responds (t: t_SchemaTransition) (evs: list t_SchemaEvent)
   : Pure bool (requires schema_sound t) (ensures fun _ -> True) (decreases evs) =
@@ -629,6 +671,16 @@ let run_capsule_ack_is_run_ev (#io_t: Type0) {| i: t_CapsuleAckIo io_t |} (s: io
   assert (v v_CAPSULE_ACK_MAX_EFFECTS = 2);
   assert (run_capsule_ack #io_t #i s request == ack_iter #io_t #i 2 (s, t0))
 
+/// Cancellation (`POST /device/capsule/ack`): the handler future may be dropped after any
+/// executor call, so the loop stops after an arbitrary prefix of turns. Every
+/// such prefix, for every executor and every `k`, ends in a sound driver
+/// state whose next effect agrees with it.
+let capsule_ack_cancellation (#io_t: Type0) {| i: t_CapsuleAckIo io_t |} (k: nat) (s: io_t)
+  (t: t_CapsuleAckTransition)
+  : Lemma (requires ack_sound t)
+          (ensures (let (_, t2) = ack_iter #io_t #i k (s, t) in ack_sound t2)) =
+  ack_iter_is_run_ev #io_t #i k s t
+
 let rec ack_responds (t: t_CapsuleAckTransition) (evs: list t_CapsuleAckEvent)
   : Pure bool (requires ack_sound t) (ensures fun _ -> True) (decreases evs) =
   match evs with
@@ -784,6 +836,16 @@ let run_rekey_capable_is_run_ev (#io_t: Type0) {| i: t_RekeyCapableIo io_t |} (s
   capable_iter_is_run_ev #io_t #i 1 s t0;
   assert (v v_REKEY_CAPABLE_MAX_EFFECTS = 1);
   assert (run_rekey_capable #io_t #i s request == capable_iter #io_t #i 1 (s, t0))
+
+/// Cancellation (`POST /device/rekey-capable`): the handler future may be dropped after any
+/// executor call, so the loop stops after an arbitrary prefix of turns. Every
+/// such prefix, for every executor and every `k`, ends in a sound driver
+/// state whose next effect agrees with it.
+let rekey_capable_cancellation (#io_t: Type0) {| i: t_RekeyCapableIo io_t |} (k: nat) (s: io_t)
+  (t: t_RekeyCapableTransition)
+  : Lemma (requires capable_sound t)
+          (ensures (let (_, t2) = capable_iter #io_t #i k (s, t) in capable_sound t2)) =
+  capable_iter_is_run_ev #io_t #i k s t
 
 let rec capable_responds (t: t_RekeyCapableTransition) (evs: list t_RekeyCapableEvent)
   : Pure bool (requires capable_sound t) (ensures fun _ -> True) (decreases evs) =

@@ -292,3 +292,13 @@ let enroll_interpreter_theorem (#io_t: Type0) {| i: t_EnrollIo io_t |} (s: io_t)
   failed_implies_not_inserted t.f_driver;
   success_excludes_failure t.f_driver;
   assert (run_from_enroll evs == run t0.f_driver evs)
+
+/// Cancellation (POST /device/enroll): the handler future may be dropped after any
+/// executor call, so the loop stops after an arbitrary prefix of turns. Every
+/// such prefix, for every executor and every `k`, ends in a sound driver state
+/// whose next effect agrees with it.
+let enroll_cancellation (#io_t: Type0) {| i: t_EnrollIo io_t |} (k: nat) (s: io_t)
+  (t: t_EnrollTransition)
+  : Lemma (requires sound_transition t)
+          (ensures (let (_, t2) = iter_turn #io_t #i k (s, t) in sound_transition t2)) =
+  iter_turn_is_run_ev #io_t #i k s t

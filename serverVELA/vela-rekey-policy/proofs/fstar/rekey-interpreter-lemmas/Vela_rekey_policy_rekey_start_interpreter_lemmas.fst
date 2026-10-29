@@ -86,3 +86,12 @@ let run_start_theorem (#io_t: Type0) {| i: t_RekeyIo io_t |} (s: io_t)
   rekey_start_trace_theorem request evs;
   assert (start_final request evs t2)
 
+/// Cancellation (`POST /vault/rekey/start`): the handler future may be dropped after any
+/// executor call, so the loop stops after an arbitrary prefix of turns. Every
+/// such prefix, for every executor and every `k`, ends in a sound driver state
+/// (`rekey_state_is_sound`) whose next effect agrees with it.
+let rekey_start_cancellation (#io_t: Type0) {| i: t_RekeyIo io_t |} (k: nat) (s: io_t)
+  (t: t_RekeyTransition)
+  : Lemma (requires sound_transition t)
+          (ensures (let (_, t2) = iter_turn #io_t #i k (s, t) in sound_transition t2)) =
+  iter_turn_is_run_ev #io_t #i k s t

@@ -152,23 +152,22 @@ pub struct ChunkDeleteTransition {
 }
 
 pub fn chunk_delete_state_is_sound(d: ChunkDeleteDriver) -> bool {
-    let fresh = d.epoch == 0
-        && d.permit_epoch == 0
-        && d.current_version == 0
-        && !d.deleted
-        && !d.published
-        && !d.responded
-        && !d.failed;
+    // Before the verdict nothing is published or answered, and only the
+    // publish stage follows the guarded delete.
+    let clean = !d.deleted && !d.published && !d.responded && !d.failed;
+    let fresh = d.epoch == 0 && d.permit_epoch == 0 && d.current_version == 0 && clean;
     let permitted = d.epoch >= INITIAL_EPOCH && d.permit_epoch == d.epoch;
     let done = (d.responded || d.failed)
         && !(d.responded && d.failed)
-        && (!d.responded || (d.permitted() && d.deleted && d.published))
+        && (!d.responded || (permitted && d.deleted && d.published))
         && (!d.failed || !d.deleted);
     (!matches!(d.stage, ChunkDeleteStage::Schema) || (d.authenticated && fresh))
         && (!matches!(d.stage, ChunkDeleteStage::Epoch) || (d.authenticated && fresh))
-        && (!matches!(d.stage, ChunkDeleteStage::Version) || permitted)
-        && (!matches!(d.stage, ChunkDeleteStage::Delete) || (permitted && d.current_version >= 0))
-        && (!matches!(d.stage, ChunkDeleteStage::Publish) || (permitted && d.deleted))
+        && (!matches!(d.stage, ChunkDeleteStage::Version) || (permitted && clean))
+        && (!matches!(d.stage, ChunkDeleteStage::Delete)
+            || (permitted && d.current_version >= 0 && clean))
+        && (!matches!(d.stage, ChunkDeleteStage::Publish)
+            || (permitted && d.deleted && !d.published && !d.responded && !d.failed))
         && (!matches!(d.stage, ChunkDeleteStage::Done) || done)
         && (!d.deleted || permitted)
         && (!d.published || d.deleted)
@@ -209,6 +208,13 @@ fn chunk_transition(driver: ChunkDeleteDriver, effect: ChunkDeleteEffect) -> Chu
     ChunkDeleteTransition { driver, effect }
 }
 
+/// A refusal before the guarded delete: sound from any state that has neither
+/// deleted nor answered.
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    !(!driver.deleted && !driver.published && !driver.responded && !driver.failed)
+        || (chunk_delete_state_is_sound(result.driver)
+            && chunk_delete_effect_is_sound(result.driver, result.effect))
+}))]
 fn chunk_terminal(driver: ChunkDeleteDriver, failure: ChunkDeleteFailure) -> ChunkDeleteTransition {
     chunk_transition(
         ChunkDeleteDriver {
@@ -273,6 +279,126 @@ fn chunk_permit(driver: ChunkDeleteDriver) -> Result<i64, ChunkDeleteFailure> {
     }
 }
 
+// Each event has one contracted helper; `chunk_delete_step` only dispatches.
+// Every helper is called in its own stage and preserves soundness.
+
+#[cfg_attr(hax, hax_lib::requires(matches!(driver.stage, ChunkDeleteStage::Schema)))]
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    !chunk_delete_state_is_sound(driver)
+        || (chunk_delete_state_is_sound(result.driver)
+            && chunk_delete_effect_is_sound(result.driver, result.effect))
+}))]
+fn chunk_on_schema(driver: ChunkDeleteDriver, observation: SchemaObservation) -> ChunkDeleteTransition {
+    match observation {
+        SchemaObservation::Allowed => chunk_transition(
+            ChunkDeleteDriver {
+                stage: ChunkDeleteStage::Epoch,
+                ..driver
+            },
+            ChunkDeleteEffect::ResolveEpoch,
+        ),
+        SchemaObservation::Refused => chunk_terminal(driver, ChunkDeleteFailure::SchemaRefused),
+        SchemaObservation::Storage => chunk_terminal(driver, ChunkDeleteFailure::SchemaStorage),
+    }
+}
+
+#[cfg_attr(hax, hax_lib::requires(matches!(driver.stage, ChunkDeleteStage::Epoch)))]
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    !chunk_delete_state_is_sound(driver)
+        || (chunk_delete_state_is_sound(result.driver)
+            && chunk_delete_effect_is_sound(result.driver, result.effect))
+}))]
+fn chunk_on_route(driver: ChunkDeleteDriver, observation: RouteObservation) -> ChunkDeleteTransition {
+    match observation {
+        RouteObservation::Active { epoch } => {
+            let routed = ChunkDeleteDriver { epoch, ..driver };
+            match chunk_permit(routed) {
+                Ok(permit_epoch) => chunk_transition(
+                    ChunkDeleteDriver {
+                        stage: ChunkDeleteStage::Version,
+                        permit_epoch,
+                        ..routed
+                    },
+                    ChunkDeleteEffect::ReadVersion,
+                ),
+                Err(failure) => chunk_terminal(routed, failure),
+            }
+        }
+        RouteObservation::Freezing => chunk_terminal(driver, ChunkDeleteFailure::RekeyInProgress),
+        RouteObservation::Rejected => chunk_terminal(driver, ChunkDeleteFailure::EpochMismatch),
+        RouteObservation::Storage => chunk_terminal(driver, ChunkDeleteFailure::EpochStorage),
+    }
+}
+
+#[cfg_attr(hax, hax_lib::requires(matches!(driver.stage, ChunkDeleteStage::Version)))]
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    !chunk_delete_state_is_sound(driver)
+        || (chunk_delete_state_is_sound(result.driver)
+            && chunk_delete_effect_is_sound(result.driver, result.effect))
+}))]
+fn chunk_on_version(
+    driver: ChunkDeleteDriver,
+    observation: VersionObservation,
+) -> ChunkDeleteTransition {
+    match observation {
+        VersionObservation::Found { version } => {
+            if version != driver.if_match || version < 0 {
+                chunk_terminal(driver, ChunkDeleteFailure::VersionMismatch)
+            } else {
+                chunk_transition(
+                    ChunkDeleteDriver {
+                        stage: ChunkDeleteStage::Delete,
+                        current_version: version,
+                        ..driver
+                    },
+                    ChunkDeleteEffect::DeleteRow,
+                )
+            }
+        }
+        VersionObservation::Missing => chunk_terminal(driver, ChunkDeleteFailure::NotFound),
+        VersionObservation::Storage => chunk_terminal(driver, ChunkDeleteFailure::DeleteStorage),
+    }
+}
+
+#[cfg_attr(hax, hax_lib::requires(matches!(driver.stage, ChunkDeleteStage::Delete)))]
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    !chunk_delete_state_is_sound(driver)
+        || (chunk_delete_state_is_sound(result.driver)
+            && chunk_delete_effect_is_sound(result.driver, result.effect))
+}))]
+fn chunk_on_delete(driver: ChunkDeleteDriver, observation: DeleteObservation) -> ChunkDeleteTransition {
+    match observation {
+        DeleteObservation::Deleted => chunk_transition(
+            ChunkDeleteDriver {
+                stage: ChunkDeleteStage::Publish,
+                deleted: true,
+                ..driver
+            },
+            ChunkDeleteEffect::Publish,
+        ),
+        DeleteObservation::Skipped => chunk_terminal(driver, ChunkDeleteFailure::Rekeyed),
+        DeleteObservation::Storage => chunk_terminal(driver, ChunkDeleteFailure::DeleteStorage),
+    }
+}
+
+#[cfg_attr(hax, hax_lib::requires(matches!(driver.stage, ChunkDeleteStage::Publish)))]
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    !chunk_delete_state_is_sound(driver)
+        || (chunk_delete_state_is_sound(result.driver)
+            && chunk_delete_effect_is_sound(result.driver, result.effect))
+}))]
+fn chunk_on_published(driver: ChunkDeleteDriver) -> ChunkDeleteTransition {
+    chunk_transition(
+        ChunkDeleteDriver {
+            stage: ChunkDeleteStage::Done,
+            published: true,
+            responded: true,
+            ..driver
+        },
+        ChunkDeleteEffect::Complete,
+    )
+}
+
 #[cfg_attr(hax, hax_lib::ensures(|result| {
     !chunk_delete_state_is_sound(driver)
         || (chunk_delete_state_is_sound(result.driver)
@@ -284,113 +410,39 @@ pub fn chunk_delete_step(
 ) -> ChunkDeleteTransition {
     match event {
         ChunkDeleteEvent::Schema(observation) => {
-            if !matches!(driver.stage, ChunkDeleteStage::Schema) {
-                return chunk_transition(driver, ChunkDeleteEffect::Idle);
-            }
-            match observation {
-                SchemaObservation::Allowed => chunk_transition(
-                    ChunkDeleteDriver {
-                        stage: ChunkDeleteStage::Epoch,
-                        ..driver
-                    },
-                    ChunkDeleteEffect::ResolveEpoch,
-                ),
-                SchemaObservation::Refused => {
-                    chunk_terminal(driver, ChunkDeleteFailure::SchemaRefused)
-                }
-                SchemaObservation::Storage => {
-                    chunk_terminal(driver, ChunkDeleteFailure::SchemaStorage)
-                }
+            if matches!(driver.stage, ChunkDeleteStage::Schema) {
+                chunk_on_schema(driver, observation)
+            } else {
+                chunk_transition(driver, ChunkDeleteEffect::Idle)
             }
         }
         ChunkDeleteEvent::Route(observation) => {
-            if !matches!(driver.stage, ChunkDeleteStage::Epoch) {
-                return chunk_transition(driver, ChunkDeleteEffect::Idle);
-            }
-            match observation {
-                RouteObservation::Active { epoch } => {
-                    let routed = ChunkDeleteDriver { epoch, ..driver };
-                    match chunk_permit(routed) {
-                        Ok(permit_epoch) => chunk_transition(
-                            ChunkDeleteDriver {
-                                stage: ChunkDeleteStage::Version,
-                                permit_epoch,
-                                ..routed
-                            },
-                            ChunkDeleteEffect::ReadVersion,
-                        ),
-                        Err(failure) => chunk_terminal(routed, failure),
-                    }
-                }
-                RouteObservation::Freezing => {
-                    chunk_terminal(driver, ChunkDeleteFailure::RekeyInProgress)
-                }
-                RouteObservation::Rejected => {
-                    chunk_terminal(driver, ChunkDeleteFailure::EpochMismatch)
-                }
-                RouteObservation::Storage => {
-                    chunk_terminal(driver, ChunkDeleteFailure::EpochStorage)
-                }
+            if matches!(driver.stage, ChunkDeleteStage::Epoch) {
+                chunk_on_route(driver, observation)
+            } else {
+                chunk_transition(driver, ChunkDeleteEffect::Idle)
             }
         }
         ChunkDeleteEvent::Version(observation) => {
-            if !matches!(driver.stage, ChunkDeleteStage::Version) {
-                return chunk_transition(driver, ChunkDeleteEffect::Idle);
-            }
-            match observation {
-                VersionObservation::Found { version } => {
-                    if version != driver.if_match || version < 0 {
-                        return chunk_terminal(driver, ChunkDeleteFailure::VersionMismatch);
-                    }
-                    chunk_transition(
-                        ChunkDeleteDriver {
-                            stage: ChunkDeleteStage::Delete,
-                            current_version: version,
-                            ..driver
-                        },
-                        ChunkDeleteEffect::DeleteRow,
-                    )
-                }
-                VersionObservation::Missing => {
-                    chunk_terminal(driver, ChunkDeleteFailure::NotFound)
-                }
-                VersionObservation::Storage => {
-                    chunk_terminal(driver, ChunkDeleteFailure::DeleteStorage)
-                }
+            if matches!(driver.stage, ChunkDeleteStage::Version) {
+                chunk_on_version(driver, observation)
+            } else {
+                chunk_transition(driver, ChunkDeleteEffect::Idle)
             }
         }
         ChunkDeleteEvent::Delete(observation) => {
-            if !matches!(driver.stage, ChunkDeleteStage::Delete) {
-                return chunk_transition(driver, ChunkDeleteEffect::Idle);
-            }
-            match observation {
-                DeleteObservation::Deleted => chunk_transition(
-                    ChunkDeleteDriver {
-                        stage: ChunkDeleteStage::Publish,
-                        deleted: true,
-                        ..driver
-                    },
-                    ChunkDeleteEffect::Publish,
-                ),
-                DeleteObservation::Skipped => chunk_terminal(driver, ChunkDeleteFailure::Rekeyed),
-                DeleteObservation::Storage => {
-                    chunk_terminal(driver, ChunkDeleteFailure::DeleteStorage)
-                }
+            if matches!(driver.stage, ChunkDeleteStage::Delete) {
+                chunk_on_delete(driver, observation)
+            } else {
+                chunk_transition(driver, ChunkDeleteEffect::Idle)
             }
         }
         ChunkDeleteEvent::Published => {
-            if !matches!(driver.stage, ChunkDeleteStage::Publish) {
-                return chunk_transition(driver, ChunkDeleteEffect::Idle);
+            if matches!(driver.stage, ChunkDeleteStage::Publish) {
+                chunk_on_published(driver)
+            } else {
+                chunk_transition(driver, ChunkDeleteEffect::Idle)
             }
-            chunk_transition(
-                ChunkDeleteDriver {
-                    stage: ChunkDeleteStage::Done,
-                    published: true,
-                    responded: true,
-                    ..driver
-                },
-                ChunkDeleteEffect::Complete,
-            )
         }
     }
 }
@@ -499,29 +551,45 @@ pub struct OramTransition {
     pub effect: OramEffect,
 }
 
+/// Most buckets an ORAM path holds (tree height 32).
+pub const ORAM_MAX_BUCKETS: i64 = 33;
+
 pub fn oram_state_is_sound(d: OramDriver) -> bool {
+    // Before the verdict nothing is published or answered, and the path has a
+    // valid, non-empty shape.
+    let clean = !d.published && !d.responded && !d.failed;
+    let shaped = d.bucket_count > 0 && d.bucket_count <= ORAM_MAX_BUCKETS;
     let fresh = d.epoch == 0
         && d.permit_epoch == 0
         && d.written == 0
         && !d.quota_allowed
-        && !d.published
-        && !d.responded
-        && !d.failed;
+        && clean;
     let permitted = d.epoch >= INITIAL_EPOCH && d.permit_epoch == d.epoch;
     let done = (d.responded || d.failed)
         && !(d.responded && d.failed)
         && (!d.responded || (permitted && d.written == d.bucket_count && d.published))
         && (!d.failed || !d.published);
-    (!matches!(d.stage, OramStage::Epoch) || (d.authenticated && fresh))
-        && (!matches!(d.stage, OramStage::Quota) || permitted)
+    (!matches!(d.stage, OramStage::Epoch) || (d.authenticated && shaped && fresh))
+        && (!matches!(d.stage, OramStage::Quota)
+            || (permitted && shaped && d.written == 0 && !d.quota_allowed && clean))
         && (!matches!(d.stage, OramStage::Bucket)
-            || (permitted && d.quota_allowed && d.written < d.bucket_count))
+            || (permitted
+                && shaped
+                && d.quota_allowed
+                && d.written >= 0
+                && d.written < d.bucket_count
+                && clean))
         && (!matches!(d.stage, OramStage::Recheck)
-            || (permitted && d.quota_allowed && d.recheck_index < d.bucket_count))
+            || (permitted
+                && shaped
+                && d.quota_allowed
+                && d.recheck_index >= 0
+                && d.recheck_index < d.bucket_count
+                && d.written == d.recheck_index
+                && clean))
         && (!matches!(d.stage, OramStage::Publish)
-            || (permitted && d.written == d.bucket_count && d.quota_allowed))
+            || (permitted && shaped && d.written == d.bucket_count && d.quota_allowed && clean))
         && (!matches!(d.stage, OramStage::Done) || done)
-        && (d.written <= d.bucket_count)
         && (!d.published || d.written == d.bucket_count)
 }
 
@@ -550,6 +618,12 @@ fn oram_transition(driver: OramDriver, effect: OramEffect) -> OramTransition {
     OramTransition { driver, effect }
 }
 
+/// A refusal: sound from any state that has not published or answered.
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    !(!driver.published && !driver.responded && !driver.failed)
+        || (oram_state_is_sound(result.driver)
+            && oram_effect_is_sound(result.driver, result.effect))
+}))]
 fn oram_terminal(driver: OramDriver, failure: OramFailure) -> OramTransition {
     oram_transition(
         OramDriver {
@@ -585,12 +659,19 @@ pub fn begin_oram(request: OramRequest) -> OramTransition {
     if !request.authenticated {
         return oram_terminal(driver, OramFailure::Unauthenticated);
     }
-    if request.bucket_count == 0 || request.bucket_count > 33 {
+    // A path has between one and `ORAM_MAX_BUCKETS` buckets. A non-positive
+    // count (never produced by the handler, which passes `len()`) is refused
+    // rather than left to write bucket 0 until the loop budget runs out.
+    if request.bucket_count <= 0 || request.bucket_count > ORAM_MAX_BUCKETS {
         return oram_terminal(driver, OramFailure::BucketInvalid);
     }
     oram_transition(driver, OramEffect::ResolveEpoch)
 }
 
+#[cfg_attr(hax, hax_lib::ensures(|result| match result {
+    Ok(epoch) => epoch == driver.epoch && epoch >= INITIAL_EPOCH,
+    Err(_) => true,
+}))]
 fn oram_permit(driver: OramDriver) -> Result<i64, OramFailure> {
     let authority = if driver.web {
         MutationAuthority::WebSession
@@ -618,6 +699,146 @@ fn oram_bucket_is_create(driver: OramDriver, index: i64) -> bool {
     index >= 0 && index < 64 && (driver.create_mask & (1u64 << index)) != 0
 }
 
+// Each event has one contracted helper; `oram_step` only dispatches.
+
+#[cfg_attr(hax, hax_lib::requires(matches!(driver.stage, OramStage::Epoch)))]
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    !oram_state_is_sound(driver)
+        || (oram_state_is_sound(result.driver)
+            && oram_effect_is_sound(result.driver, result.effect))
+}))]
+fn oram_on_route(driver: OramDriver, observation: RouteObservation) -> OramTransition {
+    match observation {
+        RouteObservation::Active { epoch } => {
+            if epoch < INITIAL_EPOCH {
+                return oram_terminal(driver, OramFailure::EpochMismatch);
+            }
+            let routed = OramDriver { epoch, ..driver };
+            match oram_permit(routed) {
+                Ok(permit_epoch) => oram_transition(
+                    OramDriver {
+                        stage: OramStage::Quota,
+                        permit_epoch,
+                        ..routed
+                    },
+                    OramEffect::EnforceQuota,
+                ),
+                Err(failure) => oram_terminal(routed, failure),
+            }
+        }
+        RouteObservation::Freezing => oram_terminal(driver, OramFailure::RekeyInProgress),
+        RouteObservation::Rejected => oram_terminal(driver, OramFailure::EpochMismatch),
+        RouteObservation::Storage => oram_terminal(driver, OramFailure::EpochStorage),
+    }
+}
+
+#[cfg_attr(hax, hax_lib::requires(matches!(driver.stage, OramStage::Quota)))]
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    !oram_state_is_sound(driver)
+        || (oram_state_is_sound(result.driver)
+            && oram_effect_is_sound(result.driver, result.effect))
+}))]
+fn oram_on_quota(driver: OramDriver, observation: QuotaObservation) -> OramTransition {
+    match observation {
+        QuotaObservation::Allowed => oram_transition(
+            OramDriver {
+                stage: OramStage::Bucket,
+                quota_allowed: true,
+                ..driver
+            },
+            OramEffect::WriteBucket { index: 0 },
+        ),
+        QuotaObservation::Exceeded => oram_terminal(driver, OramFailure::QuotaExceeded),
+        QuotaObservation::Storage => oram_terminal(driver, OramFailure::QuotaStorage),
+    }
+}
+
+#[cfg_attr(hax, hax_lib::requires(matches!(driver.stage, OramStage::Bucket)))]
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    !oram_state_is_sound(driver)
+        || (oram_state_is_sound(result.driver)
+            && oram_effect_is_sound(result.driver, result.effect))
+}))]
+fn oram_on_bucket(driver: OramDriver, observation: BucketObservation) -> OramTransition {
+    let index = driver.written;
+    match observation {
+        BucketObservation::Written => {
+            let next = if index < driver.bucket_count {
+                index + 1
+            } else {
+                index
+            };
+            if next == driver.bucket_count {
+                oram_transition(
+                    OramDriver {
+                        stage: OramStage::Publish,
+                        written: next,
+                        ..driver
+                    },
+                    OramEffect::Publish,
+                )
+            } else {
+                oram_transition(
+                    OramDriver {
+                        written: next,
+                        ..driver
+                    },
+                    OramEffect::WriteBucket { index: next },
+                )
+            }
+        }
+        BucketObservation::Skipped => {
+            if oram_bucket_is_create(driver, index) {
+                oram_terminal(driver, OramFailure::Rekeyed)
+            } else {
+                oram_transition(
+                    OramDriver {
+                        stage: OramStage::Recheck,
+                        recheck_index: index,
+                        ..driver
+                    },
+                    OramEffect::RecheckBucket { index },
+                )
+            }
+        }
+        BucketObservation::Existing => oram_terminal(driver, OramFailure::BucketExists),
+        BucketObservation::Invalid => oram_terminal(driver, OramFailure::BucketInvalid),
+        BucketObservation::Storage => oram_terminal(driver, OramFailure::BucketStorage),
+    }
+}
+
+#[cfg_attr(hax, hax_lib::requires(matches!(driver.stage, OramStage::Recheck)))]
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    !oram_state_is_sound(driver)
+        || (oram_state_is_sound(result.driver)
+            && oram_effect_is_sound(result.driver, result.effect))
+}))]
+fn oram_on_recheck(driver: OramDriver, observation: BucketRecheckObservation) -> OramTransition {
+    match observation {
+        BucketRecheckObservation::Unchanged => oram_terminal(driver, OramFailure::VersionMismatch),
+        BucketRecheckObservation::Changed => oram_terminal(driver, OramFailure::Rekeyed),
+        BucketRecheckObservation::Failed => oram_terminal(driver, OramFailure::RecheckStorage),
+    }
+}
+
+#[cfg_attr(hax, hax_lib::requires(matches!(driver.stage, OramStage::Publish)))]
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    !oram_state_is_sound(driver)
+        || (oram_state_is_sound(result.driver)
+            && oram_effect_is_sound(result.driver, result.effect))
+}))]
+fn oram_on_published(driver: OramDriver) -> OramTransition {
+    oram_transition(
+        OramDriver {
+            stage: OramStage::Done,
+            published: true,
+            responded: true,
+            ..driver
+        },
+        OramEffect::Complete,
+    )
+}
+
 #[cfg_attr(hax, hax_lib::ensures(|result| {
     !oram_state_is_sound(driver)
         || (oram_state_is_sound(result.driver)
@@ -626,126 +847,39 @@ fn oram_bucket_is_create(driver: OramDriver, index: i64) -> bool {
 pub fn oram_step(driver: OramDriver, event: OramEvent) -> OramTransition {
     match event {
         OramEvent::Route(observation) => {
-            if !matches!(driver.stage, OramStage::Epoch) {
-                return oram_transition(driver, OramEffect::Idle);
-            }
-            match observation {
-                RouteObservation::Active { epoch } => {
-                    if epoch < INITIAL_EPOCH {
-                        return oram_terminal(driver, OramFailure::EpochMismatch);
-                    }
-                    let routed = OramDriver { epoch, ..driver };
-                    match oram_permit(routed) {
-                        Ok(permit_epoch) => oram_transition(
-                            OramDriver {
-                                stage: OramStage::Quota,
-                                permit_epoch,
-                                ..routed
-                            },
-                            OramEffect::EnforceQuota,
-                        ),
-                        Err(failure) => oram_terminal(routed, failure),
-                    }
-                }
-                RouteObservation::Freezing => oram_terminal(driver, OramFailure::RekeyInProgress),
-                RouteObservation::Rejected => oram_terminal(driver, OramFailure::EpochMismatch),
-                RouteObservation::Storage => oram_terminal(driver, OramFailure::EpochStorage),
+            if matches!(driver.stage, OramStage::Epoch) {
+                oram_on_route(driver, observation)
+            } else {
+                oram_transition(driver, OramEffect::Idle)
             }
         }
         OramEvent::Quota(observation) => {
-            if !matches!(driver.stage, OramStage::Quota) {
-                return oram_transition(driver, OramEffect::Idle);
-            }
-            match observation {
-                QuotaObservation::Allowed => oram_transition(
-                    OramDriver {
-                        stage: OramStage::Bucket,
-                        quota_allowed: true,
-                        ..driver
-                    },
-                    OramEffect::WriteBucket { index: 0 },
-                ),
-                QuotaObservation::Exceeded => oram_terminal(driver, OramFailure::QuotaExceeded),
-                QuotaObservation::Storage => oram_terminal(driver, OramFailure::QuotaStorage),
+            if matches!(driver.stage, OramStage::Quota) {
+                oram_on_quota(driver, observation)
+            } else {
+                oram_transition(driver, OramEffect::Idle)
             }
         }
         OramEvent::Bucket(observation) => {
-            if !matches!(driver.stage, OramStage::Bucket) {
-                return oram_transition(driver, OramEffect::Idle);
-            }
-            let index = driver.written;
-            match observation {
-                BucketObservation::Written => {
-                    let next = if index < driver.bucket_count {
-                        index + 1
-                    } else {
-                        index
-                    };
-                    if next == driver.bucket_count {
-                        oram_transition(
-                            OramDriver {
-                                stage: OramStage::Publish,
-                                written: next,
-                                ..driver
-                            },
-                            OramEffect::Publish,
-                        )
-                    } else {
-                        oram_transition(
-                            OramDriver {
-                                written: next,
-                                ..driver
-                            },
-                            OramEffect::WriteBucket { index: next },
-                        )
-                    }
-                }
-                BucketObservation::Skipped => {
-                    if oram_bucket_is_create(driver, index) {
-                        oram_terminal(driver, OramFailure::Rekeyed)
-                    } else {
-                        oram_transition(
-                            OramDriver {
-                                stage: OramStage::Recheck,
-                                recheck_index: index,
-                                ..driver
-                            },
-                            OramEffect::RecheckBucket { index },
-                        )
-                    }
-                }
-                BucketObservation::Existing => oram_terminal(driver, OramFailure::BucketExists),
-                BucketObservation::Invalid => oram_terminal(driver, OramFailure::BucketInvalid),
-                BucketObservation::Storage => oram_terminal(driver, OramFailure::BucketStorage),
+            if matches!(driver.stage, OramStage::Bucket) {
+                oram_on_bucket(driver, observation)
+            } else {
+                oram_transition(driver, OramEffect::Idle)
             }
         }
         OramEvent::Recheck(observation) => {
-            if !matches!(driver.stage, OramStage::Recheck) {
-                return oram_transition(driver, OramEffect::Idle);
-            }
-            match observation {
-                BucketRecheckObservation::Unchanged => {
-                    oram_terminal(driver, OramFailure::VersionMismatch)
-                }
-                BucketRecheckObservation::Changed => oram_terminal(driver, OramFailure::Rekeyed),
-                BucketRecheckObservation::Failed => {
-                    oram_terminal(driver, OramFailure::RecheckStorage)
-                }
+            if matches!(driver.stage, OramStage::Recheck) {
+                oram_on_recheck(driver, observation)
+            } else {
+                oram_transition(driver, OramEffect::Idle)
             }
         }
         OramEvent::Published => {
-            if !matches!(driver.stage, OramStage::Publish) {
-                return oram_transition(driver, OramEffect::Idle);
+            if matches!(driver.stage, OramStage::Publish) {
+                oram_on_published(driver)
+            } else {
+                oram_transition(driver, OramEffect::Idle)
             }
-            oram_transition(
-                OramDriver {
-                    stage: OramStage::Done,
-                    published: true,
-                    responded: true,
-                    ..driver
-                },
-                OramEffect::Complete,
-            )
         }
     }
 }
@@ -807,7 +941,8 @@ pub struct SchemaTransition {
 }
 
 pub fn schema_state_is_sound(d: SchemaDriver) -> bool {
-    (!matches!(d.stage, SchemaStage::Write) || (d.authenticated && d.device_scope && !d.written))
+    (!matches!(d.stage, SchemaStage::Write)
+        || (d.authenticated && d.device_scope && !d.written && !d.responded && !d.failed))
         && (!matches!(d.stage, SchemaStage::Done)
             || ((d.responded || d.failed)
                 && !(d.responded && d.failed)
@@ -965,8 +1100,11 @@ pub struct CapsuleAckTransition {
 }
 
 pub fn capsule_ack_state_is_sound(d: CapsuleAckDriver) -> bool {
-    (!matches!(d.stage, CapsuleAckStage::Ack) || (d.authenticated && d.device_scope && !d.cleared))
-        && (!matches!(d.stage, CapsuleAckStage::Pending) || (d.authenticated && d.device_scope))
+    let open = !d.responded && !d.failed;
+    (!matches!(d.stage, CapsuleAckStage::Ack)
+        || (d.authenticated && d.device_scope && !d.cleared && open))
+        && (!matches!(d.stage, CapsuleAckStage::Pending)
+            || (d.authenticated && d.device_scope && open))
         && (!matches!(d.stage, CapsuleAckStage::Done)
             || ((d.responded || d.failed)
                 && !(d.responded && d.failed)
@@ -1146,7 +1284,7 @@ pub struct RekeyCapableTransition {
 
 pub fn rekey_capable_state_is_sound(d: RekeyCapableDriver) -> bool {
     (!matches!(d.stage, RekeyCapableStage::Attest)
-        || (d.authenticated && d.device_scope && !d.attested))
+        || (d.authenticated && d.device_scope && !d.attested && !d.responded && !d.failed))
         && (!matches!(d.stage, RekeyCapableStage::Done)
             || ((d.responded || d.failed)
                 && !(d.responded && d.failed)
@@ -1692,6 +1830,222 @@ mod tests {
             begin_rekey_capable(web).effect,
             RekeyCapableEffect::Fail(RekeyCapableFailure::WebSessionForbidden)
         );
+    }
+
+    const BOOLS: [bool; 2] = [false, true];
+
+    /// Regression for the unprovable `chunk_delete_step` postcondition: every
+    /// state the soundness predicate accepts (not only the reachable ones)
+    /// must stay sound under every event. The predicate used to accept a
+    /// pre-verdict stage that had already answered or deleted, from which a
+    /// refusal produced a state both answered and failed.
+    #[test]
+    fn chunk_delete_every_sound_state_stays_sound() {
+        let stages = [
+            ChunkDeleteStage::Schema,
+            ChunkDeleteStage::Epoch,
+            ChunkDeleteStage::Version,
+            ChunkDeleteStage::Delete,
+            ChunkDeleteStage::Publish,
+            ChunkDeleteStage::Done,
+        ];
+        let mut checked = 0;
+        for stage in stages {
+            for authenticated in BOOLS {
+                for web in BOOLS {
+                    for web_epoch in [None, Some(1), Some(4)] {
+                        for epoch in [0, 1, 4] {
+                            for permit_epoch in [0, 1, 4] {
+                                for current_version in [-1, 0, 3] {
+                                    for flags in 0..16u8 {
+                                        let d = ChunkDeleteDriver {
+                                            stage,
+                                            authenticated,
+                                            web,
+                                            web_epoch,
+                                            if_match: 3,
+                                            epoch,
+                                            permit_epoch,
+                                            current_version,
+                                            deleted: flags & 1 != 0,
+                                            published: flags & 2 != 0,
+                                            responded: flags & 4 != 0,
+                                            failed: flags & 8 != 0,
+                                        };
+                                        if !chunk_delete_state_is_sound(d) {
+                                            continue;
+                                        }
+                                        checked += 1;
+                                        for event in chunk_events() {
+                                            let t = chunk_delete_step(d, event);
+                                            assert!(
+                                                chunk_delete_state_is_sound(t.driver),
+                                                "{d:?} {event:?} -> {t:?}"
+                                            );
+                                            assert!(
+                                                chunk_delete_effect_is_sound(t.driver, t.effect),
+                                                "{d:?} {event:?} -> {t:?}"
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(checked > 0);
+    }
+
+    #[test]
+    fn oram_every_sound_state_stays_sound() {
+        let stages = [
+            OramStage::Epoch,
+            OramStage::Quota,
+            OramStage::Bucket,
+            OramStage::Recheck,
+            OramStage::Publish,
+            OramStage::Done,
+        ];
+        let mut checked = 0;
+        for stage in stages {
+            for bucket_count in [-1, 0, 1, 2, 33, 34] {
+                for written in [-1, 0, 1, 2, 33] {
+                    for recheck_index in [-1, 0, 1, 33] {
+                        for epoch in [0, 1] {
+                            for permit_epoch in [0, 1] {
+                                for create_mask in [0u64, 1, u64::MAX] {
+                                    for flags in 0..32u8 {
+                                        let d = OramDriver {
+                                            stage,
+                                            authenticated: flags & 16 != 0,
+                                            web: false,
+                                            web_epoch: None,
+                                            bucket_count,
+                                            create_mask,
+                                            written,
+                                            recheck_index,
+                                            epoch,
+                                            permit_epoch,
+                                            quota_allowed: flags & 1 != 0,
+                                            published: flags & 2 != 0,
+                                            responded: flags & 4 != 0,
+                                            failed: flags & 8 != 0,
+                                        };
+                                        if !oram_state_is_sound(d) {
+                                            continue;
+                                        }
+                                        checked += 1;
+                                        for event in oram_events() {
+                                            let t = oram_step(d, event);
+                                            assert!(
+                                                oram_state_is_sound(t.driver),
+                                                "{d:?} {event:?} -> {t:?}"
+                                            );
+                                            assert!(
+                                                oram_effect_is_sound(t.driver, t.effect),
+                                                "{d:?} {event:?} -> {t:?}"
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(checked > 0);
+    }
+
+    #[test]
+    fn small_drivers_every_sound_state_stays_sound() {
+        for stage in [SchemaStage::Write, SchemaStage::Done] {
+            for flags in 0..32u8 {
+                let d = SchemaDriver {
+                    stage,
+                    authenticated: flags & 1 != 0,
+                    device_scope: flags & 2 != 0,
+                    written: flags & 4 != 0,
+                    responded: flags & 8 != 0,
+                    failed: flags & 16 != 0,
+                };
+                if !schema_state_is_sound(d) {
+                    continue;
+                }
+                for observation in [SchemaWriteObservation::Written, SchemaWriteObservation::Storage]
+                {
+                    let t = schema_step(d, SchemaEvent::Write(observation));
+                    assert!(schema_state_is_sound(t.driver), "{d:?}");
+                    assert!(schema_effect_is_sound(t.driver, t.effect), "{d:?}");
+                }
+            }
+        }
+        for stage in [CapsuleAckStage::Ack, CapsuleAckStage::Pending, CapsuleAckStage::Done] {
+            for flags in 0..32u8 {
+                let d = CapsuleAckDriver {
+                    stage,
+                    authenticated: flags & 1 != 0,
+                    device_scope: flags & 2 != 0,
+                    cleared: flags & 4 != 0,
+                    responded: flags & 8 != 0,
+                    failed: flags & 16 != 0,
+                };
+                if !capsule_ack_state_is_sound(d) {
+                    continue;
+                }
+                let events = [
+                    CapsuleAckEvent::Ack(AckObservation::Cleared),
+                    CapsuleAckEvent::Ack(AckObservation::Missed),
+                    CapsuleAckEvent::Ack(AckObservation::Storage),
+                    CapsuleAckEvent::Pending(PendingObservation::Replay),
+                    CapsuleAckEvent::Pending(PendingObservation::Pending),
+                    CapsuleAckEvent::Pending(PendingObservation::Missing),
+                    CapsuleAckEvent::Pending(PendingObservation::Storage),
+                ];
+                for event in events {
+                    let t = capsule_ack_step(d, event);
+                    assert!(capsule_ack_state_is_sound(t.driver), "{d:?} {event:?}");
+                    assert!(capsule_ack_effect_is_sound(t.driver, t.effect), "{d:?} {event:?}");
+                }
+            }
+        }
+        for stage in [RekeyCapableStage::Attest, RekeyCapableStage::Done] {
+            for flags in 0..32u8 {
+                let d = RekeyCapableDriver {
+                    stage,
+                    authenticated: flags & 1 != 0,
+                    device_scope: flags & 2 != 0,
+                    attested: flags & 4 != 0,
+                    responded: flags & 8 != 0,
+                    failed: flags & 16 != 0,
+                };
+                if !rekey_capable_state_is_sound(d) {
+                    continue;
+                }
+                for observation in [
+                    AttestObservation::Attested,
+                    AttestObservation::Missing,
+                    AttestObservation::Storage,
+                ] {
+                    let t = rekey_capable_step(d, RekeyCapableEvent::Attest(observation));
+                    assert!(rekey_capable_state_is_sound(t.driver), "{d:?}");
+                    assert!(rekey_capable_effect_is_sound(t.driver, t.effect), "{d:?}");
+                }
+            }
+        }
+    }
+
+    /// Regression: a non-positive bucket count used to start the ORAM driver,
+    /// which then asked for bucket 0 on every turn and never reached a verdict.
+    #[test]
+    fn oram_refuses_a_non_positive_bucket_count() {
+        for buckets in [0, -1, i64::MIN] {
+            let t = begin_oram(oram_request(buckets));
+            assert_eq!(t.effect, OramEffect::Fail(OramFailure::BucketInvalid));
+            assert!(oram_state_is_sound(t.driver));
+        }
     }
 
     #[test]

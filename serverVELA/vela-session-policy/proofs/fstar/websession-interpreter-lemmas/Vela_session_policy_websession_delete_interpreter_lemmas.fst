@@ -195,3 +195,13 @@ let delete_run_theorem (#io_t: Type0) {| i: t_DeleteSessionIo io_t |} (s: io_t)
   delete_run_ev_reaches_a_verdict #io_t #i 3 s t0;
   let (_, t2, evs) = delete_run_ev #io_t #i 3 s t0 in
   delete_trace_theorem actor evs
+
+/// Cancellation (web session delete): the handler future may be dropped after any
+/// executor call, so the loop stops after an arbitrary prefix of turns. Every
+/// such prefix, for every executor and every `k`, ends in a sound driver state
+/// whose next effect agrees with it.
+let websession_delete_cancellation (#io_t: Type0) {| i: t_DeleteSessionIo io_t |} (k: nat) (s: io_t)
+  (t: t_DeleteTransition)
+  : Lemma (requires delete_sound_transition t)
+          (ensures (let (_, t2) = delete_iter_turn #io_t #i k (s, t) in delete_sound_transition t2)) =
+  delete_iter_turn_is_run_ev #io_t #i k s t

@@ -158,7 +158,7 @@ struct PutOramIo<'a> {
 }
 
 impl PutOramIo<'_> {
-    async fn resolve_epoch(
+    async fn resolve_path_epoch(
         &mut self,
     ) -> vela_rekey_policy::vault_mutation_driver::RouteObservation {
         use vela_rekey_policy::vault_mutation_driver::RouteObservation as O;
@@ -378,7 +378,7 @@ impl PutOramIo<'_> {
         }
     }
 
-    async fn publish(&mut self) {
+    async fn publish_path(&mut self) {
         self.state.vault_events.publish(
             self.session.user_id,
             self.session.device_id,

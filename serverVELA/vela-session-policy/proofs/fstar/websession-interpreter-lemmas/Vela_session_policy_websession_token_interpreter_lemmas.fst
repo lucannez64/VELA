@@ -227,3 +227,13 @@ let token_run_theorem (#io_t: Type0) {| i: t_TokenIo io_t |} (s: io_t)
   assert (token_responds (begin_token ()) evs);
   assert (t2.f_driver == token_run_from_begin evs);
   ()
+
+/// Cancellation (web session token): the handler future may be dropped after any
+/// executor call, so the loop stops after an arbitrary prefix of turns. Every
+/// such prefix, for every executor and every `k`, ends in a sound driver state
+/// whose next effect agrees with it.
+let websession_token_cancellation (#io_t: Type0) {| i: t_TokenIo io_t |} (k: nat) (s: io_t)
+  (t: t_TokenTransition)
+  : Lemma (requires token_sound_transition t)
+          (ensures (let (_, t2) = token_iter_turn #io_t #i k (s, t) in token_sound_transition t2)) =
+  token_iter_turn_is_run_ev #io_t #i k s t
