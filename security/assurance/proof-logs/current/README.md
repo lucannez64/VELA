@@ -200,6 +200,10 @@ interleaving. The [vault-mutation driver](vault-mutation-driver/README.md) for c
 delete, ORAM writes, the schema floor, capsule ack and rekey-capable proves those
 decisions per request.
 
+The [sharing executors](share-executors/README.md) evidence proves the five
+sharing executors report the truth about their SQL, against a store model
+with fault injection, and checks it on the real database (F-1 pilot).
+
 The [cancellation evidence](cancellation/README.md) proves every interpreter
 loop leaves a sound driver state when cancelled after any turn, and reviews
 what each handler has already written at that point (found U-23; U-20 closed).
