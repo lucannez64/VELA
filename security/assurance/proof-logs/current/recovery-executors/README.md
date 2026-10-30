@@ -1,23 +1,29 @@
-# Recovery device-redemption executor against a store model (F-1)
+# Recovery executor honesty against a store model (F-1)
 
 ## Claim
 
-The redemption driver assumes `EnrollDeviceIo`
-(`serverVELA/vela-server/src/recovery/enroll_device.rs`) reports the truth
-about what its key-value and SQL operations did. That assumption is now proved
-against a store model, for every starting state, grant and failing operation,
-and checked against the real stores (turso and sled). Verified on 8268c79.
+The recovery drivers assume their executor objects report the truth about what
+their key-value and SQL operations did. That assumption is proved against a
+store model, for every starting state and every failing operation, and checked
+against the real stores (turso and sled), for:
 
-The other recovery executor families are not covered yet: possession
-(`InitiateProofIo`, `RecoverProofIo`), recovery share (`PutShareIo`,
-`FinalizeShareIo`, `GetShareIo`, `DeleteShareIo`) and WebAuthn (`InitiateIo`,
-`RecoverIo`, `RegisterStartIo`, `RegisterFinishIo`).
+- **device redemption:** `EnrollDeviceIo`
+  (`serverVELA/vela-server/src/recovery/enroll_device.rs`);
+- **recovery share:** `PutShareIo`, `FinalizeShareIo`, `GetShareIo` and
+  `DeleteShareIo` (`serverVELA/vela-server/src/recovery/mod.rs`).
+
+The remaining recovery executor families are not covered yet: possession
+(`InitiateProofIo`, `RecoverProofIo`) and WebAuthn (`InitiateIo`, `RecoverIo`,
+`RegisterStartIo`, `RegisterFinishIo`).
 
 ## Design
 
-The executor's four effect methods are thin loops (plan → render → run →
-classify) over pure pieces in `vela-recovery-policy/src/redemption_store.rs`.
-The statements are:
+Every executor method is a thin loop (plan → render → run → classify) over pure
+pieces. The redemption pieces live in
+`vela-recovery-policy/src/redemption_store.rs`; the recovery-share pieces live
+in `vela-recovery-policy/src/share_store.rs`.
+
+Redemption statements:
 
 - `TakeGrant { key }`: an atomic get-and-delete of
   `recovery:enroll_grant:{user}:{grant}`.
@@ -29,30 +35,46 @@ The statements are:
   authentication hash.
 - `PutGrant { key, value, grant }`: restores the grant with a 600 s TTL.
 
+Recovery-share statements:
+
+- `StageShare { .. }`: the guarded update that stages a candidate share, split
+  id, epoch and possession commitment only while the account is at the request
+  epoch, outside rotation, with no active share or split.
+- `PromoteStagedSplit { .. }`: the guarded update that publishes the exact
+  staged epoch/split and clears the candidate.
+- `DeleteShare { .. }`: the guarded update that clears the active share, its
+  split, the candidate and both commitments together.
+- `SelectStageAccount` / `SelectFinalizeAccount` / `SelectShare`: the live-row
+  reads used after a zero-row update and by `GET /recovery/share`.
+
 `render` and `grant_key` give the exact SQL, parameters and key used before,
 pinned byte for byte by unit tests.
 
 ## Exact theorems
 
-`Vela_recovery_policy_redemption_lemmas.fst`, for every starting state, grant
-and fault point:
+`Vela_recovery_policy_redemption_lemmas.fst` and
+`Vela_recovery_policy_share_lemmas.fst`, for every starting state, row and
+fault point:
 
-- **Operations:** `take_grant_is_honest`, `insert_device_is_honest`,
-  `authority_observation_is_honest` and `restore_grant_is_honest`. Each
-  observation equals what the operation did to the modelled stores. A failure
-  changes nothing.
-- **Facts the driver relies on:**
-  - `take_match_is_the_stored_grant`;
-  - `take_is_single_use`;
-  - `inserted_device_is_owned_and_guarded`: a device is inserted only for the
-    owner, at the current epoch, outside rotation, with the guard holding;
-  - `restored_grant_is_live`.
-- **Vectors:** 7 `vector_*` lemmas, shared with the Rust mirror
+- **Redemption operations:** `take_grant_is_honest`, `insert_device_is_honest`,
+  `authority_observation_is_honest` and `restore_grant_is_honest`.
+- **Recovery-share operations:** `stage_share_is_honest`,
+  `promote_staged_split_is_honest`, `delete_share_is_honest`,
+  `stage_account_is_honest`, `finalize_account_is_honest` and
+  `read_share_is_honest`. Each observation equals what the operation did to the
+  modelled row; a failure changes nothing.
+- **Facts the drivers rely on:**
+  - redemption: `take_match_is_the_stored_grant`, `take_is_single_use`,
+    `inserted_device_is_owned_and_guarded`, `restored_grant_is_live`;
+  - recovery share: `staged_candidate_is_exact`, `promoted_split_is_active`,
+    `deleted_share_is_cleared`, `not_staged_keeps_state`.
+- **Vectors:** 7 redemption `vector_*` lemmas and 7 recovery-share
+  `vector_share_*` lemmas, shared with the Rust mirror
   (`redemption_model.rs`).
 
-Every module is checked in its own process under 600 MB, `--z3rlimit 200`, no
-admits: `Redemption_store` 35 s, `redemption_model` 37 s, `redemption_lemmas`
-54 s.
+Each module is checked in its own process under 700 MB, `--z3rlimit 200`, no
+admits. The recovery-share modules take 35–44 s each; the redemption modules
+are unchanged at 39–47 s.
 
 ## Mutations
 
@@ -67,43 +89,49 @@ named theorem:
 | `classify-authority`: a missing commitment reports `StillRotating` | `authority_observation_is_honest` |
 | `plan-guard`: always uses the commitment guard | `insert_device_is_honest` |
 | `plan-epoch`: a fixed epoch of 1 | `insert_device_is_honest` |
+| `share-classify-stage-rows`: a zero-row stage reports `Staged` | `stage_share_is_honest` |
+| `share-classify-account`: a non-matching share reports a match | `stage_account_is_honest` |
+| `share-classify-read`: a missing share reports present | `read_share_is_honest` |
+| `share-classify-delete-rows`: a zero-row delete reports `Deleted` | `delete_share_is_honest` |
+| `share-plan-epoch`: the stage update writes epoch 1 | `stage_share_is_honest` |
+| `share-plan-split`: the promote update uses the user id as split id | `promote_staged_split_is_honest` |
 
 ## Real-store conformance
 
-`vela-server/src/recovery/conformance.rs` runs the real `EnrollDeviceIo` on
-turso and sled through a fault-injecting wrapper. Each case compares the
-result with the Rust mirror.
+`vela-server/src/recovery/conformance.rs` runs the real executors on turso and
+sled through a fault-injecting wrapper. Each case compares the result with the
+Rust mirror.
 
-- **States:** 24 bounded states, covering:
-  - every grant shape: absent, matching, and possession, epoch or credential
-    mismatch;
-  - 8 user shapes;
-  - empty and populated device tables;
-  - both guards.
-- **Cases:** 124, 62 of them with an injected failure, plus 2 for an empty
-  commitment.
-- **Schema check:** the columns the model uses exist, and a duplicate device
-  id is rejected.
+- **Redemption:** 24 bounded states, 124 cases (62 faulted), plus 2 for an
+  empty commitment. Schema check: the modelled `users`/`devices` columns exist
+  and a duplicate device id is rejected.
+- **Recovery share:** 12 bounded `users` states covering absence, epoch
+  mismatch, rotation, an active share or split, and every candidate shape.
+  144 cases (72 faulted), every statement and every read fault point. For
+  `GetShareIo` the test also compares the decoded share bytes, split id and
+  normalized epoch.
 
-The executor picks a random device id, so its duplicate-id branch is covered
-by the theorem and the schema check, not by an executor case. No executor was
-found dishonest.
+No executor was found dishonest.
 
 ## Rust changes
 
 - `EnrollDeviceIo` holds `RecoverySql` and `RecoveryKv` instead of
   `&AppState`.
+- The four recovery-share I/O structs hold `RecoverySql` instead of
+  `&AppState`; their methods run `share_store` plans through the same
+  render/run/classify loop.
 - The insert timestamp can be injected for tests. Production still uses the
   current time inside the insert.
 - SQL text, parameters, keys, statuses, messages and ordering are unchanged.
 
 ## Assumptions and limits
 
-- Each operation is atomic, requests serialize, and the grant TTL expires as
+- Each operation is atomic, requests serialize, and store TTLs expire as
   configured.
 - Not covered yet:
   - the read-only grant check before redemption (`observe_enroll_grant`);
   - `post_enroll_device`'s account read before redemption;
+  - the possession and WebAuthn executor families;
   - the rate limiters.
 
 ## Reproduction

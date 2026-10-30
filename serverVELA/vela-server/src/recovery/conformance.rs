@@ -1,16 +1,18 @@
-//! Bounded conformance of the recovered-device enrollment executor against a
-//! real database and store (F-1).
+//! Bounded conformance of the recovered-device enrollment and recovery-share
+//! executors against a real database and store (F-1).
 //!
-//! The F* proofs in `vela-recovery-policy/proofs/fstar/redemption-lemmas`
-//! show that each `EnrollDeviceIo` method's plan and classifier are honest
-//! *in the store model*. This test checks the model against turso and sled:
-//! for every small starting state (each `users` shape, a fresh and an already
-//! used device id, every enrollment-grant shape), every grant guard, every
-//! caller/credential and every fault point (no fault, or a failure injected at
-//! the statement), it runs the real executor (plan, rendered SQL or key-value
-//! operation, row decoding, classification) through [`Faulty`] and compares
-//! the resulting tables, grant keys and observation with the Rust mirror of
-//! the model (`vela_recovery_policy::redemption_model`).
+//! The F* proofs in `vela-recovery-policy/proofs/fstar/redemption-lemmas` and
+//! `share-lemmas` show that each `EnrollDeviceIo` and `PutShareIo` /
+//! `FinalizeShareIo` / `GetShareIo` / `DeleteShareIo` method's plan and
+//! classifier are honest *in the store model*. This test checks the models
+//! against turso and sled: for every small starting state (each `users` shape,
+//! a fresh and an already used device id, every enrollment-grant shape and
+//! every recovery-share row shape), every guard, every caller/credential and
+//! every fault point (no fault, or a failure injected at the statement), it
+//! runs the real executor (plan, rendered SQL or key-value operation, row
+//! decoding, classification) through [`Faulty`] and compares the resulting
+//! tables, grant keys, share row and observation with the Rust mirror of the
+//! model (`vela_recovery_policy::redemption_model`).
 //!
 //! A schema check pins the columns and types the model uses.
 
@@ -18,8 +20,12 @@ use uuid::Uuid;
 use vela_recovery_policy::driver::{
     AuthorityRecheckObservation, ConsumptionObservation, InsertObservation, RedemptionInsertPermit,
 };
-use vela_recovery_policy::redemption_model::{self as model, Db as Model, DeviceRow, UserRow};
+use vela_recovery_policy::redemption_model::{self as model, Db as Model, DeviceRow, ShareDb, ShareUserRow, UserRow};
 use vela_recovery_policy::redemption_store::{self, GrantGuard, GrantView};
+use vela_recovery_policy::recovery_share_driver::{
+    begin_share_lifecycle, ShareActorObservation, ShareEffect, ShareOperation,
+    ShareRequestObservation,
+};
 
 use super::enroll_device::EnrollDeviceIo;
 use super::recover::RecoveryEnrollGrant;
@@ -690,6 +696,346 @@ async fn grant_restoration_matches_the_store_model() {
                 expected_post.unwrap_or_else(|| state.clone()),
                 "{case}"
             );
+            assert_eq!(io.error_is_set(), fault.is_some(), "{case}");
+            counts.case(fault);
+        }
+    }
+    assert!(counts.states > 0 && counts.cases > 0 && counts.faulted > 0);
+}
+
+// ── Recovery-share lifecycle conformance ───────────────────────────────────
+
+fn share_actor() -> ShareActorObservation {
+    ShareActorObservation {
+        authenticated: true,
+        device_active: true,
+        scoped_to_session_account: true,
+    }
+}
+
+fn share_request(operation: ShareOperation, epoch: i64) -> ShareRequestObservation {
+    ShareRequestObservation {
+        operation,
+        actor: share_actor(),
+        declared_epoch: epoch,
+        split_id_present: true,
+        share_present: true,
+        device_authority: true,
+        split: 11,
+    }
+}
+
+fn stage_permit(epoch: i64) -> vela_recovery_policy::recovery_share_driver::ShareStagePermit {
+    match begin_share_lifecycle(share_request(ShareOperation::Stage, epoch)).effect {
+        ShareEffect::StageShare(permit) => permit,
+        other => panic!("expected a stage permit, got {other:?}"),
+    }
+}
+
+fn finalize_permit(epoch: i64) -> vela_recovery_policy::recovery_share_driver::ShareFinalizePermit {
+    match begin_share_lifecycle(share_request(ShareOperation::Finalize, epoch)).effect {
+        ShareEffect::PromoteStagedSplit(permit) => permit,
+        other => panic!("expected a finalize permit, got {other:?}"),
+    }
+}
+
+fn delete_permit(epoch: i64) -> vela_recovery_policy::recovery_share_driver::ShareDeletePermit {
+    match begin_share_lifecycle(share_request(ShareOperation::Delete, epoch)).effect {
+        ShareEffect::DeleteShare(permit) => permit,
+        other => panic!("expected a delete permit, got {other:?}"),
+    }
+}
+
+fn share_row(
+    epoch: i64,
+    rekey: bool,
+    share: Option<&str>,
+    split: Option<&str>,
+    pending_share: Option<&str>,
+    pending_split: Option<&str>,
+    pending_epoch: Option<i64>,
+    auth: Option<&str>,
+    pending_auth: Option<&str>,
+) -> ShareUserRow {
+    ShareUserRow {
+        epoch,
+        rekey,
+        share: share.map(String::from),
+        split: split.map(String::from),
+        pending_share: pending_share.map(String::from),
+        pending_split: pending_split.map(String::from),
+        pending_epoch,
+        auth: auth.map(String::from),
+        pending_auth: pending_auth.map(String::from),
+    }
+}
+
+async fn load_share(db: &TursoDb, state: &ShareDb) {
+    db.execute_batch("DELETE FROM users;").await.unwrap();
+    for (id, row) in &state.users {
+        db.execute(
+            "INSERT INTO users (id, created_at, key_epoch, rekey_state,
+                 recovery_share, recovery_split_id, recovery_pending_share,
+                 recovery_pending_split_id, recovery_pending_epoch,
+                 recovery_auth_hash, recovery_pending_auth_hash)
+             VALUES (?, 't', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            vec![
+                TursoValue::Text(id.clone()),
+                TursoValue::Integer(row.epoch),
+                if row.rekey {
+                    TursoValue::Text("rotating".into())
+                } else {
+                    TursoValue::Null
+                },
+                opt(&row.share),
+                opt(&row.split),
+                opt(&row.pending_share),
+                opt(&row.pending_split),
+                row.pending_epoch.map(TursoValue::Integer).unwrap_or(TursoValue::Null),
+                opt(&row.auth),
+                opt(&row.pending_auth),
+            ],
+        )
+        .await
+        .unwrap();
+    }
+}
+
+async fn snapshot_share(db: &TursoDb) -> ShareDb {
+    let mut state = ShareDb::default();
+    for row in db
+        .query(
+            "SELECT id, key_epoch, rekey_state, recovery_share, recovery_split_id,
+                    recovery_pending_share, recovery_pending_split_id,
+                    recovery_pending_epoch, recovery_auth_hash,
+                    recovery_pending_auth_hash
+             FROM users",
+            vec![],
+        )
+        .await
+        .unwrap()
+    {
+        let previous = state.users.insert(
+            text(&row, 0),
+            ShareUserRow {
+                epoch: row.i64(1).expect("key_epoch is an integer"),
+                rekey: row.text(2).is_some(),
+                share: row.text(3).map(String::from),
+                split: row.text(4).map(String::from),
+                pending_share: row.text(5).map(String::from),
+                pending_split: row.text(6).map(String::from),
+                pending_epoch: row.i64(7),
+                auth: row.text(8).map(String::from),
+                pending_auth: row.text(9).map(String::from),
+            },
+        );
+        assert!(previous.is_none(), "duplicate users id");
+    }
+    state
+}
+
+const SHARE: &str = "c2hhcmU=";
+const SPLIT: &str = "2";
+const AUTH: &str = "YXV0aA==";
+
+fn share_states() -> Vec<Option<ShareUserRow>> {
+    vec![
+        None,
+        Some(share_row(7, false, None, None, None, None, None, None, None)),
+        Some(share_row(8, false, None, None, None, None, None, None, None)),
+        Some(share_row(7, true, None, None, None, None, None, None, None)),
+        Some(share_row(7, false, Some(SHARE), None, None, None, None, Some(AUTH), None)),
+        Some(share_row(7, false, None, Some(SPLIT), None, None, None, None, None)),
+        Some(share_row(7, false, None, None, Some(SHARE), Some(SPLIT), Some(7), None, Some(AUTH))),
+        Some(share_row(7, false, None, None, Some(SHARE), Some("3"), Some(7), None, Some(AUTH))),
+        Some(share_row(7, false, None, None, Some(SHARE), Some(SPLIT), Some(8), None, Some(AUTH))),
+        Some(share_row(7, false, None, None, None, Some(SPLIT), Some(7), None, Some(AUTH))),
+        Some(share_row(7, false, None, None, Some(SHARE), Some(SPLIT), Some(7), None, None)),
+        Some(share_row(7, false, Some(SHARE), Some(SPLIT), Some(SHARE), Some(SPLIT), Some(7), Some(AUTH), Some(AUTH))),
+    ]
+}
+
+fn share_model(states: &[Option<ShareUserRow>]) -> Vec<ShareDb> {
+    states
+        .iter()
+        .map(|stored| {
+            let mut state = ShareDb::default();
+            if let Some(row) = stored {
+                state.users.insert(s(user(0)), row.clone());
+            }
+            state
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn share_stage_matches_the_store_model() {
+    let db = temp_db().await;
+    let mut counts = Counts::default();
+    for state in share_model(&share_states()) {
+        counts.states += 1;
+        for fault in faults(1) {
+            load_share(&db, &state).await;
+            let mut io = super::PutShareIo::for_conformance(
+                Faulty::new(PoolSql(&db), fault),
+                s(user(0)),
+                t(SHARE),
+                t(SPLIT),
+                t(AUTH),
+            );
+            let observed = io.stage_share(stage_permit(7)).await;
+            let expected = model::stage_share(
+                &state,
+                &s(user(0)),
+                SHARE,
+                SPLIT,
+                7,
+                AUTH,
+                fault,
+            );
+            let (expected_obs, expected_post) = match expected {
+                Some((obs, post)) => (Some(obs), post),
+                None => (None, state.clone()),
+            };
+            let case = format!("stage {state:?} fault {fault:?}");
+            assert_eq!(observed, expected_obs, "{case}");
+            assert_eq!(snapshot_share(&db).await, expected_post, "{case}");
+            assert_eq!(io.error_is_set(), fault.is_some(), "{case}");
+            counts.case(fault);
+        }
+    }
+    assert!(counts.states > 0 && counts.cases > 0 && counts.faulted > 0);
+}
+
+#[tokio::test]
+async fn share_stage_account_matches_the_store_model() {
+    let db = temp_db().await;
+    let mut counts = Counts::default();
+    for state in share_model(&share_states()) {
+        counts.states += 1;
+        for fault in faults(1) {
+            load_share(&db, &state).await;
+            let mut io = super::PutShareIo::for_conformance(
+                Faulty::new(PoolSql(&db), fault),
+                s(user(0)),
+                t(SHARE),
+                t(SPLIT),
+                t(AUTH),
+            );
+            let observed = io.stage_query_account().await;
+            let expected = model::stage_account(&state, &s(user(0)), SHARE, SPLIT, fault.is_some());
+            let case = format!("stage account {state:?} fault {fault:?}");
+            assert_eq!(observed, expected, "{case}");
+            assert_eq!(io.error_is_set(), fault.is_some(), "{case}");
+            counts.case(fault);
+        }
+    }
+    assert!(counts.states > 0 && counts.cases > 0 && counts.faulted > 0);
+}
+
+#[tokio::test]
+async fn share_finalize_matches_the_store_model() {
+    let db = temp_db().await;
+    let mut counts = Counts::default();
+    for state in share_model(&share_states()) {
+        counts.states += 1;
+        for fault in faults(1) {
+            load_share(&db, &state).await;
+            let mut io = super::FinalizeShareIo::for_conformance(
+                Faulty::new(PoolSql(&db), fault),
+                s(user(0)),
+                t(SPLIT),
+            );
+            let observed = io.promote_staged_split(finalize_permit(7)).await;
+            let expected = model::promote_staged_split(&state, &s(user(0)), 7, SPLIT, fault);
+            let (expected_obs, expected_post) = match expected {
+                Some((obs, post)) => (Some(obs), post),
+                None => (None, state.clone()),
+            };
+            let case = format!("finalize {state:?} fault {fault:?}");
+            assert_eq!(observed, expected_obs, "{case}");
+            assert_eq!(snapshot_share(&db).await, expected_post, "{case}");
+            assert_eq!(io.error_is_set(), fault.is_some(), "{case}");
+            counts.case(fault);
+        }
+        for fault in faults(1) {
+            load_share(&db, &state).await;
+            let mut io = super::FinalizeShareIo::for_conformance(
+                Faulty::new(PoolSql(&db), fault),
+                s(user(0)),
+                t(SPLIT),
+            );
+            let observed = io.finalize_query_account().await;
+            let expected =
+                model::finalize_account(&state, &s(user(0)), SPLIT, fault.is_some());
+            let case = format!("finalize account {state:?} fault {fault:?}");
+            assert_eq!(observed, expected, "{case}");
+            assert_eq!(io.error_is_set(), fault.is_some(), "{case}");
+            counts.case(fault);
+        }
+    }
+    assert!(counts.states > 0 && counts.cases > 0 && counts.faulted > 0);
+}
+
+#[tokio::test]
+async fn share_delete_matches_the_store_model() {
+    let db = temp_db().await;
+    let mut counts = Counts::default();
+    for state in share_model(&share_states()) {
+        counts.states += 1;
+        for fault in faults(1) {
+            load_share(&db, &state).await;
+            let mut io = super::DeleteShareIo::for_conformance(
+                Faulty::new(PoolSql(&db), fault),
+                s(user(0)),
+            );
+            let observed = io.delete_share(delete_permit(7)).await;
+            let expected = model::delete_share(&state, &s(user(0)), 7, fault);
+            let (expected_obs, expected_post) = match expected {
+                Some((obs, post)) => (Some(obs), post),
+                None => (None, state.clone()),
+            };
+            let case = format!("delete {state:?} fault {fault:?}");
+            assert_eq!(observed, expected_obs, "{case}");
+            assert_eq!(snapshot_share(&db).await, expected_post, "{case}");
+            assert_eq!(io.error_is_set(), fault.is_some(), "{case}");
+            counts.case(fault);
+        }
+    }
+    assert!(counts.states > 0 && counts.cases > 0 && counts.faulted > 0);
+}
+
+#[tokio::test]
+async fn share_read_matches_the_store_model() {
+    let db = temp_db().await;
+    let mut counts = Counts::default();
+    for state in share_model(&share_states()) {
+        counts.states += 1;
+        for fault in faults(1) {
+            load_share(&db, &state).await;
+            let mut io = super::GetShareIo::for_conformance(
+                Faulty::new(PoolSql(&db), fault),
+                s(user(0)),
+            );
+            let observed = io.read_share().await;
+            let expected = model::read_share(&state, &s(user(0)), fault.is_some());
+            let case = format!("read {state:?} fault {fault:?}");
+            assert_eq!(observed, expected, "{case}");
+            if fault.is_none() {
+                let row = state.users.get(&s(user(0)));
+                match row.and_then(|row| row.share.as_ref()) {
+                    Some(share) => {
+                        assert_eq!(io.share_bytes().to_vec(), crate::db::decode_b64(share).unwrap(), "{case}");
+                        assert_eq!(io.split_id(), row.and_then(|row| row.split.as_ref()), "{case}");
+                        assert_eq!(io.key_epoch(), row.map(|row| row.epoch.max(1)).unwrap_or(1), "{case}");
+                    }
+                    None => {
+                        assert!(io.share_bytes().is_empty(), "{case}");
+                        assert!(io.split_id().is_none(), "{case}");
+                        assert_eq!(io.key_epoch(), 1, "{case}");
+                    }
+                }
+            }
             assert_eq!(io.error_is_set(), fault.is_some(), "{case}");
             counts.case(fault);
         }

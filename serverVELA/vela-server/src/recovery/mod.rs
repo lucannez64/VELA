@@ -29,9 +29,13 @@ use vela_rekey_policy::{
 use crate::{
     error::{AppError, Result},
     middleware::{maybe_append_new_token, DeviceSession},
-    sqldb::{Db as _, TursoValue},
     state::AppState,
 };
+use self::sql::{
+    finalize_account_row_view, run_share_read, run_share_writes, share_row_view,
+    stage_account_row_view, PoolSql, RecoverySql,
+};
+use vela_recovery_policy::share_store;
 
 const MAX_SHARE_BYTES: usize = 4096;
 
@@ -151,8 +155,8 @@ pub struct PutShareResponse {
 /// The I/O behind `PUT /recovery/share`. Only the stage effects are real; the
 /// other trait methods refuse, because the driver never emits them for a Stage
 /// request.
-struct PutShareIo<'a> {
-    state: &'a AppState,
+struct PutShareIo<S> {
+    sql: S,
     user_id: String,
     stored_share: String,
     stored_possession_hash: String,
@@ -160,71 +164,37 @@ struct PutShareIo<'a> {
     error: Option<AppError>,
 }
 
-impl PutShareIo<'_> {
+impl<S: RecoverySql> PutShareIo<S> {
     async fn stage_share(&mut self, permit: ShareStagePermit) -> Option<StageUpdateObservation> {
-        let updated = self
-            .state
-            .sqldb
-            .execute(
-                "UPDATE users
-             SET recovery_pending_share = ?, recovery_pending_split_id = ?,
-                 recovery_pending_epoch = ?, recovery_pending_auth_hash = ?
-             WHERE id = ? AND key_epoch = ? AND rekey_state IS NULL
-               AND recovery_share IS NULL AND recovery_split_id IS NULL",
-                vec![
-                    TursoValue::Text(self.stored_share.clone()),
-                    TursoValue::Text(self.split_id_text.clone()),
-                    TursoValue::Integer(permit.epoch()),
-                    TursoValue::Text(self.stored_possession_hash.clone()),
-                    TursoValue::Text(self.user_id.clone()),
-                    TursoValue::Integer(permit.epoch()),
-                ],
-            )
-            .await
-            .map_err(|e| AppError::Internal(e.to_string()));
-        match updated {
-            Ok(1) => Some(StageUpdateObservation::Staged),
-            Ok(_) => Some(StageUpdateObservation::NotStaged),
-            Err(error) => {
-                self.error = Some(error);
-                None
-            }
+        let plan = share_store::plan_stage_share(
+            self.user_id.clone(),
+            self.stored_share.clone(),
+            self.split_id_text.clone(),
+            permit.epoch(),
+            self.stored_possession_hash.clone(),
+        );
+        let (outcomes, error) = run_share_writes(&mut self.sql, &plan).await;
+        if let Some(error) = error {
+            self.error = Some(AppError::Internal(error.to_string()));
+            return None;
         }
+        Some(share_store::classify_stage_update(&outcomes))
     }
 
     async fn stage_query_account(&mut self) -> Option<StageAccountObservation> {
-        let rows = match self
-            .state
-            .sqldb
-            .query(
-                "SELECT key_epoch, rekey_state, recovery_share, recovery_split_id
-                 FROM users WHERE id = ?",
-                vec![TursoValue::Text(self.user_id.clone())],
-            )
-            .await
-        {
+        let stmt = share_store::plan_stage_account(self.user_id.clone());
+        let rows = match run_share_read(&mut self.sql, &stmt).await {
             Ok(rows) => rows,
             Err(error) => {
                 self.error = Some(AppError::Internal(error.to_string()));
                 return None;
             }
         };
-        let Some(row) = rows.first() else {
-            return Some(StageAccountObservation {
-                account_present: false,
-                stored_epoch: None,
-                rotation_active: false,
-                active_share_matches: false,
-                active_split_matches: false,
-            });
-        };
-        Some(StageAccountObservation {
-            account_present: true,
-            stored_epoch: row.i64(0),
-            rotation_active: row.text(1).is_some(),
-            active_share_matches: row.text(2) == Some(self.stored_share.as_str()),
-            active_split_matches: row.text(3) == Some(self.split_id_text.as_str()),
-        })
+        Some(share_store::classify_stage_account(
+            stage_account_row_view(&rows),
+            &self.stored_share,
+            &self.split_id_text,
+        ))
     }
 
     async fn promote_staged_split(
@@ -305,7 +275,7 @@ pub async fn put_share(
         split: split_token(split_id),
     };
     let mut io = PutShareIo {
-        state: &state,
+        sql: PoolSql(&state.sqldb),
         user_id: session.user_id.to_string(),
         stored_share: stored_share.clone(),
         stored_possession_hash,
@@ -351,14 +321,14 @@ pub struct FinalizeShareResponse {
 }
 
 /// The I/O behind `POST /recovery/share/finalize`.
-struct FinalizeShareIo<'a> {
-    state: &'a AppState,
+struct FinalizeShareIo<S> {
+    sql: S,
     user_id: String,
     split_id_text: String,
     error: Option<AppError>,
 }
 
-impl FinalizeShareIo<'_> {
+impl<S: RecoverySql> FinalizeShareIo<S> {
     async fn stage_share(&mut self, _permit: ShareStagePermit) -> Option<StageUpdateObservation> {
         self.error = Some(AppError::Internal(
             "unexpected stage effect in POST /recovery/share/finalize".into(),
@@ -377,74 +347,32 @@ impl FinalizeShareIo<'_> {
         &mut self,
         permit: ShareFinalizePermit,
     ) -> Option<FinalizeUpdateObservation> {
-        let updated = self
-            .state
-            .sqldb
-            .execute(
-                "UPDATE users
-             SET recovery_share = recovery_pending_share,
-                 recovery_split_id = recovery_pending_split_id,
-                 recovery_auth_hash = recovery_pending_auth_hash,
-                 recovery_pending_share = NULL,
-                 recovery_pending_split_id = NULL,
-                 recovery_pending_epoch = NULL,
-                 recovery_pending_auth_hash = NULL
-             WHERE id = ? AND key_epoch = ? AND rekey_state IS NULL
-               AND recovery_pending_epoch = ?
-               AND recovery_pending_split_id = ?
-               AND recovery_pending_share IS NOT NULL
-               AND recovery_pending_auth_hash IS NOT NULL
-               AND recovery_share IS NULL AND recovery_split_id IS NULL",
-                vec![
-                    TursoValue::Text(self.user_id.clone()),
-                    TursoValue::Integer(permit.epoch()),
-                    TursoValue::Integer(permit.epoch()),
-                    TursoValue::Text(self.split_id_text.clone()),
-                ],
-            )
-            .await
-            .map_err(|e| AppError::Internal(e.to_string()));
-        match updated {
-            Ok(1) => Some(FinalizeUpdateObservation::Promoted),
-            Ok(_) => Some(FinalizeUpdateObservation::NotPromoted),
-            Err(error) => {
-                self.error = Some(error);
-                None
-            }
+        let plan = share_store::plan_promote_staged_split(
+            self.user_id.clone(),
+            permit.epoch(),
+            self.split_id_text.clone(),
+        );
+        let (outcomes, error) = run_share_writes(&mut self.sql, &plan).await;
+        if let Some(error) = error {
+            self.error = Some(AppError::Internal(error.to_string()));
+            return None;
         }
+        Some(share_store::classify_finalize_update(&outcomes))
     }
 
     async fn finalize_query_account(&mut self) -> Option<FinalizeAccountObservation> {
-        let rows = match self
-            .state
-            .sqldb
-            .query(
-                "SELECT key_epoch, rekey_state, recovery_split_id
-                 FROM users WHERE id = ?",
-                vec![TursoValue::Text(self.user_id.clone())],
-            )
-            .await
-        {
+        let stmt = share_store::plan_finalize_account(self.user_id.clone());
+        let rows = match run_share_read(&mut self.sql, &stmt).await {
             Ok(rows) => rows,
             Err(error) => {
                 self.error = Some(AppError::Internal(error.to_string()));
                 return None;
             }
         };
-        let Some(row) = rows.first() else {
-            return Some(FinalizeAccountObservation {
-                account_present: false,
-                stored_epoch: None,
-                rotation_active: false,
-                active_split_matches: false,
-            });
-        };
-        Some(FinalizeAccountObservation {
-            account_present: true,
-            stored_epoch: row.i64(0),
-            rotation_active: row.text(1).is_some(),
-            active_split_matches: row.text(2) == Some(self.split_id_text.as_str()),
-        })
+        Some(share_store::classify_finalize_account(
+            finalize_account_row_view(&rows),
+            &self.split_id_text,
+        ))
     }
 
     async fn delete_share(&mut self, _permit: ShareDeletePermit) -> Option<DeleteUpdateObservation> {
@@ -483,7 +411,7 @@ pub async fn finalize_share(
         split: split_token(body.split_id),
     };
     let mut io = FinalizeShareIo {
-        state: &state,
+        sql: PoolSql(&state.sqldb),
         user_id: session.user_id.to_string(),
         split_id_text: body.split_id.to_string(),
         error: None,
@@ -520,8 +448,8 @@ pub struct GetShareResponse {
 }
 
 /// The I/O behind `GET /recovery/share`.
-struct GetShareIo<'a> {
-    state: &'a AppState,
+struct GetShareIo<S> {
+    sql: S,
     user_id: String,
     share_bytes: Vec<u8>,
     split_id: Option<String>,
@@ -529,7 +457,7 @@ struct GetShareIo<'a> {
     error: Option<AppError>,
 }
 
-impl GetShareIo<'_> {
+impl<S: RecoverySql> GetShareIo<S> {
     async fn stage_share(&mut self, _permit: ShareStagePermit) -> Option<StageUpdateObservation> {
         self.error = Some(AppError::Internal(
             "unexpected stage effect in GET /recovery/share".into(),
@@ -569,33 +497,20 @@ impl GetShareIo<'_> {
     }
 
     async fn read_share(&mut self) -> Option<ReadObservation> {
-        let rows = match self
-            .state
-            .sqldb
-            .query(
-                "SELECT recovery_share, recovery_split_id, key_epoch
-             FROM users WHERE id = ?",
-                vec![TursoValue::Text(self.user_id.clone())],
-            )
-            .await
-        {
+        let stmt = share_store::plan_read_share(self.user_id.clone());
+        let rows = match run_share_read(&mut self.sql, &stmt).await {
             Ok(rows) => rows,
             Err(error) => {
                 self.error = Some(AppError::Internal(error.to_string()));
                 return None;
             }
         };
+        let observation = share_store::classify_read_share(share_row_view(&rows));
         let Some(account_row) = rows.first() else {
-            return Some(ReadObservation {
-                account_present: false,
-                share_present: false,
-            });
+            return Some(observation);
         };
         let Some(share_b64) = account_row.text(0) else {
-            return Some(ReadObservation {
-                account_present: true,
-                share_present: false,
-            });
+            return Some(observation);
         };
         let share_bytes = match crate::db::decode_b64(&share_b64) {
             Ok(bytes) => bytes,
@@ -607,10 +522,7 @@ impl GetShareIo<'_> {
         self.share_bytes = share_bytes;
         self.split_id = account_row.text(1).map(String::from);
         self.key_epoch = account_row.i64(2).unwrap_or(1).max(1);
-        Some(ReadObservation {
-            account_present: true,
-            share_present: true,
-        })
+        Some(observation)
     }
 }
 
@@ -628,7 +540,7 @@ pub async fn get_share(
         split: 0,
     };
     let mut io = GetShareIo {
-        state: &state,
+        sql: PoolSql(&state.sqldb),
         user_id: session.user_id.to_string(),
         share_bytes: Vec::new(),
         split_id: None,
@@ -661,13 +573,13 @@ pub async fn get_share(
 }
 
 /// The I/O behind `DELETE /recovery/share`.
-struct DeleteShareIo<'a> {
-    state: &'a AppState,
+struct DeleteShareIo<S> {
+    sql: S,
     user_id: String,
     error: Option<AppError>,
 }
 
-impl DeleteShareIo<'_> {
+impl<S: RecoverySql> DeleteShareIo<S> {
     async fn stage_share(&mut self, _permit: ShareStagePermit) -> Option<StageUpdateObservation> {
         self.error = Some(AppError::Internal(
             "unexpected stage effect in DELETE /recovery/share".into(),
@@ -700,33 +612,13 @@ impl DeleteShareIo<'_> {
     }
 
     async fn delete_share(&mut self, permit: ShareDeletePermit) -> Option<DeleteUpdateObservation> {
-        let updated = self
-            .state
-            .sqldb
-            .execute(
-                "UPDATE users
-             SET recovery_share = NULL, recovery_split_id = NULL,
-                 recovery_pending_share = NULL,
-                 recovery_pending_split_id = NULL,
-                 recovery_pending_epoch = NULL,
-                 recovery_auth_hash = NULL,
-                 recovery_pending_auth_hash = NULL
-             WHERE id = ? AND key_epoch = ? AND rekey_state IS NULL",
-                vec![
-                    TursoValue::Text(self.user_id.clone()),
-                    TursoValue::Integer(permit.epoch()),
-                ],
-            )
-            .await
-            .map_err(|e| AppError::Internal(e.to_string()));
-        match updated {
-            Ok(1) => Some(DeleteUpdateObservation::Deleted),
-            Ok(_) => Some(DeleteUpdateObservation::NotDeleted),
-            Err(error) => {
-                self.error = Some(error);
-                None
-            }
+        let plan = share_store::plan_delete_share(self.user_id.clone(), permit.epoch());
+        let (outcomes, error) = run_share_writes(&mut self.sql, &plan).await;
+        if let Some(error) = error {
+            self.error = Some(AppError::Internal(error.to_string()));
+            return None;
         }
+        Some(share_store::classify_delete_update(&outcomes))
     }
 
     async fn read_share(&mut self) -> Option<ReadObservation> {
@@ -764,7 +656,7 @@ pub async fn delete_share(
         split: 0,
     };
     let mut io = DeleteShareIo {
-        state: &state,
+        sql: PoolSql(&state.sqldb),
         user_id: session.user_id.to_string(),
         error: None,
     };
@@ -791,4 +683,75 @@ pub async fn delete_share(
     maybe_append_new_token(&mut headers, &session);
 
     Ok((headers, StatusCode::NO_CONTENT))
+}
+
+/// Construction and side-channel access for the bounded real-database
+/// conformance test (`recovery/conformance.rs`).
+#[cfg(test)]
+impl<S> PutShareIo<S> {
+    pub(super) fn for_conformance(
+        sql: S,
+        user_id: String,
+        share: String,
+        split_id: String,
+        auth_hash: String,
+    ) -> Self {
+        Self {
+            sql,
+            user_id,
+            stored_share: share,
+            stored_possession_hash: auth_hash,
+            split_id_text: split_id,
+            error: None,
+        }
+    }
+
+    pub(super) fn error_is_set(&self) -> bool {
+        self.error.is_some()
+    }
+}
+
+#[cfg(test)]
+impl<S> FinalizeShareIo<S> {
+    pub(super) fn for_conformance(sql: S, user_id: String, split_id: String) -> Self {
+        Self { sql, user_id, split_id_text: split_id, error: None }
+    }
+
+    pub(super) fn error_is_set(&self) -> bool {
+        self.error.is_some()
+    }
+}
+
+#[cfg(test)]
+impl<S> GetShareIo<S> {
+    pub(super) fn for_conformance(sql: S, user_id: String) -> Self {
+        Self { sql, user_id, share_bytes: Vec::new(), split_id: None, key_epoch: 1, error: None }
+    }
+
+    pub(super) fn error_is_set(&self) -> bool {
+        self.error.is_some()
+    }
+
+    pub(super) fn share_bytes(&self) -> &[u8] {
+        &self.share_bytes
+    }
+
+    pub(super) fn split_id(&self) -> Option<&String> {
+        self.split_id.as_ref()
+    }
+
+    pub(super) fn key_epoch(&self) -> i64 {
+        self.key_epoch
+    }
+}
+
+#[cfg(test)]
+impl<S> DeleteShareIo<S> {
+    pub(super) fn for_conformance(sql: S, user_id: String) -> Self {
+        Self { sql, user_id, error: None }
+    }
+
+    pub(super) fn error_is_set(&self) -> bool {
+        self.error.is_some()
+    }
 }

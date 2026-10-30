@@ -170,6 +170,23 @@ that the handler performs exactly the returned effect in the same step as its
 observation. The challenge is assumed to have been created once by an admitted
 initiation; initiation and redemption are not composed in one world.
 
+### Executor honesty (F-1)
+
+The executed SQL/store effects behind the recovery drivers are split into pure
+plans, byte-pinned renderers and observation classifiers, and proved honest
+against a store model with a failure at every statement:
+
+- `redemption_store.rs` covers `EnrollDeviceIo` (the enrollment grant store,
+  guarded device insert and live authority recheck);
+- `share_store.rs` covers `PutShareIo`, `FinalizeShareIo`, `GetShareIo` and
+  `DeleteShareIo` (the guarded `users` row for the recovery share lifecycle).
+
+`verify-fstar-recovery-executors.sh` extracts both modules, checks
+`proofs/fstar/redemption-lemmas` and `proofs/fstar/share-lemmas`, and runs the
+mutation script. `vela-server/src/recovery/conformance.rs` checks the same
+plans and classifiers against turso and sled with fault injection at every
+statement. The possession and WebAuthn executor families are not covered yet.
+
 ## Run
 
 Use the pinned hax/F*/Z3 toolchain documented in

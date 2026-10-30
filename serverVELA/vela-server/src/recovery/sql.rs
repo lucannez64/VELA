@@ -11,6 +11,9 @@
 use vela_recovery_policy::redemption_store::{
     self, AuthorityRowView, Param, Rendered, RedemptionStmt, WriteOutcome,
 };
+use vela_recovery_policy::share_store::{
+    self, FinalizeAccountRowView, ShareRowView, ShareStmt, StageAccountRowView,
+};
 
 use crate::sqldb::{Db as _, TursoDb, TursoValue, VelaRow};
 use crate::error::Result;
@@ -102,9 +105,44 @@ pub(super) async fn run_read<S: RecoverySql>(
     }
 }
 
+/// Runs a recovery-share write plan in order, stopping at the first failure.
+pub(super) async fn run_share_writes<S: RecoverySql>(
+    sql: &mut S,
+    plan: &[ShareStmt],
+) -> (Vec<WriteOutcome>, Option<anyhow::Error>) {
+    let mut outcomes = Vec::with_capacity(plan.len());
+    for stmt in plan {
+        let result = match share_store::render(stmt) {
+            Rendered::Execute { sql: text, params } => sql.execute(text, turso_params(params)).await,
+            Rendered::Query { .. } => Err(anyhow::anyhow!("a read statement in a write plan")),
+            Rendered::KvTake { .. } | Rendered::KvPut { .. } => {
+                Err(anyhow::anyhow!("a store statement in a SQL write plan"))
+            }
+        };
+        match result {
+            Ok(rows) => outcomes.push(WriteOutcome::Applied(rows)),
+            Err(error) => {
+                outcomes.push(WriteOutcome::Failed);
+                return (outcomes, Some(error));
+            }
+        }
+    }
+    (outcomes, None)
+}
+
+/// Runs one recovery-share read statement.
+pub(super) async fn run_share_read<S: RecoverySql>(
+    sql: &mut S,
+    stmt: &ShareStmt,
+) -> anyhow::Result<Vec<VelaRow>> {
+    match share_store::render(stmt) {
+        Rendered::Query { sql: text, params } => sql.query(text, turso_params(params)).await,
+        _ => Err(anyhow::anyhow!("a non-read statement in a read plan")),
+    }
+}
+
 /// Runs one atomic grant take.
-pub(super) fn take_grant<K: RecoveryKv>(
-    kv: &mut K,
+pub(super) fn take_grant<K: RecoveryKv>(    kv: &mut K,
     stmt: &RedemptionStmt,
 ) -> Result<Option<Vec<u8>>> {
     match redemption_store::render(stmt) {
@@ -131,5 +169,33 @@ pub(super) fn authority_row_view(rows: &[VelaRow]) -> Option<AuthorityRowView> {
     rows.first().map(|row| AuthorityRowView {
         credential_id: row.text(0).map(String::from),
         auth_hash: row.text(1).filter(|hash| !hash.is_empty()).map(String::from),
+    })
+}
+
+/// The first `SelectStageAccount` row.
+pub(super) fn stage_account_row_view(rows: &[VelaRow]) -> Option<StageAccountRowView> {
+    rows.first().map(|row| StageAccountRowView {
+        stored_epoch: row.i64(0),
+        rotation_active: row.text(1).is_some(),
+        active_share: row.text(2).map(String::from),
+        active_split: row.text(3).map(String::from),
+    })
+}
+
+/// The first `SelectFinalizeAccount` row.
+pub(super) fn finalize_account_row_view(rows: &[VelaRow]) -> Option<FinalizeAccountRowView> {
+    rows.first().map(|row| FinalizeAccountRowView {
+        stored_epoch: row.i64(0),
+        rotation_active: row.text(1).is_some(),
+        active_split: row.text(2).map(String::from),
+    })
+}
+
+/// The first `SelectShare` row.
+pub(super) fn share_row_view(rows: &[VelaRow]) -> Option<ShareRowView> {
+    rows.first().map(|row| ShareRowView {
+        share: row.text(0).map(String::from),
+        split_id: row.text(1).map(String::from),
+        epoch: row.i64(2),
     })
 }
