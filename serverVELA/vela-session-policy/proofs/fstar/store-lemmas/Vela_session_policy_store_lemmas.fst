@@ -1036,3 +1036,415 @@ let vector_registration_tx ()
            Some? (lookup post.devices (s "d"))) =
   registration_tx_is_honest vector_empty_db (s "u") (s "d") (s "now")
     (s "ek") (s "since") (s "name") (s "desktop") (s "ekb64") (s "vkb64") None
+
+// ── Web sessions: start, grant, token and delete ───────────────────────────
+
+/// The `web_session:token_issued:` marker key.
+let claim_marker_key (sess: text) : text = claim_key sess
+
+/// The sentinel the delete handler writes.
+let lockout_key (sess: text) : text =
+  stmt_key (first_stmt (stmts_of (plan_sentinel sess v_WEB_SESSION_MAX_TTL_SECS)))
+
+let plan_insert_pending_shape (sess approver hash epk vk nonce now: text)
+  : Lemma (plan_insert_pending sess approver hash epk vk nonce now ==
+           SqlStmt_InsertPendingSession
+             { f_session = sess; f_approver = approver; f_poll_secret_hash = hash;
+               f_ephemeral_pk = epk; f_web_vk = vk; f_link_nonce = nonce; f_now = now }) =
+  ()
+
+let plan_grant_update_shape (sess usr dev mode capsule expires: text) (epoch: i64)
+  : Lemma (plan_grant_update sess usr dev mode capsule expires epoch ==
+           SqlStmt_GrantWebSession
+             { f_session = sess; f_user = usr; f_device = dev; f_mode = mode;
+               f_capsule = capsule; f_expires_at = expires; f_epoch = epoch }) =
+  ()
+
+let plan_revoke_session_shape (sess: text)
+  : Lemma (plan_revoke_session sess == SqlStmt_RevokeSessionById { f_session = sess }) =
+  ()
+
+let plan_lockout_session_shape (sess: text)
+  : Lemma (L.length (stmts_of (plan_sentinel sess v_WEB_SESSION_MAX_TTL_SECS)) == 1 /\
+           (match first_stmt (stmts_of (plan_sentinel sess v_WEB_SESSION_MAX_TTL_SECS)) with
+            | StoreStmt_SetEx { f_key = k; f_value = value; f_ttl = ttl } ->
+              k == lockout_key sess /\ value == mk_u8 1 /\
+              ttl == v_WEB_SESSION_MAX_TTL_SECS
+            | _ -> False)) =
+  ()
+
+let plan_token_claim_shape (sess: text)
+  : Lemma (L.length (stmts_of (plan_token_claim sess)) == 1 /\
+           (match first_stmt (stmts_of (plan_token_claim sess)) with
+            | StoreStmt_SetExNxByte { f_key = k; f_value = value; f_ttl = ttl } ->
+              k == claim_marker_key sess /\ value == mk_u8 1 /\
+              ttl == v_WEB_SESSION_MAX_TTL_SECS
+            | _ -> False)) =
+  ()
+
+let plan_token_sentinel_shape (sess: text)
+  : Lemma (L.length (stmts_of (plan_token_sentinel sess)) == 1 /\
+           (match first_stmt (stmts_of (plan_token_sentinel sess)) with
+            | StoreStmt_Exists { f_key = k } -> k == sentinel_key sess
+            | _ -> False)) =
+  ()
+
+#push-options "--fuel 4 --ifuel 2"
+/// `StartIo::insert_pending`: `Inserted` exactly when the id was fresh and the
+/// one statement ran; then exactly that pending row is added; otherwise the
+/// database is unchanged.
+let insert_pending_is_honest
+      (d: db) (sess approver hash epk vk nonce now: text) (f: option nat)
+  : Lemma
+    ((fst (insert_pending d sess approver hash epk vk nonce now f) ==
+        Vela_session_policy.Websession_driver.StartInsertObservation_Inserted
+        <==> (no_fault_in f 1 /\ lookup d.sessions sess == None)) /\
+     (fst (insert_pending d sess approver hash epk vk nonce now f) ==
+        Vela_session_policy.Websession_driver.StartInsertObservation_Inserted ==>
+        snd (insert_pending d sess approver hash epk vk nonce now f) ==
+          st_insert_pending d sess approver) /\
+     (fst (insert_pending d sess approver hash epk vk nonce now f) =!=
+        Vela_session_policy.Websession_driver.StartInsertObservation_Inserted ==>
+        snd (insert_pending d sess approver hash epk vk nonce now f) == d)) =
+  plan_insert_pending_shape sess approver hash epk vk nonce now
+
+/// `GrantIo::update_grant`: `Updated` exactly when the guard held and the one
+/// statement ran; zero rows is the conflict and changes nothing; a failure is
+/// the storage error and changes nothing.
+let grant_update_is_honest
+      (d: db) (sess usr dev mode capsule expires: text) (epoch: i64) (f: option nat)
+  : Lemma
+    ((fst (grant_update d sess usr dev mode capsule expires epoch f) ==
+        Vela_session_policy.Websession_driver.GrantUpdateObservation_Updated
+        <==> (no_fault_in f 1 /\ grant_guard d sess usr dev epoch)) /\
+     (fst (grant_update d sess usr dev mode capsule expires epoch f) ==
+        Vela_session_policy.Websession_driver.GrantUpdateObservation_Conflict
+        <==> (no_fault_in f 1 /\ not (grant_guard d sess usr dev epoch))) /\
+     (fst (grant_update d sess usr dev mode capsule expires epoch f) ==
+        Vela_session_policy.Websession_driver.GrantUpdateObservation_Failed
+        <==> faulted f 0) /\
+     (fst (grant_update d sess usr dev mode capsule expires epoch f) ==
+        Vela_session_policy.Websession_driver.GrantUpdateObservation_Updated ==>
+        snd (grant_update d sess usr dev mode capsule expires epoch f) ==
+          st_grant_session d sess usr dev mode capsule expires epoch) /\
+     (fst (grant_update d sess usr dev mode capsule expires epoch f) ==
+        Vela_session_policy.Websession_driver.GrantUpdateObservation_Conflict ==>
+        snd (grant_update d sess usr dev mode capsule expires epoch f) == d) /\
+     (fst (grant_update d sess usr dev mode capsule expires epoch f) ==
+        Vela_session_policy.Websession_driver.GrantUpdateObservation_Failed ==>
+        snd (grant_update d sess usr dev mode capsule expires epoch f) == d)) =
+  plan_grant_update_shape sess usr dev mode capsule expires epoch
+
+/// The audit statement's observation: `Updated` exactly when the statement
+/// ran (zero rows included), `Failed` exactly when it did not.
+let revoke_session_observes_its_run (d: db) (sess: text) (f: option nat)
+  : Lemma
+    ((fst (revoke_session d sess f) ==
+        Vela_session_policy.Websession_driver.DeleteRecordObservation_Updated
+        <==> not (faulted f 0)) /\
+     (fst (revoke_session d sess f) ==
+        Vela_session_policy.Websession_driver.DeleteRecordObservation_Failed
+        <==> faulted f 0)) =
+  ()
+
+/// The audit statement's state change: exactly the revoke rewrite on success,
+/// unchanged on failure. An absent target is unchanged (the statement reports
+/// zero rows but the handler still classifies it `Updated`).
+let revoke_session_state (d: db) (sess: text) (f: option nat)
+  : Lemma
+    ((fst (revoke_session d sess f) ==
+        Vela_session_policy.Websession_driver.DeleteRecordObservation_Updated ==>
+        (match lookup d.sessions sess with
+         | Some _ -> snd (revoke_session d sess f) == st_revoke_session d sess
+         | None -> snd (revoke_session d sess f) == d)) /\
+     (fst (revoke_session d sess f) =!=
+        Vela_session_policy.Websession_driver.DeleteRecordObservation_Updated ==>
+        snd (revoke_session d sess f) == d)) =
+  plan_revoke_session_shape sess
+
+/// `no_fault_in f 1` is exactly "statement 0 did not fail".
+let one_fault_equivalence (f: option nat)
+  : Lemma (no_fault_in f 1 <==> not (faulted f 0)) =
+  match f with
+  | None -> ()
+  | Some _ -> ()
+
+/// `DeleteSessionIo::record_revocation`: `Updated` exactly when the one audit
+/// statement ran (its row count is not observed); on failure the table is
+/// unchanged.
+let revoke_session_is_honest (d: db) (sess: text) (f: option nat)
+  : Lemma
+    ((fst (revoke_session d sess f) ==
+        Vela_session_policy.Websession_driver.DeleteRecordObservation_Updated
+        <==> no_fault_in f 1) /\
+     (fst (revoke_session d sess f) ==
+        Vela_session_policy.Websession_driver.DeleteRecordObservation_Updated ==>
+        (match lookup d.sessions sess with
+         | Some _ -> snd (revoke_session d sess f) == st_revoke_session d sess
+         | None -> snd (revoke_session d sess f) == d)) /\
+     (fst (revoke_session d sess f) =!=
+        Vela_session_policy.Websession_driver.DeleteRecordObservation_Updated ==>
+        snd (revoke_session d sess f) == d)) =
+  revoke_session_observes_its_run d sess f;
+  revoke_session_state d sess f;
+  one_fault_equivalence f
+
+/// `DeleteSessionIo::lockout_session`: `Applied` exactly when the sentinel
+/// write ran; then the sentinel holds the marker and nothing else changed; on
+/// failure the store is unchanged.
+let lockout_session_is_honest (s: store) (sess: text) (f: option nat)
+  : Lemma
+    ((fst (lockout_session s sess f) ==
+        Vela_session_policy.Websession_driver.DeleteSentinelObservation_Applied
+        <==> no_fault_in f 1) /\
+     (fst (lockout_session s sess f) ==
+        Vela_session_policy.Websession_driver.DeleteSentinelObservation_Applied ==>
+        (snd (lockout_session s sess f)).kv (lockout_key sess) == Some v_one /\
+        (forall (k: text). k <> lockout_key sess ==>
+           (snd (lockout_session s sess f)).kv k == s.kv k) /\
+        (snd (lockout_session s sess f)).sets == s.sets /\
+        (snd (lockout_session s sess f)).revoked == s.revoked /\
+        (snd (lockout_session s sess f)).counters == s.counters) /\
+     (fst (lockout_session s sess f) =!=
+        Vela_session_policy.Websession_driver.DeleteSentinelObservation_Applied ==>
+        snd (lockout_session s sess f) == s)) =
+  plan_lockout_session_shape sess
+#pop-options
+
+#push-options "--fuel 4 --ifuel 2"
+/// `TokenIo::claim_token`: `Claimed` exactly when the marker was absent and
+/// the write ran; `AlreadyClaimed` exactly when it was present; on success
+/// only that one key changed; a collision and a failure change nothing.
+let token_claim_is_honest (s: store) (sess: text) (f: option nat)
+  : Lemma
+    ((fst (token_claim s sess f) ==
+        Vela_session_policy.Websession_driver.TokenClaimObservation_Claimed
+        <==> (no_fault_in f 1 /\ s.kv (claim_marker_key sess) == None)) /\
+     (fst (token_claim s sess f) ==
+        Vela_session_policy.Websession_driver.TokenClaimObservation_AlreadyClaimed
+        <==> (no_fault_in f 1 /\ Some? (s.kv (claim_marker_key sess)))) /\
+     (fst (token_claim s sess f) ==
+        Vela_session_policy.Websession_driver.TokenClaimObservation_StorageFailed
+        <==> faulted f 0) /\
+     (fst (token_claim s sess f) ==
+        Vela_session_policy.Websession_driver.TokenClaimObservation_Claimed ==>
+        (snd (token_claim s sess f)).kv (claim_marker_key sess) == Some v_one /\
+        (forall (k: text). k <> claim_marker_key sess ==>
+           (snd (token_claim s sess f)).kv k == s.kv k) /\
+        (snd (token_claim s sess f)).sets == s.sets /\
+        (snd (token_claim s sess f)).revoked == s.revoked /\
+        (snd (token_claim s sess f)).counters == s.counters) /\
+     (fst (token_claim s sess f) ==
+        Vela_session_policy.Websession_driver.TokenClaimObservation_AlreadyClaimed ==>
+        snd (token_claim s sess f) == s) /\
+     (fst (token_claim s sess f) ==
+        Vela_session_policy.Websession_driver.TokenClaimObservation_StorageFailed ==>
+        snd (token_claim s sess f) == s)) =
+  plan_token_claim_shape sess
+
+/// `TokenIo::issue_token`'s lockout re-check: a present sentinel, an absent
+/// one and a failed read, each the store's truth and changing nothing.
+let token_sentinel_is_honest (s: store) (sess: text) (f: option nat)
+  : Lemma
+    ((fst (token_sentinel s sess f) == ExistsOutcome_Absent
+        <==> (no_fault_in f 1 /\ s.kv (sentinel_key sess) == None)) /\
+     (fst (token_sentinel s sess f) == ExistsOutcome_Present
+        <==> (no_fault_in f 1 /\ Some? (s.kv (sentinel_key sess)))) /\
+     (fst (token_sentinel s sess f) == ExistsOutcome_Failed <==> faulted f 0) /\
+     snd (token_sentinel s sess f) == s) =
+  plan_token_sentinel_shape sess
+#pop-options
+
+#push-options "--fuel 4 --ifuel 2"
+/// `TokenIo::issue_token`: `Issued` exactly when the issuer produced a token,
+/// the issue-time sentinel was absent and the JTI track ran; then the JTI is
+/// in the session's set and no key, JTI revocation or counter changed. Any
+/// other outcome leaves the store exactly as it was.
+let token_issue_is_honest (s: store) (sess jti: text) (paseto_ok: bool) (f: option nat)
+  : Lemma
+    ((fst (token_issue s sess jti paseto_ok f) ==
+        Vela_session_policy.Websession_driver.TokenIssueObservation_Issued
+        <==> (paseto_ok /\ no_fault_in f 2 /\
+             s.kv (sentinel_key sess) == None)) /\
+     (fst (token_issue s sess jti paseto_ok f) ==
+        Vela_session_policy.Websession_driver.TokenIssueObservation_Issued ==>
+        (L.mem jti ((snd (token_issue s sess jti paseto_ok f)).sets (track_key sess)) /\
+         (snd (token_issue s sess jti paseto_ok f)).kv == s.kv /\
+         (snd (token_issue s sess jti paseto_ok f)).revoked == s.revoked /\
+         (snd (token_issue s sess jti paseto_ok f)).counters == s.counters)) /\
+     (fst (token_issue s sess jti paseto_ok f) =!=
+        Vela_session_policy.Websession_driver.TokenIssueObservation_Issued ==>
+        snd (token_issue s sess jti paseto_ok f) == s)) =
+  plan_token_sentinel_shape sess;
+  plan_track_jti_shape sess jti
+#pop-options
+
+// ── Web-session facts the driver relies on ─────────────────────────────────
+
+/// An `Inserted` pending row is exactly what `start` reports: pending, bound
+/// to the committed approver, with no user or grant fields.
+let inserted_pending_is_stored
+      (d: db) (sess approver hash epk vk nonce now: text) (f: option nat)
+  : Lemma
+    (fst (insert_pending d sess approver hash epk vk nonce now f) ==
+       Vela_session_policy.Websession_driver.StartInsertObservation_Inserted ==>
+       (match lookup (snd (insert_pending d sess approver hash epk vk nonce now f)).sessions sess with
+        | Some r -> r.ws_status == v_pending /\ r.ws_user == None /\
+                    r.ws_approver == Some approver /\ r.ws_capsule == None
+        | None -> False)) =
+  insert_pending_is_honest d sess approver hash epk vk nonce now f
+
+/// A `Updated` grant held every guard the CAS checks.
+let grant_updated_only_pending_guarded
+      (d: db) (sess usr dev mode capsule expires: text) (epoch: i64) (f: option nat)
+  : Lemma
+    (fst (grant_update d sess usr dev mode capsule expires epoch f) ==
+       Vela_session_policy.Websession_driver.GrantUpdateObservation_Updated ==>
+       grant_guard d sess usr dev epoch) =
+  grant_update_is_honest d sess usr dev mode capsule expires epoch f
+
+/// A `Updated` grant changed only the `web_sessions` table (the one intended
+/// row is `st_grant_session`; `grant_update_is_honest` names it exactly).
+let grant_updated_changes_only_sessions
+      (d: db) (sess usr dev mode capsule expires: text) (epoch: i64) (f: option nat)
+  : Lemma
+    (fst (grant_update d sess usr dev mode capsule expires epoch f) ==
+       Vela_session_policy.Websession_driver.GrantUpdateObservation_Updated ==>
+       (snd (grant_update d sess usr dev mode capsule expires epoch f)).users == d.users /\
+       (snd (grant_update d sess usr dev mode capsule expires epoch f)).devices == d.devices /\
+       (snd (grant_update d sess usr dev mode capsule expires epoch f)).inbox == d.inbox /\
+       (snd (grant_update d sess usr dev mode capsule expires epoch f)).items == d.items /\
+       (snd (grant_update d sess usr dev mode capsule expires epoch f)).sends == d.sends /\
+       (snd (grant_update d sess usr dev mode capsule expires epoch f)).chunks == d.chunks /\
+       (snd (grant_update d sess usr dev mode capsule expires epoch f)).buckets == d.buckets) =
+  grant_update_is_honest d sess usr dev mode capsule expires epoch f
+
+/// A `Claimed` token means the marker was absent before the write and present
+/// after it: the one-shot claim.
+let token_claim_is_first_writer_wins (s: store) (sess: text) (f: option nat)
+  : Lemma
+    (fst (token_claim s sess f) ==
+       Vela_session_policy.Websession_driver.TokenClaimObservation_Claimed ==>
+       (s.kv (claim_marker_key sess) == None /\
+        (snd (token_claim s sess f)).kv (claim_marker_key sess) == Some v_one)) =
+  token_claim_is_honest s sess f
+
+/// An issued token is only released while no lockout sentinel is stored.
+let issued_token_is_not_locked_out (s: store) (sess jti: text) (paseto_ok: bool)
+      (f: option nat)
+  : Lemma
+    (fst (token_issue s sess jti paseto_ok f) ==
+       Vela_session_policy.Websession_driver.TokenIssueObservation_Issued ==>
+       s.kv (sentinel_key sess) == None) =
+  token_issue_is_honest s sess jti paseto_ok f
+
+/// An issued token's JTI is tracked, so the revocation sweep can retire it.
+let issued_token_is_tracked (s: store) (sess jti: text) (paseto_ok: bool) (f: option nat)
+  : Lemma
+    (fst (token_issue s sess jti paseto_ok f) ==
+       Vela_session_policy.Websession_driver.TokenIssueObservation_Issued ==>
+       L.mem jti ((snd (token_issue s sess jti paseto_ok f)).sets (track_key sess))) =
+  token_issue_is_honest s sess jti paseto_ok f
+
+/// A `Applied` delete lockout left the sentinel in the store: the session's
+/// tokens are rejected for the whole ceiling.
+let lockout_applied_means_sentinel_stored (s: store) (sess: text) (f: option nat)
+  : Lemma
+    (fst (lockout_session s sess f) ==
+       Vela_session_policy.Websession_driver.DeleteSentinelObservation_Applied ==>
+       (snd (lockout_session s sess f)).kv (lockout_key sess) == Some v_one) =
+  lockout_session_is_honest s sess f
+
+/// An `Updated` audit record left exactly the revoked row (an absent target
+/// stays absent).
+let revoke_record_marks_the_session (d: db) (sess: text) (f: option nat)
+  : Lemma
+    (fst (revoke_session d sess f) ==
+       Vela_session_policy.Websession_driver.DeleteRecordObservation_Updated ==>
+       (match lookup d.sessions sess with
+        | Some _ -> snd (revoke_session d sess f) == st_revoke_session d sess
+        | None -> snd (revoke_session d sess f) == d)) =
+  revoke_session_is_honest d sess f
+
+// ── Vectors shared with `store_model.rs::tests` ────────────────────────────
+
+let vector_web_db : db =
+  { users =
+      [(s "u",
+        ({ us_share_ek = None; us_share_ek_since = None; us_created_at = s "t0";
+           us_rekey_state = None; us_key_epoch = mk_i64 3 } <: user_row))];
+    devices =
+      [(s "d",
+        ({ dv_user = s "u"; dv_revoked = mk_i64 0; dv_hybrid_ek = s "";
+           dv_hybrid_vk = s ""; dv_last_active = None; dv_name = s "n";
+           dv_kind = s "k"; dv_revoked_at = None; dv_revoked_by = None } <: device_row))];
+    sessions =
+      [(s "s",
+        ({ ws_user = None; ws_approver = Some (s "u"); ws_status = v_pending;
+           ws_capsule = None; ws_approved_by = None; ws_mode = None;
+           ws_key_epoch = None; ws_expires_at = None } <: session_row))];
+    inbox = []; items = []; sends = []; chunks = []; buckets = [] }
+
+let vector_insert_pending ()
+  : Lemma (let (obs, post) =
+             insert_pending vector_empty_db (s "fresh") (s "u") (s "h") (s "e") (s "v")
+               (s "n") (s "now") None in
+           obs == Vela_session_policy.Websession_driver.StartInsertObservation_Inserted /\
+           Some? (lookup post.sessions (s "fresh"))) =
+  insert_pending_is_honest vector_empty_db (s "fresh") (s "u") (s "h") (s "e") (s "v")
+    (s "n") (s "now") None
+
+let vector_grant_update ()
+  : Lemma (let (obs, post) =
+             grant_update vector_web_db (s "s") (s "u") (s "d") (s "rw") (s "cap")
+               (s "exp") (mk_i64 3) None in
+           obs == Vela_session_policy.Websession_driver.GrantUpdateObservation_Updated /\
+           post == st_grant_session vector_web_db (s "s") (s "u") (s "d") (s "rw")
+                     (s "cap") (s "exp") (mk_i64 3)) =
+  grant_update_is_honest vector_web_db (s "s") (s "u") (s "d") (s "rw") (s "cap")
+    (s "exp") (mk_i64 3) None
+
+let vector_grant_conflict ()
+  : Lemma (let (obs, post) =
+             grant_update vector_web_db (s "s") (s "u") (s "d") (s "rw") (s "cap")
+               (s "exp") (mk_i64 4) None in
+           obs == Vela_session_policy.Websession_driver.GrantUpdateObservation_Conflict /\
+           post == vector_web_db) =
+  grant_update_is_honest vector_web_db (s "s") (s "u") (s "d") (s "rw") (s "cap")
+    (s "exp") (mk_i64 4) None
+
+let vector_revoke_session ()
+  : Lemma (let (obs, post) = revoke_session vector_web_db (s "s") None in
+           obs == Vela_session_policy.Websession_driver.DeleteRecordObservation_Updated /\
+           post == st_revoke_session vector_web_db (s "s")) =
+  revoke_session_is_honest vector_web_db (s "s") None
+
+let vector_token_claim ()
+  : Lemma (let (obs, post) = token_claim vector_store (s "s") None in
+           obs == Vela_session_policy.Websession_driver.TokenClaimObservation_Claimed /\
+           post.kv (claim_marker_key (s "s")) == Some v_one) =
+  token_claim_is_honest vector_store (s "s") None
+
+let vector_token_claim_exists : store =
+  { vector_store with kv = (fun k -> if k = claim_marker_key (s "s") then Some v_one else None) }
+
+let vector_token_claim_collision ()
+  : Lemma (let (obs, post) = token_claim vector_token_claim_exists (s "s") None in
+           obs == Vela_session_policy.Websession_driver.TokenClaimObservation_AlreadyClaimed /\
+           post == vector_token_claim_exists) =
+  token_claim_is_honest vector_token_claim_exists (s "s") None
+
+let vector_token_issue ()
+  : Lemma (let (obs, post) = token_issue vector_store (s "s") (s "jti") true None in
+           obs == Vela_session_policy.Websession_driver.TokenIssueObservation_Issued /\
+           L.mem (s "jti") (post.sets (track_key (s "s")))) =
+  token_issue_is_honest vector_store (s "s") (s "jti") true None
+
+let vector_token_issue_locked : store =
+  { vector_store with kv = (fun k -> if k = sentinel_key (s "s") then Some v_one else None) }
+
+let vector_token_issue_locked_fails ()
+  : Lemma (let (obs, post) = token_issue vector_token_issue_locked (s "s") (s "jti") true None in
+           obs == Vela_session_policy.Websession_driver.TokenIssueObservation_Failed /\
+           post == vector_token_issue_locked) =
+  token_issue_is_honest vector_token_issue_locked (s "s") (s "jti") true None

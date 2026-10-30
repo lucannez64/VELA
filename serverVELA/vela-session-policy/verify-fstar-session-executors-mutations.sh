@@ -34,6 +34,17 @@ set -euo pipefail
 #   classify-budget-failed           a failed count query reports zero accounts
 #   plan-registration-limit          the registration window allows one more
 #   plan-insert-account-swap         the account insert swaps its two key columns
+#   classify-start-insert-error      a failed pending insert reports Inserted
+#   plan-insert-pending-swap         the pending insert swaps its approver and hash
+#   classify-grant-conflict          a zero-row grant CAS reports Updated
+#   classify-grant-error             a failed grant CAS reports Updated
+#   plan-grant-swap                  the grant CAS swaps its mode and capsule
+#   classify-claim-error             a failed token claim reports Claimed
+#   plan-claim-ttl                   the token claim outlives its session ceiling
+#   classify-issue-track             a failed JTI track still issues
+#   classify-lockout-session-error   a failed session lockout reports Applied
+#   plan-revoke-session-key          the audit update targets another session
+#   classify-revoke-session-error    a failed audit update reports Updated
 
 proof_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cd "$proof_root"
@@ -59,6 +70,11 @@ mutants=(
   plan-counter-limit plan-jti-ttl
   classify-store-nonce-failed plan-store-nonce-ttl classify-insert-error
   classify-budget-failed plan-registration-limit plan-insert-account-swap
+  classify-start-insert-error plan-insert-pending-swap
+  classify-grant-conflict classify-grant-error plan-grant-swap
+  classify-claim-error plan-claim-ttl classify-issue-track
+  classify-lockout-session-error plan-revoke-session-key
+  classify-revoke-session-error
 )
 declare -A expect=(
   [classify-logout-error]=logout_is_honest
@@ -84,6 +100,17 @@ declare -A expect=(
   [classify-budget-failed]=account_count_is_honest
   [plan-registration-limit]=plan_registration_rate_limit_shape
   [plan-insert-account-swap]=plan_insert_account_shape
+  [classify-start-insert-error]=insert_pending_is_honest
+  [plan-insert-pending-swap]=plan_insert_pending_shape
+  [classify-grant-conflict]=grant_update_is_honest
+  [classify-grant-error]=grant_update_is_honest
+  [plan-grant-swap]=plan_grant_update_shape
+  [classify-claim-error]=token_claim_is_honest
+  [plan-claim-ttl]=plan_token_claim_shape
+  [classify-issue-track]=token_issue_is_honest
+  [classify-lockout-session-error]=lockout_session_is_honest
+  [plan-revoke-session-key]=plan_revoke_session_shape
+  [classify-revoke-session-error]=revoke_session_observes_its_run
 )
 
 rm -rf "$mut"
@@ -208,6 +235,58 @@ elif name == 'plan-insert-account-swap':
     in_body('let plan_insert_account', 'let plan_insert_device',
             'f_share_ek = share_ek; f_share_ek_since = share_ek_since',
             'f_share_ek = share_ek_since; f_share_ek_since = share_ek')
+elif name == 'classify-start-insert-error':
+    once('''  | WriteOutcome_Failed  ->
+    Vela_session_policy.Websession_driver.StartInsertObservation_Failed''',
+         '''  | WriteOutcome_Failed  ->
+    Vela_session_policy.Websession_driver.StartInsertObservation_Inserted''')
+elif name == 'plan-insert-pending-swap':
+    in_body('let plan_insert_pending', 'let plan_grant_update',
+            'f_approver = approver;', 'f_approver = poll_secret_hash;')
+    in_body('let plan_insert_pending', 'let plan_grant_update',
+            'f_poll_secret_hash = poll_secret_hash;',
+            'f_poll_secret_hash = approver;')
+elif name == 'classify-grant-conflict':
+    once('''  | WriteOutcome_Applied (Rust_primitives.Integers.MkInt 0) ->
+    Vela_session_policy.Websession_driver.GrantUpdateObservation_Conflict''',
+         '''  | WriteOutcome_Applied (Rust_primitives.Integers.MkInt 0) ->
+    Vela_session_policy.Websession_driver.GrantUpdateObservation_Updated''')
+elif name == 'classify-grant-error':
+    once('''  | WriteOutcome_Failed  ->
+    Vela_session_policy.Websession_driver.GrantUpdateObservation_Failed''',
+         '''  | WriteOutcome_Failed  ->
+    Vela_session_policy.Websession_driver.GrantUpdateObservation_Updated''')
+elif name == 'plan-grant-swap':
+    in_body('let plan_grant_update', 'let plan_revoke_session',
+            'f_mode = mode;', 'f_mode = capsule;')
+    in_body('let plan_grant_update', 'let plan_revoke_session',
+            'f_capsule = capsule;', 'f_capsule = mode;')
+elif name == 'classify-claim-error':
+    once('''  | NxOutcome_Failed  ->
+    Vela_session_policy.Websession_driver.TokenClaimObservation_StorageFailed''',
+         '''  | NxOutcome_Failed  ->
+    Vela_session_policy.Websession_driver.TokenClaimObservation_Claimed''')
+elif name == 'plan-claim-ttl':
+    in_body('let plan_token_claim', 'let plan_token_sentinel',
+            'f_ttl = v_WEB_SESSION_MAX_TTL_SECS', 'f_ttl = mk_u64 86401')
+elif name == 'classify-issue-track':
+    once('''    (match tracked <: t_StoreOutcome with
+      | StoreOutcome_Applied  -> true
+      | _ -> false)''',
+         '''    true''')
+elif name == 'classify-lockout-session-error':
+    once('''  | StoreOutcome_Failed  ->
+    Vela_session_policy.Websession_driver.DeleteSentinelObservation_StorageFailed''',
+         '''  | StoreOutcome_Failed  ->
+    Vela_session_policy.Websession_driver.DeleteSentinelObservation_Applied''')
+elif name == 'plan-revoke-session-key':
+    once('SqlStmt_RevokeSessionById ({ f_session = session })',
+         'SqlStmt_RevokeSessionById ({ f_session = Alloc.String.String "" })')
+elif name == 'classify-revoke-session-error':
+    once('''  | WriteOutcome_Failed  ->
+    Vela_session_policy.Websession_driver.DeleteRecordObservation_Failed''',
+         '''  | WriteOutcome_Failed  ->
+    Vela_session_policy.Websession_driver.DeleteRecordObservation_Updated''')
 elif name == 'plan-sentinel-ttl':
     start = text.index('let plan_lockout_device')
     end = text.index('let plan_lockout_web_session', start)

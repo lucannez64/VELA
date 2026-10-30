@@ -20,6 +20,10 @@ use vela_session_policy::store_model::{
     self as model, Db as Model, DeviceRow, MailRow, OwnedRow, SessionRow, Store as ModelStore,
     UserRow,
 };
+use vela_session_policy::websession_driver::{
+    DeleteRecordObservation, DeleteSentinelObservation, GrantUpdateObservation,
+    TokenClaimObservation, TokenIssueObservation,
+};
 
 use super::challenge::ChallengeIssueIo;
 use super::session_store::{DbSql, SessionSql, SessionStore, SessionTokens, SledStore};
@@ -29,7 +33,9 @@ use crate::account::delete::DeleteAccountIo;
 use crate::auth::logout::LogoutJtiIo;
 use crate::device::revoke::RevokeDeviceIo;
 use crate::sqldb::{Db as _, TursoDb, TursoValue, VelaRow};
+use crate::state::{AppState, AppStateInner};
 use crate::store::Store;
+use crate::web_session::{DeleteSessionIo, GrantIo, GrantRequest, StartIo, StartRequest, TokenIo, TokenRequest};
 
 /// Fails the k-th statement (from 0) an executor sends, without sending it.
 pub(crate) struct Faulty<T> {
@@ -135,6 +141,11 @@ impl<T: SessionStore> SessionStore for Faulty<T> {
         self.hit()?;
         self.inner.set_ex_nx(key, value, ttl)
     }
+
+    fn exists(&mut self, key: &str) -> anyhow::Result<bool> {
+        self.hit()?;
+        self.inner.exists(key)
+    }
 }
 
 const NOW: &str = "2026-10-29T12:00:00+00:00";
@@ -178,12 +189,14 @@ async fn load(db: &TursoDb, state: &Model) {
     .unwrap();
     for (id, row) in &state.users {
         db.execute(
-            "INSERT INTO users (id, created_at, share_ek, share_ek_since) VALUES (?, ?, ?, ?)",
+            "INSERT INTO users (id, created_at, share_ek, share_ek_since, key_epoch, rekey_state) VALUES (?, ?, ?, ?, ?, ?)",
             vec![
                 TursoValue::Text(id.clone()),
                 TursoValue::Text(row.created_at.clone()),
                 TursoValue::Text(row.share_ek.clone()),
                 TursoValue::Text(row.share_ek_since.clone()),
+                TursoValue::Integer(row.key_epoch),
+                opt(&row.rekey_state),
             ],
         )
         .await
@@ -208,14 +221,20 @@ async fn load(db: &TursoDb, state: &Model) {
     }
     for (id, row) in &state.sessions {
         db.execute(
-            "INSERT INTO web_sessions (id, user_id, approver_user_id, ephemeral_pk, link_nonce, status, capsule, approved_by, created_at) VALUES (?, ?, ?, 'pk', 'nonce', ?, ?, ?, 't')",
+            "INSERT INTO web_sessions (id, user_id, approver_user_id, ephemeral_pk, link_nonce, mode, status, capsule, approved_by, key_epoch, created_at, expires_at) VALUES (?, ?, ?, 'pk', 'nonce', ?, ?, ?, ?, ?, 't', ?)",
             vec![
                 TursoValue::Text(id.clone()),
                 opt(&row.user_id),
                 opt(&row.approver_user_id),
+                opt(&row.mode),
                 TursoValue::Text(row.status.clone()),
                 opt(&row.capsule),
                 opt(&row.approved_by),
+                match row.key_epoch {
+                    Some(epoch) => TursoValue::Integer(epoch),
+                    None => TursoValue::Null,
+                },
+                opt(&row.expires_at),
             ],
         )
         .await
@@ -291,7 +310,7 @@ async fn snapshot(db: &TursoDb) -> Model {
     let mut state = Model::default();
     for row in db
         .query(
-            "SELECT id, share_ek, share_ek_since, created_at FROM users",
+            "SELECT id, share_ek, share_ek_since, created_at, key_epoch, rekey_state FROM users",
             vec![],
         )
         .await
@@ -303,6 +322,8 @@ async fn snapshot(db: &TursoDb) -> Model {
                 share_ek: text_opt(&row, 1).unwrap_or_default(),
                 share_ek_since: text_opt(&row, 2).unwrap_or_default(),
                 created_at: text_opt(&row, 3).unwrap_or_default(),
+                key_epoch: row.i64(4).expect("key_epoch is an integer"),
+                rekey_state: text_opt(&row, 5),
             },
         );
     }
@@ -331,7 +352,7 @@ async fn snapshot(db: &TursoDb) -> Model {
     }
     for row in db
         .query(
-            "SELECT id, user_id, approver_user_id, status, capsule, approved_by FROM web_sessions",
+            "SELECT id, user_id, approver_user_id, status, capsule, approved_by, mode, key_epoch, expires_at FROM web_sessions",
             vec![],
         )
         .await
@@ -345,6 +366,9 @@ async fn snapshot(db: &TursoDb) -> Model {
                 status: text_opt(&row, 3).unwrap_or_default(),
                 capsule: text_opt(&row, 4),
                 approved_by: text_opt(&row, 5),
+                mode: text_opt(&row, 6),
+                key_epoch: row.i64(7),
+                expires_at: text_opt(&row, 8),
             },
         );
     }
@@ -450,6 +474,8 @@ fn base_state() -> Model {
                 share_ek: format!("ek-{n}"),
                 share_ek_since: s("t0"),
                 created_at: s("t0"),
+                rekey_state: None,
+                key_epoch: 1,
             },
         );
     }
@@ -467,6 +493,9 @@ fn base_state() -> Model {
             status: s("granted"),
             capsule: Some(s("cap")),
             approved_by: Some(device(0)),
+            mode: Some(s("rw")),
+            key_epoch: Some(1),
+            expires_at: Some(s("t")),
         },
     );
     state.sessions.insert(
@@ -477,6 +506,9 @@ fn base_state() -> Model {
             status: s("pending"),
             capsule: None,
             approved_by: None,
+            mode: None,
+            key_epoch: None,
+            expires_at: None,
         },
     );
     state.sessions.insert(
@@ -487,6 +519,9 @@ fn base_state() -> Model {
             status: s("granted"),
             capsule: Some(s("cap")),
             approved_by: Some(device(1)),
+            mode: Some(s("ro")),
+            key_epoch: Some(1),
+            expires_at: Some(s("t")),
         },
     );
     state.sessions.insert(
@@ -497,6 +532,9 @@ fn base_state() -> Model {
             status: s("revoked"),
             capsule: None,
             approved_by: Some(device(1)),
+            mode: None,
+            key_epoch: None,
+            expires_at: None,
         },
     );
     state.inbox.insert(s("i0"), MailRow { sender: user(0), recipient: user(1) });
@@ -1079,6 +1117,62 @@ impl SessionTokens for FakeTokens {
     ) -> anyhow::Result<(String, String)> {
         Ok((s("token"), s("jti")))
     }
+
+    fn issue_web(
+        &self,
+        _user: uuid::Uuid,
+        _session: uuid::Uuid,
+        _plan: vela_session_policy::TokenPlan,
+    ) -> anyhow::Result<(String, String)> {
+        Ok((s("token"), s("jti")))
+    }
+}
+
+/// The web-token issuer: issuance is a trusted input, and `ok` lets the
+/// conformance drive the executor's failure path.
+struct FakeWebTokens {
+    ok: bool,
+}
+
+impl SessionTokens for FakeWebTokens {
+    fn issue_device(
+        &self,
+        _user: uuid::Uuid,
+        _device: uuid::Uuid,
+    ) -> anyhow::Result<(String, String)> {
+        Ok((s("token"), s("jti")))
+    }
+
+    fn issue_web(
+        &self,
+        _user: uuid::Uuid,
+        _session: uuid::Uuid,
+        _plan: vela_session_policy::TokenPlan,
+    ) -> anyhow::Result<(String, String)> {
+        if self.ok {
+            Ok((s("token"), s("jti")))
+        } else {
+            Err(anyhow::anyhow!("injected issuer failure"))
+        }
+    }
+}
+
+/// A state for the executors that are given one; only their own handles
+/// (sql, store, tokens) are exercised.
+async fn web_state() -> AppState {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static N: AtomicU64 = AtomicU64::new(0);
+    let path = format!(
+        "{}/vela-websession-conformance-{}-{}.db",
+        std::env::temp_dir().display(),
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    );
+    let _ = std::fs::remove_file(&path);
+    let turso = std::sync::Arc::new(TursoDb::open(&path, 1).await.unwrap());
+    let store = Store::open_temp().unwrap();
+    let cfg = crate::config::Config::from_env().expect("default config");
+    std::sync::Arc::new(AppStateInner::new(turso, store, cfg).await.unwrap())
 }
 
 const LOGIN_IP: &str = "203.0.113.7";
@@ -1896,6 +1990,392 @@ async fn registration_executors_match_the_store_model() {
     }
     eprintln!(
         "session executor conformance (registration): {} states, {} cases, {} with an injected failure",
+        counts.states, counts.cases, counts.faulted
+    );
+}
+
+// ── Web sessions: start, grant, token and delete executors ─────────────────
+
+/// A pending session for `user(0)` approved by the device it will grant with,
+/// plus one variant per guard in the grant CAS.
+fn web_states() -> Vec<Model> {
+    let base = || {
+        let mut state = base_state();
+        state.sessions.insert(
+            session_id(4),
+            SessionRow {
+                user_id: None,
+                approver_user_id: Some(user(0)),
+                status: s("pending"),
+                capsule: None,
+                approved_by: None,
+                mode: None,
+                key_epoch: None,
+                expires_at: None,
+            },
+        );
+        state
+    };
+    let mut out = vec![base()];
+
+    let mut state = base();
+    state.users.get_mut(&user(0)).unwrap().rekey_state = Some(s("rotating"));
+    out.push(state); // 1: a rekey is in progress
+
+    let mut state = base();
+    state.users.get_mut(&user(0)).unwrap().key_epoch = 2;
+    out.push(state); // 2: the account's epoch moved
+
+    let mut state = base();
+    state.devices.get_mut(&device(0)).unwrap().revoked = 1;
+    out.push(state); // 3: the approving device is revoked
+
+    let mut state = base();
+    state.devices.get_mut(&device(0)).unwrap().user_id = user(1);
+    out.push(state); // 4: the approving device belongs to another account
+
+    let mut state = base();
+    state.devices.remove(&device(0));
+    out.push(state); // 5: no device row
+
+    let mut state = base();
+    state.sessions.get_mut(&session_id(4)).unwrap().status = s("granted");
+    out.push(state); // 6: already granted
+
+    let mut state = base();
+    state.sessions.get_mut(&session_id(4)).unwrap().approver_user_id = Some(user(1));
+    out.push(state); // 7: committed to another approver
+
+    let mut state = base();
+    state.sessions.remove(&session_id(4));
+    out.push(state); // 8: no session row
+
+    let mut state = base();
+    state.users.remove(&user(0));
+    out.push(state); // 9: no account row
+
+    out
+}
+
+fn web_start_request() -> StartRequest {
+    StartRequest {
+        ephemeral_pk: s("epk"),
+        web_vk: Some(s("vk")),
+        link_nonce: s("nonce"),
+        approver_user_id: uuid::Uuid::parse_str(&user(0)).unwrap(),
+        poll_secret_hash: s("hash"),
+    }
+}
+
+fn web_device_session() -> crate::middleware::DeviceSession {
+    crate::middleware::DeviceSession(crate::middleware::AuthSession {
+        user_id: uuid::Uuid::parse_str(&user(0)).unwrap(),
+        device_id: uuid::Uuid::parse_str(&device(0)).unwrap(),
+        jti: s("jti"),
+        key_epoch: Some(1),
+        new_token: None,
+        scope: crate::auth::token::TokenScope::Device,
+    })
+}
+
+fn web_token_plan() -> vela_session_policy::TokenPlan {
+    use vela_session_policy::{
+        plan_web_session_token, SessionMode, SessionPhase, TokenDecision, WebTokenFacts,
+    };
+    let now = chrono::Utc::now().timestamp();
+    let facts = WebTokenFacts {
+        phase: SessionPhase::Granted,
+        mode: SessionMode::ReadWrite,
+        approver_bound: true,
+        nonce_bound: true,
+        challenge_consumed: true,
+        signature_valid: true,
+    };
+    match plan_web_session_token(facts, now, now + 3600, 1) {
+        TokenDecision::Issue(plan) => plan,
+        TokenDecision::Reject => panic!("the conformance token facts must be authorized"),
+    }
+}
+
+#[tokio::test]
+async fn web_session_executors_match_the_store_model() {
+    let db = temp_db().await;
+    let state = web_state().await;
+    let mut counts = Counts::default();
+
+    // StartIo::insert_pending. The executor draws a fresh v4 id, so the model
+    // is given the id the executor reports; a duplicate id (the SQL UNIQUE
+    // failure) is proved in the model and pinned by the schema check.
+    for pre in web_states() {
+        counts.states += 1;
+        for fault in faults(1) {
+            load(&db, &pre).await;
+            let mut io = StartIo {
+                state: &state,
+                sql: Faulty::new(DbSql { pool: &db, tx: None }, fault),
+                body: web_start_request(),
+                ip: s("203.0.113.9"),
+                session_id: None,
+                error: None,
+            };
+            let observed = io.insert_pending().await;
+            let id = io.session_id.map(|id| id.to_string()).unwrap_or_default();
+            let (expected, want) = model::insert_pending(
+                &pre,
+                &id,
+                &user(0),
+                "hash",
+                "epk",
+                "vk",
+                "nonce",
+                NOW,
+                fault,
+            );
+            let case = format!("insert pending fault {fault:?}");
+            assert_eq!(observed, expected, "{case}");
+            assert_eq!(
+                io.error.is_some(),
+                fault.is_some(),
+                "{case}: {:?}",
+                io.error.as_ref().map(|e| e.to_string())
+            );
+            assert_eq!(snapshot(&db).await, want, "{case}");
+            counts.case(fault);
+        }
+    }
+
+    // GrantIo::update_grant: every guard variant, two declared epochs, and
+    // every fault point.
+    for pre in web_states() {
+        counts.states += 1;
+        for epoch in [1i64, 2] {
+            for fault in faults(1) {
+                load(&db, &pre).await;
+                let mut io = GrantIo {
+                    state: &state,
+                    sql: Faulty::new(DbSql { pool: &db, tx: None }, fault),
+                    id: uuid::Uuid::parse_str(&session_id(4)).unwrap(),
+                    session: web_device_session(),
+                    body: GrantRequest {
+                        mode: s("rw"),
+                        capsule: s("cap"),
+                        link_nonce: s("nonce"),
+                        key_epoch: epoch,
+                        ttl_secs: Some(600),
+                    },
+                    expires_at: None,
+                    error: None,
+                };
+                let observed = io
+                    .update_grant(vela_session_policy::websession_driver::GrantUpdate {
+                        mode: vela_session_policy::SessionMode::ReadWrite,
+                        epoch,
+                        ttl_secs: 600,
+                    })
+                    .await;
+                let exp = io
+                    .expires_at
+                    .map(|at| at.to_rfc3339())
+                    .unwrap_or_else(|| s("unused"));
+                let (expected, want) = model::grant_update(
+                    &pre,
+                    &session_id(4),
+                    &user(0),
+                    &device(0),
+                    "rw",
+                    "cap",
+                    &exp,
+                    epoch,
+                    fault,
+                );
+                let case = format!("grant epoch {epoch} fault {fault:?}");
+                assert_eq!(observed, expected, "{case}");
+                assert_eq!(
+                    io.error.is_some(),
+                    observed == GrantUpdateObservation::Failed,
+                    "{case}"
+                );
+                assert_eq!(snapshot(&db).await, want, "{case}");
+                counts.case(fault);
+            }
+        }
+    }
+
+    // TokenIo::claim_token: an absent marker and one already claimed.
+    for seed in [false, true] {
+        counts.states += 1;
+        for fault in faults(1) {
+            let store = Store::open_temp().unwrap();
+            let mut ms = ModelStore::default();
+            if seed {
+                store
+                    .set_ex_nx(&format!("web_session:token_issued:{}", session_id(4)), &[1], 86_400)
+                    .unwrap();
+                ms.kv.insert(
+                    model::claim_key(&session_id(4)),
+                    s("1"),
+                );
+            }
+            let mut io = TokenIo {
+                state: &state,
+                store: Faulty::new(SledStore(&store), fault),
+                tokens: FakeWebTokens { ok: true },
+                id: uuid::Uuid::parse_str(&session_id(4)).unwrap(),
+                id_str: session_id(4),
+                ip: s("203.0.113.9"),
+                body: TokenRequest {
+                    challenge: s("challenge"),
+                    signature: s("signature"),
+                },
+                user_id: Some(uuid::Uuid::parse_str(&user(0)).unwrap()),
+                web_vk: None,
+                session_expires_at: None,
+                token: None,
+                jti: None,
+                error: None,
+            };
+            let observed = io.claim_token().await;
+            let (expected, want) = model::token_claim(&ms, &session_id(4), fault);
+            let case = format!("claim seed {seed} fault {fault:?}");
+            assert_eq!(observed, expected, "{case}");
+            assert_eq!(
+                io.error.is_some(),
+                observed == TokenClaimObservation::StorageFailed,
+                "{case}"
+            );
+            assert_eq!(
+                store
+                    .exists(&format!("web_session:token_issued:{}", session_id(4)))
+                    .unwrap(),
+                want.kv.contains_key(&model::claim_key(&session_id(4))),
+                "{case}"
+            );
+            counts.case(fault);
+        }
+    }
+
+    // TokenIo::issue_token: the issue-time sentinel and the JTI track.
+    let plan = web_token_plan();
+    for (seed, paseto_ok) in [(false, true), (true, true), (false, false)] {
+        counts.states += 1;
+        for fault in faults(2) {
+            let store = Store::open_temp().unwrap();
+            let mut ms = ModelStore::default();
+            if seed {
+                store.set_ex(&format!("device:revoked:{}", session_id(4)), &[1], 86_400).unwrap();
+                ms.kv.insert(model::sentinel_key(&session_id(4)), s("1"));
+            }
+            let mut io = TokenIo {
+                state: &state,
+                store: Faulty::new(SledStore(&store), fault),
+                tokens: FakeWebTokens { ok: paseto_ok },
+                id: uuid::Uuid::parse_str(&session_id(4)).unwrap(),
+                id_str: session_id(4),
+                ip: s("203.0.113.9"),
+                body: TokenRequest {
+                    challenge: s("challenge"),
+                    signature: s("signature"),
+                },
+                user_id: Some(uuid::Uuid::parse_str(&user(0)).unwrap()),
+                web_vk: None,
+                session_expires_at: None,
+                token: None,
+                jti: None,
+                error: None,
+            };
+            let observed = io.issue_token(plan).await;
+            let (expected, want) =
+                model::token_issue(&ms, &session_id(4), "jti", paseto_ok, fault);
+            let case = format!("issue seed {seed} paseto {paseto_ok} fault {fault:?}");
+            assert_eq!(observed, expected, "{case}");
+            assert_eq!(
+                io.error.is_some(),
+                observed == TokenIssueObservation::Failed,
+                "{case}"
+            );
+            assert_eq!(io.token.is_some(), observed == TokenIssueObservation::Issued, "{case}");
+            assert_eq!(
+                store.smembers(&format!("device:jtis:{}", session_id(4)))
+                    .unwrap()
+                    .into_iter()
+                    .collect::<BTreeSet<_>>(),
+                want.sets
+                    .get(&format!("device:jtis:{}", session_id(4)))
+                    .cloned()
+                    .unwrap_or_default(),
+                "{case}"
+            );
+            counts.case(fault);
+        }
+    }
+
+    // DeleteSessionIo::lockout_session: an absent sentinel and a live one.
+    for seed in [false, true] {
+        counts.states += 1;
+        for fault in faults(1) {
+            let store = Store::open_temp().unwrap();
+            let mut ms = ModelStore::default();
+            if seed {
+                store.set_ex(&format!("device:revoked:{}", session_id(4)), &[1], 86_400).unwrap();
+                ms.kv.insert(model::sentinel_key(&session_id(4)), s("1"));
+            }
+            let mut io = DeleteSessionIo {
+                state: &state,
+                sql: Faulty::new(DbSql { pool: &db, tx: None }, None),
+                store: Faulty::new(SledStore(&store), fault),
+                id: uuid::Uuid::parse_str(&session_id(4)).unwrap(),
+                error: None,
+            };
+            let observed = io.lockout_session().await;
+            let (expected, want) = model::lockout_session(&ms, &session_id(4), fault);
+            let case = format!("lockout seed {seed} fault {fault:?}");
+            assert_eq!(observed, expected, "{case}");
+            assert_eq!(
+                io.error.is_some(),
+                observed == DeleteSentinelObservation::StorageFailed,
+                "{case}"
+            );
+            assert_eq!(
+                store
+                    .exists(&format!("device:revoked:{}", session_id(4)))
+                    .unwrap(),
+                want.kv.contains_key(&model::sentinel_key(&session_id(4))),
+                "{case}"
+            );
+            counts.case(fault);
+        }
+    }
+
+    // DeleteSessionIo::record_revocation: a live target, a granted one and an
+    // absent one.
+    for pre in web_states() {
+        counts.states += 1;
+        let scratch = Store::open_temp().unwrap();
+        for fault in faults(1) {
+            load(&db, &pre).await;
+            let mut io = DeleteSessionIo {
+                state: &state,
+                sql: Faulty::new(DbSql { pool: &db, tx: None }, fault),
+                store: Faulty::new(SledStore(&scratch), None),
+                id: uuid::Uuid::parse_str(&session_id(4)).unwrap(),
+                error: None,
+            };
+            let observed = io.record_revocation().await;
+            let (expected, want) = model::revoke_session(&pre, &session_id(4), fault);
+            let case = format!("revoke record fault {fault:?}");
+            assert_eq!(observed, expected, "{case}");
+            assert_eq!(
+                io.error.is_some(),
+                observed == DeleteRecordObservation::Failed,
+                "{case}"
+            );
+            assert_eq!(snapshot(&db).await, want, "{case}");
+            counts.case(fault);
+        }
+    }
+
+    eprintln!(
+        "session executor conformance (web sessions): {} states, {} cases, {} with an injected failure",
         counts.states, counts.cases, counts.faulted
     );
 }

@@ -42,6 +42,10 @@ use crate::revocation_driver::{
     CascadeObservation, DeviceLookupObservation, LogoutObservation, RecordObservation,
     TargetObservation,
 };
+use crate::websession_driver::{
+    DeleteRecordObservation, DeleteSentinelObservation, GrantUpdateObservation,
+    StartInsertObservation, TokenClaimObservation, TokenIssueObservation,
+};
 
 /// The remaining-lifetime TTL of a revoked JTI, in seconds
 /// (`rate_limit::TOKEN_MAX_LIFETIME_SECS`).
@@ -138,6 +142,44 @@ pub enum SqlStmt {
     },
     /// `SELECT COUNT(*) FROM users`: the registration account budget.
     CountUsers,
+    /// `INSERT INTO web_sessions (id, user_id, approver_user_id,
+    /// poll_secret_hash, ephemeral_pk, web_vk, link_nonce, mode, status,
+    /// capsule, approved_by, created_at, expires_at) VALUES (?, NULL, ?, ?, ?,
+    /// ?, ?, NULL, 'pending', NULL, NULL, ?, NULL)`. The id is `UNIQUE`: an
+    /// existing row makes the statement fail.
+    InsertPendingSession {
+        session: String,
+        approver: String,
+        poll_secret_hash: String,
+        ephemeral_pk: String,
+        web_vk: String,
+        link_nonce: String,
+        now: String,
+    },
+    /// The grant compare-and-swap:
+    /// `UPDATE web_sessions SET user_id = ?, mode = ?, status = 'granted',
+    /// capsule = ?, approved_by = ?, expires_at = ?, key_epoch = ? WHERE id = ?
+    /// AND status = 'pending' AND approver_user_id = ? AND EXISTS (SELECT 1
+    /// FROM users WHERE id = ? AND rekey_state IS NULL AND key_epoch = ?) AND
+    /// EXISTS (SELECT 1 FROM devices WHERE id = ? AND user_id = ? AND
+    /// revoked = 0)`.
+    ///
+    /// `approved_by` is the approving device; it is also the device the second
+    /// `EXISTS` names, and `user` is the granting account, the session's
+    /// `approver_user_id` guard and the `users`/`devices` owner. Zero rows is
+    /// the handler's `Conflict`.
+    GrantWebSession {
+        session: String,
+        user: String,
+        device: String,
+        mode: String,
+        capsule: String,
+        expires_at: String,
+        epoch: i64,
+    },
+    /// `UPDATE web_sessions SET status = 'revoked', capsule = NULL WHERE id = ?`
+    /// (the delete handler's audit record; its row count is not observed).
+    RevokeSessionById { session: String },
     /// Commit the open transaction.
     Commit,
 }
@@ -176,6 +218,15 @@ pub enum StoreStmt {
         value: String,
         ttl: u64,
     },
+    /// `Store::set_ex_nx(key, [value], ttl)` with a one-byte value (the web
+    /// token claim's marker).
+    SetExNxByte {
+        key: String,
+        value: u8,
+        ttl: u64,
+    },
+    /// `Store::exists(key)`: a read, so it never changes the store.
+    Exists { key: String },
 }
 
 /// What one SQL statement returned.
@@ -230,6 +281,15 @@ pub enum TakeOutcome {
 pub enum NxOutcome {
     Inserted,
     KeyExists,
+    Failed,
+}
+
+/// What `Store::exists` returned: the key is present, absent, or the call
+/// failed.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ExistsOutcome {
+    Present,
+    Absent,
     Failed,
 }
 
@@ -511,6 +571,77 @@ pub fn plan_insert_device(
     }
 }
 
+// ── Web sessions ───────────────────────────────────────────────────────────
+
+/// `StartIo::insert_pending`: the one pending `web_sessions` row, with the
+/// account the browser committed to and `user_id`/grant fields still NULL.
+pub fn plan_insert_pending(
+    session: String,
+    approver: String,
+    poll_secret_hash: String,
+    ephemeral_pk: String,
+    web_vk: String,
+    link_nonce: String,
+    now: String,
+) -> SqlStmt {
+    SqlStmt::InsertPendingSession {
+        session,
+        approver,
+        poll_secret_hash,
+        ephemeral_pk,
+        web_vk,
+        link_nonce,
+        now,
+    }
+}
+
+/// `GrantIo::update_grant`: the guarded compare-and-swap that publishes the
+/// grant only while the session is still pending for this approver, the
+/// account is not mid-rekey at the declared epoch, and the approving device is
+/// stored, owned by the account and unrevoked.
+pub fn plan_grant_update(
+    session: String,
+    user: String,
+    device: String,
+    mode: String,
+    capsule: String,
+    expires_at: String,
+    epoch: i64,
+) -> SqlStmt {
+    SqlStmt::GrantWebSession {
+        session,
+        user,
+        device,
+        mode,
+        capsule,
+        expires_at,
+        epoch,
+    }
+}
+
+/// `DeleteSessionIo::record_revocation`: the audit row.
+pub fn plan_revoke_session(session: String) -> SqlStmt {
+    SqlStmt::RevokeSessionById { session }
+}
+
+/// `TokenIo::claim_token`: the one `web_session:token_issued:` marker, first
+/// writer wins for the session's whole token ceiling.
+pub fn plan_token_claim(session: String) -> Vec<StoreStmt> {
+    vec![StoreStmt::SetExNxByte {
+        key: format!("web_session:token_issued:{}", session),
+        value: 1,
+        ttl: WEB_SESSION_MAX_TTL_SECS,
+    }]
+}
+
+/// `TokenIo::issue_token`: the issue-time lockout re-check. It reads the
+/// sentinel the delete handler and the revocation cascade write.
+pub fn plan_token_sentinel(session: String) -> Vec<StoreStmt> {
+    vec![StoreStmt::Exists {
+        key: format!("device:revoked:{}", session),
+    }]
+}
+
 // ── Classification ─────────────────────────────────────────────────────────
 
 /// The logout marker: it was written exactly when its one statement ran.
@@ -770,6 +901,72 @@ pub fn classify_registration_track(outcome: &StoreOutcome) -> TrackObservation {
     }
 }
 
+// ── Web sessions ───────────────────────────────────────────────────────────
+
+/// `StartIo::insert_pending`: `Inserted` exactly when the one statement ran
+/// (its id was fresh).
+pub fn classify_start_insert(outcome: &WriteOutcome) -> StartInsertObservation {
+    match outcome {
+        WriteOutcome::Applied(_) => StartInsertObservation::Inserted,
+        WriteOutcome::Failed => StartInsertObservation::Failed,
+    }
+}
+
+/// `GrantIo::update_grant`: zero rows is the CAS conflict; a failure is the
+/// storage error; one row is the grant.
+pub fn classify_grant_update(outcome: &WriteOutcome) -> GrantUpdateObservation {
+    match outcome {
+        WriteOutcome::Applied(0) => GrantUpdateObservation::Conflict,
+        WriteOutcome::Applied(_) => GrantUpdateObservation::Updated,
+        WriteOutcome::Failed => GrantUpdateObservation::Failed,
+    }
+}
+
+/// `TokenIo::claim_token`: `Claimed` exactly when this call inserted the
+/// marker, `AlreadyClaimed` when it was already there.
+pub fn classify_token_claim(outcome: &NxOutcome) -> TokenClaimObservation {
+    match outcome {
+        NxOutcome::Inserted => TokenClaimObservation::Claimed,
+        NxOutcome::KeyExists => TokenClaimObservation::AlreadyClaimed,
+        NxOutcome::Failed => TokenClaimObservation::StorageFailed,
+    }
+}
+
+/// `TokenIo::issue_token`: `Issued` exactly when the issuer produced a token,
+/// the issue-time sentinel was absent and the JTI was tracked.
+pub fn classify_token_issue(
+    issued: bool,
+    sentinel: &ExistsOutcome,
+    tracked: &StoreOutcome,
+) -> TokenIssueObservation {
+    if issued
+        && matches!(sentinel, ExistsOutcome::Absent)
+        && matches!(tracked, StoreOutcome::Applied)
+    {
+        TokenIssueObservation::Issued
+    } else {
+        TokenIssueObservation::Failed
+    }
+}
+
+/// `DeleteSessionIo::lockout_session`: `Applied` exactly when the sentinel
+/// write ran.
+pub fn classify_lockout_session(outcome: &StoreOutcome) -> DeleteSentinelObservation {
+    match outcome {
+        StoreOutcome::Applied => DeleteSentinelObservation::Applied,
+        StoreOutcome::Failed => DeleteSentinelObservation::StorageFailed,
+    }
+}
+
+/// `DeleteSessionIo::record_revocation`: `Updated` exactly when the audit
+/// statement ran (its row count is not observed).
+pub fn classify_revoke_session(outcome: &WriteOutcome) -> DeleteRecordObservation {
+    match outcome {
+        WriteOutcome::Applied(_) => DeleteRecordObservation::Updated,
+        WriteOutcome::Failed => DeleteRecordObservation::Failed,
+    }
+}
+
 // ── Rendering (not extracted; pinned by the tests below) ───────────────────
 
 /// One SQL statement as the database receives it.
@@ -778,7 +975,21 @@ pub fn classify_registration_track(outcome: &StoreOutcome) -> TrackObservation {
 pub enum Rendered {
     Query { sql: &'static str, params: Vec<String> },
     Execute { sql: &'static str, params: Vec<String> },
+    /// An `execute` whose parameters mix text and integer cells, exactly as
+    /// the handler bound them.
+    ExecuteMixed {
+        sql: &'static str,
+        params: Vec<Param>,
+    },
     Commit,
+}
+
+/// One bound parameter.
+#[cfg(not(hax))]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Param {
+    Text(String),
+    Int(i64),
 }
 
 /// The store operation a [`StoreStmt`] performs.
@@ -793,6 +1004,8 @@ pub enum StoreOp {
     ResetBackoff,
     AddMember,
     SetExNx,
+    SetExNxByte,
+    Exists,
 }
 
 /// One store statement as the handler sends it.
@@ -946,6 +1159,71 @@ pub fn render_sql(stmt: &SqlStmt) -> Rendered {
             sql: "SELECT COUNT(*) FROM users",
             params: vec![],
         },
+        SqlStmt::InsertPendingSession {
+            session,
+            approver,
+            poll_secret_hash,
+            ephemeral_pk,
+            web_vk,
+            link_nonce,
+            now,
+        } => Rendered::Execute {
+            sql: "INSERT INTO web_sessions
+                    (id, user_id, approver_user_id, poll_secret_hash, ephemeral_pk, web_vk, link_nonce, mode, status, capsule, approved_by, created_at, expires_at)
+                 VALUES (?, NULL, ?, ?, ?, ?, ?, NULL, 'pending', NULL, NULL, ?, NULL)",
+            params: vec![
+                session.clone(),
+                approver.clone(),
+                poll_secret_hash.clone(),
+                ephemeral_pk.clone(),
+                web_vk.clone(),
+                link_nonce.clone(),
+                now.clone(),
+            ],
+        },
+        SqlStmt::GrantWebSession {
+            session,
+            user,
+            device,
+            mode,
+            capsule,
+            expires_at,
+            epoch,
+        } => Rendered::ExecuteMixed {
+            sql: "UPDATE web_sessions
+                 SET user_id = ?, mode = ?, status = 'granted', capsule = ?,
+                     approved_by = ?, expires_at = ?,
+                     key_epoch = ?
+                 WHERE id = ? AND status = 'pending' AND approver_user_id = ?
+                   AND EXISTS (
+                       SELECT 1 FROM users
+                       WHERE id = ? AND rekey_state IS NULL AND key_epoch = ?
+                   )
+                   -- A device being revoked cannot slip a grant past the
+                   -- revocation cascade (see device::revoke).
+                   AND EXISTS (
+                       SELECT 1 FROM devices
+                       WHERE id = ? AND user_id = ? AND revoked = 0
+                   )",
+            params: vec![
+                Param::Text(user.clone()),
+                Param::Text(mode.clone()),
+                Param::Text(capsule.clone()),
+                Param::Text(device.clone()),
+                Param::Text(expires_at.clone()),
+                Param::Int(*epoch),
+                Param::Text(session.clone()),
+                Param::Text(user.clone()),
+                Param::Text(user.clone()),
+                Param::Int(*epoch),
+                Param::Text(device.clone()),
+                Param::Text(user.clone()),
+            ],
+        },
+        SqlStmt::RevokeSessionById { session } => Rendered::Execute {
+            sql: "UPDATE web_sessions SET status = 'revoked', capsule = NULL WHERE id = ?",
+            params: vec![session.clone()],
+        },
         SqlStmt::Commit => Rendered::Commit,
     }
 }
@@ -1018,6 +1296,22 @@ pub fn render_store(stmt: &StoreStmt) -> RenderedStore {
             limit: 0,
             member: value.clone(),
         },
+        StoreStmt::SetExNxByte { key, value, ttl } => RenderedStore {
+            op: StoreOp::SetExNxByte,
+            key: key.clone(),
+            value: *value,
+            ttl: *ttl,
+            limit: 0,
+            member: String::new(),
+        },
+        StoreStmt::Exists { key } => RenderedStore {
+            op: StoreOp::Exists,
+            key: key.clone(),
+            value: 0,
+            ttl: 0,
+            limit: 0,
+            member: String::new(),
+        },
     }
 }
 
@@ -1040,6 +1334,13 @@ mod tests {
         match render_sql(stmt) {
             Rendered::Query { sql, params } => (sql, params),
             other => panic!("expected a read, got {other:?}"),
+        }
+    }
+
+    fn mixed(stmt: &SqlStmt) -> (&'static str, Vec<Param>) {
+        match render_sql(stmt) {
+            Rendered::ExecuteMixed { sql, params } => (sql, params),
+            other => panic!("expected a mixed write, got {other:?}"),
         }
     }
 
@@ -1669,6 +1970,197 @@ mod tests {
         assert_eq!(
             classify_registration_track(&StoreOutcome::Failed),
             crate::registration_driver::TrackObservation::Failed
+        );
+    }
+
+    // ── Web sessions ───────────────────────────────────────────────────────
+
+    #[test]
+    fn web_session_plans_render_the_historical_statements() {
+        let (sql, params) = exec(&plan_insert_pending(
+            s("sess"),
+            s("acct"),
+            s("hash"),
+            s("epk"),
+            s("vk"),
+            s("nonce"),
+            s("now"),
+        ));
+        assert_eq!(
+            sql,
+            "INSERT INTO web_sessions
+                    (id, user_id, approver_user_id, poll_secret_hash, ephemeral_pk, web_vk, link_nonce, mode, status, capsule, approved_by, created_at, expires_at)
+                 VALUES (?, NULL, ?, ?, ?, ?, ?, NULL, 'pending', NULL, NULL, ?, NULL)"
+        );
+        assert_eq!(
+            params,
+            vec![s("sess"), s("acct"), s("hash"), s("epk"), s("vk"), s("nonce"), s("now")]
+        );
+
+        let (sql, params) = mixed(&plan_grant_update(
+            s("sess"),
+            s("acct"),
+            s("dev"),
+            s("rw"),
+            s("cap"),
+            s("exp"),
+            7,
+        ));
+        assert_eq!(
+            sql,
+            "UPDATE web_sessions
+                 SET user_id = ?, mode = ?, status = 'granted', capsule = ?,
+                     approved_by = ?, expires_at = ?,
+                     key_epoch = ?
+                 WHERE id = ? AND status = 'pending' AND approver_user_id = ?
+                   AND EXISTS (
+                       SELECT 1 FROM users
+                       WHERE id = ? AND rekey_state IS NULL AND key_epoch = ?
+                   )
+                   -- A device being revoked cannot slip a grant past the
+                   -- revocation cascade (see device::revoke).
+                   AND EXISTS (
+                       SELECT 1 FROM devices
+                       WHERE id = ? AND user_id = ? AND revoked = 0
+                   )"
+        );
+        assert_eq!(
+            params,
+            vec![
+                Param::Text(s("acct")),
+                Param::Text(s("rw")),
+                Param::Text(s("cap")),
+                Param::Text(s("dev")),
+                Param::Text(s("exp")),
+                Param::Int(7),
+                Param::Text(s("sess")),
+                Param::Text(s("acct")),
+                Param::Text(s("acct")),
+                Param::Int(7),
+                Param::Text(s("dev")),
+                Param::Text(s("acct")),
+            ]
+        );
+
+        let (sql, params) = exec(&plan_revoke_session(s("sess")));
+        assert_eq!(
+            sql,
+            "UPDATE web_sessions SET status = 'revoked', capsule = NULL WHERE id = ?"
+        );
+        assert_eq!(params, vec![s("sess")]);
+
+        let plan = plan_token_claim(s("sess"));
+        assert_eq!(plan.len(), 1);
+        assert_eq!(
+            render_store(&plan[0]),
+            RenderedStore {
+                op: StoreOp::SetExNxByte,
+                key: s("web_session:token_issued:sess"),
+                value: 1,
+                ttl: 86_400,
+                limit: 0,
+                member: String::new()
+            }
+        );
+
+        let plan = plan_token_sentinel(s("sess"));
+        assert_eq!(plan.len(), 1);
+        assert_eq!(
+            render_store(&plan[0]),
+            RenderedStore {
+                op: StoreOp::Exists,
+                key: s("device:revoked:sess"),
+                value: 0,
+                ttl: 0,
+                limit: 0,
+                member: String::new()
+            }
+        );
+
+        // The delete handler's sentinel is the shared plan, with the web
+        // session ceiling.
+        assert_eq!(
+            render_store(&plan_sentinel(s("sess"), WEB_SESSION_MAX_TTL_SECS)[0]),
+            RenderedStore {
+                op: StoreOp::SetEx,
+                key: s("device:revoked:sess"),
+                value: 1,
+                ttl: 86_400,
+                limit: 0,
+                member: String::new()
+            }
+        );
+    }
+
+    #[test]
+    fn web_session_classifiers_keep_the_historical_observations() {
+        assert_eq!(
+            classify_start_insert(&WriteOutcome::Applied(1)),
+            StartInsertObservation::Inserted
+        );
+        assert_eq!(
+            classify_start_insert(&WriteOutcome::Failed),
+            StartInsertObservation::Failed
+        );
+        assert_eq!(
+            classify_grant_update(&WriteOutcome::Applied(1)),
+            GrantUpdateObservation::Updated
+        );
+        assert_eq!(
+            classify_grant_update(&WriteOutcome::Applied(0)),
+            GrantUpdateObservation::Conflict
+        );
+        assert_eq!(
+            classify_grant_update(&WriteOutcome::Failed),
+            GrantUpdateObservation::Failed
+        );
+        assert_eq!(
+            classify_token_claim(&NxOutcome::Inserted),
+            TokenClaimObservation::Claimed
+        );
+        assert_eq!(
+            classify_token_claim(&NxOutcome::KeyExists),
+            TokenClaimObservation::AlreadyClaimed
+        );
+        assert_eq!(
+            classify_token_claim(&NxOutcome::Failed),
+            TokenClaimObservation::StorageFailed
+        );
+        assert_eq!(
+            classify_token_issue(true, &ExistsOutcome::Absent, &StoreOutcome::Applied),
+            TokenIssueObservation::Issued
+        );
+        for (issued, sentinel, tracked) in [
+            (false, ExistsOutcome::Absent, StoreOutcome::Applied),
+            (true, ExistsOutcome::Present, StoreOutcome::Applied),
+            (true, ExistsOutcome::Failed, StoreOutcome::Applied),
+            (true, ExistsOutcome::Absent, StoreOutcome::Failed),
+        ] {
+            assert_eq!(
+                classify_token_issue(issued, &sentinel, &tracked),
+                TokenIssueObservation::Failed,
+                "issued {issued}, sentinel {sentinel:?}, tracked {tracked:?}"
+            );
+        }
+        assert_eq!(
+            classify_lockout_session(&StoreOutcome::Applied),
+            DeleteSentinelObservation::Applied
+        );
+        assert_eq!(
+            classify_lockout_session(&StoreOutcome::Failed),
+            DeleteSentinelObservation::StorageFailed
+        );
+        assert_eq!(
+            classify_revoke_session(&WriteOutcome::Applied(0)),
+            DeleteRecordObservation::Updated
+        );
+        assert_eq!(
+            classify_revoke_session(&WriteOutcome::Applied(1)),
+            DeleteRecordObservation::Updated
+        );
+        assert_eq!(
+            classify_revoke_session(&WriteOutcome::Failed),
+            DeleteRecordObservation::Failed
         );
     }
 }
