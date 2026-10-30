@@ -65,3 +65,9 @@ fstar.exe \
 # state and every failing statement, with mutation checks. Needs the driver
 # extraction above.
 "$proof_root/verify-fstar-share-executors.sh"
+
+# F-1 for the one-off share-link executors (`sends`): each create/fetch/delete
+# executor method's observation is the truth about the table, proved against
+# the extended store model, with mutation checks. Needs the store extraction
+# above.
+"$proof_root/verify-fstar-send-executors.sh"

@@ -99,6 +99,7 @@ PY
     --include "$hax_lib_root/proof-libs/fstar/rust_primitives" \
     --include "$hax_lib_root/proofs/fstar/extraction" \
     --include "$proof_root/proofs/fstar/extraction-driver" \
+    --include "$proof_root/proofs/fstar/extraction-send-driver" \
     --include "$d/store" --include "$d/lemmas" \
     "$d/lemmas/Vela_share_policy_store_lemmas.fst" 2>&1)
   status=$?

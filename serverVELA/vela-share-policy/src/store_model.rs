@@ -8,13 +8,17 @@
 //! order; keep them in step. `tests::shared_vectors` checks the concrete
 //! runs the F* `vector_*` lemmas prove from the general theorems.
 //!
-//! Only the columns the sharing statements read or write are modelled. Every
-//! table is keyed by its `UNIQUE` id column, so a missing key is a missing
-//! row and an `INSERT` of a present key fails.
+//! Only the columns the statements read or write are modelled. Every table is
+//! keyed by its `UNIQUE` id column, so a missing key is a missing row and an
+//! `INSERT` of a present key fails. The one-off share-link statements use
+//! `sends`; `send_live` supplies SQLite's stored-text comparison for the
+//! expiry guard (`d.clock` in F*).
 
 use std::collections::BTreeMap;
 
-use crate::store::{DeviceRowView, LinkRowView, ReadOutcome, ShareStmt, WriteOutcome};
+use crate::store::{
+    DeviceRowView, LinkRowView, ReadOutcome, SendRowView, SendStmt, ShareStmt, WriteOutcome,
+};
 
 /// A `shared_items` row.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -52,13 +56,30 @@ pub struct DeviceRow {
     pub revoked: i64,
 }
 
-/// The four tables, each keyed by its id.
+/// A `sends` row: the columns the one-off share-link statements read or write.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SendRow {
+    pub owner: String,
+    pub ciphertext: String,
+    pub has_passphrase: i64,
+    pub kdf_salt: Option<String>,
+    pub label: Option<String>,
+    pub view_once: i64,
+    pub max_views: Option<i64>,
+    pub view_count: i64,
+    pub created_at: String,
+    pub expires_at: String,
+    pub revoked: i64,
+}
+
+/// The five tables, each keyed by its id.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Db {
     pub items: BTreeMap<String, ItemRow>,
     pub inbox: BTreeMap<String, InboxRow>,
     pub users: BTreeMap<String, UserRow>,
     pub devices: BTreeMap<String, DeviceRow>,
+    pub sends: BTreeMap<String, SendRow>,
 }
 
 /// One write statement on a working state: `Some((rows changed, new state))`,
@@ -221,6 +242,128 @@ pub fn run_autocommit(
     (outcomes, db)
 }
 
+// ── One-off send links: `sends` ────────────────────────────────────────────
+
+/// The SQL guard of the view consume: unrevoked, unexpired by the stored text
+/// comparison, and views remaining. F*: `send_live` (`d.clock` is `>` here).
+fn send_live(row: &SendRow, now: &str) -> bool {
+    row.revoked == 0
+        && row.expires_at.as_str() > now
+        && match row.max_views {
+            Some(max) => row.view_count < max,
+            None => true,
+        }
+}
+
+/// One `sends` write statement on a working state. F*: `exec_send`.
+pub fn exec_send(db: &Db, stmt: &SendStmt) -> Option<(u64, Db)> {
+    let mut next = db.clone();
+    match stmt {
+        SendStmt::InsertSend {
+            id,
+            owner,
+            ciphertext,
+            has_passphrase,
+            kdf_salt,
+            label,
+            view_once,
+            max_views,
+            created_at,
+            expires_at,
+        } => {
+            if db.sends.contains_key(id) {
+                return None;
+            }
+            next.sends.insert(
+                id.clone(),
+                SendRow {
+                    owner: owner.clone(),
+                    ciphertext: ciphertext.clone(),
+                    has_passphrase: i64::from(*has_passphrase),
+                    kdf_salt: kdf_salt.clone(),
+                    label: label.clone(),
+                    view_once: i64::from(*view_once),
+                    max_views: *max_views,
+                    view_count: 0,
+                    created_at: created_at.clone(),
+                    expires_at: expires_at.clone(),
+                    revoked: 0,
+                },
+            );
+            Some((1, next))
+        }
+        SendStmt::ConsumeSendView { id, now } => match db.sends.get(id) {
+            Some(row) if send_live(row, now) => {
+                let mut row = row.clone();
+                row.view_count = row.view_count.wrapping_add(1);
+                next.sends.insert(id.clone(), row);
+                Some((1, next))
+            }
+            _ => Some((0, next)),
+        },
+        SendStmt::DeleteSend { id } => match db.sends.get(id) {
+            Some(_) => {
+                next.sends.remove(id);
+                Some((1, next))
+            }
+            None => Some((0, next)),
+        },
+        SendStmt::DeleteOwnedSend { id, owner } => match db.sends.get(id) {
+            Some(row) if &row.owner == owner => {
+                next.sends.remove(id);
+                Some((1, next))
+            }
+            _ => Some((0, next)),
+        },
+        SendStmt::SelectSend { .. } => None,
+    }
+}
+
+/// A `sends` plan on the pool, one statement per implicit transaction,
+/// stopping at the first failure. `fault = Some(k)` makes the k-th statement
+/// (from 0) fail. F*: `run_send_auto`.
+pub fn run_send_autocommit(
+    pre: &Db,
+    plan: &[SendStmt],
+    fault: Option<usize>,
+) -> (Vec<WriteOutcome>, Db) {
+    let mut db = pre.clone();
+    let mut outcomes = Vec::new();
+    for (k, stmt) in plan.iter().enumerate() {
+        if faulted(fault, k) {
+            outcomes.push(WriteOutcome::Failed);
+            return (outcomes, db);
+        }
+        match exec_send(&db, stmt) {
+            Some((rows, next)) => {
+                outcomes.push(WriteOutcome::Applied(rows));
+                db = next;
+            }
+            None => {
+                outcomes.push(WriteOutcome::Failed);
+                return (outcomes, db);
+            }
+        }
+    }
+    (outcomes, db)
+}
+
+/// `SelectSend` on a state; `failed` injects a read error. F*: `read_send`.
+pub fn read_send(db: &Db, stmt: &SendStmt, failed: bool) -> ReadOutcome<SendRowView> {
+    match stmt {
+        SendStmt::SelectSend { id } if !failed => ReadOutcome::Row(db.sends.get(id).map(|row| SendRowView {
+            ciphertext: Some(row.ciphertext.clone()),
+            has_passphrase: Some(row.has_passphrase),
+            kdf_salt: row.kdf_salt.clone(),
+            view_once: Some(row.view_once),
+            max_views: row.max_views,
+            view_count: Some(row.view_count),
+            expires_at: Some(row.expires_at.clone()),
+        })),
+        _ => ReadOutcome::Failed,
+    }
+}
+
 /// `SelectLink` on a state; `failed` injects a read error. F*: `read_link`.
 pub fn read_link(db: &Db, stmt: &ShareStmt, failed: bool) -> ReadOutcome<LinkRowView> {
     match stmt {
@@ -315,5 +458,96 @@ mod tests {
         let (outs, post) = run_autocommit(&pre, &plan_inbox_delete(s("i"), s("a")), None);
         assert_eq!(classify_rows(&outs).rows, 0);
         assert_eq!(post, pre);
+    }
+
+    /// The F* lemmas `vector_send_link_*` prove the same runs.
+    #[test]
+    fn send_link_vectors() {
+        use crate::store::{
+            classify_send_consume, classify_send_create, classify_send_delete,
+            classify_send_read, classify_send_remove, plan_send_consume, plan_send_create,
+            plan_send_delete, plan_send_read, plan_send_remove, SendCell,
+        };
+        use crate::send_driver::{ConsumeObservation, ReadObservation};
+
+        let fresh = Db::default();
+        let create = plan_send_create(
+            s("l"),
+            s("a"),
+            s("ct"),
+            true,
+            Some(s("salt")),
+            None,
+            false,
+            Some(3),
+            s("t0"),
+            s("t9"),
+        );
+        // vector_send_link_create: a fresh id is inserted with the permit
+        // bounds, view_count 0 and revoked 0.
+        let (outs, post) = run_send_autocommit(&fresh, &create, None);
+        assert!(!classify_send_create(&outs).failed);
+        assert_eq!(
+            post.sends["l"],
+            SendRow {
+                owner: s("a"),
+                ciphertext: s("ct"),
+                has_passphrase: 1,
+                kdf_salt: Some(s("salt")),
+                label: None,
+                view_once: 0,
+                max_views: Some(3),
+                view_count: 0,
+                created_at: s("t0"),
+                expires_at: s("t9"),
+                revoked: 0,
+            }
+        );
+        // vector_send_link_duplicate: a present id fails and changes nothing.
+        let (outs, post) = run_send_autocommit(&post, &create, None);
+        assert!(classify_send_create(&outs).failed);
+        assert_eq!(post.sends.len(), 1);
+        // vector_send_link_consume: one view, then exhaustion.
+        let (outs, post) = run_send_autocommit(&post, &plan_send_consume(s("l"), s("t1")), None);
+        assert_eq!(classify_send_consume(&outs), ConsumeObservation::Consumed);
+        assert_eq!(post.sends["l"].view_count, 1);
+        // vector_send_link_expired: a `now` after the expiry consumes nothing.
+        let (outs, post) = run_send_autocommit(&post, &plan_send_consume(s("l"), s("u0")), None);
+        assert_eq!(classify_send_consume(&outs), ConsumeObservation::Unavailable);
+        assert_eq!(post.sends["l"].view_count, 1);
+
+        // vector_send_link_read: the row's cells, and Missing for another id.
+        let read = read_send(&post, &plan_send_read(s("l")), false);
+        let view = classify_send_read(&read);
+        assert_eq!(view.read, ReadObservation::Payload { view_once: false });
+        assert_eq!(view.ciphertext, Some(s("ct")));
+        assert_eq!(view.view_count, 1);
+        assert_eq!(view.kdf_salt, Some(s("salt")));
+        assert_eq!(read_send(&post, &plan_send_read(s("z")), false), ReadOutcome::Row(None));
+        // vector_send_link_unreadable: a missing required cell.
+        let no_ciphertext = classify_send_read(&ReadOutcome::Row(Some(SendRowView {
+            ciphertext: None,
+            has_passphrase: None,
+            kdf_salt: None,
+            view_once: None,
+            max_views: None,
+            view_count: None,
+            expires_at: Some(s("t9")),
+        })));
+        assert_eq!(no_ciphertext.missing_cell, Some(SendCell::Ciphertext));
+
+        // vector_send_link_remove: the cleanup drops the row.
+        let (outs, post) = run_send_autocommit(&post, &plan_send_remove(s("l")), None);
+        assert!(!classify_send_remove(&outs).failed);
+        assert!(post.sends.is_empty());
+
+        // vector_send_link_owner / vector_send_link_foreign.
+        let (_, owned) = run_send_autocommit(&fresh, &create, None);
+        let (outs, post) = run_send_autocommit(&owned, &plan_send_delete(s("l"), s("b")), None);
+        assert_eq!(classify_send_delete(&outs).rows, 0);
+        assert_eq!(post, owned);
+        let (outs, post) = run_send_autocommit(&owned, &plan_send_delete(s("l"), s("a")), None);
+        assert_eq!(classify_send_delete(&outs).rows, 1);
+        assert!(post.sends.is_empty());
     }
 }
