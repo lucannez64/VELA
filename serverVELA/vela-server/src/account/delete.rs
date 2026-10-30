@@ -31,12 +31,15 @@ use vela_session_policy::deletion_driver::{
 };
 
 use crate::{
+    auth::session_store::{
+        id_rows, keep_error, run_read, run_sql, run_sql_in_tx, run_store, DbSql, SessionSql,
+        SessionStore, SledStore,
+    },
     error::{AppError, Result},
     middleware::DeviceSession,
-    rate_limit,
-    sqldb::{Db as _, TursoValue, TxGuard},
     state::AppState,
 };
+use vela_session_policy::store::IdsOutcome;
 
 /// Statuses and messages for the driver failures that are not a raw SQL error.
 fn deletion_failure_error(failure: DeletionFailure) -> AppError {
@@ -68,40 +71,43 @@ fn deletion_failure_error(failure: DeletionFailure) -> AppError {
 /// `run_deletion`); each method only performs its effect and reports the
 /// outcome. The first storage error is kept so the response carries the
 /// original message.
-struct DeleteAccountIo<'a> {
-    state: &'a AppState,
-    account: String,
-    device_ids: Vec<String>,
-    web_session_ids: Vec<String>,
-    tx: Option<TxGuard>,
-    error: Option<AppError>,
+pub(crate) struct DeleteAccountIo<S: SessionSql, K: SessionStore> {
+    pub(crate) sql: S,
+    pub(crate) store: K,
+    pub(crate) account: String,
+    pub(crate) device_ids: Vec<String>,
+    pub(crate) web_session_ids: Vec<String>,
+    pub(crate) error: Option<AppError>,
 }
 
-impl DeleteAccountIo<'_> {
-    fn fail(&mut self, error: impl ToString) {
-        if self.error.is_none() {
-            self.error = Some(AppError::Internal(error.to_string()));
-        }
-    }
-
-    async fn scan_ids(&mut self, sql: &str, params: Vec<TursoValue>) -> (ScanObservation, Vec<String>) {
-        match self.state.sqldb.query(sql, params).await {
-            Ok(rows) => (
-                ScanObservation::Rows,
-                rows.iter().filter_map(|row| row.text(0).map(String::from)).collect(),
-            ),
-            Err(error) => {
-                self.fail(error);
-                (ScanObservation::QueryFailed, Vec::new())
+impl<S: SessionSql, K: SessionStore> DeleteAccountIo<S, K> {
+    async fn scan_ids(&mut self, plan: vela_session_policy::store::SqlStmt) -> (ScanObservation, Vec<String>) {
+        let (rows, error) = run_read(&mut self.sql, plan).await;
+        match rows {
+            Some(rows) => {
+                let ids = id_rows(&rows);
+                (
+                    vela_session_policy::store::classify_scan(&IdsOutcome::Ids(ids.clone())),
+                    ids,
+                )
+            }
+            None => {
+                if let Some(error) = error {
+                    keep_error(&mut self.error, error);
+                }
+                (
+                    vela_session_policy::store::classify_scan(&IdsOutcome::Failed),
+                    Vec::new(),
+                )
             }
         }
     }
 
     // ── 1. Lock every device out before touching the database ──────────────
 
-    async fn scan_devices(&mut self) -> ScanObservation {
-        let params = vec![TursoValue::Text(self.account.clone())];
-        let (observation, ids) = self.scan_ids("SELECT id FROM devices WHERE user_id = ?", params).await;
+    pub(crate) async fn scan_devices(&mut self) -> ScanObservation {
+        let plan = vela_session_policy::store::plan_scan_devices(self.account.clone());
+        let (observation, ids) = self.scan_ids(plan).await;
         self.device_ids = ids;
         observation
     }
@@ -109,105 +115,58 @@ impl DeleteAccountIo<'_> {
     /// A store error is ignored, as it always was: the rows are about to be
     /// deleted, so a failed lockout can only shorten the window in which a
     /// stolen token still works.
-    async fn lockout_devices(&mut self) -> LockoutObservation {
+    pub(crate) async fn lockout_devices(&mut self) -> LockoutObservation {
         for id in &self.device_ids {
-            let _ = rate_limit::revoke_all_device_jtis(&self.state.store, id);
+            let plan = vela_session_policy::store::plan_lockout_device(id.clone());
+            let _ = run_store(&mut self.store, &plan);
         }
-        LockoutObservation::Applied
+        vela_session_policy::store::classify_lockout_ignored(&[])
     }
 
     // ── 2. Lock every web session out (owned or approved) ──────────────────
-    //
-    // Pending sessions started from a browser have `user_id = NULL` and only
-    // name the account in `approver_user_id` (POST /web-session/start is
-    // unauthenticated). They can never be granted once the account is gone, so
-    // they are part of the account's footprint too — otherwise a deleted user
-    // id lingers in the table for the pending TTL.
 
-    async fn scan_web_sessions(&mut self) -> ScanObservation {
-        let params = vec![
-            TursoValue::Text(self.account.clone()),
-            TursoValue::Text(self.account.clone()),
-        ];
-        let (observation, ids) = self
-            .scan_ids(
-                "SELECT id FROM web_sessions WHERE user_id = ? OR approver_user_id = ?",
-                params,
-            )
-            .await;
+    pub(crate) async fn scan_web_sessions(&mut self) -> ScanObservation {
+        let plan = vela_session_policy::store::plan_scan_web_sessions(self.account.clone());
+        let (observation, ids) = self.scan_ids(plan).await;
         self.web_session_ids = ids;
         observation
     }
 
-    async fn lockout_web_sessions(&mut self) -> LockoutObservation {
+    pub(crate) async fn lockout_web_sessions(&mut self) -> LockoutObservation {
         for id in &self.web_session_ids {
-            let _ = self.state.store.set_ex(
-                &format!("device:revoked:{id}"),
-                &[1u8],
-                crate::web_session::MAX_TTL_SECS as u64,
-            );
-            let _ = rate_limit::revoke_all_device_jtis(&self.state.store, id);
+            let plan = vela_session_policy::store::plan_lockout_web_session(id.clone());
+            let _ = run_store(&mut self.store, &plan);
         }
-        LockoutObservation::Applied
+        vela_session_policy::store::classify_lockout_ignored(&[])
     }
 
     // ── 3. One SQL transaction for every deletion ──────────────────────────
-    //
-    // A crash or database error part-way leaves the account intact instead of
-    // partly deleted. The store-side revocations above run first and only ever
-    // lock out, so they are safe to leave in place if this transaction rolls
-    // back (dropping `tx` rolls it back).
 
-    async fn begin_transaction(&mut self) -> TransactionObservation {
-        match self.state.sqldb.tx().await {
-            Ok(tx) => {
-                self.tx = Some(tx);
-                TransactionObservation::Begun
-            }
+    pub(crate) async fn begin_transaction(&mut self) -> TransactionObservation {
+        match self.sql.begin().await {
+            Ok(()) => vela_session_policy::store::classify_transaction(
+                &vela_session_policy::store::WriteOutcome::Applied(0),
+            ),
             Err(error) => {
-                self.fail(error);
-                TransactionObservation::Failed
+                keep_error(&mut self.error, error);
+                vela_session_policy::store::classify_transaction(
+                    &vela_session_policy::store::WriteOutcome::Failed,
+                )
             }
         }
     }
 
-    async fn delete_table(&mut self, table: DeletionTable) -> TableDeleteObservation {
-        let sql = match table {
-            DeletionTable::WebSessions => {
-                "DELETE FROM web_sessions WHERE user_id = ? OR approver_user_id = ?"
-            }
-            DeletionTable::ShareInbox => {
-                "DELETE FROM share_inbox WHERE recipient_user_id = ? OR sender_user_id = ?"
-            }
-            DeletionTable::SharedItems => {
-                "DELETE FROM shared_items WHERE recipient_user_id = ? OR sender_user_id = ?"
-            }
-            DeletionTable::Sends => "DELETE FROM sends WHERE owner_user_id = ?",
-            DeletionTable::VaultChunks => "DELETE FROM vault_chunks WHERE user_id = ?",
-            DeletionTable::OramBuckets => "DELETE FROM oram_buckets WHERE user_id = ?",
-            DeletionTable::Devices => "DELETE FROM devices WHERE user_id = ?",
-        };
-        // The three two-sided tables name the account in both columns.
-        let params = match table {
-            DeletionTable::WebSessions | DeletionTable::ShareInbox | DeletionTable::SharedItems => {
-                vec![
-                    TursoValue::Text(self.account.clone()),
-                    TursoValue::Text(self.account.clone()),
-                ]
-            }
-            _ => vec![TursoValue::Text(self.account.clone())],
-        };
-        let Some(tx) = self.tx.as_ref() else {
-            self.fail("account deletion transaction is not open");
-            return TableDeleteObservation::Failed;
-        };
-        match tx.execute(sql, params).await {
-            Ok(_) => TableDeleteObservation::Deleted,
-            Err(error) => {
-                self.fail(error);
-                TableDeleteObservation::Failed
-            }
+    pub(crate) async fn delete_table(&mut self, table: DeletionTable) -> TableDeleteObservation {
+        let plan = vela_session_policy::store::plan_delete_table(self.account.clone(), table);
+        let (outcomes, error) = run_sql_in_tx(&mut self.sql, &[plan]).await;
+        if let Some(error) = error {
+            keep_error(&mut self.error, error);
         }
+        vela_session_policy::store::classify_table_delete(
+            outcomes
+                .first()
+                .unwrap_or(&vela_session_policy::store::WriteOutcome::Failed),
+        )
     }
 
     /// Web-session-only accounts legitimately have zero rows in `devices` (a
@@ -215,39 +174,30 @@ impl DeleteAccountIo<'_> {
     /// row — see the comment in middleware.rs), so device count is not a valid
     /// existence signal. The `users` delete's own affected-row count is the
     /// account record.
-    async fn delete_users(&mut self) -> UsersDeleteObservation {
-        let Some(tx) = self.tx.as_ref() else {
-            self.fail("account deletion transaction is not open");
-            return UsersDeleteObservation::Failed;
-        };
-        match tx
-            .execute(
-                "DELETE FROM users WHERE id = ?",
-                vec![TursoValue::Text(self.account.clone())],
-            )
-            .await
-        {
-            Ok(0) => UsersDeleteObservation::Absent,
-            Ok(_) => UsersDeleteObservation::Deleted,
-            Err(error) => {
-                self.fail(error);
-                UsersDeleteObservation::Failed
-            }
+    pub(crate) async fn delete_users(&mut self) -> UsersDeleteObservation {
+        let plan = vela_session_policy::store::plan_delete_users(self.account.clone());
+        let (outcomes, error) = run_sql_in_tx(&mut self.sql, &[plan]).await;
+        if let Some(error) = error {
+            keep_error(&mut self.error, error);
         }
+        vela_session_policy::store::classify_users_delete(
+            outcomes
+                .first()
+                .unwrap_or(&vela_session_policy::store::WriteOutcome::Failed),
+        )
     }
 
-    async fn commit(&mut self) -> CommitObservation {
-        let Some(tx) = self.tx.take() else {
-            self.fail("account deletion transaction is not open");
-            return CommitObservation::Failed;
-        };
-        match tx.commit().await {
-            Ok(()) => CommitObservation::Committed,
-            Err(error) => {
-                self.fail(error);
-                CommitObservation::Failed
-            }
+    pub(crate) async fn commit(&mut self) -> CommitObservation {
+        let plan = vela_session_policy::store::plan_commit();
+        let (outcomes, error) = run_sql(&mut self.sql, &[plan]).await;
+        if let Some(error) = error {
+            keep_error(&mut self.error, error);
         }
+        vela_session_policy::store::classify_commit(
+            outcomes
+                .first()
+                .unwrap_or(&vela_session_policy::store::WriteOutcome::Failed),
+        )
     }
 }
 
@@ -265,18 +215,18 @@ pub async fn delete_account(
         scoped_to_session_account: true,
     };
     let mut io = DeleteAccountIo {
-        state: &state,
+        sql: DbSql { pool: &state.sqldb, tx: None },
+        store: SledStore(&state.store),
         account: session.user_id.to_string(),
         device_ids: Vec::new(),
         web_session_ids: Vec::new(),
-        tx: None,
         error: None,
     };
     // The proved loop: only the effect the driver just emitted is performed,
     // and nothing after its verdict.
     let transition = vela_session_policy::deletion_interpreter!(io, actor, await);
     // Dropping an uncommitted transaction rolls it back.
-    drop(io.tx.take());
+    io.sql.rollback();
 
     match transition.effect {
         DeletionEffect::Complete => {

@@ -19,6 +19,7 @@ use axum::{extract::State, http::HeaderMap};
 use vela_session_policy::revocation_driver::{LogoutEffect, LogoutFailure, LogoutObservation};
 
 use crate::{
+    auth::session_store::{keep_error, run_store, SessionStore, SledStore},
     error::{AppError, Result},
     middleware::AuthSession,
     state::AppState,
@@ -27,25 +28,24 @@ use crate::{
 /// The I/O behind the one logout effect: the `jti:revoked:` marker with the
 /// remaining-lifetime TTL. The original error is kept so the response carries
 /// it, exactly as the hand-written handler returned it.
-struct LogoutJtiIo<'a> {
-    state: &'a AppState,
-    jti: String,
-    error: Option<AppError>,
+///
+/// The marker is a typed plan (`plan_logout`) run here and classified by
+/// `classify_logout`, proved honest in F* for every store and every failing
+/// write.
+pub(crate) struct LogoutJtiIo<K: SessionStore> {
+    pub(crate) store: K,
+    pub(crate) jti: String,
+    pub(crate) error: Option<AppError>,
 }
 
-impl LogoutJtiIo<'_> {
-    async fn revoke_jti(&mut self) -> LogoutObservation {
-        match self
-            .state
-            .store
-            .set_ex(&format!("jti:revoked:{}", self.jti), &[1u8], 15 * 60)
-        {
-            Ok(()) => LogoutObservation::Applied,
-            Err(error) => {
-                self.error = Some(error);
-                LogoutObservation::StorageFailed
-            }
+impl<K: SessionStore> LogoutJtiIo<K> {
+    pub(crate) async fn revoke_jti(&mut self) -> LogoutObservation {
+        let plan = vela_session_policy::store::plan_logout(self.jti.clone());
+        let (outcomes, error) = run_store(&mut self.store, &plan);
+        if let Some(error) = error {
+            keep_error(&mut self.error, error);
         }
+        vela_session_policy::store::classify_logout(&outcomes)
     }
 }
 
@@ -54,7 +54,7 @@ pub async fn post_logout(
     session: AuthSession,
 ) -> Result<(HeaderMap, &'static str)> {
     let mut io = LogoutJtiIo {
-        state: &state,
+        store: SledStore(&state.store),
         jti: session.jti.clone(),
         error: None,
     };
