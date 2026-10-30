@@ -81,3 +81,10 @@ fstar.exe \
 # lemmas, and the five interpreter loops with their cancellation lemmas.
 "$proof_root/verify-fstar-vault-mutation-driver.sh"
 "$proof_root/verify-fstar-vault-mutation-interpreter.sh"
+
+# F-1 for the vault, rekey, capsule, ORAM and schema executors: each executor
+# method's observation is the truth about the tables and the store key, proved
+# against a store model for every starting state and every failing statement,
+# with mutation checks and a bounded real-database conformance test. Needs the
+# driver extractions above (it regenerates its own partial extraction).
+"$proof_root/verify-fstar-vault-executors.sh"

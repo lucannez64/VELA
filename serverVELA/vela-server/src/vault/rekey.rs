@@ -211,6 +211,11 @@ async fn rollback_rekey(
     epoch: i64,
     rotation_id: &str,
 ) -> Result<bool> {
+    use vela_rekey_policy::executor::{
+        classify_rollback, plan_commit_transaction, plan_rollback_cas, plan_rollback_cleanup,
+        WriteOutcome,
+    };
+    use vela_rekey_policy::rekey_driver::RollbackObservation;
     // Keep the state transition and shadow cleanup on one pinned transaction.
     // Otherwise a new `start` can enter FREEZING after the UPDATE and have its
     // fresh N+1 shadows deleted by the previous abort's cleanup statement.
@@ -219,50 +224,45 @@ async fn rollback_rekey(
         .tx()
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
-    let updated = tx
-        .execute(
-            "UPDATE users SET rekey_state = NULL, rekey_started_at = NULL,
-                    rekey_starter = NULL, rekey_id = NULL
-                 WHERE id = ? AND key_epoch = ? AND rekey_state = 'freezing'
-                   AND rekey_id = ?",
-            vec![
-                TursoValue::Text(user_id.to_string()),
-                TursoValue::Integer(epoch),
-                TursoValue::Text(rotation_id.to_string()),
-            ],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    if updated == 1 {
-        tx.execute(
-            "DELETE FROM vault_chunks WHERE user_id = ? AND epoch > ?",
-            vec![
-                TursoValue::Text(user_id.to_string()),
-                TursoValue::Integer(epoch),
-            ],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-        // Capsules are attempt output too. Removing them in the same
-        // transition prevents their epoch tag from satisfying the next
-        // attempt's completeness check at the same N -> N+1 boundary.
+    let mut sql = crate::vault::sql::TxSql(Some(tx));
+    let (cas, error) = crate::vault::sql::run_writes(
+        &mut sql,
+        &plan_rollback_cas(user_id.to_string(), epoch, rotation_id.to_string()),
+    )
+    .await;
+    if let Some(error) = error {
+        return Err(error.into_internal());
+    }
+    let updated = matches!(cas.first(), Some(WriteOutcome::Applied(1)));
+    let mut outcomes = cas;
+    if updated {
         if let Some(target_epoch) = vela_rekey_policy::next_epoch(epoch) {
-            tx.execute(
-                "UPDATE devices SET rms_capsule = NULL, rms_capsule_epoch = NULL
-                 WHERE user_id = ? AND rms_capsule_epoch = ?",
-                vec![
-                    TursoValue::Text(user_id.to_string()),
-                    TursoValue::Integer(target_epoch),
-                ],
+            let (cleanup, error) = crate::vault::sql::run_writes(
+                &mut sql,
+                &plan_rollback_cleanup(user_id.to_string(), epoch, target_epoch),
             )
-            .await
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .await;
+            if let Some(error) = error {
+                return Err(error.into_internal());
+            }
+            outcomes.extend(cleanup);
         }
     }
-    tx.commit()
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    Ok(updated == 1)
+    let (commit, error) =
+        crate::vault::sql::run_writes(&mut sql, &plan_commit_transaction()).await;
+    if let Some(error) = error {
+        return Err(error.into_internal());
+    }
+    outcomes.extend(commit);
+    match classify_rollback(&outcomes) {
+        RollbackObservation::RolledBack => Ok(true),
+        RollbackObservation::Raced => Ok(false),
+        // Every failure above returned already; a `Storage` here would mean the
+        // transaction committed a partial rollback.
+        RollbackObservation::Storage => {
+            Err(AppError::Internal("rollback transaction did not complete".into()))
+        }
+    }
 }
 
 /// The write-side guard (`PUT /vault/chunk`, ORAM writes): resolve which epoch
@@ -325,34 +325,35 @@ pub async fn record_shadow_activity(
     read_epoch: i64,
     rotation_id: Option<&str>,
 ) -> Result<bool> {
+    use vela_rekey_policy::executor::{
+        classify_shadow_activity, plan_shadow_activity,
+    };
     if write_epoch == read_epoch {
         return Ok(true);
     }
-    let refreshed = state
-        .sqldb
-        .execute(
-            "UPDATE users SET rekey_started_at = ?
-             WHERE id = ? AND key_epoch = ? AND rekey_state = 'freezing'
-               AND rekey_starter = ? AND rekey_id = ?",
-            vec![
-                TursoValue::Text(Utc::now().to_rfc3339()),
-                TursoValue::Text(session.user_id.to_string()),
-                TursoValue::Integer(read_epoch),
-                TursoValue::Text(session.device_id.to_string()),
-                TursoValue::Text(rotation_id.unwrap_or_default().to_string()),
-            ],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    if refreshed != 1 {
+    let plan = plan_shadow_activity(
+        session.user_id.to_string(),
+        read_epoch,
+        session.device_id.to_string(),
+        rotation_id.unwrap_or_default().to_string(),
+        Utc::now().to_rfc3339(),
+    );
+    let mut sql = crate::vault::sql::PoolSql(state);
+    let (outcomes, error) = crate::vault::sql::run_writes(&mut sql, &plan).await;
+    if let Some(error) = error {
+        return Err(error.into_internal());
+    }
+    let refreshed = matches!(
+        classify_shadow_activity(&outcomes),
+        vela_rekey_policy::vault_upload_driver::ActivityObservation::Refreshed
+    );
+    if !refreshed {
         tracing::debug!(
             user_id = %session.user_id,
             "shadow write completed as the re-key transition ended"
         );
-        Ok(false)
-    } else {
-        Ok(true)
     }
+    Ok(refreshed)
 }
 
 /// The read-side filter: chunks at or below the served epoch exist; callers
@@ -437,6 +438,43 @@ impl RekeyIo<'_> {
         }
     }
 
+    /// Runs one plan on the pinned transaction, keeping the guard for the next
+    /// statement. A finished or failed transaction reports a storage failure.
+    async fn run_tx_plan(
+        &mut self,
+        plan: Vec<vela_rekey_policy::executor::VaultStmt>,
+    ) -> Vec<vela_rekey_policy::executor::WriteOutcome> {
+        use vela_rekey_policy::executor::WriteOutcome;
+        let Some(guard) = self.tx.take() else {
+            return vec![WriteOutcome::Failed];
+        };
+        let mut sql = crate::vault::sql::TxSql(Some(guard));
+        let (outcomes, error) = crate::vault::sql::run_writes(&mut sql, &plan).await;
+        self.tx = sql.0;
+        if let Some(error) = error {
+            self.error = Some(error.into_internal());
+        }
+        outcomes
+    }
+
+    /// One read statement on the pool, as a completeness probe.
+    async fn probe_stmt(
+        &mut self,
+        stmt: vela_rekey_policy::executor::VaultStmt,
+    ) -> vela_rekey_policy::rekey_driver::ProbeObservation {
+        use vela_rekey_policy::executor::{classify_probe, ReadOutcome};
+        let mut sql = crate::vault::sql::PoolSql(self.state);
+        match crate::vault::sql::run_read(&mut sql, &stmt).await {
+            Err(error) => {
+                self.error = Some(AppError::Internal(error.to_string()));
+                vela_rekey_policy::rekey_driver::ProbeObservation::Storage
+            }
+            Ok(rows) => classify_probe(&ReadOutcome::Rows(
+                crate::vault::sql::exists_view(&rows),
+            )),
+        }
+    }
+
     async fn rate_limit(&mut self) -> vela_rekey_policy::rekey_driver::RateLimitObservation {
         use vela_rekey_policy::rekey_driver::RateLimitObservation as O;
         match rate_limit(self.state, &self.user_id()) {
@@ -512,53 +550,18 @@ impl RekeyIo<'_> {
     }
 
     async fn check_oram(&mut self) -> vela_rekey_policy::rekey_driver::ProbeObservation {
-        use vela_rekey_policy::rekey_driver::ProbeObservation as O;
-        self.probe(
-            "SELECT 1 FROM oram_buckets WHERE user_id = ? LIMIT 1",
-            vec![TursoValue::Text(self.user_id())],
-        )
-        .await
-        .map(|empty| if empty { O::Empty } else { O::Found })
-        .unwrap_or(O::Storage)
+        use vela_rekey_policy::executor::plan_probe_oram;
+        self.probe_stmt(plan_probe_oram(self.user_id())).await
     }
 
     async fn check_capable(&mut self) -> vela_rekey_policy::rekey_driver::ProbeObservation {
-        use vela_rekey_policy::rekey_driver::ProbeObservation as O;
-        self.probe(
-            "SELECT 1 FROM devices
-             WHERE user_id = ? AND revoked = 0 AND rekey_capable = 0 LIMIT 1",
-            vec![TursoValue::Text(self.user_id())],
-        )
-        .await
-        .map(|empty| if empty { O::Empty } else { O::Found })
-        .unwrap_or(O::Storage)
+        use vela_rekey_policy::executor::plan_probe_capable;
+        self.probe_stmt(plan_probe_capable(self.user_id())).await
     }
 
     async fn check_acknowledged(&mut self) -> vela_rekey_policy::rekey_driver::ProbeObservation {
-        use vela_rekey_policy::rekey_driver::ProbeObservation as O;
-        self.probe(
-            "SELECT 1 FROM devices
-             WHERE user_id = ? AND revoked = 0 AND rms_capsule_epoch IS NOT NULL
-             LIMIT 1",
-            vec![TursoValue::Text(self.user_id())],
-        )
-        .await
-        .map(|empty| if empty { O::Empty } else { O::Found })
-        .unwrap_or(O::Storage)
-    }
-
-    async fn probe(
-        &mut self,
-        sql: &str,
-        params: Vec<TursoValue>,
-    ) -> Option<bool> {
-        match self.state.sqldb.query(sql, params).await {
-            Ok(rows) => Some(rows.is_empty()),
-            Err(error) => {
-                self.error = Some(AppError::Internal(error.to_string()));
-                None
-            }
-        }
+        use vela_rekey_policy::executor::plan_probe_acknowledged;
+        self.probe_stmt(plan_probe_acknowledged(self.user_id())).await
     }
 
     async fn begin_freeze_transaction(
@@ -580,28 +583,24 @@ impl RekeyIo<'_> {
     async fn read_inventory(
         &mut self,
     ) -> vela_rekey_policy::rekey_driver::InventoryObservation {
-        use vela_rekey_policy::rekey_driver::InventoryObservation as O;
+        use vela_rekey_policy::executor::{
+            classify_inventory, plan_read_inventory, ReadOutcome,
+        };
         let Some(ks) = self.key.as_ref() else {
-            return O::Failed;
+            return vela_rekey_policy::rekey_driver::InventoryObservation::Failed;
         };
         let from_epoch = ks.epoch;
-        let Some(tx) = self.tx.as_ref() else {
-            return O::Failed;
+        let plan = plan_read_inventory(self.user_id(), from_epoch);
+        let Some(guard) = self.tx.take() else {
+            return vela_rekey_policy::rekey_driver::InventoryObservation::Failed;
         };
-        let inventory = tx
-            .query(
-                "SELECT chunk_id, version, lamport_clock FROM vault_chunks
-             WHERE user_id = ? AND epoch = ? ORDER BY chunk_id",
-                vec![
-                    TursoValue::Text(self.user_id()),
-                    TursoValue::Integer(from_epoch),
-                ],
-            )
-            .await;
-        match inventory {
+        let mut sql = crate::vault::sql::TxSql(Some(guard));
+        let rows = crate::vault::sql::run_read(&mut sql, &plan).await;
+        self.tx = sql.0;
+        match rows {
             Err(error) => {
                 self.error = Some(AppError::Internal(error.to_string()));
-                O::Failed
+                vela_rekey_policy::rekey_driver::InventoryObservation::Failed
             }
             Ok(rows) => {
                 let mut chunks = Vec::new();
@@ -616,7 +615,9 @@ impl RekeyIo<'_> {
                     });
                 }
                 self.inventory = chunks;
-                O::Read
+                classify_inventory(&ReadOutcome::Rows(
+                    crate::vault::sql::inventory_rows(&rows),
+                ))
             }
         }
     }
@@ -626,214 +627,138 @@ impl RekeyIo<'_> {
         from_epoch: i64,
         _to_epoch: i64,
     ) -> vela_rekey_policy::rekey_driver::CasObservation {
-        use vela_rekey_policy::rekey_driver::CasObservation as O;
+        use vela_rekey_policy::executor::{classify_freeze_cas, plan_freeze_cas};
         let rotation_id = uuid::Uuid::new_v4().to_string();
-        let Some(tx) = self.tx.as_ref() else {
-            return O::Storage;
-        };
-        let updated = tx
-            .execute(
-                "UPDATE users SET rekey_state = 'freezing', rekey_started_at = ?,
-                rekey_starter = ?, rekey_id = ?
-             WHERE id = ? AND key_epoch = ? AND rekey_state IS NULL
-               AND NOT EXISTS (
-                 SELECT 1 FROM oram_buckets WHERE user_id = users.id
-               )
-               AND NOT EXISTS (
-                 SELECT 1 FROM devices
-                  WHERE user_id = users.id AND revoked = 0
-                    AND rekey_capable = 0
-               )
-               AND NOT EXISTS (
-                 SELECT 1 FROM devices
-                  WHERE user_id = users.id AND revoked = 0
-                    AND rms_capsule_epoch IS NOT NULL
-               )",
-                vec![
-                    TursoValue::Text(Utc::now().to_rfc3339()),
-                    TursoValue::Text(self.device_id()),
-                    TursoValue::Text(rotation_id.clone()),
-                    TursoValue::Text(self.user_id()),
-                    TursoValue::Integer(from_epoch),
-                ],
-            )
-            .await;
-        match updated {
-            Err(error) => {
-                self.error = Some(AppError::Internal(error.to_string()));
-                O::Storage
-            }
-            Ok(1) => {
-                self.rotation_id = Some(rotation_id);
-                O::Updated
-            }
-            Ok(_) => O::Skipped,
+        let plan = plan_freeze_cas(
+            self.user_id(),
+            from_epoch,
+            Utc::now().to_rfc3339(),
+            self.device_id(),
+            rotation_id.clone(),
+        );
+        let outcomes = self.run_tx_plan(plan).await;
+        let observation = classify_freeze_cas(&outcomes);
+        if matches!(
+            observation,
+            vela_rekey_policy::rekey_driver::CasObservation::Updated
+        ) {
+            self.rotation_id = Some(rotation_id);
         }
+        observation
     }
 
     async fn cleanup_chunks(
         &mut self,
         from_epoch: i64,
     ) -> vela_rekey_policy::rekey_driver::CleanupObservation {
-        use vela_rekey_policy::rekey_driver::CleanupObservation as O;
-        let Some(tx) = self.tx.as_ref() else {
-            return O::Storage;
-        };
-        match tx
-            .execute(
-                "DELETE FROM vault_chunks WHERE user_id = ? AND epoch != ?",
-                vec![
-                    TursoValue::Text(self.user_id()),
-                    TursoValue::Integer(from_epoch),
-                ],
-            )
-            .await
-        {
-            Ok(_) => O::Done,
-            Err(error) => {
-                self.error = Some(AppError::Internal(error.to_string()));
-                O::Storage
-            }
-        }
+        use vela_rekey_policy::executor::{classify_cleanup, plan_freeze_cleanup};
+        let plan = plan_freeze_cleanup(self.user_id(), from_epoch);
+        let outcomes = self.run_tx_plan(plan).await;
+        classify_cleanup(&outcomes)
     }
 
     async fn commit_freeze_transaction(
         &mut self,
     ) -> vela_rekey_policy::rekey_driver::TransactionObservation {
-        use vela_rekey_policy::rekey_driver::TransactionObservation as O;
-        let Some(tx) = self.tx.take() else {
-            return O::Failed;
+        use vela_rekey_policy::executor::{classify_transaction, plan_commit_transaction};
+        let Some(guard) = self.tx.take() else {
+            return vela_rekey_policy::rekey_driver::TransactionObservation::Failed;
         };
-        match tx.commit().await {
-            Ok(()) => O::Committed,
-            Err(error) => {
-                self.error = Some(AppError::Internal(error.to_string()));
-                O::Failed
-            }
+        let mut sql = crate::vault::sql::TxSql(Some(guard));
+        let (outcomes, error) =
+            crate::vault::sql::run_writes(&mut sql, &plan_commit_transaction()).await;
+        self.tx = sql.0;
+        if let Some(error) = error {
+            self.error = Some(error.into_internal());
         }
+        classify_transaction(&outcomes)
     }
 
     async fn write_capsule(
         &mut self,
         index: i64,
     ) -> vela_rekey_policy::rekey_driver::CapsuleObservation {
-        use vela_rekey_policy::rekey_driver::CapsuleObservation as O;
+        use vela_rekey_policy::executor::{classify_capsule_write, plan_write_capsule};
         let Some((device_id, capsule_b64)) = self.capsules.get(index as usize).cloned() else {
-            return O::NotTarget;
+            return vela_rekey_policy::rekey_driver::CapsuleObservation::NotTarget;
         };
         let capsule = match crate::db::decode_b64(&capsule_b64) {
             Ok(capsule) => capsule,
             Err(error) => {
                 self.error = Some(error);
-                return O::Invalid;
+                return vela_rekey_policy::rekey_driver::CapsuleObservation::Invalid;
             }
         };
         if capsule.is_empty() || capsule.len() > 64 * 1024 {
             self.error = Some(AppError::BadRequest(format!(
                 "capsule for {device_id} has an invalid size"
             )));
-            return O::Invalid;
+            return vela_rekey_policy::rekey_driver::CapsuleObservation::Invalid;
         }
         let Some(ks) = self.key.as_ref() else {
-            return O::Storage;
+            return vela_rekey_policy::rekey_driver::CapsuleObservation::Storage;
         };
         let Some(capsule_epoch) = vela_rekey_policy::next_epoch(ks.epoch) else {
-            return O::Invalid;
+            return vela_rekey_policy::rekey_driver::CapsuleObservation::Invalid;
         };
-        let rows = self
-            .state
-            .sqldb
-            .execute(
-                "UPDATE devices SET rms_capsule = ?, rms_capsule_epoch = ?
-                 WHERE id = ? AND user_id = ? AND revoked = 0
-                   AND EXISTS (
-                     SELECT 1 FROM users
-                      WHERE users.id = devices.user_id
-                        AND users.key_epoch = ?
-                        AND users.rekey_state = 'freezing'
-                        AND users.rekey_starter = ?
-                        AND users.rekey_id = ?
-                   )",
-                vec![
-                    TursoValue::Text(capsule_b64),
-                    TursoValue::Integer(capsule_epoch),
-                    TursoValue::Text(device_id.clone()),
-                    TursoValue::Text(self.user_id()),
-                    TursoValue::Integer(ks.epoch),
-                    TursoValue::Text(self.device_id()),
-                    TursoValue::Text(ks.rotation_id.as_deref().unwrap_or_default().to_string()),
-                ],
-            )
-            .await;
-        match rows {
-            Err(error) => {
-                self.error = Some(AppError::Internal(error.to_string()));
-                O::Storage
-            }
-            Ok(0) => {
-                self.error = Some(AppError::BadRequest(format!(
-                    "capsule target is not an active device of this account: {device_id}"
-                )));
-                O::NotTarget
-            }
-            Ok(_) => O::Stored,
+        let plan = plan_write_capsule(
+            device_id,
+            self.user_id(),
+            capsule_b64,
+            capsule_epoch,
+            ks.epoch,
+            self.device_id(),
+            ks.rotation_id.clone().unwrap_or_default(),
+        );
+        let mut sql = crate::vault::sql::PoolSql(self.state);
+        let (outcomes, error) = crate::vault::sql::run_writes(&mut sql, &plan).await;
+        if let Some(error) = error {
+            self.error = Some(error.into_internal());
         }
+        let observation = classify_capsule_write(&outcomes);
+        if matches!(
+            observation,
+            vela_rekey_policy::rekey_driver::CapsuleObservation::NotTarget
+        ) {
+            // Keep the historical diagnostic for a target which is not an
+            // active device of this account.
+            if let Some((device_id, _)) = self.capsules.get(index as usize).cloned() {
+                if self.error.is_none() {
+                    self.error = Some(AppError::BadRequest(format!(
+                        "capsule target is not an active device of this account: {device_id}"
+                    )));
+                }
+            }
+        }
+        observation
     }
 
     async fn check_chunk_shadows(
         &mut self,
     ) -> vela_rekey_policy::rekey_driver::ProbeObservation {
-        use vela_rekey_policy::rekey_driver::ProbeObservation as O;
+        use vela_rekey_policy::executor::plan_probe_chunk_shadows;
         let Some(ks) = self.key.as_ref() else {
-            return O::Storage;
+            return vela_rekey_policy::rekey_driver::ProbeObservation::Storage;
         };
         let Some(new_epoch) = vela_rekey_policy::next_epoch(ks.epoch) else {
-            return O::Storage;
+            return vela_rekey_policy::rekey_driver::ProbeObservation::Storage;
         };
-        self.probe(
-            "SELECT 1 FROM vault_chunks old
-             WHERE old.user_id = ? AND old.epoch = ?
-               AND NOT EXISTS (
-                 SELECT 1 FROM vault_chunks new
-                 WHERE new.user_id = old.user_id
-                   AND new.chunk_id = old.chunk_id
-                   AND new.epoch = ?
-               )
-             LIMIT 1",
-            vec![
-                TursoValue::Text(self.user_id()),
-                TursoValue::Integer(ks.epoch),
-                TursoValue::Integer(new_epoch),
-            ],
-        )
-        .await
-        .map(|empty| if empty { O::Empty } else { O::Found })
-        .unwrap_or(O::Storage)
+        self.probe_stmt(plan_probe_chunk_shadows(self.user_id(), ks.epoch, new_epoch))
+            .await
     }
 
     async fn check_device_capsules(
         &mut self,
     ) -> vela_rekey_policy::rekey_driver::ProbeObservation {
-        use vela_rekey_policy::rekey_driver::ProbeObservation as O;
+        use vela_rekey_policy::executor::plan_probe_device_capsules;
         let Some(ks) = self.key.as_ref() else {
-            return O::Storage;
+            return vela_rekey_policy::rekey_driver::ProbeObservation::Storage;
         };
         let Some(new_epoch) = vela_rekey_policy::next_epoch(ks.epoch) else {
-            return O::Storage;
+            return vela_rekey_policy::rekey_driver::ProbeObservation::Storage;
         };
-        self.probe(
-            "SELECT 1 FROM devices
-             WHERE user_id = ? AND revoked = 0
-               AND (rekey_capable = 0 OR rms_capsule IS NULL OR rms_capsule_epoch != ?)
-             LIMIT 1",
-            vec![
-                TursoValue::Text(self.user_id()),
-                TursoValue::Integer(new_epoch),
-            ],
-        )
-        .await
-        .map(|empty| if empty { O::Empty } else { O::Found })
-        .unwrap_or(O::Storage)
+        self.probe_stmt(plan_probe_device_capsules(self.user_id(), new_epoch))
+            .await
     }
 
     async fn commit_cas(
@@ -841,82 +766,35 @@ impl RekeyIo<'_> {
         from_epoch: i64,
         to_epoch: i64,
     ) -> vela_rekey_policy::rekey_driver::CasObservation {
-        use vela_rekey_policy::rekey_driver::CasObservation as O;
+        use vela_rekey_policy::executor::{classify_freeze_cas, plan_commit_cas};
         let rotation_id = header_str(self.headers, "x-vela-rekey-id").unwrap_or_default();
-        let updated = self
-            .state
-            .sqldb
-            .execute(
-                "UPDATE users SET key_epoch = ?, rekey_state = NULL,
-             rekey_started_at = NULL, rekey_starter = NULL, rekey_id = NULL,
-             last_rekey_id = ?, last_rekey_epoch = ?,
-             recovery_share = NULL, recovery_split_id = NULL,
-             recovery_pending_share = NULL, recovery_pending_split_id = NULL,
-             recovery_pending_epoch = NULL, recovery_auth_hash = NULL,
-             recovery_pending_auth_hash = NULL
-         WHERE id = ? AND key_epoch = ? AND rekey_state = 'freezing'
-           AND rekey_starter = ? AND rekey_id = ?
-           AND NOT EXISTS (
-             SELECT 1 FROM vault_chunks old
-             WHERE old.user_id = users.id AND old.epoch = ?
-               AND NOT EXISTS (
-                 SELECT 1 FROM vault_chunks new
-                 WHERE new.user_id = old.user_id
-                   AND new.chunk_id = old.chunk_id AND new.epoch = ?
-               )
-           )
-           AND NOT EXISTS (
-             SELECT 1 FROM devices
-             WHERE user_id = users.id AND revoked = 0
-               AND (rekey_capable = 0 OR rms_capsule IS NULL OR rms_capsule_epoch != ?)
-           )",
-                vec![
-                    TursoValue::Integer(to_epoch),
-                    TursoValue::Text(rotation_id.to_string()),
-                    TursoValue::Integer(to_epoch),
-                    TursoValue::Text(self.user_id()),
-                    TursoValue::Integer(from_epoch),
-                    TursoValue::Text(self.device_id()),
-                    TursoValue::Text(rotation_id.to_string()),
-                    TursoValue::Integer(from_epoch),
-                    TursoValue::Integer(to_epoch),
-                    TursoValue::Integer(to_epoch),
-                ],
-            )
-            .await;
-        match updated {
-            Err(error) => {
-                self.error = Some(AppError::Internal(error.to_string()));
-                O::Storage
-            }
-            Ok(1) => O::Updated,
-            Ok(_) => O::Skipped,
+        let plan = plan_commit_cas(
+            self.user_id(),
+            from_epoch,
+            to_epoch,
+            self.device_id(),
+            rotation_id.to_string(),
+        );
+        let mut sql = crate::vault::sql::PoolSql(self.state);
+        let (outcomes, error) = crate::vault::sql::run_writes(&mut sql, &plan).await;
+        if let Some(error) = error {
+            self.error = Some(error.into_internal());
         }
+        classify_freeze_cas(&outcomes)
     }
 
     async fn sweep_old_chunks(
         &mut self,
         new_epoch: i64,
     ) -> vela_rekey_policy::rekey_driver::SweepObservation {
-        use vela_rekey_policy::rekey_driver::SweepObservation as O;
-        match self
-            .state
-            .sqldb
-            .execute(
-                "DELETE FROM vault_chunks WHERE user_id = ? AND epoch < ?",
-                vec![
-                    TursoValue::Text(self.user_id()),
-                    TursoValue::Integer(new_epoch),
-                ],
-            )
-            .await
-        {
-            Ok(_) => O::Done,
-            Err(error) => {
-                tracing::warn!(user_id = %self.session.user_id, epoch = new_epoch, "failed to sweep superseded re-key rows: {error}");
-                O::Failed
-            }
+        use vela_rekey_policy::executor::{classify_sweep, plan_sweep_old_chunks};
+        let plan = plan_sweep_old_chunks(self.user_id(), new_epoch);
+        let mut sql = crate::vault::sql::PoolSql(self.state);
+        let (outcomes, error) = crate::vault::sql::run_writes(&mut sql, &plan).await;
+        if let Some(error) = error {
+            tracing::warn!(user_id = %self.session.user_id, epoch = new_epoch, "failed to sweep superseded re-key rows: {error:?}");
         }
+        classify_sweep(&outcomes)
     }
 
     async fn publish_epoch(&mut self, epoch: i64) {

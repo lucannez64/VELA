@@ -81,18 +81,19 @@ impl ActivateIo<'_> {
     async fn write_floor(
         &mut self,
     ) -> vela_rekey_policy::vault_mutation_driver::SchemaWriteObservation {
-        use vela_rekey_policy::vault_mutation_driver::SchemaWriteObservation as O;
-        match self
-            .state
-            .store
-            .set_durable(&format!("vault-schema:{}", self.user), b"2")
-        {
-            Ok(()) => O::Written,
-            Err(error) => {
-                self.error = Some(error);
-                O::Storage
+        use vela_rekey_policy::executor::{classify_schema_write, plan_schema_floor};
+        let plan = plan_schema_floor(format!("vault-schema:{}", self.user));
+        let mut sql = crate::vault::sql::PoolSql(self.state);
+        let (outcomes, error) = crate::vault::sql::run_writes(&mut sql, &plan).await;
+        if let Some(error) = error {
+            match error {
+                crate::vault::sql::RunError::Store(error) => self.error = Some(error),
+                crate::vault::sql::RunError::Sql(error) => {
+                    self.error = Some(AppError::Internal(error.to_string()))
+                }
             }
         }
+        classify_schema_write(&outcomes)
     }
 }
 

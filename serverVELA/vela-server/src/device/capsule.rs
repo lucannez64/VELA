@@ -4,7 +4,7 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use crate::{
     error::{AppError, Result},
     middleware::{maybe_append_new_token, DeviceSession},
-    sqldb::{Db as _, TursoValue},
+    sqldb::TursoValue,
     state::AppState,
 };
 
@@ -122,60 +122,34 @@ impl CapsuleAckIo<'_> {
     async fn acknowledge(
         &mut self,
     ) -> vela_rekey_policy::vault_mutation_driver::AckObservation {
-        use vela_rekey_policy::vault_mutation_driver::AckObservation as O;
-        let updated = self
-            .state
-            .sqldb
-            .execute(
-                "UPDATE devices SET rms_capsule = NULL, rms_capsule_epoch = NULL
-             WHERE id = ? AND user_id = ? AND revoked = 0 AND rms_capsule_epoch = ?",
-                vec![
-                    TursoValue::Text(self.device_id.clone()),
-                    TursoValue::Text(self.user_id.clone()),
-                    TursoValue::Integer(self.epoch),
-                ],
-            )
-            .await;
-        match updated {
-            Err(error) => {
-                self.error = Some(AppError::Internal(error.to_string()));
-                O::Storage
-            }
-            Ok(1) => O::Cleared,
-            Ok(_) => O::Missed,
+        use vela_rekey_policy::executor::{classify_ack, plan_ack_capsule};
+        let plan = plan_ack_capsule(self.device_id.clone(), self.user_id.clone(), self.epoch);
+        let mut sql = crate::vault::sql::PoolSql(self.state);
+        let (outcomes, error) = crate::vault::sql::run_writes(&mut sql, &plan).await;
+        if let Some(error) = error {
+            self.error = Some(error.into_internal());
         }
+        classify_ack(&outcomes)
     }
 
     async fn inspect_pending(
         &mut self,
     ) -> vela_rekey_policy::vault_mutation_driver::PendingObservation {
-        use vela_rekey_policy::vault_mutation_driver::PendingObservation as O;
-        let rows = self
-            .state
-            .sqldb
-            .query(
-                "SELECT rms_capsule_epoch FROM devices
-                 WHERE id = ? AND user_id = ? AND revoked = 0",
-                vec![
-                    TursoValue::Text(self.device_id.clone()),
-                    TursoValue::Text(self.user_id.clone()),
-                ],
-            )
-            .await;
-        match rows {
+        use vela_rekey_policy::executor::{
+            classify_pending, plan_pending_capsule, ReadOutcome,
+        };
+        let plan = plan_pending_capsule(self.device_id.clone(), self.user_id.clone());
+        let mut sql = crate::vault::sql::PoolSql(self.state);
+        let outcome = match crate::vault::sql::run_read(&mut sql, &plan).await {
             Err(error) => {
                 self.error = Some(AppError::Internal(error.to_string()));
-                O::Storage
+                ReadOutcome::Failed
             }
-            Ok(rows) => match rows.first() {
-                None => O::Missing,
-                // A lost successful ACK response is safe to retry. A
-                // different pending epoch is not: clearing it would strand the
-                // device on its old RMS.
-                Some(row) if row.i64(0).is_some() => O::Pending,
-                Some(_) => O::Replay,
-            },
-        }
+            Ok(rows) => {
+                ReadOutcome::Rows(crate::vault::sql::pending_row_view(&rows))
+            }
+        };
+        classify_pending(&outcome)
     }
 }
 

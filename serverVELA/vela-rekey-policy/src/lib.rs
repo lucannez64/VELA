@@ -9,6 +9,8 @@
 
 pub mod rekey_driver;
 pub mod rekey_interpreter;
+pub mod executor;
+pub mod executor_model;
 pub mod vault_mutation_driver;
 pub mod vault_mutation_interpreter;
 pub mod vault_upload_driver;

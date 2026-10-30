@@ -245,115 +245,80 @@ impl PutOramIo<'_> {
         let lamport_clock = bucket.lamport_clock;
         let bucket_index = bucket.bucket_index;
 
+        use vela_rekey_policy::executor::{
+            classify_oram_create, classify_oram_update, plan_oram_exists, plan_oram_insert,
+            plan_oram_update, ReadOutcome,
+        };
+        let mut sql = crate::vault::sql::PoolSql(self.state);
         if if_match == 0 {
-            let existing = self
-                .state
-                .sqldb
-                .query(
-                    "SELECT 1 FROM oram_buckets
-                 WHERE user_id = ? AND tree_id = ? AND bucket_index = ? AND epoch = ?",
-                    vec![
-                        TursoValue::Text(self.user_id.clone()),
-                        TursoValue::Text(self.tree_id.clone()),
-                        TursoValue::Integer(bucket_index_i64),
-                        TursoValue::Integer(self.epoch),
-                    ],
-                )
-                .await;
-            match existing {
+            let probe_stmt = plan_oram_exists(
+                self.user_id.clone(),
+                self.tree_id.clone(),
+                bucket_index_i64,
+                self.epoch,
+            );
+            let probe = match crate::vault::sql::run_read(&mut sql, &probe_stmt).await {
                 Err(error) => {
                     self.error = Some(AppError::Internal(error.to_string()));
-                    return O::Storage;
+                    ReadOutcome::Failed
                 }
-                Ok(rows) if rows.first().is_some() => return O::Existing,
-                Ok(_) => {}
+                Ok(rows) => ReadOutcome::Rows(crate::vault::sql::exists_view(&rows)),
+            };
+            if !matches!(probe, ReadOutcome::Rows(false)) {
+                return classify_oram_create(&probe, &[]);
             }
-            let inserted = self
-                .state
-                .sqldb
-                .execute(
-                    "INSERT INTO oram_buckets
-                 (user_id, tree_id, bucket_index, version, lamport_clock, last_writer, ciphertext, epoch, created_at, updated_at)
-                 SELECT ?, ?, ?, 1, ?, ?, ?, ?, ?, ? FROM users
-                 WHERE id = ? AND key_epoch = ? AND rekey_state IS NULL",
-                    vec![
-                        TursoValue::Text(self.user_id.clone()),
-                        TursoValue::Text(self.tree_id.clone()),
-                        TursoValue::Integer(bucket_index_i64),
-                        TursoValue::Integer(lamport_clock),
-                        TursoValue::Text(self.session.device_id.to_string()),
-                        TursoValue::Text(crate::db::encode_b64(&ciphertext)),
-                        TursoValue::Integer(self.epoch),
-                        TursoValue::Text(self.now.clone()),
-                        TursoValue::Text(self.now.clone()),
-                        TursoValue::Text(self.user_id.clone()),
-                        TursoValue::Integer(self.epoch),
-                    ],
-                )
-                .await;
-            match inserted {
-                Err(error) => {
-                    self.error = Some(AppError::Internal(error.to_string()));
-                    O::Storage
-                }
-                Ok(1) => {
-                    self.responses.push(PutOramBucketResponse {
-                        bucket_index,
-                        version: 1,
-                    });
-                    O::Written
-                }
-                Ok(_) => O::Skipped,
+            let plan = plan_oram_insert(
+                self.user_id.clone(),
+                self.tree_id.clone(),
+                bucket_index_i64,
+                lamport_clock,
+                self.session.device_id.to_string(),
+                crate::db::encode_b64(&ciphertext),
+                self.epoch,
+                self.now.clone(),
+            );
+            let (outcomes, error) = crate::vault::sql::run_writes(&mut sql, &plan).await;
+            if let Some(error) = error {
+                self.error = Some(error.into_internal());
             }
+            let observation = classify_oram_create(&probe, &outcomes);
+            if matches!(
+                observation,
+                vela_rekey_policy::vault_mutation_driver::BucketObservation::Written
+            ) {
+                self.responses.push(PutOramBucketResponse {
+                    bucket_index,
+                    version: 1,
+                });
+            }
+            observation
         } else {
-            let updated = self
-                .state
-                .sqldb
-                .execute(
-                    "UPDATE oram_buckets
-                 SET version = version + 1,
-                     lamport_clock = ?,
-                     last_writer = ?,
-                     ciphertext = ?,
-                     updated_at = ?
-                 WHERE user_id = ?
-                   AND tree_id = ?
-                   AND bucket_index = ?
-                   AND version = ?
-                   AND epoch = ?
-                   AND EXISTS (
-                     SELECT 1 FROM users
-                     WHERE users.id = oram_buckets.user_id
-                       AND users.key_epoch = ? AND users.rekey_state IS NULL
-                   )",
-                    vec![
-                        TursoValue::Integer(lamport_clock),
-                        TursoValue::Text(self.session.device_id.to_string()),
-                        TursoValue::Text(crate::db::encode_b64(&ciphertext)),
-                        TursoValue::Text(self.now.clone()),
-                        TursoValue::Text(self.user_id.clone()),
-                        TursoValue::Text(self.tree_id.clone()),
-                        TursoValue::Integer(bucket_index_i64),
-                        TursoValue::Integer(if_match),
-                        TursoValue::Integer(self.epoch),
-                        TursoValue::Integer(self.epoch),
-                    ],
-                )
-                .await;
-            match updated {
-                Err(error) => {
-                    self.error = Some(AppError::Internal(error.to_string()));
-                    O::Storage
-                }
-                Ok(0) => O::Skipped,
-                Ok(_) => {
-                    self.responses.push(PutOramBucketResponse {
-                        bucket_index,
-                        version: if_match + 1,
-                    });
-                    O::Written
-                }
+            let plan = plan_oram_update(
+                self.user_id.clone(),
+                self.tree_id.clone(),
+                bucket_index_i64,
+                if_match,
+                lamport_clock,
+                self.session.device_id.to_string(),
+                crate::db::encode_b64(&ciphertext),
+                self.epoch,
+                self.now.clone(),
+            );
+            let (outcomes, error) = crate::vault::sql::run_writes(&mut sql, &plan).await;
+            if let Some(error) = error {
+                self.error = Some(error.into_internal());
             }
+            let observation = classify_oram_update(&outcomes);
+            if matches!(
+                observation,
+                vela_rekey_policy::vault_mutation_driver::BucketObservation::Written
+            ) {
+                self.responses.push(PutOramBucketResponse {
+                    bucket_index,
+                    version: if_match + 1,
+                });
+            }
+            observation
         }
     }
 

@@ -6,7 +6,7 @@ use uuid::Uuid;
 use crate::{
     error::{AppError, Result},
     middleware::{maybe_append_new_token, DeviceSession},
-    sqldb::{Db as _, TursoValue},
+    sqldb::Db as _,
     state::AppState,
 };
 
@@ -98,27 +98,14 @@ impl CapableIo<'_> {
     async fn attest(
         &mut self,
     ) -> vela_rekey_policy::vault_mutation_driver::AttestObservation {
-        use vela_rekey_policy::vault_mutation_driver::AttestObservation as O;
-        let updated = self
-            .state
-            .sqldb
-            .execute(
-                "UPDATE devices SET rekey_capable = 1
-             WHERE id = ? AND user_id = ? AND revoked = 0",
-                vec![
-                    TursoValue::Text(self.device_id.clone()),
-                    TursoValue::Text(self.user_id.clone()),
-                ],
-            )
-            .await;
-        match updated {
-            Err(error) => {
-                self.error = Some(AppError::Internal(error.to_string()));
-                O::Storage
-            }
-            Ok(1) => O::Attested,
-            Ok(_) => O::Missing,
+        use vela_rekey_policy::executor::{classify_attest, plan_attest_capable};
+        let plan = plan_attest_capable(self.device_id.clone(), self.user_id.clone());
+        let mut sql = crate::vault::sql::PoolSql(self.state);
+        let (outcomes, error) = crate::vault::sql::run_writes(&mut sql, &plan).await;
+        if let Some(error) = error {
+            self.error = Some(error.into_internal());
         }
+        classify_attest(&outcomes)
     }
 }
 
