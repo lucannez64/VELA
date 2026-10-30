@@ -27,9 +27,14 @@
 //! ever learns whether the helper returned an error, and the helper's own keys
 //! are tested directly in `vela-server/src/auth/session_store.rs`.
 
+use crate::challenge::ChallengeConsumption;
 use crate::deletion_driver::{
     CommitObservation, DeletionTable, LockoutObservation, ScanObservation, TableDeleteObservation,
     TransactionObservation, UsersDeleteObservation,
+};
+use crate::login_driver::{
+    BackoffResetObservation, ChallengeObservation, DeviceObservation, FailureRecordObservation,
+    TokenTrackObservation,
 };
 use crate::revocation_driver::{
     CascadeObservation, DeviceLookupObservation, LogoutObservation, RecordObservation,
@@ -42,6 +47,13 @@ pub const TOKEN_MAX_LIFETIME_SECS: u64 = 15 * 60;
 /// The ceiling of a granted web session, in seconds
 /// (`web_session::MAX_TTL_SECS`); a revoked session is locked out for it.
 pub const WEB_SESSION_MAX_TTL_SECS: u64 = 24 * 60 * 60;
+/// The window of the per-(ip, device) failed-proof counter
+/// (`rate_limit::verify_fail_by_device`).
+pub const VERIFY_FAIL_WINDOW_SECS: u64 = 60;
+/// How many failed proofs that window allows.
+pub const VERIFY_FAIL_LIMIT: u64 = 5;
+/// The TTL of a device's tracked-JTI set (`rate_limit::SESSION_HARD_CAP_SECS`).
+pub const JTI_SET_TTL_SECS: u64 = 8 * 60 * 60;
 
 /// One SQL statement an executor may run.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -78,6 +90,19 @@ pub enum SqlStmt {
     },
     /// `UPDATE web_sessions SET status = 'revoked', capsule = NULL ...`
     RevokeWebSessionsApprovedBy { device_id: String, user: String },
+    /// The unrevoked target device row, by id:
+    /// `SELECT ... FROM devices WHERE id = ? AND revoked = 0`.
+    SelectUnrevokedDeviceById { device_id: String },
+    /// `UPDATE devices SET last_active = ? WHERE id = ?` (best effort).
+    UpdateDeviceLastActive { now: String, device_id: String },
+    /// `UPDATE devices SET last_active = ?, device_name = ?, device_type = ? WHERE id = ?`
+    /// (best effort).
+    UpdateDeviceLastActiveNamed {
+        now: String,
+        name: String,
+        kind: String,
+        device_id: String,
+    },
     /// Commit the open transaction.
     Commit,
 }
@@ -90,6 +115,24 @@ pub enum StoreStmt {
     /// `rate_limit::revoke_all_device_jtis(device)`: write a
     /// `jti:revoked:` marker for every tracked JTI and drop the tracking set.
     RevokeJtis { device: String },
+    /// `Store::get_del(key)`: read the key's value and remove it.
+    Take { key: String },
+    /// One fixed-window counter increment (`rate_limit::check`): the count
+    /// grows by one and the request is refused once it exceeds `limit`.
+    Incr { key: String, limit: u64, ttl: u64 },
+    /// `rate_limit::record_verify_failure` / `record_backoff_failure`: one
+    /// logical statement that grows the `streak` counter and, from the third
+    /// consecutive failure on, writes the `backoff` marker.
+    BackoffFailure { streak: String, backoff: String },
+    /// `rate_limit::reset_verify_streak` / `reset_backoff`: drop the `streak`
+    /// counter and the `backoff` marker.
+    ResetBackoff { streak: String, backoff: String },
+    /// `rate_limit::track_device_jti`: add `member` to the `key` set.
+    AddMember {
+        key: String,
+        member: String,
+        ttl: u64,
+    },
 }
 
 /// What one SQL statement returned.
@@ -128,6 +171,28 @@ pub enum IdsOutcome {
 pub struct TargetRowView {
     pub user_id: Option<String>,
     pub revoked: Option<i64>,
+}
+
+/// What the atomic challenge take returned: the stored value it removed, or
+/// the `get_del` error.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TakeOutcome {
+    Taken(Option<String>),
+    Failed,
+}
+
+/// What the unrevoked-device lookup returned, after decoding.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DeviceReadOutcome {
+    /// One row with `revoked = 0`, decoded into a device.
+    Row,
+    /// One row, but its cells could not be decoded (the handler's internal
+    /// error, which must not spend the challenge).
+    Undecodable,
+    /// No row: absent or already revoked.
+    Missing,
+    /// The query returned an error.
+    Failed,
 }
 
 // ── Plans ──────────────────────────────────────────────────────────────────
@@ -238,6 +303,82 @@ pub fn plan_cascade_read(device_id: String, user: String) -> SqlStmt {
 /// drop their capsules.
 pub fn plan_cascade_update(device_id: String, user: String) -> SqlStmt {
     SqlStmt::RevokeWebSessionsApprovedBy { device_id, user }
+}
+
+/// The text `GET /auth/challenge` stores for `purpose`, as the atomic take
+/// reads it back. The unit tests below pin the bytes to
+/// `challenge::purpose_tag_bytes`, so this text form never drifts from the
+/// value the issuer actually wrote.
+#[cfg(not(hax))]
+pub fn challenge_tag_text(purpose: crate::challenge::ChallengePurpose) -> String {
+    String::from_utf8_lossy(crate::challenge::purpose_tag_bytes(purpose)).into_owned()
+}
+
+/// `VerifyIo::consume_challenge`: remove the one challenge key.
+pub fn plan_take_challenge(challenge: String) -> Vec<StoreStmt> {
+    vec![StoreStmt::Take {
+        key: format!("challenge:{}", challenge),
+    }]
+}
+
+/// `VerifyIo::observe_device`.
+pub fn plan_login_device(device_id: String) -> SqlStmt {
+    SqlStmt::SelectUnrevokedDeviceById { device_id }
+}
+
+/// `VerifyIo::record_verification_failure`: the log-only exponential-backoff
+/// record for the request's `(ip, device)` scope.
+pub fn plan_backoff_record(ip: String, device: String) -> Vec<StoreStmt> {
+    vec![StoreStmt::BackoffFailure {
+        streak: format!("rl:streak:verify:{}:{}", ip, device),
+        backoff: format!("rl:backoff:verify:{}:{}", ip, device),
+    }]
+}
+
+/// `VerifyIo::record_verification_failure`: the request-level failed-proof
+/// counter, whose refusal is the only failure the driver propagates.
+pub fn plan_failure_counter(ip: String, device: String) -> Vec<StoreStmt> {
+    vec![StoreStmt::Incr {
+        key: format!("rl:verify:fail:dev:{}:{}", ip, device),
+        limit: VERIFY_FAIL_LIMIT,
+        ttl: VERIFY_FAIL_WINDOW_SECS,
+    }]
+}
+
+/// `VerifyIo::reset_backoff`: drop the success streak and backoff marker.
+pub fn plan_reset_login_streak(ip: String, device: String) -> Vec<StoreStmt> {
+    vec![StoreStmt::ResetBackoff {
+        streak: format!("rl:streak:verify:{}:{}", ip, device),
+        backoff: format!("rl:backoff:verify:{}:{}", ip, device),
+    }]
+}
+
+/// `VerifyIo::reset_backoff`: the historical best-effort `last_active` stamp,
+/// with the device's own name and type when the request did not rename it.
+pub fn plan_login_last_active(
+    device_id: String,
+    now: String,
+    name: Option<String>,
+    kind: Option<String>,
+) -> SqlStmt {
+    match (name, kind) {
+        (Some(name), Some(kind)) => SqlStmt::UpdateDeviceLastActiveNamed {
+            now,
+            name,
+            kind,
+            device_id,
+        },
+        _ => SqlStmt::UpdateDeviceLastActive { now, device_id },
+    }
+}
+
+/// `VerifyIo::track_token`: register the issued JTI against the device.
+pub fn plan_track_jti(device: String, jti: String) -> Vec<StoreStmt> {
+    vec![StoreStmt::AddMember {
+        key: format!("device:jtis:{}", device),
+        member: jti,
+        ttl: JTI_SET_TTL_SECS,
+    }]
 }
 
 // ── Classification ─────────────────────────────────────────────────────────
@@ -363,6 +504,67 @@ pub fn classify_cascade(ok: bool) -> CascadeObservation {
     }
 }
 
+// ── Login: VerifyIo ────────────────────────────────────────────────────────
+
+/// The atomic challenge take: `StorageFailed` exactly when the take failed;
+/// otherwise the observation is the exact match of the value it removed
+/// against the tag this consumer expected. A present but different value (or
+/// an unrecognized one) is spent and reported as the wrong purpose.
+pub fn classify_login_challenge(
+    outcome: &TakeOutcome,
+    expected_tag: &String,
+) -> ChallengeObservation {
+    match outcome {
+        TakeOutcome::Taken(Some(value)) => {
+            if value == expected_tag {
+                ChallengeObservation::Observed(ChallengeConsumption::Accepted)
+            } else {
+                ChallengeObservation::Observed(ChallengeConsumption::WrongPurpose)
+            }
+        }
+        TakeOutcome::Taken(None) => ChallengeObservation::Observed(ChallengeConsumption::Missing),
+        TakeOutcome::Failed => ChallengeObservation::StorageFailed,
+    }
+}
+
+/// The unrevoked-device lookup: the observation names exactly what the query
+/// and decoder produced.
+pub fn classify_login_device(outcome: &DeviceReadOutcome) -> DeviceObservation {
+    match outcome {
+        DeviceReadOutcome::Row => DeviceObservation::Present,
+        DeviceReadOutcome::Undecodable => DeviceObservation::ParseFailed,
+        DeviceReadOutcome::Missing => DeviceObservation::Absent,
+        DeviceReadOutcome::Failed => DeviceObservation::QueryFailed,
+    }
+}
+
+/// The failed-proof side effects: only the request-level counter's refusal is
+/// reported; the log-only backoff record cannot change the observation.
+pub fn classify_failure_counter(outcomes: &[StoreOutcome]) -> FailureRecordObservation {
+    let fallback_counter_ok = outcomes.len() == 1
+        && match outcomes[0] {
+            StoreOutcome::Applied => true,
+            StoreOutcome::Failed => false,
+        };
+    FailureRecordObservation { fallback_counter_ok }
+}
+
+/// The success-streak reset: `Reset` exactly when its one statement ran.
+pub fn classify_backoff_reset(outcome: &StoreOutcome) -> BackoffResetObservation {
+    match outcome {
+        StoreOutcome::Applied => BackoffResetObservation::Reset,
+        StoreOutcome::Failed => BackoffResetObservation::StorageFailed,
+    }
+}
+
+/// JTI tracking: `Tracked` exactly when the set add ran.
+pub fn classify_track_jti(outcome: &StoreOutcome) -> TokenTrackObservation {
+    match outcome {
+        StoreOutcome::Applied => TokenTrackObservation::Tracked,
+        StoreOutcome::Failed => TokenTrackObservation::Failed,
+    }
+}
+
 // ── Rendering (not extracted; pinned by the tests below) ───────────────────
 
 /// One SQL statement as the database receives it.
@@ -380,6 +582,11 @@ pub enum Rendered {
 pub enum StoreOp {
     SetEx,
     RevokeJtis,
+    Take,
+    Incr,
+    BackoffFailure,
+    ResetBackoff,
+    AddMember,
 }
 
 /// One store statement as the handler sends it.
@@ -387,10 +594,15 @@ pub enum StoreOp {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RenderedStore {
     pub op: StoreOp,
-    /// The key (`SetEx`) or the device whose JTIs are revoked.
+    /// The key (`SetEx`, `Take`, `Incr`, `AddMember`) or the device/scope
+    /// whose JTIs are revoked / whose streak is touched.
     pub key: String,
     pub value: u8,
     pub ttl: u64,
+    /// The counter ceiling (`Incr`), or the tracked member (`AddMember`), or
+    /// the scope's backoff key (`BackoffFailure`, `ResetBackoff`).
+    pub limit: u64,
+    pub member: String,
 }
 
 /// The exact SQL text and text parameters each statement has always used.
@@ -464,6 +676,28 @@ pub fn render_sql(stmt: &SqlStmt) -> Rendered {
              WHERE approved_by = ? AND user_id = ? AND status != 'revoked'",
             params: vec![device_id.clone(), user.clone()],
         },
+        SqlStmt::SelectUnrevokedDeviceById { device_id } => Rendered::Query {
+            sql: "SELECT id, user_id, device_name, device_type, last_active,
+                    hybrid_ek, hybrid_vk,
+                    enrolled_by, rms_capsule, revoked,
+                    revoked_at, revoked_by, created_at
+                 FROM devices
+                 WHERE id = ? AND revoked = 0",
+            params: vec![device_id.clone()],
+        },
+        SqlStmt::UpdateDeviceLastActive { now, device_id } => Rendered::Execute {
+            sql: "UPDATE devices SET last_active = ? WHERE id = ?",
+            params: vec![now.clone(), device_id.clone()],
+        },
+        SqlStmt::UpdateDeviceLastActiveNamed {
+            now,
+            name,
+            kind,
+            device_id,
+        } => Rendered::Execute {
+            sql: "UPDATE devices SET last_active = ?, device_name = ?, device_type = ? WHERE id = ?",
+            params: vec![now.clone(), name.clone(), kind.clone(), device_id.clone()],
+        },
         SqlStmt::Commit => Rendered::Commit,
     }
 }
@@ -477,12 +711,56 @@ pub fn render_store(stmt: &StoreStmt) -> RenderedStore {
             key: key.clone(),
             value: *value,
             ttl: *ttl,
+            limit: 0,
+            member: String::new(),
         },
         StoreStmt::RevokeJtis { device } => RenderedStore {
             op: StoreOp::RevokeJtis,
             key: device.clone(),
             value: 0,
             ttl: 0,
+            limit: 0,
+            member: String::new(),
+        },
+        StoreStmt::Take { key } => RenderedStore {
+            op: StoreOp::Take,
+            key: key.clone(),
+            value: 0,
+            ttl: 0,
+            limit: 0,
+            member: String::new(),
+        },
+        StoreStmt::Incr { key, limit, ttl } => RenderedStore {
+            op: StoreOp::Incr,
+            key: key.clone(),
+            value: 1,
+            ttl: *ttl,
+            limit: *limit,
+            member: String::new(),
+        },
+        StoreStmt::BackoffFailure { streak, backoff } => RenderedStore {
+            op: StoreOp::BackoffFailure,
+            key: streak.clone(),
+            value: 0,
+            ttl: 0,
+            limit: 0,
+            member: backoff.clone(),
+        },
+        StoreStmt::ResetBackoff { streak, backoff } => RenderedStore {
+            op: StoreOp::ResetBackoff,
+            key: streak.clone(),
+            value: 0,
+            ttl: 0,
+            limit: 0,
+            member: backoff.clone(),
+        },
+        StoreStmt::AddMember { key, member, ttl } => RenderedStore {
+            op: StoreOp::AddMember,
+            key: key.clone(),
+            value: 0,
+            ttl: *ttl,
+            limit: 0,
+            member: member.clone(),
         },
     }
 }
@@ -523,7 +801,9 @@ mod tests {
                 op: StoreOp::SetEx,
                 key: s("jti:revoked:j"),
                 value: 1,
-                ttl: 900
+                ttl: 900,
+                limit: 0,
+                member: String::new()
             }
         );
         assert_eq!(classify_logout(&[StoreOutcome::Applied]), LogoutObservation::Applied);
@@ -575,7 +855,9 @@ mod tests {
                 op: StoreOp::RevokeJtis,
                 key: s("dev"),
                 value: 0,
-                ttl: 0
+                ttl: 0,
+                limit: 0,
+                member: String::new()
             }
         );
         assert_eq!(
@@ -584,7 +866,9 @@ mod tests {
                 op: StoreOp::SetEx,
                 key: s("device:revoked:dev"),
                 value: 1,
-                ttl: 900
+                ttl: 900,
+                limit: 0,
+                member: String::new()
             }
         );
 
@@ -596,7 +880,9 @@ mod tests {
                 op: StoreOp::SetEx,
                 key: s("device:revoked:sess"),
                 value: 1,
-                ttl: 86_400
+                ttl: 86_400,
+                limit: 0,
+                member: String::new()
             }
         );
         assert_eq!(
@@ -605,7 +891,9 @@ mod tests {
                 op: StoreOp::RevokeJtis,
                 key: s("sess"),
                 value: 0,
-                ttl: 0
+                ttl: 0,
+                limit: 0,
+                member: String::new()
             }
         );
 
@@ -615,7 +903,9 @@ mod tests {
                 op: StoreOp::SetEx,
                 key: s("device:revoked:dev"),
                 value: 1,
-                ttl: 86_400
+                ttl: 86_400,
+                limit: 0,
+                member: String::new()
             }
         );
     }
@@ -740,6 +1030,197 @@ mod tests {
             classify_lockout_ignored(&[StoreOutcome::Failed]),
             LockoutObservation::Applied
         );
+    }
+
+    #[test]
+    fn login_plans_render_the_historical_statements() {
+        let plan = plan_take_challenge(s("abc"));
+        assert_eq!(plan.len(), 1);
+        assert_eq!(
+            render_store(&plan[0]),
+            RenderedStore {
+                op: StoreOp::Take,
+                key: s("challenge:abc"),
+                value: 0,
+                ttl: 0,
+                limit: 0,
+                member: String::new()
+            }
+        );
+
+        let (sql, params) = query(&plan_login_device(s("dev")));
+        assert_eq!(
+            sql,
+            "SELECT id, user_id, device_name, device_type, last_active,\n                    hybrid_ek, hybrid_vk,\n                    enrolled_by, rms_capsule, revoked,\n                    revoked_at, revoked_by, created_at\n                 FROM devices\n                 WHERE id = ? AND revoked = 0"
+        );
+        assert_eq!(params, vec![s("dev")]);
+
+        let plan = plan_backoff_record(s("1.2.3.4"), s("dev"));
+        assert_eq!(plan.len(), 1);
+        assert_eq!(
+            render_store(&plan[0]),
+            RenderedStore {
+                op: StoreOp::BackoffFailure,
+                key: s("rl:streak:verify:1.2.3.4:dev"),
+                value: 0,
+                ttl: 0,
+                limit: 0,
+                member: s("rl:backoff:verify:1.2.3.4:dev")
+            }
+        );
+
+        let plan = plan_failure_counter(s("1.2.3.4"), s("dev"));
+        assert_eq!(plan.len(), 1);
+        assert_eq!(
+            render_store(&plan[0]),
+            RenderedStore {
+                op: StoreOp::Incr,
+                key: s("rl:verify:fail:dev:1.2.3.4:dev"),
+                value: 1,
+                ttl: 60,
+                limit: 5,
+                member: String::new()
+            }
+        );
+
+        let plan = plan_reset_login_streak(s("1.2.3.4"), s("dev"));
+        assert_eq!(plan.len(), 1);
+        assert_eq!(
+            render_store(&plan[0]),
+            RenderedStore {
+                op: StoreOp::ResetBackoff,
+                key: s("rl:streak:verify:1.2.3.4:dev"),
+                value: 0,
+                ttl: 0,
+                limit: 0,
+                member: s("rl:backoff:verify:1.2.3.4:dev")
+            }
+        );
+
+        let plan = plan_track_jti(s("dev"), s("jti"));
+        assert_eq!(plan.len(), 1);
+        assert_eq!(
+            render_store(&plan[0]),
+            RenderedStore {
+                op: StoreOp::AddMember,
+                key: s("device:jtis:dev"),
+                value: 0,
+                ttl: 28_800,
+                limit: 0,
+                member: s("jti")
+            }
+        );
+
+        let (sql, params) = exec(&plan_login_last_active(s("dev"), s("now"), None, None));
+        assert_eq!(sql, "UPDATE devices SET last_active = ? WHERE id = ?");
+        assert_eq!(params, vec![s("now"), s("dev")]);
+
+        let (sql, params) = exec(&plan_login_last_active(
+            s("dev"),
+            s("now"),
+            Some(s("name")),
+            Some(s("kind")),
+        ));
+        assert_eq!(
+            sql,
+            "UPDATE devices SET last_active = ?, device_name = ?, device_type = ? WHERE id = ?"
+        );
+        assert_eq!(params, vec![s("now"), s("name"), s("kind"), s("dev")]);
+
+        // One of the two missing falls back to the plain stamp, as before.
+        let (sql, params) =
+            exec(&plan_login_last_active(s("dev"), s("now"), Some(s("name")), None));
+        assert_eq!(sql, "UPDATE devices SET last_active = ? WHERE id = ?");
+        assert_eq!(params, vec![s("now"), s("dev")]);
+    }
+
+    #[test]
+    fn login_classifiers_keep_the_historical_observations() {
+        let login = s("login");
+        assert_eq!(
+            classify_login_challenge(&TakeOutcome::Taken(Some(s("login"))), &login),
+            ChallengeObservation::Observed(ChallengeConsumption::Accepted)
+        );
+        assert_eq!(
+            classify_login_challenge(&TakeOutcome::Taken(Some(s("enroll"))), &login),
+            ChallengeObservation::Observed(ChallengeConsumption::WrongPurpose)
+        );
+        assert_eq!(
+            classify_login_challenge(&TakeOutcome::Taken(None), &login),
+            ChallengeObservation::Observed(ChallengeConsumption::Missing)
+        );
+        assert_eq!(
+            classify_login_challenge(&TakeOutcome::Failed, &login),
+            ChallengeObservation::StorageFailed
+        );
+
+        assert_eq!(
+            classify_login_device(&DeviceReadOutcome::Row),
+            DeviceObservation::Present
+        );
+        assert_eq!(
+            classify_login_device(&DeviceReadOutcome::Undecodable),
+            DeviceObservation::ParseFailed
+        );
+        assert_eq!(
+            classify_login_device(&DeviceReadOutcome::Missing),
+            DeviceObservation::Absent
+        );
+        assert_eq!(
+            classify_login_device(&DeviceReadOutcome::Failed),
+            DeviceObservation::QueryFailed
+        );
+
+        assert_eq!(
+            classify_failure_counter(&[StoreOutcome::Applied]),
+            FailureRecordObservation {
+                fallback_counter_ok: true
+            }
+        );
+        assert_eq!(
+            classify_failure_counter(&[StoreOutcome::Failed]),
+            FailureRecordObservation {
+                fallback_counter_ok: false
+            }
+        );
+        assert_eq!(
+            classify_failure_counter(&[]),
+            FailureRecordObservation {
+                fallback_counter_ok: false
+            }
+        );
+
+        assert_eq!(
+            classify_backoff_reset(&StoreOutcome::Applied),
+            BackoffResetObservation::Reset
+        );
+        assert_eq!(
+            classify_backoff_reset(&StoreOutcome::Failed),
+            BackoffResetObservation::StorageFailed
+        );
+        assert_eq!(
+            classify_track_jti(&StoreOutcome::Applied),
+            TokenTrackObservation::Tracked
+        );
+        assert_eq!(
+            classify_track_jti(&StoreOutcome::Failed),
+            TokenTrackObservation::Failed
+        );
+    }
+
+    #[test]
+    fn challenge_tags_are_the_issuer_s_exact_bytes() {
+        for purpose in [
+            crate::challenge::ChallengePurpose::Login,
+            crate::challenge::ChallengePurpose::Enroll,
+            crate::challenge::ChallengePurpose::WebToken,
+        ] {
+            assert_eq!(
+                challenge_tag_text(purpose).as_bytes(),
+                crate::challenge::purpose_tag_bytes(purpose)
+            );
+        }
+        assert_eq!(challenge_tag_text(crate::challenge::ChallengePurpose::Login), "login");
     }
 
     #[test]

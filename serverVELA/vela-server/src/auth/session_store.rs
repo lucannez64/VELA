@@ -9,7 +9,7 @@
 
 use vela_session_policy::store::{
     render_sql, render_store, Rendered, RenderedStore, SqlStmt, StoreOp, StoreOutcome, StoreStmt,
-    WriteOutcome,
+    TakeOutcome, WriteOutcome,
 };
 
 use crate::error::AppError;
@@ -94,6 +94,42 @@ pub(crate) trait SessionStore {
     /// `rate_limit::revoke_all_device_jtis`: every tracked JTI of `device` is
     /// written to `jti:revoked:` and the tracking set is dropped.
     fn revoke_jtis(&mut self, device: &str) -> anyhow::Result<()>;
+    /// `Store::get_del`: the key's value, removed.
+    fn take(&mut self, key: &str) -> anyhow::Result<Option<String>>;
+    /// One fixed-window counter increment (`rate_limit::check`).
+    fn incr(&mut self, key: &str, limit: u64, ttl: u64) -> anyhow::Result<()>;
+    /// `rate_limit::record_backoff_failure`, on the exact streak and backoff
+    /// keys the plan named.
+    fn backoff_failure(&mut self, streak_key: &str, backoff_key: &str) -> anyhow::Result<()>;
+    /// `rate_limit::reset_backoff`, on the exact keys the plan named.
+    fn reset_backoff(&mut self, streak_key: &str, backoff_key: &str) -> anyhow::Result<()>;
+    /// `rate_limit::track_device_jti`: add `member` to the `key` set.
+    fn add_member(&mut self, key: &str, member: &str, ttl: u64) -> anyhow::Result<()>;
+}
+
+/// The token issuer behind an executor's `issue_token` method.
+///
+/// Issuance itself is the verified `plan_device_token` / web-token policy; the
+/// executor treats its result as an observation, exactly as the driver does.
+pub(crate) trait SessionTokens {
+    fn issue_device(
+        &self,
+        user: uuid::Uuid,
+        device: uuid::Uuid,
+    ) -> anyhow::Result<(String, String)>;
+}
+
+/// The production issuer: the existing PASETO service.
+pub(crate) struct PasetoTokens(pub crate::auth::token::TokenService);
+
+impl SessionTokens for PasetoTokens {
+    fn issue_device(
+        &self,
+        user: uuid::Uuid,
+        device: uuid::Uuid,
+    ) -> anyhow::Result<(String, String)> {
+        Ok(self.0.issue(user, device, None)?)
+    }
 }
 
 /// The production sled store.
@@ -107,6 +143,33 @@ impl SessionStore for SledStore<'_> {
 
     fn revoke_jtis(&mut self, device: &str) -> anyhow::Result<()> {
         rate_limit::revoke_all_device_jtis(self.0, device)?;
+        Ok(())
+    }
+
+    fn take(&mut self, key: &str) -> anyhow::Result<Option<String>> {
+        Ok(self
+            .0
+            .get_del(key)?
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned()))
+    }
+
+    fn incr(&mut self, key: &str, limit: u64, ttl: u64) -> anyhow::Result<()> {
+        rate_limit::check(self.0, key, limit, ttl as i64)?;
+        Ok(())
+    }
+
+    fn backoff_failure(&mut self, streak_key: &str, backoff_key: &str) -> anyhow::Result<()> {
+        rate_limit::record_backoff_failure_keys(self.0, streak_key, backoff_key)?;
+        Ok(())
+    }
+
+    fn reset_backoff(&mut self, streak_key: &str, backoff_key: &str) -> anyhow::Result<()> {
+        rate_limit::reset_backoff_keys(self.0, streak_key, backoff_key)?;
+        Ok(())
+    }
+
+    fn add_member(&mut self, key: &str, member: &str, ttl: u64) -> anyhow::Result<()> {
+        self.0.sadd(key, member, ttl as i64)?;
         Ok(())
     }
 }
@@ -162,6 +225,27 @@ pub(crate) async fn run_read<S: SessionSql>(
     }
 }
 
+/// Runs the one take statement of a plan, returning the value it removed.
+pub(crate) fn run_take<K: SessionStore>(
+    store: &mut K,
+    stmt: &StoreStmt,
+) -> (TakeOutcome, Option<anyhow::Error>) {
+    match render_store(stmt) {
+        RenderedStore {
+            op: StoreOp::Take,
+            key,
+            ..
+        } => match store.take(&key) {
+            Ok(value) => (TakeOutcome::Taken(value), None),
+            Err(error) => (TakeOutcome::Failed, Some(error)),
+        },
+        _ => (
+            TakeOutcome::Failed,
+            Some(anyhow::anyhow!("a write statement in a take plan")),
+        ),
+    }
+}
+
 /// Runs one SQL plan where every statement must run on the open transaction.
 pub(crate) async fn run_sql_in_tx<S: SessionSql>(
     sql: &mut S,
@@ -202,12 +286,42 @@ pub(crate) fn run_store<K: SessionStore>(
                 key,
                 value,
                 ttl,
+                ..
             } => store.set_ex(&key, value, ttl),
             RenderedStore {
                 op: StoreOp::RevokeJtis,
                 key,
                 ..
             } => store.revoke_jtis(&key),
+            RenderedStore {
+                op: StoreOp::Incr,
+                key,
+                limit,
+                ttl,
+                ..
+            } => store.incr(&key, limit, ttl),
+            RenderedStore {
+                op: StoreOp::BackoffFailure,
+                key,
+                member,
+                ..
+            } => store.backoff_failure(&key, &member),
+            RenderedStore {
+                op: StoreOp::ResetBackoff,
+                key,
+                member,
+                ..
+            } => store.reset_backoff(&key, &member),
+            RenderedStore {
+                op: StoreOp::AddMember,
+                key,
+                member,
+                ttl,
+                ..
+            } => store.add_member(&key, &member, ttl),
+            RenderedStore {
+                op: StoreOp::Take, ..
+            } => Err(anyhow::anyhow!("a take statement in a write plan")),
         };
         match result {
             Ok(()) => outcomes.push(StoreOutcome::Applied),

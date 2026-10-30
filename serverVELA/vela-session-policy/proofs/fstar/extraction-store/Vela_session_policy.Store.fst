@@ -11,6 +11,16 @@ let v_TOKEN_MAX_LIFETIME_SECS: u64 = mk_u64 15 *! mk_u64 60
 /// (`web_session::MAX_TTL_SECS`); a revoked session is locked out for it.
 let v_WEB_SESSION_MAX_TTL_SECS: u64 = (mk_u64 24 *! mk_u64 60 <: u64) *! mk_u64 60
 
+/// The window of the per-(ip, device) failed-proof counter
+/// (`rate_limit::verify_fail_by_device`).
+let v_VERIFY_FAIL_WINDOW_SECS: u64 = mk_u64 60
+
+/// How many failed proofs that window allows.
+let v_VERIFY_FAIL_LIMIT: u64 = mk_u64 5
+
+/// The TTL of a device's tracked-JTI set (`rate_limit::SESSION_HARD_CAP_SECS`).
+let v_JTI_SET_TTL_SECS: u64 = (mk_u64 8 *! mk_u64 60 <: u64) *! mk_u64 60
+
 /// One SQL statement an executor may run.
 type t_SqlStmt =
   | SqlStmt_SelectDeviceIdsByUser { f_user:Alloc.String.t_String }: t_SqlStmt
@@ -37,6 +47,17 @@ type t_SqlStmt =
     f_device_id:Alloc.String.t_String;
     f_user:Alloc.String.t_String
   }: t_SqlStmt
+  | SqlStmt_SelectUnrevokedDeviceById { f_device_id:Alloc.String.t_String }: t_SqlStmt
+  | SqlStmt_UpdateDeviceLastActive {
+    f_now:Alloc.String.t_String;
+    f_device_id:Alloc.String.t_String
+  }: t_SqlStmt
+  | SqlStmt_UpdateDeviceLastActiveNamed {
+    f_now:Alloc.String.t_String;
+    f_name:Alloc.String.t_String;
+    f_kind:Alloc.String.t_String;
+    f_device_id:Alloc.String.t_String
+  }: t_SqlStmt
   | SqlStmt_Commit : t_SqlStmt
 
 /// One store statement an executor may run.
@@ -47,6 +68,25 @@ type t_StoreStmt =
     f_ttl:u64
   }: t_StoreStmt
   | StoreStmt_RevokeJtis { f_device:Alloc.String.t_String }: t_StoreStmt
+  | StoreStmt_Take { f_key:Alloc.String.t_String }: t_StoreStmt
+  | StoreStmt_Incr {
+    f_key:Alloc.String.t_String;
+    f_limit:u64;
+    f_ttl:u64
+  }: t_StoreStmt
+  | StoreStmt_BackoffFailure {
+    f_streak:Alloc.String.t_String;
+    f_backoff:Alloc.String.t_String
+  }: t_StoreStmt
+  | StoreStmt_ResetBackoff {
+    f_streak:Alloc.String.t_String;
+    f_backoff:Alloc.String.t_String
+  }: t_StoreStmt
+  | StoreStmt_AddMember {
+    f_key:Alloc.String.t_String;
+    f_member:Alloc.String.t_String;
+    f_ttl:u64
+  }: t_StoreStmt
 
 /// What one SQL statement returned.
 type t_WriteOutcome =
@@ -74,6 +114,19 @@ type t_TargetRowView = {
   f_user_id:Core_models.Option.t_Option Alloc.String.t_String;
   f_revoked:Core_models.Option.t_Option i64
 }
+
+/// What the atomic challenge take returned: the stored value it removed, or
+/// the `get_del` error.
+type t_TakeOutcome =
+  | TakeOutcome_Taken : Core_models.Option.t_Option Alloc.String.t_String -> t_TakeOutcome
+  | TakeOutcome_Failed : t_TakeOutcome
+
+/// What the unrevoked-device lookup returned, after decoding.
+type t_DeviceReadOutcome =
+  | DeviceReadOutcome_Row : t_DeviceReadOutcome
+  | DeviceReadOutcome_Undecodable : t_DeviceReadOutcome
+  | DeviceReadOutcome_Missing : t_DeviceReadOutcome
+  | DeviceReadOutcome_Failed : t_DeviceReadOutcome
 
 /// `LogoutJtiIo::revoke_jti`: the caller's JTI marker, with the token
 /// lifetime's TTL.
@@ -304,6 +357,298 @@ let plan_cascade_read (device_id user: Alloc.String.t_String) : t_SqlStmt =
 let plan_cascade_update (device_id user: Alloc.String.t_String) : t_SqlStmt =
   SqlStmt_RevokeWebSessionsApprovedBy ({ f_device_id = device_id; f_user = user }) <: t_SqlStmt
 
+/// `VerifyIo::consume_challenge`: remove the one challenge key.
+let plan_take_challenge (challenge: Alloc.String.t_String)
+    : Alloc.Vec.t_Vec t_StoreStmt Alloc.Alloc.t_Global =
+  let args:Alloc.String.t_String = challenge <: Alloc.String.t_String in
+  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 1) =
+    let list = [Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args] in
+    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+    Rust_primitives.Hax.array_of_list 1 list
+  in
+  Alloc.Slice.impl__into_vec #t_StoreStmt
+    #Alloc.Alloc.t_Global
+    ((let list =
+          [
+            StoreStmt_Take
+            ({
+                f_key
+                =
+                Core_models.Hint.must_use #Alloc.String.t_String
+                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 1)
+                          (mk_usize 1)
+                          (let list = ["challenge:"] in
+                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+                            Rust_primitives.Hax.array_of_list 1 list)
+                          args
+                        <:
+                        Core_models.Fmt.t_Arguments)
+                    <:
+                    Alloc.String.t_String)
+              })
+            <:
+            t_StoreStmt
+          ]
+        in
+        FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+        Rust_primitives.Hax.array_of_list 1 list)
+      <:
+      t_Slice t_StoreStmt)
+
+/// `VerifyIo::observe_device`.
+let plan_login_device (device_id: Alloc.String.t_String) : t_SqlStmt =
+  SqlStmt_SelectUnrevokedDeviceById ({ f_device_id = device_id }) <: t_SqlStmt
+
+/// `VerifyIo::record_verification_failure`: the log-only exponential-backoff
+/// record for the request's `(ip, device)` scope.
+let plan_backoff_record (ip device: Alloc.String.t_String)
+    : Alloc.Vec.t_Vec t_StoreStmt Alloc.Alloc.t_Global =
+  let args:(Alloc.String.t_String & Alloc.String.t_String) =
+    ip, device <: (Alloc.String.t_String & Alloc.String.t_String)
+  in
+  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 2) =
+    let list =
+      [
+        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._1;
+        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._2
+      ]
+    in
+    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
+    Rust_primitives.Hax.array_of_list 2 list
+  in
+  let args:(Alloc.String.t_String & Alloc.String.t_String) =
+    ip, device <: (Alloc.String.t_String & Alloc.String.t_String)
+  in
+  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 2) =
+    let list =
+      [
+        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._1;
+        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._2
+      ]
+    in
+    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
+    Rust_primitives.Hax.array_of_list 2 list
+  in
+  Alloc.Slice.impl__into_vec #t_StoreStmt
+    #Alloc.Alloc.t_Global
+    ((let list =
+          [
+            StoreStmt_BackoffFailure
+            ({
+                f_streak
+                =
+                Core_models.Hint.must_use #Alloc.String.t_String
+                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 2)
+                          (mk_usize 2)
+                          (let list = ["rl:streak:verify:"; ":"] in
+                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
+                            Rust_primitives.Hax.array_of_list 2 list)
+                          args
+                        <:
+                        Core_models.Fmt.t_Arguments)
+                    <:
+                    Alloc.String.t_String);
+                f_backoff
+                =
+                Core_models.Hint.must_use #Alloc.String.t_String
+                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 2)
+                          (mk_usize 2)
+                          (let list = ["rl:backoff:verify:"; ":"] in
+                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
+                            Rust_primitives.Hax.array_of_list 2 list)
+                          args
+                        <:
+                        Core_models.Fmt.t_Arguments)
+                    <:
+                    Alloc.String.t_String)
+              })
+            <:
+            t_StoreStmt
+          ]
+        in
+        FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+        Rust_primitives.Hax.array_of_list 1 list)
+      <:
+      t_Slice t_StoreStmt)
+
+/// `VerifyIo::record_verification_failure`: the request-level failed-proof
+/// counter, whose refusal is the only failure the driver propagates.
+let plan_failure_counter (ip device: Alloc.String.t_String)
+    : Alloc.Vec.t_Vec t_StoreStmt Alloc.Alloc.t_Global =
+  let args:(Alloc.String.t_String & Alloc.String.t_String) =
+    ip, device <: (Alloc.String.t_String & Alloc.String.t_String)
+  in
+  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 2) =
+    let list =
+      [
+        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._1;
+        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._2
+      ]
+    in
+    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
+    Rust_primitives.Hax.array_of_list 2 list
+  in
+  Alloc.Slice.impl__into_vec #t_StoreStmt
+    #Alloc.Alloc.t_Global
+    ((let list =
+          [
+            StoreStmt_Incr
+            ({
+                f_key
+                =
+                Core_models.Hint.must_use #Alloc.String.t_String
+                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 2)
+                          (mk_usize 2)
+                          (let list = ["rl:verify:fail:dev:"; ":"] in
+                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
+                            Rust_primitives.Hax.array_of_list 2 list)
+                          args
+                        <:
+                        Core_models.Fmt.t_Arguments)
+                    <:
+                    Alloc.String.t_String);
+                f_limit = v_VERIFY_FAIL_LIMIT;
+                f_ttl = v_VERIFY_FAIL_WINDOW_SECS
+              })
+            <:
+            t_StoreStmt
+          ]
+        in
+        FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+        Rust_primitives.Hax.array_of_list 1 list)
+      <:
+      t_Slice t_StoreStmt)
+
+/// `VerifyIo::reset_backoff`: drop the success streak and backoff marker.
+let plan_reset_login_streak (ip device: Alloc.String.t_String)
+    : Alloc.Vec.t_Vec t_StoreStmt Alloc.Alloc.t_Global =
+  let args:(Alloc.String.t_String & Alloc.String.t_String) =
+    ip, device <: (Alloc.String.t_String & Alloc.String.t_String)
+  in
+  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 2) =
+    let list =
+      [
+        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._1;
+        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._2
+      ]
+    in
+    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
+    Rust_primitives.Hax.array_of_list 2 list
+  in
+  let args:(Alloc.String.t_String & Alloc.String.t_String) =
+    ip, device <: (Alloc.String.t_String & Alloc.String.t_String)
+  in
+  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 2) =
+    let list =
+      [
+        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._1;
+        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._2
+      ]
+    in
+    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
+    Rust_primitives.Hax.array_of_list 2 list
+  in
+  Alloc.Slice.impl__into_vec #t_StoreStmt
+    #Alloc.Alloc.t_Global
+    ((let list =
+          [
+            StoreStmt_ResetBackoff
+            ({
+                f_streak
+                =
+                Core_models.Hint.must_use #Alloc.String.t_String
+                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 2)
+                          (mk_usize 2)
+                          (let list = ["rl:streak:verify:"; ":"] in
+                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
+                            Rust_primitives.Hax.array_of_list 2 list)
+                          args
+                        <:
+                        Core_models.Fmt.t_Arguments)
+                    <:
+                    Alloc.String.t_String);
+                f_backoff
+                =
+                Core_models.Hint.must_use #Alloc.String.t_String
+                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 2)
+                          (mk_usize 2)
+                          (let list = ["rl:backoff:verify:"; ":"] in
+                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
+                            Rust_primitives.Hax.array_of_list 2 list)
+                          args
+                        <:
+                        Core_models.Fmt.t_Arguments)
+                    <:
+                    Alloc.String.t_String)
+              })
+            <:
+            t_StoreStmt
+          ]
+        in
+        FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+        Rust_primitives.Hax.array_of_list 1 list)
+      <:
+      t_Slice t_StoreStmt)
+
+/// `VerifyIo::reset_backoff`: the historical best-effort `last_active` stamp,
+/// with the device's own name and type when the request did not rename it.
+let plan_login_last_active
+      (device_id now: Alloc.String.t_String)
+      (name kind: Core_models.Option.t_Option Alloc.String.t_String)
+    : t_SqlStmt =
+  match
+    name, kind
+    <:
+    (Core_models.Option.t_Option Alloc.String.t_String &
+      Core_models.Option.t_Option Alloc.String.t_String)
+  with
+  | Core_models.Option.Option_Some name, Core_models.Option.Option_Some kind ->
+    SqlStmt_UpdateDeviceLastActiveNamed
+    ({ f_now = now; f_name = name; f_kind = kind; f_device_id = device_id })
+    <:
+    t_SqlStmt
+  | _ -> SqlStmt_UpdateDeviceLastActive ({ f_now = now; f_device_id = device_id }) <: t_SqlStmt
+
+/// `VerifyIo::track_token`: register the issued JTI against the device.
+let plan_track_jti (device jti: Alloc.String.t_String)
+    : Alloc.Vec.t_Vec t_StoreStmt Alloc.Alloc.t_Global =
+  let args:Alloc.String.t_String = device <: Alloc.String.t_String in
+  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 1) =
+    let list = [Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args] in
+    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+    Rust_primitives.Hax.array_of_list 1 list
+  in
+  Alloc.Slice.impl__into_vec #t_StoreStmt
+    #Alloc.Alloc.t_Global
+    ((let list =
+          [
+            StoreStmt_AddMember
+            ({
+                f_key
+                =
+                Core_models.Hint.must_use #Alloc.String.t_String
+                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 1)
+                          (mk_usize 1)
+                          (let list = ["device:jtis:"] in
+                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+                            Rust_primitives.Hax.array_of_list 1 list)
+                          args
+                        <:
+                        Core_models.Fmt.t_Arguments)
+                    <:
+                    Alloc.String.t_String);
+                f_member = jti;
+                f_ttl = v_JTI_SET_TTL_SECS
+              })
+            <:
+            t_StoreStmt
+          ]
+        in
+        FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+        Rust_primitives.Hax.array_of_list 1 list)
+      <:
+      t_Slice t_StoreStmt)
+
 /// The logout marker: it was written exactly when its one statement ran.
 let classify_logout (outcomes: t_Slice t_StoreOutcome)
     : Vela_session_policy.Revocation_driver.t_LogoutObservation =
@@ -479,3 +824,100 @@ let classify_cascade (ok: bool) : Vela_session_policy.Revocation_driver.t_Cascad
     Vela_session_policy.Revocation_driver.CascadeObservation_StorageFailed
     <:
     Vela_session_policy.Revocation_driver.t_CascadeObservation
+
+/// The atomic challenge take: `StorageFailed` exactly when the take failed;
+/// otherwise the observation is the exact match of the value it removed
+/// against the tag this consumer expected. A present but different value (or
+/// an unrecognized one) is spent and reported as the wrong purpose.
+let classify_login_challenge (outcome: t_TakeOutcome) (expected_tag: Alloc.String.t_String)
+    : Vela_session_policy.Login_driver.t_ChallengeObservation =
+  match outcome <: t_TakeOutcome with
+  | TakeOutcome_Taken (Core_models.Option.Option_Some value) ->
+    if value =. expected_tag
+    then
+      Vela_session_policy.Login_driver.ChallengeObservation_Observed
+      (Vela_session_policy.Challenge.ChallengeConsumption_Accepted
+        <:
+        Vela_session_policy.Challenge.t_ChallengeConsumption)
+      <:
+      Vela_session_policy.Login_driver.t_ChallengeObservation
+    else
+      Vela_session_policy.Login_driver.ChallengeObservation_Observed
+      (Vela_session_policy.Challenge.ChallengeConsumption_WrongPurpose
+        <:
+        Vela_session_policy.Challenge.t_ChallengeConsumption)
+      <:
+      Vela_session_policy.Login_driver.t_ChallengeObservation
+  | TakeOutcome_Taken (Core_models.Option.Option_None ) ->
+    Vela_session_policy.Login_driver.ChallengeObservation_Observed
+    (Vela_session_policy.Challenge.ChallengeConsumption_Missing
+      <:
+      Vela_session_policy.Challenge.t_ChallengeConsumption)
+    <:
+    Vela_session_policy.Login_driver.t_ChallengeObservation
+  | TakeOutcome_Failed  ->
+    Vela_session_policy.Login_driver.ChallengeObservation_StorageFailed
+    <:
+    Vela_session_policy.Login_driver.t_ChallengeObservation
+
+/// The unrevoked-device lookup: the observation names exactly what the query
+/// and decoder produced.
+let classify_login_device (outcome: t_DeviceReadOutcome)
+    : Vela_session_policy.Login_driver.t_DeviceObservation =
+  match outcome <: t_DeviceReadOutcome with
+  | DeviceReadOutcome_Row  ->
+    Vela_session_policy.Login_driver.DeviceObservation_Present
+    <:
+    Vela_session_policy.Login_driver.t_DeviceObservation
+  | DeviceReadOutcome_Undecodable  ->
+    Vela_session_policy.Login_driver.DeviceObservation_ParseFailed
+    <:
+    Vela_session_policy.Login_driver.t_DeviceObservation
+  | DeviceReadOutcome_Missing  ->
+    Vela_session_policy.Login_driver.DeviceObservation_Absent
+    <:
+    Vela_session_policy.Login_driver.t_DeviceObservation
+  | DeviceReadOutcome_Failed  ->
+    Vela_session_policy.Login_driver.DeviceObservation_QueryFailed
+    <:
+    Vela_session_policy.Login_driver.t_DeviceObservation
+
+/// The failed-proof side effects: only the request-level counter's refusal is
+/// reported; the log-only backoff record cannot change the observation.
+let classify_failure_counter (outcomes: t_Slice t_StoreOutcome)
+    : Vela_session_policy.Login_driver.t_FailureRecordObservation =
+  let fallback_counter_ok:bool =
+    (Core_models.Slice.impl__len #t_StoreOutcome outcomes <: usize) =. mk_usize 1 &&
+    (match outcomes.[ mk_usize 0 ] <: t_StoreOutcome with
+      | StoreOutcome_Applied  -> true
+      | StoreOutcome_Failed  -> false)
+  in
+  { Vela_session_policy.Login_driver.f_fallback_counter_ok = fallback_counter_ok }
+  <:
+  Vela_session_policy.Login_driver.t_FailureRecordObservation
+
+/// The success-streak reset: `Reset` exactly when its one statement ran.
+let classify_backoff_reset (outcome: t_StoreOutcome)
+    : Vela_session_policy.Login_driver.t_BackoffResetObservation =
+  match outcome <: t_StoreOutcome with
+  | StoreOutcome_Applied  ->
+    Vela_session_policy.Login_driver.BackoffResetObservation_Reset
+    <:
+    Vela_session_policy.Login_driver.t_BackoffResetObservation
+  | StoreOutcome_Failed  ->
+    Vela_session_policy.Login_driver.BackoffResetObservation_StorageFailed
+    <:
+    Vela_session_policy.Login_driver.t_BackoffResetObservation
+
+/// JTI tracking: `Tracked` exactly when the set add ran.
+let classify_track_jti (outcome: t_StoreOutcome)
+    : Vela_session_policy.Login_driver.t_TokenTrackObservation =
+  match outcome <: t_StoreOutcome with
+  | StoreOutcome_Applied  ->
+    Vela_session_policy.Login_driver.TokenTrackObservation_Tracked
+    <:
+    Vela_session_policy.Login_driver.t_TokenTrackObservation
+  | StoreOutcome_Failed  ->
+    Vela_session_policy.Login_driver.TokenTrackObservation_Failed
+    <:
+    Vela_session_policy.Login_driver.t_TokenTrackObservation

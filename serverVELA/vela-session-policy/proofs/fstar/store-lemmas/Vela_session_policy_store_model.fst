@@ -178,6 +178,19 @@ let revoked_device_row (now revoker: text) (r: device_row) : device_row =
 let st_revoke_device (d: db) (dev now revoker: text) : db =
   { d with devices = update_rows d.devices dev (revoked_device_row now revoker) }
 
+/// The `devices` row after the login's best-effort last-active stamp. The
+/// named form (request renamed or retyped the device) also rewrites the name
+/// and type; the plain form only stamps the time.
+let login_stamp (d: db) (dev now: text)
+      (nm kd: Core_models.Option.t_Option text) : db =
+  match nm, kd with
+  | Core_models.Option.Option_Some n, Core_models.Option.Option_Some k ->
+    { d with devices = update_rows d.devices dev (fun r ->
+        { r with dv_last_active = Some now; dv_name = n; dv_kind = k }) }
+  | _ ->
+    { d with devices = update_rows d.devices dev (fun r ->
+        { r with dv_last_active = Some now }) }
+
 /// A web session the cascade ends: revoked with its capsule dropped.
 let revoked_session (r: session_row) : session_row =
   { r with ws_status = v_revoked; ws_capsule = None }
@@ -217,10 +230,18 @@ let exec_stmt (d: db) (s: t_SqlStmt) : option (write_result & db) =
     Some (Wrote, st_revoke_device d dev now revoker)
   | SqlStmt_RevokeWebSessionsApprovedBy { f_device_id = dev; f_user = usr } ->
     Some (Wrote, st_revoke_approved d dev usr)
+  | SqlStmt_UpdateDeviceLastActive { f_now = now; f_device_id = dev } ->
+    Some (Wrote, login_stamp d dev now
+            Core_models.Option.Option_None Core_models.Option.Option_None)
+  | SqlStmt_UpdateDeviceLastActiveNamed
+      { f_now = now; f_name = nm; f_kind = kd; f_device_id = dev } ->
+    Some (Wrote, login_stamp d dev now
+            (Core_models.Option.Option_Some nm) (Core_models.Option.Option_Some kd))
   | SqlStmt_SelectDeviceIdsByUser _
   | SqlStmt_SelectWebSessionIdsByUser _
   | SqlStmt_SelectDeviceById _
   | SqlStmt_SelectWebSessionIdsApprovedBy _
+  | SqlStmt_SelectUnrevokedDeviceById _
   | SqlStmt_Commit -> None
 
 /// The state after one write statement (a rejected statement changes nothing).
@@ -276,16 +297,23 @@ let rec exec_all (d: db) (plan: list t_SqlStmt) : Tot db (decreases plan) =
 
 // ── The store ──────────────────────────────────────────────────────────────
 
-/// A key-value map (`set_ex` targets) and a set map (`device:jtis:` targets).
-/// `revoked` records every JTI the lockout helper has marked.
+/// A key-value map (`set_ex` targets), a set map (`device:jtis:` targets),
+/// the counters behind the login limiters, and every JTI the lockout helper
+/// has marked.
 noeq type store = {
   kv: text -> option text;
   sets: text -> list text;
   revoked: list text;
+  counters: text -> nat;
+  streaks: text -> nat;
 }
 
 let kv_set (s: text -> option text) (k: text) (v: option text) : (text -> option text) =
   fun k' -> if k' = k then v else s k'
+
+/// A counter map that writes one key.
+let cnt_set (c: text -> nat) (k: text) (n: nat) : (text -> nat) =
+  fun k' -> if k' = k then n else c k'
 
 /// One store statement.
 let exec_store (s: store) (st: t_StoreStmt) : store =
@@ -295,6 +323,29 @@ let exec_store (s: store) (st: t_StoreStmt) : store =
   | StoreStmt_RevokeJtis { f_device = dev } ->
     { s with sets = (fun k -> if k = dev then [] else s.sets k);
              revoked = s.revoked @ s.sets dev }
+  | StoreStmt_Take { f_key = k } ->
+    { s with kv = kv_set s.kv k None }
+  | StoreStmt_Incr { f_key = k; f_limit = _; f_ttl = _ } ->
+    { s with counters = cnt_set s.counters k (s.counters k + 1) }
+  | StoreStmt_BackoffFailure { f_streak = streak; f_backoff = backoff } ->
+    { s with streaks = cnt_set s.streaks streak (s.streaks streak + 1);
+             kv = (if s.streaks streak + 1 >= 3
+                   then kv_set s.kv backoff (Some v_one) else s.kv) }
+  | StoreStmt_ResetBackoff { f_streak = streak; f_backoff = backoff } ->
+    { s with streaks = cnt_set s.streaks streak 0;
+             kv = kv_set s.kv backoff None }
+  | StoreStmt_AddMember { f_key = k; f_member = m; f_ttl = _ } ->
+    { s with sets = (fun k' -> if k' = k then m :: s.sets k else s.sets k') }
+
+/// One store statement and the outcome the handler observed. Only a fixed
+/// window counter can refuse: it grew before it reported the refusal.
+let exec_store_out (s: store) (st: t_StoreStmt) : (t_StoreOutcome & store) =
+  match st with
+  | StoreStmt_Incr { f_key = k; f_limit = lim; f_ttl = _ } ->
+    let n = s.counters k + 1 in
+    let s' = { s with counters = cnt_set s.counters k n } in
+    ((if n <= v lim then StoreOutcome_Applied else StoreOutcome_Failed), s')
+  | _ -> (StoreOutcome_Applied, exec_store s st)
 
 /// A plan of store statements: stop at the first failure.
 let rec run_store (s: store) (stmts: list t_StoreStmt) (k: nat) (f: option nat)
@@ -305,8 +356,12 @@ let rec run_store (s: store) (stmts: list t_StoreStmt) (k: nat) (f: option nat)
     if faulted f k
     then ([StoreOutcome_Failed], s)
     else
-      let r = run_store (exec_store s st) rest (k + 1) f in
-      (StoreOutcome_Applied :: fst r, snd r)
+      let (o, s') = exec_store_out s st in
+      match o with
+      | StoreOutcome_Applied ->
+        let r = run_store s' rest (k + 1) f in
+        (StoreOutcome_Applied :: fst r, snd r)
+      | StoreOutcome_Failed -> ([StoreOutcome_Failed], s')
 
 /// The outcome list of a plan that runs to completion.
 let rec all_applied (stmts: list t_StoreStmt) : Tot (list t_StoreOutcome) (decreases stmts) =
@@ -318,15 +373,7 @@ let rec all_applied (stmts: list t_StoreStmt) : Tot (list t_StoreOutcome) (decre
 let rec apply_all (s: store) (stmts: list t_StoreStmt) : Tot store (decreases stmts) =
   match stmts with
   | [] -> s
-  | st :: rest -> apply_all (exec_store s st) rest
-
-/// With no injected fault a plan applies every statement.
-let rec run_store_no_fault (s: store) (stmts: list t_StoreStmt) (k: nat)
-  : Lemma (ensures (run_store s stmts k None == (all_applied stmts, apply_all s stmts)))
-          (decreases stmts) =
-  match stmts with
-  | [] -> ()
-  | st :: rest -> run_store_no_fault (exec_store s st) rest (k + 1)
+  | st :: rest -> apply_all (snd (exec_store_out s st)) rest
 
 /// A batch of per-id lockouts, continuing past a failure (the deletion
 /// handler ignores a lockout error), with the store call counter carried
@@ -405,6 +452,100 @@ let read_target (d: db) (dev: text) (failed: bool) : t_ReadOutcome t_TargetRowVi
               f_revoked = Core_models.Option.Option_Some r.dv_revoked
             } <: t_TargetRowView))
     | None -> ReadOutcome_Row Core_models.Option.Option_None
+
+// ── Login: VerifyIo ────────────────────────────────────────────────────────
+
+/// A native option as the `Core_models` option the extracted views carry.
+let cm_option (#a: Type0) (o: option a) : Core_models.Option.t_Option a =
+  match o with
+  | None -> Core_models.Option.Option_None
+  | Some x -> Core_models.Option.Option_Some x
+
+let cm_option_none (#a: Type0) (o: option a)
+  : Lemma (cm_option o == Core_models.Option.Option_None <==> o == None) =
+  match o with
+  | None -> ()
+  | Some _ -> ()
+
+let cm_option_some (#a: Type0) (o: option a) (x: a)
+  : Lemma (cm_option o == Core_models.Option.Option_Some x <==> o == Some x) =
+  match o with
+  | None -> ()
+  | Some _ -> ()
+
+/// `VerifyIo::consume_challenge`: the atomic take of the one challenge key.
+/// The modelled take returns the stored value and removes it; the extracted
+/// classifier decides from that value and the tag this consumer expected — on
+/// the failure path too.
+let login_challenge (s: store) (challenge tag: text) (f: option nat)
+  : (Vela_session_policy.Login_driver.t_ChallengeObservation & store) =
+  let key = match stmts_of (plan_take_challenge challenge) with
+            | StoreStmt_Take { f_key = k } :: _ -> k
+            | _ -> Alloc.String.String "" in
+  let (outcome, s') =
+    if faulted f 0
+    then (TakeOutcome_Failed, s)
+    else (TakeOutcome_Taken (cm_option (s.kv key)),
+          exec_store s (StoreStmt_Take { f_key = key })) in
+  (classify_login_challenge outcome tag, s')
+
+/// `VerifyIo::observe_device`: what the `revoked = 0` query and the decoder
+/// produced. `undecodable` is the decoder's verdict on a present row.
+let login_device (d: db) (dev: text) (failed undecodable: bool)
+  : t_DeviceReadOutcome =
+  if failed then DeviceReadOutcome_Failed
+  else
+    match lookup d.devices dev with
+    | None -> DeviceReadOutcome_Missing
+    | Some r ->
+      if r.dv_revoked <> mk_i64 0 then DeviceReadOutcome_Missing
+      else if undecodable then DeviceReadOutcome_Undecodable
+      else DeviceReadOutcome_Row
+
+/// `VerifyIo::observe_device`.
+let observe_device (d: db) (dev: text) (failed undecodable: bool)
+  : Vela_session_policy.Login_driver.t_DeviceObservation =
+  classify_login_device (login_device d dev failed undecodable)
+
+/// `VerifyIo::record_verification_failure`: the log-only backoff record (fault
+/// 0) and then the request-level counter (fault 1), two independent calls.
+let login_failure_record (s: store) (ip dev: text) (f: option nat)
+  : (Vela_session_policy.Login_driver.t_FailureRecordObservation & store) =
+  let a = run_store s (stmts_of (plan_backoff_record ip dev)) 0
+            (if faulted f 0 then Some 0 else None) in
+  let r = run_store (snd a) (stmts_of (plan_failure_counter ip dev)) 0
+                    (if faulted f 1 then Some 0 else None) in
+  (classify_failure_counter (slice_of (fst r)), snd r)
+
+/// The first outcome of a run (empty runs never happen; the caller's plan is
+/// never empty).
+let first_out (l: list t_StoreOutcome) : t_StoreOutcome =
+  match l with
+  | [] -> StoreOutcome_Failed
+  | o :: _ -> o
+
+/// `VerifyIo::reset_backoff`: the streak reset (fault 0), then the historical
+/// best-effort stamp (fault 1), whose failure the observation ignores. Both
+/// paths classify, so a changed classifier fails the theorem.
+let login_reset (s: store) (d: db) (ip dev now: text)
+      (nm kd: Core_models.Option.t_Option text) (f: option nat)
+  : (Vela_session_policy.Login_driver.t_BackoffResetObservation & store & db) =
+  let r = run_store s (stmts_of (plan_reset_login_streak ip dev)) 0 f in
+  let outcome = first_out (fst r) in
+  let s' = snd r in
+  let d' =
+    match outcome with
+    | StoreOutcome_Applied ->
+      (if faulted f 1 then d
+       else exec_write d (plan_login_last_active dev now nm kd))
+    | StoreOutcome_Failed -> d in
+  (classify_backoff_reset outcome, s', d')
+
+/// `VerifyIo::track_token`: one set add.
+let login_track (s: store) (dev jti: text) (f: option nat)
+  : (Vela_session_policy.Login_driver.t_TokenTrackObservation & store) =
+  let r = run_store s (stmts_of (plan_track_jti dev jti)) 0 f in
+  (classify_track_jti (first_out (fst r)), snd r)
 
 // ── The executors: plan, run, classify ─────────────────────────────────────
 

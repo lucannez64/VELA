@@ -365,17 +365,28 @@ pub fn check_backoff(store: &Store, scope: &str) -> Result<()> {
 /// fails this at most once (a stale challenge); anything grinding at it slows
 /// down geometrically.
 pub fn record_backoff_failure(store: &Store, scope: &str) -> Result<()> {
-    let backoff_key = format!("rl:backoff:{scope}");
-    let streak_key = format!("rl:streak:{scope}");
+    record_backoff_failure_keys(
+        store,
+        &format!("rl:streak:{scope}"),
+        &format!("rl:backoff:{scope}"),
+    )
+}
 
-    let streak = store.incr_expire(&streak_key, 1, 300)?;
+/// The same record, on keys the caller already built (an executor's typed
+/// statement carries the exact keys it proved).
+pub fn record_backoff_failure_keys(
+    store: &Store,
+    streak_key: &str,
+    backoff_key: &str,
+) -> Result<()> {
+    let streak = store.incr_expire(streak_key, 1, 300)?;
     let eff_streak = streak.min(10);
     if eff_streak >= 3 {
         let exp = (eff_streak - 3).min(8);
         let delay_secs: u64 = (1u64 << exp).min(300);
-        store.set_ex(&backoff_key, &[1u8], delay_secs)?;
+        store.set_ex(backoff_key, &[1u8], delay_secs)?;
         if streak < 12 {
-            tracing::warn!(scope, streak, delay_secs, "backoff applied");
+            tracing::warn!(scope = streak_key, streak, delay_secs, "backoff applied");
         }
     }
     Ok(())
@@ -383,8 +394,17 @@ pub fn record_backoff_failure(store: &Store, scope: &str) -> Result<()> {
 
 /// Clear a scope's streak after it succeeds.
 pub fn reset_backoff(store: &Store, scope: &str) -> Result<()> {
-    let _ = store.del(&format!("rl:streak:{scope}"))?;
-    let _ = store.del(&format!("rl:backoff:{scope}"))?;
+    reset_backoff_keys(
+        store,
+        &format!("rl:streak:{scope}"),
+        &format!("rl:backoff:{scope}"),
+    )
+}
+
+/// The same reset, on keys the caller already built.
+pub fn reset_backoff_keys(store: &Store, streak_key: &str, backoff_key: &str) -> Result<()> {
+    let _ = store.del(streak_key)?;
+    let _ = store.del(backoff_key)?;
     Ok(())
 }
 

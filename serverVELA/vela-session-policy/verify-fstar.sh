@@ -121,8 +121,9 @@ if wants websession; then "$proof_root/verify-fstar-websession-interpreter.sh"; 
 # and deletes, and no authority from start. Needs the driver extraction above.
 if wants websession; then "$proof_root/verify-fstar-websession-composition.sh"; fi
 
-# F-1 for the session executors (logout, device revocation, account deletion):
+# F-1 for the session executors (logout, device revocation, account deletion,
+# login):
 # each method's observation proved against the model of the tables and store
-# keys it touches, with mutation checks. Needs the deletion/revocation driver
-# extraction above.
+# keys it touches, with mutation checks. Needs the deletion, revocation and
+# login driver extractions above.
 if wants session; then "$proof_root/verify-fstar-session-executors.sh"; fi
