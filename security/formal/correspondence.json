@@ -27,7 +27,7 @@
       "boundary": "device challenge authentication",
       "artifacts": {
         "libVELA/vela-crypto/src/signing.rs": "82c9e2f3f9882d62cad5707cd8287b1299b373b10629eff912477f519249150b",
-        "serverVELA/vela-server/src/auth/challenge.rs": "1f9d4048f6791a84d492b2c2c8a25dbd284397334f06dd8a5f18cea9d396409c",
+        "serverVELA/vela-server/src/auth/challenge.rs": "9ceaed7b2a9c48b1fabf15412df99b262f73d492a7127e7649424e3dc355a438",
         "serverVELA/vela-server/src/auth/verify.rs": "83efcbafb765fa5c68d552536fa2cfbb4d6d59cc02617d5ac1ffe091be7d0f1c",
         "security/formal/m27_device_authentication.spthy": "e935fe68bc6872ab11599af50f67ca96aee296139b02c4bb2b9ab76e91dbfcbc"
       }
@@ -300,7 +300,7 @@
       "boundary": "bounded single-use challenge conformance across verify/enroll/web-token plus concurrent race test (each nonce bound to one purpose; signature security, multi-node stores, crash and real TTL not covered)",
       "artifacts": {
         "serverVELA/vela-server/tests/challenge_single_use_model.rs": "d5c5eacca0e81b6cb122aeb51f4a2c890ba13246229629bc87b3a5ec9dbf0f50",
-        "serverVELA/vela-server/src/auth/challenge.rs": "1f9d4048f6791a84d492b2c2c8a25dbd284397334f06dd8a5f18cea9d396409c",
+        "serverVELA/vela-server/src/auth/challenge.rs": "9ceaed7b2a9c48b1fabf15412df99b262f73d492a7127e7649424e3dc355a438",
         "serverVELA/vela-server/src/auth/verify.rs": "83efcbafb765fa5c68d552536fa2cfbb4d6d59cc02617d5ac1ffe091be7d0f1c",
         "serverVELA/vela-server/src/device/enroll.rs": "383e66aef1d5291d8483853fa9f8dc5d235d59140701917be8beef0764c95b7d",
         "serverVELA/vela-server/src/web_session/mod.rs": "9a7737e40a08a80afc232cad87acb78398515d2ee4bb82580a72b074abfc2b18"
@@ -363,7 +363,7 @@
         "serverVELA/vela-session-policy/tests/login_driver.rs": "8dbb576cbb60960437f9dee20e3e3982ded6a104c6e94ccdbdbbb40ff6855df6",
         "serverVELA/vela-session-policy/verify-fstar-login-driver.sh": "20ae2b94cad3791607e8a28f54713c3eca63ba5962e73f0d7d51a156eaf1bfcd",
         "serverVELA/vela-session-policy/rust-toolchain.toml": "50786309c2f9d452b358b0995257d726737eb19aa007a4b97606a40499f51b3f",
-        "serverVELA/vela-server/src/auth/challenge.rs": "1f9d4048f6791a84d492b2c2c8a25dbd284397334f06dd8a5f18cea9d396409c",
+        "serverVELA/vela-server/src/auth/challenge.rs": "9ceaed7b2a9c48b1fabf15412df99b262f73d492a7127e7649424e3dc355a438",
         "serverVELA/vela-server/src/auth/verify.rs": "83efcbafb765fa5c68d552536fa2cfbb4d6d59cc02617d5ac1ffe091be7d0f1c",
         "serverVELA/vela-server/tests/login_driver_handler.rs": "e9ed016693f70febd4bcf8f26977022126fb5887fb89448d71addfeffd6a963d",
         "serverVELA/vela-session-policy/proofs/fstar/extraction-login-driver/Vela_session_policy.Challenge.fst": "1b96acdadd51dca6cdbdafe1608baa7f2173b51b3ca4bcf0f3374710a3513ea5",
@@ -636,8 +636,8 @@
         "serverVELA/vela-session-policy/proofs/fstar/extraction-challenge-issue-interpreter/Vela_session_policy.Challenge_issue_interpreter.fst": "88aafd7ab275bbd655f4b2b188e6a6f970f67a1e388b0844e3ec2b07ea3699c5",
         "serverVELA/vela-session-policy/proofs/fstar/registration-interpreter-lemmas/Vela_session_policy_registration_interpreter_lemmas.fst": "97fc3d928734e9fff84c52de6621eee6b1759cff36eb596ba50b3e356ea95dcc",
         "serverVELA/vela-session-policy/proofs/fstar/challenge-issue-interpreter-lemmas/Vela_session_policy_challenge_issue_interpreter_lemmas.fst": "e020378f300b920df4acf28421f7bba5baa7137a4a2058d79586b4dd4cf610b9",
-        "serverVELA/vela-server/src/account/mod.rs": "ca11ec5295dd51f3221f4069088cc131157b0f50b8943d9c5bde183e6f990314",
-        "serverVELA/vela-server/src/auth/challenge.rs": "1f9d4048f6791a84d492b2c2c8a25dbd284397334f06dd8a5f18cea9d396409c"
+        "serverVELA/vela-server/src/account/mod.rs": "6ab1f2307ebc4976bedd679ab6e1acbb70150f32613ee76be1c9123e79f10a8a",
+        "serverVELA/vela-server/src/auth/challenge.rs": "9ceaed7b2a9c48b1fabf15412df99b262f73d492a7127e7649424e3dc355a438"
       }
     },
     {
@@ -727,7 +727,7 @@
       }
     },
     {
-      "boundary": "sharing executors (F-1): each executor method in vela-server/src/share/mod.rs is an extracted typed statement plan, a pinned SQL rendering and an extracted observation classifier; for every starting database and every failing statement, F* proves each observation reports exactly what the statements did to shared_items, share_inbox and users and that a failed run changes nothing, with mutation checks; the store model (statement and transaction semantics, statement atomicity), SQL rendering, row decoding and the thin loop are checked by bounded conformance against turso, not proved; crypto verdicts, concurrency between transactions and pre-driver reads remain open",
+      "boundary": "logout, device-revocation, account-deletion, login, registration and challenge-issue executor honesty (F-1): each method of LogoutJtiIo, RevokeDeviceIo, DeleteAccountIo, VerifyIo, RegisterIo and ChallengeIssueIo is an extracted typed SQL/store statement plan, a pinned rendering and an extracted classifier, proved against a store model of the eight account tables (including the UNIQUE-id INSERTs and the account-count read), the jti markers, the deletion and registration transactions, the challenge take and first-writer-wins issue, the login failure counters and backoff/streak keys, and the device last-active stamp, with a failure at any statement, and matched on real turso and sled with fault injection; the deletion transaction and revocation cascade are proved per statement (no single fold theorem), revoke_all_device_jtis and the backoff helpers are one atomic logical statement each (partial marker writes on failure are not modelled), store TTLs are abstracted, and the web-session executors (StartIo, GrantIo, TokenIo, DeleteSessionIo) remain open",
       "artifacts": {
         "serverVELA/vela-share-policy/src/store.rs": "8caa3c3c97f7789f8bd8237def80609e310981286c039acaf7856ece3968bc8c",
         "serverVELA/vela-share-policy/src/store_model.rs": "675eea81bef9e64a41e336edd2c4694800fa3a3e57fb3ae443f85d098cacfc9d",
@@ -738,7 +738,9 @@
         "serverVELA/vela-share-policy/proofs/fstar/store-lemmas/Vela_share_policy_store_lemmas.fst": "df5be6082fc50d3d25fe4d5e079d9f6b8129ab87cba868b7ea988953fb7a5a46",
         "serverVELA/vela-server/src/share/sql.rs": "a0debcb63afb0e7d39961bff31f47f0cc74c35d65cd52d03fdccfdb1c03ff198",
         "serverVELA/vela-server/src/share/conformance.rs": "06bf0c53fe2c90f2a4abc12950cc1092ceaa603a851f7676788b4d4c88328285",
-        "serverVELA/vela-server/src/share/mod.rs": "e4142a94a72beff97b2c99cb38a0346e16004de7db4d08bcc579b5b7983394da"
+        "serverVELA/vela-server/src/share/mod.rs": "e4142a94a72beff97b2c99cb38a0346e16004de7db4d08bcc579b5b7983394da",
+        "serverVELA/vela-server/src/auth/challenge.rs": "9ceaed7b2a9c48b1fabf15412df99b262f73d492a7127e7649424e3dc355a438",
+        "serverVELA/vela-server/src/account/mod.rs": "6ab1f2307ebc4976bedd679ab6e1acbb70150f32613ee76be1c9123e79f10a8a"
       }
     },
     {
@@ -789,22 +791,27 @@
       }
     },
     {
-      "boundary": "logout, device-revocation, account-deletion and login executor honesty (F-1): each method of LogoutJtiIo, RevokeDeviceIo, DeleteAccountIo and VerifyIo is an extracted typed SQL/store statement plan, a pinned rendering and an extracted classifier, proved against a store model of the eight account tables, the jti markers, the deletion transaction, the challenge take, the login failure counters and backoff/streak keys, and the device last-active stamp, with a failure at any statement, and matched on real turso and sled with fault injection; the deletion transaction and revocation cascade are proved per statement (no single fold theorem), revoke_all_device_jtis is one atomic logical statement (partial marker writes on failure are not modelled), store TTLs are abstracted, and registration/challenge and web-session executors remain open",
+      "boundary": "logout, device-revocation, account-deletion, login, registration and challenge-issue executor honesty (F-1): each method of LogoutJtiIo, RevokeDeviceIo, DeleteAccountIo, VerifyIo, RegisterIo and ChallengeIssueIo is an extracted typed SQL/store statement plan, a pinned rendering and an extracted classifier, proved against a store model of the eight account tables (including the UNIQUE-id INSERTs and the account-count read), the jti markers, the deletion and registration transactions, the challenge take and first-writer-wins issue, the login failure counters and backoff/streak keys, and the device last-active stamp, with a failure at any statement, and matched on real turso and sled with fault injection; the deletion transaction and revocation cascade are proved per statement (no single fold theorem), revoke_all_device_jtis and the backoff helpers are one atomic logical statement each (partial marker writes on failure are not modelled), store TTLs are abstracted, and the web-session executors (StartIo, GrantIo, TokenIo, DeleteSessionIo) remain open",
       "artifacts": {
         "serverVELA/vela-server/src/account/delete.rs": "3676236ade8d780739d77e6e067be4b0b5c9c3dc967805ef67aad357dd2c516e",
         "serverVELA/vela-server/src/auth/logout.rs": "dd1a67af0df08111c82e18ecf53fee8b896bd8352efca22ee422a1d617ccf916",
-        "serverVELA/vela-server/src/auth/session_conformance.rs": "cb193d8467993f41dd91e5c8863879c3a0492ca946239e387d2ef6e23e062daf",
-        "serverVELA/vela-server/src/auth/session_store.rs": "7b386ee56621120ce2b6645bf83a7e727fecef48f02cca5390b0dc8d203fcb43",
+        "serverVELA/vela-server/src/auth/session_conformance.rs": "ad7aa54b4b35f41704e9b195cfd32912ba20df675a5d6728659d5348f7a466d2",
+        "serverVELA/vela-server/src/auth/session_store.rs": "eae206d3fe6b746917e9d0443c0b95c470b35ab008a90cf66a11cbdbaaa594c5",
         "serverVELA/vela-server/src/auth/verify.rs": "83efcbafb765fa5c68d552536fa2cfbb4d6d59cc02617d5ac1ffe091be7d0f1c",
         "serverVELA/vela-server/src/device/revoke.rs": "efcbadf0aa9097308430b7f56328ce15791f7969fabde9a9f0b6a1a5112116e9",
         "serverVELA/vela-server/src/rate_limit.rs": "d1878343e77243f60369a6d4531d5bf3bc90b0f2090771563414fcd5154b26ab",
-        "serverVELA/vela-session-policy/proofs/fstar/extraction-store/Vela_session_policy.Store.fst": "43161ce5d8352edc29ff7c3f7c85c25df8c3ab2924dc41339000b7f181c5ad79",
-        "serverVELA/vela-session-policy/proofs/fstar/store-lemmas/Vela_session_policy_store_lemmas.fst": "ea5e1de1d6d8607d9bee30e87add529b5f806d80af015c46baf73dae73507d4a",
-        "serverVELA/vela-session-policy/proofs/fstar/store-lemmas/Vela_session_policy_store_model.fst": "7def7607af7caadb9ce37ad296cd8ff93af15bd8de9412663ddfefa954cba231",
-        "serverVELA/vela-session-policy/src/store.rs": "203808e77c1b5bb19facab39cf2c728f461a465d0b2e6fd73c91109b55862bb1",
-        "serverVELA/vela-session-policy/src/store_model.rs": "8d8c8cbeb5fc1bbb58ce85fed1fe29afdac823c84e696ac03fde38bb3ebf1a69",
-        "serverVELA/vela-session-policy/verify-fstar-session-executors-mutations.sh": "4cf7b1a2be769e7e0ed678fefc17b730731c9d6b46d6341854933ab5c67fe1f2",
-        "serverVELA/vela-session-policy/verify-fstar-session-executors.sh": "e4346bc22f229bd096c770627cd57ccf81a3ceb88a4041b8e8ce894d99c8c8e6"
+        "serverVELA/vela-session-policy/proofs/fstar/extraction-store/Vela_session_policy.Store.fst": "cf5b1742d5942e004cc191632af62a2a21f09cd398503e2947b16ba97d0f2d9e",
+        "serverVELA/vela-session-policy/proofs/fstar/store-lemmas/Vela_session_policy_store_lemmas.fst": "4eb1d2510eb21926b224ebf5ce131d96760be70b33357c7575aedb3d7f7aa016",
+        "serverVELA/vela-session-policy/proofs/fstar/store-lemmas/Vela_session_policy_store_model.fst": "8d46b826cf079e9a4235afcd0de1b7753d511f7d0eb0e957bf56d4bb299445ea",
+        "serverVELA/vela-session-policy/src/store.rs": "6588c2a205799e099b3b34ea2de4742c6463ea4fbda2a638bca101d9dc05b226",
+        "serverVELA/vela-session-policy/src/store_model.rs": "861f3879462efb81c402d14ecc2daa136acca93b775073ca8419e9f62710be86",
+        "serverVELA/vela-session-policy/verify-fstar-session-executors-mutations.sh": "9306570f92de6a98ee8cd5c22da35b75397faa23b9b9246965bf3838d73507eb",
+        "serverVELA/vela-session-policy/verify-fstar-session-executors.sh": "ae1b8bd13bc81d543c1d0fbbd4b2f7bf243a0b89378360382489a06e93f9593c",
+        "serverVELA/vela-server/src/auth/challenge.rs": "9ceaed7b2a9c48b1fabf15412df99b262f73d492a7127e7649424e3dc355a438",
+        "serverVELA/vela-server/src/account/mod.rs": "6ab1f2307ebc4976bedd679ab6e1acbb70150f32613ee76be1c9123e79f10a8a",
+        "serverVELA/vela-session-policy/proofs/fstar/extraction-registration-driver/Vela_session_policy.Registration_driver.fst": "4cd2ebfb88ebd5e6f7f71eb5402257b25e9fdd29aac1d38ccfe59969ff969ce7",
+        "serverVELA/vela-session-policy/proofs/fstar/extraction-challenge-issue-driver/Vela_session_policy.Challenge_issue_driver.fst": "319b188c77c083d275913455077e0cd260efa005eff9ccc44ef52ff7eed891ce",
+        "serverVELA/vela-session-policy/proofs/fstar/extraction-challenge-issue-driver/Vela_session_policy.Challenge.fst": "1b96acdadd51dca6cdbdafe1608baa7f2173b51b3ca4bcf0f3374710a3513ea5"
       }
     },
     {

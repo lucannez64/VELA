@@ -12,12 +12,17 @@ use std::net::SocketAddr;
 use uuid::Uuid;
 
 use crate::{
+    auth::session_store::{
+        keep_error, run_read, run_sql_in_tx_named, run_sql_named, run_store, DbSql, PasetoTokens,
+        SessionSql, SessionStore, SessionTokens, SledStore,
+    },
     auth::token::TokenService,
     error::{AppError, Result},
-    net, rate_limit,
-    sqldb::{Db as _, TursoValue, TxGuard},
+    net,
     state::AppState,
 };
+
+use vela_session_policy::store::{self, CountOutcome, StoreOutcome, WriteOutcome};
 use vela_session_policy::registration_driver::{
     BudgetObservation, CommitObservation, InsertObservation, RateLimitObservation,
     RegistrationEffect, RegistrationFailure, RegistrationRequestObservation, TokenObservation,
@@ -58,14 +63,14 @@ pub struct RegisterResponse {
 /// order (identity encryption key, identity verification key, then the
 /// optional signed share key). The first error keeps its exact message; the
 /// driver only learns whether each key is valid.
-struct ParsedKeys {
-    identity_ek: Option<Vec<u8>>,
-    identity_vk: Option<Vec<u8>>,
-    share_ek_b64: String,
-    identity_ek_valid: bool,
-    identity_vk_valid: bool,
-    share_ek_valid: bool,
-    error: Option<AppError>,
+pub(crate) struct ParsedKeys {
+    pub identity_ek: Option<Vec<u8>>,
+    pub identity_vk: Option<Vec<u8>>,
+    pub share_ek_b64: String,
+    pub identity_ek_valid: bool,
+    pub identity_vk_valid: bool,
+    pub share_ek_valid: bool,
+    pub error: Option<AppError>,
 }
 
 fn observe_keys(body: &RegisterRequest) -> ParsedKeys {
@@ -166,199 +171,159 @@ fn observe_keys(body: &RegisterRequest) -> ParsedKeys {
 
 /// The I/O behind each registration effect. The driver decides which method
 /// runs and when (through the shared `registration_interpreter!` loop, proved
-/// in F* as `run_registration`); each method only performs its effect and
+/// in F* as `run_registration`); each method only performs its effect — one
+/// typed plan from `vela_session_policy::store`, run and classified — and
 /// reports the outcome. The first storage error is kept so the response
 /// carries the original message.
-struct RegisterIo<'a> {
-    state: &'a AppState,
-    ip: String,
-    body: RegisterRequest,
-    keys: ParsedKeys,
-    user_id: Uuid,
-    device_id: Uuid,
-    now: String,
-    device_name: String,
-    device_type: String,
-    tx: Option<TxGuard>,
-    token: Option<String>,
-    jti: Option<String>,
-    error: Option<AppError>,
+pub(crate) struct RegisterIo<S: SessionSql, K: SessionStore, T: SessionTokens> {
+    pub sql: S,
+    pub store: K,
+    pub tokens: T,
+    pub ip: String,
+    pub body: RegisterRequest,
+    pub keys: ParsedKeys,
+    pub user_id: Uuid,
+    pub device_id: Uuid,
+    pub now: String,
+    pub device_name: String,
+    pub device_type: String,
+    pub token: Option<String>,
+    pub jti: Option<String>,
+    pub error: Option<AppError>,
 }
 
-impl RegisterIo<'_> {
+impl<S: SessionSql, K: SessionStore, T: SessionTokens> RegisterIo<S, K, T> {
     fn fail(&mut self, error: impl ToString) {
         if self.error.is_none() {
             self.error = Some(AppError::Internal(error.to_string()));
         }
     }
 
-    fn fail_with(&mut self, error: AppError) {
-        if self.error.is_none() {
-            self.error = Some(error);
+    pub(crate) async fn check_rate_limit(&mut self) -> RateLimitObservation {
+        let plan = store::plan_registration_rate_limit(self.ip.clone());
+        let (outcomes, error) = run_store(&mut self.store, &plan);
+        if let Some(error) = error {
+            keep_error(&mut self.error, error);
         }
+        let outcome = outcomes.first().copied().unwrap_or(StoreOutcome::Failed);
+        store::classify_registration_rate_limit(&outcome)
     }
 
-    async fn check_rate_limit(&mut self) -> RateLimitObservation {
-        match rate_limit::check(
-            &self.state.store,
-            &format!("rl:register:ip:{}", self.ip),
-            5,
-            3600,
-        ) {
-            Ok(()) => RateLimitObservation::Allowed,
-            Err(error) => {
-                self.fail_with(error);
-                RateLimitObservation::Denied
-            }
-        }
-    }
-
-    async fn check_account_budget(&mut self) -> BudgetObservation {
-        match self
-            .state
-            .sqldb
-            .query("SELECT COUNT(*) FROM users", vec![])
-            .await
-        {
-            Ok(rows) => {
+    pub(crate) async fn check_account_budget(&mut self) -> BudgetObservation {
+        let (rows, error) = run_read(&mut self.sql, store::plan_account_count()).await;
+        match rows {
+            Some(rows) => {
                 let count = rows.first().and_then(|row| row.i64(0)).unwrap_or(0);
-                BudgetObservation::Counted { count }
+                store::classify_account_count(&CountOutcome::Count(count))
             }
-            Err(error) => {
-                self.fail(error);
-                BudgetObservation::QueryFailed
-            }
-        }
-    }
-
-    async fn begin_transaction(&mut self) -> TransactionObservation {
-        match self.state.sqldb.tx().await {
-            Ok(tx) => {
-                self.tx = Some(tx);
-                TransactionObservation::Begun
-            }
-            Err(error) => {
-                self.fail(error);
-                TransactionObservation::Failed
+            None => {
+                if let Some(error) = error {
+                    keep_error(&mut self.error, error);
+                }
+                store::classify_account_count(&CountOutcome::Failed)
             }
         }
     }
 
-    async fn insert_account(&mut self) -> InsertObservation {
-        let Some(tx) = self.tx.as_ref() else {
-            self.fail("registration transaction is not open");
-            return InsertObservation::Failed;
-        };
-        match tx
-            .execute(
-                "INSERT INTO users (id, created_at, share_ek, share_ek_since)
-             VALUES (?, ?, ?, ?)",
-                vec![
-                    TursoValue::Text(self.user_id.to_string()),
-                    TursoValue::Text(self.now.clone()),
-                    TursoValue::Text(self.keys.share_ek_b64.clone()),
-                    TursoValue::Text(
-                        self.body
-                            .share_ek
-                            .as_deref()
-                            .map(|_| self.now.clone())
-                            .unwrap_or_default(),
-                    ),
-                ],
-            )
-            .await
-        {
-            Ok(_) => InsertObservation::Inserted,
+    pub(crate) async fn begin_transaction(&mut self) -> TransactionObservation {
+        match self.sql.begin().await {
+            Ok(()) => store::classify_registration_transaction(&WriteOutcome::Applied(0)),
             Err(error) => {
-                self.fail(error);
-                InsertObservation::Failed
+                keep_error(&mut self.error, error);
+                store::classify_registration_transaction(&WriteOutcome::Failed)
             }
         }
     }
 
-    async fn insert_device(&mut self) -> InsertObservation {
-        let Some(tx) = self.tx.as_ref() else {
-            self.fail("registration transaction is not open");
-            return InsertObservation::Failed;
-        };
+    pub(crate) async fn insert_account(&mut self) -> InsertObservation {
+        let share_ek_since = self
+            .body
+            .share_ek
+            .as_deref()
+            .map(|_| self.now.clone())
+            .unwrap_or_default();
+        let plan = [store::plan_insert_account(
+            self.user_id.to_string(),
+            self.now.clone(),
+            self.keys.share_ek_b64.clone(),
+            share_ek_since,
+        )];
+        let (outcomes, error) =
+            run_sql_in_tx_named(&mut self.sql, &plan, "registration transaction is not open")
+                .await;
+        if let Some(error) = error {
+            keep_error(&mut self.error, error);
+        }
+        let outcome = outcomes.first().copied().unwrap_or(WriteOutcome::Failed);
+        store::classify_insert(&outcome)
+    }
+
+    pub(crate) async fn insert_device(&mut self) -> InsertObservation {
         let (Some(hybrid_ek), Some(hybrid_vk)) =
             (self.keys.identity_ek.as_ref(), self.keys.identity_vk.as_ref())
         else {
             self.fail("registration keys are not available");
-            return InsertObservation::Failed;
+            return store::classify_insert(&WriteOutcome::Failed);
         };
-        match tx
-            .execute(
-                "INSERT INTO devices
-         (id, user_id, device_name, device_type, last_active, hybrid_ek, hybrid_vk, enrolled_by, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?)",
-                vec![
-                    TursoValue::Text(self.device_id.to_string()),
-                    TursoValue::Text(self.user_id.to_string()),
-                    TursoValue::Text(self.device_name.clone()),
-                    TursoValue::Text(self.device_type.clone()),
-                    TursoValue::Text(self.now.clone()),
-                    TursoValue::Text(crate::db::encode_b64(hybrid_ek)),
-                    TursoValue::Text(crate::db::encode_b64(hybrid_vk)),
-                    TursoValue::Text(self.now.clone()),
-                ],
-            )
-            .await
-        {
-            Ok(_) => InsertObservation::Inserted,
-            Err(error) => {
-                self.fail(error);
-                InsertObservation::Failed
-            }
+        let plan = [store::plan_insert_device(
+            self.device_id.to_string(),
+            self.user_id.to_string(),
+            self.device_name.clone(),
+            self.device_type.clone(),
+            self.now.clone(),
+            crate::db::encode_b64(hybrid_ek),
+            crate::db::encode_b64(hybrid_vk),
+        )];
+        let (outcomes, error) =
+            run_sql_in_tx_named(&mut self.sql, &plan, "registration transaction is not open")
+                .await;
+        if let Some(error) = error {
+            keep_error(&mut self.error, error);
         }
+        let outcome = outcomes.first().copied().unwrap_or(WriteOutcome::Failed);
+        store::classify_insert(&outcome)
     }
 
-    async fn commit(&mut self) -> CommitObservation {
-        let Some(tx) = self.tx.take() else {
-            self.fail("registration transaction is not open");
-            return CommitObservation::Failed;
-        };
-        match tx.commit().await {
-            Ok(()) => CommitObservation::Committed,
-            Err(error) => {
-                self.fail(error);
-                CommitObservation::Failed
-            }
+    pub(crate) async fn commit(&mut self) -> CommitObservation {
+        let (outcomes, error) = run_sql_named(
+            &mut self.sql,
+            &[store::plan_commit()],
+            "registration transaction is not open",
+        )
+        .await;
+        if let Some(error) = error {
+            keep_error(&mut self.error, error);
         }
+        let outcome = outcomes.first().copied().unwrap_or(WriteOutcome::Failed);
+        store::classify_registration_commit(&outcome)
     }
 
-    async fn issue_token(&mut self) -> TokenObservation {
-        let service =
-            TokenService::new(self.state.paseto_sk.clone(), self.state.paseto_pk.clone());
-        match service.issue(self.user_id, self.device_id, None) {
+    pub(crate) async fn issue_token(&mut self) -> TokenObservation {
+        match self.tokens.issue_device(self.user_id, self.device_id) {
             Ok((token, jti)) => {
                 self.token = Some(token);
                 self.jti = Some(jti);
                 TokenObservation::Issued
             }
             Err(error) => {
-                self.fail_with(error);
+                keep_error(&mut self.error, error);
                 TokenObservation::Failed
             }
         }
     }
 
-    async fn track_token(&mut self) -> TrackObservation {
-        let Some(jti) = self.jti.as_deref() else {
+    pub(crate) async fn track_token(&mut self) -> TrackObservation {
+        let Some(jti) = self.jti.clone() else {
             self.fail("registration token is not available");
-            return TrackObservation::Failed;
+            return store::classify_registration_track(&StoreOutcome::Failed);
         };
-        match rate_limit::track_device_jti(
-            &self.state.store,
-            &self.device_id.to_string(),
-            jti,
-        ) {
-            Ok(()) => TrackObservation::Tracked,
-            Err(error) => {
-                self.fail_with(error);
-                TrackObservation::Failed
-            }
+        let plan = store::plan_track_jti(self.device_id.to_string(), jti);
+        let (outcomes, error) = run_store(&mut self.store, &plan);
+        if let Some(error) = error {
+            keep_error(&mut self.error, error);
         }
+        let outcome = outcomes.first().copied().unwrap_or(StoreOutcome::Failed);
+        store::classify_registration_track(&outcome)
     }
 }
 
@@ -439,7 +404,15 @@ pub async fn post_register(
     let now = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
 
     let mut io = RegisterIo {
-        state: &state,
+        sql: DbSql {
+            pool: &state.sqldb,
+            tx: None,
+        },
+        store: SledStore(&state.store),
+        tokens: PasetoTokens(TokenService::new(
+            state.paseto_sk.clone(),
+            state.paseto_pk.clone(),
+        )),
         ip,
         body,
         keys,
@@ -448,7 +421,6 @@ pub async fn post_register(
         now,
         device_name,
         device_type,
-        tx: None,
         token: None,
         jti: None,
         error: None,
@@ -457,7 +429,7 @@ pub async fn post_register(
     // and nothing after its verdict.
     let transition = vela_session_policy::registration_interpreter!(io, request, await);
     // Dropping an uncommitted transaction rolls back the account row.
-    drop(io.tx.take());
+    io.sql.rollback();
 
     match transition.effect {
         RegistrationEffect::Complete => {

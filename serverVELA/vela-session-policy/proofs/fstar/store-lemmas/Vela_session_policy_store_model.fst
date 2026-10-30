@@ -85,12 +85,14 @@ let update_rows (#a: Type0) (t: tbl a) (k: text) (f: a -> a) : tbl a =
 type user_row = {
   us_share_ek: option text;
   us_share_ek_since: option text;
+  us_created_at: text;
 }
 
 /// The `devices` columns the session statements read or write.
 type device_row = {
   dv_user: text;
   dv_revoked: i64;
+  dv_hybrid_ek: text;
   dv_hybrid_vk: text;
   dv_last_active: option text;
   dv_name: text;
@@ -133,11 +135,13 @@ noeq type db = {
 // ── Statement semantics ────────────────────────────────────────────────────
 
 /// What a write statement's row count means to the handler. `WroteOne` and
-/// `WroteAbsent` are the `users` delete's one-or-zero rows.
+/// `WroteAbsent` are the `users` delete's one-or-zero rows; `WroteConflict` is
+/// an `INSERT` whose `UNIQUE` id was taken, which the handler sees as failure.
 type write_result =
   | Wrote
   | WroteOne
   | WroteAbsent
+  | WroteConflict
 
 /// A web session the cascade may end: approved by `dev`, owned by `usr`, and
 /// not already revoked (the handler's `status != 'revoked'`).
@@ -204,6 +208,35 @@ let update_where (#a: Type0) (t: tbl a) (p: a -> bool) (f: a -> a) : tbl a =
 let st_revoke_approved (d: db) (dev usr: text) : db =
   { d with sessions = update_where d.sessions (live_approved dev usr) revoked_session }
 
+/// The `users` row one registration inserts.
+let inserted_user (now ek since: text) : user_row =
+  { us_share_ek = Some ek; us_share_ek_since = Some since; us_created_at = now }
+
+/// The `devices` row one registration inserts.
+let inserted_device (usr now nm kd ek vk: text) : device_row =
+  { dv_user = usr;
+    dv_revoked = mk_i64 0;
+    dv_hybrid_ek = ek;
+    dv_hybrid_vk = vk;
+    dv_last_active = Some now;
+    dv_name = nm;
+    dv_kind = kd;
+    dv_revoked_at = None;
+    dv_revoked_by = None }
+
+/// `INSERT INTO users ...` on a fresh id.
+let st_insert_user (d: db) (usr now ek since: text) : db =
+  { d with users = insert_row d.users usr (inserted_user now ek since) }
+
+/// `INSERT INTO devices ...` on a fresh id.
+let st_insert_device (d: db) (dev usr now nm kd ek vk: text) : db =
+  { d with devices = insert_row d.devices dev (inserted_device usr now nm kd ek vk) }
+
+/// Both rows a registration's transaction inserts: the account with its
+/// share key, then the device that owns it.
+let registration_published (d: db) (usr dev now sek since nm kd dek vk: text) : db =
+  st_insert_device (st_insert_user d usr now sek since) dev usr now nm kd dek vk
+
 /// One write statement on a state, or `None` when a read or `Commit` was
 /// passed where a write belongs.
 let exec_stmt (d: db) (s: t_SqlStmt) : option (write_result & db) =
@@ -237,11 +270,23 @@ let exec_stmt (d: db) (s: t_SqlStmt) : option (write_result & db) =
       { f_now = now; f_name = nm; f_kind = kd; f_device_id = dev } ->
     Some (Wrote, login_stamp d dev now
             (Core_models.Option.Option_Some nm) (Core_models.Option.Option_Some kd))
+  | SqlStmt_InsertUser
+      { f_user = usr; f_now = now; f_share_ek = ek; f_share_ek_since = since } ->
+    (match lookup d.users usr with
+     | Some _ -> Some (WroteConflict, d)
+     | None -> Some (Wrote, st_insert_user d usr now ek since))
+  | SqlStmt_InsertDevice
+      { f_device = dev; f_user = usr; f_name = nm; f_kind = kd;
+        f_now = now; f_ek = ek; f_vk = vk } ->
+    (match lookup d.devices dev with
+     | Some _ -> Some (WroteConflict, d)
+     | None -> Some (Wrote, st_insert_device d dev usr now nm kd ek vk))
   | SqlStmt_SelectDeviceIdsByUser _
   | SqlStmt_SelectWebSessionIdsByUser _
   | SqlStmt_SelectDeviceById _
   | SqlStmt_SelectWebSessionIdsApprovedBy _
   | SqlStmt_SelectUnrevokedDeviceById _
+  | SqlStmt_CountUsers
   | SqlStmt_Commit -> None
 
 /// The state after one write statement (a rejected statement changes nothing).
@@ -256,6 +301,7 @@ let outcome_of (w: write_result) : t_WriteOutcome =
   | Wrote -> WriteOutcome_Applied (mk_u64 1)
   | WroteOne -> WriteOutcome_Applied (mk_u64 1)
   | WroteAbsent -> WriteOutcome_Applied (mk_u64 0)
+  | WroteConflict -> WriteOutcome_Failed
 
 /// The k-th statement is the injected failure.
 let faulted (f: option nat) (k: nat) : bool =
@@ -294,6 +340,31 @@ let rec exec_all (d: db) (plan: list t_SqlStmt) : Tot db (decreases plan) =
   match plan with
   | [] -> d
   | s :: rest -> exec_all (exec_write d s) rest
+
+/// A plan inside an open transaction that stops at the first statement the
+/// handler saw fail — an injection or a duplicate `UNIQUE` id — and leaves the
+/// state the transaction began from. `Commit` publishes the working state.
+let rec run_tx_checked (pre work: db) (stmts: list t_SqlStmt) (k: nat) (f: option nat)
+  : Tot (r: (list t_WriteOutcome & db){L.length (fst r) <= L.length stmts}) (decreases stmts) =
+  match stmts with
+  | [] -> ([], work)
+  | s :: rest ->
+    if faulted f k
+    then ([WriteOutcome_Failed], pre)
+    else
+      match s with
+      | SqlStmt_Commit ->
+        let r = run_tx_checked pre work rest (k + 1) f in
+        (WriteOutcome_Applied (mk_u64 0) :: fst r, snd r)
+      | _ ->
+        (match exec_stmt work s with
+         | None -> ([WriteOutcome_Failed], pre)
+         | Some (w, w') ->
+           (match outcome_of w with
+            | WriteOutcome_Failed -> ([WriteOutcome_Failed], pre)
+            | o ->
+              let r = run_tx_checked pre w' rest (k + 1) f in
+              (o :: fst r, snd r)))
 
 // ── The store ──────────────────────────────────────────────────────────────
 
@@ -336,6 +407,8 @@ let exec_store (s: store) (st: t_StoreStmt) : store =
              kv = kv_set s.kv backoff None }
   | StoreStmt_AddMember { f_key = k; f_member = m; f_ttl = _ } ->
     { s with sets = (fun k' -> if k' = k then m :: s.sets k else s.sets k') }
+  | StoreStmt_SetExNx { f_key = k; f_value = v; f_ttl = _ } ->
+    { s with kv = (if Some? (s.kv k) then s.kv else kv_set s.kv k (Some v)) }
 
 /// One store statement and the outcome the handler observed. Only a fixed
 /// window counter can refuse: it grew before it reported the refusal.
@@ -632,3 +705,105 @@ let deletion_plan (acct: text) : list t_SqlStmt =
 /// The whole transaction, from the state it began in.
 let deletion_transaction (d: db) (acct: text) (f: option nat) : (list t_WriteOutcome & db) =
   run_tx d d (deletion_plan acct) 0 f
+
+// ── Registration and challenge ─────────────────────────────────────────────
+
+/// The `users` count the account budget reads, as the `i64` the query returns.
+/// The saturation at `i64::MAX` is unreachable for any real table and only
+/// makes the `nat`-to-`i64` conversion total.
+let v_i64_max : int = 4611686018427387903
+
+let users_count (d: db) : i64 =
+  mk_i64 (if L.length d.users <= v_i64_max then L.length d.users else v_i64_max)
+
+/// Below the saturation bound the count is exactly the number of rows.
+let users_count_is_length (d: db)
+  : Lemma (L.length d.users <= v_i64_max ==> v (users_count d) = L.length d.users) =
+  ()
+
+/// `RegisterIo::check_account_budget`: the count query, or its error.
+let account_count (d: db) (failed: bool)
+  : (Vela_session_policy.Registration_driver.t_BudgetObservation & i64) =
+  if failed
+  then (classify_account_count CountOutcome_Failed, mk_i64 0)
+  else (classify_account_count (CountOutcome_Count (users_count d)), users_count d)
+
+/// `ChallengeIssueIo::check_rate_limit`: the first outcome of the one counter.
+let challenge_rate_limit (s: store) (ip: text) (f: option nat)
+  : (Vela_session_policy.Challenge_issue_driver.t_RateLimitObservation & store) =
+  let r = run_store s (stmts_of (plan_challenge_rate_limit ip)) 0 f in
+  (classify_challenge_rate_limit (first_out (fst r)), snd r)
+
+/// `ChallengeIssueIo::store_nonce`: first writer wins. `Inserted` exactly when
+/// the key was absent and the write ran; a collision leaves the live challenge
+/// untouched.
+let challenge_nonce (s: store) (challenge tag: text) (f: option nat)
+  : (Vela_session_policy.Challenge_issue_driver.t_StoreObservation & store) =
+  let key = match stmts_of (plan_store_nonce challenge tag) with
+            | StoreStmt_SetExNx { f_key = k } :: _ -> k
+            | _ -> Alloc.String.String "" in
+  let value = match stmts_of (plan_store_nonce challenge tag) with
+              | StoreStmt_SetExNx { f_value = v } :: _ -> v
+              | _ -> Alloc.String.String "" in
+  if faulted f 0
+  then (classify_store_nonce NxOutcome_Failed, s)
+  else if Some? (s.kv key)
+  then (classify_store_nonce NxOutcome_KeyExists, s)
+  else (classify_store_nonce NxOutcome_Inserted,
+        exec_store s (StoreStmt_SetExNx { f_key = key; f_value = value; f_ttl = v_CHALLENGE_TTL_SECS }))
+
+/// `RegisterIo::check_rate_limit`.
+let registration_rate_limit (s: store) (ip: text) (f: option nat)
+  : (Vela_session_policy.Registration_driver.t_RateLimitObservation & store) =
+  let r = run_store s (stmts_of (plan_registration_rate_limit ip)) 0 f in
+  (classify_registration_rate_limit (first_out (fst r)), snd r)
+
+/// `RegisterIo::insert_account`: one `INSERT` on the open transaction.
+let insert_account (d: db) (usr now ek since: text) (f: option nat)
+  : (Vela_session_policy.Registration_driver.t_InsertObservation & db) =
+  if faulted f 0
+  then (classify_insert WriteOutcome_Failed, d)
+  else match exec_stmt d (plan_insert_account usr now ek since) with
+       | Some (w, d') -> (classify_insert (outcome_of w), d')
+       | None -> (classify_insert WriteOutcome_Failed, d)
+
+/// `RegisterIo::insert_device`.
+let insert_device (d: db) (dev usr now nm kd ek vk: text) (f: option nat)
+  : (Vela_session_policy.Registration_driver.t_InsertObservation & db) =
+  if faulted f 0
+  then (classify_insert WriteOutcome_Failed, d)
+  else match exec_stmt d (plan_insert_device dev usr nm kd now ek vk) with
+       | Some (w, d') -> (classify_insert (outcome_of w), d')
+       | None -> (classify_insert WriteOutcome_Failed, d)
+
+/// `RegisterIo::begin_transaction`.
+let registration_begin (d: db) (f: option nat)
+  : (Vela_session_policy.Registration_driver.t_TransactionObservation & db) =
+  if faulted f 0
+  then (classify_registration_transaction WriteOutcome_Failed, d)
+  else (classify_registration_transaction (WriteOutcome_Applied (mk_u64 0)), d)
+
+/// `RegisterIo::commit`.
+let registration_commit (d: db) (f: option nat)
+  : (Vela_session_policy.Registration_driver.t_CommitObservation & db) =
+  if faulted f 0
+  then (classify_registration_commit WriteOutcome_Failed, d)
+  else (classify_registration_commit (WriteOutcome_Applied (mk_u64 0)), d)
+
+/// `RegisterIo::track_token`.
+let registration_track (s: store) (dev jti: text) (f: option nat)
+  : (Vela_session_policy.Registration_driver.t_TrackObservation & store) =
+  let r = run_store s (stmts_of (plan_track_jti dev jti)) 0 f in
+  (classify_registration_track (first_out (fst r)), snd r)
+
+/// The registration handler's one transaction: the account insert, the device
+/// insert, then the commit, in the driver's order.
+let registration_plan (usr dev now sek since nm kd dek vk: text) : list t_SqlStmt =
+  [ plan_insert_account usr now sek since;
+    plan_insert_device dev usr nm kd now dek vk;
+    plan_commit () ]
+
+/// The whole registration transaction, from the state it began in.
+let registration_transaction (d: db) (usr dev now sek since nm kd dek vk: text) (f: option nat)
+  : (list t_WriteOutcome & db) =
+  run_tx_checked d d (registration_plan usr dev now sek since nm kd dek vk) 0 f

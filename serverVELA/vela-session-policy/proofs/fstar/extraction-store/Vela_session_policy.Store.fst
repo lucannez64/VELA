@@ -21,6 +21,21 @@ let v_VERIFY_FAIL_LIMIT: u64 = mk_u64 5
 /// The TTL of a device's tracked-JTI set (`rate_limit::SESSION_HARD_CAP_SECS`).
 let v_JTI_SET_TTL_SECS: u64 = (mk_u64 8 *! mk_u64 60 <: u64) *! mk_u64 60
 
+/// 20 challenge issues per minute per IP (`rate_limit::challenge_by_ip`).
+let v_CHALLENGE_RATE_LIMIT: u64 = mk_u64 20
+
+/// The challenge limiter's fixed window (`rate_limit::WINDOW_SECS`).
+let v_CHALLENGE_RATE_WINDOW_SECS: u64 = mk_u64 60
+
+/// The lifetime of one issued challenge (`challenge::CHALLENGE_TTL_SECS`).
+let v_CHALLENGE_TTL_SECS: u64 = mk_u64 60
+
+/// 5 registrations per hour per IP (`account::RegisterIo`).
+let v_REGISTER_RATE_LIMIT: u64 = mk_u64 5
+
+/// The registration limiter's fixed window.
+let v_REGISTER_RATE_WINDOW_SECS: u64 = mk_u64 60 *! mk_u64 60
+
 /// One SQL statement an executor may run.
 type t_SqlStmt =
   | SqlStmt_SelectDeviceIdsByUser { f_user:Alloc.String.t_String }: t_SqlStmt
@@ -58,6 +73,22 @@ type t_SqlStmt =
     f_kind:Alloc.String.t_String;
     f_device_id:Alloc.String.t_String
   }: t_SqlStmt
+  | SqlStmt_InsertUser {
+    f_user:Alloc.String.t_String;
+    f_now:Alloc.String.t_String;
+    f_share_ek:Alloc.String.t_String;
+    f_share_ek_since:Alloc.String.t_String
+  }: t_SqlStmt
+  | SqlStmt_InsertDevice {
+    f_device:Alloc.String.t_String;
+    f_user:Alloc.String.t_String;
+    f_name:Alloc.String.t_String;
+    f_kind:Alloc.String.t_String;
+    f_now:Alloc.String.t_String;
+    f_ek:Alloc.String.t_String;
+    f_vk:Alloc.String.t_String
+  }: t_SqlStmt
+  | SqlStmt_CountUsers : t_SqlStmt
   | SqlStmt_Commit : t_SqlStmt
 
 /// One store statement an executor may run.
@@ -85,6 +116,11 @@ type t_StoreStmt =
   | StoreStmt_AddMember {
     f_key:Alloc.String.t_String;
     f_member:Alloc.String.t_String;
+    f_ttl:u64
+  }: t_StoreStmt
+  | StoreStmt_SetExNx {
+    f_key:Alloc.String.t_String;
+    f_value:Alloc.String.t_String;
     f_ttl:u64
   }: t_StoreStmt
 
@@ -120,6 +156,18 @@ type t_TargetRowView = {
 type t_TakeOutcome =
   | TakeOutcome_Taken : Core_models.Option.t_Option Alloc.String.t_String -> t_TakeOutcome
   | TakeOutcome_Failed : t_TakeOutcome
+
+/// What a first-writer-wins insert (`set_ex_nx`) returned: it inserted, the
+/// key was already there, or the store failed.
+type t_NxOutcome =
+  | NxOutcome_Inserted : t_NxOutcome
+  | NxOutcome_KeyExists : t_NxOutcome
+  | NxOutcome_Failed : t_NxOutcome
+
+/// What `SELECT COUNT(*) FROM users` returned.
+type t_CountOutcome =
+  | CountOutcome_Count : i64 -> t_CountOutcome
+  | CountOutcome_Failed : t_CountOutcome
 
 /// What the unrevoked-device lookup returned, after decoding.
 type t_DeviceReadOutcome =
@@ -649,6 +697,152 @@ let plan_track_jti (device jti: Alloc.String.t_String)
       <:
       t_Slice t_StoreStmt)
 
+/// `ChallengeIssueIo::check_rate_limit`: the per-IP fixed window.
+let plan_challenge_rate_limit (ip: Alloc.String.t_String)
+    : Alloc.Vec.t_Vec t_StoreStmt Alloc.Alloc.t_Global =
+  let args:Alloc.String.t_String = ip <: Alloc.String.t_String in
+  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 1) =
+    let list = [Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args] in
+    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+    Rust_primitives.Hax.array_of_list 1 list
+  in
+  Alloc.Slice.impl__into_vec #t_StoreStmt
+    #Alloc.Alloc.t_Global
+    ((let list =
+          [
+            StoreStmt_Incr
+            ({
+                f_key
+                =
+                Core_models.Hint.must_use #Alloc.String.t_String
+                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 1)
+                          (mk_usize 1)
+                          (let list = ["rl:challenge:ip:"] in
+                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+                            Rust_primitives.Hax.array_of_list 1 list)
+                          args
+                        <:
+                        Core_models.Fmt.t_Arguments)
+                    <:
+                    Alloc.String.t_String);
+                f_limit = v_CHALLENGE_RATE_LIMIT;
+                f_ttl = v_CHALLENGE_RATE_WINDOW_SECS
+              })
+            <:
+            t_StoreStmt
+          ]
+        in
+        FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+        Rust_primitives.Hax.array_of_list 1 list)
+      <:
+      t_Slice t_StoreStmt)
+
+/// `ChallengeIssueIo::store_nonce`: one purpose tag under the fresh nonce's
+/// key, first writer wins.
+let plan_store_nonce (challenge tag: Alloc.String.t_String)
+    : Alloc.Vec.t_Vec t_StoreStmt Alloc.Alloc.t_Global =
+  let args:Alloc.String.t_String = challenge <: Alloc.String.t_String in
+  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 1) =
+    let list = [Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args] in
+    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+    Rust_primitives.Hax.array_of_list 1 list
+  in
+  Alloc.Slice.impl__into_vec #t_StoreStmt
+    #Alloc.Alloc.t_Global
+    ((let list =
+          [
+            StoreStmt_SetExNx
+            ({
+                f_key
+                =
+                Core_models.Hint.must_use #Alloc.String.t_String
+                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 1)
+                          (mk_usize 1)
+                          (let list = ["challenge:"] in
+                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+                            Rust_primitives.Hax.array_of_list 1 list)
+                          args
+                        <:
+                        Core_models.Fmt.t_Arguments)
+                    <:
+                    Alloc.String.t_String);
+                f_value = tag;
+                f_ttl = v_CHALLENGE_TTL_SECS
+              })
+            <:
+            t_StoreStmt
+          ]
+        in
+        FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+        Rust_primitives.Hax.array_of_list 1 list)
+      <:
+      t_Slice t_StoreStmt)
+
+/// `RegisterIo::check_rate_limit`: the per-IP fixed window.
+let plan_registration_rate_limit (ip: Alloc.String.t_String)
+    : Alloc.Vec.t_Vec t_StoreStmt Alloc.Alloc.t_Global =
+  let args:Alloc.String.t_String = ip <: Alloc.String.t_String in
+  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 1) =
+    let list = [Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args] in
+    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+    Rust_primitives.Hax.array_of_list 1 list
+  in
+  Alloc.Slice.impl__into_vec #t_StoreStmt
+    #Alloc.Alloc.t_Global
+    ((let list =
+          [
+            StoreStmt_Incr
+            ({
+                f_key
+                =
+                Core_models.Hint.must_use #Alloc.String.t_String
+                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 1)
+                          (mk_usize 1)
+                          (let list = ["rl:register:ip:"] in
+                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+                            Rust_primitives.Hax.array_of_list 1 list)
+                          args
+                        <:
+                        Core_models.Fmt.t_Arguments)
+                    <:
+                    Alloc.String.t_String);
+                f_limit = v_REGISTER_RATE_LIMIT;
+                f_ttl = v_REGISTER_RATE_WINDOW_SECS
+              })
+            <:
+            t_StoreStmt
+          ]
+        in
+        FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+        Rust_primitives.Hax.array_of_list 1 list)
+      <:
+      t_Slice t_StoreStmt)
+
+/// `RegisterIo::check_account_budget`: the account-count query.
+let plan_account_count (_: Prims.unit) : t_SqlStmt = SqlStmt_CountUsers <: t_SqlStmt
+
+/// `RegisterIo::insert_account`.
+let plan_insert_account (user now share_ek share_ek_since: Alloc.String.t_String) : t_SqlStmt =
+  SqlStmt_InsertUser
+  ({ f_user = user; f_now = now; f_share_ek = share_ek; f_share_ek_since = share_ek_since })
+  <:
+  t_SqlStmt
+
+/// `RegisterIo::insert_device`.
+let plan_insert_device (device user name kind now ek vk: Alloc.String.t_String) : t_SqlStmt =
+  SqlStmt_InsertDevice
+  ({
+      f_device = device;
+      f_user = user;
+      f_name = name;
+      f_kind = kind;
+      f_now = now;
+      f_ek = ek;
+      f_vk = vk
+    })
+  <:
+  t_SqlStmt
+
 /// The logout marker: it was written exactly when its one statement ran.
 let classify_logout (outcomes: t_Slice t_StoreOutcome)
     : Vela_session_policy.Revocation_driver.t_LogoutObservation =
@@ -921,3 +1115,114 @@ let classify_track_jti (outcome: t_StoreOutcome)
     Vela_session_policy.Login_driver.TokenTrackObservation_Failed
     <:
     Vela_session_policy.Login_driver.t_TokenTrackObservation
+
+/// A rate limiter: `Allowed` exactly when its one counter statement ran.
+let classify_challenge_rate_limit (outcome: t_StoreOutcome)
+    : Vela_session_policy.Challenge_issue_driver.t_RateLimitObservation =
+  match outcome <: t_StoreOutcome with
+  | StoreOutcome_Applied  ->
+    Vela_session_policy.Challenge_issue_driver.RateLimitObservation_Allowed
+    <:
+    Vela_session_policy.Challenge_issue_driver.t_RateLimitObservation
+  | StoreOutcome_Failed  ->
+    Vela_session_policy.Challenge_issue_driver.RateLimitObservation_Denied
+    <:
+    Vela_session_policy.Challenge_issue_driver.t_RateLimitObservation
+
+/// The first-writer-wins challenge write: `Inserted` exactly when the key was
+/// absent and the write ran.
+let classify_store_nonce (outcome: t_NxOutcome)
+    : Vela_session_policy.Challenge_issue_driver.t_StoreObservation =
+  match outcome <: t_NxOutcome with
+  | NxOutcome_Inserted  ->
+    Vela_session_policy.Challenge_issue_driver.StoreObservation_Inserted
+    <:
+    Vela_session_policy.Challenge_issue_driver.t_StoreObservation
+  | NxOutcome_KeyExists  ->
+    Vela_session_policy.Challenge_issue_driver.StoreObservation_KeyExists
+    <:
+    Vela_session_policy.Challenge_issue_driver.t_StoreObservation
+  | NxOutcome_Failed  ->
+    Vela_session_policy.Challenge_issue_driver.StoreObservation_Failed
+    <:
+    Vela_session_policy.Challenge_issue_driver.t_StoreObservation
+
+/// The registration limiter.
+let classify_registration_rate_limit (outcome: t_StoreOutcome)
+    : Vela_session_policy.Registration_driver.t_RateLimitObservation =
+  match outcome <: t_StoreOutcome with
+  | StoreOutcome_Applied  ->
+    Vela_session_policy.Registration_driver.RateLimitObservation_Allowed
+    <:
+    Vela_session_policy.Registration_driver.t_RateLimitObservation
+  | StoreOutcome_Failed  ->
+    Vela_session_policy.Registration_driver.RateLimitObservation_Denied
+    <:
+    Vela_session_policy.Registration_driver.t_RateLimitObservation
+
+/// The registration transaction begin.
+let classify_registration_transaction (outcome: t_WriteOutcome)
+    : Vela_session_policy.Registration_driver.t_TransactionObservation =
+  match outcome <: t_WriteOutcome with
+  | WriteOutcome_Applied _ ->
+    Vela_session_policy.Registration_driver.TransactionObservation_Begun
+    <:
+    Vela_session_policy.Registration_driver.t_TransactionObservation
+  | WriteOutcome_Failed  ->
+    Vela_session_policy.Registration_driver.TransactionObservation_Failed
+    <:
+    Vela_session_policy.Registration_driver.t_TransactionObservation
+
+/// The registration commit.
+let classify_registration_commit (outcome: t_WriteOutcome)
+    : Vela_session_policy.Registration_driver.t_CommitObservation =
+  match outcome <: t_WriteOutcome with
+  | WriteOutcome_Applied _ ->
+    Vela_session_policy.Registration_driver.CommitObservation_Committed
+    <:
+    Vela_session_policy.Registration_driver.t_CommitObservation
+  | WriteOutcome_Failed  ->
+    Vela_session_policy.Registration_driver.CommitObservation_Failed
+    <:
+    Vela_session_policy.Registration_driver.t_CommitObservation
+
+/// The account budget: `Counted` exactly when the query ran, carrying the
+/// exact number of `users` rows.
+let classify_account_count (outcome: t_CountOutcome)
+    : Vela_session_policy.Registration_driver.t_BudgetObservation =
+  match outcome <: t_CountOutcome with
+  | CountOutcome_Count count ->
+    Vela_session_policy.Registration_driver.BudgetObservation_Counted
+    ({ Vela_session_policy.Registration_driver.f_count = count })
+    <:
+    Vela_session_policy.Registration_driver.t_BudgetObservation
+  | CountOutcome_Failed  ->
+    Vela_session_policy.Registration_driver.BudgetObservation_QueryFailed
+    <:
+    Vela_session_policy.Registration_driver.t_BudgetObservation
+
+/// One `INSERT`: `Inserted` exactly when it ran (its id was fresh).
+let classify_insert (outcome: t_WriteOutcome)
+    : Vela_session_policy.Registration_driver.t_InsertObservation =
+  match outcome <: t_WriteOutcome with
+  | WriteOutcome_Applied _ ->
+    Vela_session_policy.Registration_driver.InsertObservation_Inserted
+    <:
+    Vela_session_policy.Registration_driver.t_InsertObservation
+  | WriteOutcome_Failed  ->
+    Vela_session_policy.Registration_driver.InsertObservation_Failed
+    <:
+    Vela_session_policy.Registration_driver.t_InsertObservation
+
+/// `RegisterIo::track_token`: `Tracked` exactly when the set add ran.
+let classify_registration_track (outcome: t_StoreOutcome)
+    : Vela_session_policy.Registration_driver.t_TrackObservation =
+  match outcome <: t_StoreOutcome with
+  | StoreOutcome_Applied  ->
+    Vela_session_policy.Registration_driver.TrackObservation_Tracked
+    <:
+    Vela_session_policy.Registration_driver.t_TrackObservation
+  | StoreOutcome_Failed  ->
+    Vela_session_policy.Registration_driver.TrackObservation_Failed
+    <:
+    Vela_session_policy.Registration_driver.t_TrackObservation

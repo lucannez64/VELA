@@ -20,6 +20,8 @@ module R = Vela_session_policy.Revocation_driver
 module SP = FStar.Seq.Properties
 module LG = Vela_session_policy.Login_driver
 module LGC = Vela_session_policy.Challenge
+module RG = Vela_session_policy.Registration_driver
+module CI = Vela_session_policy.Challenge_issue_driver
 
 // ── Outcome slices ─────────────────────────────────────────────────────────
 
@@ -701,3 +703,336 @@ let vector_login_track ()
            obs == LG.TokenTrackObservation_Tracked /\
            L.mem (s "jti") (post.sets (track_key (s "dev")))) =
   login_track_is_honest vector_store (s "dev") (s "jti") None
+
+// ── Registration and challenge ─────────────────────────────────────────────
+
+/// The per-IP challenge limiter's key.
+let challenge_rate_key (ip: text) : text =
+  match first_stmt (stmts_of (plan_challenge_rate_limit ip)) with
+  | StoreStmt_Incr { f_key = k } -> k
+  | _ -> Alloc.String.String ""
+
+/// The one counter statement's own outcome on a store.
+let challenge_rate_out (s: store) (ip: text) : t_StoreOutcome =
+  match stmts_of (plan_challenge_rate_limit ip) with
+  | st :: _ -> fst (exec_store_out s st)
+  | [] -> StoreOutcome_Failed
+
+/// The per-IP registration limiter's key.
+let registration_rate_key (ip: text) : text =
+  match first_stmt (stmts_of (plan_registration_rate_limit ip)) with
+  | StoreStmt_Incr { f_key = k } -> k
+  | _ -> Alloc.String.String ""
+
+let registration_rate_out (s: store) (ip: text) : t_StoreOutcome =
+  match stmts_of (plan_registration_rate_limit ip) with
+  | st :: _ -> fst (exec_store_out s st)
+  | [] -> StoreOutcome_Failed
+
+/// The challenge key and the tag the issue plan writes under it.
+let nonce_key (challenge: text) : text =
+  match first_stmt (stmts_of (plan_store_nonce challenge (Alloc.String.String ""))) with
+  | StoreStmt_SetExNx { f_key = k } -> k
+  | _ -> Alloc.String.String ""
+
+let nonce_value (challenge tag: text) : text =
+  match first_stmt (stmts_of (plan_store_nonce challenge tag)) with
+  | StoreStmt_SetExNx { f_value = v } -> v
+  | _ -> Alloc.String.String ""
+
+// ── Plan shapes ────────────────────────────────────────────────────────────
+
+let plan_account_count_shape ()
+  : Lemma (plan_account_count () == SqlStmt_CountUsers) =
+  ()
+
+let plan_insert_account_shape (usr now ek since: text)
+  : Lemma (plan_insert_account usr now ek since ==
+           SqlStmt_InsertUser { f_user = usr; f_now = now;
+                                f_share_ek = ek; f_share_ek_since = since }) =
+  ()
+
+let plan_insert_device_shape (dev usr nm kd now ek vk: text)
+  : Lemma (plan_insert_device dev usr nm kd now ek vk ==
+           SqlStmt_InsertDevice { f_device = dev; f_user = usr; f_name = nm;
+                                  f_kind = kd; f_now = now; f_ek = ek; f_vk = vk }) =
+  ()
+
+let plan_challenge_rate_limit_shape (ip: text)
+  : Lemma (L.length (stmts_of (plan_challenge_rate_limit ip)) == 1 /\
+           (match first_stmt (stmts_of (plan_challenge_rate_limit ip)) with
+            | StoreStmt_Incr { f_key = k; f_limit = lim; f_ttl = ttl } ->
+              k == challenge_rate_key ip /\ lim == v_CHALLENGE_RATE_LIMIT /\
+              ttl == v_CHALLENGE_RATE_WINDOW_SECS
+            | _ -> False)) =
+  ()
+
+let plan_registration_rate_limit_shape (ip: text)
+  : Lemma (L.length (stmts_of (plan_registration_rate_limit ip)) == 1 /\
+           (match first_stmt (stmts_of (plan_registration_rate_limit ip)) with
+            | StoreStmt_Incr { f_key = k; f_limit = lim; f_ttl = ttl } ->
+              k == registration_rate_key ip /\ lim == v_REGISTER_RATE_LIMIT /\
+              ttl == v_REGISTER_RATE_WINDOW_SECS
+            | _ -> False)) =
+  ()
+
+let plan_store_nonce_shape (challenge tag: text)
+  : Lemma (L.length (stmts_of (plan_store_nonce challenge tag)) == 1 /\
+           (match first_stmt (stmts_of (plan_store_nonce challenge tag)) with
+            | StoreStmt_SetExNx { f_key = k; f_value = v; f_ttl = ttl } ->
+              k == nonce_key challenge /\ v == tag /\
+              ttl == v_CHALLENGE_TTL_SECS
+            | _ -> False)) =
+  ()
+
+let plan_registration_plan_shape (usr dev now sek since nm kd dek vk: text)
+  : Lemma (registration_plan usr dev now sek since nm kd dek vk ==
+           [ plan_insert_account usr now sek since;
+             plan_insert_device dev usr nm kd now dek vk;
+             plan_commit () ]) =
+  ()
+
+// ── Account budget and the two limiters ────────────────────────────────────
+
+/// `check_account_budget`: `Counted` exactly when the query ran, carrying the
+/// exact number of `users` rows.
+let account_count_is_honest (d: db) (failed: bool)
+  : Lemma
+    (fst (account_count d failed) ==
+       (if failed then RG.BudgetObservation_QueryFailed
+        else RG.BudgetObservation_Counted { f_count = users_count d }) /\
+     snd (account_count d failed) == (if failed then mk_i64 0 else users_count d)) =
+  plan_account_count_shape ()
+
+/// The registration limiter allows exactly the calls its counter still has
+/// room for, and counts every call it made.
+let registration_rate_limit_is_honest (s: store) (ip: text) (f: option nat)
+  : Lemma
+    ((fst (registration_rate_limit s ip f) == RG.RateLimitObservation_Allowed
+        <==> (not (faulted f 0) /\ registration_rate_out s ip == StoreOutcome_Applied)) /\
+     (snd (registration_rate_limit s ip f)).counters (registration_rate_key ip) ==
+       (if faulted f 0 then s.counters (registration_rate_key ip)
+        else s.counters (registration_rate_key ip) + 1) /\
+     (snd (registration_rate_limit s ip f)).kv == s.kv /\
+     (snd (registration_rate_limit s ip f)).sets == s.sets) =
+  plan_registration_rate_limit_shape ip
+
+/// The challenge limiter, the same way.
+let challenge_rate_limit_is_honest (s: store) (ip: text) (f: option nat)
+  : Lemma
+    ((fst (challenge_rate_limit s ip f) == CI.RateLimitObservation_Allowed
+        <==> (not (faulted f 0) /\ challenge_rate_out s ip == StoreOutcome_Applied)) /\
+     (snd (challenge_rate_limit s ip f)).counters (challenge_rate_key ip) ==
+       (if faulted f 0 then s.counters (challenge_rate_key ip)
+        else s.counters (challenge_rate_key ip) + 1) /\
+     (snd (challenge_rate_limit s ip f)).kv == s.kv /\
+     (snd (challenge_rate_limit s ip f)).sets == s.sets) =
+  plan_challenge_rate_limit_shape ip
+
+// ── The two registration inserts ───────────────────────────────────────────
+
+#push-options "--fuel 4 --ifuel 2"
+/// `insert_account`: `Inserted` exactly when the one statement ran on a fresh
+/// id, and then exactly that one `users` row is added; a duplicate id or an
+/// injected failure changes nothing.
+let insert_account_is_honest (d: db) (usr now ek since: text) (f: option nat)
+  : Lemma
+    ((fst (insert_account d usr now ek since f) == RG.InsertObservation_Inserted
+        <==> (no_fault_in f 1 /\ lookup d.users usr == None)) /\
+     (fst (insert_account d usr now ek since f) == RG.InsertObservation_Inserted ==>
+        snd (insert_account d usr now ek since f) == st_insert_user d usr now ek since) /\
+     (fst (insert_account d usr now ek since f) =!= RG.InsertObservation_Inserted ==>
+        snd (insert_account d usr now ek since f) == d)) =
+  plan_insert_account_shape usr now ek since
+
+/// `insert_device`: the same for the one `devices` row, carrying the exact
+/// owner, name, type and keys the plan named.
+let insert_device_is_honest (d: db) (dev usr now nm kd ek vk: text) (f: option nat)
+  : Lemma
+    ((fst (insert_device d dev usr now nm kd ek vk f) == RG.InsertObservation_Inserted
+        <==> (no_fault_in f 1 /\ lookup d.devices dev == None)) /\
+     (fst (insert_device d dev usr now nm kd ek vk f) == RG.InsertObservation_Inserted ==>
+        snd (insert_device d dev usr now nm kd ek vk f) ==
+          st_insert_device d dev usr now nm kd ek vk) /\
+     (fst (insert_device d dev usr now nm kd ek vk f) =!= RG.InsertObservation_Inserted ==>
+        snd (insert_device d dev usr now nm kd ek vk f) == d)) =
+  plan_insert_device_shape dev usr nm kd now ek vk
+#pop-options
+
+/// `begin_transaction`: `Begun` exactly when it ran; no table changes.
+let registration_begin_is_honest (d: db) (f: option nat)
+  : Lemma
+    ((fst (registration_begin d f) == RG.TransactionObservation_Begun <==>
+        no_fault_in f 1) /\
+     snd (registration_begin d f) == d) =
+  ()
+
+/// `commit`: `Committed` exactly when it ran.
+let registration_commit_is_honest (d: db) (f: option nat)
+  : Lemma
+    ((fst (registration_commit d f) == RG.CommitObservation_Committed <==>
+        no_fault_in f 1) /\
+     snd (registration_commit d f) == d) =
+  plan_commit_shape ()
+
+#push-options "--fuel 4 --ifuel 2"
+/// `track_token`: `Tracked` exactly when the one set add ran, and then the JTI
+/// is in the device's tracked set and nothing else changed.
+let registration_track_is_honest (s: store) (dev jti: text) (f: option nat)
+  : Lemma
+    ((fst (registration_track s dev jti f) == RG.TrackObservation_Tracked
+        <==> no_fault_in f 1) /\
+     (fst (registration_track s dev jti f) == RG.TrackObservation_Tracked ==>
+        L.mem jti ((snd (registration_track s dev jti f)).sets (track_key dev)) /\
+        (forall (k: text). k <> track_key dev ==>
+           (snd (registration_track s dev jti f)).sets k == s.sets k) /\
+        (snd (registration_track s dev jti f)).kv == s.kv /\
+        (snd (registration_track s dev jti f)).revoked == s.revoked) /\
+     (fst (registration_track s dev jti f) =!= RG.TrackObservation_Tracked ==>
+        snd (registration_track s dev jti f) == s)) =
+  plan_track_jti_shape dev jti
+#pop-options
+
+// ── The challenge write ────────────────────────────────────────────────────
+
+#push-options "--fuel 4 --ifuel 2"
+/// `store_nonce`: `Inserted` exactly when the key was absent and the write
+/// ran; a collision is reported without touching the live challenge, and a
+/// failed call changes nothing.
+let challenge_nonce_is_honest (s: store) (challenge tag: text) (f: option nat)
+  : Lemma
+    ((fst (challenge_nonce s challenge tag f) == CI.StoreObservation_Inserted
+        <==> (no_fault_in f 1 /\ s.kv (nonce_key challenge) == None)) /\
+     (fst (challenge_nonce s challenge tag f) == CI.StoreObservation_KeyExists
+        <==> (no_fault_in f 1 /\ Some? (s.kv (nonce_key challenge)))) /\
+     (fst (challenge_nonce s challenge tag f) == CI.StoreObservation_Failed
+        <==> faulted f 0) /\
+     (fst (challenge_nonce s challenge tag f) == CI.StoreObservation_Inserted ==>
+        (snd (challenge_nonce s challenge tag f)).kv (nonce_key challenge) ==
+          Some (tag) /\
+        (forall (k: text). k <> nonce_key challenge ==>
+           (snd (challenge_nonce s challenge tag f)).kv k == s.kv k)) /\
+     (fst (challenge_nonce s challenge tag f) == CI.StoreObservation_KeyExists ==>
+        snd (challenge_nonce s challenge tag f) == s) /\
+     (fst (challenge_nonce s challenge tag f) == CI.StoreObservation_Failed ==>
+        snd (challenge_nonce s challenge tag f) == s)) =
+  plan_store_nonce_shape challenge tag
+#pop-options
+
+// ── The registration transaction ───────────────────────────────────────────
+
+#push-options "--fuel 4 --ifuel 2"
+/// The whole registration transaction: when the commit ran and both ids were
+/// fresh, exactly the two intended rows are published; otherwise the state is
+/// exactly the one the transaction began from (the handler drops it).
+let registration_tx_is_honest (d: db) (usr dev now sek since nm kd dek vk: text)
+      (f: option nat)
+  : Lemma
+    (let (outs, post) = registration_transaction d usr dev now sek since nm kd dek vk f in
+     ((no_fault_in f 3 /\ lookup d.users usr == None /\ lookup d.devices dev == None) ==>
+        (post == registration_published d usr dev now sek since nm kd dek vk /\
+         L.length outs == 3)) /\
+     (~(no_fault_in f 3 /\ lookup d.users usr == None /\ lookup d.devices dev == None) ==>
+        post == d)) =
+  plan_registration_plan_shape usr dev now sek since nm kd dek vk
+#pop-options
+
+// ── Facts the registration and challenge drivers rely on ───────────────────
+
+/// An `Inserted` observation is only ever a stored row.
+let inserted_account_is_stored (d: db) (usr now ek since: text) (f: option nat)
+  : Lemma
+    (fst (insert_account d usr now ek since f) == RG.InsertObservation_Inserted ==>
+       Some? (lookup (snd (insert_account d usr now ek since f)).users usr)) =
+  insert_account_is_honest d usr now ek since f
+
+let inserted_device_is_stored (d: db) (dev usr now nm kd ek vk: text) (f: option nat)
+  : Lemma
+    (fst (insert_device d dev usr now nm kd ek vk f) == RG.InsertObservation_Inserted ==>
+       Some? (lookup (snd (insert_device d dev usr now nm kd ek vk f)).devices dev)) =
+  insert_device_is_honest d dev usr now nm kd ek vk f
+
+/// A published registration really holds the account row and the device row
+/// that names it.
+let registration_publishes_both_rows (d: db) (usr dev now sek since nm kd dek vk: text)
+      (f: option nat)
+  : Lemma
+    ((no_fault_in f 3 /\ lookup d.users usr == None /\ lookup d.devices dev == None) ==>
+       (Some? (lookup (snd (registration_transaction d usr dev now sek since nm kd dek vk f)).users usr) /\
+        Some? (lookup (snd (registration_transaction d usr dev now sek since nm kd dek vk f)).devices dev) /\
+        (match lookup (snd (registration_transaction d usr dev now sek since nm kd dek vk f)).devices dev with
+         | Some r -> r.dv_user == usr
+         | None -> False))) =
+  registration_tx_is_honest d usr dev now sek since nm kd dek vk f
+
+/// The account budget counts exactly the stored accounts.
+let budget_counts_the_stored_accounts (d: db) (failed: bool)
+  : Lemma
+    (fst (account_count d failed) == RG.BudgetObservation_QueryFailed \/
+     (match fst (account_count d failed) with
+      | RG.BudgetObservation_Counted facts -> facts.RG.f_count == users_count d
+      | _ -> False)) =
+  plan_account_count_shape ()
+
+/// An issued challenge is stored under its nonce key with the purpose tag,
+/// and nothing else was touched.
+let challenge_issued_nonce_is_stored (s: store) (challenge tag: text) (f: option nat)
+  : Lemma
+    (fst (challenge_nonce s challenge tag f) == CI.StoreObservation_Inserted ==>
+       (snd (challenge_nonce s challenge tag f)).kv (nonce_key challenge) ==
+         Some (tag)) =
+  challenge_nonce_is_honest s challenge tag f
+
+/// A collision never overwrites the live challenge.
+let challenge_collision_keeps_the_live_nonce (s: store) (challenge tag: text)
+      (f: option nat)
+  : Lemma
+    (fst (challenge_nonce s challenge tag f) == CI.StoreObservation_KeyExists ==>
+       snd (challenge_nonce s challenge tag f) == s) =
+  challenge_nonce_is_honest s challenge tag f
+
+/// A tracked registration JTI can be revoked by the device-revocation sweep.
+let registration_tracks_the_issued_jti (s: store) (dev jti: text) (f: option nat)
+  : Lemma
+    (fst (registration_track s dev jti f) == RG.TrackObservation_Tracked ==>
+       L.mem jti ((snd (registration_track s dev jti f)).sets (track_key dev))) =
+  registration_track_is_honest s dev jti f
+
+// ── Vectors shared with `store_model.rs::tests` ────────────────────────────
+
+let vector_challenge_nonce ()
+  : Lemma (let (obs, post) = challenge_nonce vector_store (s "n") (s "login") None in
+           obs == CI.StoreObservation_Inserted /\
+           post.kv (nonce_key (s "n")) == Some (s "login")) =
+  challenge_nonce_is_honest vector_store (s "n") (s "login") None
+
+let vector_challenge_collision : store =
+  { vector_store with kv = (fun k -> if k = nonce_key (s "n") then Some (s "enroll") else None) }
+
+let vector_challenge_nonce_collision ()
+  : Lemma (let (obs, post) = challenge_nonce vector_challenge_collision (s "n") (s "login") None in
+           obs == CI.StoreObservation_KeyExists /\ post == vector_challenge_collision) =
+  challenge_nonce_is_honest vector_challenge_collision (s "n") (s "login") None;
+  challenge_collision_keeps_the_live_nonce vector_challenge_collision (s "n") (s "login") None
+
+let vector_empty_db : db =
+  { users = []; devices = []; sessions = []; inbox = []; items = [];
+    sends = []; chunks = []; buckets = [] }
+
+let vector_insert_account ()
+  : Lemma (let (obs, post) =
+             insert_account vector_empty_db (s "u") (s "now") (s "ek") (s "now") None in
+           obs == RG.InsertObservation_Inserted /\
+           Some? (lookup post.users (s "u"))) =
+  insert_account_is_honest vector_empty_db (s "u") (s "now") (s "ek") (s "now") None;
+  inserted_account_is_stored vector_empty_db (s "u") (s "now") (s "ek") (s "now") None
+
+let vector_registration_tx ()
+  : Lemma (let (outs, post) =
+             registration_transaction vector_empty_db (s "u") (s "d") (s "now")
+               (s "ek") (s "since") (s "name") (s "desktop") (s "ekb64") (s "vkb64") None in
+           L.length outs == 3 /\
+           Some? (lookup post.users (s "u")) /\
+           Some? (lookup post.devices (s "d"))) =
+  registration_tx_is_honest vector_empty_db (s "u") (s "d") (s "now")
+    (s "ek") (s "since") (s "name") (s "desktop") (s "ekb64") (s "vkb64") None
