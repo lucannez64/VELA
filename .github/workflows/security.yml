@@ -315,7 +315,7 @@ jobs:
     name: refinement (${{ matrix.name }})
     needs: pick-runner
     runs-on: ${{ fromJSON(needs.pick-runner.outputs.runner) }}
-    timeout-minutes: 90
+    timeout-minutes: 140
     strategy:
       fail-fast: false
       matrix:
@@ -451,8 +451,9 @@ jobs:
           SCRIPT_ARGS: ${{ matrix.args }}
           FRESH: ${{ matrix.fresh }}
           LOG_NAME: ${{ matrix.name }}
-          # The box may be shared with local proof work; the job keeps its 90-minute cap.
-          VELA_STEP_TIMEOUT: "3600"
+          # The box is shared with local proof work, which can roughly double
+          # proof times; the job keeps a 140-minute cap.
+          VELA_STEP_TIMEOUT: "7200"
         run: |
           mkdir -p "$RUNNER_TEMP/refinement-logs"
           # Require fresh output even when the repository contains extractions.
