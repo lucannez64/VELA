@@ -12,7 +12,7 @@ cd "$proof_root"
 part=${1:-all}
 case $part in
   all|core|login|revocation|deletion|account|websession|session) ;;
-  *) echo "usage: $0 [all|core|login|revocation|deletion|account|websession]" >&2; exit 2 ;;
+  *) echo "usage: $0 [all|core|login|revocation|deletion|account|websession|session]" >&2; exit 2 ;;
 esac
 wants() { [[ $part == all || $part == "$1" ]]; }
 

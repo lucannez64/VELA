@@ -172,7 +172,7 @@
       "artifacts": {
         "serverVELA/vela-session-policy/src/lib.rs": "6f5cad0d6cbbe53cb24bfbae77d4f7cab4526fb4281ebbe0f836bf102e19da83",
         "serverVELA/vela-session-policy/README.md": "8baf43669c2475b5281f145476ce4b47d3610939570413674f9e5a0fd4832fd3",
-        "serverVELA/vela-session-policy/verify-fstar.sh": "4a2a259dca64f37da057d78a30e5fff72fbcc34f2ea963201e88f8405f8067fe",
+        "serverVELA/vela-session-policy/verify-fstar.sh": "785a3dd44a2beacd8ae715e46d672b642d1505a6e14053c690dfd763d6711272",
         "serverVELA/vela-session-policy/proofs/fstar/extraction/Vela_session_policy.fst": "f558711ac3d165952846d03d1d7b2b91186fa3ff1925a0780b35fdf824f2dd1d",
         "serverVELA/vela-server/src/web_session/mod.rs": "c279e62d256d8362b63f24d4eef5d892298818e6a6a42a9a1aa49ceccfc660db",
         "security/assurance/14-session-observation-refinement.md": "f910e98ded01e1641eaacb534ab9a1668628eabd0e60836342803068c21239d4"

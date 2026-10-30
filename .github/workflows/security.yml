@@ -327,9 +327,11 @@ jobs:
           - { name: vela-session-policy-revocation, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: revocation, fresh: false, ships: false, deps: 'serverVELA/vela-server/src/auth/challenge.rs' }
           - { name: vela-session-policy-account, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: account, fresh: false, ships: false, deps: 'serverVELA/vela-server/src/auth/challenge.rs' }
           - { name: vela-session-policy-websession, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: websession, fresh: false, ships: false, deps: 'serverVELA/vela-server/src/auth/challenge.rs' }
+          - { name: vela-session-policy-session, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: session, fresh: false, ships: false, deps: 'serverVELA/vela-server/src/auth/challenge.rs' }
           - { name: vela-session-policy-core, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: core, fresh: true, ships: true, deps: 'serverVELA/vela-server/src/auth/challenge.rs' }
           - { name: vela-recovery-policy, dir: serverVELA/vela-recovery-policy, script: verify-fstar.sh, fresh: true, ships: true, deps: '' }
-          - { name: vela-rekey-policy, dir: serverVELA/vela-rekey-policy, script: verify-fstar.sh, fresh: true, ships: true, deps: '' }
+          - { name: vela-rekey-policy, dir: serverVELA/vela-rekey-policy, script: verify-fstar.sh, args: core, fresh: true, ships: true, deps: '' }
+          - { name: vela-rekey-policy-executors, dir: serverVELA/vela-rekey-policy, script: verify-fstar.sh, args: executors, fresh: false, ships: false, deps: '' }
           - { name: vela-enrollment-policy, dir: serverVELA/vela-enrollment-policy, script: verify-fstar.sh, fresh: true, ships: true, deps: '' }
           - { name: vela-share-policy, dir: serverVELA/vela-share-policy, script: verify-fstar.sh, fresh: true, ships: true, deps: 'serverVELA/vela-rekey-policy/README.md' }
           - { name: share-facts, dir: libVELA/vela-crypto, script: verify-share-facts-fstar.sh, fresh: false, ships: true, deps: 'libVELA/vela-client-recovery-policy libVELA/vela-client-share-policy' }
