@@ -35,7 +35,7 @@ jobs:
   build-and-verify:
     permissions:
       contents: read
-    runs-on: macos-14   # Apple Silicon (arm64)
+    runs-on: macos-15   # Apple Silicon (arm64); macos-14 is retired on 2026-11-02
     steps:
       - uses: actions/checkout@v4
 
@@ -152,7 +152,7 @@ jobs:
 
   gpui-build-and-launch:
     name: GPUI macOS preview
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 35
     permissions:
       contents: read
