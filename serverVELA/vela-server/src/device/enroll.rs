@@ -9,12 +9,17 @@ use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use uuid::Uuid;
 use vela_enrollment_policy::enroll_driver::EnrollFailure;
+use vela_enrollment_policy::executor::{
+    classify_challenge_take, classify_device_check, classify_insert_enroll,
+    plan_active_device_read, plan_challenge_take, plan_enroll_insert, DeviceRowView,
+    EnrollAuthVerdict, ReadOutcome,
+};
 use vela_rekey_policy::{MutationAuthority, MutationDecision, MutationKind, MutationRequest};
 
+use super::exec_io::{ExecIo, RawRead};
 use crate::{
     error::{AppError, Result},
     net, rate_limit,
-    sqldb::{Db as _, TursoValue},
     state::AppState,
 };
 
@@ -75,8 +80,8 @@ pub struct EnrollResponse {
 /// device row read, both signature checks and the guarded insert happen here;
 /// every decision between them is the policy driver's. The handler keeps the
 /// original error in `error`, so each failure keeps its exact status and text.
-struct EnrollIo<'a> {
-    state: &'a AppState,
+pub(crate) struct EnrollIo<'a> {
+    io: ExecIo<'a>,
     body: EnrollRequest,
     enrolling_device_id_str: String,
     new_device_id: Uuid,
@@ -90,55 +95,81 @@ struct EnrollIo<'a> {
 }
 
 impl EnrollIo<'_> {
-    async fn consume_challenge(
+    pub(crate) async fn consume_challenge(
         &mut self,
     ) -> vela_enrollment_policy::enroll_driver::ChallengeObservation {
         use vela_enrollment_policy::enroll_driver::ChallengeObservation;
-        match crate::auth::challenge::consume_challenge(
-            self.state,
-            &self.body.challenge,
-            crate::auth::challenge::ChallengePurpose::Enroll,
-        ) {
-            Ok(()) => ChallengeObservation::Consumed,
-            Err(error) => {
-                self.error = Some(error);
-                ChallengeObservation::Rejected
+        let plan = plan_challenge_take(self.body.challenge.clone());
+        let (outcome, value, error) = self.io.run_take(&plan).await;
+        if let Some(error) = error {
+            if self.error.is_none() {
+                self.error = Some(error.into_app());
             }
+        }
+        // The take removes the value whatever its purpose; the session policy
+        // classifies the stored tag against the enrollment purpose.
+        let consumption = vela_session_policy::challenge::classify_taken_challenge(
+            &value,
+            vela_session_policy::challenge::ChallengePurpose::Enroll,
+        );
+        let purpose_matches = matches!(
+            consumption,
+            vela_session_policy::challenge::ChallengeConsumption::Accepted
+        );
+        if classify_challenge_take(&outcome, purpose_matches) {
+            ChallengeObservation::Consumed
+        } else {
+            if self.error.is_none() {
+                self.error = Some(match consumption {
+                    vela_session_policy::challenge::ChallengeConsumption::Accepted => {
+                        AppError::Internal("challenge take classification disagrees".into())
+                    }
+                    vela_session_policy::challenge::ChallengeConsumption::Missing => {
+                        AppError::Unauthorized("challenge not found or already used".into())
+                    }
+                    vela_session_policy::challenge::ChallengeConsumption::WrongPurpose => {
+                        AppError::Unauthorized(
+                            "challenge was issued for a different purpose".into(),
+                        )
+                    }
+                });
+            }
+            ChallengeObservation::Rejected
         }
     }
 
-    async fn check_device(&mut self) -> vela_enrollment_policy::enroll_driver::DeviceObservation {
-        use vela_enrollment_policy::enroll_driver::DeviceObservation;
-        let rows = match self
-            .state
-            .sqldb
-            .query(
-                "SELECT id, user_id, device_name, device_type, last_active,
-                hybrid_ek, hybrid_vk,
-                enrolled_by, rms_capsule, revoked,
-                revoked_at, revoked_by, created_at
-         FROM devices
-         WHERE id = ? AND revoked = 0",
-                vec![TursoValue::Text(self.enrolling_device_id_str.clone())],
-            )
-            .await
-        {
-            Ok(rows) => rows,
-            Err(error) => {
-                self.error = Some(AppError::Internal(error.to_string()));
-                return DeviceObservation::Error;
+    pub(crate) async fn check_device(&mut self) -> vela_enrollment_policy::enroll_driver::DeviceObservation {
+        let plan = plan_active_device_read(self.enrolling_device_id_str.clone());
+        let (reads, error) = self.io.run_reads(&plan).await;
+        let (outcome, device_a) = match reads.first() {
+            Some(RawRead::Rows(rows)) => match rows.first() {
+                None => (ReadOutcome::ActiveDevice(None), None),
+                Some(row) => match crate::db::parse_device_row_turso(row) {
+                    Ok(device_a) => (
+                        ReadOutcome::ActiveDevice(Some(DeviceRowView {
+                            device_id: Some(device_a.id.to_string()),
+                            hybrid_vk: row.text(6).map(String::from),
+                            revoked: Some(0),
+                            user_id: Some(device_a.user_id.to_string()),
+                            enrollment_grant_id: None,
+                        })),
+                        Some(device_a),
+                    ),
+                    Err(error) => {
+                        self.error = Some(error);
+                        (ReadOutcome::Undecodable, None)
+                    }
+                },
+            },
+            _ => {
+                if let Some(error) = error {
+                    self.error = Some(error.into_app());
+                }
+                (ReadOutcome::Failed, None)
             }
         };
-
-        let Some(row) = rows.first() else {
-            return DeviceObservation::Unavailable;
-        };
-        let device_a = match crate::db::parse_device_row_turso(row) {
-            Ok(device_a) => device_a,
-            Err(error) => {
-                self.error = Some(error);
-                return DeviceObservation::Error;
-            }
+        let Some(device_a) = device_a else {
+            return classify_device_check(&[outcome], EnrollAuthVerdict::Rejected);
         };
         self.device_a_user_id = Some(device_a.user_id);
         self.device_a_vk = device_a.hybrid_vk.clone();
@@ -147,7 +178,7 @@ impl EnrollIo<'_> {
             Ok(bytes) => bytes,
             Err(_) => {
                 self.error = Some(AppError::BadRequest("invalid challenge encoding".into()));
-                return DeviceObservation::MalformedChallenge;
+                return classify_device_check(&[outcome], EnrollAuthVerdict::MalformedChallenge);
             }
         };
 
@@ -161,10 +192,10 @@ impl EnrollIo<'_> {
         )
         .map_err(unify_device_auth_error)
         {
-            Ok(()) => DeviceObservation::Verified,
+            Ok(()) => classify_device_check(&[outcome], EnrollAuthVerdict::Verified),
             Err(error) => {
                 self.error = Some(error);
-                DeviceObservation::AuthSignatureRejected
+                classify_device_check(&[outcome], EnrollAuthVerdict::Rejected)
             }
         }
     }
@@ -259,7 +290,7 @@ impl EnrollIo<'_> {
         }
     }
 
-    async fn insert_device(&mut self) -> vela_enrollment_policy::enroll_driver::InsertObservation {
+    pub(crate) async fn insert_device(&mut self) -> vela_enrollment_policy::enroll_driver::InsertObservation {
         use vela_enrollment_policy::enroll_driver::InsertObservation;
         let Some(user_id) = self.device_a_user_id else {
             self.error = Some(AppError::Internal(
@@ -282,41 +313,52 @@ impl EnrollIo<'_> {
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| "desktop".to_string());
         let now = Utc::now().to_rfc3339();
-
-        match self
-            .state
-            .sqldb
-            .execute(
-                "INSERT INTO devices
-         (id, user_id, device_name, device_type, last_active, hybrid_ek, hybrid_vk, enrolled_by, rms_capsule, created_at)
-         SELECT ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?
-         WHERE EXISTS (
-             SELECT 1 FROM users
-             WHERE id = ? AND key_epoch = ? AND rekey_state IS NULL
-         )",
-                vec![
-                    TursoValue::Text(self.new_device_id.to_string()),
-                    TursoValue::Text(user_id.to_string()),
-                    TursoValue::Text(device_name),
-                    TursoValue::Text(device_type),
-                    TursoValue::Text(crate::db::encode_b64(&self.new_hybrid_ek)),
-                    TursoValue::Text(crate::db::encode_b64(&self.new_hybrid_vk)),
-                    TursoValue::Text(self.enrolling_device_id_str.clone()),
-                    TursoValue::Text(crate::db::encode_b64(&self.rms_capsule)),
-                    TursoValue::Text(now),
-                    TursoValue::Text(user_id.to_string()),
-                    TursoValue::Integer(self.permit_epoch),
-                ],
-            )
-            .await
-        {
-            Ok(0) => InsertObservation::EpochMismatch,
-            Ok(_) => InsertObservation::Inserted,
-            Err(error) => {
-                self.error = Some(AppError::Internal(error.to_string()));
-                InsertObservation::Failed
-            }
+        let plan = plan_enroll_insert(
+            self.new_device_id.to_string(),
+            user_id.to_string(),
+            device_name,
+            device_type,
+            crate::db::encode_b64(&self.new_hybrid_ek),
+            crate::db::encode_b64(&self.new_hybrid_vk),
+            self.enrolling_device_id_str.clone(),
+            crate::db::encode_b64(&self.rms_capsule),
+            now,
+            user_id.to_string(),
+            self.permit_epoch,
+        );
+        let (outcomes, error) = self.io.run_writes(&plan).await;
+        if let Some(error) = error {
+            self.error = Some(error.into_app());
         }
+        classify_insert_enroll(&outcomes)
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn enroll_io_for_test<'a>(
+    state: &'a AppState,
+    fail_at: Option<usize>,
+    body: EnrollRequest,
+    enrolling_device_id_str: String,
+    new_device_id: Uuid,
+    device_a_user_id: Option<Uuid>,
+    permit_epoch: i64,
+    new_hybrid_ek: Vec<u8>,
+    new_hybrid_vk: Vec<u8>,
+    rms_capsule: Vec<u8>,
+) -> EnrollIo<'a> {
+    EnrollIo {
+        io: ExecIo::faulty(state, fail_at),
+        body,
+        enrolling_device_id_str,
+        new_device_id,
+        device_a_user_id,
+        permit_epoch,
+        device_a_vk: Vec::new(),
+        new_hybrid_ek,
+        new_hybrid_vk,
+        rms_capsule,
+        error: None,
     }
 }
 
@@ -388,7 +430,7 @@ pub async fn post_enroll(
     let enrolling_device_id_str = enrolling_device_id.to_string();
     let new_device_id = Uuid::new_v4();
     let mut io = EnrollIo {
-        state: &state,
+        io: ExecIo::new(&state),
         body,
         enrolling_device_id_str,
         new_device_id,

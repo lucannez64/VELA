@@ -4764,7 +4764,10 @@ dependencies = [
 name = "vela-enrollment-policy"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "hax-lib",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

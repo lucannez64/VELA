@@ -63,3 +63,9 @@ fstar.exe \
 # Handler-to-driver link for `POST /device/enroll`; needs the driver
 # extraction above.
 "$proof_root/verify-fstar-enroll-interpreter.sh"
+
+# F-1 for the device-enrollment executors: each executor method's observation
+# is the truth about the turso tables and the sled store, proved against a
+# store model for every starting state and every failing statement, with
+# mutation checks. Needs the pairing and enrollment driver extractions above.
+"$proof_root/verify-fstar-enrollment-executors.sh"
