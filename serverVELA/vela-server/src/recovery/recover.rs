@@ -487,7 +487,7 @@ impl RecoverIo<'_> {
     }
 }
 
-fn enroll_grant_key(user_id: Uuid, grant: Uuid) -> String {
+pub(crate) fn enroll_grant_key(user_id: Uuid, grant: Uuid) -> String {
     format!("recovery:enroll_grant:{user_id}:{grant}")
 }
 
@@ -566,19 +566,11 @@ pub(crate) fn store_credential_grant(
 }
 
 /// Grant issued from an RMS-possession proof; releases no server share and is
-/// bound to no credential.
-pub(crate) fn store_possession_grant(
-    state: &AppState,
-    user_id: Uuid,
-    grant: Uuid,
-    key_epoch: i64,
-) -> Result<()> {
-    store_enroll_grant(
-        state,
-        user_id,
-        grant,
-        &RecoveryEnrollGrant::from_possession_proof(key_epoch),
-    )
+/// bound to no credential. The possession executor now stores it through its
+/// extracted `PutEnrollmentGrant` plan, so only the grant value itself is
+/// shared here.
+pub(crate) fn possession_grant(key_epoch: i64) -> RecoveryEnrollGrant {
+    RecoveryEnrollGrant::from_possession_proof(key_epoch)
 }
 
 /// Read the grant without consuming it, so callers can reject rotation state

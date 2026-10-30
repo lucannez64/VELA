@@ -8,6 +8,10 @@
 //! module is the part that model trusts, and `conformance.rs` checks it, with
 //! injected failures, against a real database and store.
 
+use vela_recovery_policy::possession_driver::CommitmentObservation;
+use vela_recovery_policy::possession_store::{
+    self, InitiateRowView, PossessionStmt, ProofAccountRowView,
+};
 use vela_recovery_policy::redemption_store::{
     self, AuthorityRowView, Param, Rendered, RedemptionStmt, WriteOutcome,
 };
@@ -16,7 +20,7 @@ use vela_recovery_policy::share_store::{
 };
 
 use crate::sqldb::{Db as _, TursoDb, TursoValue, VelaRow};
-use crate::error::Result;
+use crate::error::{AppError, Result};
 
 /// Where an executor's SQL statements run. The enrollment path uses the pool:
 /// each statement commits on its own.
@@ -38,10 +42,16 @@ impl RecoverySql for PoolSql<'_> {
     }
 }
 
-/// Where an executor's enrollment-grant operations run.
+/// Where an executor's enrollment-grant and challenge operations run.
 pub(super) trait RecoveryKv {
     fn take(&mut self, key: &str) -> Result<Option<Vec<u8>>>;
     fn put(&mut self, key: &str, value: &[u8]) -> Result<()>;
+    /// Whether the exact key is present.
+    fn exists(&mut self, key: &str) -> Result<bool>;
+    /// Set the key only while it is absent; `true` when this call wrote it.
+    fn set_nx(&mut self, key: &str, value: &[u8], ttl_secs: u64) -> Result<bool>;
+    /// Set the key, overwriting any current value.
+    fn set_ex(&mut self, key: &str, value: &[u8], ttl_secs: u64) -> Result<()>;
 }
 
 /// The sled-backed store the recovery grants live in.
@@ -55,6 +65,18 @@ impl RecoveryKv for StoreKv<'_> {
     fn put(&mut self, key: &str, value: &[u8]) -> Result<()> {
         self.0
             .set_ex(key, value, super::recover::ENROLL_GRANT_TTL_SECS)
+    }
+
+    fn exists(&mut self, key: &str) -> Result<bool> {
+        self.0.exists(key)
+    }
+
+    fn set_nx(&mut self, key: &str, value: &[u8], ttl_secs: u64) -> Result<bool> {
+        self.0.set_ex_nx(key, value, ttl_secs)
+    }
+
+    fn set_ex(&mut self, key: &str, value: &[u8], ttl_secs: u64) -> Result<()> {
+        self.0.set_ex(key, value, ttl_secs)
     }
 }
 
@@ -79,7 +101,11 @@ pub(super) async fn run_writes<S: RecoverySql>(
         let result = match redemption_store::render(stmt) {
             Rendered::Execute { sql: text, params } => sql.execute(text, turso_params(params)).await,
             Rendered::Query { .. } => Err(anyhow::anyhow!("a read statement in a write plan")),
-            Rendered::KvTake { .. } | Rendered::KvPut { .. } => {
+            Rendered::KvTake { .. }
+            | Rendered::KvPut { .. }
+            | Rendered::KvExists { .. }
+            | Rendered::KvSetNx { .. }
+            | Rendered::KvSetEx { .. } => {
                 Err(anyhow::anyhow!("a store statement in a SQL write plan"))
             }
         };
@@ -115,7 +141,11 @@ pub(super) async fn run_share_writes<S: RecoverySql>(
         let result = match share_store::render(stmt) {
             Rendered::Execute { sql: text, params } => sql.execute(text, turso_params(params)).await,
             Rendered::Query { .. } => Err(anyhow::anyhow!("a read statement in a write plan")),
-            Rendered::KvTake { .. } | Rendered::KvPut { .. } => {
+            Rendered::KvTake { .. }
+            | Rendered::KvPut { .. }
+            | Rendered::KvExists { .. }
+            | Rendered::KvSetNx { .. }
+            | Rendered::KvSetEx { .. } => {
                 Err(anyhow::anyhow!("a store statement in a SQL write plan"))
             }
         };
@@ -198,4 +228,146 @@ pub(super) fn share_row_view(rows: &[VelaRow]) -> Option<ShareRowView> {
         split_id: row.text(1).map(String::from),
         epoch: row.i64(2),
     })
+}
+
+// ── Possession-proof plans (F-1) ───────────────────────────────────────────
+
+/// Decode one base64 commitment cell into the observation the driver sees.
+fn commitment_cell(row: &VelaRow, index: usize) -> CommitmentObservation {
+    match row.get(index) {
+        Some(TursoValue::Text(text)) => match crate::db::decode_b64(text) {
+            Ok(bytes) => CommitmentObservation::Present { len: bytes.len() },
+            Err(_) => CommitmentObservation::Corrupt,
+        },
+        _ => CommitmentObservation::Missing,
+    }
+}
+
+/// The decode error behind a corrupt cell, exactly the error the handler has
+/// always rendered.
+fn commitment_error(row: &VelaRow, index: usize) -> Option<AppError> {
+    match row.get(index) {
+        Some(TursoValue::Text(text)) => crate::db::decode_b64(text).err(),
+        _ => None,
+    }
+}
+
+/// The first initiation row: `recovery_share`, the decoded commitment,
+/// `key_epoch` and `rekey_state`, with the decode error if the cell is corrupt.
+pub(super) fn initiate_row(rows: &[VelaRow]) -> (Option<InitiateRowView>, Option<AppError>) {
+    let Some(row) = rows.first() else {
+        return (None, None);
+    };
+    let commitment = commitment_cell(row, 1);
+    let decode_error = if commitment == CommitmentObservation::Corrupt {
+        commitment_error(row, 1)
+    } else {
+        None
+    };
+    (
+        Some(InitiateRowView {
+            share_present: !matches!(row.get(0), Some(TursoValue::Null) | None),
+            commitment,
+            key_epoch: row.i64(2),
+            rotation_active: row.text(3).is_some(),
+        }),
+        decode_error,
+    )
+}
+
+/// The first proof-recovery row: the decoded commitment, `key_epoch` and
+/// `rekey_state`, with the decode error if the cell is corrupt and the decoded
+/// commitment bytes for verification.
+pub(super) fn proof_account_row(
+    rows: &[VelaRow],
+) -> (
+    Option<ProofAccountRowView>,
+    Option<AppError>,
+    Option<Vec<u8>>,
+) {
+    let Some(row) = rows.first() else {
+        return (None, None, None);
+    };
+    let commitment = commitment_cell(row, 0);
+    let (decode_error, commitment_bytes) = match row.get(0) {
+        Some(TursoValue::Text(text)) => match crate::db::decode_b64(text) {
+            Ok(bytes) => (None, Some(bytes)),
+            Err(error) => (Some(error), None),
+        },
+        _ => (None, None),
+    };
+    (
+        Some(ProofAccountRowView {
+            commitment,
+            stored_epoch: row.i64(1),
+            rotation_active: row.text(2).is_some(),
+        }),
+        decode_error,
+        commitment_bytes,
+    )
+}
+
+/// Runs one possession read statement.
+pub(super) async fn run_possession_read<S: RecoverySql>(
+    sql: &mut S,
+    stmt: &PossessionStmt,
+) -> anyhow::Result<Vec<VelaRow>> {
+    match possession_store::render(stmt) {
+        Rendered::Query { sql: text, params } => sql.query(text, turso_params(params)).await,
+        _ => Err(anyhow::anyhow!("a non-read statement in a possession read plan")),
+    }
+}
+
+/// Runs the exact user/attempt proof-slot probe.
+pub(super) fn probe_proof_slot<K: RecoveryKv>(kv: &mut K, stmt: &PossessionStmt) -> Result<bool> {
+    match possession_store::render(stmt) {
+        Rendered::KvExists { key } => kv.exists(&key),
+        _ => Err(AppError::Internal(
+            "a non-exists statement in a proof-slot plan".into(),
+        )),
+    }
+}
+
+/// Runs the atomic insert-if-absent of the drawn challenge.
+pub(super) fn store_proof_challenge<K: RecoveryKv>(
+    kv: &mut K,
+    stmt: &PossessionStmt,
+) -> Result<bool> {
+    match possession_store::render(stmt) {
+        Rendered::KvSetNx {
+            key,
+            value,
+            ttl_secs,
+        } => kv.set_nx(&key, &value, ttl_secs),
+        _ => Err(AppError::Internal(
+            "a non-set_nx statement in a challenge plan".into(),
+        )),
+    }
+}
+
+/// Runs the atomic read-and-delete of the exact proof attempt.
+pub(super) fn take_proof_attempt<K: RecoveryKv>(
+    kv: &mut K,
+    stmt: &PossessionStmt,
+) -> Result<Option<Vec<u8>>> {
+    match possession_store::render(stmt) {
+        Rendered::KvTake { key } => kv.take(&key),
+        _ => Err(AppError::Internal(
+            "a non-take statement in a proof-attempt plan".into(),
+        )),
+    }
+}
+
+/// Runs one single-use enrollment-grant store.
+pub(super) fn put_enrollment_grant<K: RecoveryKv>(kv: &mut K, stmt: &PossessionStmt) -> Result<()> {
+    match possession_store::render(stmt) {
+        Rendered::KvSetEx {
+            key,
+            value,
+            ttl_secs,
+        } => kv.set_ex(&key, &value, ttl_secs),
+        _ => Err(AppError::Internal(
+            "a non-set_ex statement in a grant plan".into(),
+        )),
+    }
 }

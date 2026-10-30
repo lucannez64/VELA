@@ -249,6 +249,12 @@ pub enum Rendered {
     KvTake { key: String },
     /// Set a key with its serialized value.
     KvPut { key: String, value: Vec<u8> },
+    /// Whether a key is currently present.
+    KvExists { key: String },
+    /// Set a key with its serialized value only while it is absent.
+    KvSetNx { key: String, value: Vec<u8>, ttl_secs: u64 },
+    /// Set a key with its serialized value, overwriting any current value.
+    KvSetEx { key: String, value: Vec<u8>, ttl_secs: u64 },
 }
 
 /// The exact SQL text and parameters each statement has always used.
