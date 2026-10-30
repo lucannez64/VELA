@@ -16,7 +16,10 @@
 //!
 //! A schema check pins the columns and types the model uses.
 
+use base64::engine::general_purpose::STANDARD as B64;
+use base64::Engine as _;
 use uuid::Uuid;
+use webauthn_rs::prelude::{Passkey, PasskeyAuthentication, PasskeyRegistration};
 use vela_recovery_policy::driver::{
     AuthorityRecheckObservation, ConsumptionObservation, InsertObservation, RedemptionInsertPermit,
 };
@@ -29,6 +32,7 @@ use vela_recovery_policy::redemption_model::{
     ShareUserRow, UserRow,
 };
 use vela_recovery_policy::redemption_store::{self, GrantGuard, GrantView};
+use vela_recovery_policy::webauthn_store::CredentialGrantView;
 use vela_recovery_policy::recovery_share_driver::{
     begin_share_lifecycle, ShareActorObservation, ShareEffect, ShareOperation,
     ShareRequestObservation,
@@ -38,6 +42,7 @@ use super::enroll_device::EnrollDeviceIo;
 use super::recover::RecoveryEnrollGrant;
 use super::sql::{PoolSql, RecoveryKv, RecoverySql, StoreKv};
 use crate::error::{AppError, Result};
+use crate::state::AppState;
 use crate::sqldb::{Db as _, TursoDb, TursoValue, VelaRow};
 
 /// Fails the k-th SQL statement (from 0) an executor sends, without sending it.
@@ -1511,4 +1516,1028 @@ async fn possession_grant_store_matches_the_store_model() {
         }
     }
     assert!(counts.states > 0 && counts.cases > 0 && counts.faulted > 0);
+}
+
+// ── WebAuthn executor conformance ──────────────────────────────────────────
+
+/// A fixed attempt id so the exact challenge slot is predictable.
+fn attempt_id() -> Uuid {
+    Uuid::from_u128(0x4000)
+}
+
+/// A base64 credential id the `users.recovery_webauthn_credential` cell can
+/// decode to.
+fn cred_id(n: u8) -> String {
+    B64.encode([n; 16])
+}
+
+/// A real `Passkey` whose credential id is exactly `credential_id`, built from
+/// the public credential types so the stored JSON decodes through the same
+/// path the handlers use.
+fn build_credential(credential_id: &str) -> webauthn_rs_core::proto::Credential {
+    use webauthn_rs::prelude::{
+        COSEAlgorithm, COSEEC2Key, COSEKey, COSEKeyType, CredentialID, ECDSACurve,
+        ParsedAttestation, ParsedAttestationData,
+    };
+    let raw = B64.decode(credential_id).expect("seeded credential id is base64");
+    webauthn_rs_core::proto::Credential {
+        cred_id: CredentialID::from(raw),
+        cred: COSEKey {
+            type_: COSEAlgorithm::ES256,
+            key: COSEKeyType::EC_EC2(COSEEC2Key {
+                curve: ECDSACurve::SECP256R1,
+                x: CredentialID::from(vec![2u8; 32]),
+                y: CredentialID::from(vec![3u8; 32]),
+            }),
+        },
+        counter: 0,
+        transports: None,
+        user_verified: true,
+        backup_eligible: false,
+        backup_state: false,
+        registration_policy: webauthn_rs_core::proto::UserVerificationPolicy::Required,
+        extensions: webauthn_rs_core::proto::RegisteredExtensions::none(),
+        attestation: ParsedAttestation {
+            data: ParsedAttestationData::None,
+            metadata: webauthn_rs_core::proto::AttestationMetadata::None,
+        },
+        attestation_format: webauthn_rs::prelude::AttestationFormat::None,
+    }
+}
+
+fn stored_passkey(credential_id: &str) -> Passkey {
+    let credential = serde_json::to_value(build_credential(credential_id)).unwrap();
+    serde_json::from_value(serde_json::json!({ "cred": credential }))
+        .expect("a built credential deserialises as a passkey")
+}
+
+/// A real authentication state bound to the seeded credential.
+fn stored_auth_state(app: &AppState, credential_id: &str) -> PasskeyAuthentication {
+    app.webauthn
+        .start_passkey_authentication(&[stored_passkey(credential_id)])
+        .expect("the seeded credential starts an authentication ceremony")
+        .1
+}
+
+/// A real registration ceremony state.
+fn stored_registration_state(app: &AppState) -> PasskeyRegistration {
+    app.webauthn
+        .start_passkey_registration(user(0), "conformance", "conformance", None)
+        .expect("a registration ceremony starts")
+        .1
+}
+
+/// A standalone `AppState` for the handlers' ceremony and limiter fields; the
+/// conformance test always injects its own faulted SQL and store handles.
+async fn temp_app_state() -> AppState {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static N: AtomicU64 = AtomicU64::new(0);
+    let path = format!(
+        "{}/vela-recovery-webauthn-{}-{}.db",
+        std::env::temp_dir().display(),
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    );
+    let _ = std::fs::remove_file(&path);
+    let turso = std::sync::Arc::new(TursoDb::open(&path, 1).await.unwrap());
+    let store = crate::store::Store::open_temp().unwrap();
+    let cfg = crate::config::Config::from_env().expect("default config");
+    std::sync::Arc::new(crate::state::AppStateInner::new(turso, store, cfg).await.unwrap())
+}
+
+fn webauthn_attempt_key() -> String {
+    vela_recovery_policy::webauthn_store::auth_state_key(&s(user(0)), &s(attempt_id()))
+}
+
+fn webauthn_registration_key() -> String {
+    vela_recovery_policy::webauthn_store::registration_state_key(&s(user(0)))
+}
+
+fn webauthn_grant_key() -> String {
+    super::recover::enroll_grant_key(user(0), grant(0))
+}
+
+fn webauthn_attempt_view(credential_id: &str) -> vela_recovery_policy::webauthn_store::AuthStateView {
+    vela_recovery_policy::webauthn_store::AuthStateView {
+        user: s(user(0)),
+        attempt: s(attempt_id()),
+        credential_id: credential_id.to_string(),
+    }
+}
+
+fn webauthn_user_row(
+    share: Option<&str>,
+    credential: model::CredentialCell,
+    credential_id: Option<&str>,
+    epoch: Option<i64>,
+    rekey: bool,
+    split: Option<&str>,
+) -> model::WebAuthnUserRow {
+    model::WebAuthnUserRow {
+        share: share.map(t),
+        credential,
+        credential_id: credential_id.map(t),
+        epoch,
+        rekey,
+        split: split.map(t),
+    }
+}
+
+fn webauthn_user_states() -> Vec<Option<model::WebAuthnUserRow>> {
+    let cred = cred_id(0);
+    let other = cred_id(1);
+    vec![
+        None,
+        Some(webauthn_user_row(
+            Some("c2hhcmU="),
+            model::CredentialCell::Valid(cred.clone()),
+            Some(&cred),
+            Some(7),
+            false,
+            Some("split"),
+        )),
+        Some(webauthn_user_row(
+            None,
+            model::CredentialCell::Valid(cred.clone()),
+            Some(&cred),
+            Some(7),
+            false,
+            None,
+        )),
+        Some(webauthn_user_row(
+            Some("c2hhcmU="),
+            model::CredentialCell::Absent,
+            None,
+            Some(7),
+            false,
+            None,
+        )),
+        Some(webauthn_user_row(
+            Some("c2hhcmU="),
+            model::CredentialCell::Undecodable,
+            None,
+            Some(7),
+            false,
+            None,
+        )),
+        Some(webauthn_user_row(
+            Some("c2hhcmU="),
+            model::CredentialCell::Valid(other),
+            Some(&cred),
+            Some(7),
+            false,
+            None,
+        )),
+        Some(webauthn_user_row(
+            Some("c2hhcmU="),
+            model::CredentialCell::Valid(cred.clone()),
+            Some(&cred),
+            Some(7),
+            true,
+            None,
+        )),
+        Some(webauthn_user_row(
+            Some("c2hhcmU="),
+            model::CredentialCell::Valid(cred.clone()),
+            Some(&cred),
+            Some(8),
+            false,
+            None,
+        )),
+        Some(webauthn_user_row(
+            Some("!!!"),
+            model::CredentialCell::Valid(cred),
+            Some(&cred_id(0)),
+            Some(7),
+            false,
+            None,
+        )),
+    ]
+}
+
+fn webauthn_db(
+    user_row: &Option<model::WebAuthnUserRow>,
+    attempt: Option<model::WebAuthnAttemptCell>,
+    registration: Option<model::WebAuthnRegistrationCell>,
+    grant: Option<CredentialGrantView>,
+) -> model::WebAuthnDb {
+    let mut state = model::WebAuthnDb::default();
+    if let Some(row) = user_row {
+        state.users.insert(s(user(0)), row.clone());
+        if let Some(credential_id) = &row.credential_id {
+            state.holders.insert(credential_id.clone(), s(user(0)));
+        }
+    }
+    if let Some(cell) = attempt {
+        state.attempts.insert(webauthn_attempt_key(), cell);
+    }
+    if let Some(cell) = registration {
+        state.registrations.insert(webauthn_registration_key(), cell);
+    }
+    if let Some(value) = grant {
+        state.grants.insert(webauthn_grant_key(), value);
+    }
+    state
+}
+
+async fn load_webauthn(
+    app: &AppState,
+    db: &TursoDb,
+    store: &crate::store::Store,
+    state: &model::WebAuthnDb,
+) {
+    db.execute_batch("DELETE FROM users;").await.unwrap();
+    for (id, row) in &state.users {
+        let (credential, stored_id) = match &row.credential {
+            model::CredentialCell::Absent => (TursoValue::Null, opt(&row.credential_id)),
+            model::CredentialCell::Valid(credential_id) => (
+                TursoValue::Text(
+                    serde_json::to_string(&stored_passkey(credential_id)).unwrap(),
+                ),
+                opt(&row.credential_id),
+            ),
+            model::CredentialCell::Undecodable => (
+                TursoValue::Text("not a stored passkey".into()),
+                opt(&row.credential_id),
+            ),
+        };
+        db.execute(
+            "INSERT INTO users (id, created_at, recovery_share, recovery_webauthn_credential,
+                                recovery_webauthn_cred_id, key_epoch, rekey_state, recovery_split_id)
+             VALUES (?, 't', ?, ?, ?, ?, ?, ?)",
+            vec![
+                TursoValue::Text(id.clone()),
+                opt(&row.share),
+                credential,
+                stored_id,
+                row.epoch.map(TursoValue::Integer).unwrap_or(TursoValue::Null),
+                if row.rekey {
+                    TursoValue::Text("rotating".into())
+                } else {
+                    TursoValue::Null
+                },
+                opt(&row.split),
+            ],
+        )
+        .await
+        .unwrap();
+    }
+    let key = webauthn_attempt_key();
+    store.del(&key).unwrap();
+    if let Some(cell) = state.attempts.get(&key) {
+        let bytes = match cell {
+            model::WebAuthnAttemptCell::Valid(view) => {
+                let envelope = super::initiate::RecoveryAuthState {
+                    user_id: Uuid::parse_str(&view.user).expect("seeded user id"),
+                    recovery_id: Uuid::parse_str(&view.attempt).expect("seeded attempt id"),
+                    credential_id: view.credential_id.clone(),
+                    auth_state: stored_auth_state(app, &view.credential_id),
+                };
+                serde_json::to_vec(&envelope).unwrap()
+            }
+            model::WebAuthnAttemptCell::Undecodable => b"not an attempt envelope".to_vec(),
+            model::WebAuthnAttemptCell::Absent => Vec::new(),
+        };
+        if !matches!(cell, model::WebAuthnAttemptCell::Absent) {
+            store.set_ex(&key, &bytes, 300).unwrap();
+        }
+    }
+    let key = webauthn_registration_key();
+    store.del(&key).unwrap();
+    if let Some(cell) = state.registrations.get(&key) {
+        let bytes = match cell {
+            model::WebAuthnRegistrationCell::Valid => {
+                serde_json::to_vec(&stored_registration_state(app)).unwrap()
+            }
+            model::WebAuthnRegistrationCell::Undecodable => b"not a registration state".to_vec(),
+            model::WebAuthnRegistrationCell::Absent => Vec::new(),
+        };
+        if !matches!(cell, model::WebAuthnRegistrationCell::Absent) {
+            store.set_ex(&key, &bytes, 300).unwrap();
+        }
+    }
+    let key = webauthn_grant_key();
+    store.del(&key).unwrap();
+    if let Some(grant) = state.grants.get(&key) {
+        store
+            .set(
+                &key,
+                &serde_json::to_vec(&super::recover::RecoveryEnrollGrant {
+                    key_epoch: grant.key_epoch,
+                    credential_id: grant.credential_id.clone(),
+                    possession: grant.possession,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+    }
+}
+
+async fn snapshot_webauthn(
+    db: &TursoDb,
+    store: &crate::store::Store,
+) -> model::WebAuthnDb {
+    let mut state = model::WebAuthnDb::default();
+    for row in db
+        .query(
+            "SELECT id, recovery_share, recovery_webauthn_credential,
+                    recovery_webauthn_cred_id, key_epoch, rekey_state, recovery_split_id
+             FROM users",
+            vec![],
+        )
+        .await
+        .unwrap()
+    {
+        let id = text(&row, 0);
+        let credential = match row.get(2) {
+            Some(TursoValue::Null) | None => model::CredentialCell::Absent,
+            Some(TursoValue::Text(passkey_json)) => {
+                match serde_json::from_str::<Passkey>(passkey_json) {
+                    Ok(passkey) => model::CredentialCell::Valid(super::webauthn::cred_id_b64(&passkey)),
+                    Err(_) => model::CredentialCell::Undecodable,
+                }
+            }
+            _ => model::CredentialCell::Undecodable,
+        };
+        let credential_id = row.text(3).map(String::from);
+        if let Some(credential_id) = &credential_id {
+            state.holders.insert(credential_id.clone(), id.clone());
+        }
+        state.users.insert(
+            id,
+            model::WebAuthnUserRow {
+                share: row.text(1).map(String::from),
+                credential,
+                credential_id,
+                epoch: row.i64(4),
+                rekey: row.text(5).is_some(),
+                split: row.text(6).map(String::from),
+            },
+        );
+    }
+    let key = webauthn_attempt_key();
+    let cell = match store.get(&key).unwrap() {
+        None => model::WebAuthnAttemptCell::Absent,
+        Some(bytes) => match serde_json::from_slice::<super::initiate::RecoveryAuthState>(&bytes) {
+            Ok(envelope) => model::WebAuthnAttemptCell::Valid(
+                vela_recovery_policy::webauthn_store::AuthStateView {
+                    user: envelope.user_id.to_string(),
+                    attempt: envelope.recovery_id.to_string(),
+                    credential_id: envelope.credential_id.clone(),
+                },
+            ),
+            Err(_) => model::WebAuthnAttemptCell::Undecodable,
+        },
+    };
+    if !matches!(cell, model::WebAuthnAttemptCell::Absent) {
+        state.attempts.insert(key, cell);
+    }
+    let key = webauthn_registration_key();
+    let cell = match store.get(&key).unwrap() {
+        None => model::WebAuthnRegistrationCell::Absent,
+        Some(bytes) => match serde_json::from_slice::<PasskeyRegistration>(&bytes) {
+            Ok(_) => model::WebAuthnRegistrationCell::Valid,
+            Err(_) => model::WebAuthnRegistrationCell::Undecodable,
+        },
+    };
+    if !matches!(cell, model::WebAuthnRegistrationCell::Absent) {
+        state.registrations.insert(key, cell);
+    }
+    let key = webauthn_grant_key();
+    if let Some(bytes) = store.get(&key).unwrap() {
+        let grant = super::recover::decode_enroll_grant(&bytes).expect("stored grant decodes");
+        state.grants.insert(
+            key,
+            CredentialGrantView {
+                key_epoch: grant.key_epoch,
+                credential_id: grant.credential_id.clone(),
+                possession: grant.possession,
+            },
+        );
+    }
+    state
+}
+
+/// `snapshot_webauthn` records the full model; a single-method test only
+/// changes the keys it touches, so compare those.
+fn webauthn_grant_of(db: &model::WebAuthnDb) -> Option<CredentialGrantView> {
+    db.grants.get(&webauthn_grant_key()).cloned()
+}
+
+#[tokio::test]
+async fn webauthn_initiation_matches_the_store_model() {
+    let app = temp_app_state().await;
+    let db = temp_db().await;
+    let store = temp_store();
+    let mut counts = Counts::default();
+    let drawn = attempt_id();
+
+    for row_state in webauthn_user_states() {
+        counts.states += 1;
+        for attempt in [
+            None,
+            Some(model::WebAuthnAttemptCell::Valid(webauthn_attempt_view(
+                &cred_id(0),
+            ))),
+            Some(model::WebAuthnAttemptCell::Undecodable),
+        ] {
+            for sql_fault in faults(2) {
+                for kv_fault in faults(1) {
+                    let state = webauthn_db(&row_state, attempt.clone(), None, None);
+                    load_webauthn(&app, &db, &store, &state).await;
+                    let mut io = super::initiate::InitiateIo::for_conformance(
+                        &app,
+                        Faulty::new(PoolSql(&db), sql_fault),
+                        FaultyKv::new(StoreKv(&store), kv_fault),
+                        user(0),
+                        drawn,
+                    );
+                    let observed = io.auth_start_observe().await;
+                    let expected = model::auth_start_observe(
+                        &state,
+                        &s(user(0)),
+                        &webauthn_attempt_key(),
+                        300,
+                        sql_fault,
+                        kv_fault,
+                    );
+                    let case =
+                        format!("webauthn initiate {state:?} sql {sql_fault:?} kv {kv_fault:?}");
+                    assert_eq!(observed, expected.as_ref().map(|(obs, _)| *obs), "{case}");
+                    assert_eq!(
+                        snapshot_webauthn(&db, &store).await,
+                        expected
+                            .clone()
+                            .map(|(_, post)| post)
+                            .unwrap_or_else(|| state.clone()),
+                        "{case}"
+                    );
+                    assert_eq!(io.error_is_set(), expected.is_none(), "{case}");
+                    assert_eq!(
+                        io.recovery_id(),
+                        expected.as_ref().map(|_| drawn),
+                        "{case}"
+                    );
+                    counts.case(sql_fault.or(kv_fault));
+                }
+            }
+        }
+    }
+    assert!(counts.states > 0 && counts.cases > 0 && counts.faulted > 0);
+}
+
+#[tokio::test]
+async fn webauthn_challenge_store_matches_the_store_model() {
+    let app = temp_app_state().await;
+    let db = temp_db().await;
+    let store = temp_store();
+    let mut counts = Counts::default();
+    let view = webauthn_attempt_view(&cred_id(0));
+
+    for attempt in [
+        None,
+        Some(model::WebAuthnAttemptCell::Valid(webauthn_attempt_view(
+            &cred_id(0),
+        ))),
+        Some(model::WebAuthnAttemptCell::Undecodable),
+    ] {
+        counts.states += 1;
+        for kv_fault in faults(1) {
+            let state = webauthn_db(&None, attempt.clone(), None, None);
+            load_webauthn(&app, &db, &store, &state).await;
+            let mut io = super::initiate::InitiateIo::for_conformance(
+                &app,
+                Faulty::new(PoolSql(&db), None),
+                FaultyKv::new(StoreKv(&store), kv_fault),
+                user(0),
+                attempt_id(),
+            );
+            io.set_recovery_id(attempt_id());
+            let value = serde_json::to_string(&super::initiate::RecoveryAuthState {
+                user_id: user(0),
+                recovery_id: attempt_id(),
+                credential_id: cred_id(0),
+                auth_state: stored_auth_state(&app, &cred_id(0)),
+            })
+            .unwrap();
+            let observed = io.write_auth_state(value.clone(), view.clone()).await;
+            let expected = model::store_auth_state(
+                &state,
+                &webauthn_attempt_key(),
+                &value,
+                &view,
+                300,
+                kv_fault,
+            );
+            let case = format!("webauthn store {state:?} kv {kv_fault:?}");
+            assert_eq!(observed, Some(expected.0), "{case}");
+            assert_eq!(snapshot_webauthn(&db, &store).await, expected.1, "{case}");
+            counts.case(kv_fault);
+        }
+    }
+    assert!(counts.states > 0 && counts.cases > 0 && counts.faulted > 0);
+}
+
+#[tokio::test]
+async fn webauthn_context_matches_the_store_model() {
+    let app = temp_app_state().await;
+    let db = temp_db().await;
+    let store = temp_store();
+    let mut counts = Counts::default();
+
+    for row_state in webauthn_user_states() {
+        counts.states += 1;
+        for attempt_present in [false, true] {
+            for sql_fault in faults(2) {
+                let state = webauthn_db(&row_state, None, None, None);
+                load_webauthn(&app, &db, &store, &state).await;
+                let mut io = super::recover::RecoverIo::for_conformance(
+                    &app,
+                    Faulty::new(PoolSql(&db), sql_fault),
+                    FaultyKv::new(StoreKv(&store), None),
+                    user(0),
+                    attempt_present.then(attempt_id),
+                    Some(cred_id(0)),
+                    None,
+                    None,
+                    None,
+                    None,
+                );
+                let observed = io.auth_finish_context().await;
+                let expected = model::finish_context(
+                    &state,
+                    &s(user(0)),
+                    attempt_present,
+                    sql_fault,
+                );
+                let case = format!("webauthn context {state:?} sql {sql_fault:?}");
+                assert_eq!(observed, expected, "{case}");
+                assert_eq!(io.error_is_set(), expected.is_none(), "{case}");
+                counts.case(sql_fault);
+            }
+        }
+    }
+    assert!(counts.states > 0 && counts.cases > 0 && counts.faulted > 0);
+}
+
+#[tokio::test]
+async fn webauthn_attempt_consumption_matches_the_store_model() {
+    let app = temp_app_state().await;
+    let db = temp_db().await;
+    let store = temp_store();
+    let mut counts = Counts::default();
+
+    for attempt in [
+        None,
+        Some(model::WebAuthnAttemptCell::Valid(webauthn_attempt_view(
+            &cred_id(0),
+        ))),
+        Some(model::WebAuthnAttemptCell::Valid(webauthn_attempt_view(
+            &cred_id(1),
+        ))),
+        Some(model::WebAuthnAttemptCell::Undecodable),
+    ] {
+        counts.states += 1;
+        for observed_credential in [cred_id(0), cred_id(1)] {
+            for kv_fault in faults(1) {
+                let state = webauthn_db(&None, attempt.clone(), None, None);
+                load_webauthn(&app, &db, &store, &state).await;
+                let mut io = super::recover::RecoverIo::for_conformance(
+                    &app,
+                    Faulty::new(PoolSql(&db), None),
+                    FaultyKv::new(StoreKv(&store), kv_fault),
+                    user(0),
+                    Some(attempt_id()),
+                    Some(observed_credential.clone()),
+                    None,
+                    None,
+                    None,
+                    None,
+                );
+                let observed = io.auth_finish_consume().await;
+                let expected = model::take_auth_state(
+                    &state,
+                    &webauthn_attempt_key(),
+                    &s(user(0)),
+                    &s(attempt_id()),
+                    &observed_credential,
+                    kv_fault,
+                );
+                let case = format!(
+                    "webauthn consume {state:?} credential {observed_credential} kv {kv_fault:?}"
+                );
+                assert_eq!(observed, expected.as_ref().map(|(obs, _)| *obs), "{case}");
+                assert_eq!(
+                    snapshot_webauthn(&db, &store).await,
+                    expected
+                        .clone()
+                        .map(|(_, post)| post)
+                        .unwrap_or_else(|| state.clone()),
+                    "{case}"
+                );
+                assert_eq!(io.error_is_set(), expected.is_none(), "{case}");
+                counts.case(kv_fault);
+            }
+        }
+    }
+    assert!(counts.states > 0 && counts.cases > 0 && counts.faulted > 0);
+}
+
+#[tokio::test]
+async fn webauthn_credential_update_matches_the_store_model() {
+    let app = temp_app_state().await;
+    let db = temp_db().await;
+    let store = temp_store();
+    let mut counts = Counts::default();
+    let new_id = cred_id(2);
+
+    for row_state in webauthn_user_states() {
+        counts.states += 1;
+        for expected_id in [cred_id(0), cred_id(1)] {
+            for sql_fault in faults(1) {
+                let state = webauthn_db(&row_state, None, None, None);
+                load_webauthn(&app, &db, &store, &state).await;
+                let mut io = super::recover::RecoverIo::for_conformance(
+                    &app,
+                    Faulty::new(PoolSql(&db), sql_fault),
+                    FaultyKv::new(StoreKv(&store), None),
+                    user(0),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                );
+                let credential = serde_json::to_string(&stored_passkey(&new_id)).unwrap();
+                let observed = io
+                    .write_updated_credential(expected_id.clone(), credential, new_id.clone())
+                    .await;
+                let expected = model::update_credential(
+                    &state,
+                    &s(user(0)),
+                    &expected_id,
+                    "{}",
+                    &new_id,
+                    sql_fault,
+                );
+                let case =
+                    format!("webauthn update {state:?} expected {expected_id} sql {sql_fault:?}");
+                assert_eq!(observed, expected.as_ref().map(|(obs, _)| *obs), "{case}");
+                assert_eq!(
+                    snapshot_webauthn(&db, &store).await,
+                    expected
+                        .clone()
+                        .map(|(_, post)| post)
+                        .unwrap_or_else(|| state.clone()),
+                    "{case}"
+                );
+                assert_eq!(io.error_is_set(), expected.is_none(), "{case}");
+                counts.case(sql_fault);
+            }
+        }
+    }
+    assert!(counts.states > 0 && counts.cases > 0 && counts.faulted > 0);
+}
+
+#[tokio::test]
+async fn webauthn_account_and_release_match_the_store_model() {
+    let app = temp_app_state().await;
+    let db = temp_db().await;
+    let store = temp_store();
+    let mut counts = Counts::default();
+
+    for row_state in webauthn_user_states() {
+        counts.states += 1;
+        for credential_id in [cred_id(0), cred_id(1)] {
+            for sql_fault in faults(1) {
+                let state = webauthn_db(&row_state, None, None, None);
+                load_webauthn(&app, &db, &store, &state).await;
+                let mut io = super::recover::RecoverIo::for_conformance(
+                    &app,
+                    Faulty::new(PoolSql(&db), sql_fault),
+                    FaultyKv::new(StoreKv(&store), None),
+                    user(0),
+                    None,
+                    None,
+                    Some(credential_id.clone()),
+                    None,
+                    Some(1),
+                    None,
+                );
+                let observed = io.auth_finish_account().await;
+                let expected = model::finish_account(
+                    &state,
+                    &s(user(0)),
+                    &credential_id,
+                    sql_fault,
+                );
+                let case =
+                    format!("webauthn account {state:?} credential {credential_id} sql {sql_fault:?}");
+                assert_eq!(observed, expected.as_ref().map(|(obs, _)| *obs), "{case}");
+                assert_eq!(
+                    io.split_id(),
+                    expected.as_ref().and_then(|(_, split)| split.clone()),
+                    "{case}"
+                );
+                assert_eq!(io.error_is_set(), expected.is_none(), "{case}");
+                counts.case(sql_fault);
+            }
+        }
+
+        // Release the same live share the row carries.
+        let state = webauthn_db(&row_state, None, None, None);
+        load_webauthn(&app, &db, &store, &state).await;
+        let share = row_state.as_ref().and_then(|row| row.share.clone());
+        let decoded = share
+            .as_deref()
+            .map(crate::db::decode_b64)
+            .map(|result| result.is_ok());
+        let share_for_bytes = share.clone();
+        let mut io = super::recover::RecoverIo::for_conformance(
+            &app,
+            Faulty::new(PoolSql(&db), None),
+            FaultyKv::new(StoreKv(&store), None),
+            user(0),
+            None,
+            None,
+            None,
+            share,
+            Some(1),
+            None,
+        );
+        let observed = io
+            .auth_finish_release(vela_recovery_policy::webauthn_driver::AuthFinishGrantPermit {
+                epoch: 1,
+            })
+            .await;
+        let expected = model::release_share(
+            &state,
+            &s(user(0)),
+            decoded.unwrap_or(false),
+        );
+        let case = format!("webauthn release {state:?}");
+        assert_eq!(observed, expected.as_ref().map(|(obs, _)| *obs), "{case}");
+        assert_eq!(snapshot_webauthn(&db, &store).await, state, "{case}");
+        assert_eq!(io.error_is_set(), expected.is_none(), "{case}");
+        assert_eq!(
+            io.share_bytes(),
+            share_for_bytes
+                .as_deref()
+                .and_then(|text| crate::db::decode_b64(text).ok()),
+            "{case}"
+        );
+        if let Some((_, post)) = expected {
+            assert_eq!(post, state);
+        }
+        counts.case(None);
+    }
+    assert!(counts.states > 0 && counts.cases > 0);
+}
+
+#[tokio::test]
+async fn webauthn_grant_store_matches_the_store_model() {
+    let app = temp_app_state().await;
+    let db = temp_db().await;
+    let store = temp_store();
+    let mut counts = Counts::default();
+
+    for row_state in [None, Some(webauthn_user_states()[1].clone().unwrap())] {
+        counts.states += 1;
+        for kv_fault in faults(1) {
+            let state = webauthn_db(&row_state, None, None, None);
+            load_webauthn(&app, &db, &store, &state).await;
+            let mut io = super::recover::RecoverIo::for_conformance(
+                &app,
+                Faulty::new(PoolSql(&db), None),
+                FaultyKv::new(StoreKv(&store), kv_fault),
+                user(0),
+                None,
+                None,
+                Some(cred_id(0)),
+                None,
+                Some(7),
+                Some(grant(0)),
+            );
+            let observed = io.auth_finish_store_grant().await;
+            let expected = model::store_credential_grant(
+                &state,
+                &webauthn_grant_key(),
+                "{\"key_epoch\":7}",
+                &CredentialGrantView {
+                    key_epoch: 7,
+                    credential_id: cred_id(0),
+                    possession: false,
+                },
+                600,
+                kv_fault,
+            );
+            let case = format!("webauthn grant {state:?} kv {kv_fault:?}");
+            assert_eq!(observed, Some(expected.0), "{case}");
+            assert_eq!(
+                webauthn_grant_of(&snapshot_webauthn(&db, &store).await),
+                expected.1.grants.get(&webauthn_grant_key()).cloned(),
+                "{case}"
+            );
+            assert_eq!(io.recovery_grant(), Some(grant(0)), "{case}");
+            counts.case(kv_fault);
+        }
+    }
+    assert!(counts.states > 0 && counts.cases > 0 && counts.faulted > 0);
+}
+
+#[tokio::test]
+async fn webauthn_registration_start_matches_the_store_model() {
+    let app = temp_app_state().await;
+    let db = temp_db().await;
+    let store = temp_store();
+    let mut counts = Counts::default();
+
+    for row_state in webauthn_user_states() {
+        counts.states += 1;
+        for sql_fault in faults(1) {
+            let state = webauthn_db(&row_state, None, None, None);
+            load_webauthn(&app, &db, &store, &state).await;
+            let mut io = super::webauthn::RegisterStartIo::for_conformance(
+                &app,
+                Faulty::new(PoolSql(&db), sql_fault),
+                FaultyKv::new(StoreKv(&store), None),
+                user(0),
+            );
+            let observed = io.registration_start_observe().await;
+            let expected = model::registration_start_observe(&state, &s(user(0)), sql_fault);
+            let case = format!("webauthn registration start {state:?} sql {sql_fault:?}");
+            assert_eq!(observed, expected, "{case}");
+            assert_eq!(io.error_is_set(), expected.is_none(), "{case}");
+            counts.case(sql_fault);
+        }
+        for kv_fault in faults(1) {
+            let state = webauthn_db(&row_state, None, None, None);
+            load_webauthn(&app, &db, &store, &state).await;
+            let mut io = super::webauthn::RegisterStartIo::for_conformance(
+                &app,
+                Faulty::new(PoolSql(&db), None),
+                FaultyKv::new(StoreKv(&store), kv_fault),
+                user(0),
+            );
+            let value = serde_json::to_string(&stored_registration_state(&app)).unwrap();
+            let observed = io.write_registration_state(value.clone()).await;
+            let expected = model::store_registration_state(
+                &state,
+                &webauthn_registration_key(),
+                &value,
+                300,
+                kv_fault,
+            );
+            let case = format!("webauthn registration store {state:?} kv {kv_fault:?}");
+            assert_eq!(observed, Some(expected.0), "{case}");
+            assert_eq!(snapshot_webauthn(&db, &store).await, expected.1, "{case}");
+            counts.case(kv_fault);
+        }
+    }
+    assert!(counts.states > 0 && counts.cases > 0 && counts.faulted > 0);
+}
+
+#[tokio::test]
+async fn webauthn_registration_finish_matches_the_store_model() {
+    let app = temp_app_state().await;
+    let db = temp_db().await;
+    let store = temp_store();
+    let mut counts = Counts::default();
+    let new_id = cred_id(2);
+
+    for registration in [
+        None,
+        Some(model::WebAuthnRegistrationCell::Valid),
+        Some(model::WebAuthnRegistrationCell::Undecodable),
+    ] {
+        counts.states += 1;
+        for kv_fault in faults(1) {
+            let state = webauthn_db(&None, None, registration.clone(), None);
+            load_webauthn(&app, &db, &store, &state).await;
+            let mut io = super::webauthn::RegisterFinishIo::for_conformance(
+                &app,
+                Faulty::new(PoolSql(&db), None),
+                FaultyKv::new(StoreKv(&store), kv_fault),
+                user(0),
+            );
+            let observed = io.registration_consume_state().await;
+            let expected =
+                model::take_registration_state(&state, &webauthn_registration_key(), kv_fault);
+            let case = format!("webauthn registration consume {state:?} kv {kv_fault:?}");
+            assert_eq!(observed, expected.as_ref().map(|(obs, _)| *obs), "{case}");
+            assert_eq!(
+                snapshot_webauthn(&db, &store).await,
+                expected
+                    .clone()
+                    .map(|(_, post)| post)
+                    .unwrap_or_else(|| state.clone()),
+                "{case}"
+            );
+            counts.case(kv_fault);
+        }
+    }
+
+    // The uniqueness lookup and the credential write.
+    for row_state in webauthn_user_states() {
+        counts.states += 1;
+        for (holder, other_account) in [
+            (cred_id(0), false),
+            (cred_id(1), false),
+            (cred_id(1), true),
+        ] {
+            for sql_fault in faults(1) {
+                let mut state = webauthn_db(&row_state, None, None, None);
+                if other_account {
+                    let row = webauthn_user_row(
+                        Some("c2hhcmU="),
+                        model::CredentialCell::Valid(holder.clone()),
+                        Some(&holder),
+                        Some(7),
+                        false,
+                        None,
+                    );
+                    state.users.insert(s(user(1)), row);
+                    state.holders.insert(holder.clone(), s(user(1)));
+                }
+                load_webauthn(&app, &db, &store, &state).await;
+                let mut io = super::webauthn::RegisterFinishIo::for_conformance(
+                    &app,
+                    Faulty::new(PoolSql(&db), sql_fault),
+                    FaultyKv::new(StoreKv(&store), None),
+                    user(0),
+                );
+                io.set_passkey(stored_passkey(&holder));
+                let observed = io.registration_check_uniqueness().await;
+                let expected =
+                    model::check_uniqueness(&state, &holder, &s(user(0)), sql_fault);
+                let case = format!("webauthn uniqueness {state:?} holder {holder} sql {sql_fault:?}");
+                assert_eq!(observed, Some(expected), "{case}");
+                counts.case(sql_fault);
+            }
+        }
+        for sql_fault in faults(1) {
+            let state = webauthn_db(&row_state, None, None, None);
+            load_webauthn(&app, &db, &store, &state).await;
+            let mut io = super::webauthn::RegisterFinishIo::for_conformance(
+                &app,
+                Faulty::new(PoolSql(&db), sql_fault),
+                FaultyKv::new(StoreKv(&store), None),
+                user(0),
+            );
+            let credential = serde_json::to_string(&stored_passkey(&new_id)).unwrap();
+            let observed = io.persist_credential_json(credential.clone(), new_id.clone()).await;
+            let expected = model::persist_credential(
+                &state,
+                &s(user(0)),
+                &credential,
+                &new_id,
+                true,
+                sql_fault,
+            );
+            let case = format!("webauthn persist {state:?} sql {sql_fault:?}");
+            assert_eq!(observed, Some(expected.0), "{case}");
+            assert_eq!(
+                snapshot_webauthn(&db, &store).await,
+                expected.1,
+                "{case}"
+            );
+            if expected.0 != vela_recovery_policy::webauthn_driver::CredentialPersistObservation::Persisted {
+                assert_eq!(io.persist_error_is_set(), sql_fault.is_some(), "{case}");
+            }
+            counts.case(sql_fault);
+        }
+    }
+    assert!(counts.states > 0 && counts.cases > 0 && counts.faulted > 0);
+}
+
+#[tokio::test]
+async fn schema_has_the_webauthn_columns() {
+    let db = temp_db().await;
+    for column in [
+        "recovery_share",
+        "recovery_webauthn_credential",
+        "recovery_webauthn_cred_id",
+        "recovery_split_id",
+        "key_epoch",
+        "rekey_state",
+    ] {
+        db.query(&format!("SELECT {column} FROM users"), vec![])
+            .await
+            .unwrap_or_else(|error| panic!("users.{column} is missing: {error}"));
+    }
+    // The credential-id index is unique, so at most one account holds an id.
+    db.execute(
+        "INSERT INTO users (id, created_at, recovery_webauthn_cred_id) VALUES (?, 't', 'shared')",
+        vec![TursoValue::Text(user(100).to_string())],
+    )
+    .await
+    .unwrap();
+    let duplicate = db
+        .execute(
+            "INSERT INTO users (id, created_at, recovery_webauthn_cred_id) VALUES (?, 't', 'shared')",
+            vec![TursoValue::Text(user(102).to_string())],
+        )
+        .await;
+    assert!(duplicate.is_err(), "recovery_webauthn_cred_id must be unique");
 }

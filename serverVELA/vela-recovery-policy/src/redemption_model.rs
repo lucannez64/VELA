@@ -39,6 +39,19 @@ use crate::redemption_store::{
 use crate::share_store::{
     self, FinalizeAccountRowView, ShareRowView, ShareStmt, StageAccountRowView,
 };
+use crate::webauthn_driver::{
+    AuthAccountObservation, AuthAttemptConsumptionObservation, AuthFinishContextObservation,
+    AuthStartObservation, ChallengeStoreObservation as WebAuthnChallengeStoreObservation,
+    CredentialPersistObservation, CredentialUniquenessObservation,
+    CredentialUpdateStoreObservation, GrantStoreObservation as WebAuthnGrantStoreObservation,
+    RegistrationStartObservation, RegistrationStateObservation, ShareDecodeObservation,
+    StoredCredentialObservation,
+};
+use crate::webauthn_store::{
+    self, AuthStateTake, AuthStateView, CredentialGrantView, CredentialHolderView,
+    CredentialRowView, FinishAccountRowView, RegistrationStateTake, SetNxOutcome, SetOutcome,
+    ShareRowView as WebAuthnShareRowView,
+};
 
 /// The modelled columns of a `users` row.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -774,6 +787,484 @@ pub fn issue_grant(
     }
 }
 
+
+// ── WebAuthn recovery model ────────────────────────────────────────────────
+//
+// Mirrors `proofs/fstar/webauthn-lemmas/Vela_recovery_policy_webauthn_model.fst`
+// function for function; `tests::shared_webauthn_vectors` checks the same
+// concrete runs the F* `vector_webauthn_*` lemmas prove from the general
+// theorems.
+
+/// A stored credential cell: absent, a decoded credential id, or
+/// present-but-undecodable JSON.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CredentialCell {
+    Absent,
+    Valid(String),
+    Undecodable,
+}
+
+/// The modelled `users` columns the WebAuthn executors read or write.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WebAuthnUserRow {
+    pub share: Option<String>,
+    pub credential: CredentialCell,
+    pub credential_id: Option<String>,
+    pub epoch: Option<i64>,
+    pub rekey: bool,
+    pub split: Option<String>,
+}
+
+/// One attempt slot.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WebAuthnAttemptCell {
+    Absent,
+    Valid(AuthStateView),
+    Undecodable,
+}
+
+/// One registration slot.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WebAuthnRegistrationCell {
+    Absent,
+    Valid,
+    Undecodable,
+}
+
+/// The modelled state of the WebAuthn executors.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct WebAuthnDb {
+    pub users: BTreeMap<String, WebAuthnUserRow>,
+    pub attempts: BTreeMap<String, WebAuthnAttemptCell>,
+    pub registrations: BTreeMap<String, WebAuthnRegistrationCell>,
+    pub grants: BTreeMap<String, CredentialGrantView>,
+    /// credential id -> the account holding it.
+    pub holders: BTreeMap<String, String>,
+}
+
+fn wfault(fault: Option<usize>, k: usize) -> bool {
+    fault == Some(k)
+}
+
+/// A stored credential cell as the handler's row view reports it.
+pub fn credential_observation(cell: &CredentialCell) -> StoredCredentialObservation {
+    match cell {
+        CredentialCell::Absent => StoredCredentialObservation::Missing,
+        CredentialCell::Valid(_) => StoredCredentialObservation::Present,
+        CredentialCell::Undecodable => StoredCredentialObservation::Corrupt,
+    }
+}
+
+/// The `recovery_share` row view.
+pub fn webauthn_share_view(db: &WebAuthnDb, user: &str) -> WebAuthnShareRowView {
+    match db.users.get(user) {
+        None => WebAuthnShareRowView {
+            account_present: false,
+            share_present: false,
+        },
+        Some(row) => WebAuthnShareRowView {
+            account_present: true,
+            share_present: row.share.is_some(),
+        },
+    }
+}
+
+/// The stored-credential row view.
+pub fn credential_view(db: &WebAuthnDb, user: &str) -> CredentialRowView {
+    match db.users.get(user) {
+        None => CredentialRowView {
+            account_present: false,
+            credential: StoredCredentialObservation::Missing,
+        },
+        Some(row) => CredentialRowView {
+            account_present: true,
+            credential: credential_observation(&row.credential),
+        },
+    }
+}
+
+/// Whether the exact attempt slot is occupied.
+pub fn webauthn_slot_occupied(db: &WebAuthnDb, key: &str) -> bool {
+    !matches!(
+        db.attempts.get(key),
+        None | Some(WebAuthnAttemptCell::Absent)
+    )
+}
+
+/// The guarded credential update's SQL guard.
+pub fn update_guard(db: &WebAuthnDb, user: &str, expected: &str) -> bool {
+    db.users
+        .get(user)
+        .map(|row| row.credential_id.as_deref() == Some(expected))
+        .unwrap_or(false)
+}
+
+/// Whether another account holds the credential id.
+pub fn holder_other(db: &WebAuthnDb, credential_id: &str, user: &str) -> bool {
+    db.holders
+        .get(credential_id)
+        .map(|owner| owner != user)
+        .unwrap_or(false)
+}
+
+fn row_share_present(db: &WebAuthnDb, user: &str) -> bool {
+    db.users.get(user).map(|row| row.share.is_some()).unwrap_or(false)
+}
+
+fn row_credential_matches(db: &WebAuthnDb, user: &str, credential_id: &str) -> bool {
+    db.users
+        .get(user)
+        .map(|row| row.credential_id.as_deref() == Some(credential_id))
+        .unwrap_or(false)
+}
+
+fn row_epoch(db: &WebAuthnDb, user: &str) -> Option<i64> {
+    db.users.get(user).and_then(|row| row.epoch)
+}
+
+fn row_rekeying(db: &WebAuthnDb, user: &str) -> bool {
+    db.users.get(user).map(|row| row.rekey).unwrap_or(false)
+}
+
+fn row_split(db: &WebAuthnDb, user: &str) -> Option<String> {
+    db.users.get(user).and_then(|row| row.split.clone())
+}
+
+fn row_credential_id(db: &WebAuthnDb, user: &str) -> Option<String> {
+    db.users.get(user).and_then(|row| row.credential_id.clone())
+}
+
+fn finish_account_view(row: &WebAuthnUserRow) -> FinishAccountRowView {
+    FinishAccountRowView {
+        share: row.share.clone(),
+        stored_epoch: row.epoch,
+        rotation_active: row.rekey,
+        stored_credential_id: row.credential_id.clone(),
+        split_id: row.split.clone(),
+    }
+}
+
+fn rebind(holders: &mut BTreeMap<String, String>, owner: &str, old: Option<&str>, new_id: &str) {
+    if let Some(old) = old {
+        holders.remove(old);
+    }
+    holders.insert(new_id.to_string(), owner.to_string());
+}
+
+/// `InitiateIo::auth_start_observe`.
+pub fn auth_start_observe(
+    db: &WebAuthnDb,
+    user: &str,
+    slot: &str,
+    ttl: u64,
+    sql_fault: Option<usize>,
+    kv_fault: Option<usize>,
+) -> Option<(AuthStartObservation, WebAuthnDb)> {
+    if wfault(sql_fault, 0) {
+        return None;
+    }
+    let share = webauthn_share_view(db, user);
+    if wfault(sql_fault, 1) {
+        return None;
+    }
+    let credential = credential_view(db, user);
+    if wfault(kv_fault, 0) {
+        return None;
+    }
+    Some((
+        webauthn_store::classify_auth_start(
+            &share,
+            &credential,
+            webauthn_slot_occupied(db, slot),
+            ttl,
+        ),
+        db.clone(),
+    ))
+}
+
+/// `InitiateIo::auth_start_store`.
+pub fn store_auth_state(
+    db: &WebAuthnDb,
+    key: &str,
+    _value: &str,
+    state: &AuthStateView,
+    _ttl: u64,
+    kv_fault: Option<usize>,
+) -> (WebAuthnChallengeStoreObservation, WebAuthnDb) {
+    if wfault(kv_fault, 0) {
+        return (
+            webauthn_store::classify_store_auth_state(&SetNxOutcome::Failed),
+            db.clone(),
+        );
+    }
+    if webauthn_slot_occupied(db, key) {
+        return (
+            webauthn_store::classify_store_auth_state(&SetNxOutcome::Occupied),
+            db.clone(),
+        );
+    }
+    let mut post = db.clone();
+    post.attempts
+        .insert(key.to_string(), WebAuthnAttemptCell::Valid(state.clone()));
+    (
+        webauthn_store::classify_store_auth_state(&SetNxOutcome::Wrote),
+        post,
+    )
+}
+
+/// `RecoverIo::auth_finish_context`.
+pub fn finish_context(
+    db: &WebAuthnDb,
+    user: &str,
+    attempt_id_present: bool,
+    sql_fault: Option<usize>,
+) -> Option<AuthFinishContextObservation> {
+    if wfault(sql_fault, 0) {
+        return None;
+    }
+    let share = webauthn_share_view(db, user);
+    if wfault(sql_fault, 1) {
+        return None;
+    }
+    let credential = credential_view(db, user);
+    Some(webauthn_store::classify_finish_context(
+        &share,
+        &credential,
+        attempt_id_present,
+    ))
+}
+
+/// `RecoverIo::auth_finish_consume`.
+pub fn take_auth_state(
+    db: &WebAuthnDb,
+    key: &str,
+    user: &str,
+    attempt: &str,
+    observed_credential_id: &str,
+    kv_fault: Option<usize>,
+) -> Option<(AuthAttemptConsumptionObservation, WebAuthnDb)> {
+    if wfault(kv_fault, 0) {
+        return None;
+    }
+    let cell = db
+        .attempts
+        .get(key)
+        .cloned()
+        .unwrap_or(WebAuthnAttemptCell::Absent);
+    let taken = match &cell {
+        WebAuthnAttemptCell::Absent => AuthStateTake::Missing,
+        WebAuthnAttemptCell::Undecodable => AuthStateTake::Corrupt,
+        WebAuthnAttemptCell::Valid(state) => AuthStateTake::Present(state.clone()),
+    };
+    let mut post = db.clone();
+    if !matches!(cell, WebAuthnAttemptCell::Absent) {
+        post.attempts.remove(key);
+    }
+    Some((
+        webauthn_store::classify_take_auth_state(
+            &taken,
+            &user.to_string(),
+            &attempt.to_string(),
+            &observed_credential_id.to_string(),
+        ),
+        post,
+    ))
+}
+
+/// `RecoverIo::auth_finish_update`'s guarded write.
+pub fn update_credential(
+    db: &WebAuthnDb,
+    user: &str,
+    expected: &str,
+    _credential: &str,
+    credential_id: &str,
+    sql_fault: Option<usize>,
+) -> Option<(CredentialUpdateStoreObservation, WebAuthnDb)> {
+    if wfault(sql_fault, 0) {
+        return None;
+    }
+    if !update_guard(db, user, expected) {
+        return Some((webauthn_store::classify_credential_update(0), db.clone()));
+    }
+    let mut post = db.clone();
+    if let Some(row) = post.users.get_mut(user) {
+        row.credential = CredentialCell::Valid(credential_id.to_string());
+        row.credential_id = Some(credential_id.to_string());
+    }
+    rebind(&mut post.holders, user, Some(expected), credential_id);
+    Some((webauthn_store::classify_credential_update(1), post))
+}
+
+/// `RecoverIo::auth_finish_account`, with its split-id side channel.
+pub fn finish_account(
+    db: &WebAuthnDb,
+    user: &str,
+    credential_id: &str,
+    sql_fault: Option<usize>,
+) -> Option<(AuthAccountObservation, Option<String>)> {
+    if wfault(sql_fault, 0) {
+        return None;
+    }
+    let row = db.users.get(user);
+    let view = row.map(finish_account_view);
+    Some((
+        webauthn_store::classify_finish_account(view, &credential_id.to_string()),
+        row.and_then(|row| row.split.clone()),
+    ))
+}
+
+/// `RecoverIo::auth_finish_release`.
+pub fn release_share(
+    db: &WebAuthnDb,
+    user: &str,
+    decoded: bool,
+) -> Option<(ShareDecodeObservation, WebAuthnDb)> {
+    webauthn_store::classify_share_release(row_share_present(db, user), decoded)
+        .map(|observation| (observation, db.clone()))
+}
+
+/// `RecoverIo::auth_finish_store_grant`.
+pub fn store_credential_grant(
+    db: &WebAuthnDb,
+    key: &str,
+    _value: &str,
+    grant: &CredentialGrantView,
+    _ttl: u64,
+    kv_fault: Option<usize>,
+) -> (WebAuthnGrantStoreObservation, WebAuthnDb) {
+    if wfault(kv_fault, 0) {
+        return (webauthn_store::classify_grant_store(false), db.clone());
+    }
+    let mut post = db.clone();
+    post.grants.insert(key.to_string(), grant.clone());
+    (webauthn_store::classify_grant_store(true), post)
+}
+
+/// `RegisterStartIo::registration_start_observe`.
+pub fn registration_start_observe(
+    db: &WebAuthnDb,
+    user: &str,
+    sql_fault: Option<usize>,
+) -> Option<RegistrationStartObservation> {
+    if wfault(sql_fault, 0) {
+        return None;
+    }
+    Some(webauthn_store::classify_registration_start(&credential_view(
+        db, user,
+    )))
+}
+
+/// `RegisterStartIo::registration_start_store`.
+pub fn store_registration_state(
+    db: &WebAuthnDb,
+    key: &str,
+    _value: &str,
+    _ttl: u64,
+    kv_fault: Option<usize>,
+) -> (WebAuthnChallengeStoreObservation, WebAuthnDb) {
+    if wfault(kv_fault, 0) {
+        return (
+            webauthn_store::classify_store_registration_state(&SetOutcome::Failed),
+            db.clone(),
+        );
+    }
+    let mut post = db.clone();
+    post.registrations
+        .insert(key.to_string(), WebAuthnRegistrationCell::Valid);
+    (
+        webauthn_store::classify_store_registration_state(&SetOutcome::Wrote),
+        post,
+    )
+}
+
+/// `RegisterFinishIo::registration_consume_state`.
+pub fn take_registration_state(
+    db: &WebAuthnDb,
+    key: &str,
+    kv_fault: Option<usize>,
+) -> Option<(RegistrationStateObservation, WebAuthnDb)> {
+    if wfault(kv_fault, 0) {
+        return None;
+    }
+    let cell = db
+        .registrations
+        .get(key)
+        .copied()
+        .unwrap_or(WebAuthnRegistrationCell::Absent);
+    let taken = match cell {
+        WebAuthnRegistrationCell::Absent => RegistrationStateTake::Missing,
+        WebAuthnRegistrationCell::Undecodable => RegistrationStateTake::Corrupt,
+        WebAuthnRegistrationCell::Valid => RegistrationStateTake::Present,
+    };
+    let mut post = db.clone();
+    if !matches!(cell, WebAuthnRegistrationCell::Absent) {
+        post.registrations.remove(key);
+    }
+    Some((
+        webauthn_store::classify_registration_state(&taken),
+        post,
+    ))
+}
+
+/// `RegisterFinishIo::registration_check_uniqueness`.
+pub fn check_uniqueness(
+    db: &WebAuthnDb,
+    credential_id: &str,
+    user: &str,
+    sql_fault: Option<usize>,
+) -> CredentialUniquenessObservation {
+    let view = if wfault(sql_fault, 0) {
+        CredentialHolderView::Unreadable
+    } else if holder_other(db, credential_id, user) {
+        CredentialHolderView::OtherAccount
+    } else {
+        CredentialHolderView::OnlyCaller
+    };
+    webauthn_store::classify_uniqueness(&view)
+}
+
+/// `RegisterFinishIo::registration_persist`.
+pub fn persist_credential(
+    db: &WebAuthnDb,
+    user: &str,
+    _credential: &str,
+    credential_id: &str,
+    encoded: bool,
+    sql_fault: Option<usize>,
+) -> (CredentialPersistObservation, WebAuthnDb) {
+    if !encoded {
+        return (
+            webauthn_store::classify_persist_credential(false, &[]),
+            db.clone(),
+        );
+    }
+    if wfault(sql_fault, 0) {
+        return (
+            webauthn_store::classify_persist_credential(true, &[WriteOutcome::Failed]),
+            db.clone(),
+        );
+    }
+    match db.users.get(user) {
+        None => (
+            webauthn_store::classify_persist_credential(true, &[WriteOutcome::Applied(0)]),
+            db.clone(),
+        ),
+        Some(row) => {
+            let old = row.credential_id.clone();
+            let mut post = db.clone();
+            if let Some(row) = post.users.get_mut(user) {
+                row.credential = CredentialCell::Valid(credential_id.to_string());
+                row.credential_id = Some(credential_id.to_string());
+            }
+            rebind(&mut post.holders, user, old.as_deref(), credential_id);
+            (
+                webauthn_store::classify_persist_credential(true, &[WriteOutcome::Applied(1)]),
+                post,
+            )
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1034,6 +1525,197 @@ mod tests {
         // vector_possession_grant_failed: a store error changes nothing.
         let (obs, post) = issue_grant(&pre, "g", "{\"key_epoch\":7}", &grant, 600, Some(0));
         assert_eq!(obs, GrantStoreObservation::Failed);
+        assert_eq!(post, pre);
+    }
+
+    fn webauthn_row() -> WebAuthnUserRow {
+        WebAuthnUserRow {
+            share: Some(s("c2hhcmU=")),
+            credential: CredentialCell::Valid(s("cred")),
+            credential_id: Some(s("cred")),
+            epoch: Some(7),
+            rekey: false,
+            split: Some(s("split")),
+        }
+    }
+
+    fn webauthn_db() -> WebAuthnDb {
+        let mut db = WebAuthnDb::default();
+        db.users.insert(s("u"), webauthn_row());
+        db.holders.insert(s("cred"), s("u"));
+        db
+    }
+
+    fn attempt() -> AuthStateView {
+        AuthStateView {
+            user: s("u"),
+            attempt: s("a"),
+            credential_id: s("cred"),
+        }
+    }
+
+    /// The F* lemmas `vector_webauthn_*` prove the same runs.
+    #[test]
+    fn shared_webauthn_vectors() {
+        let pre = webauthn_db();
+
+        // vector_webauthn_start / _absent / _occupied.
+        let (obs, post) =
+            auth_start_observe(&pre, "u", "slot", 300, None, None).unwrap();
+        assert!(obs.account_present && obs.share_present && obs.attempt_id_fresh);
+        assert_eq!(obs.credential, StoredCredentialObservation::Present);
+        assert_eq!(obs.ttl_secs, 300);
+        assert_eq!(post, pre);
+        let (obs, post) =
+            auth_start_observe(&pre, "missing", "slot", 300, None, None).unwrap();
+        assert!(!obs.account_present && !obs.share_present && obs.attempt_id_fresh);
+        assert_eq!(obs.credential, StoredCredentialObservation::Missing);
+        assert_eq!(post, pre);
+        let mut occupied = pre.clone();
+        occupied
+            .attempts
+            .insert(s("slot"), WebAuthnAttemptCell::Valid(attempt()));
+        let (obs, post) =
+            auth_start_observe(&occupied, "u", "slot", 300, None, None).unwrap();
+        assert!(!obs.attempt_id_fresh);
+        assert_eq!(post, occupied);
+
+        // vector_webauthn_store / _lost / _failed.
+        let state = attempt();
+        let (obs, stored) =
+            store_auth_state(&pre, "slot", "v", &state, 300, None);
+        assert_eq!(obs, WebAuthnChallengeStoreObservation::Stored);
+        assert_eq!(
+            stored.attempts.get("slot"),
+            Some(&WebAuthnAttemptCell::Valid(state.clone()))
+        );
+        let (obs, lost) =
+            store_auth_state(&occupied, "slot", "v", &state, 300, None);
+        assert_eq!(obs, WebAuthnChallengeStoreObservation::Lost);
+        assert_eq!(lost, occupied);
+        let (obs, failed) =
+            store_auth_state(&pre, "slot", "v", &state, 300, Some(0));
+        assert_eq!(obs, WebAuthnChallengeStoreObservation::StorageFailed);
+        assert_eq!(failed, pre);
+
+        // vector_webauthn_context.
+        let obs = finish_context(&pre, "u", true, None).unwrap();
+        assert!(obs.account_present && obs.share_present && obs.attempt_id_present);
+        assert_eq!(obs.credential, StoredCredentialObservation::Present);
+
+        // vector_webauthn_take / _missing / _corrupt.
+        let (obs, taken) =
+            take_auth_state(&occupied, "slot", "u", "a", "cred", None).unwrap();
+        assert_eq!(
+            obs,
+            AuthAttemptConsumptionObservation::Present {
+                user_matches: true,
+                attempt_matches: true,
+                credential_matches: true,
+            }
+        );
+        assert!(taken.attempts.is_empty());
+        let (obs, post) = take_auth_state(&pre, "slot", "u", "a", "cred", None).unwrap();
+        assert_eq!(obs, AuthAttemptConsumptionObservation::Missing);
+        assert_eq!(post, pre);
+        let mut corrupt = pre.clone();
+        corrupt
+            .attempts
+            .insert(s("slot"), WebAuthnAttemptCell::Undecodable);
+        let (obs, post) =
+            take_auth_state(&corrupt, "slot", "u", "a", "cred", None).unwrap();
+        assert_eq!(obs, AuthAttemptConsumptionObservation::Corrupt);
+        assert!(post.attempts.is_empty());
+
+        // vector_webauthn_update / _stale.
+        let (obs, updated) =
+            update_credential(&pre, "u", "cred", "{}", "cred2", None).unwrap();
+        assert_eq!(obs, CredentialUpdateStoreObservation::Updated);
+        assert_eq!(updated.holders.get("cred2").map(String::as_str), Some("u"));
+        assert_eq!(updated.holders.get("cred"), None);
+        let (obs, post) =
+            update_credential(&pre, "u", "other", "{}", "cred2", None).unwrap();
+        assert_eq!(obs, CredentialUpdateStoreObservation::Changed);
+        assert_eq!(post, pre);
+
+        // vector_webauthn_account / _absent.
+        let (obs, split) = finish_account(&pre, "u", "cred", None).unwrap();
+        assert!(obs.account_present && obs.account_epoch_active && obs.share_present);
+        assert!(obs.stored_credential_matches);
+        assert_eq!(obs.stored_epoch, Some(7));
+        assert_eq!(split, Some(s("split")));
+        let (obs, split) = finish_account(&pre, "missing", "cred", None).unwrap();
+        assert!(!obs.account_present && !obs.account_epoch_active && !obs.share_present);
+        assert_eq!(split, None);
+
+        // vector_webauthn_release / _corrupt / _missing.
+        let (obs, post) = release_share(&pre, "u", true).unwrap();
+        assert_eq!(obs, ShareDecodeObservation::Decoded);
+        assert_eq!(post, pre);
+        let (obs, post) = release_share(&pre, "u", false).unwrap();
+        assert_eq!(obs, ShareDecodeObservation::Corrupt);
+        assert_eq!(post, pre);
+        assert!(release_share(&pre, "missing", true).is_none());
+
+        // vector_webauthn_grant / _failed.
+        let grant = CredentialGrantView {
+            key_epoch: 7,
+            credential_id: s("cred"),
+            possession: false,
+        };
+        let (obs, issued) =
+            store_credential_grant(&pre, "g", "v", &grant, 600, None);
+        assert_eq!(obs, WebAuthnGrantStoreObservation::Stored);
+        assert_eq!(issued.grants.get("g"), Some(&grant));
+        let (obs, post) =
+            store_credential_grant(&pre, "g", "v", &grant, 600, Some(0));
+        assert_eq!(obs, WebAuthnGrantStoreObservation::Failed);
+        assert_eq!(post, pre);
+
+        // vector_webauthn_registration_start / _store / _take.
+        let obs = registration_start_observe(&pre, "u", None).unwrap();
+        assert!(obs.account_present);
+        assert_eq!(obs.credential, StoredCredentialObservation::Present);
+        let (obs, stored) = store_registration_state(&pre, "r", "{}", 300, None);
+        assert_eq!(obs, WebAuthnChallengeStoreObservation::Stored);
+        assert_eq!(
+            stored.registrations.get("r"),
+            Some(&WebAuthnRegistrationCell::Valid)
+        );
+        let (obs, taken) = take_registration_state(&stored, "r", None).unwrap();
+        assert_eq!(obs, RegistrationStateObservation::Present);
+        assert_eq!(taken.registrations.get("r"), None);
+        let (obs, post) = take_registration_state(&pre, "r", None).unwrap();
+        assert_eq!(obs, RegistrationStateObservation::Missing);
+        assert_eq!(post, pre);
+
+        // vector_webauthn_uniqueness / _elsewhere / _failed.
+        assert_eq!(
+            check_uniqueness(&pre, "cred", "u", None),
+            CredentialUniquenessObservation::Unique
+        );
+        assert_eq!(
+            check_uniqueness(&pre, "cred", "other", None),
+            CredentialUniquenessObservation::RegisteredElsewhere
+        );
+        assert_eq!(
+            check_uniqueness(&pre, "cred", "u", Some(0)),
+            CredentialUniquenessObservation::LookupFailed
+        );
+
+        // vector_webauthn_persist / _gone / _encoding.
+        let (obs, post) =
+            persist_credential(&pre, "u", "{}", "cred2", true, None);
+        assert_eq!(obs, CredentialPersistObservation::Persisted);
+        assert_eq!(post.holders.get("cred2").map(String::as_str), Some("u"));
+        assert_eq!(post.holders.get("cred"), None);
+        let (obs, post) =
+            persist_credential(&pre, "missing", "{}", "cred2", true, None);
+        assert_eq!(obs, CredentialPersistObservation::AccountGone);
+        assert_eq!(post, pre);
+        let (obs, post) =
+            persist_credential(&pre, "u", "{}", "cred2", false, None);
+        assert_eq!(obs, CredentialPersistObservation::EncodingFailed);
         assert_eq!(post, pre);
     }
 }

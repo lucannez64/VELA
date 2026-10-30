@@ -18,6 +18,11 @@ use vela_recovery_policy::redemption_store::{
 use vela_recovery_policy::share_store::{
     self, FinalizeAccountRowView, ShareRowView, ShareStmt, StageAccountRowView,
 };
+use vela_recovery_policy::webauthn_store::{
+    self, AuthStateView, CredentialHolderView, CredentialRowView, FinishAccountRowView, SetNxOutcome,
+    SetOutcome, ShareRowView as WebAuthnShareRowView, WebAuthnStmt,
+};
+use webauthn_rs::prelude::Passkey;
 
 use crate::sqldb::{Db as _, TursoDb, TursoValue, VelaRow};
 use crate::error::{AppError, Result};
@@ -369,5 +374,262 @@ pub(super) fn put_enrollment_grant<K: RecoveryKv>(kv: &mut K, stmt: &PossessionS
         _ => Err(AppError::Internal(
             "a non-set_ex statement in a grant plan".into(),
         )),
+    }
+}
+
+// ── WebAuthn recovery plans (F-1) ──────────────────────────────────────────
+
+/// Runs one WebAuthn read statement.
+pub(super) async fn run_webauthn_read<S: RecoverySql>(
+    sql: &mut S,
+    stmt: &WebAuthnStmt,
+) -> anyhow::Result<Vec<VelaRow>> {
+    match webauthn_store::render(stmt) {
+        Rendered::Query { sql: text, params } => sql.query(text, turso_params(params)).await,
+        _ => Err(anyhow::anyhow!(
+            "a non-read statement in a WebAuthn read plan"
+        )),
+    }
+}
+
+/// Runs one WebAuthn write statement, returning the rows it changed.
+pub(super) async fn run_webauthn_write<S: RecoverySql>(
+    sql: &mut S,
+    stmt: &WebAuthnStmt,
+) -> anyhow::Result<u64> {
+    match webauthn_store::render(stmt) {
+        Rendered::Execute { sql: text, params } => sql.execute(text, turso_params(params)).await,
+        _ => Err(anyhow::anyhow!(
+            "a non-write statement in a WebAuthn write plan"
+        )),
+    }
+}
+
+/// Runs a one-statement WebAuthn write plan: its outcome, or the error that
+/// stopped it.
+pub(super) async fn run_webauthn_writes<S: RecoverySql>(
+    sql: &mut S,
+    plan: &[WebAuthnStmt],
+) -> (Vec<WriteOutcome>, Option<anyhow::Error>) {
+    let mut outcomes = Vec::with_capacity(plan.len());
+    for stmt in plan {
+        match run_webauthn_write(sql, stmt).await {
+            Ok(rows) => outcomes.push(WriteOutcome::Applied(rows)),
+            Err(error) => {
+                outcomes.push(WriteOutcome::Failed);
+                return (outcomes, Some(error));
+            }
+        }
+    }
+    (outcomes, None)
+}
+
+/// Whether the exact attempt slot is occupied.
+pub(super) fn probe_auth_slot<K: RecoveryKv>(kv: &mut K, stmt: &WebAuthnStmt) -> Result<bool> {
+    match webauthn_store::render(stmt) {
+        Rendered::KvExists { key } => kv.exists(&key),
+        _ => Err(AppError::Internal(
+            "a non-exists statement in an attempt-slot plan".into(),
+        )),
+    }
+}
+
+/// The atomic insert-if-absent of one attempt envelope.
+pub(super) fn store_auth_state<K: RecoveryKv>(
+    kv: &mut K,
+    stmt: &WebAuthnStmt,
+) -> Result<SetNxOutcome> {
+    match webauthn_store::render(stmt) {
+        Rendered::KvSetNx {
+            key,
+            value,
+            ttl_secs,
+        } => Ok(if kv.set_nx(&key, &value, ttl_secs)? {
+            SetNxOutcome::Wrote
+        } else {
+            SetNxOutcome::Occupied
+        }),
+        _ => Err(AppError::Internal(
+            "a non-set_nx statement in a challenge plan".into(),
+        )),
+    }
+}
+
+/// The atomic read-and-delete of the exact attempt envelope.
+pub(super) fn take_auth_state<K: RecoveryKv>(
+    kv: &mut K,
+    stmt: &WebAuthnStmt,
+) -> Result<Option<Vec<u8>>> {
+    match webauthn_store::render(stmt) {
+        Rendered::KvTake { key } => kv.take(&key),
+        _ => Err(AppError::Internal(
+            "a non-take statement in an attempt plan".into(),
+        )),
+    }
+}
+
+/// The overwriting write of the registration ceremony state.
+pub(super) fn store_registration_state<K: RecoveryKv>(
+    kv: &mut K,
+    stmt: &WebAuthnStmt,
+) -> Result<SetOutcome> {
+    match webauthn_store::render(stmt) {
+        Rendered::KvSetEx {
+            key,
+            value,
+            ttl_secs,
+        } => {
+            kv.set_ex(&key, &value, ttl_secs)?;
+            Ok(SetOutcome::Wrote)
+        }
+        _ => Err(AppError::Internal(
+            "a non-set_ex statement in a registration-state plan".into(),
+        )),
+    }
+}
+
+/// The atomic read-and-delete of the registration ceremony state.
+pub(super) fn take_registration_state<K: RecoveryKv>(
+    kv: &mut K,
+    stmt: &WebAuthnStmt,
+) -> Result<Option<Vec<u8>>> {
+    match webauthn_store::render(stmt) {
+        Rendered::KvTake { key } => kv.take(&key),
+        _ => Err(AppError::Internal(
+            "a non-take statement in a registration-state plan".into(),
+        )),
+    }
+}
+
+/// Stores one credential-bound enrollment grant.
+pub(super) fn store_credential_grant<K: RecoveryKv>(
+    kv: &mut K,
+    stmt: &WebAuthnStmt,
+) -> Result<()> {
+    match webauthn_store::render(stmt) {
+        Rendered::KvSetEx {
+            key,
+            value,
+            ttl_secs,
+        } => kv.set_ex(&key, &value, ttl_secs),
+        _ => Err(AppError::Internal(
+            "a non-set_ex statement in a grant plan".into(),
+        )),
+    }
+}
+
+/// The decoded stored-credential recall: the row view the drivers classify,
+/// plus the decoded passkey and its decode error when the cell does not parse.
+pub(super) struct CredentialObservation {
+    pub view: CredentialRowView,
+    pub passkey: Option<Passkey>,
+    pub decode_error: Option<AppError>,
+}
+
+/// The first `SelectCredential` row, decoded exactly as
+/// `observe_recovery_credential` decodes it.
+pub(super) fn credential_row(rows: &[VelaRow]) -> Result<CredentialObservation> {
+    let Some(row) = rows.first() else {
+        return Ok(CredentialObservation {
+            view: CredentialRowView {
+                account_present: false,
+                credential: vela_recovery_policy::webauthn_driver::StoredCredentialObservation::Missing,
+            },
+            passkey: None,
+            decode_error: None,
+        });
+    };
+    match row.get(0) {
+        Some(TursoValue::Null) | None => Ok(CredentialObservation {
+            view: CredentialRowView {
+                account_present: true,
+                credential: vela_recovery_policy::webauthn_driver::StoredCredentialObservation::Missing,
+            },
+            passkey: None,
+            decode_error: None,
+        }),
+        Some(TursoValue::Text(passkey_json)) => match serde_json::from_str(passkey_json) {
+            Ok(passkey) => Ok(CredentialObservation {
+                view: CredentialRowView {
+                    account_present: true,
+                    credential:
+                        vela_recovery_policy::webauthn_driver::StoredCredentialObservation::Present,
+                },
+                passkey: Some(passkey),
+                decode_error: None,
+            }),
+            Err(e) => Ok(CredentialObservation {
+                view: CredentialRowView {
+                    account_present: true,
+                    credential:
+                        vela_recovery_policy::webauthn_driver::StoredCredentialObservation::Corrupt,
+                },
+                passkey: None,
+                decode_error: Some(AppError::Internal(format!(
+                    "invalid stored WebAuthn credential: {e}"
+                ))),
+            }),
+        },
+        _ => Err(AppError::Internal(
+            "expected WebAuthn credential JSON".into(),
+        )),
+    }
+}
+
+/// The first `SelectShare` row.
+pub(super) fn webauthn_share_row_view(rows: &[VelaRow]) -> WebAuthnShareRowView {
+    match rows.first() {
+        Some(row) => WebAuthnShareRowView {
+            account_present: true,
+            share_present: !matches!(row.get(0), Some(TursoValue::Null) | None),
+        },
+        None => WebAuthnShareRowView {
+            account_present: false,
+            share_present: false,
+        },
+    }
+}
+
+/// The first `SelectFinishAccount` row.
+pub(super) fn finish_account_row_view(rows: &[VelaRow]) -> Option<FinishAccountRowView> {
+    rows.first().map(|row| FinishAccountRowView {
+        share: row.text(0).map(String::from),
+        stored_epoch: row.i64(1),
+        rotation_active: row.text(2).is_some(),
+        stored_credential_id: row.text(3).map(String::from),
+        split_id: row.text(4).map(String::from),
+    })
+}
+
+/// The credential-holder lookup: whether a row belongs to another account, and
+/// the error a row whose id cell did not read as text has always produced.
+pub(super) fn holder_view(
+    rows: &[VelaRow],
+    user_id: &str,
+) -> (CredentialHolderView, Option<AppError>) {
+    for row in rows {
+        let Some(id) = row.text(0) else {
+            return (
+                CredentialHolderView::Unreadable,
+                Some(AppError::Internal("expected user id".into())),
+            );
+        };
+        if id != user_id {
+            return (CredentialHolderView::OtherAccount, None);
+        }
+    }
+    (CredentialHolderView::OnlyCaller, None)
+}
+
+/// The view an attempt envelope carries, for the plan.
+pub(super) fn auth_state_view(
+    user_id: uuid::Uuid,
+    attempt: uuid::Uuid,
+    credential_id: &str,
+) -> AuthStateView {
+    AuthStateView {
+        user: user_id.to_string(),
+        attempt: attempt.to_string(),
+        credential_id: credential_id.to_string(),
     }
 }
