@@ -19,6 +19,8 @@ pub mod registration_driver;
 pub mod registration_interpreter;
 pub mod revocation_driver;
 pub mod revocation_interpreter;
+pub mod store;
+pub mod store_model;
 pub mod websession_driver;
 pub mod websession_interpreter;
 

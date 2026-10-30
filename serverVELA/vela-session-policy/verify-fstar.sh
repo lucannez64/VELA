@@ -11,7 +11,7 @@ cd "$proof_root"
 # extraction it just regenerated. No argument runs everything, in order.
 part=${1:-all}
 case $part in
-  all|core|login|revocation|deletion|account|websession) ;;
+  all|core|login|revocation|deletion|account|websession|session) ;;
   *) echo "usage: $0 [all|core|login|revocation|deletion|account|websession]" >&2; exit 2 ;;
 esac
 wants() { [[ $part == all || $part == "$1" ]]; }
@@ -120,3 +120,9 @@ if wants websession; then "$proof_root/verify-fstar-websession-interpreter.sh"; 
 # world: one token per session, no token after revocation, owner-only grants
 # and deletes, and no authority from start. Needs the driver extraction above.
 if wants websession; then "$proof_root/verify-fstar-websession-composition.sh"; fi
+
+# F-1 for the session executors (logout, device revocation, account deletion):
+# each method's observation proved against the model of the tables and store
+# keys it touches, with mutation checks. Needs the deletion/revocation driver
+# extraction above.
+if wants session; then "$proof_root/verify-fstar-session-executors.sh"; fi
