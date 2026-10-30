@@ -210,7 +210,7 @@ for recovery device redemption and the recovery share.
 The [enrollment executors](enrollment-executors/README.md) evidence does the
 same for the seven enrollment and pairing executors.
 The [session executors](session-executors/README.md) evidence does the same for
-logout, device revocation and account deletion.
+login, logout, device revocation and account deletion.
 
 The [cancellation evidence](cancellation/README.md) proves every interpreter
 loop leaves a sound driver state when cancelled after any turn, and reviews
