@@ -93,6 +93,8 @@ tracing            = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 [dev-dependencies]
+# Conformance builds a real stored passkey for the WebAuthn executor tests.
+webauthn-rs-core = "0.5.5"
 tower = { version = "0.4", features = ["util"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "blocking"] }
 serde_json = "1"

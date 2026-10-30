@@ -7,13 +7,18 @@ use vela_recovery_policy::webauthn_driver::{
     CredentialPersistObservation, CredentialUniquenessObservation, RegistrationEffect,
     RegistrationFailure, RegistrationStartEffect, RegistrationStartFailure,
     RegistrationStartObservation, RegistrationStateObservation,
-    RegistrationVerificationObservation, StoredCredentialObservation,
+    RegistrationVerificationObservation,
 };
+use vela_recovery_policy::webauthn_store::{self, CredentialHolderView, RegistrationStateTake, SetOutcome};
 use webauthn_rs::prelude::{
     CreationChallengeResponse, CredentialID, Passkey, PasskeyRegistration,
     RegisterPublicKeyCredential,
 };
 
+use super::sql::{
+    credential_row, holder_view, run_webauthn_read, run_webauthn_writes,
+    store_registration_state, take_registration_state, PoolSql, RecoveryKv, RecoverySql, StoreKv,
+};
 use crate::{
     error::{AppError, Result},
     middleware::{maybe_append_new_token, DeviceSession},
@@ -64,94 +69,6 @@ pub struct RegisterStartResponse {
 #[derive(Serialize)]
 pub struct RegisterFinishResponse {
     pub registered: bool,
-}
-
-/// The stored recovery credential as an observation rather than an error.
-/// Account absence and JSON corruption are distinct facts the pure driver
-/// classifies; only a storage error short-circuits here.
-pub(crate) struct RecoveryCredentialObservation {
-    pub account_present: bool,
-    pub credential: StoredCredentialObservation,
-    pub passkey: Option<Passkey>,
-    pub decode_error: Option<AppError>,
-}
-
-pub(crate) async fn observe_recovery_credential(
-    state: &AppState,
-    user_id: Uuid,
-) -> Result<RecoveryCredentialObservation> {
-    let rows = state
-        .sqldb
-        .query(
-            "SELECT recovery_webauthn_credential FROM users WHERE id = ?",
-            vec![TursoValue::Text(user_id.to_string())],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-
-    let Some(row) = rows.first() else {
-        return Ok(RecoveryCredentialObservation {
-            account_present: false,
-            credential: StoredCredentialObservation::Missing,
-            passkey: None,
-            decode_error: None,
-        });
-    };
-    Ok(match row.get(0) {
-        Some(TursoValue::Null) | None => RecoveryCredentialObservation {
-            account_present: true,
-            credential: StoredCredentialObservation::Missing,
-            passkey: None,
-            decode_error: None,
-        },
-        Some(TursoValue::Text(passkey_json)) => match serde_json::from_str(passkey_json) {
-            Ok(passkey) => RecoveryCredentialObservation {
-                account_present: true,
-                credential: StoredCredentialObservation::Present,
-                passkey: Some(passkey),
-                decode_error: None,
-            },
-            Err(e) => RecoveryCredentialObservation {
-                account_present: true,
-                credential: StoredCredentialObservation::Corrupt,
-                passkey: None,
-                decode_error: Some(AppError::Internal(format!(
-                    "invalid stored WebAuthn credential: {e}"
-                ))),
-            },
-        },
-        _ => {
-            return Err(AppError::Internal(
-                "expected WebAuthn credential JSON".into(),
-            ))
-        }
-    })
-}
-
-pub(crate) async fn update_recovery_passkey_if_current(
-    state: &AppState,
-    user_id: Uuid,
-    expected_cred_id: &str,
-    passkey: &Passkey,
-) -> Result<bool> {
-    let passkey_json = serde_json::to_string(passkey)
-        .map_err(|e| AppError::Internal(format!("failed to serialize passkey: {e}")))?;
-    let cred_id = cred_id_b64(passkey);
-    let updated = state
-        .sqldb
-        .execute(
-            "UPDATE users SET recovery_webauthn_credential = ?, recovery_webauthn_cred_id = ?
-             WHERE id = ? AND recovery_webauthn_cred_id = ?",
-            vec![
-                TursoValue::Text(passkey_json),
-                TursoValue::Text(cred_id),
-                TursoValue::Text(user_id.to_string()),
-                TursoValue::Text(expected_cred_id.to_string()),
-            ],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    Ok(updated == 1)
 }
 
 /// One-time startup backfill: populate `recovery_webauthn_cred_id` for rows
@@ -217,6 +134,8 @@ pub async fn post_register_start(
     // handler only supplies the I/O and renders the terminal effect.
     let mut io = RegisterStartIo {
         state: &state,
+        sql: PoolSql(&state.sqldb),
+        kv: StoreKv(&state.store),
         user_id: session.user_id,
         user_name: body.user_name,
         user_display_name: body.user_display_name,
@@ -272,8 +191,10 @@ pub async fn post_register_start(
 /// method runs and when (through the shared `registration_start_interpreter!`
 /// loop, proved in F* as `run_registration_start`); each method only performs
 /// its effect and reports the observation. `None` aborts with `error`.
-struct RegisterStartIo<'a> {
+pub(super) struct RegisterStartIo<'a, S, K> {
     state: &'a AppState,
+    sql: S,
+    kv: K,
     user_id: Uuid,
     user_name: Option<String>,
     user_display_name: Option<String>,
@@ -286,10 +207,18 @@ struct RegisterStartIo<'a> {
     error: Option<AppError>,
 }
 
-impl RegisterStartIo<'_> {
+impl<S: RecoverySql, K: RecoveryKv> RegisterStartIo<'_, S, K> {
     /// Observe the currently stored recovery credential (or its absence).
-    async fn registration_start_observe(&mut self) -> Option<RegistrationStartObservation> {
-        let observed = match observe_recovery_credential(self.state, self.user_id).await {
+    pub(super) async fn registration_start_observe(&mut self) -> Option<RegistrationStartObservation> {
+        let stmt = webauthn_store::plan_select_credential(self.user_id.to_string());
+        let rows = match run_webauthn_read(&mut self.sql, &stmt).await {
+            Ok(rows) => rows,
+            Err(error) => {
+                self.error = Some(AppError::Internal(error.to_string()));
+                return None;
+            }
+        };
+        let observed = match credential_row(&rows) {
             Ok(observed) => observed,
             Err(error) => {
                 self.error = Some(error);
@@ -298,10 +227,7 @@ impl RegisterStartIo<'_> {
         };
         self.passkey = observed.passkey;
         self.decode_error = observed.decode_error;
-        Some(RegistrationStartObservation {
-            account_present: observed.account_present,
-            credential: observed.credential,
-        })
+        Some(webauthn_store::classify_registration_start(&observed.view))
     }
 
     /// Start the registration ceremony, excluding the observed credential.
@@ -347,14 +273,66 @@ impl RegisterStartIo<'_> {
             ));
             return None;
         };
-        let write = store_register_state(self.state, self.user_id, &reg_state);
-        let observation = if write.is_ok() {
-            ChallengeStoreObservation::Stored
-        } else {
-            ChallengeStoreObservation::StorageFailed
+        let value = match serde_json::to_string(&reg_state) {
+            Ok(value) => value,
+            Err(e) => {
+                self.error = Some(AppError::Internal(format!(
+                    "failed to serialize registration state: {e}"
+                )));
+                return None;
+            }
         };
-        self.store_error = write.err();
-        Some(observation)
+        self.write_registration_state(value).await
+    }
+
+    /// The write half of `registration_start_store`: write exactly one
+    /// ceremony state at the account's registration key.
+    pub(super) async fn write_registration_state(&mut self, value: String) -> Option<ChallengeStoreObservation> {
+        let stmt = webauthn_store::plan_store_registration_state(
+            webauthn_store::registration_state_key(&self.user_id.to_string()),
+            value,
+            REGISTER_STATE_TTL_SECS,
+        );
+        let outcome = match store_registration_state(&mut self.kv, &stmt) {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                self.store_error = Some(error);
+                SetOutcome::Failed
+            }
+        };
+        Some(webauthn_store::classify_store_registration_state(&outcome))
+    }
+}
+
+/// Construction and side-channel access for the bounded real-database
+/// conformance test (`recovery/conformance.rs`).
+#[cfg(test)]
+impl<'a, S, K> RegisterStartIo<'a, S, K> {
+    pub(super) fn for_conformance(
+        state: &'a AppState,
+        sql: S,
+        kv: K,
+        user_id: Uuid,
+    ) -> Self {
+        Self {
+            state,
+            sql,
+            kv,
+            user_id,
+            user_name: None,
+            user_display_name: None,
+            passkey: None,
+            decode_error: None,
+            challenge: None,
+            reg_state: None,
+            ceremony_error: None,
+            store_error: None,
+            error: None,
+        }
+    }
+
+    pub(super) fn error_is_set(&self) -> bool {
+        self.error.is_some()
     }
 }
 
@@ -392,6 +370,8 @@ pub async fn post_register_finish(
     // handler only supplies the I/O and renders the terminal effect.
     let mut io = RegisterFinishIo {
         state: &state,
+        sql: PoolSql(&state.sqldb),
+        kv: StoreKv(&state.store),
         user_id: session.user_id,
         credential,
         limited_error: None,
@@ -423,9 +403,56 @@ pub async fn post_register_finish(
     Ok((headers, Json(RegisterFinishResponse { registered: true })))
 }
 
+#[cfg(test)]
+impl<'a, S, K> RegisterFinishIo<'a, S, K> {
+    pub(super) fn for_conformance(
+        state: &'a AppState,
+        sql: S,
+        kv: K,
+        user_id: Uuid,
+    ) -> Self {
+        Self {
+            state,
+            sql,
+            kv,
+            user_id,
+            credential: RegisterPublicKeyCredential {
+                id: "unused".into(),
+                raw_id: Default::default(),
+                response: webauthn_rs_core::proto::AuthenticatorAttestationResponseRaw {
+                    attestation_object: Default::default(),
+                    client_data_json: Default::default(),
+                    transports: None,
+                },
+                type_: "public-key".into(),
+                extensions: Default::default(),
+            },
+            limited_error: None,
+            reg_state: None,
+            state_error: None,
+            passkey: None,
+            verification_error: None,
+            uniqueness_error: None,
+            persist_error: None,
+            error: None,
+        }
+    }
+
+    pub(super) fn set_passkey(&mut self, passkey: Passkey) {
+        self.passkey = Some(passkey);
+    }
+
+    pub(super) fn persist_error_is_set(&self) -> bool {
+        self.persist_error.is_some()
+    }
+}
+
 /// Render a registration failure with the handler's historical status and
 /// message, preferring the original error captured by the effect.
-fn registration_failure_error(failure: RegistrationFailure, io: &mut RegisterFinishIo<'_>) -> AppError {
+fn registration_failure_error<S, K>(
+    failure: RegistrationFailure,
+    io: &mut RegisterFinishIo<'_, S, K>,
+) -> AppError {
     match failure {
         RegistrationFailure::AttemptLimited => io.limited_error.take().unwrap_or_else(|| {
             AppError::Internal("registration attempt was limited".into())
@@ -468,8 +495,10 @@ fn registration_failure_error(failure: RegistrationFailure, io: &mut RegisterFin
 /// method runs and when (through the shared `registration_interpreter!` loop,
 /// proved in F* as `run_registration`); each method only performs its effect
 /// and reports the observation. `None` aborts with `error`.
-struct RegisterFinishIo<'a> {
+pub(super) struct RegisterFinishIo<'a, S, K> {
     state: &'a AppState,
+    sql: S,
+    kv: K,
     user_id: Uuid,
     credential: RegisterPublicKeyCredential,
     limited_error: Option<AppError>,
@@ -482,7 +511,7 @@ struct RegisterFinishIo<'a> {
     error: Option<AppError>,
 }
 
-impl RegisterFinishIo<'_> {
+impl<S: RecoverySql, K: RecoveryKv> RegisterFinishIo<'_, S, K> {
     /// Count one attempt against the registration limiter.
     async fn registration_count_attempt(&mut self) -> Option<AttemptBudgetObservation> {
         let limited = rate_limit::webauthn_register_by_user(
@@ -500,26 +529,33 @@ impl RegisterFinishIo<'_> {
     }
 
     /// Perform the atomic single-use `get_del` of the registration state.
-    async fn registration_consume_state(&mut self) -> Option<RegistrationStateObservation> {
-        let observed = match take_register_state(self.state, self.user_id) {
-            Ok(observed) => observed,
+    pub(super) async fn registration_consume_state(&mut self) -> Option<RegistrationStateObservation> {
+        let stmt = webauthn_store::plan_take_registration_state(
+            webauthn_store::registration_state_key(&self.user_id.to_string()),
+        );
+        let bytes = match take_registration_state(&mut self.kv, &stmt) {
+            Ok(bytes) => bytes,
             Err(error) => {
                 self.error = Some(error);
                 return None;
             }
         };
-        let observation = match observed {
-            StoredRegisterState::Missing => RegistrationStateObservation::Missing,
-            StoredRegisterState::Corrupt(error) => {
-                self.state_error = Some(error);
-                RegistrationStateObservation::Corrupt
-            }
-            StoredRegisterState::Present(reg_state) => {
-                self.reg_state = Some(reg_state);
-                RegistrationStateObservation::Present
-            }
+        let taken = match bytes {
+            None => RegistrationStateTake::Missing,
+            Some(bytes) => match serde_json::from_slice::<PasskeyRegistration>(&bytes) {
+                Ok(reg_state) => {
+                    self.reg_state = Some(reg_state);
+                    RegistrationStateTake::Present
+                }
+                Err(e) => {
+                    self.state_error = Some(AppError::BadRequest(format!(
+                        "invalid registration state: {e}"
+                    )));
+                    RegistrationStateTake::Corrupt
+                }
+            },
         };
-        Some(observation)
+        Some(webauthn_store::classify_registration_state(&taken))
     }
 
     /// Verify the presented registration ceremony.
@@ -553,23 +589,28 @@ impl RegisterFinishIo<'_> {
     }
 
     /// Look the credential up across accounts.
-    async fn registration_check_uniqueness(&mut self) -> Option<CredentialUniquenessObservation> {
+    pub(super) async fn registration_check_uniqueness(&mut self) -> Option<CredentialUniquenessObservation> {
         let Some(passkey) = self.passkey.as_ref() else {
             self.error = Some(AppError::Internal(
                 "registration driver admitted an unverified credential".into(),
             ));
             return None;
         };
-        match assert_credential_not_registered_elsewhere(self.state, self.user_id, passkey).await {
-            Ok(()) => Some(CredentialUniquenessObservation::Unique),
-            Err(AppError::Conflict(_)) => {
-                Some(CredentialUniquenessObservation::RegisteredElsewhere)
+        let stmt = webauthn_store::plan_credential_holders(cred_id_b64(passkey));
+        let view = match run_webauthn_read(&mut self.sql, &stmt).await {
+            Ok(rows) => {
+                let (view, error) = holder_view(&rows, &self.user_id.to_string());
+                if let Some(error) = error {
+                    self.uniqueness_error = Some(error);
+                }
+                view
             }
             Err(error) => {
-                self.uniqueness_error = Some(error);
-                Some(CredentialUniquenessObservation::LookupFailed)
+                self.uniqueness_error = Some(AppError::Internal(error.to_string()));
+                CredentialHolderView::Unreadable
             }
-        }
+        };
+        Some(webauthn_store::classify_uniqueness(&view))
     }
 
     /// Serialize and write the credential after the checked policy permit.
@@ -584,97 +625,30 @@ impl RegisterFinishIo<'_> {
             Err(error) => {
                 self.persist_error =
                     Some(AppError::Internal(format!("failed to serialize passkey: {error}")));
-                Some(CredentialPersistObservation::EncodingFailed)
+                Some(webauthn_store::classify_persist_credential(false, &[]))
             }
             Ok(passkey_json) => {
                 let cred_id = cred_id_b64(passkey);
-                match self
-                    .state
-                    .sqldb
-                    .execute(
-                        "UPDATE users SET recovery_webauthn_credential = ?, recovery_webauthn_cred_id = ? WHERE id = ?",
-                        vec![
-                            TursoValue::Text(passkey_json),
-                            TursoValue::Text(cred_id),
-                            TursoValue::Text(self.user_id.to_string()),
-                        ],
-                    )
-                    .await
-                {
-                    Err(error) => {
-                        self.persist_error = Some(AppError::Internal(error.to_string()));
-                        Some(CredentialPersistObservation::StorageFailed)
-                    }
-                    Ok(1) => Some(CredentialPersistObservation::Persisted),
-                    Ok(_) => Some(CredentialPersistObservation::AccountGone),
-                }
+                self.persist_credential_json(passkey_json, cred_id).await
             }
         }
     }
-}
 
-fn store_register_state(
-    state: &AppState,
-    user_id: Uuid,
-    reg_state: &PasskeyRegistration,
-) -> Result<()> {
-    let state_json = serde_json::to_vec(reg_state)
-        .map_err(|e| AppError::Internal(format!("failed to serialize registration state: {e}")))?;
-    state.store.set_ex(
-        &format!("recovery:webauthn:register:{user_id}"),
-        &state_json,
-        REGISTER_STATE_TTL_SECS,
-    )
-}
-
-/// One run of the registration-state observation. A decode failure consumed the
-/// state: the driver records corruption rather than pretending nothing matched.
-pub(crate) enum StoredRegisterState {
-    Missing,
-    Corrupt(AppError),
-    Present(PasskeyRegistration),
-}
-
-fn take_register_state(state: &AppState, user_id: Uuid) -> Result<StoredRegisterState> {
-    let Some(bytes) = state
-        .store
-        .get_del(&format!("recovery:webauthn:register:{user_id}"))?
-    else {
-        return Ok(StoredRegisterState::Missing);
-    };
-    match serde_json::from_slice(&bytes) {
-        Ok(reg_state) => Ok(StoredRegisterState::Present(reg_state)),
-        Err(e) => Ok(StoredRegisterState::Corrupt(AppError::BadRequest(
-            format!("invalid registration state: {e}"),
-        ))),
-    }
-}
-
-async fn assert_credential_not_registered_elsewhere(
-    state: &AppState,
-    user_id: Uuid,
-    passkey: &Passkey,
-) -> Result<()> {
-    let cred_id = cred_id_b64(passkey);
-    let rows = state
-        .sqldb
-        .query(
-            "SELECT id FROM users WHERE recovery_webauthn_cred_id = ?",
-            vec![TursoValue::Text(cred_id)],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-
-    for row in &rows {
-        let id = row
-            .text(0)
-            .map(String::from)
-            .ok_or_else(|| AppError::Internal("expected user id".into()))?;
-        if id != user_id.to_string() {
-            return Err(AppError::Conflict(
-                "WebAuthn credential is already registered to another account".into(),
-            ));
+    /// The write half of `registration_persist`: exactly one guarded `UPDATE`.
+    pub(super) async fn persist_credential_json(
+        &mut self,
+        credential: String,
+        credential_id: String,
+    ) -> Option<CredentialPersistObservation> {
+        let stmt = webauthn_store::plan_persist_credential(
+            self.user_id.to_string(),
+            credential,
+            credential_id,
+        );
+        let (outcomes, error) = run_webauthn_writes(&mut self.sql, std::slice::from_ref(&stmt)).await;
+        if let Some(error) = error {
+            self.persist_error = Some(AppError::Internal(error.to_string()));
         }
+        Some(webauthn_store::classify_persist_credential(true, &outcomes))
     }
-    Ok(())
 }

@@ -11,12 +11,16 @@ use vela_recovery_policy::webauthn_driver::{
     AuthStartEffect, AuthStartFailure, AuthStartObservation, CeremonyStartObservation,
     ChallengeStoreObservation,
 };
+use vela_recovery_policy::webauthn_store::{self, SetNxOutcome};
 use webauthn_rs::prelude::{PasskeyAuthentication, RequestChallengeResponse};
 
+use super::sql::{
+    auth_state_view, credential_row, probe_auth_slot, run_webauthn_read, store_auth_state,
+    webauthn_share_row_view, PoolSql, RecoveryKv, RecoverySql, StoreKv,
+};
 use crate::{
     error::{AppError, Result},
     net, rate_limit,
-    sqldb::{Db as _, TursoValue},
     state::AppState,
 };
 
@@ -75,8 +79,11 @@ pub async fn post_initiate(
     // and renders the terminal effect.
     let mut io = InitiateIo {
         state: &state,
+        sql: PoolSql(&state.sqldb),
+        kv: StoreKv(&state.store),
         user_id: body.user_id,
         recovery_id: None,
+        drawn_recovery_id: None,
         passkey: None,
         decode_error: None,
         challenge: None,
@@ -129,10 +136,15 @@ pub async fn post_initiate(
 /// method runs and when (through the shared `auth_start_interpreter!` loop,
 /// proved in F* as `run_auth_start`); each method only performs its effect and
 /// reports the observation. `None` aborts with `error`.
-struct InitiateIo<'a> {
+pub(super) struct InitiateIo<'a, S, K> {
     state: &'a AppState,
+    sql: S,
+    kv: K,
     user_id: Uuid,
     recovery_id: Option<Uuid>,
+    /// A fixed attempt id for the conformance test; `None` draws a fresh v4 id
+    /// exactly when the observation runs, as the handler always has.
+    drawn_recovery_id: Option<Uuid>,
     passkey: Option<webauthn_rs::prelude::Passkey>,
     decode_error: Option<AppError>,
     challenge: Option<RequestChallengeResponse>,
@@ -143,36 +155,43 @@ struct InitiateIo<'a> {
     error: Option<AppError>,
 }
 
-impl InitiateIo<'_> {
+impl<S: RecoverySql, K: RecoveryKv> InitiateIo<'_, S, K> {
     /// Observe availability and the stored credential, then probe the freshly
     /// generated attempt slot. A storage error has no observation.
-    async fn auth_start_observe(&mut self) -> Option<AuthStartObservation> {
-        let availability = match observe_recovery_share(self.state, self.user_id).await {
-            Ok(availability) => availability,
+    pub(super) async fn auth_start_observe(&mut self) -> Option<AuthStartObservation> {
+        let share_stmt = webauthn_store::plan_select_share(self.user_id.to_string());
+        let share_rows = match run_webauthn_read(&mut self.sql, &share_stmt).await {
+            Ok(rows) => rows,
+            Err(error) => {
+                self.error = Some(AppError::Internal(error.to_string()));
+                return None;
+            }
+        };
+        let share = webauthn_share_row_view(&share_rows);
+        let credential_stmt = webauthn_store::plan_select_credential(self.user_id.to_string());
+        let credential_rows = match run_webauthn_read(&mut self.sql, &credential_stmt).await {
+            Ok(rows) => rows,
+            Err(error) => {
+                self.error = Some(AppError::Internal(error.to_string()));
+                return None;
+            }
+        };
+        let credential = match credential_row(&credential_rows) {
+            Ok(credential) => credential,
             Err(error) => {
                 self.error = Some(error);
                 return None;
             }
         };
-        let credential =
-            match crate::recovery::webauthn::observe_recovery_credential(self.state, self.user_id)
-                .await
-            {
-                Ok(credential) => credential,
-                Err(error) => {
-                    self.error = Some(error);
-                    return None;
-                }
-            };
-        let recovery_id = Uuid::new_v4();
+        let recovery_id = self.drawn_recovery_id.unwrap_or_else(Uuid::new_v4);
         // Observe freshness for the policy. Storage checks it atomically again:
         // another insertion may win after this preflight observation.
-        let attempt_id_fresh = match self
-            .state
-            .store
-            .exists(&auth_state_key(self.user_id, recovery_id))
-        {
-            Ok(occupied) => !occupied,
+        let slot_stmt = webauthn_store::plan_auth_slot(webauthn_store::auth_state_key(
+            &self.user_id.to_string(),
+            &recovery_id.to_string(),
+        ));
+        let occupied = match probe_auth_slot(&mut self.kv, &slot_stmt) {
+            Ok(occupied) => occupied,
             Err(error) => {
                 self.error = Some(error);
                 return None;
@@ -181,13 +200,12 @@ impl InitiateIo<'_> {
         self.recovery_id = Some(recovery_id);
         self.passkey = credential.passkey;
         self.decode_error = credential.decode_error;
-        Some(AuthStartObservation {
-            account_present: availability.account_present,
-            share_present: availability.share_present,
-            credential: credential.credential,
-            attempt_id_fresh,
-            ttl_secs: AUTH_STATE_TTL_SECS,
-        })
+        Some(webauthn_store::classify_auth_start(
+            &share,
+            &credential.view,
+            occupied,
+            AUTH_STATE_TTL_SECS,
+        ))
     }
 
     /// Start the authentication ceremony for the observed credential.
@@ -231,18 +249,96 @@ impl InitiateIo<'_> {
         let envelope = RecoveryAuthState {
             user_id: self.user_id,
             recovery_id,
-            credential_id,
+            credential_id: credential_id.clone(),
             auth_state,
         };
-        let written = store_auth_state(self.state, &envelope);
-        let observation = match &written {
-            Ok(()) => ChallengeStoreObservation::Stored,
-            Err(AppError::Conflict(_)) => ChallengeStoreObservation::Lost,
-            Err(_) => ChallengeStoreObservation::StorageFailed,
+        let value = match serde_json::to_string(&envelope) {
+            Ok(value) => value,
+            Err(e) => {
+                self.error = Some(AppError::Internal(format!(
+                    "failed to serialize WebAuthn auth state: {e}"
+                )));
+                return None;
+            }
         };
-        self.store_error = written.err();
-        Some(observation)
+        let view = auth_state_view(self.user_id, recovery_id, &credential_id);
+        self.write_auth_state(value, view).await
     }
+
+    /// The write half of `auth_start_store`: commit exactly one envelope at the
+    /// exact user/attempt key.
+    pub(super) async fn write_auth_state(
+        &mut self,
+        value: String,
+        state: vela_recovery_policy::webauthn_store::AuthStateView,
+    ) -> Option<ChallengeStoreObservation> {
+        let recovery_id = self.recovery_id?;
+        let stmt = webauthn_store::plan_store_auth_state(
+            webauthn_store::auth_state_key(
+                &self.user_id.to_string(),
+                &recovery_id.to_string(),
+            ),
+            value,
+            state,
+            AUTH_STATE_TTL_SECS,
+        );
+        let outcome = match store_auth_state(&mut self.kv, &stmt) {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                self.store_error = Some(error);
+                SetNxOutcome::Failed
+            }
+        };
+        if matches!(outcome, SetNxOutcome::Occupied) {
+            self.store_error = Some(AppError::Conflict(
+                "recovery challenge id is already in use".into(),
+            ));
+        }
+        Some(webauthn_store::classify_store_auth_state(&outcome))
+    }
+}
+
+/// Construction and side-channel access for the bounded real-database
+/// conformance test (`recovery/conformance.rs`).
+#[cfg(test)]
+impl<'a, S, K> InitiateIo<'a, S, K> {
+    pub(super) fn for_conformance(
+        state: &'a AppState,
+        sql: S,
+        kv: K,
+        user_id: Uuid,
+        drawn_recovery_id: Uuid,
+    ) -> Self {
+        Self {
+            state,
+            sql,
+            kv,
+            user_id,
+            recovery_id: None,
+            drawn_recovery_id: Some(drawn_recovery_id),
+            passkey: None,
+            decode_error: None,
+            challenge: None,
+            auth_state: None,
+            credential_id: None,
+            ceremony_error: None,
+            store_error: None,
+            error: None,
+        }
+    }
+
+    pub(super) fn error_is_set(&self) -> bool {
+        self.error.is_some()
+    }
+
+    pub(super) fn recovery_id(&self) -> Option<Uuid> {
+        self.recovery_id
+    }
+
+    pub(super) fn set_recovery_id(&mut self, recovery_id: Uuid) {
+        self.recovery_id = Some(recovery_id);
+    }
+
 }
 
 /// Render an initiation failure with the handler's historical status and
@@ -272,107 +368,36 @@ fn auth_start_failure(failure: AuthStartFailure, decode_error: Option<AppError>)
     }
 }
 
-/// Raw availability of the recovery share for one account.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct RecoveryShareObservation {
-    pub account_present: bool,
-    pub share_present: bool,
-}
-
-/// Observe the account row and its `recovery_share` column without collapsing
-/// either into a hard-coded fact. The caller decides which error, if any, the
-/// absence corresponds to.
-pub(crate) async fn observe_recovery_share(
-    state: &AppState,
-    user_id: Uuid,
-) -> Result<RecoveryShareObservation> {
-    let rows = state
-        .sqldb
-        .query(
-            "SELECT recovery_share FROM users WHERE id = ?",
-            vec![TursoValue::Text(user_id.to_string())],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-
-    Ok(match rows.first() {
-        Some(row) => RecoveryShareObservation {
-            account_present: true,
-            share_present: !matches!(row.get(0), Some(TursoValue::Null) | None),
-        },
-        None => RecoveryShareObservation {
-            account_present: false,
-            share_present: false,
-        },
-    })
-}
-
-fn auth_state_key(user_id: Uuid, recovery_id: Uuid) -> String {
-    format!("recovery:webauthn:auth:{user_id}:{recovery_id}")
-}
-
-pub(crate) fn store_auth_state(state: &AppState, envelope: &RecoveryAuthState) -> Result<()> {
-    let bytes = serde_json::to_vec(envelope)
-        .map_err(|e| AppError::Internal(format!("failed to serialize WebAuthn auth state: {e}")))?;
-    store_auth_state_bytes(&state.store, envelope.user_id, envelope.recovery_id, &bytes)
-}
-
-/// Commit only while this exact user/attempt slot is free. The earlier
-/// observation is not an authorization to overwrite a concurrent insertion.
-fn store_auth_state_bytes(
-    store: &crate::store::Store,
-    user_id: Uuid,
-    recovery_id: Uuid,
-    bytes: &[u8],
-) -> Result<()> {
-    if store.set_ex_nx(
-        &auth_state_key(user_id, recovery_id),
-        bytes,
-        AUTH_STATE_TTL_SECS,
-    )? {
-        Ok(())
-    } else {
-        Err(AppError::Conflict(
-            "recovery challenge id is already in use".into(),
-        ))
-    }
-}
-
-/// What the atomic single-use `get_del` of one attempt-bound challenge
-/// observed. A decode failure still removed the state, so it is reported
-/// separately from "nothing matched"; the driver decides that corruption is
-/// terminal rather than assuming the store returned nothing.
+/// What the atomic `get_del` of one attempt-bound challenge observed. A decode
+/// failure still removed the state, so it is reported separately from "nothing
+/// matched"; the driver decides that corruption is terminal rather than
+/// assuming the store returned nothing.
 pub(crate) enum StoredAuthAttempt {
     Missing,
     Corrupt(AppError),
     Present {
-        state: RecoveryAuthState,
-        user_matches: bool,
-        attempt_matches: bool,
+        view: vela_recovery_policy::webauthn_store::AuthStateView,
+        envelope: RecoveryAuthState,
     },
 }
 
-/// Consume the exact attempt state once. `Missing` means no state matched. The
-/// binding comparison is returned as an observation; the checked driver decides
-/// that a mismatch is terminal without re-arming the consumed challenge.
-pub(crate) fn observe_auth_state(
-    state: &AppState,
-    user_id: Uuid,
-    recovery_id: Uuid,
-) -> Result<StoredAuthAttempt> {
-    let key = auth_state_key(user_id, recovery_id);
-    let Some(bytes) = state.store.get_del(&key)? else {
-        return Ok(StoredAuthAttempt::Missing);
+/// Decode one consumed attempt envelope into the observation the driver sees.
+pub(crate) fn decode_auth_attempt(bytes: Option<Vec<u8>>) -> StoredAuthAttempt {
+    let Some(bytes) = bytes else {
+        return StoredAuthAttempt::Missing;
     };
     match serde_json::from_slice::<RecoveryAuthState>(&bytes) {
-        Ok(envelope) => Ok(StoredAuthAttempt::Present {
-            user_matches: envelope.user_id == user_id,
-            attempt_matches: envelope.recovery_id == recovery_id,
-            state: envelope,
-        }),
-        Err(e) => Ok(StoredAuthAttempt::Corrupt(AppError::BadRequest(format!(
+        Ok(envelope) => StoredAuthAttempt::Present {
+            view: vela_recovery_policy::webauthn_store::AuthStateView {
+                user: envelope.user_id.to_string(),
+                attempt: envelope.recovery_id.to_string(),
+                credential_id: envelope.credential_id.clone(),
+            },
+            envelope,
+        },
+        Err(e) => StoredAuthAttempt::Corrupt(AppError::BadRequest(format!(
             "invalid recovery challenge state: {e}"
-        )))),
+        ))),
     }
 }
 
@@ -385,14 +410,33 @@ mod tests {
         let store = crate::store::Store::open_temp().unwrap();
         let user_id = Uuid::new_v4();
         let recovery_id = Uuid::new_v4();
-        let key = auth_state_key(user_id, recovery_id);
+        let key = webauthn_store::auth_state_key(
+            &user_id.to_string(),
+            &recovery_id.to_string(),
+        );
         // Two requests may both see an empty slot before either writes.
         assert!(!store.exists(&key).unwrap());
         assert!(!store.exists(&key).unwrap());
-        store_auth_state_bytes(&store, user_id, recovery_id, b"original challenge").unwrap();
+        let view = auth_state_view(user_id, recovery_id, "cred");
+        let first = webauthn_store::plan_store_auth_state(
+            key.clone(),
+            "original challenge".into(),
+            view.clone(),
+            AUTH_STATE_TTL_SECS,
+        );
         assert!(matches!(
-            store_auth_state_bytes(&store, user_id, recovery_id, b"replacement challenge"),
-            Err(AppError::Conflict(_))
+            store_auth_state(&mut StoreKv(&store), &first),
+            Ok(SetNxOutcome::Wrote)
+        ));
+        let second = webauthn_store::plan_store_auth_state(
+            key.clone(),
+            "replacement challenge".into(),
+            view,
+            AUTH_STATE_TTL_SECS,
+        );
+        assert!(matches!(
+            store_auth_state(&mut StoreKv(&store), &second),
+            Ok(SetNxOutcome::Occupied)
         ));
         assert_eq!(store.get(&key).unwrap().unwrap(), b"original challenge");
     }

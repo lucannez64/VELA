@@ -12,14 +12,19 @@ use vela_recovery_policy::webauthn_driver::{
     AuthFinishFailure, AuthFinishGrantPermit, CredentialUpdateStoreObservation,
     GrantStoreObservation, ShareDecodeObservation,
 };
+use vela_recovery_policy::webauthn_store::{self, CredentialGrantView};
 use webauthn_rs::prelude::PublicKeyCredential;
 
 use std::net::SocketAddr;
 
+use super::sql::{
+    credential_row, finish_account_row_view, run_webauthn_read, run_webauthn_write,
+    store_credential_grant, take_auth_state, webauthn_share_row_view, PoolSql, RecoveryKv,
+    RecoverySql, StoreKv,
+};
 use crate::{
     error::{AppError, Result},
     net, rate_limit,
-    sqldb::{Db as _, TursoValue},
     state::AppState,
 };
 
@@ -75,6 +80,8 @@ pub async fn post_recover(
     // supplies the I/O and renders the terminal effect.
     let mut io = RecoverIo {
         state: &state,
+        sql: PoolSql(&state.sqldb),
+        kv: StoreKv(&state.store),
         ip,
         user_id: body.user_id,
         recovery_id: body.recovery_id,
@@ -82,6 +89,7 @@ pub async fn post_recover(
         limited_error: None,
         passkey: None,
         decode_error: None,
+        observed_credential_id: None,
         auth_state: None,
         credential_id: None,
         attempt_error: None,
@@ -93,6 +101,7 @@ pub async fn post_recover(
         share_error: None,
         permit_epoch: None,
         recovery_grant: None,
+        drawn_grant: None,
         grant_error: None,
         error: None,
     };
@@ -127,9 +136,84 @@ pub async fn post_recover(
     }
 }
 
+/// Construction and side-channel access for the bounded real-database
+/// conformance test (`recovery/conformance.rs`).
+#[cfg(test)]
+impl<'a, S, K> RecoverIo<'a, S, K> {
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn for_conformance(
+        state: &'a AppState,
+        sql: S,
+        kv: K,
+        user_id: Uuid,
+        recovery_id: Option<Uuid>,
+        observed_credential_id: Option<String>,
+        credential_id: Option<String>,
+        share_text: Option<String>,
+        permit_epoch: Option<i64>,
+        drawn_grant: Option<Uuid>,
+    ) -> Self {
+        Self {
+            state,
+            sql,
+            kv,
+            ip: "127.0.0.1".into(),
+            user_id,
+            recovery_id,
+            credential: PublicKeyCredential {
+                id: "unused".into(),
+                raw_id: Default::default(),
+                response: webauthn_rs_core::proto::AuthenticatorAssertionResponseRaw {
+                    authenticator_data: Default::default(),
+                    client_data_json: Default::default(),
+                    signature: Default::default(),
+                    user_handle: None,
+                },
+                type_: "public-key".into(),
+                extensions: Default::default(),
+            },
+            limited_error: None,
+            passkey: None,
+            decode_error: None,
+            observed_credential_id,
+            auth_state: None,
+            credential_id,
+            attempt_error: None,
+            auth_result: None,
+            assertion_error: None,
+            share_text,
+            split_id: None,
+            share_bytes: None,
+            share_error: None,
+            permit_epoch,
+            recovery_grant: None,
+            drawn_grant,
+            grant_error: None,
+            error: None,
+        }
+    }
+
+    pub(super) fn error_is_set(&self) -> bool {
+        self.error.is_some()
+    }
+
+    pub(super) fn split_id(&self) -> Option<String> {
+        self.split_id.clone()
+    }
+
+    pub(super) fn share_bytes(&self) -> Option<Vec<u8>> {
+        self.share_bytes.clone()
+    }
+
+    pub(super) fn recovery_grant(&self) -> Option<Uuid> {
+        self.recovery_grant
+    }
+
+}
+
 /// Render a terminal authentication-finish failure, preferring the original
 /// error captured by the effect.
-fn auth_finish_failure(failure: AuthFinishFailure, io: &mut RecoverIo<'_>) -> AppError {
+fn auth_finish_failure<S, K>(failure: AuthFinishFailure, io: &mut RecoverIo<'_, S, K>) -> AppError {
     match failure {
         AuthFinishFailure::AttemptLimited => io.limited_error.take().unwrap_or_else(|| {
             AppError::Internal("WebAuthn recovery attempt was limited".into())
@@ -194,8 +278,10 @@ fn auth_finish_failure(failure: AuthFinishFailure, io: &mut RecoverIo<'_>) -> Ap
 /// method runs and when (through the shared `auth_finish_interpreter!` loop,
 /// proved in F* as `run_auth_finish`); each method only performs its effect and
 /// reports the observation. `None` aborts with `error`.
-struct RecoverIo<'a> {
+pub(super) struct RecoverIo<'a, S, K> {
     state: &'a AppState,
+    sql: S,
+    kv: K,
     ip: String,
     user_id: Uuid,
     recovery_id: Option<Uuid>,
@@ -203,6 +289,9 @@ struct RecoverIo<'a> {
     limited_error: Option<AppError>,
     passkey: Option<webauthn_rs::prelude::Passkey>,
     decode_error: Option<AppError>,
+    /// The credential id of the live stored credential, observed before the
+    /// challenge is spent.
+    observed_credential_id: Option<String>,
     auth_state: Option<crate::recovery::initiate::RecoveryAuthState>,
     credential_id: Option<String>,
     attempt_error: Option<AppError>,
@@ -214,11 +303,14 @@ struct RecoverIo<'a> {
     share_error: Option<AppError>,
     permit_epoch: Option<i64>,
     recovery_grant: Option<Uuid>,
+    /// A fixed grant id for the conformance test; `None` draws a fresh v4 id
+    /// exactly when the grant is issued, as the handler always has.
+    drawn_grant: Option<Uuid>,
     grant_error: Option<AppError>,
     error: Option<AppError>,
 }
 
-impl RecoverIo<'_> {
+impl<S: RecoverySql, K: RecoveryKv> RecoverIo<'_, S, K> {
     /// Count one attempt; the limiter's own error is kept for the response.
     async fn auth_finish_count(&mut self) -> Option<AttemptBudgetObservation> {
         let limited = match rate_limit::recovery_recover_by_ip_user(
@@ -243,80 +335,85 @@ impl RecoverIo<'_> {
 
     /// Observe share/credential availability and whether the request carried
     /// the attempt id. The challenge is not spent until all of them are usable.
-    async fn auth_finish_context(&mut self) -> Option<AuthFinishContextObservation> {
-        let availability =
-            match crate::recovery::initiate::observe_recovery_share(self.state, self.user_id).await
-            {
-                Ok(availability) => availability,
-                Err(error) => {
-                    self.error = Some(error);
-                    return None;
-                }
-            };
-        let credential =
-            match crate::recovery::webauthn::observe_recovery_credential(self.state, self.user_id)
-                .await
-            {
-                Ok(credential) => credential,
-                Err(error) => {
-                    self.error = Some(error);
-                    return None;
-                }
-            };
-        self.passkey = credential.passkey;
-        self.decode_error = credential.decode_error;
-        Some(AuthFinishContextObservation {
-            account_present: availability.account_present,
-            share_present: availability.share_present,
-            credential: credential.credential,
-            attempt_id_present: self.recovery_id.is_some(),
-        })
-    }
-
-    /// Consume the exact attempt state once.
-    async fn auth_finish_consume(&mut self) -> Option<AuthAttemptConsumptionObservation> {
-        let (Some(recovery_id), Some(passkey)) = (self.recovery_id, self.passkey.as_ref()) else {
-            self.error = Some(AppError::Internal(
-                "WebAuthn recovery driver admitted an incomplete attempt".into(),
-            ));
-            return None;
+    pub(super) async fn auth_finish_context(&mut self) -> Option<AuthFinishContextObservation> {
+        let share_stmt = webauthn_store::plan_select_share(self.user_id.to_string());
+        let share_rows = match run_webauthn_read(&mut self.sql, &share_stmt).await {
+            Ok(rows) => rows,
+            Err(error) => {
+                self.error = Some(AppError::Internal(error.to_string()));
+                return None;
+            }
         };
-        let current_credential_id = B64.encode(passkey.cred_id().as_slice());
-        let observed = match crate::recovery::initiate::observe_auth_state(
-            self.state,
-            self.user_id,
-            recovery_id,
-        ) {
-            Ok(observed) => observed,
+        let share = webauthn_share_row_view(&share_rows);
+        let credential_stmt = webauthn_store::plan_select_credential(self.user_id.to_string());
+        let credential_rows = match run_webauthn_read(&mut self.sql, &credential_stmt).await {
+            Ok(rows) => rows,
+            Err(error) => {
+                self.error = Some(AppError::Internal(error.to_string()));
+                return None;
+            }
+        };
+        let credential = match credential_row(&credential_rows) {
+            Ok(credential) => credential,
             Err(error) => {
                 self.error = Some(error);
                 return None;
             }
         };
-        let observation = match observed {
+        self.observed_credential_id = credential
+            .passkey
+            .as_ref()
+            .map(crate::recovery::webauthn::cred_id_b64);
+        self.passkey = credential.passkey;
+        self.decode_error = credential.decode_error;
+        Some(webauthn_store::classify_finish_context(
+            &share,
+            &credential.view,
+            self.recovery_id.is_some(),
+        ))
+    }
+
+    /// Consume the exact attempt state once.
+    pub(super) async fn auth_finish_consume(&mut self) -> Option<AuthAttemptConsumptionObservation> {
+        let (Some(recovery_id), Some(observed_credential_id)) =
+            (self.recovery_id, self.observed_credential_id.clone())
+        else {
+            self.error = Some(AppError::Internal(
+                "WebAuthn recovery driver admitted an incomplete attempt".into(),
+            ));
+            return None;
+        };
+        let stmt = webauthn_store::plan_take_auth_state(webauthn_store::auth_state_key(
+            &self.user_id.to_string(),
+            &recovery_id.to_string(),
+        ));
+        let bytes = match take_auth_state(&mut self.kv, &stmt) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                self.error = Some(error);
+                return None;
+            }
+        };
+        let taken = match crate::recovery::initiate::decode_auth_attempt(bytes) {
             crate::recovery::initiate::StoredAuthAttempt::Missing => {
-                AuthAttemptConsumptionObservation::Missing
+                webauthn_store::AuthStateTake::Missing
             }
             crate::recovery::initiate::StoredAuthAttempt::Corrupt(error) => {
                 self.attempt_error = Some(error);
-                AuthAttemptConsumptionObservation::Corrupt
+                webauthn_store::AuthStateTake::Corrupt
             }
-            crate::recovery::initiate::StoredAuthAttempt::Present {
-                state,
-                user_matches,
-                attempt_matches,
-            } => {
-                let observation = AuthAttemptConsumptionObservation::Present {
-                    user_matches,
-                    attempt_matches,
-                    credential_matches: current_credential_id == state.credential_id,
-                };
-                self.credential_id = Some(state.credential_id.clone());
-                self.auth_state = Some(state);
-                observation
+            crate::recovery::initiate::StoredAuthAttempt::Present { view, envelope } => {
+                self.credential_id = Some(envelope.credential_id.clone());
+                self.auth_state = Some(envelope);
+                webauthn_store::AuthStateTake::Present(view)
             }
         };
-        Some(observation)
+        Some(webauthn_store::classify_take_auth_state(
+            &taken,
+            &self.user_id.to_string(),
+            &recovery_id.to_string(),
+            &observed_credential_id,
+        ))
     }
 
     /// Verify the assertion against the consumed challenge.
@@ -375,68 +472,71 @@ impl RecoverIo<'_> {
             return None;
         };
         if passkey.update_credential(&auth_result).is_none() {
-            return Some(CredentialUpdateStoreObservation::Changed);
+            return Some(webauthn_store::classify_credential_update(0));
         }
-        let updated = match crate::recovery::webauthn::update_recovery_passkey_if_current(
-            self.state,
-            self.user_id,
-            &credential_id,
-            passkey,
-        )
-        .await
-        {
-            Ok(updated) => updated,
+        let credential = match serde_json::to_string(passkey) {
+            Ok(credential) => credential,
             Err(error) => {
-                self.error = Some(error);
+                self.error = Some(AppError::Internal(format!(
+                    "failed to serialize passkey: {error}"
+                )));
                 return None;
             }
         };
-        Some(if updated {
-            CredentialUpdateStoreObservation::Updated
-        } else {
-            CredentialUpdateStoreObservation::Changed
-        })
+        let credential_id_now = crate::recovery::webauthn::cred_id_b64(passkey);
+        self.write_updated_credential(credential_id, credential, credential_id_now)
+            .await
     }
 
-    /// Query the live row. Every field is retained as an observation so the
-    /// checked policy decides release and the handler can still return the
-    /// original error.
-    async fn auth_finish_account(&mut self) -> Option<AuthAccountObservation> {
-        let rows = match self
-            .state
-            .sqldb
-            .query(
-                "SELECT recovery_share, key_epoch, rekey_state,
-                        recovery_webauthn_cred_id, recovery_split_id
-                 FROM users WHERE id = ?",
-                vec![TursoValue::Text(self.user_id.to_string())],
-            )
-            .await
-        {
+    /// The guarded write half of `auth_finish_update`: replace the stored
+    /// credential only while `expected_credential_id` is still current.
+    pub(super) async fn write_updated_credential(
+        &mut self,
+        expected_credential_id: String,
+        credential: String,
+        credential_id: String,
+    ) -> Option<CredentialUpdateStoreObservation> {
+        let stmt = webauthn_store::plan_update_credential_if_current(
+            self.user_id.to_string(),
+            expected_credential_id,
+            credential,
+            credential_id,
+        );
+        let rows = match run_webauthn_write(&mut self.sql, &stmt).await {
             Ok(rows) => rows,
             Err(error) => {
                 self.error = Some(AppError::Internal(error.to_string()));
                 return None;
             }
         };
-        let row = rows.first();
-        let credential_id = self.credential_id.clone().unwrap_or_default();
-        let observation = AuthAccountObservation {
-            account_present: row.is_some(),
-            account_epoch_active: row.map(|row| row.text(2).is_none()).unwrap_or(false),
-            share_present: row.map(|row| row.text(0).is_some()).unwrap_or(false),
-            stored_credential_matches: row
-                .map(|row| row.text(3) == Some(credential_id.as_str()))
-                .unwrap_or(false),
-            stored_epoch: row.and_then(|row| row.i64(1)),
+        Some(webauthn_store::classify_credential_update(rows))
+    }
+
+    /// Query the live row. Every field is retained as an observation so the
+    /// checked policy decides release and the handler can still return the
+    /// original error.
+    pub(super) async fn auth_finish_account(&mut self) -> Option<AuthAccountObservation> {
+        let stmt = webauthn_store::plan_finish_account(self.user_id.to_string());
+        let rows = match run_webauthn_read(&mut self.sql, &stmt).await {
+            Ok(rows) => rows,
+            Err(error) => {
+                self.error = Some(AppError::Internal(error.to_string()));
+                return None;
+            }
         };
-        self.share_text = row.and_then(|row| row.text(0).map(String::from));
-        self.split_id = row.and_then(|row| row.text(4).map(String::from));
+        let row = finish_account_row_view(&rows);
+        let credential_id = self.credential_id.clone().unwrap_or_default();
+        let observation = webauthn_store::classify_finish_account(row.clone(), &credential_id);
+        self.share_text = row.as_ref().and_then(|row| row.share.clone());
+        self.split_id = webauthn_store::finish_account_split(&row);
         Some(observation)
     }
 
     /// Decode the staged share the driver authorized releasing.
-    async fn auth_finish_release(&mut self, permit: AuthFinishGrantPermit) -> Option<ShareDecodeObservation> {
+    pub(super) async fn auth_finish_release(
+        &mut self,
+        permit: AuthFinishGrantPermit,
+    ) -> Option<ShareDecodeObservation> {
         self.permit_epoch = Some(permit.epoch);
         let Some(share_b64) = self.share_text.clone() else {
             self.error = Some(AppError::NotFound(
@@ -444,20 +544,17 @@ impl RecoverIo<'_> {
             ));
             return None;
         };
-        match crate::db::decode_b64(&share_b64) {
-            Ok(bytes) => {
-                self.share_bytes = Some(bytes);
-                Some(ShareDecodeObservation::Decoded)
-            }
-            Err(error) => {
-                self.share_error = Some(error);
-                Some(ShareDecodeObservation::Corrupt)
-            }
+        let decoded = crate::db::decode_b64(&share_b64);
+        let observation = webauthn_store::classify_share_release(true, decoded.is_ok())?;
+        match decoded {
+            Ok(bytes) => self.share_bytes = Some(bytes),
+            Err(error) => self.share_error = Some(error),
         }
+        Some(observation)
     }
 
     /// Store exactly one single-use enrollment grant.
-    async fn auth_finish_store_grant(&mut self) -> Option<GrantStoreObservation> {
+    pub(super) async fn auth_finish_store_grant(&mut self) -> Option<GrantStoreObservation> {
         let (Some(key_epoch), Some(credential_id)) =
             (self.permit_epoch, self.credential_id.clone())
         else {
@@ -466,23 +563,36 @@ impl RecoverIo<'_> {
             ));
             return None;
         };
-        let recovery_grant = Uuid::new_v4();
-        let stored = store_credential_grant(
-            self.state,
-            self.user_id,
-            recovery_grant,
-            key_epoch,
-            &credential_id,
+        let recovery_grant = self.drawn_grant.unwrap_or_else(Uuid::new_v4);
+        let grant = RecoveryEnrollGrant::credential_bound(key_epoch, &credential_id);
+        let value = match serde_json::to_string(&grant) {
+            Ok(value) => value,
+            Err(error) => {
+                self.recovery_grant = Some(recovery_grant);
+                self.grant_error = Some(AppError::Internal(format!(
+                    "failed to serialize recovery grant: {error}"
+                )));
+                return Some(webauthn_store::classify_grant_store(false));
+            }
+        };
+        let stmt = webauthn_store::plan_store_credential_grant(
+            enroll_grant_key(self.user_id, recovery_grant),
+            value,
+            CredentialGrantView {
+                key_epoch,
+                credential_id: credential_id.clone(),
+                possession: false,
+            },
+            ENROLL_GRANT_TTL_SECS,
         );
-        let observation = if stored.is_ok() {
-            GrantStoreObservation::Stored
-        } else {
-            GrantStoreObservation::Failed
+        let observation = match store_credential_grant(&mut self.kv, &stmt) {
+            Ok(()) => webauthn_store::classify_grant_store(true),
+            Err(error) => {
+                self.grant_error = Some(error);
+                webauthn_store::classify_grant_store(false)
+            }
         };
         self.recovery_grant = Some(recovery_grant);
-        if let Err(error) = stored {
-            self.grant_error = Some(error);
-        }
         Some(observation)
     }
 }
@@ -532,37 +642,6 @@ pub(crate) fn decode_enroll_grant(value: &[u8]) -> Result<RecoveryEnrollGrant> {
         return Err(AppError::Unauthorized("recovery grant is invalid".into()));
     }
     Ok(grant)
-}
-
-fn store_enroll_grant(
-    state: &AppState,
-    user_id: Uuid,
-    grant: Uuid,
-    value: &RecoveryEnrollGrant,
-) -> Result<()> {
-    let bytes = serde_json::to_vec(value)
-        .map_err(|e| AppError::Internal(format!("failed to serialize recovery grant: {e}")))?;
-    state.store.set_ex(
-        &enroll_grant_key(user_id, grant),
-        &bytes,
-        ENROLL_GRANT_TTL_SECS,
-    )
-}
-
-/// Grant issued after a WebAuthn-gated share release.
-pub(crate) fn store_credential_grant(
-    state: &AppState,
-    user_id: Uuid,
-    grant: Uuid,
-    key_epoch: i64,
-    credential_id: &str,
-) -> Result<()> {
-    store_enroll_grant(
-        state,
-        user_id,
-        grant,
-        &RecoveryEnrollGrant::credential_bound(key_epoch, credential_id),
-    )
 }
 
 /// Grant issued from an RMS-possession proof; releases no server share and is

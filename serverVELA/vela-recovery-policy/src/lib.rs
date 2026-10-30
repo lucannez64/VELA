@@ -13,6 +13,7 @@ pub mod redemption_store;
 pub mod recovery_share_driver;
 pub mod share_store;
 pub mod webauthn_driver;
+pub mod webauthn_store;
 
 #[cfg(not(hax))]
 pub mod redemption_model;

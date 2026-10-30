@@ -44,6 +44,8 @@ share_store=$proof_root/proofs/fstar/extraction-share/Vela_recovery_policy.Share
 share_lemmas=$proof_root/proofs/fstar/share-lemmas/Vela_recovery_policy_share_lemmas.fst
 possession_store=$proof_root/proofs/fstar/extraction-possession/Vela_recovery_policy.Possession_store.fst
 possession_lemmas=$proof_root/proofs/fstar/possession-lemmas/Vela_recovery_policy_possession_lemmas.fst
+webauthn_store=$proof_root/proofs/fstar/extraction-webauthn/Vela_recovery_policy.Webauthn_store.fst
+webauthn_lemmas=$proof_root/proofs/fstar/webauthn-lemmas/Vela_recovery_policy_webauthn_lemmas.fst
 [[ -f $redemption_store && -f $redemption_lemmas ]] || {
   echo "run verify-fstar-recovery-executors.sh first" >&2; exit 1
 }
@@ -51,6 +53,9 @@ possession_lemmas=$proof_root/proofs/fstar/possession-lemmas/Vela_recovery_polic
   echo "run verify-fstar-recovery-executors.sh first" >&2; exit 1
 }
 [[ -f $possession_store && -f $possession_lemmas ]] || {
+  echo "run verify-fstar-recovery-executors.sh first" >&2; exit 1
+}
+[[ -f $webauthn_store && -f $webauthn_lemmas ]] || {
   echo "run verify-fstar-recovery-executors.sh first" >&2; exit 1
 }
 mut=/tmp/vela-recovery-executor-mut
@@ -66,6 +71,12 @@ mutants=(
   share-classify-delete-rows share-plan-epoch share-plan-split
   possession-classify-store possession-classify-attempt
   possession-classify-grant possession-plan-key
+  webauthn-classify-start-share webauthn-classify-start-credential
+  webauthn-classify-store-lost webauthn-classify-consume
+  webauthn-classify-update webauthn-classify-account
+  webauthn-classify-persist webauthn-classify-uniqueness
+  webauthn-classify-release webauthn-plan-select-share
+  webauthn-plan-grant-key webauthn-plan-persist-user
 )
 declare -A expect=(
   [classify-match]=take_grant_is_honest
@@ -84,6 +95,18 @@ declare -A expect=(
   [possession-classify-attempt]=attempt_consumption_is_honest
   [possession-classify-grant]=grant_store_is_honest
   [possession-plan-key]=store_challenge_is_honest
+  [webauthn-classify-start-share]=auth_start_observation_is_honest
+  [webauthn-classify-start-credential]=auth_start_observation_is_honest
+  [webauthn-classify-store-lost]=auth_start_store_is_honest
+  [webauthn-classify-consume]=attempt_consumption_is_honest
+  [webauthn-classify-update]=credential_update_guard_is_honest
+  [webauthn-classify-account]=finish_account_is_honest
+  [webauthn-classify-persist]=credential_persist_is_honest
+  [webauthn-classify-uniqueness]=uniqueness_is_honest
+  [webauthn-classify-release]=share_release_is_honest
+  [webauthn-plan-select-share]=auth_start_observation_is_honest
+  [webauthn-plan-grant-key]=grant_store_is_honest
+  [webauthn-plan-persist-user]=credential_persist_is_honest
 )
 
 rm -rf "$mut"
@@ -108,6 +131,16 @@ for name in "${mutants[@]}"; do
       store_module=Vela_recovery_policy.Possession_store.fst
       includes=(
         --include "$proof_root/proofs/fstar/extraction-possession-driver"
+      )
+      ;;
+    webauthn-*)
+      store=$webauthn_store
+      lemmas=$webauthn_lemmas
+      lemma_dir=$proof_root/proofs/fstar/webauthn-lemmas
+      store_module=Vela_recovery_policy.Webauthn_store.fst
+      includes=(
+        --include "$proof_root/proofs/fstar/extraction-webauthn-driver"
+        --include "$proof_root/proofs/fstar/extraction-webauthn"
       )
       ;;
     *)
@@ -252,6 +285,93 @@ elif name == 'possession-plan-key':
     if body.count('f_key = key') != 1:
         sys.exit(f'{name}: challenge key field not found')
     text = text[:start] + body.replace('f_key = key', 'f_key = value') + text[end:]
+elif name == 'webauthn-classify-start-share':
+    start, body, end = region('let classify_auth_start', '/// `RecoverIo::auth_finish_context`')
+    if body.count('f_share_present = share.f_share_present') != 1:
+        sys.exit(f'{name}: share field not found')
+    text = text[:start] + body.replace('f_share_present = share.f_share_present', 'f_share_present = true') + text[end:]
+elif name == 'webauthn-classify-start-credential':
+    start, body, end = region('let classify_auth_start', '/// `RecoverIo::auth_finish_context`')
+    old_cred = 'f_credential = credential.f_credential'
+    if body.count(old_cred) != 1:
+        sys.exit(f'{name}: credential field not found')
+    text = text[:start] + body.replace(old_cred,
+        'f_credential = Vela_recovery_policy.Webauthn_driver.StoredCredentialObservation_Present') + text[end:]
+elif name == 'webauthn-classify-store-lost':
+    start, body, end = region('let classify_store_auth_state', 'let classify_store_registration_state')
+    if body.count('ChallengeStoreObservation_Stored') != 1 or body.count('ChallengeStoreObservation_Lost') != 1:
+        sys.exit(f'{name}: challenge classifier shape changed')
+    mutated = body.replace('ChallengeStoreObservation_Stored', 'ChallengeStoreObservation_TMP')
+    mutated = mutated.replace('ChallengeStoreObservation_Lost', 'ChallengeStoreObservation_Stored')
+    mutated = mutated.replace('ChallengeStoreObservation_TMP', 'ChallengeStoreObservation_Lost')
+    text = text[:start] + mutated + text[end:]
+elif name == 'webauthn-classify-consume':
+    start, body, end = region('let classify_take_auth_state', 'let classify_credential_update')
+    old = '''  | AuthStateTake_Corrupt  ->
+    Vela_recovery_policy.Webauthn_driver.AuthAttemptConsumptionObservation_Corrupt'''
+    if body.count(old) != 1:
+        sys.exit(f'{name}: corrupt branch not found')
+    text = text[:start] + body.replace(old, '''  | AuthStateTake_Corrupt  ->
+    Vela_recovery_policy.Webauthn_driver.AuthAttemptConsumptionObservation_Missing''') + text[end:]
+elif name == 'webauthn-classify-update':
+    start, body, end = region('let classify_credential_update', 'let classify_finish_account')
+    if body.count('if rows >. mk_u64 0') != 1:
+        sys.exit(f'{name}: row check not found')
+    text = text[:start] + body.replace('if rows >. mk_u64 0', 'if true') + text[end:]
+elif name == 'webauthn-classify-account':
+    start, body, end = region('let classify_finish_account', '/// `RecoverIo::auth_finish_account`\'s split-id side channel')
+    old = 'f_account_epoch_active = ~.row.f_rotation_active'
+    if body.count(old) != 1:
+        sys.exit(f'{name}: rotation field not found')
+    text = text[:start] + body.replace(old, 'f_account_epoch_active = true') + text[end:]
+elif name == 'webauthn-classify-persist':
+    start = text.index('let classify_persist_credential')
+    body = text[start:]
+    old = '''        if rows >. mk_u64 0
+        then
+          Vela_recovery_policy.Webauthn_driver.CredentialPersistObservation_Persisted
+          <:
+          Vela_recovery_policy.Webauthn_driver.t_CredentialPersistObservation
+        else
+          Vela_recovery_policy.Webauthn_driver.CredentialPersistObservation_AccountGone
+          <:
+          Vela_recovery_policy.Webauthn_driver.t_CredentialPersistObservation'''
+    if body.count(old) != 1:
+        sys.exit(f'{name}: persist row check not found')
+    text = text[:start] + body.replace(old, '''        Vela_recovery_policy.Webauthn_driver.CredentialPersistObservation_Persisted
+        <:
+        Vela_recovery_policy.Webauthn_driver.t_CredentialPersistObservation''')
+elif name == 'webauthn-classify-uniqueness':
+    start, body, end = region('let classify_uniqueness', 'let classify_persist_credential')
+    old = '''  | CredentialHolderView_Unreadable  ->
+    Vela_recovery_policy.Webauthn_driver.CredentialUniquenessObservation_LookupFailed'''
+    if body.count(old) != 1:
+        sys.exit(f'{name}: unreadable branch not found')
+    text = text[:start] + body.replace(old, '''  | CredentialHolderView_Unreadable  ->
+    Vela_recovery_policy.Webauthn_driver.CredentialUniquenessObservation_Unique''') + text[end:]
+elif name == 'webauthn-classify-release':
+    start, body, end = region('let classify_share_release', 'let classify_grant_store')
+    if body.count('ShareDecodeObservation_Decoded') != 1 or body.count('ShareDecodeObservation_Corrupt') != 1:
+        sys.exit(f'{name}: release classifier shape changed')
+    mutated = body.replace('ShareDecodeObservation_Decoded', 'ShareDecodeObservation_TMP')
+    mutated = mutated.replace('ShareDecodeObservation_Corrupt', 'ShareDecodeObservation_Decoded')
+    mutated = mutated.replace('ShareDecodeObservation_TMP', 'ShareDecodeObservation_Corrupt')
+    text = text[:start] + mutated + text[end:]
+elif name == 'webauthn-plan-select-share':
+    start, body, end = region('let plan_select_share', '/// `InitiateIo::auth_start_observe` / `RecoverIo::auth_finish_context` /')
+    if body.count('f_user = user') != 1:
+        sys.exit(f'{name}: share user field not found')
+    text = text[:start] + body.replace('f_user = user', 'f_user = Alloc.String.String ""') + text[end:]
+elif name == 'webauthn-plan-grant-key':
+    start, body, end = region('let plan_store_credential_grant', '/// `InitiateIo::auth_start_observe`: every field')
+    if body.count('f_key = key') != 1:
+        sys.exit(f'{name}: grant key field not found')
+    text = text[:start] + body.replace('f_key = key', 'f_key = value') + text[end:]
+elif name == 'webauthn-plan-persist-user':
+    start, body, end = region('let plan_persist_credential', 'let plan_store_registration_state')
+    if body.count('f_user = user') != 1:
+        sys.exit(f'{name}: persist user field not found')
+    text = text[:start] + body.replace('f_user = user', 'f_user = credential') + text[end:]
 else:
     sys.exit(f'{name}: unknown mutant')
 path.write_text(text)

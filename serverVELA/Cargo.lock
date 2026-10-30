@@ -4835,6 +4835,7 @@ dependencies = [
  "vela-session-policy",
  "vela-share-policy",
  "webauthn-rs",
+ "webauthn-rs-core",
  "zstd",
 ]
 
