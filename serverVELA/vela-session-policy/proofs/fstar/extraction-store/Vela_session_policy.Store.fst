@@ -89,6 +89,25 @@ type t_SqlStmt =
     f_vk:Alloc.String.t_String
   }: t_SqlStmt
   | SqlStmt_CountUsers : t_SqlStmt
+  | SqlStmt_InsertPendingSession {
+    f_session:Alloc.String.t_String;
+    f_approver:Alloc.String.t_String;
+    f_poll_secret_hash:Alloc.String.t_String;
+    f_ephemeral_pk:Alloc.String.t_String;
+    f_web_vk:Alloc.String.t_String;
+    f_link_nonce:Alloc.String.t_String;
+    f_now:Alloc.String.t_String
+  }: t_SqlStmt
+  | SqlStmt_GrantWebSession {
+    f_session:Alloc.String.t_String;
+    f_user:Alloc.String.t_String;
+    f_device:Alloc.String.t_String;
+    f_mode:Alloc.String.t_String;
+    f_capsule:Alloc.String.t_String;
+    f_expires_at:Alloc.String.t_String;
+    f_epoch:i64
+  }: t_SqlStmt
+  | SqlStmt_RevokeSessionById { f_session:Alloc.String.t_String }: t_SqlStmt
   | SqlStmt_Commit : t_SqlStmt
 
 /// One store statement an executor may run.
@@ -123,6 +142,12 @@ type t_StoreStmt =
     f_value:Alloc.String.t_String;
     f_ttl:u64
   }: t_StoreStmt
+  | StoreStmt_SetExNxByte {
+    f_key:Alloc.String.t_String;
+    f_value:u8;
+    f_ttl:u64
+  }: t_StoreStmt
+  | StoreStmt_Exists { f_key:Alloc.String.t_String }: t_StoreStmt
 
 /// What one SQL statement returned.
 type t_WriteOutcome =
@@ -163,6 +188,13 @@ type t_NxOutcome =
   | NxOutcome_Inserted : t_NxOutcome
   | NxOutcome_KeyExists : t_NxOutcome
   | NxOutcome_Failed : t_NxOutcome
+
+/// What `Store::exists` returned: the key is present, absent, or the call
+/// failed.
+type t_ExistsOutcome =
+  | ExistsOutcome_Present : t_ExistsOutcome
+  | ExistsOutcome_Absent : t_ExistsOutcome
+  | ExistsOutcome_Failed : t_ExistsOutcome
 
 /// What `SELECT COUNT(*) FROM users` returned.
 type t_CountOutcome =
@@ -843,6 +875,129 @@ let plan_insert_device (device user name kind now ek vk: Alloc.String.t_String) 
   <:
   t_SqlStmt
 
+/// `StartIo::insert_pending`: the one pending `web_sessions` row, with the
+/// account the browser committed to and `user_id`/grant fields still NULL.
+let plan_insert_pending
+      (session approver poll_secret_hash ephemeral_pk web_vk link_nonce now: Alloc.String.t_String)
+    : t_SqlStmt =
+  SqlStmt_InsertPendingSession
+  ({
+      f_session = session;
+      f_approver = approver;
+      f_poll_secret_hash = poll_secret_hash;
+      f_ephemeral_pk = ephemeral_pk;
+      f_web_vk = web_vk;
+      f_link_nonce = link_nonce;
+      f_now = now
+    })
+  <:
+  t_SqlStmt
+
+/// `GrantIo::update_grant`: the guarded compare-and-swap that publishes the
+/// grant only while the session is still pending for this approver, the
+/// account is not mid-rekey at the declared epoch, and the approving device is
+/// stored, owned by the account and unrevoked.
+let plan_grant_update
+      (session user device mode capsule expires_at: Alloc.String.t_String)
+      (epoch: i64)
+    : t_SqlStmt =
+  SqlStmt_GrantWebSession
+  ({
+      f_session = session;
+      f_user = user;
+      f_device = device;
+      f_mode = mode;
+      f_capsule = capsule;
+      f_expires_at = expires_at;
+      f_epoch = epoch
+    })
+  <:
+  t_SqlStmt
+
+/// `DeleteSessionIo::record_revocation`: the audit row.
+let plan_revoke_session (session: Alloc.String.t_String) : t_SqlStmt =
+  SqlStmt_RevokeSessionById ({ f_session = session }) <: t_SqlStmt
+
+/// `TokenIo::claim_token`: the one `web_session:token_issued:` marker, first
+/// writer wins for the session's whole token ceiling.
+let plan_token_claim (session: Alloc.String.t_String)
+    : Alloc.Vec.t_Vec t_StoreStmt Alloc.Alloc.t_Global =
+  let args:Alloc.String.t_String = session <: Alloc.String.t_String in
+  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 1) =
+    let list = [Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args] in
+    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+    Rust_primitives.Hax.array_of_list 1 list
+  in
+  Alloc.Slice.impl__into_vec #t_StoreStmt
+    #Alloc.Alloc.t_Global
+    ((let list =
+          [
+            StoreStmt_SetExNxByte
+            ({
+                f_key
+                =
+                Core_models.Hint.must_use #Alloc.String.t_String
+                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 1)
+                          (mk_usize 1)
+                          (let list = ["web_session:token_issued:"] in
+                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+                            Rust_primitives.Hax.array_of_list 1 list)
+                          args
+                        <:
+                        Core_models.Fmt.t_Arguments)
+                    <:
+                    Alloc.String.t_String);
+                f_value = mk_u8 1;
+                f_ttl = v_WEB_SESSION_MAX_TTL_SECS
+              })
+            <:
+            t_StoreStmt
+          ]
+        in
+        FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+        Rust_primitives.Hax.array_of_list 1 list)
+      <:
+      t_Slice t_StoreStmt)
+
+/// `TokenIo::issue_token`: the issue-time lockout re-check. It reads the
+/// sentinel the delete handler and the revocation cascade write.
+let plan_token_sentinel (session: Alloc.String.t_String)
+    : Alloc.Vec.t_Vec t_StoreStmt Alloc.Alloc.t_Global =
+  let args:Alloc.String.t_String = session <: Alloc.String.t_String in
+  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 1) =
+    let list = [Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args] in
+    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+    Rust_primitives.Hax.array_of_list 1 list
+  in
+  Alloc.Slice.impl__into_vec #t_StoreStmt
+    #Alloc.Alloc.t_Global
+    ((let list =
+          [
+            StoreStmt_Exists
+            ({
+                f_key
+                =
+                Core_models.Hint.must_use #Alloc.String.t_String
+                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 1)
+                          (mk_usize 1)
+                          (let list = ["device:revoked:"] in
+                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+                            Rust_primitives.Hax.array_of_list 1 list)
+                          args
+                        <:
+                        Core_models.Fmt.t_Arguments)
+                    <:
+                    Alloc.String.t_String)
+              })
+            <:
+            t_StoreStmt
+          ]
+        in
+        FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+        Rust_primitives.Hax.array_of_list 1 list)
+      <:
+      t_Slice t_StoreStmt)
+
 /// The logout marker: it was written exactly when its one statement ran.
 let classify_logout (outcomes: t_Slice t_StoreOutcome)
     : Vela_session_policy.Revocation_driver.t_LogoutObservation =
@@ -1226,3 +1381,102 @@ let classify_registration_track (outcome: t_StoreOutcome)
     Vela_session_policy.Registration_driver.TrackObservation_Failed
     <:
     Vela_session_policy.Registration_driver.t_TrackObservation
+
+/// `StartIo::insert_pending`: `Inserted` exactly when the one statement ran
+/// (its id was fresh).
+let classify_start_insert (outcome: t_WriteOutcome)
+    : Vela_session_policy.Websession_driver.t_StartInsertObservation =
+  match outcome <: t_WriteOutcome with
+  | WriteOutcome_Applied _ ->
+    Vela_session_policy.Websession_driver.StartInsertObservation_Inserted
+    <:
+    Vela_session_policy.Websession_driver.t_StartInsertObservation
+  | WriteOutcome_Failed  ->
+    Vela_session_policy.Websession_driver.StartInsertObservation_Failed
+    <:
+    Vela_session_policy.Websession_driver.t_StartInsertObservation
+
+/// `GrantIo::update_grant`: zero rows is the CAS conflict; a failure is the
+/// storage error; one row is the grant.
+let classify_grant_update (outcome: t_WriteOutcome)
+    : Vela_session_policy.Websession_driver.t_GrantUpdateObservation =
+  match outcome <: t_WriteOutcome with
+  | WriteOutcome_Applied (Rust_primitives.Integers.MkInt 0) ->
+    Vela_session_policy.Websession_driver.GrantUpdateObservation_Conflict
+    <:
+    Vela_session_policy.Websession_driver.t_GrantUpdateObservation
+  | WriteOutcome_Applied _ ->
+    Vela_session_policy.Websession_driver.GrantUpdateObservation_Updated
+    <:
+    Vela_session_policy.Websession_driver.t_GrantUpdateObservation
+  | WriteOutcome_Failed  ->
+    Vela_session_policy.Websession_driver.GrantUpdateObservation_Failed
+    <:
+    Vela_session_policy.Websession_driver.t_GrantUpdateObservation
+
+/// `TokenIo::claim_token`: `Claimed` exactly when this call inserted the
+/// marker, `AlreadyClaimed` when it was already there.
+let classify_token_claim (outcome: t_NxOutcome)
+    : Vela_session_policy.Websession_driver.t_TokenClaimObservation =
+  match outcome <: t_NxOutcome with
+  | NxOutcome_Inserted  ->
+    Vela_session_policy.Websession_driver.TokenClaimObservation_Claimed
+    <:
+    Vela_session_policy.Websession_driver.t_TokenClaimObservation
+  | NxOutcome_KeyExists  ->
+    Vela_session_policy.Websession_driver.TokenClaimObservation_AlreadyClaimed
+    <:
+    Vela_session_policy.Websession_driver.t_TokenClaimObservation
+  | NxOutcome_Failed  ->
+    Vela_session_policy.Websession_driver.TokenClaimObservation_StorageFailed
+    <:
+    Vela_session_policy.Websession_driver.t_TokenClaimObservation
+
+/// `TokenIo::issue_token`: `Issued` exactly when the issuer produced a token,
+/// the issue-time sentinel was absent and the JTI was tracked.
+let classify_token_issue (issued: bool) (sentinel: t_ExistsOutcome) (tracked: t_StoreOutcome)
+    : Vela_session_policy.Websession_driver.t_TokenIssueObservation =
+  if
+    issued &&
+    (match sentinel <: t_ExistsOutcome with
+      | ExistsOutcome_Absent  -> true
+      | _ -> false) &&
+    (match tracked <: t_StoreOutcome with
+      | StoreOutcome_Applied  -> true
+      | _ -> false)
+  then
+    Vela_session_policy.Websession_driver.TokenIssueObservation_Issued
+    <:
+    Vela_session_policy.Websession_driver.t_TokenIssueObservation
+  else
+    Vela_session_policy.Websession_driver.TokenIssueObservation_Failed
+    <:
+    Vela_session_policy.Websession_driver.t_TokenIssueObservation
+
+/// `DeleteSessionIo::lockout_session`: `Applied` exactly when the sentinel
+/// write ran.
+let classify_lockout_session (outcome: t_StoreOutcome)
+    : Vela_session_policy.Websession_driver.t_DeleteSentinelObservation =
+  match outcome <: t_StoreOutcome with
+  | StoreOutcome_Applied  ->
+    Vela_session_policy.Websession_driver.DeleteSentinelObservation_Applied
+    <:
+    Vela_session_policy.Websession_driver.t_DeleteSentinelObservation
+  | StoreOutcome_Failed  ->
+    Vela_session_policy.Websession_driver.DeleteSentinelObservation_StorageFailed
+    <:
+    Vela_session_policy.Websession_driver.t_DeleteSentinelObservation
+
+/// `DeleteSessionIo::record_revocation`: `Updated` exactly when the audit
+/// statement ran (its row count is not observed).
+let classify_revoke_session (outcome: t_WriteOutcome)
+    : Vela_session_policy.Websession_driver.t_DeleteRecordObservation =
+  match outcome <: t_WriteOutcome with
+  | WriteOutcome_Applied _ ->
+    Vela_session_policy.Websession_driver.DeleteRecordObservation_Updated
+    <:
+    Vela_session_policy.Websession_driver.t_DeleteRecordObservation
+  | WriteOutcome_Failed  ->
+    Vela_session_policy.Websession_driver.DeleteRecordObservation_Failed
+    <:
+    Vela_session_policy.Websession_driver.t_DeleteRecordObservation

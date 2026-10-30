@@ -1,5 +1,6 @@
 # Session executors against a store model (F-1): login, logout, device
-# revocation, account deletion, registration and challenge issuance
+# revocation, account deletion, registration, challenge issuance and the
+# web-session start/grant/token/delete executors
 
 ## Claim
 
@@ -8,7 +9,8 @@ SQL and sled operations did. That assumption is now proved against a store
 model for six executors, for every starting state and failing statement, and
 checked on the real stores (turso and sled). The four original ones were
 verified on 6ccd31c (login on e9c797b); registration and challenge issue are
-covered by the same model since this log.
+covered by the same model since this log, and the four web-session executors
+since the same increment.
 
 - `VerifyIo` (`auth/verify.rs`, login);
 - `LogoutJtiIo` (`auth/logout.rs`);
@@ -18,9 +20,13 @@ covered by the same model since this log.
 - `RegisterIo` (`account/mod.rs`): `check_rate_limit`, `check_account_budget`,
   `begin_transaction`, `insert_account`, `insert_device`, `commit`,
   `track_token`.
-
-Still not covered: the web-session executors (`StartIo`, `GrantIo`, `TokenIo`,
-`DeleteSessionIo`).
+- `StartIo` (`web_session/mod.rs`): `insert_pending`;
+- `GrantIo` (`web_session/mod.rs`): `update_grant` (the epoch/approver/device
+  CAS);
+- `TokenIo` (`web_session/mod.rs`): `claim_token` and the `issue_token`
+  sentinel re-check plus JTI tracking;
+- `DeleteSessionIo` (`web_session/mod.rs`): `lockout_session` and
+  `record_revocation`.
 
 Each method is a thin loop (plan → render → run → classify) over pure pieces
 in `vela-session-policy/src/store.rs`. hax extracts the plans and classifiers.
@@ -67,6 +73,24 @@ Registration and challenge add:
 The deletion transaction publishes only at `Commit`. A failure can be injected
 at any statement.
 
+The web-session executors add three SQL statements and two store statements:
+
+- `InsertPendingSession`: the `start` insert with `user_id`, `mode`, `capsule`,
+  `approved_by`, `key_epoch` and `expires_at` NULL and `status = 'pending'`.
+  The id is `UNIQUE`: an existing row is the statement failure (the handler's
+  `Failed` observation);
+- `GrantWebSession`: the grant CAS. It rewrites the one row only while
+  `status = 'pending'` and `approver_user_id = ?`, AND `EXISTS (SELECT 1 FROM
+  users WHERE id = ? AND rekey_state IS NULL AND key_epoch = ?)` AND `EXISTS
+  (SELECT 1 FROM devices WHERE id = ? AND user_id = ? AND revoked = 0)`. Those
+  two `EXISTS` guards are evaluated against the modelled `users` and `devices`
+  tables, not free inputs. Zero rows is `Conflict`, one row is `Updated`;
+- `RevokeSessionById`: the delete handler's audit update (`status = 'revoked',
+  capsule = NULL WHERE id = ?`, whose row count the handler does not observe);
+- in the store, `SetExNxByte`, the first-writer-wins `web_session:token_issued:`
+  marker (exact one-byte value), and `Exists`, the read-only
+  `device:revoked:` sentinel check at the point of token issue.
+
 ## Exact theorems
 
 `Vela_session_policy_store_lemmas.fst`, for every starting database, store and
@@ -103,9 +127,18 @@ fault point:
   `login_reset_is_honest` and `login_track_is_honest`. Its driver facts are
   `login_completes_only_with_the_unrevoked_row`,
   `login_accepts_only_its_stored_tag` and `login_tracks_the_issued_jti`.
-- **Plan shapes:** 19 `plan_*_shape` lemmas state the statements each plan must
+- **Web sessions:** `insert_pending_is_honest`, `grant_update_is_honest`,
+  `revoke_session_is_honest`, `lockout_session_is_honest`,
+  `token_claim_is_honest`, `token_sentinel_is_honest` and
+  `token_issue_is_honest`. Its driver facts are `inserted_pending_is_stored`,
+  `grant_updated_only_pending_guarded`, `grant_updated_changes_only_sessions`,
+  `token_claim_is_first_writer_wins`, `issued_token_is_not_locked_out`,
+  `issued_token_is_tracked`, `lockout_applied_means_sentinel_stored` and
+  `revoke_record_marks_the_session`.
+- **Plan shapes:** 31 `plan_*_shape` lemmas state the statements each plan must
   emit; the honesty proofs build on them.
-- **Vectors:** eight, shared with `store_model.rs`.
+- **Vectors:** 27 `vector_*` lemmas and state definitions, shared with
+  `store_model.rs`.
 
 Every module is checked in its own process under 640 MB, `--z3rlimit 200`, no
 admits: `Store` 32 s, `store_model` 35 s, `store_lemmas` 39 s.
@@ -140,6 +173,17 @@ theorem:
 | `classify-budget-failed` | `account_count_is_honest` |
 | `plan-registration-limit` | `plan_registration_rate_limit_shape` |
 | `plan-insert-account-swap` | `plan_insert_account_shape` |
+| `classify-start-insert-error` | `insert_pending_is_honest` |
+| `plan-insert-pending-swap` | `plan_insert_pending_shape` |
+| `classify-grant-conflict` | `grant_update_is_honest` |
+| `classify-grant-error` | `grant_update_is_honest` |
+| `plan-grant-swap` | `plan_grant_update_shape` |
+| `classify-claim-error` | `token_claim_is_honest` |
+| `plan-claim-ttl` | `plan_token_claim_shape` |
+| `classify-issue-track` | `token_issue_is_honest` |
+| `classify-lockout-session-error` | `lockout_session_is_honest` |
+| `plan-revoke-session-key` | `plan_revoke_session_shape` |
+| `classify-revoke-session-error` | `revoke_session_observes_its_run` |
 
 ## Real-store conformance
 
@@ -154,7 +198,8 @@ and sled, with a failure injected at every statement:
 | Login | 3 | 78 | 36 |
 | Challenge issue | 2 | 10 | 5 |
 | Registration | 3 | 96 | 57 |
-| **Total** | | **401** | **244** |
+| Web sessions | 37 | 97 | 50 |
+| **Total** | | **498** | **294** |
 
 Every statement kind is faulted at least once. The schema check pins the
 modelled columns of all eight tables and rejects a duplicate id. The
@@ -183,6 +228,15 @@ dishonest.
   and that a collision overwrote nothing.
 - `users` count saturation at `i64::MAX` is unreachable for a real table; the
   model states the exact count below that bound.
+- The web-session `start` insert draws its id inside the executor, so the
+  conformance harness feeds the model the reported id; the duplicate-id
+  semantics are proved in the model and pinned by the `web_sessions.id UNIQUE`
+  schema check.
+- Web-session PASETO issuance is an input (the plan policy is proved
+  elsewhere); the executor's proof is that `Issued` is only reported while no
+  `device:revoked:` sentinel is stored and the JTI was tracked.
+- `TokenIo`'s per-IP/per-session limiters and backoff precheck before the
+  driver are not covered (the same shape as login's per-IP limiter).
 
 ## Reproduction
 

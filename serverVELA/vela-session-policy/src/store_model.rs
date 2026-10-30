@@ -29,11 +29,17 @@ use crate::revocation_driver::{
 };
 use crate::store::{
     classify_backoff_reset, classify_cascade, classify_commit, classify_failure_counter,
-    classify_lockout_device, classify_lockout_ignored, classify_login_challenge,
-    classify_login_device, classify_logout, classify_record, classify_scan, classify_table_delete,
-    classify_track_jti, classify_transaction, classify_users_delete, CountOutcome,
-    DeviceReadOutcome, IdsOutcome, NxOutcome, ReadOutcome, SqlStmt, StoreOutcome, StoreStmt,
-    TakeOutcome, TargetRowView, WriteOutcome,
+    classify_grant_update, classify_lockout_device, classify_lockout_ignored,
+    classify_lockout_session, classify_login_challenge, classify_login_device, classify_logout,
+    classify_record, classify_revoke_session, classify_scan, classify_start_insert,
+    classify_table_delete, classify_token_claim, classify_token_issue, classify_track_jti,
+    classify_transaction, classify_users_delete, CountOutcome, DeviceReadOutcome, ExistsOutcome,
+    IdsOutcome, NxOutcome, ReadOutcome, SqlStmt, StoreOutcome, StoreStmt, TakeOutcome,
+    TargetRowView, WriteOutcome,
+};
+use crate::websession_driver::{
+    DeleteRecordObservation, DeleteSentinelObservation, GrantUpdateObservation,
+    StartInsertObservation, TokenClaimObservation, TokenIssueObservation,
 };
 
 /// A `String` from a literal, for the model's own plan construction.
@@ -47,6 +53,10 @@ pub struct UserRow {
     pub share_ek: String,
     pub share_ek_since: String,
     pub created_at: String,
+    /// Non-`None` while a rekey is in progress; the grant CAS refuses it.
+    pub rekey_state: Option<String>,
+    /// The account's vault-key epoch; the grant CAS binds the declared one.
+    pub key_epoch: i64,
 }
 
 /// A `devices` row.
@@ -71,6 +81,9 @@ pub struct SessionRow {
     pub status: String,
     pub capsule: Option<String>,
     pub approved_by: Option<String>,
+    pub mode: Option<String>,
+    pub key_epoch: Option<i64>,
+    pub expires_at: Option<String>,
 }
 
 /// A `share_inbox` or `shared_items` row.
@@ -261,6 +274,104 @@ impl Db {
             DeletionTable::Devices => self.st_devices_of_user(acct),
         }
     }
+
+    /// F*: `inserted_pending_session`. The `start` insert leaves every grant
+    /// field NULL and `user_id` unset; only the committed approver is stored.
+    pub fn inserted_pending_session(approver: &str) -> SessionRow {
+        SessionRow {
+            user_id: None,
+            approver_user_id: Some(approver.to_string()),
+            status: s("pending"),
+            capsule: None,
+            approved_by: None,
+            mode: None,
+            key_epoch: None,
+            expires_at: None,
+        }
+    }
+
+    /// F*: `st_insert_pending`.
+    pub fn st_insert_pending(&self, session: &str, approver: &str) -> Db {
+        let mut next = self.clone();
+        next.sessions
+            .insert(session.to_string(), Db::inserted_pending_session(approver));
+        next
+    }
+
+    /// F*: `grant_guard`. The session must be pending for this approver, the
+    /// account must exist and not be mid-rekey at the declared epoch, and the
+    /// approving device must be stored, owned by the account and unrevoked.
+    pub fn grant_guard(&self, session: &str, user: &str, device: &str, epoch: i64) -> bool {
+        let Some(row) = self.sessions.get(session) else {
+            return false;
+        };
+        let Some(owner) = self.users.get(user) else {
+            return false;
+        };
+        let Some(dev) = self.devices.get(device) else {
+            return false;
+        };
+        row.status == "pending"
+            && row.approver_user_id.as_deref() == Some(user)
+            && owner.rekey_state.is_none()
+            && owner.key_epoch == epoch
+            && dev.user_id == user
+            && dev.revoked == 0
+    }
+
+    /// F*: `granted_session`. The row the CAS publishes, from the row it
+    /// found (the approver binding is preserved).
+    pub fn granted_session(
+        row: &SessionRow,
+        user: &str,
+        device: &str,
+        mode: &str,
+        capsule: &str,
+        expires_at: &str,
+        epoch: i64,
+    ) -> SessionRow {
+        SessionRow {
+            user_id: Some(user.to_string()),
+            approver_user_id: row.approver_user_id.clone(),
+            status: s("granted"),
+            capsule: Some(capsule.to_string()),
+            approved_by: Some(device.to_string()),
+            mode: Some(mode.to_string()),
+            key_epoch: Some(epoch),
+            expires_at: Some(expires_at.to_string()),
+        }
+    }
+
+    /// F*: `st_grant_session`. The CAS rewrites the one guarded row; when the
+    /// guard fails the statement changes nothing.
+    pub fn st_grant_session(
+        &self,
+        session: &str,
+        user: &str,
+        device: &str,
+        mode: &str,
+        capsule: &str,
+        expires_at: &str,
+        epoch: i64,
+    ) -> Db {
+        let mut next = self.clone();
+        if let Some(row) = next.sessions.get(session) {
+            let replacement =
+                Db::granted_session(row, user, device, mode, capsule, expires_at, epoch);
+            next.sessions.insert(session.to_string(), replacement);
+        }
+        next
+    }
+
+    /// F*: `st_revoke_session`. The audit update rewrites the one row, or none.
+    pub fn st_revoke_session(&self, session: &str) -> Db {
+        let mut next = self.clone();
+        if let Some(row) = next.sessions.get_mut(session) {
+            row.status = s("revoked");
+            row.capsule = None;
+        }
+        next
+    }
 }
 
 /// F*: `exec_stmt`.
@@ -331,6 +442,8 @@ pub fn exec_stmt(db: &Db, stmt: &SqlStmt) -> Option<(WriteResult, Db)> {
                         share_ek: share_ek.clone(),
                         share_ek_since: share_ek_since.clone(),
                         created_at: now.clone(),
+                        rekey_state: None,
+                        key_epoch: 1,
                     },
                 );
                 Some((WriteResult::Wrote, next))
@@ -367,6 +480,38 @@ pub fn exec_stmt(db: &Db, stmt: &SqlStmt) -> Option<(WriteResult, Db)> {
             }
         }
         SqlStmt::CountUsers => None,
+        SqlStmt::InsertPendingSession { session, approver, .. } => {
+            if db.sessions.contains_key(session) {
+                Some((WriteResult::WroteConflict, db.clone()))
+            } else {
+                Some((WriteResult::Wrote, db.st_insert_pending(session, approver)))
+            }
+        }
+        SqlStmt::GrantWebSession {
+            session,
+            user,
+            device,
+            mode,
+            capsule,
+            expires_at,
+            epoch,
+        } => {
+            if db.grant_guard(session, user, device, *epoch) {
+                Some((
+                    WriteResult::WroteOne,
+                    db.st_grant_session(session, user, device, mode, capsule, expires_at, *epoch),
+                ))
+            } else {
+                Some((WriteResult::WroteAbsent, db.clone()))
+            }
+        }
+        SqlStmt::RevokeSessionById { session } => {
+            if db.sessions.contains_key(session) {
+                Some((WriteResult::WroteOne, db.st_revoke_session(session)))
+            } else {
+                Some((WriteResult::WroteAbsent, db.clone()))
+            }
+        }
     }
 }
 
@@ -452,6 +597,15 @@ pub fn exec_store(store: &Store, stmt: &StoreStmt) -> (StoreOutcome, Store) {
             next.kv.entry(key.clone()).or_insert_with(|| value.clone());
             (StoreOutcome::Applied, next)
         }
+        StoreStmt::SetExNxByte { key, value, .. } => {
+            // The marker is one byte; its text form is only the model's
+            // representation of it (the F* model calls it `v_one`).
+            next.kv
+                .entry(key.clone())
+                .or_insert_with(|| value.to_string());
+            (StoreOutcome::Applied, next)
+        }
+        StoreStmt::Exists { .. } => (StoreOutcome::Applied, next),
     }
 }
 
@@ -1108,6 +1262,190 @@ pub fn registration_transaction(
     )
 }
 
+// ── Web sessions ───────────────────────────────────────────────────────────
+
+/// F*: `insert_pending`. `Inserted` exactly when the id was fresh and the one
+/// statement ran; then exactly that one pending row is added.
+pub fn insert_pending(
+    db: &Db,
+    session: &str,
+    approver: &str,
+    poll_secret_hash: &str,
+    ephemeral_pk: &str,
+    web_vk: &str,
+    link_nonce: &str,
+    now: &str,
+    fault: Option<usize>,
+) -> (StartInsertObservation, Db) {
+    if faulted(fault, 0) {
+        (classify_start_insert(&WriteOutcome::Failed), db.clone())
+    } else {
+        let plan = crate::store::plan_insert_pending(
+            s(session),
+            s(approver),
+            s(poll_secret_hash),
+            s(ephemeral_pk),
+            s(web_vk),
+            s(link_nonce),
+            s(now),
+        );
+        match exec_stmt(db, &plan) {
+            Some((rows, next)) => (classify_start_insert(&rows.outcome()), next),
+            None => (classify_start_insert(&WriteOutcome::Failed), db.clone()),
+        }
+    }
+}
+
+/// F*: `grant_update`. `Updated`/`Conflict` exactly as the guarded CAS
+/// reports; a failure leaves the state unchanged.
+pub fn grant_update(
+    db: &Db,
+    session: &str,
+    user: &str,
+    device: &str,
+    mode: &str,
+    capsule: &str,
+    expires_at: &str,
+    epoch: i64,
+    fault: Option<usize>,
+) -> (GrantUpdateObservation, Db) {
+    if faulted(fault, 0) {
+        (classify_grant_update(&WriteOutcome::Failed), db.clone())
+    } else {
+        let plan = crate::store::plan_grant_update(
+            s(session),
+            s(user),
+            s(device),
+            s(mode),
+            s(capsule),
+            s(expires_at),
+            epoch,
+        );
+        match exec_stmt(db, &plan) {
+            Some((rows, next)) => (classify_grant_update(&rows.outcome()), next),
+            None => (classify_grant_update(&WriteOutcome::Failed), db.clone()),
+        }
+    }
+}
+
+/// F*: `revoke_session`. `Updated` exactly when the audit statement ran (it
+/// reports `Updated` even when no row matched, as the handler did).
+pub fn revoke_session(db: &Db, session: &str, fault: Option<usize>) -> (DeleteRecordObservation, Db) {
+    if faulted(fault, 0) {
+        (classify_revoke_session(&WriteOutcome::Failed), db.clone())
+    } else {
+        let plan = crate::store::plan_revoke_session(s(session));
+        match exec_stmt(db, &plan) {
+            Some((rows, next)) => (classify_revoke_session(&rows.outcome()), next),
+            None => (classify_revoke_session(&WriteOutcome::Failed), db.clone()),
+        }
+    }
+}
+
+/// F*: `lockout_session`. `Applied` exactly when the sentinel write ran.
+pub fn lockout_session(store: &Store, session: &str, fault: Option<usize>)
+    -> (DeleteSentinelObservation, Store)
+{
+    let plan = crate::store::plan_sentinel(s(session), crate::store::WEB_SESSION_MAX_TTL_SECS);
+    let (outcomes, post) = run_store(store, &plan, fault);
+    let outcome = outcomes.first().copied().unwrap_or(StoreOutcome::Failed);
+    (classify_lockout_session(&outcome), post)
+}
+
+/// F*: `claim_key`. The `web_session:token_issued:` key the claim writes.
+pub fn claim_key(session: &str) -> String {
+    match crate::store::plan_token_claim(s(session)).first() {
+        Some(StoreStmt::SetExNxByte { key, .. }) => key.clone(),
+        _ => String::new(),
+    }
+}
+
+/// F*: `token_claim`. First writer wins: `Claimed` exactly when the key was
+/// absent and the write ran; a collision leaves the marker untouched.
+pub fn token_claim(
+    store: &Store,
+    session: &str,
+    fault: Option<usize>,
+) -> (TokenClaimObservation, Store) {
+    let plan = crate::store::plan_token_claim(s(session));
+    let stmt = plan.first().cloned();
+    let key = claim_key(session);
+    if faulted(fault, 0) {
+        (classify_token_claim(&NxOutcome::Failed), store.clone())
+    } else if store.kv.contains_key(&key) {
+        (classify_token_claim(&NxOutcome::KeyExists), store.clone())
+    } else {
+        let mut post = store.clone();
+        if let Some(stmt) = stmt {
+            post = exec_store(store, &stmt).1;
+        }
+        (classify_token_claim(&NxOutcome::Inserted), post)
+    }
+}
+
+/// F*: `sentinel_key`. The sentinel the issue-time check reads.
+pub fn sentinel_key(session: &str) -> String {
+    match crate::store::plan_token_sentinel(s(session)).first() {
+        Some(StoreStmt::Exists { key }) => key.clone(),
+        _ => String::new(),
+    }
+}
+
+/// F*: `sentinel_truth`. What `Store::exists` sees.
+pub fn sentinel_truth(store: &Store, session: &str) -> ExistsOutcome {
+    if store.kv.contains_key(&sentinel_key(session)) {
+        ExistsOutcome::Present
+    } else {
+        ExistsOutcome::Absent
+    }
+}
+
+/// F*: `token_sentinel`. The read-only issue-time lockout check.
+pub fn token_sentinel(
+    store: &Store,
+    session: &str,
+    fault: Option<usize>,
+) -> (ExistsOutcome, Store) {
+    if faulted(fault, 0) {
+        (ExistsOutcome::Failed, store.clone())
+    } else {
+        (sentinel_truth(store, session), store.clone())
+    }
+}
+
+/// F*: `token_issue`. Issuance is an input; the executor's own claim is that
+/// `Issued` means the sentinel was absent and the JTI landed in the set.
+pub fn token_issue(
+    store: &Store,
+    session: &str,
+    jti: &str,
+    paseto_ok: bool,
+    fault: Option<usize>,
+) -> (TokenIssueObservation, Store) {
+    if !paseto_ok {
+        return (
+            classify_token_issue(false, &ExistsOutcome::Failed, &StoreOutcome::Failed),
+            store.clone(),
+        );
+    }
+    let sentinel = if faulted(fault, 0) {
+        ExistsOutcome::Failed
+    } else {
+        sentinel_truth(store, session)
+    };
+    if sentinel == ExistsOutcome::Absent {
+        let plan = crate::store::plan_track_jti(s(session), s(jti));
+        let (outcomes, post) = run_store(store, &plan, if faulted(fault, 1) { Some(0) } else { None });
+        let outcome = outcomes.first().copied().unwrap_or(StoreOutcome::Failed);
+        (classify_token_issue(true, &sentinel, &outcome), post)
+    } else {
+        (
+            classify_token_issue(true, &sentinel, &StoreOutcome::Failed),
+            store.clone(),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1288,7 +1626,13 @@ mod tests {
         let mut db = Db::default();
         db.users.insert(
             s("me"),
-            UserRow { share_ek: s("ek"), share_ek_since: s("t"), created_at: s("t0") },
+            UserRow {
+                share_ek: s("ek"),
+                share_ek_since: s("t"),
+                created_at: s("t0"),
+                rekey_state: None,
+                key_epoch: 1,
+            },
         );
         db.devices.insert(
             s("d1"),
@@ -1312,6 +1656,9 @@ mod tests {
                 status: s("pending"),
                 capsule: None,
                 approved_by: None,
+                mode: None,
+                key_epoch: None,
+                expires_at: None,
             },
         );
         db.inbox.insert(s("i1"), MailRow { sender: s("me"), recipient: s("you") });
@@ -1325,5 +1672,149 @@ mod tests {
             let (_, post) = deletion_transaction(&db, "me", Some(k));
             assert_eq!(post, db, "fault at {k}");
         }
+    }
+
+    fn web_session_state() -> Db {
+        let mut db = Db::default();
+        db.users.insert(
+            s("u"),
+            UserRow {
+                share_ek: s(""),
+                share_ek_since: s(""),
+                created_at: s("t0"),
+                rekey_state: None,
+                key_epoch: 3,
+            },
+        );
+        db.devices.insert(
+            s("d"),
+            DeviceRow {
+                user_id: s("u"),
+                revoked: 0,
+                hybrid_ek: s(""),
+                hybrid_vk: s(""),
+                last_active: None,
+                name: s("n"),
+                kind: s("k"),
+                revoked_at: None,
+                revoked_by: None,
+            },
+        );
+        db.sessions.insert(
+            s("s"),
+            SessionRow {
+                user_id: None,
+                approver_user_id: Some(s("u")),
+                status: s("pending"),
+                capsule: None,
+                approved_by: None,
+                mode: None,
+                key_epoch: None,
+                expires_at: None,
+            },
+        );
+        db
+    }
+
+    /// The F* lemmas `vector_insert_pending`, `vector_grant_update`,
+    /// `vector_grant_conflict`, `vector_revoke_session`,
+    /// `vector_token_claim`, `vector_token_claim_exists`,
+    /// `vector_token_issue` and `vector_token_issue_locked` prove these runs.
+    #[test]
+    fn web_session_vectors() {
+        let db = web_session_state();
+
+        let (obs, post) = insert_pending(
+            &db, "fresh", "u", "hash", "epk", "", "nonce", "now", None,
+        );
+        assert_eq!(obs, StartInsertObservation::Inserted);
+        assert_eq!(
+            post.sessions.get("fresh").map(|r| r.status.as_str()),
+            Some("pending")
+        );
+        // A duplicate id is the statement failure.
+        let (obs, post) = insert_pending(&db, "s", "u", "hash", "epk", "", "nonce", "now", None);
+        assert_eq!(obs, StartInsertObservation::Failed);
+        assert_eq!(post, db);
+
+        let (obs, post) =
+            grant_update(&db, "s", "u", "d", "rw", "cap", "exp", 3, None);
+        assert_eq!(obs, GrantUpdateObservation::Updated);
+        let granted = post.sessions.get("s").unwrap();
+        assert_eq!(granted.status, "granted");
+        assert_eq!(granted.user_id.as_deref(), Some("u"));
+        assert_eq!(granted.key_epoch, Some(3));
+        assert_eq!(granted.mode.as_deref(), Some("rw"));
+        // A moved epoch fails the CAS without changing anything.
+        let (obs, post) =
+            grant_update(&db, "s", "u", "d", "rw", "cap", "exp", 4, None);
+        assert_eq!(obs, GrantUpdateObservation::Conflict);
+        assert_eq!(post, db);
+
+        let (obs, post) = revoke_session(&db, "s", None);
+        assert_eq!(obs, DeleteRecordObservation::Updated);
+        assert_eq!(post.sessions.get("s").unwrap().status, "revoked");
+
+        let store = Store::default();
+        let (obs, post) = token_claim(&store, "s", None);
+        assert_eq!(obs, TokenClaimObservation::Claimed);
+        assert!(post.kv.contains_key(&claim_key("s")));
+        let (obs, post) = token_claim(&post, "s", None);
+        assert_eq!(obs, TokenClaimObservation::AlreadyClaimed);
+        assert!(post.kv.contains_key(&claim_key("s")));
+
+        let (obs, _) = token_issue(&store, "s", "jti", true, None);
+        assert_eq!(obs, TokenIssueObservation::Issued);
+        let _ = token_claim(&store, "s", Some(0));
+    }
+
+    #[test]
+    fn token_issue_honesty_vectors() {
+        let store = Store::default();
+        let (obs, post) = token_issue(&store, "s", "jti", true, None);
+        assert_eq!(obs, TokenIssueObservation::Issued);
+        assert!(post
+            .sets
+            .get("device:jtis:s")
+            .map(|set| set.contains("jti"))
+            .unwrap_or(false));
+
+        // A live lockout sentinel makes issuance fail and changes nothing.
+        let mut locked = Store::default();
+        locked.kv.insert(s("device:revoked:s"), s("1"));
+        let (obs, post) = token_issue(&locked, "s", "jti", true, None);
+        assert_eq!(obs, TokenIssueObservation::Failed);
+        assert_eq!(post, locked);
+
+        // A failed issuance is a failure and changes nothing.
+        let (obs, post) = token_issue(&store, "s", "jti", false, None);
+        assert_eq!(obs, TokenIssueObservation::Failed);
+        assert_eq!(post, store);
+
+        // A fault at either store call fails the exchange and changes nothing.
+        for k in 0..2 {
+            let (obs, post) = token_issue(&store, "s", "jti", true, Some(k));
+            assert_eq!(obs, TokenIssueObservation::Failed, "fault at {k}");
+            assert_eq!(post, store, "fault at {k}");
+        }
+    }
+
+    #[test]
+    fn web_session_lockout_and_claim_faults() {
+        let store = Store::default();
+        for k in 0..1 {
+            let (obs, post) = lockout_session(&store, "s", Some(k));
+            assert_eq!(obs, DeleteSentinelObservation::StorageFailed);
+            assert_eq!(post, store);
+            let (obs, post) = token_claim(&store, "s", Some(k));
+            assert_eq!(obs, TokenClaimObservation::StorageFailed);
+            assert_eq!(post, store);
+        }
+        let (obs, post) = lockout_session(&store, "s", None);
+        assert_eq!(obs, DeleteSentinelObservation::Applied);
+        assert_eq!(
+            post.kv.get("device:revoked:s").map(String::as_str),
+            Some("1")
+        );
     }
 }

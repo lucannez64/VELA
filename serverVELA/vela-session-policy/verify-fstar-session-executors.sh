@@ -5,7 +5,7 @@ set -euo pipefail
 # truth about the database and store.
 #
 # `src/store.rs` splits every session executor method in
-# `vela-server/src/{auth/logout.rs,device/revoke.rs,account/delete.rs,auth/verify.rs}`
+# `vela-server/src/{auth/logout.rs,device/revoke.rs,account/delete.rs,auth/verify.rs,web_session/mod.rs}`
 # into a
 # typed statement plan (`plan_*`), the SQL/store rendering (pinned by its unit
 # tests) and an observation classifier (`classify_*`). hax extracts the plans
@@ -79,6 +79,10 @@ items=(
   classify_registration_rate_limit classify_registration_transaction
   classify_registration_commit classify_account_count classify_insert
   classify_registration_track
+  plan_insert_pending plan_grant_update plan_revoke_session
+  plan_token_claim plan_token_sentinel
+  classify_start_insert classify_grant_update classify_token_claim
+  classify_token_issue classify_lockout_session classify_revoke_session
 )
 include='-**'
 for item in "${items[@]}"; do
@@ -164,5 +168,5 @@ done
 # Each mutant of the plans and classifiers must break the proof.
 "$proof_root/verify-fstar-session-executors-mutations.sh"
 
-echo "session executors: for every starting database and store and every failing statement, the logout, device-revocation, account-deletion, login, registration and challenge-issue executors' observations report exactly what their statements did to the eight tables, the store keys and counters, and a failed run leaves the transaction uncommitted"
+echo "session executors: for every starting database and store and every failing statement, the logout, device-revocation, account-deletion, login, registration and challenge-issue executors' observations report exactly what their statements did to the eight tables, the store keys and counters, and a failed run leaves the transaction uncommitted; the web-session start, grant, token-claim/issue and delete-lockout/record executors report exactly their guarded insert/CAS, the first-writer-wins marker, the sentinel re-check and the audit update"
 sha256sum "${generated[@]}" "${model[@]}" "${lemmas[@]}" src/store.rs src/store_model.rs

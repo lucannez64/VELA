@@ -8,8 +8,8 @@
 //! injected failures, against a real turso database and a real sled store.
 
 use vela_session_policy::store::{
-    render_sql, render_store, NxOutcome, Rendered, RenderedStore, SqlStmt, StoreOp, StoreOutcome,
-    StoreStmt, TakeOutcome, WriteOutcome,
+    render_sql, render_store, ExistsOutcome, NxOutcome, Param, Rendered, RenderedStore, SqlStmt,
+    StoreOp, StoreOutcome, StoreStmt, TakeOutcome, WriteOutcome,
 };
 
 use crate::error::AppError;
@@ -112,6 +112,8 @@ pub(crate) trait SessionStore {
     /// `Store::set_ex_nx`: write only when the key is absent; `true` when this
     /// call inserted it.
     fn set_ex_nx(&mut self, key: &str, value: &[u8], ttl: u64) -> anyhow::Result<bool>;
+    /// `Store::exists`: whether the key is present.
+    fn exists(&mut self, key: &str) -> anyhow::Result<bool>;
 }
 
 /// The token issuer behind an executor's `issue_token` method.
@@ -123,6 +125,14 @@ pub(crate) trait SessionTokens {
         &self,
         user: uuid::Uuid,
         device: uuid::Uuid,
+    ) -> anyhow::Result<(String, String)>;
+    /// Issue the RW web-session token bound to the driver's `TokenPlan`. The
+    /// driver verifies the plan; issuance is a trusted effect.
+    fn issue_web(
+        &self,
+        user: uuid::Uuid,
+        session: uuid::Uuid,
+        plan: vela_session_policy::TokenPlan,
     ) -> anyhow::Result<(String, String)>;
 }
 
@@ -136,6 +146,15 @@ impl SessionTokens for PasetoTokens {
         device: uuid::Uuid,
     ) -> anyhow::Result<(String, String)> {
         Ok(self.0.issue(user, device, None)?)
+    }
+
+    fn issue_web(
+        &self,
+        user: uuid::Uuid,
+        session: uuid::Uuid,
+        plan: vela_session_policy::TokenPlan,
+    ) -> anyhow::Result<(String, String)> {
+        Ok(self.0.issue_from_plan(user, session, plan)?)
     }
 }
 
@@ -183,10 +202,24 @@ impl SessionStore for SledStore<'_> {
     fn set_ex_nx(&mut self, key: &str, value: &[u8], ttl: u64) -> anyhow::Result<bool> {
         Ok(self.0.set_ex_nx(key, value, ttl)?)
     }
+
+    fn exists(&mut self, key: &str) -> anyhow::Result<bool> {
+        Ok(self.0.exists(key)?)
+    }
 }
 
 fn text_params(values: Vec<String>) -> Vec<TursoValue> {
     values.into_iter().map(TursoValue::Text).collect()
+}
+
+fn mixed_params(values: Vec<Param>) -> Vec<TursoValue> {
+    values
+        .into_iter()
+        .map(|value| match value {
+            Param::Text(text) => TursoValue::Text(text),
+            Param::Int(int) => TursoValue::Integer(int),
+        })
+        .collect()
 }
 
 /// Runs one SQL plan in order, stopping at the first failure. Returns one
@@ -203,6 +236,9 @@ pub(crate) async fn run_sql<S: SessionSql>(
             }
             Rendered::Execute { sql: text, params } => {
                 sql.execute(text, text_params(params)).await
+            }
+            Rendered::ExecuteMixed { sql: text, params } => {
+                sql.execute(text, mixed_params(params)).await
             }
             Rendered::Commit => sql.commit().await.map(|()| 0),
         };
@@ -253,9 +289,42 @@ pub(crate) fn run_nonce<K: SessionStore>(
             Ok(false) => (NxOutcome::KeyExists, None),
             Err(error) => (NxOutcome::Failed, Some(error)),
         },
+        RenderedStore {
+            op: StoreOp::SetExNxByte,
+            key,
+            value,
+            ttl,
+            ..
+        } => match store.set_ex_nx(&key, &[value], ttl) {
+            Ok(true) => (NxOutcome::Inserted, None),
+            Ok(false) => (NxOutcome::KeyExists, None),
+            Err(error) => (NxOutcome::Failed, Some(error)),
+        },
         _ => (
             NxOutcome::Failed,
             Some(anyhow::anyhow!("a non-nonce statement in a nonce plan")),
+        ),
+    }
+}
+
+/// Runs the one existence check of a plan (`Store::exists`).
+pub(crate) fn run_exists<K: SessionStore>(
+    store: &mut K,
+    stmt: &StoreStmt,
+) -> (ExistsOutcome, Option<anyhow::Error>) {
+    match render_store(stmt) {
+        RenderedStore {
+            op: StoreOp::Exists,
+            key,
+            ..
+        } => match store.exists(&key) {
+            Ok(true) => (ExistsOutcome::Present, None),
+            Ok(false) => (ExistsOutcome::Absent, None),
+            Err(error) => (ExistsOutcome::Failed, Some(error)),
+        },
+        _ => (
+            ExistsOutcome::Failed,
+            Some(anyhow::anyhow!("a non-exists statement in an exists plan")),
         ),
     }
 }
@@ -304,6 +373,9 @@ pub(crate) async fn run_sql_in_tx_named<S: SessionSql>(
             Rendered::Execute { sql: text, params } => {
                 sql.execute_in_tx_named(text, text_params(params), closed).await
             }
+            Rendered::ExecuteMixed { sql: text, params } => {
+                sql.execute_in_tx_named(text, mixed_params(params), closed).await
+            }
             Rendered::Query { sql: text, params } => {
                 sql.query(text, text_params(params)).await.map(|rows| rows.len() as u64)
             }
@@ -334,6 +406,9 @@ pub(crate) async fn run_sql_named<S: SessionSql>(
             }
             Rendered::Execute { sql: text, params } => {
                 sql.execute(text, text_params(params)).await
+            }
+            Rendered::ExecuteMixed { sql: text, params } => {
+                sql.execute(text, mixed_params(params)).await
             }
             Rendered::Commit => sql.commit_named(closed).await.map(|()| 0),
         };
@@ -400,6 +475,12 @@ pub(crate) fn run_store<K: SessionStore>(
             RenderedStore {
                 op: StoreOp::SetExNx, ..
             } => Err(anyhow::anyhow!("a nonce statement in a write plan")),
+            RenderedStore {
+                op: StoreOp::SetExNxByte, ..
+            } => Err(anyhow::anyhow!("a nonce statement in a write plan")),
+            RenderedStore {
+                op: StoreOp::Exists, ..
+            } => Err(anyhow::anyhow!("a read statement in a write plan")),
         };
         match result {
             Ok(()) => outcomes.push(StoreOutcome::Applied),

@@ -42,6 +42,10 @@ use vela_session_policy::{
 };
 
 use crate::{
+    auth::session_store::{
+        keep_error, run_exists, run_nonce, run_sql, run_store, DbSql, PasetoTokens, SessionSql,
+        SessionStore, SessionTokens, SledStore,
+    },
     auth::token::TokenService,
     device::enroll::verify_auth_signature,
     error::{AppError, Result},
@@ -136,15 +140,16 @@ pub struct StartResponse {
 /// when (through the shared `websession_start_interpreter!` loop, proved in F*
 /// as `run_start`); each method only performs its effect and reports the
 /// outcome.
-struct StartIo<'a> {
-    state: &'a AppState,
-    body: StartRequest,
-    ip: String,
-    session_id: Option<Uuid>,
-    error: Option<AppError>,
+pub(crate) struct StartIo<'a, S: SessionSql = DbSql<'a>> {
+    pub state: &'a AppState,
+    pub sql: S,
+    pub body: StartRequest,
+    pub ip: String,
+    pub session_id: Option<Uuid>,
+    pub error: Option<AppError>,
 }
 
-impl StartIo<'_> {
+impl<S: SessionSql> StartIo<'_, S> {
     async fn check_rate_limit(&mut self) -> StartLimitObservation {
         match rate_limit::web_session_start_by_ip(&self.state.store, &self.ip) {
             Ok(()) => StartLimitObservation::Allowed,
@@ -186,41 +191,34 @@ impl StartIo<'_> {
     /// `users` table: this endpoint is unauthenticated, so confirming that an
     /// account exists would turn it into a user-enumeration oracle. A typo
     /// simply yields a session nobody can grant, which expires in 5 minutes.
-    async fn insert_pending(&mut self) -> StartInsertObservation {
+    pub(crate) async fn insert_pending(&mut self) -> StartInsertObservation {
         let id = Uuid::new_v4();
-        let now = Utc::now().to_rfc3339();
-        match self
-            .state
-            .sqldb
-            .execute(
-                "INSERT INTO web_sessions
-                    (id, user_id, approver_user_id, poll_secret_hash, ephemeral_pk, web_vk, link_nonce, mode, status, capsule, approved_by, created_at, expires_at)
-                 VALUES (?, NULL, ?, ?, ?, ?, ?, NULL, 'pending', NULL, NULL, ?, NULL)",
-                vec![
-                    TursoValue::Text(id.to_string()),
-                    TursoValue::Text(self.body.approver_user_id.to_string()),
-                    TursoValue::Text(self.body.poll_secret_hash.clone()),
-                    TursoValue::Text(self.body.ephemeral_pk.clone()),
-                    TursoValue::Text(self.body.web_vk.as_deref().unwrap_or("").to_string()),
-                    TursoValue::Text(self.body.link_nonce.clone()),
-                    TursoValue::Text(now),
-                ],
-            )
-            .await
-        {
-            Ok(_) => {
-                self.session_id = Some(id);
-                StartInsertObservation::Inserted
-            }
-            Err(error) => {
-                self.error = Some(AppError::Internal(error.to_string()));
-                StartInsertObservation::Failed
-            }
+        let plan = vela_session_policy::store::plan_insert_pending(
+            id.to_string(),
+            self.body.approver_user_id.to_string(),
+            self.body.poll_secret_hash.clone(),
+            self.body.ephemeral_pk.clone(),
+            self.body.web_vk.as_deref().unwrap_or("").to_string(),
+            self.body.link_nonce.clone(),
+            Utc::now().to_rfc3339(),
+        );
+        let (outcomes, error) = run_sql(&mut self.sql, std::slice::from_ref(&plan)).await;
+        if let Some(error) = error {
+            keep_error(&mut self.error, error);
         }
+        let outcome = outcomes
+            .first()
+            .copied()
+            .unwrap_or(vela_session_policy::store::WriteOutcome::Failed);
+        let observed = vela_session_policy::store::classify_start_insert(&outcome);
+        if observed == StartInsertObservation::Inserted {
+            self.session_id = Some(id);
+        }
+        observed
     }
 }
 
-fn start_failure_error(failure: StartFailure, io: &mut StartIo<'_>) -> AppError {
+fn start_failure_error<S: SessionSql>(failure: StartFailure, io: &mut StartIo<'_, S>) -> AppError {
     match failure {
         StartFailure::RateLimited | StartFailure::Validation | StartFailure::InsertStorage => io
             .error
@@ -238,6 +236,10 @@ pub async fn post_start(
     let ip = net::client_ip(&headers, addr.map(|ConnectInfo(a)| a.ip()), &state.config);
     let mut io = StartIo {
         state: &state,
+        sql: DbSql {
+            pool: state.sqldb.as_ref(),
+            tx: None,
+        },
         body,
         ip,
         session_id: None,
@@ -555,16 +557,17 @@ pub struct GrantResponse {
 /// when (through the shared `websession_grant_interpreter!` loop, proved in F*
 /// as `run_grant`); each method only performs its effect and reports the
 /// outcome.
-struct GrantIo<'a> {
-    state: &'a AppState,
-    id: Uuid,
-    session: DeviceSession,
-    body: GrantRequest,
-    expires_at: Option<DateTime<Utc>>,
-    error: Option<AppError>,
+pub(crate) struct GrantIo<'a, S: SessionSql = DbSql<'a>> {
+    pub state: &'a AppState,
+    pub sql: S,
+    pub id: Uuid,
+    pub session: DeviceSession,
+    pub body: GrantRequest,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub error: Option<AppError>,
 }
 
-impl GrantIo<'_> {
+impl<S: SessionSql> GrantIo<'_, S> {
     async fn validate_grant(&mut self) -> vela_session_policy::websession_driver::GrantValidationObservation {
         use vela_session_policy::websession_driver::GrantValidationObservation;
         let invalid = |this: &mut Self, error: AppError| {
@@ -650,66 +653,40 @@ impl GrantIo<'_> {
         })
     }
 
-    async fn update_grant(&mut self, update: GrantUpdate) -> GrantUpdateObservation {
+    pub(crate) async fn update_grant(&mut self, update: GrantUpdate) -> GrantUpdateObservation {
         let verified_mode = match update.mode {
             PolicyMode::ReadOnly => "ro",
             PolicyMode::ReadWrite => "rw",
         };
         let expires_at = Utc::now() + chrono::Duration::seconds(update.ttl_secs);
-        let user = self.session.user_id.to_string();
-        let device = self.session.device_id.to_string();
-        let n = self
-            .state
-            .sqldb
-            .execute(
-                // `approver_user_id` is re-checked here so the binding also
-                // holds against a concurrent grant, not just the read above.
-                "UPDATE web_sessions
-                 SET user_id = ?, mode = ?, status = 'granted', capsule = ?,
-                     approved_by = ?, expires_at = ?,
-                     key_epoch = ?
-                 WHERE id = ? AND status = 'pending' AND approver_user_id = ?
-                   AND EXISTS (
-                       SELECT 1 FROM users
-                       WHERE id = ? AND rekey_state IS NULL AND key_epoch = ?
-                   )
-                   -- A device being revoked cannot slip a grant past the
-                   -- revocation cascade (see device::revoke).
-                   AND EXISTS (
-                       SELECT 1 FROM devices
-                       WHERE id = ? AND user_id = ? AND revoked = 0
-                   )",
-                vec![
-                    TursoValue::Text(user.clone()),
-                    TursoValue::Text(verified_mode.to_string()),
-                    TursoValue::Text(self.body.capsule.clone()),
-                    TursoValue::Text(device.clone()),
-                    TursoValue::Text(expires_at.to_rfc3339()),
-                    TursoValue::Integer(update.epoch),
-                    TursoValue::Text(self.id.to_string()),
-                    TursoValue::Text(user.clone()),
-                    TursoValue::Text(user.clone()),
-                    TursoValue::Integer(update.epoch),
-                    TursoValue::Text(device),
-                    TursoValue::Text(user),
-                ],
-            )
-            .await;
-        match n {
-            Ok(0) => GrantUpdateObservation::Conflict,
-            Ok(_) => {
-                self.expires_at = Some(expires_at);
-                GrantUpdateObservation::Updated
-            }
-            Err(error) => {
-                self.error = Some(AppError::Internal(error.to_string()));
-                GrantUpdateObservation::Failed
-            }
+        // `approver_user_id` is re-checked in the statement so the binding
+        // also holds against a concurrent grant, not just the read above.
+        let plan = vela_session_policy::store::plan_grant_update(
+            self.id.to_string(),
+            self.session.user_id.to_string(),
+            self.session.device_id.to_string(),
+            verified_mode.to_string(),
+            self.body.capsule.clone(),
+            expires_at.to_rfc3339(),
+            update.epoch,
+        );
+        let (outcomes, error) = run_sql(&mut self.sql, std::slice::from_ref(&plan)).await;
+        if let Some(error) = error {
+            keep_error(&mut self.error, error);
         }
+        let outcome = outcomes
+            .first()
+            .copied()
+            .unwrap_or(vela_session_policy::store::WriteOutcome::Failed);
+        let observed = vela_session_policy::store::classify_grant_update(&outcome);
+        if observed == GrantUpdateObservation::Updated {
+            self.expires_at = Some(expires_at);
+        }
+        observed
     }
 }
 
-fn grant_failure_error(failure: GrantFailure, io: &mut GrantIo<'_>) -> AppError {
+fn grant_failure_error<S: SessionSql>(failure: GrantFailure, io: &mut GrantIo<'_, S>) -> AppError {
     match failure {
         GrantFailure::Unauthenticated => AppError::Forbidden(
             "web session grant capability facts are inconsistent".into(),
@@ -761,6 +738,10 @@ pub async fn post_grant(
     let requested_ttl = body.ttl_secs;
     let mut io = GrantIo {
         state: &state,
+        sql: DbSql {
+            pool: state.sqldb.as_ref(),
+            tx: None,
+        },
         id,
         session,
         body,
@@ -819,21 +800,23 @@ pub struct TokenResponse {
 /// when (through the shared `websession_token_interpreter!` loop, proved in F*
 /// as `run_token`); each method only performs its effect and reports the
 /// outcome.
-struct TokenIo<'a> {
-    state: &'a AppState,
-    id: Uuid,
-    id_str: String,
-    ip: String,
-    body: TokenRequest,
-    user_id: Option<Uuid>,
-    web_vk: Option<Vec<u8>>,
-    session_expires_at: Option<DateTime<Utc>>,
-    token: Option<String>,
-    jti: Option<String>,
-    error: Option<AppError>,
+pub(crate) struct TokenIo<'a, K: SessionStore = SledStore<'a>, T: SessionTokens = PasetoTokens> {
+    pub state: &'a AppState,
+    pub store: K,
+    pub tokens: T,
+    pub id: Uuid,
+    pub id_str: String,
+    pub ip: String,
+    pub body: TokenRequest,
+    pub user_id: Option<Uuid>,
+    pub web_vk: Option<Vec<u8>>,
+    pub session_expires_at: Option<DateTime<Utc>>,
+    pub token: Option<String>,
+    pub jti: Option<String>,
+    pub error: Option<AppError>,
 }
 
-impl TokenIo<'_> {
+impl<K: SessionStore, T: SessionTokens> TokenIo<'_, K, T> {
     async fn check_token_limits(&mut self) -> TokenLimitObservation {
         // Both the budget and the backoff are scoped to the caller, not to the
         // session (red-team RT-2). The session id is in the QR and this
@@ -1000,81 +983,98 @@ impl TokenIo<'_> {
     /// First-writer-wins claim of the one token this grant may issue. A second
     /// valid proof with a fresh `web_token` nonce therefore cannot mint a
     /// second token for the same granted session.
-    async fn claim_token(&mut self) -> TokenClaimObservation {
-        match self.state.store.set_ex_nx(
-            &format!("web_session:token_issued:{}", self.id_str),
-            &[1u8],
-            MAX_TTL_SECS as u64,
-        ) {
-            Ok(true) => TokenClaimObservation::Claimed,
-            Ok(false) => TokenClaimObservation::AlreadyClaimed,
-            Err(error) => {
-                self.error = Some(error);
-                TokenClaimObservation::StorageFailed
+    pub(crate) async fn claim_token(&mut self) -> TokenClaimObservation {
+        let plan = vela_session_policy::store::plan_token_claim(self.id_str.clone());
+        let outcome = match plan.first() {
+            Some(stmt) => {
+                let (outcome, error) = run_nonce(&mut self.store, stmt);
+                if let Some(error) = error {
+                    keep_error(&mut self.error, error);
+                }
+                outcome
             }
-        }
+            None => {
+                self.error = Some(AppError::Internal("token claim plan is empty".into()));
+                vela_session_policy::store::NxOutcome::Failed
+            }
+        };
+        vela_session_policy::store::classify_token_claim(&outcome)
     }
 
-    async fn issue_token(
+    pub(crate) async fn issue_token(
         &mut self,
         plan: vela_session_policy::TokenPlan,
     ) -> TokenIssueObservation {
+        use vela_session_policy::store::{
+            classify_token_issue, plan_token_sentinel, plan_track_jti, ExistsOutcome, StoreOutcome,
+        };
         let Some(user_id) = self.user_id else {
             self.error = Some(AppError::Internal(
                 "granted session lost its account".into(),
             ));
-            return TokenIssueObservation::Failed;
+            return classify_token_issue(false, &ExistsOutcome::Failed, &StoreOutcome::Failed);
         };
-        let ts = TokenService::new(self.state.paseto_sk.clone(), self.state.paseto_pk.clone());
         // device_id = session_id; hard_cap = session expiry, so renewals never
         // outlive the granted TTL and revocation via
         // `device:revoked:<session_id>` applies.
-        match ts.issue_from_plan(user_id, self.id, plan) {
-            Ok((token, jti)) => {
-                // `DELETE /web-session/:id` and the approving-device
-                // revocation cascade write `device:revoked:<session_id>`
-                // *before* the SQL row flips. An exchange that observed the
-                // granted row before that lockout must not release a token
-                // after it: re-check the sentinel at the point of issue and
-                // fail closed on a storage error too. This is the
-                // composition proof's issue-time lockout guard.
-                match self.state.store.exists(&format!("device:revoked:{}", self.id)) {
-                    Ok(false) => {}
-                    Ok(true) => {
-                        self.error = Some(AppError::Unauthorized(
-                            "web session was revoked during token issuance".into(),
-                        ));
-                        return TokenIssueObservation::Failed;
-                    }
-                    Err(error) => {
-                        self.error = Some(error);
-                        return TokenIssueObservation::Failed;
-                    }
-                }
-                // Track the JTI before the driver may respond. A tracking
-                // failure is a failed exchange, exactly as the historical
-                // separate step was.
-                match rate_limit::track_device_jti(&self.state.store, &self.id_str, &jti) {
-                    Ok(()) => {
-                        self.token = Some(token);
-                        self.jti = Some(jti);
-                        TokenIssueObservation::Issued
-                    }
-                    Err(error) => {
-                        self.error = Some(error);
-                        TokenIssueObservation::Failed
-                    }
-                }
-            }
+        let (token, jti) = match self.tokens.issue_web(user_id, self.id, plan) {
+            Ok(pair) => pair,
             Err(error) => {
-                self.error = Some(error);
-                TokenIssueObservation::Failed
+                keep_error(&mut self.error, error);
+                return classify_token_issue(false, &ExistsOutcome::Failed, &StoreOutcome::Failed);
             }
+        };
+        // `DELETE /web-session/:id` and the approving-device revocation
+        // cascade write `device:revoked:<session_id>` *before* the SQL row
+        // flips. An exchange that observed the granted row before that lockout
+        // must not release a token after it: re-check the sentinel at the
+        // point of issue and fail closed on a storage error too. This is the
+        // composition proof's issue-time lockout guard.
+        let sentinel = match plan_token_sentinel(self.id_str.clone()).first() {
+            Some(stmt) => {
+                let (outcome, error) = run_exists(&mut self.store, stmt);
+                if let Some(error) = error {
+                    keep_error(&mut self.error, error);
+                }
+                outcome
+            }
+            None => {
+                self.error = Some(AppError::Internal(
+                    "token sentinel plan is empty".into(),
+                ));
+                ExistsOutcome::Failed
+            }
+        };
+        if sentinel == ExistsOutcome::Present {
+            self.error = Some(AppError::Unauthorized(
+                "web session was revoked during token issuance".into(),
+            ));
+            return classify_token_issue(true, &sentinel, &StoreOutcome::Failed);
         }
+        if sentinel == ExistsOutcome::Failed {
+            return classify_token_issue(true, &sentinel, &StoreOutcome::Failed);
+        }
+        // Track the JTI before the driver may respond. A tracking failure is a
+        // failed exchange, exactly as the historical separate step was.
+        let track = plan_track_jti(self.id_str.clone(), jti.clone());
+        let (outcomes, error) = run_store(&mut self.store, &track);
+        if let Some(error) = error {
+            keep_error(&mut self.error, error);
+        }
+        let tracked = outcomes.first().copied().unwrap_or(StoreOutcome::Failed);
+        let observed = classify_token_issue(true, &sentinel, &tracked);
+        if observed == TokenIssueObservation::Issued {
+            self.token = Some(token);
+            self.jti = Some(jti);
+        }
+        observed
     }
 }
 
-fn token_failure_error(failure: TokenFailure, io: &mut TokenIo<'_>) -> AppError {
+fn token_failure_error<K: SessionStore, T: SessionTokens>(
+    failure: TokenFailure,
+    io: &mut TokenIo<'_, K, T>,
+) -> AppError {
     match failure {
         TokenFailure::RateLimited => io
             .error
@@ -1159,6 +1159,11 @@ pub async fn post_token(
     let ip = net::client_ip(&headers, addr.map(|ConnectInfo(a)| a.ip()), &state.config);
     let mut io = TokenIo {
         state: &state,
+        store: SledStore(&state.store),
+        tokens: PasetoTokens(TokenService::new(
+            state.paseto_sk.clone(),
+            state.paseto_pk.clone(),
+        )),
         id,
         id_str: id.to_string(),
         ip,
@@ -1205,13 +1210,19 @@ pub async fn post_token(
 /// when (through the shared `websession_delete_interpreter!` loop, proved in F*
 /// as `run_delete`); each method only performs its effect and reports the
 /// outcome.
-struct DeleteSessionIo<'a> {
-    state: &'a AppState,
-    id: Uuid,
-    error: Option<AppError>,
+pub(crate) struct DeleteSessionIo<
+    'a,
+    S: SessionSql = DbSql<'a>,
+    K: SessionStore = SledStore<'a>,
+> {
+    pub state: &'a AppState,
+    pub sql: S,
+    pub store: K,
+    pub id: Uuid,
+    pub error: Option<AppError>,
 }
 
-impl DeleteSessionIo<'_> {
+impl<S: SessionSql, K: SessionStore> DeleteSessionIo<'_, S, K> {
     async fn delete_load_session(&mut self) -> DeleteLookupObservation {
         match load_session(self.state, self.id).await {
             Ok(session) => DeleteLookupObservation::Present(
@@ -1231,40 +1242,40 @@ impl DeleteSessionIo<'_> {
     /// Reject any already-issued RW token (device_id == session_id) before the
     /// SQL audit row says the session is revoked. If SQL subsequently fails,
     /// the safe partial state is locked-out-but-visible, not marked-but-live.
-    async fn lockout_session(&mut self) -> DeleteSentinelObservation {
-        match self.state.store.set_ex(
-            &format!("device:revoked:{}", self.id),
-            &[1u8],
-            MAX_TTL_SECS as u64,
-        ) {
-            Ok(()) => DeleteSentinelObservation::Applied,
-            Err(error) => {
-                self.error = Some(error);
-                DeleteSentinelObservation::StorageFailed
-            }
+    pub(crate) async fn lockout_session(&mut self) -> DeleteSentinelObservation {
+        let plan = vela_session_policy::store::plan_sentinel(
+            self.id.to_string(),
+            vela_session_policy::store::WEB_SESSION_MAX_TTL_SECS,
+        );
+        let (outcomes, error) = run_store(&mut self.store, &plan);
+        if let Some(error) = error {
+            keep_error(&mut self.error, error);
         }
+        let outcome = outcomes
+            .first()
+            .copied()
+            .unwrap_or(vela_session_policy::store::StoreOutcome::Failed);
+        vela_session_policy::store::classify_lockout_session(&outcome)
     }
 
-    async fn record_revocation(&mut self) -> DeleteRecordObservation {
-        match self
-            .state
-            .sqldb
-            .execute(
-                "UPDATE web_sessions SET status = 'revoked', capsule = NULL WHERE id = ?",
-                vec![TursoValue::Text(self.id.to_string())],
-            )
-            .await
-        {
-            Ok(_) => DeleteRecordObservation::Updated,
-            Err(error) => {
-                self.error = Some(AppError::Internal(error.to_string()));
-                DeleteRecordObservation::Failed
-            }
+    pub(crate) async fn record_revocation(&mut self) -> DeleteRecordObservation {
+        let plan = vela_session_policy::store::plan_revoke_session(self.id.to_string());
+        let (outcomes, error) = run_sql(&mut self.sql, std::slice::from_ref(&plan)).await;
+        if let Some(error) = error {
+            keep_error(&mut self.error, error);
         }
+        let outcome = outcomes
+            .first()
+            .copied()
+            .unwrap_or(vela_session_policy::store::WriteOutcome::Failed);
+        vela_session_policy::store::classify_revoke_session(&outcome)
     }
 }
 
-fn delete_failure_error(failure: DeleteFailure, io: &mut DeleteSessionIo<'_>) -> AppError {
+fn delete_failure_error<S: SessionSql, K: SessionStore>(
+    failure: DeleteFailure,
+    io: &mut DeleteSessionIo<'_, S, K>,
+) -> AppError {
     match failure {
         DeleteFailure::Unauthenticated => AppError::Unauthorized("unauthorized".into()),
         DeleteFailure::NotFound => AppError::NotFound("web session not found".into()),
@@ -1284,6 +1295,11 @@ pub async fn delete_session(
     let actor_user = session.user_id.as_u128();
     let mut io = DeleteSessionIo {
         state: &state,
+        sql: DbSql {
+            pool: state.sqldb.as_ref(),
+            tx: None,
+        },
+        store: SledStore(&state.store),
         id,
         error: None,
     };

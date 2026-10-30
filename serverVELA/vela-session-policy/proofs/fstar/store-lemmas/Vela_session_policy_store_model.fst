@@ -43,6 +43,12 @@ let v_one : text = Alloc.String.String "1"
 /// The status text a revoked session carries.
 let v_revoked : text = Alloc.String.String "revoked"
 
+/// The status text a freshly started session carries.
+let v_pending : text = Alloc.String.String "pending"
+
+/// The status text a granted session carries.
+let v_granted : text = Alloc.String.String "granted"
+
 // ── Finite tables ──────────────────────────────────────────────────────────
 
 /// A table is a list of unique id/row pairs.
@@ -86,6 +92,10 @@ type user_row = {
   us_share_ek: option text;
   us_share_ek_since: option text;
   us_created_at: text;
+  /// Non-`None` while a rekey is in progress; the grant CAS refuses it.
+  us_rekey_state: option text;
+  /// The account's vault-key epoch; the grant CAS binds the declared one.
+  us_key_epoch: i64;
 }
 
 /// The `devices` columns the session statements read or write.
@@ -108,6 +118,9 @@ type session_row = {
   ws_status: text;
   ws_capsule: option text;
   ws_approved_by: option text;
+  ws_mode: option text;
+  ws_key_epoch: option i64;
+  ws_expires_at: option text;
 }
 
 /// A `share_inbox` or `shared_items` row.
@@ -210,7 +223,8 @@ let st_revoke_approved (d: db) (dev usr: text) : db =
 
 /// The `users` row one registration inserts.
 let inserted_user (now ek since: text) : user_row =
-  { us_share_ek = Some ek; us_share_ek_since = Some since; us_created_at = now }
+  { us_share_ek = Some ek; us_share_ek_since = Some since; us_created_at = now;
+    us_rekey_state = None; us_key_epoch = mk_i64 1 }
 
 /// The `devices` row one registration inserts.
 let inserted_device (usr now nm kd ek vk: text) : device_row =
@@ -236,6 +250,52 @@ let st_insert_device (d: db) (dev usr now nm kd ek vk: text) : db =
 /// share key, then the device that owns it.
 let registration_published (d: db) (usr dev now sek since nm kd dek vk: text) : db =
   st_insert_device (st_insert_user d usr now sek since) dev usr now nm kd dek vk
+
+// ── Web sessions: rows and guards ──────────────────────────────────────────
+
+/// The row `start` inserts: the committed approver, `user_id` and every grant
+/// field still NULL.
+let inserted_pending_session (approver: text) : session_row =
+  { ws_user = None; ws_approver = Some approver; ws_status = v_pending;
+    ws_capsule = None; ws_approved_by = None; ws_mode = None;
+    ws_key_epoch = None; ws_expires_at = None }
+
+let st_insert_pending (d: db) (sess approver: text) : db =
+  { d with sessions = insert_row d.sessions sess (inserted_pending_session approver) }
+
+/// The SQL guard of the grant CAS: the session is pending for this approver,
+/// the account exists and is not mid-rekey at the declared epoch, and the
+/// approving device is stored, owned by the account and unrevoked.
+let grant_guard (d: db) (sess usr dev: text) (epoch: i64) : bool =
+  match lookup d.sessions sess, lookup d.users usr, lookup d.devices dev with
+  | Some r, Some u, Some dv ->
+    r.ws_status = v_pending &&
+    r.ws_approver = Some usr &&
+    u.us_rekey_state = None &&
+    u.us_key_epoch = epoch &&
+    dv.dv_user = usr &&
+    dv.dv_revoked = mk_i64 0
+  | _ -> false
+
+/// The row the CAS publishes: the grant fields set, the approver binding and
+/// every other column kept.
+let granted_session (r: session_row) (usr dev mode capsule expires: text) (epoch: i64)
+  : session_row =
+  { r with ws_user = Some usr;
+           ws_mode = Some mode;
+           ws_status = v_granted;
+           ws_capsule = Some capsule;
+           ws_approved_by = Some dev;
+           ws_key_epoch = Some epoch;
+           ws_expires_at = Some expires }
+
+let st_grant_session (d: db) (sess usr dev mode capsule expires: text) (epoch: i64) : db =
+  { d with sessions =
+      update_rows d.sessions sess (fun r -> granted_session r usr dev mode capsule expires epoch) }
+
+/// `UPDATE web_sessions SET status = 'revoked', capsule = NULL WHERE id = ?`.
+let st_revoke_session (d: db) (sess: text) : db =
+  { d with sessions = update_rows d.sessions sess revoked_session }
 
 /// One write statement on a state, or `None` when a read or `Commit` was
 /// passed where a write belongs.
@@ -281,6 +341,22 @@ let exec_stmt (d: db) (s: t_SqlStmt) : option (write_result & db) =
     (match lookup d.devices dev with
      | Some _ -> Some (WroteConflict, d)
      | None -> Some (Wrote, st_insert_device d dev usr now nm kd ek vk))
+  | SqlStmt_InsertPendingSession
+      { f_session = sess; f_approver = approver; f_poll_secret_hash = _;
+        f_ephemeral_pk = _; f_web_vk = _; f_link_nonce = _; f_now = _ } ->
+    (match lookup d.sessions sess with
+     | Some _ -> Some (WroteConflict, d)
+     | None -> Some (Wrote, st_insert_pending d sess approver))
+  | SqlStmt_GrantWebSession
+      { f_session = sess; f_user = usr; f_device = dev; f_mode = mode;
+        f_capsule = capsule; f_expires_at = expires; f_epoch = epoch } ->
+    if grant_guard d sess usr dev epoch
+    then Some (WroteOne, st_grant_session d sess usr dev mode capsule expires epoch)
+    else Some (WroteAbsent, d)
+  | SqlStmt_RevokeSessionById { f_session = sess } ->
+    (match lookup d.sessions sess with
+     | Some _ -> Some (WroteOne, st_revoke_session d sess)
+     | None -> Some (WroteAbsent, d))
   | SqlStmt_SelectDeviceIdsByUser _
   | SqlStmt_SelectWebSessionIdsByUser _
   | SqlStmt_SelectDeviceById _
@@ -409,6 +485,9 @@ let exec_store (s: store) (st: t_StoreStmt) : store =
     { s with sets = (fun k' -> if k' = k then m :: s.sets k else s.sets k') }
   | StoreStmt_SetExNx { f_key = k; f_value = v; f_ttl = _ } ->
     { s with kv = (if Some? (s.kv k) then s.kv else kv_set s.kv k (Some v)) }
+  | StoreStmt_SetExNxByte { f_key = k; f_value = _; f_ttl = _ } ->
+    { s with kv = (if Some? (s.kv k) then s.kv else kv_set s.kv k (Some v_one)) }
+  | StoreStmt_Exists { f_key = _ } -> s
 
 /// One store statement and the outcome the handler observed. Only a fixed
 /// window counter can refuse: it grew before it reported the refusal.
@@ -807,3 +886,99 @@ let registration_plan (usr dev now sek since nm kd dek vk: text) : list t_SqlStm
 let registration_transaction (d: db) (usr dev now sek since nm kd dek vk: text) (f: option nat)
   : (list t_WriteOutcome & db) =
   run_tx_checked d d (registration_plan usr dev now sek since nm kd dek vk) 0 f
+
+// ── Web sessions: start, grant, token and delete ───────────────────────────
+
+/// `StartIo::insert_pending`: one `INSERT` on the pool.
+let insert_pending
+      (d: db) (sess approver hash epk vk nonce now: text) (f: option nat)
+  : (Vela_session_policy.Websession_driver.t_StartInsertObservation & db) =
+  if faulted f 0
+  then (classify_start_insert WriteOutcome_Failed, d)
+  else
+    match exec_stmt d (plan_insert_pending sess approver hash epk vk nonce now) with
+    | Some (w, d') -> (classify_start_insert (outcome_of w), d')
+    | None -> (classify_start_insert WriteOutcome_Failed, d)
+
+/// `GrantIo::update_grant`: the one guarded compare-and-swap on the pool.
+let grant_update
+      (d: db) (sess usr dev mode capsule expires: text) (epoch: i64) (f: option nat)
+  : (Vela_session_policy.Websession_driver.t_GrantUpdateObservation & db) =
+  if faulted f 0
+  then (classify_grant_update WriteOutcome_Failed, d)
+  else
+    match exec_stmt d (plan_grant_update sess usr dev mode capsule expires epoch) with
+    | Some (w, d') -> (classify_grant_update (outcome_of w), d')
+    | None -> (classify_grant_update WriteOutcome_Failed, d)
+
+/// `DeleteSessionIo::record_revocation`: the one audit update on the pool.
+let revoke_session (d: db) (sess: text) (f: option nat)
+  : (Vela_session_policy.Websession_driver.t_DeleteRecordObservation & db) =
+  if faulted f 0
+  then (classify_revoke_session WriteOutcome_Failed, d)
+  else
+    match exec_stmt d (plan_revoke_session sess) with
+    | Some (w, d') -> (classify_revoke_session (outcome_of w), d')
+    | None -> (classify_revoke_session WriteOutcome_Failed, d)
+
+/// `DeleteSessionIo::lockout_session`: the one sentinel write, with the web
+/// session ceiling.
+let lockout_session (s: store) (sess: text) (f: option nat)
+  : (Vela_session_policy.Websession_driver.t_DeleteSentinelObservation & store) =
+  let r = run_store s (stmts_of (plan_sentinel sess v_WEB_SESSION_MAX_TTL_SECS)) 0 f in
+  (classify_lockout_session (first_out (fst r)), snd r)
+
+/// The `web_session:token_issued:` key the claim writes.
+let claim_key (sess: text) : text =
+  match stmts_of (plan_token_claim sess) with
+  | StoreStmt_SetExNxByte { f_key = k } :: _ -> k
+  | _ -> Alloc.String.String ""
+
+/// `TokenIo::claim_token`: first writer wins. `Claimed` exactly when the key
+/// was absent and the write ran; a collision leaves the marker untouched.
+let token_claim (s: store) (sess: text) (f: option nat)
+  : (Vela_session_policy.Websession_driver.t_TokenClaimObservation & store) =
+  let key = claim_key sess in
+  if faulted f 0
+  then (classify_token_claim NxOutcome_Failed, s)
+  else if Some? (s.kv key)
+  then (classify_token_claim NxOutcome_KeyExists, s)
+  else
+    (classify_token_claim NxOutcome_Inserted,
+     (match stmts_of (plan_token_claim sess) with
+      | st :: _ -> exec_store s st
+      | [] -> s))
+
+/// The `device:revoked:` sentinel the issue-time check reads.
+let sentinel_key (sess: text) : text =
+  match stmts_of (plan_token_sentinel sess) with
+  | StoreStmt_Exists { f_key = k } :: _ -> k
+  | _ -> Alloc.String.String ""
+
+/// What `Store::exists` sees.
+let sentinel_truth (s: store) (sess: text) : t_ExistsOutcome =
+  if Some? (s.kv (sentinel_key sess))
+  then ExistsOutcome_Present
+  else ExistsOutcome_Absent
+
+/// `TokenIo::issue_token`'s lockout re-check: a read, so it changes nothing.
+let token_sentinel (s: store) (sess: text) (f: option nat)
+  : (t_ExistsOutcome & store) =
+  if faulted f 0
+  then (ExistsOutcome_Failed, s)
+  else (sentinel_truth s sess, s)
+
+/// `TokenIo::issue_token`: issuance is an input; the executor's own claim is
+/// that `Issued` means the sentinel was absent and the JTI was tracked.
+let token_issue (s: store) (sess jti: text) (paseto_ok: bool) (f: option nat)
+  : (Vela_session_policy.Websession_driver.t_TokenIssueObservation & store) =
+  if not paseto_ok
+  then (classify_token_issue false ExistsOutcome_Failed StoreOutcome_Failed, s)
+  else
+    let sent = if faulted f 0 then ExistsOutcome_Failed else sentinel_truth s sess in
+    match sent with
+    | ExistsOutcome_Absent ->
+      let r = run_store s (stmts_of (plan_track_jti sess jti)) 0
+                (if faulted f 1 then Some 0 else None) in
+      (classify_token_issue true sent (first_out (fst r)), snd r)
+    | _ -> (classify_token_issue true sent StoreOutcome_Failed, s)
