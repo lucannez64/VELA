@@ -10,14 +10,20 @@ use vela_enrollment_policy::pairing_driver::{
     RedeemObservation, StoreObservation,
 };
 
+use super::exec_io::ExecIo;
 use super::pairing_executor::PairingExecutor;
+use vela_enrollment_policy::executor::{
+    classify_redeem, classify_store, plan_redeem_package, plan_store_package,
+};
+
 use crate::{
     error::{AppError, Result},
     net, rate_limit,
     state::AppState,
 };
 
-const ENROLLMENT_PACKAGE_TTL_SECS: u64 = 15 * 60;
+const ENROLLMENT_PACKAGE_TTL_SECS: u64 =
+    vela_enrollment_policy::executor::PACKAGE_TTL_SECS;
 const MAX_ENROLLMENT_PACKAGE_BYTES: usize = 64 * 1024;
 
 #[derive(Deserialize)]
@@ -34,8 +40,8 @@ pub struct FetchEnrollmentPackageResponse {
 /// The I/O behind the package-store ceremony. The driver decides whether the
 /// write may happen at all and how its outcome is classified; this executor
 /// performs only the one effect the proved loop hands it.
-struct StorePackageIo<'a> {
-    state: &'a AppState,
+pub(crate) struct StorePackageIo<'a> {
+    io: ExecIo<'a>,
     token: String,
     ciphertext: String,
     error: Option<AppError>,
@@ -43,19 +49,43 @@ struct StorePackageIo<'a> {
 
 impl PairingExecutor for StorePackageIo<'_> {
     async fn store_package(&mut self) -> StoreObservation {
-        match self.state.store.set_ex(
-            &package_key(&self.token),
-            self.ciphertext.as_bytes(),
-            ENROLLMENT_PACKAGE_TTL_SECS,
-        ) {
-            Ok(()) => StoreObservation::Stored,
-            Err(error) => {
-                if self.error.is_none() {
-                    self.error = Some(error);
-                }
-                StoreObservation::Failed
+        let plan = plan_store_package(self.token.clone(), self.ciphertext.clone());
+        let (outcomes, error) = self.io.run_writes(&plan).await;
+        if let Some(error) = error {
+            if self.error.is_none() {
+                self.error = Some(error.into_app());
             }
         }
+        classify_store(&outcomes)
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn store_package_for_test<'a>(
+    state: &'a AppState,
+    fail_at: Option<usize>,
+    token: String,
+    ciphertext: String,
+) -> StorePackageIo<'a> {
+    StorePackageIo {
+        io: super::exec_io::ExecIo::faulty(state, fail_at),
+        token,
+        ciphertext,
+        error: None,
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn redeem_package_for_test<'a>(
+    state: &'a AppState,
+    fail_at: Option<usize>,
+    token: String,
+) -> RedeemPackageIo<'a> {
+    RedeemPackageIo {
+        io: super::exec_io::ExecIo::faulty(state, fail_at),
+        token,
+        removed: None,
+        error: None,
     }
 }
 
@@ -79,7 +109,7 @@ pub async fn post_enrollment_package(
         },
     );
     let mut io = StorePackageIo {
-        state: &state,
+        io: ExecIo::new(&state),
         token: body.token,
         ciphertext: body.ciphertext,
         error: None,
@@ -106,8 +136,8 @@ pub async fn post_enrollment_package(
 /// The I/O behind the package-fetch ceremony. The destructive read is the only
 /// way a package is handed out, and the driver authorizes it at most once per
 /// request.
-struct RedeemPackageIo<'a> {
-    state: &'a AppState,
+pub(crate) struct RedeemPackageIo<'a> {
+    io: ExecIo<'a>,
     token: String,
     removed: Option<Vec<u8>>,
     error: Option<AppError>,
@@ -115,22 +145,21 @@ struct RedeemPackageIo<'a> {
 
 impl PairingExecutor for RedeemPackageIo<'_> {
     async fn redeem_package(&mut self) -> RedeemObservation {
-        match self.state.store.get_del(&package_key(&self.token)) {
-            Ok(None) => RedeemObservation::Missing,
-            Ok(Some(bytes)) => {
-                let observation = RedeemObservation::Present {
-                    utf8_valid: std::str::from_utf8(&bytes).is_ok(),
-                };
-                self.removed = Some(bytes);
-                observation
-            }
-            Err(error) => {
-                if self.error.is_none() {
-                    self.error = Some(error);
-                }
-                RedeemObservation::Missing
+        let plan = plan_redeem_package(self.token.clone());
+        let (outcome, value, error) = self.io.run_take(&plan).await;
+        if let Some(error) = error {
+            if self.error.is_none() {
+                self.error = Some(error.into_app());
             }
         }
+        let utf8_valid = value
+            .as_deref()
+            .map(|bytes| std::str::from_utf8(bytes).is_ok())
+            .unwrap_or(false);
+        if let Some(bytes) = value {
+            self.removed = Some(bytes);
+        }
+        classify_redeem(&outcome, utf8_valid)
     }
 }
 
@@ -159,7 +188,7 @@ pub async fn get_enrollment_package(
         },
     );
     let mut io = RedeemPackageIo {
-        state: &state,
+        io: ExecIo::new(&state),
         token,
         removed: None,
         error: None,
@@ -184,10 +213,6 @@ pub async fn get_enrollment_package(
             "pairing driver produced an unexpected package-redeem effect".into(),
         )),
     }
-}
-
-fn package_key(token: &str) -> String {
-    format!("enrollment_package:{token}")
 }
 
 fn validate_token(token: &str) -> Result<()> {

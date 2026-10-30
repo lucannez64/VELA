@@ -9,6 +9,8 @@
 //! [`pairing_driver`] adds the per-request, total transition relation the
 //! invitation and rendezvous handlers follow between their effects.
 
+pub mod executor;
+pub mod executor_model;
 pub mod pairing_driver;
 pub mod pairing_interpreter;
 pub mod enroll_driver;
