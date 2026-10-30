@@ -13,7 +13,6 @@ use crate::{
     auth::token::TokenScope,
     error::{AppError, Result},
     middleware::{maybe_append_new_token, AuthSession},
-    sqldb::{Db as _, TursoValue},
     state::AppState,
 };
 
@@ -64,45 +63,30 @@ impl GetChunkIo<'_> {
     /// in-flight rotation belong to nobody until commit, and superseded rows
     /// are gone by the time anyone could ask (docs/VAULT_REKEYING_DESIGN.md §5).
     async fn lookup_chunk(&mut self) -> vault_upload_driver::ReadLookupObservation {
+        use vela_rekey_policy::executor::{classify_chunk_read, plan_read_chunk, ReadOutcome};
         let read_epoch = self.epoch;
-        let rows = self
-            .state
-            .sqldb
-            .query(
-                "SELECT chunk_id, user_id, version, lamport_clock, last_writer, ciphertext, epoch
-         FROM vault_chunks
-         WHERE chunk_id = ? AND user_id = ? AND epoch = ?",
-                vec![
-                    TursoValue::Text(self.id.clone()),
-                    TursoValue::Text(self.session.user_id.to_string()),
-                    TursoValue::Integer(read_epoch),
-                ],
-            )
-            .await
-            .map_err(|e| AppError::Internal(e.to_string()));
-        match rows {
+        let caller = self.session.user_id.to_string();
+        let plan = plan_read_chunk(self.id.clone(), caller.clone(), read_epoch);
+        let mut sql = crate::vault::sql::PoolSql(self.state);
+        let rows = match crate::vault::sql::run_read(&mut sql, &plan).await {
             Err(error) => {
-                self.error = Some(error);
-                vault_upload_driver::ReadLookupObservation::QueryFailed
+                self.error = Some(AppError::Internal(error.to_string()));
+                return classify_chunk_read(&caller, read_epoch, false, &ReadOutcome::Failed);
             }
-            Ok(rows) => match rows.first() {
-                None => vault_upload_driver::ReadLookupObservation::Missing,
-                Some(row) => match crate::db::parse_chunk_row_turso(row) {
-                    Ok(chunk) => {
-                        let observation = vault_upload_driver::ReadLookupObservation::Found {
-                            account_matches: chunk.user_id == self.session.user_id,
-                            epoch_matches: row.i64(6) == Some(read_epoch),
-                            version: chunk.version,
-                            lamport_clock: chunk.lamport_clock,
-                        };
-                        self.chunk = Some(chunk);
-                        observation
-                    }
-                    Err(error) => {
-                        self.error = Some(error);
-                        vault_upload_driver::ReadLookupObservation::Malformed
-                    }
-                },
+            Ok(rows) => rows,
+        };
+        let view = crate::vault::sql::chunk_row_view(&rows);
+        match rows.first() {
+            None => classify_chunk_read(&caller, read_epoch, false, &ReadOutcome::Rows(view)),
+            Some(raw) => match crate::db::parse_chunk_row_turso(raw) {
+                Ok(chunk) => {
+                    self.chunk = Some(chunk);
+                    classify_chunk_read(&caller, read_epoch, false, &ReadOutcome::Rows(view))
+                }
+                Err(error) => {
+                    self.error = Some(error);
+                    classify_chunk_read(&caller, read_epoch, true, &ReadOutcome::Rows(view))
+                }
             },
         }
     }
@@ -210,6 +194,19 @@ impl PutChunkIo<'_> {
         }
     }
 
+    /// Records the failure that stopped the plan, keeping the historical error
+    /// shape: a SQL error becomes `Internal(text)`, a store error is kept as is.
+    fn record(&mut self, error: crate::vault::sql::RunError) {
+        match error {
+            crate::vault::sql::RunError::Sql(error) => self.fail(error),
+            crate::vault::sql::RunError::Store(error) => {
+                if self.error.is_none() {
+                    self.error = Some(error);
+                }
+            }
+        }
+    }
+
     async fn resolve_epoch(&mut self) -> vault_upload_driver::RekeyObservation {
         match crate::vault::rekey::resolve_write_epoch(
             self.state,
@@ -294,159 +291,107 @@ impl PutChunkIo<'_> {
     /// Exactly one guarded insert/update with the permit the driver emitted.
     async fn guarded_write(
         &mut self,
-        permit: vault_upload_driver::UploadWritePermit,
-    ) -> vault_upload_driver::WriteObservation {
+        permit: vela_rekey_policy::vault_upload_driver::UploadWritePermit,
+    ) -> vela_rekey_policy::vault_upload_driver::WriteObservation {
+        use vela_rekey_policy::executor::{
+            classify_chunk_create, classify_chunk_shadow, classify_chunk_update,
+            plan_chunk_create, plan_chunk_exists, plan_chunk_shadow, plan_chunk_update,
+            ReadOutcome,
+        };
         let write_epoch = permit.write_epoch;
         let read_epoch = permit.read_epoch;
         let is_shadow = permit.shadow;
         self.write_epoch = write_epoch;
         self.read_epoch = read_epoch;
         self.shadow = is_shadow;
+        let id = self.id.clone();
+        let user = self.user_id.clone();
+        let writer = self.session.device_id.to_string();
+        let ciphertext = crate::db::encode_b64(&self.ciphertext);
+        let now = self.now.clone();
+        let lamport_clock = self.lamport_clock;
+        let mut sql = crate::vault::sql::PoolSql(self.state);
         if self.if_match == 0 {
             if is_shadow {
                 // Shadow writes (epoch above the served one, i.e. a rotation in
                 // flight) must tolerate replays: a crashed initiator restarts and
                 // re-uploads the same chunks. Upsert instead of create-or-conflict.
-                let written = self.state.sqldb.execute(
-                    "INSERT INTO vault_chunks
-                 (chunk_id, user_id, version, lamport_clock, last_writer, ciphertext, epoch, created_at, updated_at)
-                 SELECT ?, ?, 1, ?, ?, ?, ?, ?, ? FROM users
-                 WHERE id = ? AND key_epoch = ? AND rekey_state = 'freezing'
-                   AND rekey_starter = ? AND rekey_id = ?
-                 ON CONFLICT(user_id, chunk_id, epoch) DO UPDATE SET
-                     version       = version + 1,
-                     lamport_clock = excluded.lamport_clock,
-                     last_writer   = excluded.last_writer,
-                     ciphertext    = excluded.ciphertext,
-                     updated_at    = excluded.updated_at",
-                    vec![
-                        TursoValue::Text(self.id.clone()),
-                        TursoValue::Text(self.user_id.clone()),
-                        TursoValue::Integer(self.lamport_clock),
-                        TursoValue::Text(self.session.device_id.to_string()),
-                        TursoValue::Text(crate::db::encode_b64(&self.ciphertext)),
-                        TursoValue::Integer(write_epoch),
-                        TursoValue::Text(self.now.clone()),
-                        TursoValue::Text(self.now.clone()),
-                        TursoValue::Text(self.user_id.clone()),
-                        TursoValue::Integer(read_epoch),
-                        TursoValue::Text(self.session.device_id.to_string()),
-                        TursoValue::Text(self.rotation_id.clone().unwrap_or_default()),
-                    ],
-                ).await;
-                return match written {
-                    Ok(1) => vault_upload_driver::WriteObservation::Inserted,
-                    Ok(_) => vault_upload_driver::WriteObservation::Skipped,
-                    Err(error) => {
-                        self.fail(error);
-                        vault_upload_driver::WriteObservation::Failed
-                    }
-                };
+                let plan = plan_chunk_shadow(
+                    id,
+                    user,
+                    lamport_clock,
+                    writer.clone(),
+                    ciphertext,
+                    write_epoch,
+                    now,
+                    read_epoch,
+                    writer,
+                    self.rotation_id.clone().unwrap_or_default(),
+                );
+                let (outcomes, error) = crate::vault::sql::run_writes(&mut sql, &plan).await;
+                if let Some(error) = error {
+                    self.record(error);
+                }
+                return classify_chunk_shadow(&outcomes);
             }
-            let existing = self
-                .state
-                .sqldb
-                .query(
-                    "SELECT 1 FROM vault_chunks WHERE chunk_id = ? AND user_id = ? AND epoch = ?",
-                    vec![
-                        TursoValue::Text(self.id.clone()),
-                        TursoValue::Text(self.user_id.clone()),
-                        TursoValue::Integer(write_epoch),
-                    ],
-                )
-                .await;
-            match existing {
+            let probe_stmt = plan_chunk_exists(id.clone(), user.clone(), write_epoch);
+            let probe = match crate::vault::sql::run_read(&mut sql, &probe_stmt).await {
                 Err(error) => {
                     self.fail(error);
-                    return vault_upload_driver::WriteObservation::Failed;
+                    ReadOutcome::Failed
                 }
-                Ok(rows) if rows.first().is_some() => {
-                    return vault_upload_driver::WriteObservation::Existing;
-                }
-                Ok(_) => {}
+                Ok(rows) => ReadOutcome::Rows(crate::vault::sql::exists_view(&rows)),
+            };
+            if !matches!(probe, ReadOutcome::Rows(false)) {
+                return classify_chunk_create(&probe, false, &[]);
             }
-
-            let inserted = self.state.sqldb.execute(
-            "INSERT INTO vault_chunks
-             (chunk_id, user_id, version, lamport_clock, last_writer, ciphertext, epoch, created_at, updated_at)
-             SELECT ?, ?, 1, ?, ?, ?, ?, ?, ? FROM users
-             WHERE id = ? AND key_epoch = ? AND rekey_state IS NULL",
-            vec![
-                TursoValue::Text(self.id.clone()),
-                TursoValue::Text(self.user_id.clone()),
-                TursoValue::Integer(self.lamport_clock),
-                TursoValue::Text(self.session.device_id.to_string()),
-                TursoValue::Text(crate::db::encode_b64(&self.ciphertext)),
-                TursoValue::Integer(write_epoch),
-                TursoValue::Text(self.now.clone()),
-                TursoValue::Text(self.now.clone()),
-                TursoValue::Text(self.user_id.clone()),
-                TursoValue::Integer(permit.permit_epoch),
-            ],
-        ).await;
-            return match inserted {
-                Ok(1) => vault_upload_driver::WriteObservation::Inserted,
-                Ok(_) => vault_upload_driver::WriteObservation::Skipped,
-                Err(error) => {
-                    // A concurrent If-Match:0 request can win the race between
-                    // the "does it exist" check above and this INSERT; the
-                    // unique index then reports it as a constraint violation
-                    // instead of a plain error. Surface that as the same 409 the
-                    // pre-check gives, not 500.
+            let plan = plan_chunk_create(
+                id,
+                user,
+                lamport_clock,
+                writer,
+                ciphertext,
+                write_epoch,
+                now,
+                permit.permit_epoch,
+            );
+            let (outcomes, error) = crate::vault::sql::run_writes(&mut sql, &plan).await;
+            // A concurrent If-Match:0 request can win the race between the
+            // "does it exist" check above and the INSERT; the unique index then
+            // reports it as a constraint violation instead of a plain error.
+            // Surface that as the same 409 the pre-check gives, not 500.
+            let duplicate = match &error {
+                Some(crate::vault::sql::RunError::Sql(error)) => {
                     let message = error.to_string().to_lowercase();
-                    if message.contains("constraint")
+                    message.contains("constraint")
                         || message.contains("unique")
                         || message.contains("duplicate")
-                    {
-                        vault_upload_driver::WriteObservation::Duplicate
-                    } else {
-                        self.fail(error);
-                        vault_upload_driver::WriteObservation::Failed
-                    }
                 }
+                _ => false,
             };
-        }
-
-        let updated = self
-            .state
-            .sqldb
-            .execute(
-                "UPDATE vault_chunks
-             SET version       = version + 1,
-                 lamport_clock = ?,
-                 last_writer   = ?,
-                 ciphertext    = ?,
-                 updated_at    = ?
-             WHERE chunk_id = ?
-               AND user_id  = ?
-               AND version  = ?
-               AND epoch    = ?
-               AND EXISTS (
-                 SELECT 1 FROM users
-                 WHERE users.id = vault_chunks.user_id
-                   AND users.key_epoch = ? AND users.rekey_state IS NULL
-               )",
-                vec![
-                    TursoValue::Integer(self.lamport_clock),
-                    TursoValue::Text(self.session.device_id.to_string()),
-                    TursoValue::Text(crate::db::encode_b64(&self.ciphertext)),
-                    TursoValue::Text(self.now.clone()),
-                    TursoValue::Text(self.id.clone()),
-                    TursoValue::Text(self.user_id.clone()),
-                    TursoValue::Integer(self.if_match),
-                    TursoValue::Integer(write_epoch),
-                    TursoValue::Integer(permit.permit_epoch),
-                ],
-            )
-            .await;
-        match updated {
-            Err(error) => {
-                self.fail(error);
-                vault_upload_driver::WriteObservation::Failed
+            if let Some(error) = error {
+                if !duplicate {
+                    self.record(error);
+                }
             }
-            Ok(0) => vault_upload_driver::WriteObservation::Skipped,
-            Ok(_) => vault_upload_driver::WriteObservation::Updated,
+            return classify_chunk_create(&probe, duplicate, &outcomes);
         }
+        let plan = plan_chunk_update(
+            id,
+            user,
+            self.if_match,
+            lamport_clock,
+            writer,
+            ciphertext,
+            write_epoch,
+            now,
+            permit.permit_epoch,
+        );
+        let (outcomes, error) = crate::vault::sql::run_writes(&mut sql, &plan).await;
+        if let Some(error) = error {
+            self.record(error);
+        }
+        classify_chunk_update(&outcomes)
     }
 
     /// Re-resolve the route after a zero-row update, to tell a stale version
@@ -476,28 +421,18 @@ impl PutChunkIo<'_> {
 
     /// Read back the committed version.
     async fn reread_version(&mut self) -> vault_upload_driver::RereadObservation {
-        let ver_rows = self
-            .state
-            .sqldb
-            .query(
-                "SELECT version FROM vault_chunks WHERE chunk_id = ? AND user_id = ? AND epoch = ?",
-                vec![
-                    TursoValue::Text(self.id.clone()),
-                    TursoValue::Text(self.user_id.clone()),
-                    TursoValue::Integer(self.write_epoch),
-                ],
-            )
-            .await;
-        match ver_rows {
+        use vela_rekey_policy::executor::{classify_reread, plan_reread_version, ReadOutcome};
+        let plan =
+            plan_reread_version(self.id.clone(), self.user_id.clone(), self.write_epoch);
+        let mut sql = crate::vault::sql::PoolSql(self.state);
+        let outcome = match crate::vault::sql::run_read(&mut sql, &plan).await {
             Err(error) => {
                 self.fail(error);
-                vault_upload_driver::RereadObservation::Failed
+                ReadOutcome::Failed
             }
-            Ok(rows) => match rows.first().and_then(|r| r.i64(0)) {
-                Some(version) => vault_upload_driver::RereadObservation::Read { version },
-                None => vault_upload_driver::RereadObservation::Missing,
-            },
-        }
+            Ok(rows) => ReadOutcome::Rows(crate::vault::sql::version_view(&rows)),
+        };
+        classify_reread(&outcome)
     }
 
     /// Refresh the rotation deadline after a shadow write.
@@ -741,60 +676,28 @@ impl DeleteChunkIo<'_> {
     async fn read_version(
         &mut self,
     ) -> vela_rekey_policy::vault_mutation_driver::VersionObservation {
-        use vela_rekey_policy::vault_mutation_driver::VersionObservation as O;
-        let rows = self
-            .state
-            .sqldb
-            .query(
-                "SELECT version FROM vault_chunks WHERE chunk_id = ? AND user_id = ? AND epoch = ?",
-                vec![
-                    TursoValue::Text(self.id.clone()),
-                    TursoValue::Text(self.user_id.clone()),
-                    TursoValue::Integer(self.epoch),
-                ],
-            )
-            .await;
-        match rows {
+        use vela_rekey_policy::executor::{classify_version, plan_read_version, ReadOutcome};
+        let plan = plan_read_version(self.id.clone(), self.user_id.clone(), self.epoch);
+        let mut sql = crate::vault::sql::PoolSql(self.state);
+        let outcome = match crate::vault::sql::run_read(&mut sql, &plan).await {
             Err(error) => {
                 self.error = Some(AppError::Internal(error.to_string()));
-                O::Storage
+                ReadOutcome::Failed
             }
-            Ok(rows) => match rows.first().and_then(|r| r.i64(0)) {
-                Some(version) => O::Found { version },
-                None => O::Missing,
-            },
-        }
+            Ok(rows) => ReadOutcome::Rows(crate::vault::sql::version_view(&rows)),
+        };
+        classify_version(&outcome)
     }
 
     async fn delete_row(&mut self) -> vela_rekey_policy::vault_mutation_driver::DeleteObservation {
-        use vela_rekey_policy::vault_mutation_driver::DeleteObservation as O;
-        let deleted = self
-            .state
-            .sqldb
-            .execute(
-                "DELETE FROM vault_chunks
-             WHERE chunk_id = ? AND user_id = ? AND epoch = ?
-               AND EXISTS (
-                 SELECT 1 FROM users
-                 WHERE users.id = vault_chunks.user_id
-                   AND users.key_epoch = ? AND users.rekey_state IS NULL
-               )",
-                vec![
-                    TursoValue::Text(self.id.clone()),
-                    TursoValue::Text(self.user_id.clone()),
-                    TursoValue::Integer(self.epoch),
-                    TursoValue::Integer(self.epoch),
-                ],
-            )
-            .await;
-        match deleted {
-            Err(error) => {
-                self.error = Some(AppError::Internal(error.to_string()));
-                O::Storage
-            }
-            Ok(1) => O::Deleted,
-            Ok(_) => O::Skipped,
+        use vela_rekey_policy::executor::{classify_delete, plan_delete_chunk};
+        let plan = plan_delete_chunk(self.id.clone(), self.user_id.clone(), self.epoch);
+        let mut sql = crate::vault::sql::PoolSql(self.state);
+        let (outcomes, error) = crate::vault::sql::run_writes(&mut sql, &plan).await;
+        if let Some(error) = error {
+            self.error = Some(error.into_internal());
         }
+        classify_delete(&outcomes)
     }
 
     async fn publish(&mut self) {

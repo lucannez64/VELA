@@ -3,7 +3,10 @@ pub mod events;
 pub mod oram;
 pub mod rekey;
 pub mod sync;
+#[cfg(test)]
+mod conformance;
 pub mod schema;
+pub mod sql;
 
 use crate::{
     error::{AppError, Result},

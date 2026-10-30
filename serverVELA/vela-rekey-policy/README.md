@@ -100,3 +100,68 @@ export PATH="$(opam var bin --switch vela-hax):$(opam var bin --switch vela-fsta
 The runner first executes the Rust unit tests, then extracts the twelve production
 policy entry points and asks F* to discharge their postconditions without
 `--lax`.
+
+## Executor honesty (F-1)
+
+The driver proofs above assume each executor is honest: the observation it
+returns is the truth about what its SQL and store writes did. F-1 removes that
+assumption for the vault, rotation, ORAM, capsule and schema executors.
+
+`src/executor.rs` splits every executor method into three pure pieces:
+
+- `plan_*`: the method's inputs -> typed statements (`VaultStmt`: reads,
+  guarded inserts/updates/deletes, version CAS, the shadow upsert, the account
+  key-row CAS, completeness probes, bulk deletes, the schema store write,
+  `Commit`);
+- `render`: each statement -> the exact SQL text and typed parameters (or the
+  exact store key), pinned byte for byte by unit tests;
+- `classify_*`: the per-statement outcomes -> the observation the driver
+  consumes.
+
+`vela-server/src/vault/sql.rs` is the thin loop the executors now run: plan,
+render, run each statement in order, stop at the first failure, classify.
+`src/executor_model.rs` is the Rust mirror of the F* model.
+
+`proofs/fstar/executor-lemmas/Vela_rekey_policy_executor_model.fst` models
+`vault_chunks` (keyed by user, chunk id and epoch), `users` (the epoch and
+attempt columns), `devices` (revoked, capability, capsule), `oram_buckets` and
+the one schema key:
+
+- a guarded `INSERT` inserts only when its `users` guard holds, and only then
+  can the unique key conflict; a guarded `UPDATE`/`DELETE` changes the one
+  matching row, or none, and reports how many; a version CAS matches only the
+  stored version; the shadow upsert inserts or bumps `version`;
+- `run_auto` (pool) and `run_tx` (a transaction publishes only at `Commit`);
+  `cas_tx` is the shape of the freeze and abort transactions: the CAS, then
+  the rest of the plan only when it changed the row, published by the plan's
+  own `Commit`;
+- `f = Some k` fails the k-th statement, including a commit;
+- the two account-CAS statements carry the database's answers to their
+  `NOT EXISTS` sub-queries (`answers`); `freeze_guard_is_honest` and
+  `commit_guard_is_honest` state exactly what it means for those answers to be
+  the truth.
+
+`Vela_rekey_policy_executor_lemmas.fst` proves, for every starting database and
+every fault point: success iff the guard held and no statement failed; on
+success exactly the intended rows/keys changed; on failure the state is
+unchanged; each point read observation equals the stored truth; and the facts
+the drivers rely on (a committed write needs an ACTIVE account at the permit
+epoch, a shadow write only lands inside the live attempt, an ACK clears only
+its own epoch, a commit publishes a shadow for every old chunk and a capsule
+for every active device, a rollback discards the attempt's shadows and
+capsules, a freeze only starts on a clean account).
+
+The five completeness probes and the inventory row set are `EXISTS`/multi-row
+queries over the id space. A functional table cannot decide or enumerate them,
+so their answers are inputs to the model; `classify_probe`/`classify_inventory`
+are proved to report exactly the store's answer, and the bounded real-database
+conformance test (`vela-server/src/vault/conformance.rs`) checks those answers
+and the rendered predicates against turso on small states, with a fault
+injected at every statement, commit and store write.
+
+`verify-fstar-vault-executors.sh` extracts the plans and classifiers, checks
+each proof module in its own process, and runs
+`verify-fstar-vault-executors-mutations.sh`: a classifier reporting a failed
+delete/update/ACK as success, a plan that swaps the capsule target, a plan that
+drops the transaction commit, and a model that ignores the account-epoch guard
+must each break a named theorem.
