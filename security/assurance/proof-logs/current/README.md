@@ -207,6 +207,8 @@ The [send-link executors](send-executors/README.md) evidence does the same for
 the three one-off share-link executors.
 The [recovery executors](recovery-executors/README.md) evidence does the same
 for recovery device redemption.
+The [enrollment executors](enrollment-executors/README.md) evidence does the
+same for the seven enrollment and pairing executors.
 
 The [cancellation evidence](cancellation/README.md) proves every interpreter
 loop leaves a sound driver state when cancelled after any turn, and reviews
