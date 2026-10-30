@@ -24,7 +24,9 @@ store=$proof_root/proofs/fstar/extraction-store/Vela_share_policy.Store.fst
 model_dir=$proof_root/proofs/fstar/store-lemmas
 lemmas_dir=$proof_root/proofs/fstar/send-store-lemmas
 lemmas=$lemmas_dir/Vela_share_policy_send_store_lemmas.fst
-mut=/tmp/vela-send-executor-mut
+mut=$(mktemp -d "${TMPDIR:-/tmp}/vela-send-executor-mut.XXXXXX")
+# A fresh directory per run: CI runners and local runs share the build box.
+trap 'rm -rf "$mut"' EXIT
 [[ -f $store && -f $lemmas ]] || { echo "run verify-fstar-send-executors.sh first" >&2; exit 1; }
 
 hax_lib_root=$(
@@ -41,7 +43,6 @@ declare -A expect=(
   [read-view-once]=send_read_is_honest
 )
 
-rm -rf "$mut"
 failures=0
 for name in "${mutants[@]}"; do
   [[ $want == all || $want == "$name" ]] || continue
@@ -130,7 +131,14 @@ PY
   fi
   # Every theorem with an error; the expected one must be among them.
   rejected=$(grep -oE 'Vela_share_policy_send_store_lemmas\.fst\(([0-9]+),' <<<"$out" | grep -oE '[0-9]+' | sort -un |
-    while read -r line; do head -n "$line" "$lemmas" | grep -oE '^let [a-z_0-9]+' | tail -n1 | cut -d' ' -f2; done | sort -u | tr '\n' ' ')
+    while read -r line; do head -n "$line" "$lemmas" | grep -oE '^let [a-z_0-9]+' | tail -n1 | cut -d' ' -f2; done | sort -u | tr '\n' ' ') || true
+  if [[ -z ${rejected// /} ]]; then
+    # No lemma error: F* was killed or failed elsewhere. Say so instead of exiting silently.
+    echo "mutant $name: F* exited $status without an error in the lemma module; last output:" >&2
+    tail -n 20 <<<"$out" >&2
+    failures=$((failures + 1))
+    continue
+  fi
   if [[ " $rejected " != *" ${expect[$name]} "* ]]; then
     echo "mutant $name: rejected at [${rejected% }], expected ${expect[$name]}:" >&2
     grep -m5 -E 'Error' <<<"$out" >&2 || true
