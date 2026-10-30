@@ -19,16 +19,26 @@ use crate::deletion_driver::{
     CommitObservation, DeletionTable, LockoutObservation as DeletionLockoutObservation,
     ScanObservation, TableDeleteObservation, TransactionObservation, UsersDeleteObservation,
 };
+use crate::login_driver::{
+    BackoffResetObservation, ChallengeObservation, DeviceObservation, FailureRecordObservation,
+    TokenTrackObservation,
+};
 use crate::revocation_driver::{
     CascadeObservation, DeviceLookupObservation, LockoutObservation, RecordObservation,
     TargetObservation,
 };
 use crate::store::{
-    classify_cascade, classify_commit, classify_lockout_device, classify_lockout_ignored,
-    classify_logout, classify_record, classify_scan, classify_table_delete, classify_transaction,
-    classify_users_delete, IdsOutcome, ReadOutcome, SqlStmt, StoreOutcome, StoreStmt,
-    TargetRowView, WriteOutcome,
+    classify_backoff_reset, classify_cascade, classify_commit, classify_failure_counter,
+    classify_lockout_device, classify_lockout_ignored, classify_login_challenge,
+    classify_login_device, classify_logout, classify_record, classify_scan, classify_table_delete,
+    classify_track_jti, classify_transaction, classify_users_delete, DeviceReadOutcome, IdsOutcome,
+    ReadOutcome, SqlStmt, StoreOutcome, StoreStmt, TakeOutcome, TargetRowView, WriteOutcome,
 };
+
+/// A `String` from a literal, for the model's own plan construction.
+fn s(x: &str) -> String {
+    x.to_string()
+}
 
 /// A `users` row.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -86,13 +96,15 @@ pub struct Db {
     pub buckets: BTreeMap<String, OwnedRow>,
 }
 
-/// The store: the `set_ex` map, the `device:jtis:` sets, and every JTI the
-/// lockout helper has revoked.
+/// The store: the `set_ex` map, the `device:jtis:` sets, every JTI the
+/// lockout helper has revoked, and the counters behind the login limiters.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Store {
     pub kv: BTreeMap<String, String>,
     pub sets: BTreeMap<String, BTreeSet<String>>,
     pub revoked: BTreeSet<String>,
+    pub counters: BTreeMap<String, u64>,
+    pub streaks: BTreeMap<String, u64>,
 }
 
 /// What a write statement's row count means to the handler.
@@ -197,6 +209,25 @@ impl Db {
         next
     }
 
+    /// F*: `st_login_last_active`.
+    pub fn st_login_last_active(
+        &self,
+        dev: &str,
+        now: &str,
+        name: Option<&str>,
+        kind: Option<&str>,
+    ) -> Db {
+        let mut next = self.clone();
+        if let Some(row) = next.devices.get_mut(dev) {
+            row.last_active = Some(now.to_string());
+            if let (Some(name), Some(kind)) = (name, kind) {
+                row.name = name.to_string();
+                row.kind = kind.to_string();
+            }
+        }
+        next
+    }
+
     /// F*: `st_revoke_approved`.
     pub fn st_revoke_approved(&self, dev: &str, usr: &str) -> Db {
         let mut next = self.clone();
@@ -233,6 +264,7 @@ pub fn exec_stmt(db: &Db, stmt: &SqlStmt) -> Option<(WriteResult, Db)> {
         | SqlStmt::SelectWebSessionIdsByUser { .. }
         | SqlStmt::SelectDeviceById { .. }
         | SqlStmt::SelectWebSessionIdsApprovedBy { .. }
+        | SqlStmt::SelectUnrevokedDeviceById { .. }
         | SqlStmt::Commit => None,
         SqlStmt::DeleteWebSessionsByUser { user } => {
             Some((WriteResult::Wrote, db.st_web_sessions(user)))
@@ -264,6 +296,19 @@ pub fn exec_stmt(db: &Db, stmt: &SqlStmt) -> Option<(WriteResult, Db)> {
         SqlStmt::RevokeWebSessionsApprovedBy { device_id, user } => {
             Some((WriteResult::Wrote, db.st_revoke_approved(device_id, user)))
         }
+        SqlStmt::UpdateDeviceLastActive { now, device_id } => Some((
+            WriteResult::Wrote,
+            db.st_login_last_active(device_id, now, None, None),
+        )),
+        SqlStmt::UpdateDeviceLastActiveNamed {
+            now,
+            name,
+            kind,
+            device_id,
+        } => Some((
+            WriteResult::Wrote,
+            db.st_login_last_active(device_id, now, Some(name), Some(kind)),
+        )),
     }
 }
 
@@ -300,19 +345,52 @@ pub fn run_tx(pre: &Db, plan: &[SqlStmt], fault: Option<usize>) -> (Vec<WriteOut
 
 // ── Store ──────────────────────────────────────────────────────────────────
 
-/// F*: `exec_store`.
-pub fn exec_store(store: &Store, stmt: &StoreStmt) -> Store {
+/// F*: `exec_store_out`. Applies one store statement and reports whether the
+/// handler saw it succeed. An over-limit counter still grew before refusing.
+pub fn exec_store(store: &Store, stmt: &StoreStmt) -> (StoreOutcome, Store) {
     let mut next = store.clone();
     match stmt {
         StoreStmt::SetEx { key, value, .. } => {
             next.kv.insert(key.clone(), (*value).to_string());
+            (StoreOutcome::Applied, next)
         }
         StoreStmt::RevokeJtis { device } => {
             let members = next.sets.remove(device).unwrap_or_default();
             next.revoked.extend(members);
+            (StoreOutcome::Applied, next)
+        }
+        StoreStmt::Take { key } => {
+            next.kv.remove(key);
+            (StoreOutcome::Applied, next)
+        }
+        StoreStmt::Incr { key, limit, .. } => {
+            let count = next.counters.get(key).copied().unwrap_or(0) + 1;
+            next.counters.insert(key.clone(), count);
+            let outcome = if count <= *limit {
+                StoreOutcome::Applied
+            } else {
+                StoreOutcome::Failed
+            };
+            (outcome, next)
+        }
+        StoreStmt::BackoffFailure { streak, backoff } => {
+            let count = next.streaks.get(streak).copied().unwrap_or(0) + 1;
+            next.streaks.insert(streak.clone(), count);
+            if count >= 3 {
+                next.kv.insert(backoff.clone(), s("1"));
+            }
+            (StoreOutcome::Applied, next)
+        }
+        StoreStmt::ResetBackoff { streak, backoff } => {
+            next.streaks.remove(streak);
+            next.kv.remove(backoff);
+            (StoreOutcome::Applied, next)
+        }
+        StoreStmt::AddMember { key, member, .. } => {
+            next.sets.entry(key.clone()).or_default().insert(member.clone());
+            (StoreOutcome::Applied, next)
         }
     }
-    next
 }
 
 /// F*: `run_store`.
@@ -324,8 +402,12 @@ pub fn run_store(store: &Store, plan: &[StoreStmt], fault: Option<usize>) -> (Ve
             outcomes.push(StoreOutcome::Failed);
             return (outcomes, state);
         }
-        state = exec_store(&state, stmt);
-        outcomes.push(StoreOutcome::Applied);
+        let (outcome, next) = exec_store(&state, stmt);
+        state = next;
+        outcomes.push(outcome);
+        if outcome == StoreOutcome::Failed {
+            return (outcomes, state);
+        }
     }
     (outcomes, state)
 }
@@ -377,7 +459,134 @@ pub fn read_target(db: &Db, dev: &str, failed: bool) -> ReadOutcome<TargetRowVie
     }
 }
 
-// ── The executors: plan, run, classify ─────────────────────────────────────
+// ── Login: VerifyIo ────────────────────────────────────────────────────────
+
+/// F*: `login_challenge`. The atomic take of the one challenge key.
+pub fn login_challenge(
+    store: &Store,
+    challenge: &str,
+    expected_tag: &str,
+    fault: Option<usize>,
+) -> (ChallengeObservation, Store) {
+    let plan = crate::store::plan_take_challenge(s(challenge));
+    let key = match plan.first() {
+        Some(StoreStmt::Take { key }) => key.clone(),
+        _ => String::new(),
+    };
+    if faulted(fault, 0) {
+        (
+            classify_login_challenge(&TakeOutcome::Failed, &s(expected_tag)),
+            store.clone(),
+        )
+    } else {
+        let taken = store.kv.get(&key).cloned();
+        let mut post = store.clone();
+        post.kv.remove(&key);
+        (
+            classify_login_challenge(&TakeOutcome::Taken(taken), &s(expected_tag)),
+            post,
+        )
+    }
+}
+
+/// F*: `login_device`. What the unrevoked-device query and decoder returned.
+pub fn login_device(
+    db: &Db,
+    dev: &str,
+    failed: bool,
+    undecodable: bool,
+) -> DeviceReadOutcome {
+    if failed {
+        DeviceReadOutcome::Failed
+    } else {
+        match db.devices.get(dev) {
+            None => DeviceReadOutcome::Missing,
+            Some(row) if row.revoked != 0 => DeviceReadOutcome::Missing,
+            Some(_) => {
+                if undecodable {
+                    DeviceReadOutcome::Undecodable
+                } else {
+                    DeviceReadOutcome::Row
+                }
+            }
+        }
+    }
+}
+
+/// F*: `observe_device`.
+pub fn observe_device(
+    db: &Db,
+    dev: &str,
+    failed: bool,
+    undecodable: bool,
+) -> DeviceObservation {
+    classify_login_device(&login_device(db, dev, failed, undecodable))
+}
+
+/// F*: `login_failure_record`. Two independent store calls: the log-only
+/// backoff record at fault 0, the request-level counter at fault 1.
+pub fn login_failure_record(
+    store: &Store,
+    ip: &str,
+    dev: &str,
+    fault: Option<usize>,
+) -> (FailureRecordObservation, Store) {
+    let plan = crate::store::plan_backoff_record(s(ip), s(dev));
+    let (_, after_record) = run_store(store, &plan, if fault == Some(0) { Some(0) } else { None });
+    let plan = crate::store::plan_failure_counter(s(ip), s(dev));
+    let (outcomes, after_counter) =
+        run_store(&after_record, &plan, if fault == Some(1) { Some(0) } else { None });
+    (classify_failure_counter(&outcomes), after_counter)
+}
+
+/// F*: `login_reset`. The streak reset at fault 0, then the best-effort stamp
+/// at fault 1 (whose failure the observation ignores).
+pub fn login_reset(
+    store: &Store,
+    db: &Db,
+    ip: &str,
+    dev: &str,
+    now: &str,
+    name: Option<&str>,
+    kind: Option<&str>,
+    fault: Option<usize>,
+) -> (BackoffResetObservation, Store, Db) {
+    let plan = crate::store::plan_reset_login_streak(s(ip), s(dev));
+    let (outcomes, after_reset) = run_store(store, &plan, if fault == Some(0) { Some(0) } else { None });
+    let outcome = outcomes.first().copied().unwrap_or(StoreOutcome::Failed);
+    if outcome == StoreOutcome::Failed {
+        return (classify_backoff_reset(&outcome), after_reset, db.clone());
+    }
+    let stamp = crate::store::plan_login_last_active(
+        s(dev),
+        s(now),
+        name.map(s),
+        kind.map(s),
+    );
+    let updated = if fault == Some(1) {
+        db.clone()
+    } else {
+        match exec_stmt(db, &stamp) {
+            Some((_, next)) => next,
+            None => db.clone(),
+        }
+    };
+    (classify_backoff_reset(&outcome), after_reset, updated)
+}
+
+/// F*: `login_track`.
+pub fn login_track(
+    store: &Store,
+    dev: &str,
+    jti: &str,
+    fault: Option<usize>,
+) -> (TokenTrackObservation, Store) {
+    let plan = crate::store::plan_track_jti(s(dev), s(jti));
+    let (outcomes, post) = run_store(store, &plan, fault);
+    let outcome = outcomes.first().copied().unwrap_or(StoreOutcome::Failed);
+    (classify_track_jti(&outcome), post)
+}
+
 
 /// F*: `logout_jti`.
 pub fn logout(store: &Store, jti: &str, fault: Option<usize>)
@@ -582,6 +791,8 @@ mod tests {
             kv: BTreeMap::new(),
             sets: BTreeMap::from([(s("dev"), BTreeSet::from([s("j1"), s("j2")]))]),
             revoked: BTreeSet::new(),
+            counters: BTreeMap::new(),
+            streaks: BTreeMap::new(),
         };
         let (obs, post) = lockout_device(&locked, "dev", None);
         assert_eq!(obs, crate::revocation_driver::LockoutObservation::Applied);
@@ -594,6 +805,79 @@ mod tests {
         let (obs, post) = lockout_device(&locked, "dev", Some(0));
         assert_eq!(obs, crate::revocation_driver::LockoutObservation::StorageFailed);
         assert_eq!(post, locked);
+    }
+
+    #[test]
+    fn login_shared_vectors() {
+        let mut store = Store::default();
+        store.kv.insert(s("challenge:c"), s("login"));
+        let (obs, post) = login_challenge(&store, "c", "login", None);
+        assert_eq!(
+            obs,
+            ChallengeObservation::Observed(crate::challenge::ChallengeConsumption::Accepted)
+        );
+        assert!(!post.kv.contains_key("challenge:c"));
+        let (obs, _) = login_challenge(&Store::default(), "c", "login", None);
+        assert_eq!(
+            obs,
+            ChallengeObservation::Observed(crate::challenge::ChallengeConsumption::Missing)
+        );
+        let (obs, post) = login_track(&Store::default(), "dev", "jti", None);
+        assert_eq!(obs, TokenTrackObservation::Tracked);
+        assert!(post
+            .sets
+            .get("device:jtis:dev")
+            .map(|set| set.contains("jti"))
+            .unwrap_or(false));
+    }
+
+    #[test]
+    fn login_failure_counter_refuses_after_its_window_quota() {
+        let mut store = Store::default();
+        let key = crate::store::plan_failure_counter(s("ip"), s("dev"));
+        let crate::store::StoreStmt::Incr { key: counter, limit, .. } = &key[0] else {
+            panic!("the counter plan is not an incr");
+        };
+        for n in 0..*limit {
+            store.counters.insert(counter.clone(), n);
+            let (obs, _) = login_failure_record(&store, "ip", "dev", None);
+            assert!(obs.fallback_counter_ok, "counter at {n}");
+        }
+        store.counters.insert(counter.clone(), *limit);
+        let (obs, post) = login_failure_record(&store, "ip", "dev", None);
+        assert!(!obs.fallback_counter_ok);
+        assert_eq!(post.counters.get(counter).copied(), Some(*limit + 1));
+    }
+
+    #[test]
+    fn login_device_sees_only_unrevoked_rows() {
+        let mut db = Db::default();
+        db.devices.insert(
+            s("dev"),
+            DeviceRow {
+                user_id: s("me"),
+                revoked: 0,
+                hybrid_vk: s("vk"),
+                last_active: None,
+                name: s("n"),
+                kind: s("k"),
+                revoked_at: None,
+                revoked_by: None,
+            },
+        );
+        assert_eq!(observe_device(&db, "dev", false, false), DeviceObservation::Present);
+        assert_eq!(
+            observe_device(&db, "dev", false, true),
+            DeviceObservation::ParseFailed
+        );
+        assert_eq!(observe_device(&db, "dev", true, false), DeviceObservation::QueryFailed);
+        let mut revoked = db.clone();
+        revoked.devices.get_mut("dev").unwrap().revoked = 1;
+        assert_eq!(
+            observe_device(&revoked, "dev", false, false),
+            DeviceObservation::Absent
+        );
+        assert_eq!(observe_device(&db, "other", false, false), DeviceObservation::Absent);
     }
 
     #[test]

@@ -21,7 +21,8 @@ use vela_session_policy::store_model::{
     UserRow,
 };
 
-use super::session_store::{DbSql, SessionSql, SessionStore, SledStore};
+use super::session_store::{DbSql, SessionSql, SessionStore, SessionTokens, SledStore};
+use super::verify::VerifyIo;
 use crate::account::delete::DeleteAccountIo;
 use crate::auth::logout::LogoutJtiIo;
 use crate::device::revoke::RevokeDeviceIo;
@@ -95,6 +96,31 @@ impl<T: SessionStore> SessionStore for Faulty<T> {
     fn revoke_jtis(&mut self, device: &str) -> anyhow::Result<()> {
         self.hit()?;
         self.inner.revoke_jtis(device)
+    }
+
+    fn take(&mut self, key: &str) -> anyhow::Result<Option<String>> {
+        self.hit()?;
+        self.inner.take(key)
+    }
+
+    fn incr(&mut self, key: &str, limit: u64, ttl: u64) -> anyhow::Result<()> {
+        self.hit()?;
+        self.inner.incr(key, limit, ttl)
+    }
+
+    fn backoff_failure(&mut self, streak_key: &str, backoff_key: &str) -> anyhow::Result<()> {
+        self.hit()?;
+        self.inner.backoff_failure(streak_key, backoff_key)
+    }
+
+    fn reset_backoff(&mut self, streak_key: &str, backoff_key: &str) -> anyhow::Result<()> {
+        self.hit()?;
+        self.inner.reset_backoff(streak_key, backoff_key)
+    }
+
+    fn add_member(&mut self, key: &str, member: &str, ttl: u64) -> anyhow::Result<()> {
+        self.hit()?;
+        self.inner.add_member(key, member, ttl)
     }
 }
 
@@ -1013,6 +1039,331 @@ async fn deletion_executors_match_the_store_model() {
     }
     eprintln!(
         "session executor conformance (deletion): {} states, {} cases, {} with an injected failure",
+        counts.states, counts.cases, counts.faulted
+    );
+}
+
+/// The test issuer: token issuance is a trusted input (its policy is proved
+/// elsewhere), so login conformance only needs a deterministic value.
+struct FakeTokens;
+
+impl SessionTokens for FakeTokens {
+    fn issue_device(
+        &self,
+        _user: uuid::Uuid,
+        _device: uuid::Uuid,
+    ) -> anyhow::Result<(String, String)> {
+        Ok((s("token"), s("jti")))
+    }
+}
+
+const LOGIN_IP: &str = "203.0.113.7";
+
+fn login_store() -> ModelStore {
+    ModelStore::default()
+}
+
+#[tokio::test]
+async fn login_executors_match_the_store_model() {
+    use vela_session_policy::login_driver::DeviceObservation;
+
+    let db = temp_db().await;
+    let mut counts = Counts::default();
+    let scratch = Store::open_temp().unwrap();
+    for pre in states() {
+        counts.states += 1;
+
+        // consume_challenge: an absent key, this purpose's tag, another one.
+        for (seed, tag) in [(None, "login"), (Some("login"), "login"), (Some("enroll"), "login")] {
+            for fault in faults(1) {
+                let store = Store::open_temp().unwrap();
+                let mut ms = login_store();
+                if let Some(value) = seed {
+                    store.set_ex("challenge:c", value.as_bytes(), 60).unwrap();
+                    ms.kv.insert(s("challenge:c"), s(value));
+                }
+                load(&db, &pre).await;
+                let mut io = VerifyIo {
+                    sql: Faulty::new(DbSql { pool: &db, tx: None }, None),
+                    store: Faulty::new(SledStore(&store), fault),
+                    tokens: FakeTokens,
+                    ip: s(LOGIN_IP),
+                    device_id_str: device(0),
+                    challenge: s("c"),
+                    signature: s("sig"),
+                    requested_name: None,
+                    requested_type: None,
+                    device: None,
+                    token: None,
+                    error: None,
+                    verifier_error: None,
+                    counter_error: None,
+                };
+                let observed = io.consume_challenge().await;
+                let (expected, expected_store) = model::login_challenge(&ms, "c", tag, fault);
+                let case = format!("challenge {seed:?} fault {fault:?} pre {pre:?}");
+                assert_eq!(observed, expected, "{case}");
+                assert_eq!(io.error.is_some(), fault.is_some(), "{case}");
+                assert_eq!(
+                    store.get("challenge:c").unwrap().is_some(),
+                    expected_store.kv.contains_key("challenge:c"),
+                    "{case}"
+                );
+                counts.case(fault);
+            }
+        }
+
+        // observe_device: present, revoked, absent, and an undecodable row.
+        for (target, corrupt) in [
+            (device(0), false),
+            (device(1), false),
+            (device(9), false),
+            (device(0), true),
+        ] {
+            for fault in faults(1) {
+                load(&db, &pre).await;
+                if corrupt {
+                    db.execute(
+                        "UPDATE devices SET created_at = 'not-a-timestamp' WHERE id = ?",
+                        vec![TursoValue::Text(target.clone())],
+                    )
+                    .await
+                    .unwrap();
+                }
+                let mut io = VerifyIo {
+                    sql: Faulty::new(DbSql { pool: &db, tx: None }, fault),
+                    store: SledStore(&scratch),
+                    tokens: FakeTokens,
+                    ip: s(LOGIN_IP),
+                    device_id_str: target.clone(),
+                    challenge: s("c"),
+                    signature: s("sig"),
+                    requested_name: None,
+                    requested_type: None,
+                    device: None,
+                    token: None,
+                    error: None,
+                    verifier_error: None,
+                    counter_error: None,
+                };
+                let observed = io.observe_device().await;
+                let expected = model::observe_device(&pre, &target, fault.is_some(), corrupt);
+                let case = format!("device {target} corrupt {corrupt} fault {fault:?} pre {pre:?}");
+                assert_eq!(observed, expected, "{case}");
+                assert_eq!(io.error.is_some(), observed != DeviceObservation::Present, "{case}");
+                counts.case(fault);
+            }
+        }
+
+        // record_verification_failure: fresh and exhausted counters, plus a
+        // fault at either of its two store calls.
+        for preseed in [0u64, 5] {
+            for fault in (0..2).map(Some).chain(std::iter::once(None)) {
+                let store = Store::open_temp().unwrap();
+                let mut ms = login_store();
+                let key = format!("rl:verify:fail:dev:{LOGIN_IP}:{}", device(0));
+                if preseed > 0 {
+                    for _ in 0..preseed {
+                        store.incr_fixed_window(&key, 1, 60).unwrap();
+                    }
+                    ms.counters.insert(key.clone(), preseed);
+                }
+                let mut io = VerifyIo {
+                    sql: Faulty::new(DbSql { pool: &db, tx: None }, None),
+                    store: Faulty::new(SledStore(&store), fault),
+                    tokens: FakeTokens,
+                    ip: s(LOGIN_IP),
+                    device_id_str: device(0),
+                    challenge: s("c"),
+                    signature: s("sig"),
+                    requested_name: None,
+                    requested_type: None,
+                    device: None,
+                    token: None,
+                    error: None,
+                    verifier_error: None,
+                    counter_error: None,
+                };
+                let observed = io.record_verification_failure().await;
+                let (expected, expected_store) =
+                    model::login_failure_record(&ms, LOGIN_IP, &device(0), fault);
+                let case = format!("failure preseed {preseed} fault {fault:?}");
+                assert_eq!(observed.fallback_counter_ok, expected.fallback_counter_ok, "{case}");
+                let count = store.incr_fixed_window(&key, 0, 60).unwrap();
+                assert_eq!(
+                    count,
+                    expected_store.counters.get(&key).copied().unwrap_or(0),
+                    "{case}"
+                );
+                assert_eq!(io.counter_error.is_some(), !observed.fallback_counter_ok, "{case}");
+                counts.case(fault);
+            }
+        }
+
+        // reset_backoff: the streak/backoff reset, then the best-effort stamp.
+        for (requested, store_fault, sql_fault) in [
+            (None, None, None),
+            (Some(("new", "tablet")), None, None),
+            (None, Some(0), None),
+            (None, None, Some(0)),
+        ] {
+            let store = Store::open_temp().unwrap();
+            let streak = format!("rl:streak:verify:{LOGIN_IP}:{}", device(0));
+            let backoff = format!("rl:backoff:verify:{LOGIN_IP}:{}", device(0));
+            store.set_ex(&streak, b"3", 300).unwrap();
+            store.set_ex(&backoff, b"1", 30).unwrap();
+            let mut ms = login_store();
+            ms.streaks.insert(streak.clone(), 3);
+            ms.kv.insert(backoff.clone(), s("1"));
+            let db = temp_db().await;
+            load(&db, &pre).await;
+            let (name, kind) = match requested {
+                Some((name, kind)) => (Some(s(name)), Some(s(kind))),
+                None => (None, None),
+            };
+            let mut io = VerifyIo {
+                sql: Faulty::new(DbSql { pool: &db, tx: None }, sql_fault),
+                store: Faulty::new(SledStore(&store), store_fault),
+                tokens: FakeTokens,
+                ip: s(LOGIN_IP),
+                device_id_str: device(0),
+                challenge: s("c"),
+                signature: s("sig"),
+                requested_name: name.clone(),
+                requested_type: kind.clone(),
+                device: Some(crate::db::DeviceRow {
+                    id: uuid::Uuid::parse_str(&device(0)).unwrap(),
+                    user_id: uuid::Uuid::parse_str(&user(0)).unwrap(),
+                    hybrid_ek: Vec::new(),
+                    revoked: false,
+                    hybrid_vk: Vec::new(),
+                    last_active: None,
+                    device_name: s("old"),
+                    device_type: s("desktop"),
+                    revoked_at: None,
+                    revoked_by: None,
+                    enrolled_by: None,
+                    rms_capsule: None,
+                    created_at: chrono::Utc::now(),
+                }),
+                token: None,
+                error: None,
+                verifier_error: None,
+                counter_error: None,
+            };
+            let observed = io.reset_backoff().await;
+            let expected_obs = if store_fault.is_some() {
+                vela_session_policy::login_driver::BackoffResetObservation::StorageFailed
+            } else {
+                vela_session_policy::login_driver::BackoffResetObservation::Reset
+            };
+            assert_eq!(observed, expected_obs, "reset pre {pre:?}");
+            assert_eq!(io.error.is_some(), store_fault.is_some(), "reset pre {pre:?}");
+            if store_fault.is_none() {
+                assert!(!store.exists(&streak).unwrap());
+                assert!(!store.exists(&backoff).unwrap());
+            }
+            // The stamp is the executor's own clock: read it back, then check
+            // the model's row update against it.
+            let actual = snapshot(&db).await;
+            let stamp = actual
+                .devices
+                .get(&device(0))
+                .and_then(|row| row.last_active.clone())
+                .unwrap_or_else(|| NOW.into());
+            let model_fault = match (store_fault, sql_fault) {
+                (Some(_), _) => Some(0),
+                (None, Some(_)) => Some(1),
+                _ => None,
+            };
+            let (_, expected_store, expected_db) = model::login_reset(
+                &ms,
+                &pre,
+                LOGIN_IP,
+                &device(0),
+                &stamp,
+                name.as_deref(),
+                kind.as_deref(),
+                model_fault,
+            );
+            if store_fault.is_none() {
+                assert!(
+                    !expected_store.streaks.contains_key(&streak),
+                    "model fault {model_fault:?} streaks {:?}",
+                    expected_store.streaks
+                );
+            }
+            if sql_fault.is_some() || store_fault.is_some() {
+                assert_eq!(expected_db, pre, "model fault db pre {pre:?}");
+                assert_eq!(actual.users, pre.users, "users");
+                assert_eq!(actual.devices, pre.devices, "devices");
+                assert_eq!(actual.sessions, pre.sessions, "sessions");
+                assert_eq!(actual.inbox, pre.inbox, "inbox");
+                assert_eq!(actual.items, pre.items, "items");
+                assert_eq!(actual.sends, pre.sends, "sends");
+                assert_eq!(actual.chunks, pre.chunks, "chunks");
+                assert_eq!(actual.buckets, pre.buckets, "buckets");
+            } else {
+                let mut want = expected_db;
+                if let Some(row) = want.devices.get_mut(&device(0)) {
+                    row.last_active = Some(stamp.clone());
+                }
+                if name.is_some() {
+                    assert_eq!(
+                        actual.devices.get(&device(0)).map(|r| &r.name),
+                        Some(&s("new")),
+                        "rename pre {pre:?}"
+                    );
+                }
+                assert_eq!(
+                    actual, want,
+                    "reset db pre {pre:?} actual {:?} want {:?}",
+                    actual.devices, want.devices
+                );
+            }
+            counts.case(None);
+        }
+
+        // track_token: one set add, injected fault at the one statement.
+        for fault in faults(1) {
+            let store = Store::open_temp().unwrap();
+            let mut io = VerifyIo {
+                sql: Faulty::new(DbSql { pool: &db, tx: None }, None),
+                store: Faulty::new(SledStore(&store), fault),
+                tokens: FakeTokens,
+                ip: s(LOGIN_IP),
+                device_id_str: device(0),
+                challenge: s("c"),
+                signature: s("sig"),
+                requested_name: None,
+                requested_type: None,
+                device: None,
+                token: Some((s("token"), s("jti"))),
+                error: None,
+                verifier_error: None,
+                counter_error: None,
+            };
+            let observed = io.track_token().await;
+            let expected = model::login_track(&login_store(), &device(0), "jti", fault);
+            let case = format!("track fault {fault:?}");
+            assert_eq!(observed, expected.0, "{case}");
+            let members = store.smembers(&format!("device:jtis:{}", device(0))).unwrap();
+            assert_eq!(
+                members.into_iter().collect::<BTreeSet<_>>(),
+                expected
+                    .1
+                    .sets
+                    .get(&format!("device:jtis:{}", device(0)))
+                    .cloned()
+                    .unwrap_or_default(),
+                "{case}"
+            );
+            assert_eq!(io.error.is_some(), fault.is_some(), "{case}");
+            counts.case(fault);
+        }
+    }
+    eprintln!(
+        "session executor conformance (login): {} states, {} cases, {} with an injected failure",
         counts.states, counts.cases, counts.faulted
     );
 }

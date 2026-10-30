@@ -18,6 +18,8 @@ module L = FStar.List.Tot
 module D = Vela_session_policy.Deletion_driver
 module R = Vela_session_policy.Revocation_driver
 module SP = FStar.Seq.Properties
+module LG = Vela_session_policy.Login_driver
+module LGC = Vela_session_policy.Challenge
 
 // ── Outcome slices ─────────────────────────────────────────────────────────
 
@@ -48,6 +50,7 @@ let stmt_key (st: t_StoreStmt) : text =
   match st with
   | StoreStmt_SetEx { f_key = k } -> k
   | StoreStmt_RevokeJtis { f_device = dev } -> dev
+  | _ -> Alloc.String.String ""
 
 /// The `jti:revoked:` marker the logout plan writes.
 let logout_key (jti: text) : text = stmt_key (first_stmt (stmts_of (plan_logout jti)))
@@ -373,7 +376,7 @@ let record_revokes_exactly_the_target (d: db) (dev now revoker: text) (f: option
 let s (x: string) : text = Alloc.String.String x
 
 let vector_store : store =
-  { kv = (fun _ -> None); sets = (fun _ -> []); revoked = [] }
+  { kv = (fun _ -> None); sets = (fun _ -> []); revoked = []; counters = (fun _ -> 0); streaks = (fun _ -> 0) }
 
 let vector_logout ()
   : Lemma (let (obs, post) = logout_jti vector_store (s "j") None in
@@ -389,7 +392,9 @@ let vector_logout_fault ()
 let vector_locked_jtis : store =
   { kv = (fun _ -> None);
     sets = (fun k -> if k = s "dev" then [s "j1"; s "j2"] else []);
-    revoked = [] }
+    revoked = [];
+    counters = (fun _ -> 0);
+    streaks = (fun _ -> 0) }
 
 let vector_lockout ()
   : Lemma (let (obs, post) = lockout_device vector_locked_jtis (s "dev") None in
@@ -403,3 +408,296 @@ let vector_lockout_fault ()
   : Lemma (let (obs, post) = lockout_device vector_locked_jtis (s "dev") (Some 0) in
            obs == R.LockoutObservation_StorageFailed /\ post == vector_locked_jtis) =
   lockout_device_is_honest vector_locked_jtis (s "dev") (Some 0)
+
+// ── Login: VerifyIo ────────────────────────────────────────────────────────
+
+/// The challenge key the take plan removes.
+let take_key (challenge: text) : text =
+  match first_stmt (stmts_of (plan_take_challenge challenge)) with
+  | StoreStmt_Take { f_key = k } -> k
+  | _ -> Alloc.String.String ""
+
+/// The failed-proof counter key and its ceiling.
+let counter_key (ip dev: text) : text =
+  match first_stmt (stmts_of (plan_failure_counter ip dev)) with
+  | StoreStmt_Incr { f_key = k } -> k
+  | _ -> Alloc.String.String ""
+
+/// The outcome the counter statement itself produced on a store.
+let counter_out (s: store) (ip dev: text) : t_StoreOutcome =
+  match stmts_of (plan_failure_counter ip dev) with
+  | st :: _ -> fst (exec_store_out s st)
+  | [] -> StoreOutcome_Failed
+
+/// The backoff record's two keys.
+let streak_key (ip dev: text) : text =
+  match first_stmt (stmts_of (plan_backoff_record ip dev)) with
+  | StoreStmt_BackoffFailure { f_streak = k } -> k
+  | _ -> Alloc.String.String ""
+
+let backoff_key (ip dev: text) : text =
+  match first_stmt (stmts_of (plan_backoff_record ip dev)) with
+  | StoreStmt_BackoffFailure { f_backoff = k } -> k
+  | _ -> Alloc.String.String ""
+
+/// The reset's two keys.
+let reset_streak_key (ip dev: text) : text =
+  match first_stmt (stmts_of (plan_reset_login_streak ip dev)) with
+  | StoreStmt_ResetBackoff { f_streak = k } -> k
+  | _ -> Alloc.String.String ""
+
+let reset_backoff_key (ip dev: text) : text =
+  match first_stmt (stmts_of (plan_reset_login_streak ip dev)) with
+  | StoreStmt_ResetBackoff { f_backoff = k } -> k
+  | _ -> Alloc.String.String ""
+
+/// The tracked-JTI set the add plan writes.
+let track_key (dev: text) : text =
+  match first_stmt (stmts_of (plan_track_jti dev (Alloc.String.String ""))) with
+  | StoreStmt_AddMember { f_key = k } -> k
+  | _ -> Alloc.String.String ""
+
+let plan_take_challenge_shape (challenge: text)
+  : Lemma (L.length (stmts_of (plan_take_challenge challenge)) == 1 /\
+           (match first_stmt (stmts_of (plan_take_challenge challenge)) with
+            | StoreStmt_Take { f_key = k } -> k == take_key challenge
+            | _ -> False)) =
+  ()
+
+let plan_login_device_shape (dev: text)
+  : Lemma (plan_login_device dev ==
+           SqlStmt_SelectUnrevokedDeviceById { f_device_id = dev }) =
+  ()
+
+let plan_backoff_record_shape (ip dev: text)
+  : Lemma (L.length (stmts_of (plan_backoff_record ip dev)) == 1 /\
+           (match first_stmt (stmts_of (plan_backoff_record ip dev)) with
+            | StoreStmt_BackoffFailure { f_streak = st; f_backoff = bo } ->
+              st == streak_key ip dev /\ bo == backoff_key ip dev
+            | _ -> False)) =
+  ()
+
+let plan_failure_counter_shape (ip dev: text)
+  : Lemma (L.length (stmts_of (plan_failure_counter ip dev)) == 1 /\
+           (match first_stmt (stmts_of (plan_failure_counter ip dev)) with
+            | StoreStmt_Incr { f_key = k; f_limit = lim; f_ttl = ttl } ->
+              k == counter_key ip dev /\ lim == v_VERIFY_FAIL_LIMIT /\
+              ttl == v_VERIFY_FAIL_WINDOW_SECS
+            | _ -> False)) =
+  ()
+
+let plan_reset_login_streak_shape (ip dev: text)
+  : Lemma (L.length (stmts_of (plan_reset_login_streak ip dev)) == 1 /\
+           (match first_stmt (stmts_of (plan_reset_login_streak ip dev)) with
+            | StoreStmt_ResetBackoff { f_streak = st; f_backoff = bo } ->
+              st == reset_streak_key ip dev /\ bo == reset_backoff_key ip dev
+            | _ -> False)) =
+  ()
+
+let plan_track_jti_shape (dev jti: text)
+  : Lemma (L.length (stmts_of (plan_track_jti dev jti)) == 1 /\
+           (match first_stmt (stmts_of (plan_track_jti dev jti)) with
+            | StoreStmt_AddMember { f_key = k; f_member = m; f_ttl = ttl } ->
+              k == track_key dev /\ m == jti /\ ttl == v_JTI_SET_TTL_SECS
+            | _ -> False)) =
+  ()
+
+let plan_login_last_active_shape (dev now: text)
+      (nm kd: Core_models.Option.t_Option text)
+  : Lemma
+    (match nm, kd with
+     | Core_models.Option.Option_Some n,
+       Core_models.Option.Option_Some k ->
+       plan_login_last_active dev now nm kd ==
+         SqlStmt_UpdateDeviceLastActiveNamed
+           { f_now = now; f_name = n; f_kind = k; f_device_id = dev }
+     | _ ->
+       plan_login_last_active dev now nm kd ==
+         SqlStmt_UpdateDeviceLastActive { f_now = now; f_device_id = dev }) =
+  ()
+
+#push-options "--fuel 4 --ifuel 2"
+/// The challenge take reports storage failure exactly when it failed.
+let login_challenge_storage_failed (s: store) (challenge tag: text) (f: option nat)
+  : Lemma
+    (fst (login_challenge s challenge tag f) ==
+       LG.ChallengeObservation_StorageFailed <==> faulted f 0) =
+  plan_take_challenge_shape challenge
+
+/// Acceptance is exactly the stored value being this consumer's tag.
+let login_challenge_accepts (s: store) (challenge tag: text) (f: option nat)
+  : Lemma
+    (fst (login_challenge s challenge tag f) ==
+        LG.ChallengeObservation_Observed LGC.ChallengeConsumption_Accepted
+       <==> (not (faulted f 0) /\
+            s.kv (take_key challenge) == Some tag)) =
+  plan_take_challenge_shape challenge;
+  cm_option_some (s.kv (take_key challenge)) tag
+
+/// An absent value is `Missing`.
+let login_challenge_missing (s: store) (challenge tag: text) (f: option nat)
+  : Lemma
+    (fst (login_challenge s challenge tag f) ==
+        LG.ChallengeObservation_Observed LGC.ChallengeConsumption_Missing
+       <==> (not (faulted f 0) /\ s.kv (take_key challenge) == None)) =
+  plan_take_challenge_shape challenge;
+  cm_option_none (s.kv (take_key challenge))
+
+/// A failed take changes nothing; a successful one changes only the key.
+let login_challenge_store (s: store) (challenge tag: text) (f: option nat)
+  : Lemma
+    ((faulted f 0 ==> snd (login_challenge s challenge tag f) == s) /\
+     (snd (login_challenge s challenge tag f)).sets == s.sets /\
+     (snd (login_challenge s challenge tag f)).revoked == s.revoked /\
+     (snd (login_challenge s challenge tag f)).counters == s.counters) =
+  plan_take_challenge_shape challenge
+
+/// The take's post state: the one key is gone, every other key is unchanged.
+let login_challenge_removes_only_its_key (s: store) (challenge tag: text)
+      (f: option nat)
+  : Lemma
+    (not (faulted f 0) ==>
+       (forall (k: text). (snd (login_challenge s challenge tag f)).kv k ==
+          (if k = take_key challenge then None else s.kv k))) =
+  plan_take_challenge_shape challenge
+
+/// The unrevoked-device lookup is exactly what the query and decoder saw: a
+/// failed query, no `revoked = 0` row, a row that did not decode, or one row.
+let login_device_is_honest (d: db) (dev: text) (failed undecodable: bool)
+  : Lemma
+    (observe_device d dev failed undecodable ==
+       (if failed then LG.DeviceObservation_QueryFailed
+        else match lookup d.devices dev with
+             | None -> LG.DeviceObservation_Absent
+             | Some r ->
+               if r.dv_revoked <> mk_i64 0 then LG.DeviceObservation_Absent
+               else if undecodable then LG.DeviceObservation_ParseFailed
+               else LG.DeviceObservation_Present)) =
+  ()
+
+/// A `Present` observation is only ever a stored, unrevoked, decoded row.
+let login_present_observes_the_stored_row (d: db) (dev: text) (r: device_row)
+      (failed undecodable: bool)
+  : Lemma
+    (lookup d.devices dev == Some r ==>
+       (observe_device d dev failed undecodable == LG.DeviceObservation_Present
+        <==> (not failed /\ not undecodable /\ r.dv_revoked = mk_i64 0))) =
+  ()
+
+/// The failed-proof side effects: the counter's own outcome is the only thing
+/// the observation reports; the log-only record's failure never changes it.
+let login_failure_counter_reports_its_run (s: store) (ip dev: text)
+      (f: option nat)
+  : Lemma
+    (let obs = fst (login_failure_record s ip dev f) in
+     obs.LG.f_fallback_counter_ok
+       <==> (not (faulted f 1) /\ counter_out s ip dev == StoreOutcome_Applied)) =
+  plan_backoff_record_shape ip dev;
+  plan_failure_counter_shape ip dev
+
+/// The two side effects' own state changes: the counter grew unless its call
+/// failed, and the log-only record grew the streak unless its call failed.
+let login_failure_record_state (s: store) (ip dev: text) (f: option nat)
+  : Lemma
+    (let post = snd (login_failure_record s ip dev f) in
+     post.counters (counter_key ip dev) ==
+       (if faulted f 1 then s.counters (counter_key ip dev)
+        else s.counters (counter_key ip dev) + 1) /\
+     (not (faulted f 0) ==>
+        post.streaks (streak_key ip dev) == s.streaks (streak_key ip dev) + 1)) =
+  plan_backoff_record_shape ip dev;
+  plan_failure_counter_shape ip dev
+
+/// The streak reset: `StorageFailed` exactly when its statement failed; on
+/// success the streak and backoff marker are gone, and the database is either
+/// the best-effort stamp or unchanged when that stamp failed.
+let login_reset_is_honest (s: store) (d: db) (ip dev now: text)
+      (nm kd: Core_models.Option.t_Option text) (f: option nat)
+  : Lemma
+    (let (obs, st, d') = login_reset s d ip dev now nm kd f in
+     (obs == LG.BackoffResetObservation_Reset <==> not (faulted f 0)) /\
+     (faulted f 0 ==> st == s /\ d' == d) /\
+     (not (faulted f 0) ==>
+        st.streaks (reset_streak_key ip dev) == 0 /\
+        st.kv (reset_backoff_key ip dev) == None /\
+        st.sets == s.sets /\
+        st.revoked == s.revoked) /\
+     (not (faulted f 0) ==>
+        (if faulted f 1 then d' == d
+         else d' == login_stamp d dev now nm kd))) =
+  plan_reset_login_streak_shape ip dev;
+  plan_login_last_active_shape dev now nm kd
+
+/// JTI tracking: `Tracked` exactly when the add ran, and then the member is in
+/// the one set, no other set changed, and no key, JTI revocation or counter
+/// changed; on failure the store is unchanged.
+let login_track_is_honest (s: store) (dev jti: text) (f: option nat)
+  : Lemma
+    ((fst (login_track s dev jti f) == LG.TokenTrackObservation_Tracked
+       <==> no_fault_in f 1) /\
+     (fst (login_track s dev jti f) == LG.TokenTrackObservation_Tracked ==>
+        L.mem jti ((snd (login_track s dev jti f)).sets (track_key dev)) /\
+        (forall (k: text). k <> track_key dev ==>
+           (snd (login_track s dev jti f)).sets k == s.sets k) /\
+        (snd (login_track s dev jti f)).kv == s.kv /\
+        (snd (login_track s dev jti f)).revoked == s.revoked /\
+        (snd (login_track s dev jti f)).counters == s.counters) /\
+     (fst (login_track s dev jti f) =!= LG.TokenTrackObservation_Tracked ==>
+        snd (login_track s dev jti f) == s)) =
+  plan_track_jti_shape dev jti
+#pop-options
+
+// ── Login facts the driver relies on ───────────────────────────────────────
+
+/// A login that observed a present device got a stored, unrevoked row.
+let login_completes_only_with_the_unrevoked_row (d: db) (dev: text)
+      (failed undecodable: bool)
+  : Lemma
+    (observe_device d dev failed undecodable == LG.DeviceObservation_Present ==>
+       (not failed /\ not undecodable /\
+        (exists (r: device_row).
+           lookup d.devices dev == Some r /\ r.dv_revoked = mk_i64 0))) =
+  ()
+
+/// A login whose challenge take was accepted really removed this consumer's
+/// tag from the one challenge key.
+let login_accepts_only_its_stored_tag (s: store) (challenge tag: text)
+      (f: option nat)
+  : Lemma
+    (fst (login_challenge s challenge tag f) ==
+       LG.ChallengeObservation_Observed LGC.ChallengeConsumption_Accepted ==>
+       s.kv (take_key challenge) == Some tag /\
+       (snd (login_challenge s challenge tag f)).kv (take_key challenge) == None) =
+  login_challenge_accepts s challenge tag f;
+  login_challenge_store s challenge tag f
+
+/// A tracked login JTI can be revoked by the device-revocation sweep: the add
+/// landed in the device's set.
+let login_tracks_the_issued_jti (s: store) (dev jti: text) (f: option nat)
+  : Lemma
+    (fst (login_track s dev jti f) == LG.TokenTrackObservation_Tracked ==>
+       L.mem jti ((snd (login_track s dev jti f)).sets (track_key dev))) =
+  login_track_is_honest s dev jti f
+
+let vector_challenge_store : store =
+  { kv = (fun k -> if k = take_key (s "c") then Some (s "login") else None);
+    sets = (fun _ -> []); revoked = []; counters = (fun _ -> 0); streaks = (fun _ -> 0) }
+
+let vector_login_challenge ()
+  : Lemma (let (obs, post) =
+             login_challenge vector_challenge_store (s "c") (s "login") None in
+           obs == LG.ChallengeObservation_Observed LGC.ChallengeConsumption_Accepted /\
+           post.kv (take_key (s "c")) == None) =
+  login_challenge_accepts vector_challenge_store (s "c") (s "login") None;
+  login_challenge_store vector_challenge_store (s "c") (s "login") None
+
+let vector_login_challenge_missing ()
+  : Lemma (let (obs, _) = login_challenge vector_store (s "c") (s "login") None in
+           obs == LG.ChallengeObservation_Observed LGC.ChallengeConsumption_Missing) =
+  login_challenge_missing vector_store (s "c") (s "login") None
+
+let vector_login_track ()
+  : Lemma (let (obs, post) = login_track vector_store (s "dev") (s "jti") None in
+           obs == LG.TokenTrackObservation_Tracked /\
+           L.mem (s "jti") (post.sets (track_key (s "dev")))) =
+  login_track_is_honest vector_store (s "dev") (s "jti") None

@@ -21,6 +21,13 @@ set -euo pipefail
 #   plan-users-swap         the users delete runs the devices delete
 #   plan-logout-ttl         the logout marker outlives its token lifetime
 #   plan-sentinel-ttl       the device sentinel outlives its token lifetime
+#   classify-login-challenge-failed  a failed challenge take reports accepted
+#   classify-login-device-failed     a failed device query reports present
+#   classify-failure-counter-error   a refused failure counter reports okay
+#   classify-reset-error             a failed streak reset reports Reset
+#   classify-track-error             a failed JTI track reports Tracked
+#   plan-counter-limit               the failed-proof counter allows one more
+#   plan-jti-ttl                     the JTI set outlives the session cap
 
 proof_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cd "$proof_root"
@@ -41,6 +48,9 @@ mutants=(
   classify-logout-error classify-record-error classify-delete-failed
   classify-users-absent classify-target-owner classify-commit-error
   plan-table-swap plan-users-swap plan-logout-ttl plan-sentinel-ttl
+  classify-login-challenge-failed classify-login-device-failed
+  classify-failure-counter-error classify-reset-error classify-track-error
+  plan-counter-limit plan-jti-ttl
 )
 declare -A expect=(
   [classify-logout-error]=logout_is_honest
@@ -53,6 +63,13 @@ declare -A expect=(
   [plan-users-swap]=plan_delete_users_shape
   [plan-logout-ttl]=plan_logout_shape
   [plan-sentinel-ttl]=plan_lockout_device_shape
+  [classify-login-challenge-failed]=login_challenge_storage_failed
+  [classify-login-device-failed]=login_device_is_honest
+  [classify-failure-counter-error]=login_failure_counter_reports_its_run
+  [classify-reset-error]=login_reset_is_honest
+  [classify-track-error]=login_track_is_honest
+  [plan-counter-limit]=plan_failure_counter_shape
+  [plan-jti-ttl]=plan_track_jti_shape
 )
 
 rm -rf "$mut"
@@ -123,6 +140,36 @@ elif name == 'plan-logout-ttl':
     in_body('let plan_logout', 'let plan_sentinel',
             'f_ttl = v_TOKEN_MAX_LIFETIME_SECS',
             'f_ttl = mk_u64 901')
+elif name == 'classify-login-challenge-failed':
+    once('''  | TakeOutcome_Failed  ->
+    Vela_session_policy.Login_driver.ChallengeObservation_StorageFailed''',
+         '''  | TakeOutcome_Failed  ->
+    Vela_session_policy.Login_driver.ChallengeObservation_Observed
+      (Vela_session_policy.Challenge.ChallengeConsumption_Accepted)''')
+elif name == 'classify-login-device-failed':
+    once('''  | DeviceReadOutcome_Failed  ->
+    Vela_session_policy.Login_driver.DeviceObservation_QueryFailed''',
+         '''  | DeviceReadOutcome_Failed  ->
+    Vela_session_policy.Login_driver.DeviceObservation_Present''')
+elif name == 'classify-failure-counter-error':
+    once('''    (match outcomes.[ mk_usize 0 ] <: t_StoreOutcome with
+      | StoreOutcome_Applied  -> true''',
+         '''    (match outcomes.[ mk_usize 0 ] <: t_StoreOutcome with
+      | StoreOutcome_Applied  -> false''')
+elif name == 'classify-reset-error':
+    once('''  | StoreOutcome_Failed  ->
+    Vela_session_policy.Login_driver.BackoffResetObservation_StorageFailed''',
+         '''  | StoreOutcome_Failed  ->
+    Vela_session_policy.Login_driver.BackoffResetObservation_Reset''')
+elif name == 'classify-track-error':
+    once('''  | StoreOutcome_Failed  ->
+    Vela_session_policy.Login_driver.TokenTrackObservation_Failed''',
+         '''  | StoreOutcome_Failed  ->
+    Vela_session_policy.Login_driver.TokenTrackObservation_Tracked''')
+elif name == 'plan-counter-limit':
+    once('f_limit = v_VERIFY_FAIL_LIMIT', 'f_limit = mk_u64 4')
+elif name == 'plan-jti-ttl':
+    once('f_ttl = v_JTI_SET_TTL_SECS', 'f_ttl = mk_u64 1')
 elif name == 'plan-sentinel-ttl':
     start = text.index('let plan_lockout_device')
     end = text.index('let plan_lockout_web_session', start)
@@ -142,6 +189,7 @@ PY
     --include "$proof_root/proofs/fstar/extraction" \
     --include "$proof_root/proofs/fstar/extraction-deletion-driver" \
     --include "$proof_root/proofs/fstar/extraction-revocation-driver" \
+    --include "$proof_root/proofs/fstar/extraction-login-driver" \
     --include "$d/store" --include "$d/lemmas" \
     "$d/lemmas/Vela_session_policy_store_lemmas.fst" 2>&1)
   status=$?

@@ -21,12 +21,14 @@
 //! unchanged.
 
 use crate::{
-    auth::challenge::ChallengePurpose,
+    auth::session_store::{
+        keep_error, run_read, run_sql, run_store, run_take, DbSql, PasetoTokens, SessionSql,
+        SessionStore, SessionTokens, SledStore,
+    },
     auth::token::TokenService,
     device::enroll::{unify_device_auth_error, verify_auth_signature, DEVICE_AUTH_FAILED},
     error::{AppError, Result},
     net, rate_limit,
-    sqldb::{Db as _, TursoValue},
     state::AppState,
 };
 use axum::{
@@ -63,86 +65,99 @@ pub struct VerifyResponse {
 /// `run_login`); each method only performs its effect and reports the outcome.
 /// The first storage error is kept so the response carries the original
 /// message, exactly as the hand-written handler returned it.
-struct VerifyIo<'a> {
-    state: &'a AppState,
-    ip: String,
-    device_id_str: String,
-    challenge: String,
-    signature: String,
-    requested_name: Option<String>,
-    requested_type: Option<String>,
-    device: Option<crate::db::DeviceRow>,
-    token: Option<(String, String)>,
+///
+/// Every method is the proved thin loop from `vela_session_policy::store`:
+/// plan → render/run → classify. The conformance harness drives this struct
+/// with a failing `SessionSql`/`SessionStore` and a fake issuer.
+pub(crate) struct VerifyIo<S: SessionSql, K: SessionStore, T: SessionTokens> {
+    pub sql: S,
+    pub store: K,
+    pub tokens: T,
+    pub ip: String,
+    pub device_id_str: String,
+    pub challenge: String,
+    pub signature: String,
+    pub requested_name: Option<String>,
+    pub requested_type: Option<String>,
+    pub device: Option<crate::db::DeviceRow>,
+    pub token: Option<(String, String)>,
     /// The raw error of the effect that failed (challenge take, device query,
     /// device parse, streak reset, token issuance or JTI tracking).
-    error: Option<AppError>,
+    pub error: Option<AppError>,
     /// The verifier's rejection, kept until the failure side effects ran.
-    verifier_error: Option<AppError>,
+    pub verifier_error: Option<AppError>,
     /// The request-level fallback limiter's error; it wins over the verifier
     /// rejection when the counter could not be consumed.
-    counter_error: Option<AppError>,
+    pub counter_error: Option<AppError>,
 }
 
-impl VerifyIo<'_> {
+impl<S: SessionSql, K: SessionStore, T: SessionTokens> VerifyIo<S, K, T> {
     /// ── Consume the login nonce ─────────────────────────────────────────
-    async fn consume_challenge(&mut self) -> ChallengeObservation {
-        match crate::auth::challenge::take_challenge(
-            self.state,
-            &self.challenge,
-            ChallengePurpose::Login,
-        ) {
-            Ok(consumed) => ChallengeObservation::Observed(consumed),
-            Err(error) => {
-                self.error = Some(error);
-                ChallengeObservation::StorageFailed
+    pub(crate) async fn consume_challenge(&mut self) -> ChallengeObservation {
+        let plan = vela_session_policy::store::plan_take_challenge(self.challenge.clone());
+        let outcome = match plan.first() {
+            Some(stmt) => {
+                let (outcome, error) = run_take(&mut self.store, stmt);
+                if let Some(error) = error {
+                    keep_error(&mut self.error, error);
+                }
+                outcome
             }
-        }
+            None => {
+                self.error = Some(AppError::Internal(
+                    "login challenge plan is empty".into(),
+                ));
+                vela_session_policy::store::TakeOutcome::Failed
+            }
+        };
+        vela_session_policy::store::classify_login_challenge(
+            &outcome,
+            &vela_session_policy::store::challenge_tag_text(
+                vela_session_policy::challenge::ChallengePurpose::Login,
+            ),
+        )
     }
 
     /// ── Observe the unrevoked device row ────────────────────────────────
-    async fn observe_device(&mut self) -> DeviceObservation {
-        let query_result = self
-            .state
-            .sqldb
-            .query(
-                "SELECT id, user_id, device_name, device_type, last_active,
-                    hybrid_ek, hybrid_vk,
-                    enrolled_by, rms_capsule, revoked,
-                    revoked_at, revoked_by, created_at
-                 FROM devices
-                 WHERE id = ? AND revoked = 0",
-                vec![TursoValue::Text(self.device_id_str.clone())],
-            )
-            .await;
-        match query_result {
-            Err(error) => {
-                self.error = Some(AppError::Internal(error.to_string()));
-                DeviceObservation::QueryFailed
-            }
-            Ok(rows) => match rows.first() {
+    pub(crate) async fn observe_device(&mut self) -> DeviceObservation {
+        let stmt = vela_session_policy::store::plan_login_device(self.device_id_str.clone());
+        let (rows, error) = run_read(&mut self.sql, stmt).await;
+        let outcome = match (rows, error) {
+            (Some(rows), None) => match rows.first() {
                 None => {
                     self.error = Some(AppError::Unauthorized(DEVICE_AUTH_FAILED.into()));
-                    DeviceObservation::Absent
+                    vela_session_policy::store::DeviceReadOutcome::Missing
                 }
                 Some(row) => match crate::db::parse_device_row_turso(row) {
                     Ok(device) => {
                         self.device = Some(device);
-                        DeviceObservation::Present
+                        vela_session_policy::store::DeviceReadOutcome::Row
                     }
                     Err(error) => {
                         self.error = Some(error);
-                        DeviceObservation::ParseFailed
+                        vela_session_policy::store::DeviceReadOutcome::Undecodable
                     }
                 },
             },
-        }
+            (_, Some(error)) => {
+                self.error = Some(AppError::Internal(error.to_string()));
+                vela_session_policy::store::DeviceReadOutcome::Failed
+            }
+            (None, None) => {
+                self.error = Some(AppError::Internal(
+                    "device lookup returned no row and no error".into(),
+                ));
+                vela_session_policy::store::DeviceReadOutcome::Failed
+            }
+        };
+        vela_session_policy::store::classify_login_device(&outcome)
     }
 
     /// ── Decode the nonce and run the actual verifier ────────────────────
     ///
     /// The base64 decode happens before the verifier and, exactly as before,
     /// does not touch the failure counter.
-    async fn verify_signature(&mut self) -> VerifierObservation {
+    pub(crate) async fn verify_signature(&mut self) -> VerifierObservation {
         let challenge_bytes = match B64.decode(&self.challenge) {
             Ok(bytes) => bytes,
             Err(_) => return VerifierObservation::ChallengeDecodeFailed,
@@ -178,21 +193,28 @@ impl VerifyIo<'_> {
     ///
     /// The exponential-backoff record is log-only: a store hiccup must not let
     /// a failed proof skip the request-level fallback limiter.
-    async fn record_verification_failure(&mut self) -> FailureRecordObservation {
-        if let Err(record_err) =
-            rate_limit::record_verify_failure(&self.state.store, &self.ip, &self.device_id_str)
-        {
+    pub(crate) async fn record_verification_failure(&mut self) -> FailureRecordObservation {
+        let plan = vela_session_policy::store::plan_backoff_record(
+            self.ip.clone(),
+            self.device_id_str.clone(),
+        );
+        if let Some(record_err) = run_store(&mut self.store, &plan).1 {
             tracing::error!(
                 device_id = %self.device_id_str,
                 error = %record_err,
                 "failed to record verify failure — exponential backoff not updated"
             );
         }
-        let counter_result =
-            rate_limit::verify_fail_by_device(&self.state.store, &self.ip, &self.device_id_str);
-        let fallback_counter_ok = counter_result.is_ok();
-        self.counter_error = counter_result.err();
-        FailureRecordObservation { fallback_counter_ok }
+        let plan = vela_session_policy::store::plan_failure_counter(
+            self.ip.clone(),
+            self.device_id_str.clone(),
+        );
+        let (outcomes, counter_error) = run_store(&mut self.store, &plan);
+        self.counter_error = None;
+        if let Some(error) = counter_error {
+            keep_error(&mut self.counter_error, error);
+        }
+        vela_session_policy::store::classify_failure_counter(&outcomes)
     }
 
     /// ── Reset the success streak/backoff ────────────────────────────────
@@ -201,91 +223,91 @@ impl VerifyIo<'_> {
     /// successful reset is followed by the historical best-effort
     /// `last_active` update (and, when the request renamed or retyped the
     /// device, that update too); its failure is ignored, as it always was.
-    async fn reset_backoff(&mut self) -> BackoffResetObservation {
-        let reset_result =
-            rate_limit::reset_verify_streak(&self.state.store, &self.ip, &self.device_id_str);
-        if let Err(error) = reset_result {
-            self.error = Some(error);
+    pub(crate) async fn reset_backoff(&mut self) -> BackoffResetObservation {
+        let plan = vela_session_policy::store::plan_reset_login_streak(
+            self.ip.clone(),
+            self.device_id_str.clone(),
+        );
+        let (_, error) = run_store(&mut self.store, &plan);
+        if let Some(error) = error {
+            keep_error(&mut self.error, error);
             return BackoffResetObservation::StorageFailed;
         }
         let now = chrono::Utc::now().to_rfc3339();
         let device = self.device.as_ref();
-        if self.requested_name.is_some() || self.requested_type.is_some() {
-            let next_name = self
-                .requested_name
-                .as_deref()
-                .or_else(|| device.map(|d| d.device_name.as_str()));
-            let next_type = self
-                .requested_type
-                .as_deref()
-                .or_else(|| device.map(|d| d.device_type.as_str()));
-            if let (Some(next_name), Some(next_type)) = (next_name, next_type) {
-                let _ = self
-                    .state
-                    .sqldb
-                    .execute(
-                        "UPDATE devices SET last_active = ?, device_name = ?, device_type = ? WHERE id = ?",
-                        vec![
-                            TursoValue::Text(now),
-                            TursoValue::Text(next_name.to_string()),
-                            TursoValue::Text(next_type.to_string()),
-                            TursoValue::Text(self.device_id_str.clone()),
-                        ],
-                    )
-                    .await;
-            }
-        } else {
-            let _ = self
-                .state
-                .sqldb
-                .execute(
-                    "UPDATE devices SET last_active = ? WHERE id = ?",
-                    vec![
-                        TursoValue::Text(now),
-                        TursoValue::Text(self.device_id_str.clone()),
-                    ],
+        // Only a request that renamed or retyped the device touches the name
+        // and type columns; otherwise the historical plain stamp runs.
+        let (next_name, next_type) =
+            if self.requested_name.is_some() || self.requested_type.is_some() {
+                (
+                    self.requested_name
+                        .clone()
+                        .or_else(|| device.map(|d| d.device_name.clone())),
+                    self.requested_type
+                        .clone()
+                        .or_else(|| device.map(|d| d.device_type.clone())),
                 )
-                .await;
+            } else {
+                (None, None)
+            };
+        // The historical code stamped only when the request asked for neither a
+        // rename nor a retype (plain stamp), or when both resolved (named
+        // stamp); a rename it could not complete wrote nothing.
+        let requested = self.requested_name.is_some() || self.requested_type.is_some();
+        let both_resolved = next_name.is_some() && next_type.is_some();
+        if !requested || both_resolved {
+            let stmt = vela_session_policy::store::plan_login_last_active(
+                self.device_id_str.clone(),
+                now,
+                next_name,
+                next_type,
+            );
+            let _ = run_sql(&mut self.sql, &[stmt]).await;
         }
         BackoffResetObservation::Reset
     }
 
     /// ── Issue the token (the existing verified device-token policy) ─────
-    async fn issue_token(&mut self) -> TokenIssueObservation {
+    pub(crate) async fn issue_token(&mut self) -> TokenIssueObservation {
         let Some(device) = self.device.as_ref() else {
             self.error = Some(AppError::Internal(
                 "login driver requested issuance without a device".into(),
             ));
             return TokenIssueObservation::Failed;
         };
-        let ts = TokenService::new(self.state.paseto_sk.clone(), self.state.paseto_pk.clone());
-        match ts.issue(device.user_id, device.id, None) {
+        match self.tokens.issue_device(device.user_id, device.id) {
             Ok(value) => {
                 self.token = Some(value);
                 TokenIssueObservation::Issued
             }
             Err(error) => {
-                self.error = Some(error);
+                keep_error(&mut self.error, error);
                 TokenIssueObservation::Failed
             }
         }
     }
 
     /// ── Track the JTI before any response ───────────────────────────────
-    async fn track_token(&mut self) -> TokenTrackObservation {
+    pub(crate) async fn track_token(&mut self) -> TokenTrackObservation {
         let Some((_, jti)) = self.token.as_ref() else {
             self.error = Some(AppError::Internal(
                 "login driver requested tracking without a token".into(),
             ));
             return TokenTrackObservation::Failed;
         };
-        match rate_limit::track_device_jti(&self.state.store, &self.device_id_str, jti) {
-            Ok(()) => TokenTrackObservation::Tracked,
-            Err(error) => {
-                self.error = Some(error);
-                TokenTrackObservation::Failed
-            }
+        let plan = vela_session_policy::store::plan_track_jti(
+            self.device_id_str.clone(),
+            jti.clone(),
+        );
+        let (outcomes, error) = run_store(&mut self.store, &plan);
+        if let Some(error) = error {
+            keep_error(&mut self.error, error);
         }
+        let outcome = outcomes
+            .first()
+            .copied()
+            .unwrap_or(vela_session_policy::store::StoreOutcome::Failed);
+        vela_session_policy::store::classify_track_jti(&outcome)
     }
 }
 
@@ -317,7 +339,12 @@ pub async fn post_verify(
         .filter(|s| !s.is_empty())
         .map(str::to_string);
     let mut io = VerifyIo {
-        state: &state,
+        sql: DbSql { pool: &state.sqldb, tx: None },
+        store: SledStore(&state.store),
+        tokens: PasetoTokens(TokenService::new(
+            state.paseto_sk.clone(),
+            state.paseto_pk.clone(),
+        )),
         ip,
         device_id_str,
         challenge: body.challenge,
