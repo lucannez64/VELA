@@ -802,6 +802,23 @@
         "serverVELA/vela-server/src/device/invitation.rs": "9ed0bb6cbc1e7de613ff2ae4df2bb93e3fbae7b5d91bcfd7398b6b995f4086b0",
         "serverVELA/vela-server/src/device/rendezvous.rs": "6571943bf8e6171122a4ba94a60f6db0dcb500cebdc4e3f85f72e66e742ee1c9"
       }
+    },
+    {
+      "boundary": "logout, device-revocation and account-deletion executor honesty (F-1): each method of LogoutJtiIo, RevokeDeviceIo and DeleteAccountIo is an extracted typed SQL/store statement plan, a pinned rendering and an extracted classifier, proved against a store model of the eight account tables, the jti markers and the deletion transaction with a failure at any statement, and matched on real turso and sled with fault injection; the deletion transaction and revocation cascade are proved per statement (no single fold theorem), revoke_all_device_jtis is one atomic logical statement (partial marker writes on failure are not modelled), and login, registration/challenge and web-session executors remain open",
+      "artifacts": {
+        "serverVELA/vela-server/src/account/delete.rs": "3676236ade8d780739d77e6e067be4b0b5c9c3dc967805ef67aad357dd2c516e",
+        "serverVELA/vela-server/src/auth/logout.rs": "dd1a67af0df08111c82e18ecf53fee8b896bd8352efca22ee422a1d617ccf916",
+        "serverVELA/vela-server/src/auth/session_conformance.rs": "d93a306e8cc02ba633c6b6d3ab67fd8e35424bbca0082fac5d12adaae39f5e69",
+        "serverVELA/vela-server/src/auth/session_store.rs": "e743f663cabd0f3226548c4ea33e9f252a1574f39e278b9d2dd13c47bcc06eab",
+        "serverVELA/vela-server/src/device/revoke.rs": "efcbadf0aa9097308430b7f56328ce15791f7969fabde9a9f0b6a1a5112116e9",
+        "serverVELA/vela-session-policy/proofs/fstar/extraction-store/Vela_session_policy.Store.fst": "b927727e6d92d56fbeb8a4f7d85d13a37279c139a15f88307e1f4530a1e37e7a",
+        "serverVELA/vela-session-policy/proofs/fstar/store-lemmas/Vela_session_policy_store_lemmas.fst": "8f1088684334cf2e9d646e1a51c12fb8184cc2716672afeef92f94c05da336af",
+        "serverVELA/vela-session-policy/proofs/fstar/store-lemmas/Vela_session_policy_store_model.fst": "892964d016c3e5ad80ff7f1cbcf231f012da033582d215f965696f2f8157ddd4",
+        "serverVELA/vela-session-policy/src/store.rs": "fd518aed35342b4d00ac946dcd4158890c41ecf29910d42bf6bebec1c0deeefe",
+        "serverVELA/vela-session-policy/src/store_model.rs": "44b4e2cde24af6843a79c0656e3895bec0dcafbe3546a065c2277d90abd418af",
+        "serverVELA/vela-session-policy/verify-fstar-session-executors-mutations.sh": "dc17690f43d1be9c306cfafd3bdf9071b021e76ed1aa50fe2c2e26b83c302c3b",
+        "serverVELA/vela-session-policy/verify-fstar-session-executors.sh": "ae0eb7d634d5b1869bfb4543c4f1ea0b03642198b2858cd2b0b9b9a1275cfd23"
+      }
     }
   ]
 }
