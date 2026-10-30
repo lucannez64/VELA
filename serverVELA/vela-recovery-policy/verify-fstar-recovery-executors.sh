@@ -39,31 +39,58 @@ done
 }
 
 # Rendering pins and the Rust mirror's shared vectors.
-cargo test --lib redemption
+cargo test --lib
 
 items=(
   plan_take_grant plan_insert_device plan_authority_read plan_restore_grant
   classify_take classify_insert classify_authority
 )
+share_items=(
+  plan_stage_share plan_promote_staged_split plan_delete_share
+  plan_stage_account plan_finalize_account plan_read_share
+  classify_stage_update classify_stage_account classify_finalize_update
+  classify_finalize_account classify_delete_update classify_read_share
+)
 include='-**'
 for item in "${items[@]}"; do
   include+=" +vela_recovery_policy::redemption_store::$item"
 done
+share_include='-**'
+for item in "${share_items[@]}"; do
+  share_include+=" +vela_recovery_policy::share_store::$item"
+done
 
-rm -rf proofs/fstar/extraction-redemption
+rm -rf proofs/fstar/extraction-redemption proofs/fstar/extraction-share
 cargo hax into \
   --output-dir proofs/fstar/extraction-redemption \
   -i "$include" \
   fstar --z3rlimit 500
+cargo hax into \
+  --output-dir proofs/fstar/extraction-share \
+  -i "$share_include" \
+  fstar --z3rlimit 500
 # The partial driver and root modules hax writes alongside are superseded by
-# the full driver extraction.
+# the full driver extractions.
 rm -f proofs/fstar/extraction-redemption/Vela_recovery_policy.Driver.fst
+rm -f proofs/fstar/extraction-redemption/Vela_recovery_policy.Recovery_share_driver.fst
 rm -f proofs/fstar/extraction-redemption/Vela_recovery_policy.fst
+rm -f proofs/fstar/extraction-share/Vela_recovery_policy.Recovery_share_driver.fst
+rm -f proofs/fstar/extraction-share/Vela_recovery_policy.fst
 
-generated=(proofs/fstar/extraction-redemption/Vela_recovery_policy.Redemption_store.fst)
-driver=(proofs/fstar/extraction-driver/*.fst)
-model=(proofs/fstar/redemption-lemmas/Vela_recovery_policy_redemption_model.fst)
-lemmas=(proofs/fstar/redemption-lemmas/Vela_recovery_policy_redemption_lemmas.fst)
+generated=(
+  proofs/fstar/extraction-redemption/Vela_recovery_policy.Redemption_store.fst
+  proofs/fstar/extraction-share/Vela_recovery_policy.Share_store.fst
+  proofs/fstar/extraction-share/Vela_recovery_policy.Redemption_store.fst
+)
+driver=(proofs/fstar/extraction-driver/*.fst proofs/fstar/extraction-recovery-share-driver/*.fst)
+model=(
+  proofs/fstar/redemption-lemmas/Vela_recovery_policy_redemption_model.fst
+  proofs/fstar/share-lemmas/Vela_recovery_policy_share_model.fst
+)
+lemmas=(
+  proofs/fstar/redemption-lemmas/Vela_recovery_policy_redemption_lemmas.fst
+  proofs/fstar/share-lemmas/Vela_recovery_policy_share_lemmas.fst
+)
 for f in "${generated[@]}" "${model[@]}" "${lemmas[@]}"; do
   [[ -f $f ]] || { echo "missing $f" >&2; exit 1; }
 done
@@ -82,33 +109,49 @@ hax_lib_root=$(
   exit 1
 }
 
-fstar_args=(
-  --cmi
-  --cache_off
-  --warn_error -331
-  --z3rlimit 200
-  --z3version 4.13.3
-  --already_cached '+Prims+FStar+LowStar+C+Spec.Loops+TestLib'
-  --include "$hax_lib_root/proof-libs/fstar/core"
-  --include "$hax_lib_root/proof-libs/fstar/rust_primitives"
-  --include "$hax_lib_root/proofs/fstar/extraction"
-  --include proofs/fstar/extraction-driver
-  --include proofs/fstar/extraction-redemption
-  --include proofs/fstar/redemption-lemmas
-)
+check_group() {
+  local -a group=("$@")
+  local -a fstar_args=(
+    --cmi
+    --cache_off
+    --warn_error -331
+    --z3rlimit 200
+    --z3version 4.13.3
+    --already_cached '+Prims+FStar+LowStar+C+Spec.Loops+TestLib'
+    --include "$hax_lib_root/proof-libs/fstar/core"
+    --include "$hax_lib_root/proof-libs/fstar/rust_primitives"
+    --include "$hax_lib_root/proofs/fstar/extraction"
+  )
+  case "$1" in
+    *Share_store*)
+      fstar_args+=(--include proofs/fstar/extraction-recovery-share-driver
+                   --include proofs/fstar/extraction-share
+                   --include proofs/fstar/share-lemmas)
+      ;;
+    *)
+      fstar_args+=(--include proofs/fstar/extraction-driver
+                   --include proofs/fstar/extraction-redemption
+                   --include proofs/fstar/redemption-lemmas)
+      ;;
+  esac
+  for module in "${group[@]}"; do
+    echo "checking $module"
+    if [[ -x /usr/bin/time ]]; then
+      /usr/bin/time -f "$module: %M KB peak, %e s" fstar.exe "${fstar_args[@]}" "$module"
+    else
+      fstar.exe "${fstar_args[@]}" "$module"
+    fi
+  done
+}
+
 # One module at a time, each in its own process, so each stays within its
-# memory budget.
-for module in "${generated[@]}" "${model[@]}" "${lemmas[@]}"; do
-  echo "checking $module"
-  if [[ -x /usr/bin/time ]]; then
-    /usr/bin/time -f "$module: %M KB peak, %e s" fstar.exe "${fstar_args[@]}" "$module"
-  else
-    fstar.exe "${fstar_args[@]}" "$module"
-  fi
-done
+# memory budget. The two families need different partial roots, so they are
+# checked in separate include groups.
+check_group "${generated[0]}" "${model[0]}" "${lemmas[0]}"
+check_group "${generated[1]}" "${generated[2]}" "${model[1]}" "${lemmas[1]}"
 
 # Each mutant of the plans and classifiers must break the proof.
 "$proof_root/verify-fstar-recovery-executors-mutations.sh"
 
-echo "recovery executors: for every starting database, every starting grant and every failing statement, each enrollment executor's observation reports exactly what its statements did to users, devices and the grant store, and a failed run changes nothing"
+echo "recovery executors: for every starting database, every starting grant, every starting users row and every failing statement, each enrollment and recovery-share executor's observation reports exactly what its statements did, and a failed run changes nothing"
 sha256sum "${generated[@]}" "${model[@]}" "${lemmas[@]}" src/redemption_store.rs src/redemption_model.rs

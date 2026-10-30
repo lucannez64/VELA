@@ -10,6 +10,7 @@ pub mod driver;
 pub mod possession_driver;
 pub mod redemption_store;
 pub mod recovery_share_driver;
+pub mod share_store;
 pub mod webauthn_driver;
 
 #[cfg(not(hax))]

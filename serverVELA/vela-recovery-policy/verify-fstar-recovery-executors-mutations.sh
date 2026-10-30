@@ -1,39 +1,59 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Mutation checks for the F-1 recovered-device-enrollment proofs. Run after
+# Mutation checks for the F-1 recovery executor proofs. Run after
 # verify-fstar-recovery-executors.sh (it reuses that gate's extraction); that
 # gate calls this script last.
 #
-# Each mutant is a copy of the extracted `Vela_recovery_policy.Redemption_store`
-# under /tmp with one change, equal to a one-line change in
-# `src/redemption_store.rs`; the checked-in extraction is never modified. The
-# checked-in lemma module must FAIL against every mutant, and the named theorem
-# must be among those that fail.
+# Each mutant is a copy of one extracted store module
+# (`Vela_recovery_policy.Redemption_store` or
+# `Vela_recovery_policy.Share_store`) under /tmp with one change, equal to a
+# one-line change in its Rust source; the checked-in extraction is never
+# modified. The checked-in lemma module must FAIL against every mutant, and the
+# named theorem must be among those that fail.
 #
+#   redemption family (`src/redemption_store.rs`)
 #   classify-match     classify_take reports a match for any consumed grant
 #   classify-error     classify_insert maps a failed insert to Inserted
 #   classify-rows      classify_insert maps a zero-row insert to Inserted
 #   classify-authority classify_authority maps a missing commitment to StillRotating
 #   plan-guard         plan_insert_device always uses the commitment guard
 #   plan-epoch         plan_insert_device writes a fixed epoch
+#
+#   recovery-share family (`src/share_store.rs`)
+#   share-classify-stage-rows  a zero-row stage update reports Staged
+#   share-classify-account     a non-matching active share reports a match
+#   share-classify-read        a missing share reports present
+#   share-classify-delete-rows a zero-row delete reports Deleted
+#   share-plan-epoch           the stage update writes a fixed epoch
+#   share-plan-split           the promote update uses the user id as split id
 
 proof_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cd "$proof_root"
 want=${1:-all}
 
-store=$proof_root/proofs/fstar/extraction-redemption/Vela_recovery_policy.Redemption_store.fst
-model_dir=$proof_root/proofs/fstar/redemption-lemmas
-lemmas=$model_dir/Vela_recovery_policy_redemption_lemmas.fst
+redemption_store=$proof_root/proofs/fstar/extraction-redemption/Vela_recovery_policy.Redemption_store.fst
+redemption_lemmas=$proof_root/proofs/fstar/redemption-lemmas/Vela_recovery_policy_redemption_lemmas.fst
+share_store=$proof_root/proofs/fstar/extraction-share/Vela_recovery_policy.Share_store.fst
+share_lemmas=$proof_root/proofs/fstar/share-lemmas/Vela_recovery_policy_share_lemmas.fst
+[[ -f $redemption_store && -f $redemption_lemmas ]] || {
+  echo "run verify-fstar-recovery-executors.sh first" >&2; exit 1
+}
+[[ -f $share_store && -f $share_lemmas ]] || {
+  echo "run verify-fstar-recovery-executors.sh first" >&2; exit 1
+}
 mut=/tmp/vela-recovery-executor-mut
-[[ -f $store && -f $lemmas ]] || { echo "run verify-fstar-recovery-executors.sh first" >&2; exit 1; }
 
 hax_lib_root=$(
   cargo metadata --format-version 1 |
     jq -r '.packages[] | select(.name == "hax-lib") | .manifest_path | sub("/Cargo.toml$"; "")'
 )
 
-mutants=(classify-match classify-error classify-rows classify-authority plan-guard plan-epoch)
+mutants=(
+  classify-match classify-error classify-rows classify-authority plan-guard plan-epoch
+  share-classify-stage-rows share-classify-account share-classify-read
+  share-classify-delete-rows share-plan-epoch share-plan-split
+)
 declare -A expect=(
   [classify-match]=take_grant_is_honest
   [classify-error]=insert_device_is_honest
@@ -41,17 +61,45 @@ declare -A expect=(
   [classify-authority]=authority_observation_is_honest
   [plan-guard]=insert_device_is_honest
   [plan-epoch]=insert_device_is_honest
+  [share-classify-stage-rows]=stage_share_is_honest
+  [share-classify-account]=stage_account_is_honest
+  [share-classify-read]=read_share_is_honest
+  [share-classify-delete-rows]=delete_share_is_honest
+  [share-plan-epoch]=stage_share_is_honest
+  [share-plan-split]=promote_staged_split_is_honest
 )
 
 rm -rf "$mut"
 failures=0
 for name in "${mutants[@]}"; do
   [[ $want == all || $want == "$name" ]] || continue
+  case $name in
+    share-*)
+      store=$share_store
+      lemmas=$share_lemmas
+      lemma_dir=$proof_root/proofs/fstar/share-lemmas
+      store_module=Vela_recovery_policy.Share_store.fst
+      includes=(
+        --include "$proof_root/proofs/fstar/extraction-recovery-share-driver"
+        --include "$proof_root/proofs/fstar/extraction-share"
+      )
+      ;;
+    *)
+      store=$redemption_store
+      lemmas=$redemption_lemmas
+      lemma_dir=$proof_root/proofs/fstar/redemption-lemmas
+      store_module=Vela_recovery_policy.Redemption_store.fst
+      includes=(
+        --include "$proof_root/proofs/fstar/extraction-driver"
+        --include "$proof_root/proofs/fstar/extraction-redemption"
+      )
+      ;;
+  esac
   d=$mut/$name
   mkdir -p "$d/store" "$d/lemmas"
-  cp "$store" "$d/store/"
-  cp "$model_dir"/*.fst "$d/lemmas/"
-  python3 - "$name" "$d/store/Vela_recovery_policy.Redemption_store.fst" <<'PY'
+  cp "$store" "$d/store/$store_module"
+  cp "$lemma_dir"/*.fst "$d/lemmas/"
+  python3 - "$name" "$d/store/$store_module" <<'PY'
 import sys, pathlib
 name, path = sys.argv[1], pathlib.Path(sys.argv[2])
 text = path.read_text()
@@ -60,6 +108,10 @@ def once(old, new):
     if text.count(old) != 1:
         sys.exit(f'{name}: expected exactly one match for {old!r}, found {text.count(old)}')
     text = text.replace(old, new)
+def region(start_marker, end_marker):
+    start = text.index(start_marker)
+    end = text.index(end_marker)
+    return start, text[start:end], end
 if name == 'classify-match':
     once('''        grant.f_key_epoch =. preflight.f_key_epoch && grant.f_possession =. preflight.f_possession &&
         grant.f_credential_id =. preflight.f_credential_id''',
@@ -70,9 +122,7 @@ elif name == 'classify-error':
          '''    | WriteOutcome_Failed  ->
       Vela_recovery_policy.Driver.InsertObservation_Inserted''')
 elif name == 'classify-rows':
-    start = text.index('let classify_insert')
-    end = text.index('/// The live authority recheck')
-    body = text[start:end]
+    start, body, end = region('let classify_insert', '/// The live authority recheck')
     old = '''      if rows >. mk_u64 0
       then
         Vela_recovery_policy.Driver.InsertObservation_Inserted
@@ -84,31 +134,59 @@ elif name == 'classify-rows':
         Vela_recovery_policy.Driver.t_InsertObservation'''
     if body.count(old) != 1:
         sys.exit(f'{name}: classify_insert shape changed')
-    body2 = body.replace(old, '''      Vela_recovery_policy.Driver.InsertObservation_Inserted
+    text = text[:start] + body.replace(old, '''      Vela_recovery_policy.Driver.InsertObservation_Inserted
       <:
-      Vela_recovery_policy.Driver.t_InsertObservation''')
-    text = text[:start] + body2 + text[end:]
+      Vela_recovery_policy.Driver.t_InsertObservation''') + text[end:]
 elif name == 'classify-authority':
     once('''      | Core_models.Option.Option_None  ->
         Vela_recovery_policy.Driver.AuthorityRecheckObservation_CommitmentRevoked''',
          '''      | Core_models.Option.Option_None  ->
         Vela_recovery_policy.Driver.AuthorityRecheckObservation_StillRotating''')
 elif name == 'plan-guard':
-    start = text.index('let plan_insert_device')
-    end = text.index('/// `recheck_authority`')
-    body = text[start:end]
-    old = 'f_guard = guard'
-    if body.count(old) != 1:
+    start, body, end = region('let plan_insert_device', '/// `recheck_authority`')
+    if body.count('f_guard = guard') != 1:
         sys.exit(f'{name}: guard field not found')
-    text = text[:start] + body.replace(old, 'f_guard = GrantGuard_Commitment') + text[end:]
+    text = text[:start] + body.replace('f_guard = guard', 'f_guard = GrantGuard_Commitment') + text[end:]
 elif name == 'plan-epoch':
-    start = text.index('let plan_insert_device')
-    end = text.index('/// `recheck_authority`')
-    body = text[start:end]
-    old = 'f_epoch = epoch'
-    if body.count(old) != 1:
+    start, body, end = region('let plan_insert_device', '/// `recheck_authority`')
+    if body.count('f_epoch = epoch') != 1:
         sys.exit(f'{name}: epoch field not found')
-    text = text[:start] + body.replace(old, 'f_epoch = mk_i64 1') + text[end:]
+    text = text[:start] + body.replace('f_epoch = epoch', 'f_epoch = mk_i64 1') + text[end:]
+elif name == 'share-classify-stage-rows':
+    start, body, end = region('let classify_stage_update', '/// `stage_query_account`')
+    if body.count('if rows =. mk_u64 1') != 1:
+        sys.exit(f'{name}: stage row check not found')
+    text = text[:start] + body.replace('if rows =. mk_u64 1', 'if true') + text[end:]
+elif name == 'share-classify-account':
+    start, body, end = region('let classify_stage_account', '/// `promote_staged_split`')
+    start_at = body.index('      Vela_recovery_policy.Recovery_share_driver.f_active_share_matches')
+    stop_at = body.index('      Vela_recovery_policy.Recovery_share_driver.f_active_split_matches')
+    replacement = '      Vela_recovery_policy.Recovery_share_driver.f_active_share_matches = true;\n'
+    text = text[:start] + body[:start_at] + replacement + body[stop_at:] + text[end:]
+elif name == 'share-classify-read':
+    start = text.index('let classify_read_share')
+    body = text[start:]
+    old = 'Core_models.Option.impl__is_some #Alloc.String.t_String row.f_share'
+    if body.count(old) != 1:
+        sys.exit(f'{name}: share presence check not found')
+    text = text[:start] + body.replace(old, 'true')
+elif name == 'share-classify-delete-rows':
+    start, body, end = region('let classify_delete_update', '/// `read_share`')
+    if body.count('if rows =. mk_u64 1') != 1:
+        sys.exit(f'{name}: delete row check not found')
+    text = text[:start] + body.replace('if rows =. mk_u64 1', 'if true') + text[end:]
+elif name == 'share-plan-epoch':
+    start, body, end = region('let plan_stage_share', '/// `FinalizeShareIo::promote_staged_split`')
+    if body.count('f_epoch = epoch') != 1:
+        sys.exit(f'{name}: stage epoch field not found')
+    text = text[:start] + body.replace('f_epoch = epoch', 'f_epoch = mk_i64 1') + text[end:]
+elif name == 'share-plan-split':
+    start, body, end = region('let plan_promote_staged_split', '/// `DeleteShareIo::delete_share`')
+    if body.count('f_split_id = split_id') != 1:
+        sys.exit(f'{name}: promote split field not found')
+    text = text[:start] + body.replace('f_split_id = split_id', 'f_split_id = user') + text[end:]
+else:
+    sys.exit(f'{name}: unknown mutant')
 path.write_text(text)
 PY
   set +e
@@ -117,9 +195,9 @@ PY
     --include "$hax_lib_root/proof-libs/fstar/core" \
     --include "$hax_lib_root/proof-libs/fstar/rust_primitives" \
     --include "$hax_lib_root/proofs/fstar/extraction" \
-    --include "$proof_root/proofs/fstar/extraction-driver" \
+    "${includes[@]}" \
     --include "$d/store" --include "$d/lemmas" \
-    "$d/lemmas/Vela_recovery_policy_redemption_lemmas.fst" 2>&1)
+    "$d/lemmas/$(basename "$lemmas")" 2>&1)
   status=$?
   set -e
   if (( status == 0 )); then
@@ -128,7 +206,7 @@ PY
     continue
   fi
   # Every theorem with an error; the expected one must be among them.
-  rejected=$(grep -oE 'Vela_recovery_policy_redemption_lemmas\.fst\(([0-9]+),' <<<"$out" | grep -oE '[0-9]+' | sort -un |
+  rejected=$(grep -oE "$(basename "$lemmas" | sed 's/\./\\./g')\(([0-9]+)," <<<"$out" | grep -oE '[0-9]+' | sort -un |
     while read -r line; do head -n "$line" "$lemmas" | grep -oE '^let [a-z_0-9]+' | tail -n1 | cut -d' ' -f2; done | sort -u | tr '\n' ' ')
   if [[ " $rejected " != *" ${expect[$name]} "* ]]; then
     echo "mutant $name: rejected at [${rejected% }], expected ${expect[$name]}:" >&2
