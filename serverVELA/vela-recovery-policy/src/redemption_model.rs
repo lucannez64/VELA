@@ -20,6 +20,14 @@
 use std::collections::BTreeMap;
 
 use crate::driver::{AuthorityRecheckObservation, ConsumptionObservation, InsertObservation};
+use crate::possession_driver::{
+    AttemptConsumptionObservation, ChallengeStoreObservation, CommitmentObservation,
+    GrantStoreObservation, InitiateObservation, ProofAccountObservation,
+};
+use crate::possession_store::{
+    self, EnrollmentGrantView, InitiateRowView, PossessionStmt, ProofAccountRowView,
+    ProofAttemptTake, ProofAttemptView,
+};
 use crate::recovery_share_driver::{
     DeleteUpdateObservation, FinalizeAccountObservation, FinalizeUpdateObservation, ReadObservation,
     StageAccountObservation, StageUpdateObservation,
@@ -535,6 +543,237 @@ pub fn read_share(db: &ShareDb, user: &str, failed: bool) -> Option<ReadObservat
     Some(share_store::classify_read_share(row))
 }
 
+// ── Possession-proof model ─────────────────────────────────────────────────
+
+/// The modelled `users` row for the possession executors.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PossessionUserRow {
+    /// `recovery_share` is present and non-NULL.
+    pub share: bool,
+    /// `recovery_auth_hash`, already decoded.
+    pub commitment: CommitmentObservation,
+    /// `key_epoch` as stored; `None` when the column is absent.
+    pub epoch: Option<i64>,
+    /// `rekey_state` is set.
+    pub rekey: bool,
+}
+
+/// One challenge-slot value: a decoded attempt, or bytes that do not decode.
+/// Absence is the second map's missing key.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AttemptCell {
+    Valid(ProofAttemptView),
+    Undecodable,
+}
+
+/// The modelled state: the `users` row, the single-use proof-attempt slots and
+/// the enrollment-grant store.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PossessionDb {
+    pub users: BTreeMap<String, PossessionUserRow>,
+    pub challenges: BTreeMap<String, AttemptCell>,
+    pub grants: BTreeMap<String, EnrollmentGrantView>,
+}
+
+fn possession_user<'a>(db: &'a PossessionDb, user: &str) -> Option<&'a PossessionUserRow> {
+    db.users.get(user)
+}
+
+/// Whether the exact proof-slot key is occupied. F*: `slot_occupied`.
+pub fn slot_occupied(db: &PossessionDb, key: &str) -> bool {
+    db.challenges.contains_key(key)
+}
+
+/// `InitiateProofIo::observe`'s account read. F*: `read_initiate_account`.
+pub fn read_initiate_account(
+    db: &PossessionDb,
+    stmt: &PossessionStmt,
+    failed: bool,
+) -> ReadOutcome<InitiateRowView> {
+    match stmt {
+        PossessionStmt::SelectInitiateAccount { user } if !failed => ReadOutcome::Row(
+            possession_user(db, user).map(|row| InitiateRowView {
+                share_present: row.share,
+                commitment: row.commitment,
+                key_epoch: row.epoch,
+                rotation_active: row.rekey,
+            }),
+        ),
+        _ => ReadOutcome::Failed,
+    }
+}
+
+/// `InitiateProofIo::observe`'s slot probe. F*: `probe_slot`.
+pub fn probe_slot(
+    db: &PossessionDb,
+    stmt: &PossessionStmt,
+    failed: bool,
+) -> ReadOutcome<bool> {
+    match stmt {
+        PossessionStmt::ProofSlotExists { key } if !failed => {
+            ReadOutcome::Row(Some(slot_occupied(db, key)))
+        }
+        _ => ReadOutcome::Failed,
+    }
+}
+
+/// `InitiateProofIo::observe`. F*: `initiate_observation`.
+pub fn initiate_observation(
+    db: &PossessionDb,
+    user: &str,
+    key: &str,
+    ttl_secs: u64,
+    sql_fault: Option<usize>,
+    kv_fault: Option<usize>,
+) -> Option<(InitiateObservation, PossessionDb)> {
+    let row = match read_initiate_account(
+        db,
+        &possession_store::plan_initiate_account(user.to_string()),
+        faulted(sql_fault, 0),
+    ) {
+        ReadOutcome::Row(row) => row,
+        ReadOutcome::Failed => return None,
+    };
+    let occupied = match probe_slot(
+        db,
+        &possession_store::plan_proof_slot(key.to_string()),
+        faulted(kv_fault, 0),
+    ) {
+        ReadOutcome::Row(Some(occupied)) => occupied,
+        _ => return None,
+    };
+    Some((
+        possession_store::classify_initiate(row, occupied, ttl_secs),
+        db.clone(),
+    ))
+}
+
+/// `InitiateProofIo::observe`'s epoch side channel. F*: `initiate_epoch_of`.
+pub fn initiate_epoch_of(
+    db: &PossessionDb,
+    user: &str,
+    failed: bool,
+) -> i64 {
+    let row = match read_initiate_account(
+        db,
+        &possession_store::plan_initiate_account(user.to_string()),
+        failed,
+    ) {
+        ReadOutcome::Row(row) => row,
+        ReadOutcome::Failed => None,
+    };
+    possession_store::initiate_epoch(&row)
+}
+
+/// `InitiateProofIo::store_challenge`. F*: `store_challenge`.
+pub fn store_challenge(
+    db: &PossessionDb,
+    key: &str,
+    value: &str,
+    attempt: &ProofAttemptView,
+    ttl_secs: u64,
+    kv_fault: Option<usize>,
+) -> Option<(ChallengeStoreObservation, PossessionDb)> {
+    match possession_store::plan_store_challenge(
+        key.to_string(),
+        value.to_string(),
+        attempt.clone(),
+        ttl_secs,
+    ) {
+        PossessionStmt::StoreProofChallenge { key, attempt, .. } => {
+            if faulted(kv_fault, 0) {
+                return None;
+            }
+            let mut next = db.clone();
+            if slot_occupied(db, &key) {
+                Some((possession_store::classify_store_challenge(false), next))
+            } else {
+                next.challenges.insert(key, AttemptCell::Valid(attempt));
+                Some((possession_store::classify_store_challenge(true), next))
+            }
+        }
+        _ => None,
+    }
+}
+
+/// `RecoverProofIo::consume_attempt`. F*: `take_attempt`.
+pub fn take_attempt(
+    db: &PossessionDb,
+    key: &str,
+    user: &str,
+    attempt: &str,
+    kv_fault: Option<usize>,
+) -> Option<(AttemptConsumptionObservation, PossessionDb)> {
+    match possession_store::plan_take_attempt(key.to_string()) {
+        PossessionStmt::TakeProofAttempt { key } => {
+            if faulted(kv_fault, 0) {
+                return None;
+            }
+            let mut next = db.clone();
+            let taken = match db.challenges.get(&key) {
+                None => ProofAttemptTake::Missing,
+                Some(AttemptCell::Undecodable) => ProofAttemptTake::Corrupt,
+                Some(AttemptCell::Valid(state)) => ProofAttemptTake::Present(state.clone()),
+            };
+            next.challenges.remove(&key);
+            Some((
+                possession_store::classify_attempt(&taken, &user.to_string(), &attempt.to_string()),
+                next,
+            ))
+        }
+        _ => None,
+    }
+}
+
+/// `RecoverProofIo::query_account`. F*: `proof_account`.
+pub fn proof_account(
+    db: &PossessionDb,
+    user: &str,
+    sql_fault: Option<usize>,
+) -> Option<ProofAccountObservation> {
+    match possession_store::plan_proof_account(user.to_string()) {
+        PossessionStmt::SelectProofAccount { user } => {
+            if faulted(sql_fault, 0) {
+                return None;
+            }
+            let row = possession_user(db, &user).map(|row| ProofAccountRowView {
+                commitment: row.commitment,
+                stored_epoch: row.epoch,
+                rotation_active: row.rekey,
+            });
+            Some(possession_store::classify_proof_account(row))
+        }
+        _ => None,
+    }
+}
+
+/// `RecoverProofIo::issue_grant`. F*: `issue_grant`.
+pub fn issue_grant(
+    db: &PossessionDb,
+    key: &str,
+    value: &str,
+    grant: &EnrollmentGrantView,
+    ttl_secs: u64,
+    kv_fault: Option<usize>,
+) -> (GrantStoreObservation, PossessionDb) {
+    match possession_store::plan_issue_grant(
+        key.to_string(),
+        value.to_string(),
+        grant.clone(),
+        ttl_secs,
+    ) {
+        PossessionStmt::PutEnrollmentGrant { key, grant, .. } => {
+            if faulted(kv_fault, 0) {
+                return (possession_store::classify_grant_store(false), db.clone());
+            }
+            let mut next = db.clone();
+            next.grants.insert(key, grant);
+            (possession_store::classify_grant_store(true), next)
+        }
+        _ => (possession_store::classify_grant_store(false), db.clone()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -695,5 +934,106 @@ mod tests {
         let observation = stage_account(&stored, "u", "sh", "sp", false).unwrap();
         assert!(observation.account_present && observation.active_share_matches);
         assert!(!observation.active_split_matches);
+    }
+
+    fn possession_row(
+        share: bool,
+        commitment: CommitmentObservation,
+        epoch: Option<i64>,
+        rekey: bool,
+    ) -> PossessionUserRow {
+        PossessionUserRow { share, commitment, epoch, rekey }
+    }
+
+    /// The F* lemmas `vector_possession_*` prove the same runs.
+    #[test]
+    fn shared_possession_vectors() {
+        let attempt = ProofAttemptView {
+            user: s("u"),
+            attempt: s("a"),
+            key_epoch: 7,
+        };
+        let mut pre = PossessionDb::default();
+        pre.users.insert(
+            s("u"),
+            possession_row(
+                true,
+                CommitmentObservation::Present { len: 32 },
+                Some(7),
+                false,
+            ),
+        );
+
+        // vector_possession_initiate: the row and the free slot are observed.
+        let (obs, post) = initiate_observation(&pre, "u", "slot", 300, None, None).unwrap();
+        assert!(obs.account_present && obs.share_present && obs.attempt_id_fresh);
+        assert_eq!(obs.commitment, CommitmentObservation::Present { len: 32 });
+        assert_eq!(obs.ttl_secs, 300);
+        assert_eq!(post, pre);
+        // vector_possession_initiate_absent: no row, still a fresh slot.
+        let (obs, post) = initiate_observation(&pre, "missing", "slot", 300, None, None).unwrap();
+        assert!(!obs.account_present && obs.attempt_id_fresh);
+        assert_eq!(
+            obs.commitment,
+            CommitmentObservation::Missing
+        );
+        assert_eq!(post, pre);
+        // vector_possession_epoch: the observed epoch is the row's.
+        assert_eq!(initiate_epoch_of(&pre, "u", false), 7);
+        assert_eq!(initiate_epoch_of(&pre, "missing", false), 1);
+
+        // vector_possession_store: the free slot takes the drawn challenge.
+        let (obs, stored) =
+            store_challenge(&pre, "slot", "{\"k\":7}", &attempt, 300, None).unwrap();
+        assert_eq!(obs, ChallengeStoreObservation::Stored);
+        assert_eq!(
+            stored.challenges.get("slot"),
+            Some(&AttemptCell::Valid(attempt.clone()))
+        );
+        // vector_possession_store_lost: a second writer does not replace it.
+        let (obs, lost) =
+            store_challenge(&stored, "slot", "{\"k\":8}", &attempt, 300, None).unwrap();
+        assert_eq!(obs, ChallengeStoreObservation::Lost);
+        assert_eq!(lost, stored);
+
+        // vector_possession_take: the exact state is removed and matches.
+        let (obs, taken) = take_attempt(&stored, "slot", "u", "a", None).unwrap();
+        assert_eq!(
+            obs,
+            AttemptConsumptionObservation::Present {
+                user_matches: true,
+                attempt_matches: true,
+                key_epoch: 7,
+            }
+        );
+        assert!(taken.challenges.is_empty());
+        // vector_possession_take_missing: nothing matched.
+        let (obs, post) = take_attempt(&taken, "slot", "u", "a", None).unwrap();
+        assert_eq!(obs, AttemptConsumptionObservation::Missing);
+        assert_eq!(post, taken);
+        // vector_possession_take_corrupt still consumed the slot.
+        let mut corrupt = pre.clone();
+        corrupt.challenges.insert(s("slot"), AttemptCell::Undecodable);
+        let (obs, post) = take_attempt(&corrupt, "slot", "u", "a", None).unwrap();
+        assert_eq!(obs, AttemptConsumptionObservation::Corrupt);
+        assert!(post.challenges.is_empty());
+
+        // vector_possession_account: the live row's fields.
+        let obs = proof_account(&pre, "u", None).unwrap();
+        assert!(obs.account_present && obs.account_epoch_active);
+        assert_eq!(obs.commitment, CommitmentObservation::Present { len: 32 });
+        assert_eq!(obs.stored_epoch, Some(7));
+        let obs = proof_account(&pre, "missing", None).unwrap();
+        assert!(!obs.account_present && !obs.account_epoch_active);
+
+        // vector_possession_grant: the grant lands at its key.
+        let grant = EnrollmentGrantView { key_epoch: 7 };
+        let (obs, issued) = issue_grant(&pre, "g", "{\"key_epoch\":7}", &grant, 600, None);
+        assert_eq!(obs, GrantStoreObservation::Stored);
+        assert_eq!(issued.grants.get("g"), Some(&grant));
+        // vector_possession_grant_failed: a store error changes nothing.
+        let (obs, post) = issue_grant(&pre, "g", "{\"key_epoch\":7}", &grant, 600, Some(0));
+        assert_eq!(obs, GrantStoreObservation::Failed);
+        assert_eq!(post, pre);
     }
 }

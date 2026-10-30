@@ -27,6 +27,12 @@ set -euo pipefail
 #   share-classify-delete-rows a zero-row delete reports Deleted
 #   share-plan-epoch           the stage update writes a fixed epoch
 #   share-plan-split           the promote update uses the user id as split id
+#
+#   possession family (`src/possession_store.rs`)
+#   possession-classify-store   a lost challenge race reports Stored
+#   possession-classify-attempt a corrupt attempt reports Missing
+#   possession-classify-grant   a failed grant store reports Stored
+#   possession-plan-key         the challenge is stored under the value, not its key
 
 proof_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cd "$proof_root"
@@ -36,10 +42,15 @@ redemption_store=$proof_root/proofs/fstar/extraction-redemption/Vela_recovery_po
 redemption_lemmas=$proof_root/proofs/fstar/redemption-lemmas/Vela_recovery_policy_redemption_lemmas.fst
 share_store=$proof_root/proofs/fstar/extraction-share/Vela_recovery_policy.Share_store.fst
 share_lemmas=$proof_root/proofs/fstar/share-lemmas/Vela_recovery_policy_share_lemmas.fst
+possession_store=$proof_root/proofs/fstar/extraction-possession/Vela_recovery_policy.Possession_store.fst
+possession_lemmas=$proof_root/proofs/fstar/possession-lemmas/Vela_recovery_policy_possession_lemmas.fst
 [[ -f $redemption_store && -f $redemption_lemmas ]] || {
   echo "run verify-fstar-recovery-executors.sh first" >&2; exit 1
 }
 [[ -f $share_store && -f $share_lemmas ]] || {
+  echo "run verify-fstar-recovery-executors.sh first" >&2; exit 1
+}
+[[ -f $possession_store && -f $possession_lemmas ]] || {
   echo "run verify-fstar-recovery-executors.sh first" >&2; exit 1
 }
 mut=/tmp/vela-recovery-executor-mut
@@ -53,6 +64,8 @@ mutants=(
   classify-match classify-error classify-rows classify-authority plan-guard plan-epoch
   share-classify-stage-rows share-classify-account share-classify-read
   share-classify-delete-rows share-plan-epoch share-plan-split
+  possession-classify-store possession-classify-attempt
+  possession-classify-grant possession-plan-key
 )
 declare -A expect=(
   [classify-match]=take_grant_is_honest
@@ -67,6 +80,10 @@ declare -A expect=(
   [share-classify-delete-rows]=delete_share_is_honest
   [share-plan-epoch]=stage_share_is_honest
   [share-plan-split]=promote_staged_split_is_honest
+  [possession-classify-store]=store_challenge_is_honest
+  [possession-classify-attempt]=attempt_consumption_is_honest
+  [possession-classify-grant]=grant_store_is_honest
+  [possession-plan-key]=store_challenge_is_honest
 )
 
 rm -rf "$mut"
@@ -82,6 +99,15 @@ for name in "${mutants[@]}"; do
       includes=(
         --include "$proof_root/proofs/fstar/extraction-recovery-share-driver"
         --include "$proof_root/proofs/fstar/extraction-share"
+      )
+      ;;
+    possession-*)
+      store=$possession_store
+      lemmas=$possession_lemmas
+      lemma_dir=$proof_root/proofs/fstar/possession-lemmas
+      store_module=Vela_recovery_policy.Possession_store.fst
+      includes=(
+        --include "$proof_root/proofs/fstar/extraction-possession-driver"
       )
       ;;
     *)
@@ -185,6 +211,47 @@ elif name == 'share-plan-split':
     if body.count('f_split_id = split_id') != 1:
         sys.exit(f'{name}: promote split field not found')
     text = text[:start] + body.replace('f_split_id = split_id', 'f_split_id = user') + text[end:]
+elif name == 'possession-classify-store':
+    start, body, end = region('let classify_store_challenge', '/// `RecoverProofIo::consume_attempt`: the removed state')
+    if body.count('ChallengeStoreObservation_Stored') != 1 or body.count('ChallengeStoreObservation_Lost') != 1:
+        sys.exit(f'{name}: challenge classifier shape changed')
+    mutated = body.replace('ChallengeStoreObservation_Stored', 'ChallengeStoreObservation_TMP')
+    mutated = mutated.replace('ChallengeStoreObservation_Lost', 'ChallengeStoreObservation_Stored')
+    mutated = mutated.replace('ChallengeStoreObservation_TMP', 'ChallengeStoreObservation_Lost')
+    text = text[:start] + mutated + text[end:]
+elif name == 'possession-classify-attempt':
+    start, body, end = region('let classify_attempt', '/// `RecoverProofIo::query_account`: every field is the live row')
+    old = '''  | ProofAttemptTake_Corrupt  ->
+    Vela_recovery_policy.Possession_driver.AttemptConsumptionObservation_Corrupt'''
+    if body.count(old) != 1:
+        sys.exit(f'{name}: corrupt branch not found')
+    text = text[:start] + body.replace(old, '''  | ProofAttemptTake_Corrupt  ->
+    Vela_recovery_policy.Possession_driver.AttemptConsumptionObservation_Missing''') + text[end:]
+elif name == 'possession-classify-grant':
+    start = text.index('let classify_grant_store')
+    body = text[start:]
+    end = len(text)
+    old = '''  if stored
+  then
+    Vela_recovery_policy.Possession_driver.GrantStoreObservation_Stored
+    <:
+    Vela_recovery_policy.Possession_driver.t_GrantStoreObservation
+  else
+    Vela_recovery_policy.Possession_driver.GrantStoreObservation_Failed'''
+    if body.count(old) != 1:
+        sys.exit(f'{name}: grant classifier shape changed')
+    text = text[:start] + body.replace(old, '''  if stored
+  then
+    Vela_recovery_policy.Possession_driver.GrantStoreObservation_Stored
+    <:
+    Vela_recovery_policy.Possession_driver.t_GrantStoreObservation
+  else
+    Vela_recovery_policy.Possession_driver.GrantStoreObservation_Stored''') + text[end:]
+elif name == 'possession-plan-key':
+    start, body, end = region('let plan_store_challenge', '/// `RecoverProofIo::consume_attempt`: the atomic single-use take')
+    if body.count('f_key = key') != 1:
+        sys.exit(f'{name}: challenge key field not found')
+    text = text[:start] + body.replace('f_key = key', 'f_key = value') + text[end:]
 else:
     sys.exit(f'{name}: unknown mutant')
 path.write_text(text)

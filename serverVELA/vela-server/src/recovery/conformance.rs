@@ -20,7 +20,14 @@ use uuid::Uuid;
 use vela_recovery_policy::driver::{
     AuthorityRecheckObservation, ConsumptionObservation, InsertObservation, RedemptionInsertPermit,
 };
-use vela_recovery_policy::redemption_model::{self as model, Db as Model, DeviceRow, ShareDb, ShareUserRow, UserRow};
+use vela_recovery_policy::possession_driver::{
+    CommitmentObservation, ProofGrantPermit,
+};
+use vela_recovery_policy::possession_store::{EnrollmentGrantView, ProofAttemptView};
+use vela_recovery_policy::redemption_model::{
+    self as model, AttemptCell, Db as Model, DeviceRow, PossessionDb, PossessionUserRow, ShareDb,
+    ShareUserRow, UserRow,
+};
 use vela_recovery_policy::redemption_store::{self, GrantGuard, GrantView};
 use vela_recovery_policy::recovery_share_driver::{
     begin_share_lifecycle, ShareActorObservation, ShareEffect, ShareOperation,
@@ -100,6 +107,21 @@ impl<K: RecoveryKv> RecoveryKv for FaultyKv<K> {
     fn put(&mut self, key: &str, value: &[u8]) -> Result<()> {
         self.hit()?;
         self.inner.put(key, value)
+    }
+
+    fn exists(&mut self, key: &str) -> Result<bool> {
+        self.hit()?;
+        self.inner.exists(key)
+    }
+
+    fn set_nx(&mut self, key: &str, value: &[u8], ttl_secs: u64) -> Result<bool> {
+        self.hit()?;
+        self.inner.set_nx(key, value, ttl_secs)
+    }
+
+    fn set_ex(&mut self, key: &str, value: &[u8], ttl_secs: u64) -> Result<()> {
+        self.hit()?;
+        self.inner.set_ex(key, value, ttl_secs)
     }
 }
 
@@ -1038,6 +1060,454 @@ async fn share_read_matches_the_store_model() {
             }
             assert_eq!(io.error_is_set(), fault.is_some(), "{case}");
             counts.case(fault);
+        }
+    }
+    assert!(counts.states > 0 && counts.cases > 0 && counts.faulted > 0);
+}
+
+// ── Possession executor conformance ────────────────────────────────────────
+
+fn possession_commitment(value: Option<&str>) -> CommitmentObservation {
+    match value {
+        Some(text) => match crate::db::decode_b64(text) {
+            Ok(bytes) => CommitmentObservation::Present { len: bytes.len() },
+            Err(_) => CommitmentObservation::Corrupt,
+        },
+        None => CommitmentObservation::Missing,
+    }
+}
+
+async fn snapshot_possession(
+    db: &TursoDb,
+    store: &crate::store::Store,
+    slots: &[String],
+    grant_keys: &[String],
+) -> PossessionDb {
+    let mut state = PossessionDb::default();
+    for row in db
+        .query(
+            "SELECT id, key_epoch, rekey_state, recovery_share, recovery_auth_hash FROM users",
+            vec![],
+        )
+        .await
+        .unwrap()
+    {
+        state.users.insert(
+            text(&row, 0),
+            PossessionUserRow {
+                share: row.text(3).is_some(),
+                commitment: possession_commitment(row.text(4)),
+                epoch: row.i64(1),
+                rekey: row.text(2).is_some(),
+            },
+        );
+    }
+    for key in slots {
+        if let Some(bytes) = store.get(key).unwrap() {
+            state.challenges.insert(
+                key.clone(),
+                match serde_json::from_slice::<super::possess::PossessionProofState>(&bytes) {
+                    Ok(envelope) => AttemptCell::Valid(ProofAttemptView {
+                        user: envelope.user_id.to_string(),
+                        attempt: envelope.recovery_id.to_string(),
+                        key_epoch: envelope.key_epoch,
+                    }),
+                    Err(_) => AttemptCell::Undecodable,
+                },
+            );
+        }
+    }
+    for key in grant_keys {
+        if let Some(bytes) = store.get(key).unwrap() {
+            let grant = super::recover::decode_enroll_grant(&bytes).expect("stored grant decodes");
+            state
+                .grants
+                .insert(key.clone(), EnrollmentGrantView { key_epoch: grant.key_epoch });
+        }
+    }
+    state
+}
+
+async fn load_possession(
+    db: &TursoDb,
+    store: &crate::store::Store,
+    state: &PossessionDb,
+    slots: &[String],
+    grant_keys: &[String],
+) {
+    db.execute_batch("DELETE FROM users;").await.unwrap();
+    for (id, row) in &state.users {
+        db.execute(
+            "INSERT INTO users (id, created_at, key_epoch, rekey_state, recovery_share, recovery_auth_hash)
+             VALUES (?, 't', ?, ?, ?, ?)",
+            vec![
+                TursoValue::Text(id.clone()),
+                row.epoch.map(TursoValue::Integer).unwrap_or(TursoValue::Null),
+                if row.rekey {
+                    TursoValue::Text("rotating".into())
+                } else {
+                    TursoValue::Null
+                },
+                if row.share {
+                    TursoValue::Text("c2hhcmU=".into())
+                } else {
+                    TursoValue::Null
+                },
+                match row.commitment {
+                    CommitmentObservation::Missing => TursoValue::Null,
+                    CommitmentObservation::Present { .. } => TursoValue::Text("AQID".into()),
+                    CommitmentObservation::Corrupt => TursoValue::Text("!!!".into()),
+                },
+            ],
+        )
+        .await
+        .unwrap();
+    }
+    for key in slots {
+        store.del(key).unwrap();
+        if let Some(cell) = state.challenges.get(key) {
+            let bytes = match cell {
+                AttemptCell::Valid(view) => serde_json::to_vec(&super::possess::PossessionProofState {
+                    user_id: Uuid::parse_str(&view.user).expect("seeded user id"),
+                    recovery_id: Uuid::parse_str(&view.attempt).expect("seeded attempt id"),
+                    challenge: vec![9u8; 32],
+                    key_epoch: view.key_epoch,
+                })
+                .unwrap(),
+                AttemptCell::Undecodable => b"not a proof state".to_vec(),
+            };
+            store.set_ex(key, &bytes, 300).unwrap();
+        }
+    }
+    for key in grant_keys {
+        store.del(key).unwrap();
+        if let Some(grant) = state.grants.get(key) {
+            let bytes = serde_json::to_vec(&super::recover::RecoveryEnrollGrant::from_possession_proof(
+                grant.key_epoch,
+            ))
+            .unwrap();
+            store.set(key, &bytes).unwrap();
+        }
+    }
+}
+
+fn possession_user(
+    share: bool,
+    commitment: CommitmentObservation,
+    epoch: i64,
+    rekey: bool,
+) -> PossessionUserRow {
+    PossessionUserRow {
+        share,
+        commitment,
+        epoch: Some(epoch),
+        rekey,
+    }
+}
+
+fn possession_user_states() -> Vec<Option<PossessionUserRow>> {
+    vec![
+        None,
+        Some(possession_user(true, CommitmentObservation::Present { len: 3 }, 7, false)),
+        Some(possession_user(true, CommitmentObservation::Present { len: 3 }, 8, false)),
+        Some(possession_user(true, CommitmentObservation::Present { len: 3 }, 7, true)),
+        Some(possession_user(false, CommitmentObservation::Present { len: 3 }, 7, false)),
+        Some(possession_user(true, CommitmentObservation::Missing, 7, false)),
+        Some(possession_user(true, CommitmentObservation::Corrupt, 7, false)),
+    ]
+}
+
+fn possession_db(
+    user_row: &Option<PossessionUserRow>,
+    challenge: Option<AttemptCell>,
+    grant: Option<EnrollmentGrantView>,
+) -> PossessionDb {
+    let mut state = PossessionDb::default();
+    if let Some(row) = user_row {
+        state.users.insert(s(user(0)), row.clone());
+    }
+    if let Some(cell) = challenge {
+        state.challenges.insert(slot_key(), cell);
+    }
+    if let Some(value) = grant {
+        state.grants.insert(grant_key_text(), value);
+    }
+    state
+}
+
+fn slot_key() -> String {
+    format!("recovery:possession:{}:{}", s(user(0)), s(recovery_id()))
+}
+
+fn grant_key_text() -> String {
+    format!("recovery:enroll_grant:{}:{}", s(user(0)), s(grant(0)))
+}
+
+fn recovery_id() -> Uuid {
+    Uuid::from_u128(0x4000)
+}
+
+fn proof_attempt(user: &str, attempt: &str, epoch: i64) -> ProofAttemptView {
+    ProofAttemptView {
+        user: t(user),
+        attempt: t(attempt),
+        key_epoch: epoch,
+    }
+}
+
+#[tokio::test]
+async fn possession_initiation_matches_the_store_model() {
+    let db = temp_db().await;
+    let store = temp_store();
+    let mut counts = Counts::default();
+    let slots = vec![slot_key()];
+    let grants = vec![grant_key_text()];
+
+    for row_state in possession_user_states() {
+        counts.states += 1;
+        for challenge in [None, Some(AttemptCell::Valid(proof_attempt(&s(user(0)), &s(recovery_id()), 7)))] {
+            for sql_fault in faults(1) {
+                for kv_fault in faults(1) {
+                    let state = possession_db(&row_state, challenge.clone(), None);
+                    load_possession(&db, &store, &state, &slots, &grants).await;
+                    let mut io = super::possess::InitiateProofIo::for_conformance(
+                        Faulty::new(PoolSql(&db), sql_fault),
+                        FaultyKv::new(StoreKv(&store), kv_fault),
+                        user(0),
+                        recovery_id(),
+                        1,
+                    );
+                    let observed = io.observe().await;
+                    let expected = model::initiate_observation(
+                        &state,
+                        &s(user(0)),
+                        &slot_key(),
+                        300,
+                        sql_fault,
+                        kv_fault,
+                    );
+                    let case = format!(
+                        "possession initiate {state:?} sql {sql_fault:?} kv {kv_fault:?}"
+                    );
+                    assert_eq!(
+                        observed,
+                        expected.as_ref().map(|(obs, _)| *obs),
+                        "{case}"
+                    );
+                    assert_eq!(
+                        snapshot_possession(&db, &store, &slots, &grants).await,
+                        expected.clone().map(|(_, post)| post).unwrap_or_else(|| state.clone()),
+                        "{case}"
+                    );
+                    assert_eq!(io.error_is_set(), expected.is_none(), "{case}");
+                    assert_eq!(
+                        io.key_epoch(),
+                        model::initiate_epoch_of(&state, &s(user(0)), sql_fault.is_some()),
+                        "{case}"
+                    );
+                    counts.case(sql_fault.or(kv_fault));
+                }
+            }
+        }
+    }
+    assert!(counts.states > 0 && counts.cases > 0 && counts.faulted > 0);
+}
+
+#[tokio::test]
+async fn possession_challenge_store_matches_the_store_model() {
+    let db = temp_db().await;
+    let store = temp_store();
+    let mut counts = Counts::default();
+    let slots = vec![slot_key()];
+    let grants = vec![grant_key_text()];
+    let drawn = proof_attempt(&s(user(0)), &s(recovery_id()), 7);
+
+    for challenge in [
+        None,
+        Some(AttemptCell::Valid(proof_attempt(&s(user(0)), &s(recovery_id()), 7))),
+        Some(AttemptCell::Undecodable),
+    ] {
+        counts.states += 1;
+        for kv_fault in faults(1) {
+            let state = possession_db(&None, challenge.clone(), None);
+            load_possession(&db, &store, &state, &slots, &grants).await;
+            let mut io = super::possess::InitiateProofIo::for_conformance(
+                Faulty::new(PoolSql(&db), None),
+                FaultyKv::new(StoreKv(&store), kv_fault),
+                user(0),
+                recovery_id(),
+                7,
+            );
+            let observed = io.store_challenge().await;
+            let expected = model::store_challenge(
+                &state,
+                &slot_key(),
+                "{\"challenge\":[9,9,9]}",
+                &drawn,
+                300,
+                kv_fault,
+            );
+            let case = format!("possession challenge {state:?} kv {kv_fault:?}");
+            assert_eq!(observed, expected.as_ref().map(|(obs, _)| *obs), "{case}");
+            assert_eq!(
+                snapshot_possession(&db, &store, &slots, &grants).await,
+                expected.clone().map(|(_, post)| post).unwrap_or_else(|| state.clone()),
+                "{case}"
+            );
+            assert_eq!(io.error_is_set(), kv_fault.is_some(), "{case}");
+            assert_eq!(io.challenge().is_some(), kv_fault.is_none(), "{case}");
+            counts.case(kv_fault);
+        }
+    }
+    assert!(counts.states > 0 && counts.cases > 0 && counts.faulted > 0);
+}
+
+#[tokio::test]
+async fn possession_attempt_consumption_matches_the_store_model() {
+    let db = temp_db().await;
+    let store = temp_store();
+    let mut counts = Counts::default();
+    let slots = vec![slot_key()];
+    let grants = vec![grant_key_text()];
+
+    let challenges = [
+        None,
+        Some(AttemptCell::Valid(proof_attempt(&s(user(0)), &s(recovery_id()), 7))),
+        Some(AttemptCell::Valid(proof_attempt(&s(user(0)), &s(recovery_id()), 8))),
+        Some(AttemptCell::Valid(proof_attempt(&s(user(1)), &s(recovery_id()), 7))),
+        Some(AttemptCell::Valid(proof_attempt(
+            &s(user(0)),
+            &s(Uuid::from_u128(0x5000)),
+            7,
+        ))),
+        Some(AttemptCell::Undecodable),
+    ];
+    for challenge in challenges {
+        counts.states += 1;
+        for kv_fault in faults(1) {
+            let state = possession_db(&None, challenge.clone(), None);
+            load_possession(&db, &store, &state, &slots, &grants).await;
+            let mut io = super::possess::RecoverProofIo::for_conformance(
+                &store,
+                Faulty::new(PoolSql(&db), None),
+                FaultyKv::new(StoreKv(&store), kv_fault),
+                user(0),
+                recovery_id(),
+                "AAAA".into(),
+            );
+            let observed = io.consume_attempt().await;
+            let expected = model::take_attempt(
+                &state,
+                &slot_key(),
+                &s(user(0)),
+                &s(recovery_id()),
+                kv_fault,
+            );
+            let case = format!("possession attempt {state:?} kv {kv_fault:?}");
+            assert_eq!(observed, expected.as_ref().map(|(obs, _)| *obs), "{case}");
+            assert_eq!(
+                snapshot_possession(&db, &store, &slots, &grants).await,
+                expected.clone().map(|(_, post)| post).unwrap_or_else(|| state.clone()),
+                "{case}"
+            );
+            assert_eq!(io.error_is_set(), kv_fault.is_some(), "{case}");
+            assert_eq!(
+                io.attempt_decode_error_is_set(),
+                matches!(challenge, Some(AttemptCell::Undecodable)) && kv_fault.is_none(),
+                "{case}"
+            );
+            counts.case(kv_fault);
+        }
+    }
+    assert!(counts.states > 0 && counts.cases > 0 && counts.faulted > 0);
+}
+
+#[tokio::test]
+async fn possession_proof_account_matches_the_store_model() {
+    let db = temp_db().await;
+    let store = temp_store();
+    let mut counts = Counts::default();
+    let slots = vec![slot_key()];
+    let grants = vec![grant_key_text()];
+
+    for row_state in possession_user_states() {
+        counts.states += 1;
+        for sql_fault in faults(1) {
+            let state = possession_db(&row_state, None, None);
+            load_possession(&db, &store, &state, &slots, &grants).await;
+            let mut io = super::possess::RecoverProofIo::for_conformance(
+                &store,
+                Faulty::new(PoolSql(&db), sql_fault),
+                FaultyKv::new(StoreKv(&store), None),
+                user(0),
+                recovery_id(),
+                "AAAA".into(),
+            );
+            let observed = io.query_account().await;
+            let expected = model::proof_account(&state, &s(user(0)), sql_fault);
+            let case = format!("possession account {state:?} sql {sql_fault:?}");
+            assert_eq!(observed, expected, "{case}");
+            assert_eq!(io.error_is_set(), sql_fault.is_some(), "{case}");
+            assert_eq!(
+                io.commitment_bytes().is_some(),
+                expected.is_some_and(|obs| {
+                    obs.commitment == CommitmentObservation::Present { len: 3 }
+                }),
+                "{case}"
+            );
+            counts.case(sql_fault);
+        }
+    }
+    assert!(counts.states > 0 && counts.cases > 0 && counts.faulted > 0);
+}
+
+#[tokio::test]
+async fn possession_grant_store_matches_the_store_model() {
+    let db = temp_db().await;
+    let store = temp_store();
+    let mut counts = Counts::default();
+    let slots = vec![slot_key()];
+    let grants = vec![grant_key_text()];
+    let issued = EnrollmentGrantView { key_epoch: 7 };
+    let state = possession_db(&None, None, None);
+
+    for stored in [false, true] {
+        counts.states += 1;
+        for kv_fault in faults(1) {
+            let mut pre = state.clone();
+            if stored {
+                pre.grants
+                    .insert(grant_key_text(), EnrollmentGrantView { key_epoch: 3 });
+            }
+            load_possession(&db, &store, &pre, &slots, &grants).await;
+            let mut io = super::possess::RecoverProofIo::for_conformance(
+                &store,
+                Faulty::new(PoolSql(&db), None),
+                FaultyKv::new(StoreKv(&store), kv_fault),
+                user(0),
+                recovery_id(),
+                "AAAA".into(),
+            );
+            let observed = io
+                .issue_grant(ProofGrantPermit { epoch: 7 })
+                .await;
+            let (expected, post) = model::issue_grant(
+                &pre,
+                &grant_key_text(),
+                "",
+                &issued,
+                600,
+                kv_fault,
+            );
+            let case = format!("possession grant stored {stored} kv {kv_fault:?}");
+            assert_eq!(observed, Some(expected), "{case}");
+            assert_eq!(
+                snapshot_possession(&db, &store, &slots, &grants).await,
+                post,
+                "{case}"
+            );
+            assert_eq!(io.grant_error_is_set(), kv_fault.is_some(), "{case}");
+            counts.case(kv_fault);
         }
     }
     assert!(counts.states > 0 && counts.cases > 0 && counts.faulted > 0);
