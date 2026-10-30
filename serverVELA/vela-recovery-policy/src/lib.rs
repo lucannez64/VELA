@@ -8,8 +8,12 @@
 
 pub mod driver;
 pub mod possession_driver;
+pub mod redemption_store;
 pub mod recovery_share_driver;
 pub mod webauthn_driver;
+
+#[cfg(not(hax))]
+pub mod redemption_model;
 
 mod interpreter_support;
 pub mod possession_interpreter;

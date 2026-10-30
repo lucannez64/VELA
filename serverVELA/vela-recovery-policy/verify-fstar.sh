@@ -83,3 +83,7 @@ fstar.exe \
 
 # F-2 recovery-share handler-to-driver interpreter for all four handlers.
 "$proof_root/verify-fstar-recovery-share-interpreter.sh"
+
+# F-1 recovered-device enrollment executor honesty: the extracted plans and
+# classifiers of `EnrollDeviceIo` against the users/devices/grant store model.
+"$proof_root/verify-fstar-recovery-executors.sh"

@@ -23,9 +23,9 @@ use std::net::SocketAddr;
 use uuid::Uuid;
 use vela_recovery_policy::{
     driver::{
-        AuthorityRecheckObservation, ConsumedGrantObservation, ConsumptionObservation,
-        FinalPolicyObservation, InsertObservation, RedemptionEffect, RedemptionFailure,
-        RedemptionInsertPermit, RekeyObservation,
+        AuthorityRecheckObservation, ConsumptionObservation, FinalPolicyObservation,
+        InsertObservation, RedemptionEffect, RedemptionFailure, RedemptionInsertPermit,
+        RekeyObservation,
     },
     observed_recovery_epoch, plan_enrollment_preflight, EnrollmentAccountFacts,
     EnrollmentAccountObservation, EnrollmentGrantFacts, EnrollmentObservation,
@@ -38,6 +38,12 @@ use crate::{
     net, rate_limit,
     sqldb::{Db as _, TursoValue},
     state::AppState,
+};
+use vela_recovery_policy::redemption_store::{self, GrantGuard, GrantTake, GrantView, ReadOutcome};
+
+use super::sql::{
+    authority_row_view, put_grant, run_read, run_writes, take_grant, PoolSql, RecoveryKv,
+    RecoverySql, StoreKv,
 };
 
 const HYBRID_EK_LEN: usize = vela_recovery_policy::HYBRID_EK_LEN;
@@ -201,7 +207,8 @@ pub async fn post_enroll_device(
     // the verdict goes through the proved `redemption_interpreter!` loop; this
     // handler only supplies the I/O and renders the terminal effect.
     let mut io = EnrollDeviceIo {
-        state: &state,
+        sql: PoolSql(&state.sqldb),
+        kv: StoreKv(&state.store),
         user_id: body.user_id,
         recovery_grant: body.recovery_grant,
         hybrid_ek,
@@ -214,6 +221,7 @@ pub async fn post_enroll_device(
             .device_type
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| "unknown".to_string()),
+        now: None,
         grant,
         grant_present,
         account,
@@ -264,14 +272,18 @@ pub async fn post_enroll_device(
 /// proved in F* as `run_redemption`); each method only performs its effect and
 /// reports the observation. `None` aborts the request with `error`, which is
 /// rendered unchanged.
-struct EnrollDeviceIo<'a> {
-    state: &'a AppState,
+pub(super) struct EnrollDeviceIo<S, K> {
+    sql: S,
+    kv: K,
     user_id: Uuid,
     recovery_grant: Uuid,
     hybrid_ek: Vec<u8>,
     hybrid_vk: Vec<u8>,
     device_name: String,
     device_type: String,
+    /// A fixed enrollment instant for the conformance test; `None` takes the
+    /// wall clock exactly when the insert runs, as the handler always has.
+    now: Option<String>,
     /// The decoded grant from the non-consuming preflight lookup.
     grant: crate::recovery::recover::RecoveryEnrollGrant,
     grant_present: bool,
@@ -287,31 +299,39 @@ struct EnrollDeviceIo<'a> {
     error: Option<AppError>,
 }
 
-impl EnrollDeviceIo<'_> {
+impl<S: RecoverySql, K: RecoveryKv> EnrollDeviceIo<S, K> {
     /// The atomic single-use consumption. A store failure has no observation:
     /// it aborts with the store's own error, exactly as the inline effect did.
-    async fn consume_grant(&mut self) -> Option<ConsumptionObservation> {
-        let observed = match crate::recovery::recover::take_enroll_grant_observed(
-            self.state,
-            self.user_id,
-            self.recovery_grant,
-        ) {
-            Ok(observed) => observed,
+    pub(super) async fn consume_grant(&mut self) -> Option<ConsumptionObservation> {
+        let preflight = grant_view(&self.grant);
+        let stmt = redemption_store::plan_take_grant(redemption_store::grant_key(
+            &self.user_id.to_string(),
+            &self.recovery_grant.to_string(),
+        ));
+        let bytes = match take_grant(&mut self.kv, &stmt) {
+            Ok(bytes) => bytes,
             Err(error) => {
                 self.error = Some(error);
                 return None;
             }
         };
+        let observed = match bytes {
+            None => None,
+            Some(value) => match crate::recovery::recover::decode_enroll_grant(&value) {
+                Ok(grant) => Some(grant),
+                Err(error) => {
+                    self.error = Some(error);
+                    return None;
+                }
+            },
+        };
         self.grant_consumed = observed.is_some();
         self.consumed_matches_observed = observed.as_ref() == Some(&self.grant);
-        let observation = match observed.as_ref() {
-            None => ConsumptionObservation::Missing,
-            Some(consumed) => ConsumptionObservation::Present(ConsumedGrantObservation {
-                key_epoch: consumed.key_epoch,
-                possession: consumed.possession,
-                matches_observed_grant: consumed == &self.grant,
-            }),
+        let taken = match observed.as_ref() {
+            None => GrantTake::Missing,
+            Some(consumed) => GrantTake::Taken(grant_view(consumed)),
         };
+        let observation = redemption_store::classify_take(&taken, &preflight);
         self.consumed_grant = observed;
         Some(observation)
     }
@@ -357,7 +377,7 @@ impl EnrollDeviceIo<'_> {
     }
 
     /// Exactly one guarded device insert with the driver's permit.
-    async fn insert_device(&mut self, permit: RedemptionInsertPermit) -> Option<InsertObservation> {
+    pub(super) async fn insert_device(&mut self, permit: RedemptionInsertPermit) -> Option<InsertObservation> {
         let Some(consumed) = self.consumed_grant.as_ref() else {
             self.error = Some(AppError::Internal(
                 "redemption driver admitted an unobserved grant".into(),
@@ -366,95 +386,167 @@ impl EnrollDeviceIo<'_> {
         };
         let new_device_id = Uuid::new_v4();
         self.new_device_id = Some(new_device_id);
-        let body = InsertRecoveredDevice {
-            device_id: new_device_id,
-            user_id: self.user_id,
-            device_name: &self.device_name,
-            device_type: &self.device_type,
-            hybrid_ek_b64: crate::db::encode_b64(&self.hybrid_ek),
-            hybrid_vk_b64: crate::db::encode_b64(&self.hybrid_vk),
-            created_at: Utc::now().to_rfc3339(),
-            epoch: permit.epoch,
-            guard_credential: if permit.possession {
-                None
-            } else {
-                Some(consumed.credential_id.clone())
-            },
-        };
-        let inserted = insert_recovered_device(self.state, &body).await;
-        Some(match inserted {
-            Ok(inserted) if inserted > 0 => InsertObservation::Inserted,
-            Ok(_) => InsertObservation::Skipped,
-            Err(error) => {
-                self.insert_error = Some(error);
-                InsertObservation::Failed
+        let guard = if permit.possession {
+            GrantGuard::Commitment
+        } else {
+            GrantGuard::Credential {
+                credential_id: consumed.credential_id.clone(),
             }
-        })
+        };
+        let plan = redemption_store::plan_insert_device(
+            new_device_id.to_string(),
+            self.user_id.to_string(),
+            self.device_name.clone(),
+            self.device_type.clone(),
+            crate::db::encode_b64(&self.hybrid_ek),
+            crate::db::encode_b64(&self.hybrid_vk),
+            self.now.clone().unwrap_or_else(|| Utc::now().to_rfc3339()),
+            permit.epoch,
+            guard,
+        );
+        let (outcomes, error) = run_writes(&mut self.sql, &plan).await;
+        let observation = redemption_store::classify_insert(&outcomes);
+        if let Some(error) = error {
+            self.insert_error = Some(AppError::Internal(error.to_string()));
+        }
+        Some(observation)
     }
 
     /// The live authority recheck after a zero-row insert. A query failure is
     /// an observation (`QueryFailed`); the driver decides that it restores the
     /// grant, and the original error is kept for the response.
-    async fn recheck_authority(&mut self) -> Option<AuthorityRecheckObservation> {
+    pub(super) async fn recheck_authority(&mut self) -> Option<AuthorityRecheckObservation> {
         let Some(consumed) = self.consumed_grant.as_ref() else {
             self.error = Some(AppError::Internal(
                 "redemption driver admitted an unobserved grant".into(),
             ));
             return None;
         };
-        let current = match self
-            .state
-            .sqldb
-            .query(
-                "SELECT recovery_webauthn_cred_id, recovery_auth_hash FROM users WHERE id = ?",
-                vec![TursoValue::Text(self.user_id.to_string())],
-            )
-            .await
-        {
-            Ok(current) => current,
+        let stmt = redemption_store::plan_authority_read(self.user_id.to_string());
+        let rows = match run_read(&mut self.sql, &stmt).await {
+            Ok(rows) => rows,
             Err(error) => {
                 self.error = Some(AppError::Internal(error.to_string()));
                 return Some(AuthorityRecheckObservation::QueryFailed);
             }
         };
-        Some(match current.first() {
-            None => AuthorityRecheckObservation::AccountAbsent,
-            Some(row) if consumed.possession => {
-                if row.text(1).is_some_and(|commitment| !commitment.is_empty()) {
-                    AuthorityRecheckObservation::StillRotating
-                } else {
-                    // Setup deletion is revocation, not a retryable rotation:
-                    // leave the old grant consumed.
-                    AuthorityRecheckObservation::CommitmentRevoked
-                }
-            }
-            Some(row) if row.text(0) != Some(consumed.credential_id.as_str()) => {
-                // Credential replacement is revocation, not a retryable
-                // rotation: leave the old grant consumed.
-                AuthorityRecheckObservation::CredentialReplaced
-            }
-            Some(_) => AuthorityRecheckObservation::StillRotating,
-        })
+        Some(redemption_store::classify_authority(
+            &ReadOutcome::Row(authority_row_view(&rows)),
+            consumed.possession,
+            &consumed.credential_id,
+        ))
     }
 
     /// Restore the consumed grant before returning the driver's failure. A
     /// store error replaces the failure, exactly as the inline `?` did.
-    async fn restore_grant(&mut self) -> Option<()> {
+    pub(super) async fn restore_grant(&mut self) -> Option<()> {
         let Some(consumed) = self.consumed_grant.as_ref() else {
             return Some(());
         };
-        match crate::recovery::recover::restore_enroll_grant(
-            self.state,
-            self.user_id,
-            self.recovery_grant,
-            consumed,
-        ) {
-            Ok(()) => Some(()),
+        let value = match serde_json::to_string(consumed) {
+            Ok(value) => value,
             Err(error) => {
+                self.error = Some(AppError::Internal(format!(
+                    "failed to serialize recovery grant: {error}"
+                )));
+                return None;
+            }
+        };
+        let plan = redemption_store::plan_restore_grant(
+            redemption_store::grant_key(
+                &self.user_id.to_string(),
+                &self.recovery_grant.to_string(),
+            ),
+            value,
+            grant_view(consumed),
+        );
+        match plan.first().map(|stmt| put_grant(&mut self.kv, stmt)) {
+            Some(Ok(())) => Some(()),
+            Some(Err(error)) => {
                 self.error = Some(error);
                 None
             }
+            None => {
+                self.error = Some(AppError::Internal(
+                    "restore plan carried no statement".into(),
+                ));
+                None
+            }
         }
+    }
+}
+
+fn grant_view(grant: &crate::recovery::recover::RecoveryEnrollGrant) -> GrantView {
+    GrantView {
+        key_epoch: grant.key_epoch,
+        credential_id: grant.credential_id.clone(),
+        possession: grant.possession,
+    }
+}
+
+/// Construction and side-channel access for the bounded real-database
+/// conformance test (`recovery/conformance.rs`).
+#[cfg(test)]
+impl<S, K> EnrollDeviceIo<S, K> {
+    pub(super) fn for_conformance(
+        sql: S,
+        kv: K,
+        user_id: Uuid,
+        recovery_grant: Uuid,
+        grant: crate::recovery::recover::RecoveryEnrollGrant,
+        consumed: Option<crate::recovery::recover::RecoveryEnrollGrant>,
+    ) -> Self {
+        let stored_epoch = grant.key_epoch;
+        Self {
+            sql,
+            kv,
+            user_id,
+            recovery_grant,
+            hybrid_ek: vec![1, 2, 3],
+            hybrid_vk: vec![4, 5, 6],
+            device_name: "conformance-device".into(),
+            device_type: "conformance".into(),
+            now: Some("2026-10-30T12:00:00+00:00".into()),
+            grant,
+            grant_present: true,
+            account: EnrollmentAccountFacts {
+                stored_epoch: Some(stored_epoch),
+                epoch_active: true,
+                credential_id_matches: false,
+                commitment_len: 0,
+            },
+            account_present: true,
+            consumed_grant: consumed,
+            grant_consumed: false,
+            consumed_matches_observed: false,
+            new_device_id: None,
+            insert_error: None,
+            error: None,
+        }
+    }
+
+    pub(super) fn insert_error_is_set(&self) -> bool {
+        self.insert_error.is_some()
+    }
+
+    pub(super) fn error_is_set(&self) -> bool {
+        self.error.is_some()
+    }
+
+    pub(super) fn new_device_id(&self) -> Option<Uuid> {
+        self.new_device_id
+    }
+
+    pub(super) fn consumed_grant(&self) -> Option<&crate::recovery::recover::RecoveryEnrollGrant> {
+        self.consumed_grant.as_ref()
+    }
+
+    pub(super) fn grant_consumed(&self) -> bool {
+        self.grant_consumed
+    }
+
+    pub(super) fn consumed_matches_observed(&self) -> bool {
+        self.consumed_matches_observed
     }
 }
 
@@ -516,62 +608,4 @@ fn redemption_failure_error(failure: RedemptionFailure) -> AppError {
             AppError::Internal("redemption storage observation failed".into())
         }
     }
-}
-
-struct InsertRecoveredDevice<'a> {
-    device_id: Uuid,
-    user_id: Uuid,
-    device_name: &'a str,
-    device_type: &'a str,
-    hybrid_ek_b64: String,
-    hybrid_vk_b64: String,
-    created_at: String,
-    epoch: i64,
-    /// `Some(credential_id)` for WebAuthn-bound grants: the insert only lands
-    /// while that exact credential is still current. `None` for possession
-    /// grants: the insert only lands while the RMS commitment still exists.
-    guard_credential: Option<String>,
-}
-
-async fn insert_recovered_device(
-    state: &AppState,
-    body: &InsertRecoveredDevice<'_>,
-) -> Result<u64> {
-    let (guard_sql, guard_param) = match &body.guard_credential {
-        Some(credential_id) => (
-            "AND recovery_webauthn_cred_id = ?",
-            Some(TursoValue::Text(credential_id.clone())),
-        ),
-        None => (
-            "AND recovery_auth_hash IS NOT NULL AND recovery_auth_hash <> ''",
-            None,
-        ),
-    };
-    let sql = format!(
-        "INSERT INTO devices
-         (id, user_id, device_name, device_type, last_active, hybrid_ek, hybrid_vk, enrolled_by, created_at)
-         SELECT ?, ?, ?, ?, NULL, ?, ?, NULL, ?
-         WHERE EXISTS (
-             SELECT 1 FROM users
-             WHERE id = ? AND key_epoch = ? AND rekey_state IS NULL
-               {guard_sql}
-         )"
-    );
-    let mut params = vec![
-        TursoValue::Text(body.device_id.to_string()),
-        TursoValue::Text(body.user_id.to_string()),
-        TursoValue::Text(body.device_name.to_string()),
-        TursoValue::Text(body.device_type.to_string()),
-        TursoValue::Text(body.hybrid_ek_b64.clone()),
-        TursoValue::Text(body.hybrid_vk_b64.clone()),
-        TursoValue::Text(body.created_at.clone()),
-        TursoValue::Text(body.user_id.to_string()),
-        TursoValue::Integer(body.epoch),
-    ];
-    params.extend(guard_param);
-    state
-        .sqldb
-        .execute(&sql, params)
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))
 }
