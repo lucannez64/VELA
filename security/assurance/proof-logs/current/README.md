@@ -203,6 +203,8 @@ decisions per request.
 The [sharing executors](share-executors/README.md) evidence proves the five
 sharing executors report the truth about their SQL, against a store model
 with fault injection, and checks it on the real database (F-1 pilot).
+The [send-link executors](send-executors/README.md) evidence does the same for
+the three one-off share-link executors.
 
 The [cancellation evidence](cancellation/README.md) proves every interpreter
 loop leaves a sound driver state when cancelled after any turn, and reviews
