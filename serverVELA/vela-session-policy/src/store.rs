@@ -28,6 +28,7 @@
 //! are tested directly in `vela-server/src/auth/session_store.rs`.
 
 use crate::challenge::ChallengeConsumption;
+use crate::challenge_issue_driver::{RateLimitObservation, StoreObservation};
 use crate::deletion_driver::{
     CommitObservation, DeletionTable, LockoutObservation, ScanObservation, TableDeleteObservation,
     TransactionObservation, UsersDeleteObservation,
@@ -36,6 +37,7 @@ use crate::login_driver::{
     BackoffResetObservation, ChallengeObservation, DeviceObservation, FailureRecordObservation,
     TokenTrackObservation,
 };
+use crate::registration_driver::{BudgetObservation, InsertObservation, TrackObservation};
 use crate::revocation_driver::{
     CascadeObservation, DeviceLookupObservation, LogoutObservation, RecordObservation,
     TargetObservation,
@@ -54,6 +56,16 @@ pub const VERIFY_FAIL_WINDOW_SECS: u64 = 60;
 pub const VERIFY_FAIL_LIMIT: u64 = 5;
 /// The TTL of a device's tracked-JTI set (`rate_limit::SESSION_HARD_CAP_SECS`).
 pub const JTI_SET_TTL_SECS: u64 = 8 * 60 * 60;
+/// 20 challenge issues per minute per IP (`rate_limit::challenge_by_ip`).
+pub const CHALLENGE_RATE_LIMIT: u64 = 20;
+/// The challenge limiter's fixed window (`rate_limit::WINDOW_SECS`).
+pub const CHALLENGE_RATE_WINDOW_SECS: u64 = 60;
+/// The lifetime of one issued challenge (`challenge::CHALLENGE_TTL_SECS`).
+pub const CHALLENGE_TTL_SECS: u64 = 60;
+/// 5 registrations per hour per IP (`account::RegisterIo`).
+pub const REGISTER_RATE_LIMIT: u64 = 5;
+/// The registration limiter's fixed window.
+pub const REGISTER_RATE_WINDOW_SECS: u64 = 60 * 60;
 
 /// One SQL statement an executor may run.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -103,6 +115,29 @@ pub enum SqlStmt {
         kind: String,
         device_id: String,
     },
+    /// `INSERT INTO users (id, created_at, share_ek, share_ek_since) VALUES (?, ?, ?, ?)`.
+    /// The id is `UNIQUE`: an existing row makes the statement fail.
+    InsertUser {
+        user: String,
+        now: String,
+        share_ek: String,
+        share_ek_since: String,
+    },
+    /// `INSERT INTO devices (id, user_id, device_name, device_type, last_active,
+    /// hybrid_ek, hybrid_vk, enrolled_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?)`.
+    /// The id is `UNIQUE`: an existing row makes the statement fail. `ek` and
+    /// `vk` are already base64, exactly as the handler encoded them.
+    InsertDevice {
+        device: String,
+        user: String,
+        name: String,
+        kind: String,
+        now: String,
+        ek: String,
+        vk: String,
+    },
+    /// `SELECT COUNT(*) FROM users`: the registration account budget.
+    CountUsers,
     /// Commit the open transaction.
     Commit,
 }
@@ -131,6 +166,14 @@ pub enum StoreStmt {
     AddMember {
         key: String,
         member: String,
+        ttl: u64,
+    },
+    /// `Store::set_ex_nx(key, value, ttl)`: insert only when the key is absent
+    /// (first writer wins). The value is the exact bytes the handler stores,
+    /// carried as text because every challenge tag is ASCII.
+    SetExNx {
+        key: String,
+        value: String,
         ttl: u64,
     },
 }
@@ -178,6 +221,22 @@ pub struct TargetRowView {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TakeOutcome {
     Taken(Option<String>),
+    Failed,
+}
+
+/// What a first-writer-wins insert (`set_ex_nx`) returned: it inserted, the
+/// key was already there, or the store failed.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum NxOutcome {
+    Inserted,
+    KeyExists,
+    Failed,
+}
+
+/// What `SELECT COUNT(*) FROM users` returned.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CountOutcome {
+    Count(i64),
     Failed,
 }
 
@@ -381,6 +440,77 @@ pub fn plan_track_jti(device: String, jti: String) -> Vec<StoreStmt> {
     }]
 }
 
+// ── Registration and challenge ─────────────────────────────────────────────
+
+/// `ChallengeIssueIo::check_rate_limit`: the per-IP fixed window.
+pub fn plan_challenge_rate_limit(ip: String) -> Vec<StoreStmt> {
+    vec![StoreStmt::Incr {
+        key: format!("rl:challenge:ip:{}", ip),
+        limit: CHALLENGE_RATE_LIMIT,
+        ttl: CHALLENGE_RATE_WINDOW_SECS,
+    }]
+}
+
+/// `ChallengeIssueIo::store_nonce`: one purpose tag under the fresh nonce's
+/// key, first writer wins.
+pub fn plan_store_nonce(challenge: String, tag: String) -> Vec<StoreStmt> {
+    vec![StoreStmt::SetExNx {
+        key: format!("challenge:{}", challenge),
+        value: tag,
+        ttl: CHALLENGE_TTL_SECS,
+    }]
+}
+
+/// `RegisterIo::check_rate_limit`: the per-IP fixed window.
+pub fn plan_registration_rate_limit(ip: String) -> Vec<StoreStmt> {
+    vec![StoreStmt::Incr {
+        key: format!("rl:register:ip:{}", ip),
+        limit: REGISTER_RATE_LIMIT,
+        ttl: REGISTER_RATE_WINDOW_SECS,
+    }]
+}
+
+/// `RegisterIo::check_account_budget`: the account-count query.
+pub fn plan_account_count() -> SqlStmt {
+    SqlStmt::CountUsers
+}
+
+/// `RegisterIo::insert_account`.
+pub fn plan_insert_account(
+    user: String,
+    now: String,
+    share_ek: String,
+    share_ek_since: String,
+) -> SqlStmt {
+    SqlStmt::InsertUser {
+        user,
+        now,
+        share_ek,
+        share_ek_since,
+    }
+}
+
+/// `RegisterIo::insert_device`.
+pub fn plan_insert_device(
+    device: String,
+    user: String,
+    name: String,
+    kind: String,
+    now: String,
+    ek: String,
+    vk: String,
+) -> SqlStmt {
+    SqlStmt::InsertDevice {
+        device,
+        user,
+        name,
+        kind,
+        now,
+        ek,
+        vk,
+    }
+}
+
 // ── Classification ─────────────────────────────────────────────────────────
 
 /// The logout marker: it was written exactly when its one statement ran.
@@ -565,6 +695,81 @@ pub fn classify_track_jti(outcome: &StoreOutcome) -> TokenTrackObservation {
     }
 }
 
+// ── Registration and challenge ─────────────────────────────────────────────
+
+/// A rate limiter: `Allowed` exactly when its one counter statement ran.
+pub fn classify_challenge_rate_limit(outcome: &StoreOutcome) -> RateLimitObservation {
+    match outcome {
+        StoreOutcome::Applied => RateLimitObservation::Allowed,
+        StoreOutcome::Failed => RateLimitObservation::Denied,
+    }
+}
+
+/// The first-writer-wins challenge write: `Inserted` exactly when the key was
+/// absent and the write ran.
+pub fn classify_store_nonce(outcome: &NxOutcome) -> StoreObservation {
+    match outcome {
+        NxOutcome::Inserted => StoreObservation::Inserted,
+        NxOutcome::KeyExists => StoreObservation::KeyExists,
+        NxOutcome::Failed => StoreObservation::Failed,
+    }
+}
+
+/// The registration limiter.
+pub fn classify_registration_rate_limit(
+    outcome: &StoreOutcome,
+) -> crate::registration_driver::RateLimitObservation {
+    match outcome {
+        StoreOutcome::Applied => crate::registration_driver::RateLimitObservation::Allowed,
+        StoreOutcome::Failed => crate::registration_driver::RateLimitObservation::Denied,
+    }
+}
+
+/// The registration transaction begin.
+pub fn classify_registration_transaction(
+    outcome: &WriteOutcome,
+) -> crate::registration_driver::TransactionObservation {
+    match outcome {
+        WriteOutcome::Applied(_) => crate::registration_driver::TransactionObservation::Begun,
+        WriteOutcome::Failed => crate::registration_driver::TransactionObservation::Failed,
+    }
+}
+
+/// The registration commit.
+pub fn classify_registration_commit(
+    outcome: &WriteOutcome,
+) -> crate::registration_driver::CommitObservation {
+    match outcome {
+        WriteOutcome::Applied(_) => crate::registration_driver::CommitObservation::Committed,
+        WriteOutcome::Failed => crate::registration_driver::CommitObservation::Failed,
+    }
+}
+
+/// The account budget: `Counted` exactly when the query ran, carrying the
+/// exact number of `users` rows.
+pub fn classify_account_count(outcome: &CountOutcome) -> BudgetObservation {
+    match outcome {
+        CountOutcome::Count(count) => BudgetObservation::Counted { count: *count },
+        CountOutcome::Failed => BudgetObservation::QueryFailed,
+    }
+}
+
+/// One `INSERT`: `Inserted` exactly when it ran (its id was fresh).
+pub fn classify_insert(outcome: &WriteOutcome) -> InsertObservation {
+    match outcome {
+        WriteOutcome::Applied(_) => InsertObservation::Inserted,
+        WriteOutcome::Failed => InsertObservation::Failed,
+    }
+}
+
+/// `RegisterIo::track_token`: `Tracked` exactly when the set add ran.
+pub fn classify_registration_track(outcome: &StoreOutcome) -> TrackObservation {
+    match outcome {
+        StoreOutcome::Applied => TrackObservation::Tracked,
+        StoreOutcome::Failed => TrackObservation::Failed,
+    }
+}
+
 // ── Rendering (not extracted; pinned by the tests below) ───────────────────
 
 /// One SQL statement as the database receives it.
@@ -587,6 +792,7 @@ pub enum StoreOp {
     BackoffFailure,
     ResetBackoff,
     AddMember,
+    SetExNx,
 }
 
 /// One store statement as the handler sends it.
@@ -698,6 +904,48 @@ pub fn render_sql(stmt: &SqlStmt) -> Rendered {
             sql: "UPDATE devices SET last_active = ?, device_name = ?, device_type = ? WHERE id = ?",
             params: vec![now.clone(), name.clone(), kind.clone(), device_id.clone()],
         },
+        SqlStmt::InsertUser {
+            user,
+            now,
+            share_ek,
+            share_ek_since,
+        } => Rendered::Execute {
+            sql: "INSERT INTO users (id, created_at, share_ek, share_ek_since)
+             VALUES (?, ?, ?, ?)",
+            params: vec![
+                user.clone(),
+                now.clone(),
+                share_ek.clone(),
+                share_ek_since.clone(),
+            ],
+        },
+        SqlStmt::InsertDevice {
+            device,
+            user,
+            name,
+            kind,
+            now,
+            ek,
+            vk,
+        } => Rendered::Execute {
+            sql: "INSERT INTO devices
+         (id, user_id, device_name, device_type, last_active, hybrid_ek, hybrid_vk, enrolled_by, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?)",
+            params: vec![
+                device.clone(),
+                user.clone(),
+                name.clone(),
+                kind.clone(),
+                now.clone(),
+                ek.clone(),
+                vk.clone(),
+                now.clone(),
+            ],
+        },
+        SqlStmt::CountUsers => Rendered::Query {
+            sql: "SELECT COUNT(*) FROM users",
+            params: vec![],
+        },
         SqlStmt::Commit => Rendered::Commit,
     }
 }
@@ -761,6 +1009,14 @@ pub fn render_store(stmt: &StoreStmt) -> RenderedStore {
             ttl: *ttl,
             limit: 0,
             member: member.clone(),
+        },
+        StoreStmt::SetExNx { key, value, ttl } => RenderedStore {
+            op: StoreOp::SetExNx,
+            key: key.clone(),
+            value: 0,
+            ttl: *ttl,
+            limit: 0,
+            member: value.clone(),
         },
     }
 }
@@ -1209,8 +1465,7 @@ mod tests {
     }
 
     #[test]
-    fn challenge_tags_are_the_issuer_s_exact_bytes() {
-        for purpose in [
+    fn challenge_tags_are_the_issuer_s_exact_bytes() {        for purpose in [
             crate::challenge::ChallengePurpose::Login,
             crate::challenge::ChallengePurpose::Enroll,
             crate::challenge::ChallengePurpose::WebToken,
@@ -1261,6 +1516,159 @@ mod tests {
         assert_eq!(
             classify_target(&me, &ReadOutcome::Failed),
             DeviceLookupObservation::QueryFailed
+        );
+    }
+
+    // ── Registration and challenge ─────────────────────────────────────────
+
+    #[test]
+    fn challenge_plans_render_the_historical_statements() {
+        let plan = plan_challenge_rate_limit(s("1.2.3.4"));
+        assert_eq!(plan.len(), 1);
+        assert_eq!(
+            render_store(&plan[0]),
+            RenderedStore {
+                op: StoreOp::Incr,
+                key: s("rl:challenge:ip:1.2.3.4"),
+                value: 1,
+                ttl: 60,
+                limit: 20,
+                member: String::new()
+            }
+        );
+
+        let tag = challenge_tag_text(crate::challenge::ChallengePurpose::Login);
+        let plan = plan_store_nonce(s("abc"), tag.clone());
+        assert_eq!(plan.len(), 1);
+        assert_eq!(
+            render_store(&plan[0]),
+            RenderedStore {
+                op: StoreOp::SetExNx,
+                key: s("challenge:abc"),
+                value: 0,
+                ttl: 60,
+                limit: 0,
+                // The exact bytes the issuer wrote: the purpose tag.
+                member: tag
+            }
+        );
+    }
+
+    #[test]
+    fn registration_plans_render_the_historical_statements() {
+        let plan = plan_registration_rate_limit(s("1.2.3.4"));
+        assert_eq!(plan.len(), 1);
+        assert_eq!(
+            render_store(&plan[0]),
+            RenderedStore {
+                op: StoreOp::Incr,
+                key: s("rl:register:ip:1.2.3.4"),
+                value: 1,
+                ttl: 3600,
+                limit: 5,
+                member: String::new()
+            }
+        );
+
+        let (sql, params) = query(&plan_account_count());
+        assert_eq!(sql, "SELECT COUNT(*) FROM users");
+        assert!(params.is_empty());
+
+        let (sql, params) =
+            exec(&plan_insert_account(s("u"), s("now"), s("ek"), s("since")));
+        assert_eq!(
+            sql,
+            "INSERT INTO users (id, created_at, share_ek, share_ek_since)\n             VALUES (?, ?, ?, ?)"
+        );
+        assert_eq!(params, vec![s("u"), s("now"), s("ek"), s("since")]);
+
+        let (sql, params) = exec(&plan_insert_device(
+            s("d"),
+            s("u"),
+            s("name"),
+            s("desktop"),
+            s("now"),
+            s("ekb64"),
+            s("vkb64"),
+        ));
+        assert_eq!(
+            sql,
+            "INSERT INTO devices\n         (id, user_id, device_name, device_type, last_active, hybrid_ek, hybrid_vk, enrolled_by, created_at)\n         VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?)"
+        );
+        assert_eq!(
+            params,
+            vec![s("d"), s("u"), s("name"), s("desktop"), s("now"), s("ekb64"), s("vkb64"), s("now")]
+        );
+
+        // The registration's tracked-JTI plan is the login one, byte for byte.
+        assert_eq!(
+            render_store(&plan_track_jti(s("d"), s("j"))[0]),
+            RenderedStore {
+                op: StoreOp::AddMember,
+                key: s("device:jtis:d"),
+                value: 0,
+                ttl: 28_800,
+                limit: 0,
+                member: s("j")
+            }
+        );
+    }
+
+    #[test]
+    fn registration_classifiers_keep_the_historical_observations() {
+        let allowed = vec![StoreOutcome::Applied];
+        let denied = vec![StoreOutcome::Failed];
+        assert_eq!(
+            classify_challenge_rate_limit(&allowed[0]),
+            crate::challenge_issue_driver::RateLimitObservation::Allowed
+        );
+        assert_eq!(
+            classify_challenge_rate_limit(&denied[0]),
+            crate::challenge_issue_driver::RateLimitObservation::Denied
+        );
+        assert_eq!(
+            classify_registration_rate_limit(&allowed[0]),
+            crate::registration_driver::RateLimitObservation::Allowed
+        );
+        assert_eq!(
+            classify_registration_rate_limit(&denied[0]),
+            crate::registration_driver::RateLimitObservation::Denied
+        );
+        assert_eq!(
+            classify_store_nonce(&NxOutcome::Inserted),
+            crate::challenge_issue_driver::StoreObservation::Inserted
+        );
+        assert_eq!(
+            classify_store_nonce(&NxOutcome::KeyExists),
+            crate::challenge_issue_driver::StoreObservation::KeyExists
+        );
+        assert_eq!(
+            classify_store_nonce(&NxOutcome::Failed),
+            crate::challenge_issue_driver::StoreObservation::Failed
+        );
+        assert_eq!(
+            classify_account_count(&CountOutcome::Count(7)),
+            crate::registration_driver::BudgetObservation::Counted { count: 7 }
+        );
+        assert_eq!(
+            classify_account_count(&CountOutcome::Failed),
+            crate::registration_driver::BudgetObservation::QueryFailed
+        );
+        assert_eq!(
+            classify_insert(&WriteOutcome::Applied(1)),
+            crate::registration_driver::InsertObservation::Inserted
+        );
+        assert_eq!(
+            classify_insert(&WriteOutcome::Failed),
+            crate::registration_driver::InsertObservation::Failed
+        );
+        assert_eq!(
+            classify_registration_track(&StoreOutcome::Applied),
+            crate::registration_driver::TrackObservation::Tracked
+        );
+        assert_eq!(
+            classify_registration_track(&StoreOutcome::Failed),
+            crate::registration_driver::TrackObservation::Failed
         );
     }
 }

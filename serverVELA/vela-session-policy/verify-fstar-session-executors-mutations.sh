@@ -28,6 +28,12 @@ set -euo pipefail
 #   classify-track-error             a failed JTI track reports Tracked
 #   plan-counter-limit               the failed-proof counter allows one more
 #   plan-jti-ttl                     the JTI set outlives the session cap
+#   classify-store-nonce-failed      a failed challenge write reports Inserted
+#   plan-store-nonce-ttl             the challenge outlives its TTL
+#   classify-insert-error            a failed INSERT reports Inserted
+#   classify-budget-failed           a failed count query reports zero accounts
+#   plan-registration-limit          the registration window allows one more
+#   plan-insert-account-swap         the account insert swaps its two key columns
 
 proof_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cd "$proof_root"
@@ -51,6 +57,8 @@ mutants=(
   classify-login-challenge-failed classify-login-device-failed
   classify-failure-counter-error classify-reset-error classify-track-error
   plan-counter-limit plan-jti-ttl
+  classify-store-nonce-failed plan-store-nonce-ttl classify-insert-error
+  classify-budget-failed plan-registration-limit plan-insert-account-swap
 )
 declare -A expect=(
   [classify-logout-error]=logout_is_honest
@@ -70,6 +78,12 @@ declare -A expect=(
   [classify-track-error]=login_track_is_honest
   [plan-counter-limit]=plan_failure_counter_shape
   [plan-jti-ttl]=plan_track_jti_shape
+  [classify-store-nonce-failed]=challenge_nonce_is_honest
+  [plan-store-nonce-ttl]=plan_store_nonce_shape
+  [classify-insert-error]=insert_account_is_honest
+  [classify-budget-failed]=account_count_is_honest
+  [plan-registration-limit]=plan_registration_rate_limit_shape
+  [plan-insert-account-swap]=plan_insert_account_shape
 )
 
 rm -rf "$mut"
@@ -170,6 +184,30 @@ elif name == 'plan-counter-limit':
     once('f_limit = v_VERIFY_FAIL_LIMIT', 'f_limit = mk_u64 4')
 elif name == 'plan-jti-ttl':
     once('f_ttl = v_JTI_SET_TTL_SECS', 'f_ttl = mk_u64 1')
+elif name == 'classify-store-nonce-failed':
+    once('''  | NxOutcome_Failed  ->
+    Vela_session_policy.Challenge_issue_driver.StoreObservation_Failed''',
+         '''  | NxOutcome_Failed  ->
+    Vela_session_policy.Challenge_issue_driver.StoreObservation_Inserted''')
+elif name == 'plan-store-nonce-ttl':
+    once('f_ttl = v_CHALLENGE_TTL_SECS', 'f_ttl = mk_u64 61')
+elif name == 'classify-insert-error':
+    once('''  | WriteOutcome_Failed  ->
+    Vela_session_policy.Registration_driver.InsertObservation_Failed''',
+         '''  | WriteOutcome_Failed  ->
+    Vela_session_policy.Registration_driver.InsertObservation_Inserted''')
+elif name == 'classify-budget-failed':
+    once('''  | CountOutcome_Failed  ->
+    Vela_session_policy.Registration_driver.BudgetObservation_QueryFailed''',
+         '''  | CountOutcome_Failed  ->
+    Vela_session_policy.Registration_driver.BudgetObservation_Counted
+    ({ Vela_session_policy.Registration_driver.f_count = mk_i64 0 })''')
+elif name == 'plan-registration-limit':
+    once('f_limit = v_REGISTER_RATE_LIMIT', 'f_limit = mk_u64 6')
+elif name == 'plan-insert-account-swap':
+    in_body('let plan_insert_account', 'let plan_insert_device',
+            'f_share_ek = share_ek; f_share_ek_since = share_ek_since',
+            'f_share_ek = share_ek_since; f_share_ek_since = share_ek')
 elif name == 'plan-sentinel-ttl':
     start = text.index('let plan_lockout_device')
     end = text.index('let plan_lockout_web_session', start)
@@ -189,7 +227,10 @@ PY
     --include "$proof_root/proofs/fstar/extraction" \
     --include "$proof_root/proofs/fstar/extraction-deletion-driver" \
     --include "$proof_root/proofs/fstar/extraction-revocation-driver" \
+    --include "$proof_root/proofs/fstar/extraction-websession-driver" \
     --include "$proof_root/proofs/fstar/extraction-login-driver" \
+    --include "$proof_root/proofs/fstar/extraction-registration-driver" \
+    --include "$proof_root/proofs/fstar/extraction-challenge-issue-driver" \
     --include "$d/store" --include "$d/lemmas" \
     "$d/lemmas/Vela_session_policy_store_lemmas.fst" 2>&1)
   status=$?

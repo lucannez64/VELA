@@ -46,6 +46,18 @@ done
   echo 'run verify-fstar-login-driver.sh first' >&2
   exit 1
 }
+[[ -f proofs/fstar/extraction-registration-driver/Vela_session_policy.Registration_driver.fst ]] || {
+  echo 'run verify-fstar-registration-driver.sh first' >&2
+  exit 1
+}
+[[ -f proofs/fstar/extraction-challenge-issue-driver/Vela_session_policy.Challenge_issue_driver.fst ]] || {
+  echo 'run verify-fstar-challenge-issue-driver.sh first' >&2
+  exit 1
+}
+[[ -f proofs/fstar/extraction-websession-driver/Vela_session_policy.Websession_driver.fst ]] || {
+  echo 'run verify-fstar-websession-driver.sh first' >&2
+  exit 1
+}
 
 # Rendering pins, classifier tables and the Rust mirror's shared vectors.
 cargo test --lib store
@@ -61,6 +73,12 @@ items=(
   classify_target classify_record classify_cascade classify_login_challenge
   classify_login_device classify_failure_counter classify_backoff_reset
   classify_track_jti
+  plan_challenge_rate_limit plan_store_nonce plan_registration_rate_limit
+  plan_account_count plan_insert_account plan_insert_device
+  classify_challenge_rate_limit classify_store_nonce
+  classify_registration_rate_limit classify_registration_transaction
+  classify_registration_commit classify_account_count classify_insert
+  classify_registration_track
 )
 include='-**'
 for item in "${items[@]}"; do
@@ -78,10 +96,16 @@ rm -f proofs/fstar/extraction-store/Vela_session_policy.Deletion_driver.fst
 rm -f proofs/fstar/extraction-store/Vela_session_policy.Revocation_driver.fst
 rm -f proofs/fstar/extraction-store/Vela_session_policy.Login_driver.fst
 rm -f proofs/fstar/extraction-store/Vela_session_policy.Challenge.fst
+rm -f proofs/fstar/extraction-store/Vela_session_policy.Registration_driver.fst
+rm -f proofs/fstar/extraction-store/Vela_session_policy.Challenge_issue_driver.fst
+rm -f proofs/fstar/extraction-store/Vela_session_policy.Websession_driver.fst
 rm -f proofs/fstar/extraction-store/Vela_session_policy.fst
 
 generated=(proofs/fstar/extraction-store/Vela_session_policy.Store.fst)
-driver=(proofs/fstar/extraction-deletion-driver/*.fst proofs/fstar/extraction-login-driver/*.fst)
+driver=(proofs/fstar/extraction-deletion-driver/*.fst proofs/fstar/extraction-login-driver/*.fst
+        proofs/fstar/extraction-registration-driver/*.fst
+        proofs/fstar/extraction-challenge-issue-driver/*.fst
+        proofs/fstar/extraction-websession-driver/*.fst)
 model=(proofs/fstar/store-lemmas/Vela_session_policy_store_model.fst)
 lemmas=(proofs/fstar/store-lemmas/Vela_session_policy_store_lemmas.fst)
 for f in "${generated[@]}" "${model[@]}" "${lemmas[@]}"; do
@@ -115,7 +139,14 @@ fstar_args=(
   --include proofs/fstar/extraction
   --include proofs/fstar/extraction-deletion-driver
   --include proofs/fstar/extraction-revocation-driver
+  # Three extractions carry a `Vela_session_policy.Challenge` module; the
+  # challenge-issue one is the fullest (purpose tags and the take adapter), so
+  # it is listed last: F* resolves a module name against the last include that
+  # has it.
+  --include proofs/fstar/extraction-websession-driver
   --include proofs/fstar/extraction-login-driver
+  --include proofs/fstar/extraction-registration-driver
+  --include proofs/fstar/extraction-challenge-issue-driver
   --include proofs/fstar/extraction-store
   --include proofs/fstar/store-lemmas
 )
@@ -133,5 +164,5 @@ done
 # Each mutant of the plans and classifiers must break the proof.
 "$proof_root/verify-fstar-session-executors-mutations.sh"
 
-echo "session executors: for every starting database and store and every failing statement, the logout, device-revocation, account-deletion and login executors' observations report exactly what their statements did to the eight tables, the store keys and counters, and a failed run leaves the transaction uncommitted"
+echo "session executors: for every starting database and store and every failing statement, the logout, device-revocation, account-deletion, login, registration and challenge-issue executors' observations report exactly what their statements did to the eight tables, the store keys and counters, and a failed run leaves the transaction uncommitted"
 sha256sum "${generated[@]}" "${model[@]}" "${lemmas[@]}" src/store.rs src/store_model.rs

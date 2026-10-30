@@ -31,7 +31,7 @@ use std::net::SocketAddr;
 
 use crate::{
     error::{AppError, Result},
-    net, rate_limit,
+    net,
     state::AppState,
 };
 use vela_session_policy::challenge::{
@@ -41,6 +41,9 @@ use vela_session_policy::challenge_issue_driver::{
     IssueEffect, IssueFailure, NonceObservation, PurposeObservation, RateLimitObservation,
     StoreObservation, NONCE_LEN,
 };
+use vela_session_policy::store::{NxOutcome, StoreOutcome};
+
+use crate::auth::session_store::{keep_error, run_nonce, run_store, SessionStore, SledStore};
 
 const CHALLENGE_TTL_SECS: u64 = 60;
 
@@ -132,15 +135,15 @@ pub struct ChallengeResponse {
 /// as `run_issue`); each method only performs its effect and reports the
 /// outcome. The first failure keeps the handler's original error so the
 /// response carries the same status and message.
-struct ChallengeIssueIo<'a> {
-    state: &'a AppState,
-    ip: String,
-    nonce: Option<[u8; NONCE_LEN]>,
-    challenge_b64: Option<String>,
-    error: Option<AppError>,
+pub(crate) struct ChallengeIssueIo<K: SessionStore> {
+    pub store: K,
+    pub ip: String,
+    pub nonce: Option<[u8; NONCE_LEN]>,
+    pub challenge_b64: Option<String>,
+    pub error: Option<AppError>,
 }
 
-impl ChallengeIssueIo<'_> {
+impl<K: SessionStore> ChallengeIssueIo<K> {
     /// Record the first error; later methods never replace the original.
     fn fail(&mut self, error: AppError) {
         if self.error.is_none() {
@@ -148,14 +151,15 @@ impl ChallengeIssueIo<'_> {
         }
     }
 
-    async fn check_rate_limit(&mut self) -> RateLimitObservation {
-        match rate_limit::challenge_by_ip(&self.state.store, &self.ip) {
-            Ok(()) => RateLimitObservation::Allowed,
-            Err(error) => {
-                self.fail(error);
-                RateLimitObservation::Denied
-            }
+    /// The per-IP limiter: one fixed-window counter statement, classified.
+    pub(crate) async fn check_rate_limit(&mut self) -> RateLimitObservation {
+        let plan = vela_session_policy::store::plan_challenge_rate_limit(self.ip.clone());
+        let (outcomes, error) = run_store(&mut self.store, &plan);
+        if let Some(error) = error {
+            keep_error(&mut self.error, error);
         }
+        let outcome = outcomes.first().copied().unwrap_or(StoreOutcome::Failed);
+        vela_session_policy::store::classify_challenge_rate_limit(&outcome)
     }
 
     async fn generate_nonce(&mut self) -> NonceObservation {
@@ -174,7 +178,7 @@ impl ChallengeIssueIo<'_> {
         }
     }
 
-    async fn store_nonce(
+    pub(crate) async fn store_nonce(
         &mut self,
         purpose: vela_session_policy::challenge::ChallengePurpose,
     ) -> StoreObservation {
@@ -185,25 +189,35 @@ impl ChallengeIssueIo<'_> {
             return StoreObservation::Failed;
         };
         let nonce_b64 = B64.encode(nonce);
-        match self.state.store.set_ex_nx(
-            &format!("challenge:{nonce_b64}"),
-            purpose_tag_bytes(purpose),
-            CHALLENGE_TTL_SECS,
-        ) {
-            Ok(true) => {
+        // The typed plan carries the exact key, the purpose tag as text (the
+        // unit tests below pin it to `purpose_tag_bytes`, byte for byte) and
+        // the challenge TTL; the write is first-writer-wins.
+        let plan = vela_session_policy::store::plan_store_nonce(
+            nonce_b64.clone(),
+            vela_session_policy::store::challenge_tag_text(purpose),
+        );
+        let outcome = match plan.first() {
+            Some(stmt) => {
+                let (outcome, error) = run_nonce(&mut self.store, stmt);
+                if let Some(error) = error {
+                    keep_error(&mut self.error, error);
+                }
+                outcome
+            }
+            None => NxOutcome::Failed,
+        };
+        match vela_session_policy::store::classify_store_nonce(&outcome) {
+            StoreObservation::Inserted => {
                 self.challenge_b64 = Some(nonce_b64);
                 StoreObservation::Inserted
             }
-            Ok(false) => {
+            StoreObservation::KeyExists => {
                 // A fresh 32-byte nonce already had a live challenge under its
                 // key. Never overwrite it: nothing is issued for this request.
                 self.fail(AppError::Internal("challenge nonce collision".into()));
                 StoreObservation::KeyExists
             }
-            Err(error) => {
-                self.fail(error);
-                StoreObservation::Failed
-            }
+            _ => StoreObservation::Failed,
         }
     }
 }
@@ -249,7 +263,7 @@ pub async fn get_challenge(
         Err(error) => (PurposeObservation::Invalid, Some(error)),
     };
     let mut io = ChallengeIssueIo {
-        state: &state,
+        store: SledStore(&state.store),
         ip,
         nonce: None,
         challenge_b64: None,
@@ -289,6 +303,24 @@ mod tests {
         ] {
             assert_eq!(purpose.policy(), policy);
             assert_eq!(purpose.tag(), purpose_tag_bytes(policy));
+        }
+    }
+
+    #[test]
+    fn the_issue_plan_stores_this_handler_s_ttl() {
+        use vela_session_policy::store::{plan_store_nonce, render_store, StoreOp};
+        let plan = plan_store_nonce("nonce".into(), "login".into());
+        match render_store(&plan[0]) {
+            vela_session_policy::store::RenderedStore {
+                op: StoreOp::SetExNx,
+                key,
+                ttl,
+                ..
+            } => {
+                assert_eq!(key, "challenge:nonce");
+                assert_eq!(ttl, CHALLENGE_TTL_SECS);
+            }
+            other => panic!("the issue plan is not a set_ex_nx: {other:?}"),
         }
     }
 

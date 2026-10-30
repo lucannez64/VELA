@@ -21,7 +21,9 @@ use vela_session_policy::store_model::{
     UserRow,
 };
 
+use super::challenge::ChallengeIssueIo;
 use super::session_store::{DbSql, SessionSql, SessionStore, SessionTokens, SledStore};
+use crate::account::{ParsedKeys, RegisterIo, RegisterRequest};
 use super::verify::VerifyIo;
 use crate::account::delete::DeleteAccountIo;
 use crate::auth::logout::LogoutJtiIo;
@@ -63,13 +65,14 @@ impl<T: SessionSql> SessionSql for Faulty<T> {
         self.inner.execute(sql, params).await
     }
 
-    async fn execute_in_tx(
+    async fn execute_in_tx_named(
         &mut self,
         sql: &str,
         params: Vec<TursoValue>,
+        closed: &'static str,
     ) -> anyhow::Result<u64> {
         self.hit()?;
-        self.inner.execute_in_tx(sql, params).await
+        self.inner.execute_in_tx_named(sql, params, closed).await
     }
 
     async fn begin(&mut self) -> anyhow::Result<()> {
@@ -80,6 +83,11 @@ impl<T: SessionSql> SessionSql for Faulty<T> {
     async fn commit(&mut self) -> anyhow::Result<()> {
         self.hit()?;
         self.inner.commit().await
+    }
+
+    async fn commit_named(&mut self, closed: &'static str) -> anyhow::Result<()> {
+        self.hit()?;
+        self.inner.commit_named(closed).await
     }
 
     fn rollback(&mut self) {
@@ -121,6 +129,11 @@ impl<T: SessionStore> SessionStore for Faulty<T> {
     fn add_member(&mut self, key: &str, member: &str, ttl: u64) -> anyhow::Result<()> {
         self.hit()?;
         self.inner.add_member(key, member, ttl)
+    }
+
+    fn set_ex_nx(&mut self, key: &str, value: &[u8], ttl: u64) -> anyhow::Result<bool> {
+        self.hit()?;
+        self.inner.set_ex_nx(key, value, ttl)
     }
 }
 
@@ -165,9 +178,10 @@ async fn load(db: &TursoDb, state: &Model) {
     .unwrap();
     for (id, row) in &state.users {
         db.execute(
-            "INSERT INTO users (id, created_at, share_ek, share_ek_since) VALUES (?, 't', ?, ?)",
+            "INSERT INTO users (id, created_at, share_ek, share_ek_since) VALUES (?, ?, ?, ?)",
             vec![
                 TursoValue::Text(id.clone()),
+                TursoValue::Text(row.created_at.clone()),
                 TursoValue::Text(row.share_ek.clone()),
                 TursoValue::Text(row.share_ek_since.clone()),
             ],
@@ -183,7 +197,7 @@ async fn load(db: &TursoDb, state: &Model) {
                 TursoValue::Text(row.user_id.clone()),
                 TursoValue::Text(row.name.clone()),
                 TursoValue::Text(row.kind.clone()),
-                TursoValue::Text(crate::db::encode_b64(b"ek")),
+                TursoValue::Text(row.hybrid_ek.clone()),
                 TursoValue::Text(row.hybrid_vk.clone()),
                 TursoValue::Integer(row.revoked),
                 TursoValue::Text(NOW.into()),
@@ -276,7 +290,10 @@ fn text_opt(row: &VelaRow, i: usize) -> Option<String> {
 async fn snapshot(db: &TursoDb) -> Model {
     let mut state = Model::default();
     for row in db
-        .query("SELECT id, share_ek, share_ek_since FROM users", vec![])
+        .query(
+            "SELECT id, share_ek, share_ek_since, created_at FROM users",
+            vec![],
+        )
         .await
         .unwrap()
     {
@@ -285,12 +302,13 @@ async fn snapshot(db: &TursoDb) -> Model {
             UserRow {
                 share_ek: text_opt(&row, 1).unwrap_or_default(),
                 share_ek_since: text_opt(&row, 2).unwrap_or_default(),
+                created_at: text_opt(&row, 3).unwrap_or_default(),
             },
         );
     }
     for row in db
         .query(
-            "SELECT id, user_id, revoked, hybrid_vk, last_active, device_name, device_type, revoked_at, revoked_by FROM devices",
+            "SELECT id, user_id, revoked, hybrid_ek, hybrid_vk, last_active, device_name, device_type, revoked_at, revoked_by FROM devices",
             vec![],
         )
         .await
@@ -301,12 +319,13 @@ async fn snapshot(db: &TursoDb) -> Model {
             DeviceRow {
                 user_id: text(&row, 1),
                 revoked: row.i64(2).expect("revoked is an integer"),
-                hybrid_vk: text_opt(&row, 3).unwrap_or_default(),
-                last_active: text_opt(&row, 4),
-                name: text_opt(&row, 5).unwrap_or_default(),
-                kind: text_opt(&row, 6).unwrap_or_default(),
-                revoked_at: text_opt(&row, 7),
-                revoked_by: text_opt(&row, 8),
+                hybrid_ek: text_opt(&row, 3).unwrap_or_default(),
+                hybrid_vk: text_opt(&row, 4).unwrap_or_default(),
+                last_active: text_opt(&row, 5),
+                name: text_opt(&row, 6).unwrap_or_default(),
+                kind: text_opt(&row, 7).unwrap_or_default(),
+                revoked_at: text_opt(&row, 8),
+                revoked_by: text_opt(&row, 9),
             },
         );
     }
@@ -412,6 +431,7 @@ fn active_device(owner: u128) -> DeviceRow {
     DeviceRow {
         user_id: user(owner),
         revoked: 0,
+        hybrid_ek: s("eks="),
         hybrid_vk: s("dms="),
         last_active: None,
         name: s("name"),
@@ -426,7 +446,11 @@ fn base_state() -> Model {
     for n in 0..3 {
         state.users.insert(
             user(n),
-            UserRow { share_ek: format!("ek-{n}"), share_ek_since: s("t0") },
+            UserRow {
+                share_ek: format!("ek-{n}"),
+                share_ek_since: s("t0"),
+                created_at: s("t0"),
+            },
         );
     }
     state.devices.insert(device(0), active_device(0));
@@ -1364,6 +1388,514 @@ async fn login_executors_match_the_store_model() {
     }
     eprintln!(
         "session executor conformance (login): {} states, {} cases, {} with an injected failure",
+        counts.states, counts.cases, counts.faulted
+    );
+}
+
+const CHALLENGE_IP: &str = "198.51.100.9";
+const REGISTER_IP: &str = "198.51.100.10";
+
+fn register_request() -> RegisterRequest {
+    RegisterRequest {
+        hybrid_ek: s("ek"),
+        hybrid_vk: s("vk"),
+        device_name: None,
+        device_type: None,
+        share_ek: Some(s("share")),
+        share_ek_signed_at: None,
+        share_ek_signature: None,
+    }
+}
+
+fn parsed_keys() -> ParsedKeys {
+    ParsedKeys {
+        identity_ek: Some(vec![1u8, 2, 3, 4]),
+        identity_vk: Some(vec![5u8, 6, 7, 8]),
+        share_ek_b64: s("share-ek"),
+        identity_ek_valid: true,
+        identity_vk_valid: true,
+        share_ek_valid: true,
+        error: None,
+    }
+}
+
+#[tokio::test]
+async fn challenge_executors_match_the_store_model() {
+    let mut counts = Counts::default();
+    use vela_session_policy::challenge_issue_driver::StoreObservation;
+
+    // check_rate_limit: a fresh window and one at its limit, each fault point.
+    for preseed in [0u64, 20] {
+        counts.states += 1;
+        for fault in faults(1) {
+            let store = Store::open_temp().unwrap();
+            let key = format!("rl:challenge:ip:{CHALLENGE_IP}");
+            for _ in 0..preseed {
+                store.incr_fixed_window(&key, 1, 60).unwrap();
+            }
+            let mut ms = ModelStore::default();
+            if preseed > 0 {
+                ms.counters.insert(key.clone(), preseed);
+            }
+            let mut io = ChallengeIssueIo {
+                store: Faulty::new(SledStore(&store), fault),
+                ip: s(CHALLENGE_IP),
+                nonce: None,
+                challenge_b64: None,
+                error: None,
+            };
+            let observed = io.check_rate_limit().await;
+            let (expected, expected_store) =
+                model::challenge_rate_limit(&ms, CHALLENGE_IP, fault);
+            let case = format!("challenge limit preseed {preseed} fault {fault:?}");
+            assert_eq!(observed, expected, "{case}");
+            // A refusal over the limit is the limiter's own error, exactly as
+            // a store failure is; either one sets the handler's slot.
+            assert_eq!(
+                io.error.is_some(),
+                fault.is_some()
+                    || observed
+                        == vela_session_policy::challenge_issue_driver::RateLimitObservation::Denied,
+                "{case}"
+            );
+            let count = store.incr_fixed_window(&key, 0, 60).unwrap();
+            assert_eq!(
+                count,
+                expected_store.counters.get(&key).copied().unwrap_or(0),
+                "{case}"
+            );
+            counts.case(fault);
+        }
+    }
+
+    // store_nonce: an absent key, a live key, and this purpose's own tag.
+    let nonce = [7u8; 32];
+    let b64 = {
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        STANDARD.encode(nonce)
+    };
+    for (seed, tag) in [(None, "login"), (Some("enroll"), "login"), (Some("login"), "login")] {
+        for fault in faults(1) {
+            let store = Store::open_temp().unwrap();
+            let mut ms = ModelStore::default();
+            let key = format!("challenge:{b64}");
+            if let Some(value) = seed {
+                store.set_ex(&key, value.as_bytes(), 60).unwrap();
+                ms.kv.insert(key.clone(), s(value));
+            }
+            let mut io = ChallengeIssueIo {
+                store: Faulty::new(SledStore(&store), fault),
+                ip: s(CHALLENGE_IP),
+                nonce: Some(nonce),
+                challenge_b64: None,
+                error: None,
+            };
+            let observed = io
+                .store_nonce(vela_session_policy::challenge::ChallengePurpose::Login)
+                .await;
+            let (expected, expected_store) = model::challenge_nonce(&ms, &b64, tag, fault);
+            let case = format!("challenge store {seed:?} fault {fault:?}");
+            assert_eq!(observed, expected, "{case}");
+            assert_eq!(
+                io.challenge_b64.is_some(),
+                observed == StoreObservation::Inserted,
+                "{case}"
+            );
+            assert_eq!(
+                io.error.is_some(),
+                fault.is_some() || observed == StoreObservation::KeyExists,
+                "{case}"
+            );
+            assert_eq!(
+                store.get(&key).unwrap(),
+                expected_store.kv.get(&key).map(|v| v.as_bytes().to_vec()),
+                "{case}"
+            );
+            counts.case(fault);
+        }
+    }
+    eprintln!(
+        "session executor conformance (challenge): {} states, {} cases, {} with an injected failure",
+        counts.states, counts.cases, counts.faulted
+    );
+}
+
+#[tokio::test]
+async fn registration_executors_match_the_store_model() {
+    use vela_session_policy::registration_driver::{
+        CommitObservation, InsertObservation, TransactionObservation,
+    };
+
+    let db = temp_db().await;
+    let mut counts = Counts::default();
+    let scratch = Store::open_temp().unwrap();
+    for pre in states() {
+        counts.states += 1;
+        let keys = parsed_keys();
+        let dek = crate::db::encode_b64(keys.identity_ek.as_ref().unwrap());
+        let dvk = crate::db::encode_b64(keys.identity_vk.as_ref().unwrap());
+
+        // check_rate_limit
+        for preseed in [0u64, 5] {
+            for fault in faults(1) {
+                let store = Store::open_temp().unwrap();
+                let key = format!("rl:register:ip:{REGISTER_IP}");
+                for _ in 0..preseed {
+                    store.incr_fixed_window(&key, 1, 3600).unwrap();
+                }
+                let mut ms = ModelStore::default();
+                if preseed > 0 {
+                    ms.counters.insert(key.clone(), preseed);
+                }
+                load(&db, &pre).await;
+                let mut io = RegisterIo {
+                    sql: Faulty::new(DbSql { pool: &db, tx: None }, None),
+                    store: Faulty::new(SledStore(&store), fault),
+                    tokens: FakeTokens,
+                    ip: s(REGISTER_IP),
+                    body: register_request(),
+                    keys: parsed_keys(),
+                    user_id: uuid::Uuid::parse_str(&user(9)).unwrap(),
+                    device_id: uuid::Uuid::parse_str(&device(9)).unwrap(),
+                    now: s(NOW),
+                    device_name: s("name"),
+                    device_type: s("desktop"),
+                    token: None,
+                    jti: None,
+                    error: None,
+                };
+                let observed = io.check_rate_limit().await;
+                let (expected, expected_store) =
+                    model::registration_rate_limit(&ms, REGISTER_IP, fault);
+                let case = format!("registration limit preseed {preseed} fault {fault:?}");
+                assert_eq!(observed, expected, "{case}");
+                assert_eq!(
+                    io.error.is_some(),
+                    fault.is_some()
+                        || observed
+                            == vela_session_policy::registration_driver::RateLimitObservation::Denied,
+                    "{case}"
+                );
+                let count = store.incr_fixed_window(&key, 0, 3600).unwrap();
+                assert_eq!(
+                    count,
+                    expected_store.counters.get(&key).copied().unwrap_or(0),
+                    "{case}"
+                );
+                counts.case(fault);
+            }
+        }
+
+        // check_account_budget
+        for fault in faults(1) {
+            load(&db, &pre).await;
+            let mut io = RegisterIo {
+                sql: Faulty::new(DbSql { pool: &db, tx: None }, fault),
+                store: SledStore(&scratch),
+                tokens: FakeTokens,
+                ip: s(REGISTER_IP),
+                body: register_request(),
+                keys: parsed_keys(),
+                user_id: uuid::Uuid::parse_str(&user(9)).unwrap(),
+                device_id: uuid::Uuid::parse_str(&device(9)).unwrap(),
+                now: s(NOW),
+                device_name: s("name"),
+                device_type: s("desktop"),
+                token: None,
+                jti: None,
+                error: None,
+            };
+            let observed = io.check_account_budget().await;
+            let (expected, count) = model::account_count(&pre, fault.is_some());
+            let case = format!("budget fault {fault:?} pre {pre:?}");
+            assert_eq!(observed, expected, "{case}");
+            assert_eq!(io.error.is_some(), fault.is_some(), "{case}");
+            if fault.is_none() {
+                assert_eq!(
+                    observed,
+                    vela_session_policy::registration_driver::BudgetObservation::Counted {
+                        count
+                    },
+                    "{case}"
+                );
+            }
+            counts.case(fault);
+        }
+
+        // begin_transaction
+        for fault in faults(1) {
+            load(&db, &pre).await;
+            let mut io = RegisterIo {
+                sql: Faulty::new(DbSql { pool: &db, tx: None }, fault),
+                store: SledStore(&scratch),
+                tokens: FakeTokens,
+                ip: s(REGISTER_IP),
+                body: register_request(),
+                keys: parsed_keys(),
+                user_id: uuid::Uuid::parse_str(&user(9)).unwrap(),
+                device_id: uuid::Uuid::parse_str(&device(9)).unwrap(),
+                now: s(NOW),
+                device_name: s("name"),
+                device_type: s("desktop"),
+                token: None,
+                jti: None,
+                error: None,
+            };
+            let observed = io.begin_transaction().await;
+            let (expected, _) = model::registration_begin(&pre, fault);
+            let case = format!("begin fault {fault:?} pre {pre:?}");
+            assert_eq!(observed, expected, "{case}");
+            assert_eq!(io.error.is_some(), fault.is_some(), "{case}");
+            io.sql.rollback();
+            settle(&db).await;
+            assert_eq!(snapshot(&db).await, pre, "{case}");
+            counts.case(fault);
+        }
+
+        // insert_account: a taken id and a fresh one.
+        for (name, target) in [("taken", user(0)), ("fresh", user(9))] {
+            for fault in faults(1) {
+                load(&db, &pre).await;
+                let mut io = RegisterIo {
+                    // `begin` is the first statement of this wrapper; the
+                    // insert is the second.
+                    sql: Faulty::new(DbSql { pool: &db, tx: None }, fault.map(|k| k + 1)),
+                    store: SledStore(&scratch),
+                    tokens: FakeTokens,
+                    ip: s(REGISTER_IP),
+                    body: register_request(),
+                    keys: parsed_keys(),
+                    user_id: uuid::Uuid::parse_str(&target).unwrap(),
+                    device_id: uuid::Uuid::parse_str(&device(9)).unwrap(),
+                    now: s(NOW),
+                    device_name: s("name"),
+                    device_type: s("desktop"),
+                    token: None,
+                    jti: None,
+                    error: None,
+                };
+                io.begin_transaction().await;
+                let observed = io.insert_account().await;
+                let (expected, expected_db) = model::insert_account(
+                    &pre,
+                    &target,
+                    NOW,
+                    &keys.share_ek_b64,
+                    NOW,
+                    fault,
+                );
+                let case = format!("insert account {name} fault {fault:?} pre {pre:?}");
+                assert_eq!(observed, expected, "{case}");
+                // A duplicate id is a real SQL error, exactly as an injected
+                // failure is: both set the handler's error slot.
+                assert_eq!(
+                    io.error.is_some(),
+                    observed == InsertObservation::Failed,
+                    "{case}"
+                );
+                if observed == InsertObservation::Inserted {
+                    assert_eq!(io.commit().await, CommitObservation::Committed, "{case}");
+                } else {
+                    io.sql.rollback();
+                }
+                settle(&db).await;
+                if observed == InsertObservation::Inserted {
+                    assert_eq!(snapshot(&db).await, expected_db, "{case}");
+                } else {
+                    assert_eq!(snapshot(&db).await, pre, "{case}");
+                }
+                counts.case(fault);
+            }
+        }
+
+        // insert_device: a taken id and a fresh one.
+        for (name, target) in [("taken", device(0)), ("fresh", device(9))] {
+            for fault in faults(1) {
+                load(&db, &pre).await;
+                let mut io = RegisterIo {
+                    sql: Faulty::new(DbSql { pool: &db, tx: None }, fault.map(|k| k + 1)),
+                    store: SledStore(&scratch),
+                    tokens: FakeTokens,
+                    ip: s(REGISTER_IP),
+                    body: register_request(),
+                    keys: parsed_keys(),
+                    user_id: uuid::Uuid::parse_str(&user(9)).unwrap(),
+                    device_id: uuid::Uuid::parse_str(&target).unwrap(),
+                    now: s(NOW),
+                    device_name: s("name"),
+                    device_type: s("desktop"),
+                    token: None,
+                    jti: None,
+                    error: None,
+                };
+                io.begin_transaction().await;
+                let observed = io.insert_device().await;
+                let (expected, expected_db) = model::insert_device(
+                    &pre,
+                    &target,
+                    &user(9),
+                    "name",
+                    "desktop",
+                    NOW,
+                    &dek,
+                    &dvk,
+                    fault,
+                );
+                let case = format!("insert device {name} fault {fault:?} pre {pre:?}");
+                assert_eq!(observed, expected, "{case}");
+                assert_eq!(
+                    io.error.is_some(),
+                    observed == InsertObservation::Failed,
+                    "{case}"
+                );
+                if observed == InsertObservation::Inserted {
+                    assert_eq!(io.commit().await, CommitObservation::Committed, "{case}");
+                } else {
+                    io.sql.rollback();
+                }
+                settle(&db).await;
+                if observed == InsertObservation::Inserted {
+                    assert_eq!(snapshot(&db).await, expected_db, "{case}");
+                } else {
+                    assert_eq!(snapshot(&db).await, pre, "{case}");
+                }
+                counts.case(fault);
+            }
+        }
+
+        // commit alone
+        for fault in faults(1) {
+            load(&db, &pre).await;
+            let mut io = RegisterIo {
+                sql: Faulty::new(DbSql { pool: &db, tx: None }, fault.map(|k| k + 1)),
+                store: SledStore(&scratch),
+                tokens: FakeTokens,
+                ip: s(REGISTER_IP),
+                body: register_request(),
+                keys: parsed_keys(),
+                user_id: uuid::Uuid::parse_str(&user(9)).unwrap(),
+                device_id: uuid::Uuid::parse_str(&device(9)).unwrap(),
+                now: s(NOW),
+                device_name: s("name"),
+                device_type: s("desktop"),
+                token: None,
+                jti: None,
+                error: None,
+            };
+            io.begin_transaction().await;
+            let observed = io.commit().await;
+            let (expected, _) = model::registration_commit(&pre, fault);
+            let case = format!("commit fault {fault:?} pre {pre:?}");
+            assert_eq!(observed, expected, "{case}");
+            assert_eq!(io.error.is_some(), fault.is_some(), "{case}");
+            io.sql.rollback();
+            settle(&db).await;
+            assert_eq!(snapshot(&db).await, pre, "{case}");
+            counts.case(fault);
+        }
+
+        // track_token
+        for fault in faults(1) {
+            let store = Store::open_temp().unwrap();
+            let mut io = RegisterIo {
+                sql: Faulty::new(DbSql { pool: &db, tx: None }, None),
+                store: Faulty::new(SledStore(&store), fault),
+                tokens: FakeTokens,
+                ip: s(REGISTER_IP),
+                body: register_request(),
+                keys: parsed_keys(),
+                user_id: uuid::Uuid::parse_str(&user(9)).unwrap(),
+                device_id: uuid::Uuid::parse_str(&device(0)).unwrap(),
+                now: s(NOW),
+                device_name: s("name"),
+                device_type: s("desktop"),
+                token: Some(s("token")),
+                jti: Some(s("jti")),
+                error: None,
+            };
+            let observed = io.track_token().await;
+            let (expected, expected_store) =
+                model::registration_track(&ModelStore::default(), &device(0), "jti", fault);
+            let case = format!("registration track fault {fault:?}");
+            assert_eq!(observed, expected, "{case}");
+            assert_eq!(io.error.is_some(), fault.is_some(), "{case}");
+            let key = format!("device:jtis:{}", device(0));
+            let members = store.smembers(&key).unwrap();
+            assert_eq!(
+                members.into_iter().collect::<BTreeSet<_>>(),
+                expected_store.sets.get(&key).cloned().unwrap_or_default(),
+                "{case}"
+            );
+            counts.case(fault);
+        }
+    }
+
+    // The whole transaction, as the driver orders it: a taken account id, a
+    // taken device id and a fresh pair, each fault point.
+    for pre in states() {
+        for (name, target_user, target_device) in [
+            ("taken-user", user(0), device(9)),
+            ("taken-device", user(9), device(0)),
+            ("fresh", user(9), device(9)),
+        ] {
+            for fault in faults(3) {
+                load(&db, &pre).await;
+                let keys = parsed_keys();
+                let dek = crate::db::encode_b64(keys.identity_ek.as_ref().unwrap());
+                let dvk = crate::db::encode_b64(keys.identity_vk.as_ref().unwrap());
+                let mut io = RegisterIo {
+                    sql: Faulty::new(DbSql { pool: &db, tx: None }, fault.map(|k| k + 1)),
+                    store: SledStore(&scratch),
+                    tokens: FakeTokens,
+                    ip: s(REGISTER_IP),
+                    body: register_request(),
+                    keys,
+                    user_id: uuid::Uuid::parse_str(&target_user).unwrap(),
+                    device_id: uuid::Uuid::parse_str(&target_device).unwrap(),
+                    now: s(NOW),
+                    device_name: s("name"),
+                    device_type: s("desktop"),
+                    token: None,
+                    jti: None,
+                    error: None,
+                };
+                let should_commit = fault.is_none()
+                    && !pre.users.contains_key(&target_user)
+                    && !pre.devices.contains_key(&target_device);
+                let begun = io.begin_transaction().await == TransactionObservation::Begun;
+                let mut committed = false;
+                if begun {
+                    if io.insert_account().await == InsertObservation::Inserted
+                        && io.insert_device().await == InsertObservation::Inserted
+                    {
+                        committed =
+                            io.commit().await == CommitObservation::Committed;
+                    }
+                }
+                io.sql.rollback();
+                settle(&db).await;
+                let (_, want) = model::registration_transaction(
+                    &pre,
+                    &target_user,
+                    &target_device,
+                    NOW,
+                    &s("share-ek"),
+                    NOW,
+                    "name",
+                    "desktop",
+                    &dek,
+                    &dvk,
+                    fault,
+                );
+                let case = format!("registration tx {name} fault {fault:?} pre {pre:?}");
+                assert_eq!(committed, should_commit, "{case}");
+                assert_eq!(snapshot(&db).await, want, "{case}");
+                counts.case(fault);
+            }
+        }
+    }
+    eprintln!(
+        "session executor conformance (registration): {} states, {} cases, {} with an injected failure",
         counts.states, counts.cases, counts.faulted
     );
 }

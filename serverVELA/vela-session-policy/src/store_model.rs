@@ -31,8 +31,9 @@ use crate::store::{
     classify_backoff_reset, classify_cascade, classify_commit, classify_failure_counter,
     classify_lockout_device, classify_lockout_ignored, classify_login_challenge,
     classify_login_device, classify_logout, classify_record, classify_scan, classify_table_delete,
-    classify_track_jti, classify_transaction, classify_users_delete, DeviceReadOutcome, IdsOutcome,
-    ReadOutcome, SqlStmt, StoreOutcome, StoreStmt, TakeOutcome, TargetRowView, WriteOutcome,
+    classify_track_jti, classify_transaction, classify_users_delete, CountOutcome,
+    DeviceReadOutcome, IdsOutcome, NxOutcome, ReadOutcome, SqlStmt, StoreOutcome, StoreStmt,
+    TakeOutcome, TargetRowView, WriteOutcome,
 };
 
 /// A `String` from a literal, for the model's own plan construction.
@@ -45,6 +46,7 @@ fn s(x: &str) -> String {
 pub struct UserRow {
     pub share_ek: String,
     pub share_ek_since: String,
+    pub created_at: String,
 }
 
 /// A `devices` row.
@@ -52,6 +54,7 @@ pub struct UserRow {
 pub struct DeviceRow {
     pub user_id: String,
     pub revoked: i64,
+    pub hybrid_ek: String,
     pub hybrid_vk: String,
     pub last_active: Option<String>,
     pub name: String,
@@ -113,6 +116,8 @@ pub enum WriteResult {
     Wrote,
     WroteOne,
     WroteAbsent,
+    /// An `INSERT` whose `UNIQUE` id was already taken: the statement fails.
+    WroteConflict,
 }
 
 impl WriteResult {
@@ -120,6 +125,7 @@ impl WriteResult {
         match self {
             WriteResult::Wrote | WriteResult::WroteOne => WriteOutcome::Applied(1),
             WriteResult::WroteAbsent => WriteOutcome::Applied(0),
+            WriteResult::WroteConflict => WriteOutcome::Failed,
         }
     }
 }
@@ -309,6 +315,58 @@ pub fn exec_stmt(db: &Db, stmt: &SqlStmt) -> Option<(WriteResult, Db)> {
             WriteResult::Wrote,
             db.st_login_last_active(device_id, now, Some(name), Some(kind)),
         )),
+        SqlStmt::InsertUser {
+            user,
+            now,
+            share_ek,
+            share_ek_since,
+        } => {
+            if db.users.contains_key(user) {
+                Some((WriteResult::WroteConflict, db.clone()))
+            } else {
+                let mut next = db.clone();
+                next.users.insert(
+                    user.clone(),
+                    UserRow {
+                        share_ek: share_ek.clone(),
+                        share_ek_since: share_ek_since.clone(),
+                        created_at: now.clone(),
+                    },
+                );
+                Some((WriteResult::Wrote, next))
+            }
+        }
+        SqlStmt::InsertDevice {
+            device,
+            user,
+            name,
+            kind,
+            now,
+            ek,
+            vk,
+        } => {
+            if db.devices.contains_key(device) {
+                Some((WriteResult::WroteConflict, db.clone()))
+            } else {
+                let mut next = db.clone();
+                next.devices.insert(
+                    device.clone(),
+                    DeviceRow {
+                        user_id: user.clone(),
+                        revoked: 0,
+                        hybrid_ek: ek.clone(),
+                        hybrid_vk: vk.clone(),
+                        last_active: Some(now.clone()),
+                        name: name.clone(),
+                        kind: kind.clone(),
+                        revoked_at: None,
+                        revoked_by: None,
+                    },
+                );
+                Some((WriteResult::Wrote, next))
+            }
+        }
+        SqlStmt::CountUsers => None,
     }
 }
 
@@ -388,6 +446,10 @@ pub fn exec_store(store: &Store, stmt: &StoreStmt) -> (StoreOutcome, Store) {
         }
         StoreStmt::AddMember { key, member, .. } => {
             next.sets.entry(key.clone()).or_default().insert(member.clone());
+            (StoreOutcome::Applied, next)
+        }
+        StoreStmt::SetExNx { key, value, .. } => {
+            next.kv.entry(key.clone()).or_insert_with(|| value.clone());
             (StoreOutcome::Applied, next)
         }
     }
@@ -767,6 +829,285 @@ pub fn cascade(ok: bool) -> CascadeObservation {
     classify_cascade(ok)
 }
 
+// ── Registration and challenge ─────────────────────────────────────────────
+
+/// F*: `run_tx_checked`. A plan inside an open transaction that stops at the
+/// first failed statement (an injection or a duplicate id) and leaves the
+/// starting state; `Commit` publishes the working state.
+pub fn run_tx_checked(pre: &Db, plan: &[SqlStmt], fault: Option<usize>) -> (Vec<WriteOutcome>, Db) {
+    let mut work = pre.clone();
+    let mut outcomes = Vec::new();
+    for (k, stmt) in plan.iter().enumerate() {
+        if faulted(fault, k) {
+            outcomes.push(WriteOutcome::Failed);
+            return (outcomes, pre.clone());
+        }
+        if let SqlStmt::Commit = stmt {
+            outcomes.push(WriteOutcome::Applied(0));
+            continue;
+        }
+        match exec_stmt(&work, stmt) {
+            Some((rows, next)) => {
+                let outcome = rows.outcome();
+                outcomes.push(outcome);
+                if outcome == WriteOutcome::Failed {
+                    return (outcomes, pre.clone());
+                }
+                work = next;
+            }
+            None => {
+                outcomes.push(WriteOutcome::Failed);
+                return (outcomes, pre.clone());
+            }
+        }
+    }
+    (outcomes, work)
+}
+
+/// F*: `challenge_rate_limit`.
+pub fn challenge_rate_limit(
+    store: &Store,
+    ip: &str,
+    fault: Option<usize>,
+) -> (crate::challenge_issue_driver::RateLimitObservation, Store) {
+    let plan = crate::store::plan_challenge_rate_limit(s(ip));
+    let (outcomes, post) = run_store(store, &plan, fault);
+    let outcome = outcomes.first().copied().unwrap_or(StoreOutcome::Failed);
+    (crate::store::classify_challenge_rate_limit(&outcome), post)
+}
+
+/// F*: `challenge_nonce`. The first-writer-wins challenge write: `Inserted`
+/// exactly when the key was absent and the write ran.
+pub fn challenge_nonce(
+    store: &Store,
+    challenge: &str,
+    tag: &str,
+    fault: Option<usize>,
+) -> (crate::challenge_issue_driver::StoreObservation, Store) {
+
+    let plan = crate::store::plan_store_nonce(s(challenge), s(tag));
+    let (key, value) = match plan.first() {
+        Some(StoreStmt::SetExNx { key, value, .. }) => (key.clone(), value.clone()),
+        _ => (String::new(), String::new()),
+    };
+    if faulted(fault, 0) {
+        (
+            crate::store::classify_store_nonce(&NxOutcome::Failed),
+            store.clone(),
+        )
+    } else if store.kv.contains_key(&key) {
+        (
+            crate::store::classify_store_nonce(&NxOutcome::KeyExists),
+            store.clone(),
+        )
+    } else {
+        let mut post = store.clone();
+        post.kv.insert(key, value);
+        (
+            crate::store::classify_store_nonce(&NxOutcome::Inserted),
+            post,
+        )
+    }
+}
+
+/// F*: `registration_rate_limit`.
+pub fn registration_rate_limit(
+    store: &Store,
+    ip: &str,
+    fault: Option<usize>,
+) -> (crate::registration_driver::RateLimitObservation, Store) {
+    let plan = crate::store::plan_registration_rate_limit(s(ip));
+    let (outcomes, post) = run_store(store, &plan, fault);
+    let outcome = outcomes.first().copied().unwrap_or(StoreOutcome::Failed);
+    (crate::store::classify_registration_rate_limit(&outcome), post)
+}
+
+/// F*: `account_count`. `Counted` exactly when the query ran, with the exact
+/// number of `users` rows.
+pub fn account_count(
+    db: &Db,
+    failed: bool,
+) -> (crate::registration_driver::BudgetObservation, i64) {
+    if failed {
+        (
+            crate::store::classify_account_count(&CountOutcome::Failed),
+            0,
+        )
+    } else {
+        let count = db.users.len() as i64;
+        (
+            crate::store::classify_account_count(&CountOutcome::Count(count)),
+            count,
+        )
+    }
+}
+
+/// F*: `insert_account`.
+pub fn insert_account(
+    db: &Db,
+    user: &str,
+    now: &str,
+    share_ek: &str,
+    share_ek_since: &str,
+    fault: Option<usize>,
+) -> (crate::registration_driver::InsertObservation, Db) {
+    if faulted(fault, 0) {
+        (
+            crate::store::classify_insert(&WriteOutcome::Failed),
+            db.clone(),
+        )
+    } else {
+        let plan = crate::store::plan_insert_account(
+            s(user),
+            s(now),
+            s(share_ek),
+            s(share_ek_since),
+        );
+        match exec_stmt(db, &plan) {
+            Some((rows, next)) => (crate::store::classify_insert(&rows.outcome()), next),
+            None => (
+                crate::store::classify_insert(&WriteOutcome::Failed),
+                db.clone(),
+            ),
+        }
+    }
+}
+
+/// F*: `insert_device`.
+pub fn insert_device(
+    db: &Db,
+    device: &str,
+    user: &str,
+    name: &str,
+    kind: &str,
+    now: &str,
+    ek: &str,
+    vk: &str,
+    fault: Option<usize>,
+) -> (crate::registration_driver::InsertObservation, Db) {
+    if faulted(fault, 0) {
+        (
+            crate::store::classify_insert(&WriteOutcome::Failed),
+            db.clone(),
+        )
+    } else {
+        let plan = crate::store::plan_insert_device(
+            s(device),
+            s(user),
+            s(name),
+            s(kind),
+            s(now),
+            s(ek),
+            s(vk),
+        );
+        match exec_stmt(db, &plan) {
+            Some((rows, next)) => (crate::store::classify_insert(&rows.outcome()), next),
+            None => (
+                crate::store::classify_insert(&WriteOutcome::Failed),
+                db.clone(),
+            ),
+        }
+    }
+}
+
+/// F*: `registration_begin`.
+pub fn registration_begin(
+    db: &Db,
+    fault: Option<usize>,
+) -> (crate::registration_driver::TransactionObservation, Db) {
+    if faulted(fault, 0) {
+        (
+            crate::store::classify_registration_transaction(&WriteOutcome::Failed),
+            db.clone(),
+        )
+    } else {
+        (
+            crate::store::classify_registration_transaction(&WriteOutcome::Applied(0)),
+            db.clone(),
+        )
+    }
+}
+
+/// F*: `registration_commit`.
+pub fn registration_commit(
+    db: &Db,
+    fault: Option<usize>,
+) -> (crate::registration_driver::CommitObservation, Db) {
+    if faulted(fault, 0) {
+        (
+            crate::store::classify_registration_commit(&WriteOutcome::Failed),
+            db.clone(),
+        )
+    } else {
+        (
+            crate::store::classify_registration_commit(&WriteOutcome::Applied(0)),
+            db.clone(),
+        )
+    }
+}
+
+/// F*: `registration_track`.
+pub fn registration_track(
+    store: &Store,
+    dev: &str,
+    jti: &str,
+    fault: Option<usize>,
+) -> (crate::registration_driver::TrackObservation, Store) {
+    let plan = crate::store::plan_track_jti(s(dev), s(jti));
+    let (outcomes, post) = run_store(store, &plan, fault);
+    let outcome = outcomes.first().copied().unwrap_or(StoreOutcome::Failed);
+    (crate::store::classify_registration_track(&outcome), post)
+}
+
+/// F*: `registration_plan` — the account insert, the device insert and the
+/// commit, in the driver's order.
+pub fn registration_plan(
+    user: &str,
+    device: &str,
+    now: &str,
+    share_ek: &str,
+    share_ek_since: &str,
+    name: &str,
+    kind: &str,
+    ek: &str,
+    vk: &str,
+) -> Vec<SqlStmt> {
+    vec![
+        crate::store::plan_insert_account(s(user), s(now), s(share_ek), s(share_ek_since)),
+        crate::store::plan_insert_device(
+            s(device),
+            s(user),
+            s(name),
+            s(kind),
+            s(now),
+            s(ek),
+            s(vk),
+        ),
+        crate::store::plan_commit(),
+    ]
+}
+
+/// F*: `registration_transaction`.
+pub fn registration_transaction(
+    db: &Db,
+    user: &str,
+    device: &str,
+    now: &str,
+    share_ek: &str,
+    share_ek_since: &str,
+    name: &str,
+    kind: &str,
+    ek: &str,
+    vk: &str,
+    fault: Option<usize>,
+) -> (Vec<WriteOutcome>, Db) {
+    run_tx_checked(
+        db,
+        &registration_plan(user, device, now, share_ek, share_ek_since, name, kind, ek, vk),
+        fault,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -831,6 +1172,67 @@ mod tests {
             .unwrap_or(false));
     }
 
+    /// The F* lemmas `vector_challenge_nonce`,
+    /// `vector_challenge_nonce_collision`, `vector_insert_account` and
+    /// `vector_registration_tx` prove the same runs.
+    #[test]
+    fn challenge_and_registration_vectors() {
+        use crate::challenge_issue_driver::StoreObservation;
+        use crate::registration_driver::InsertObservation;
+
+        let (obs, post) = challenge_nonce(&Store::default(), "n", "login", None);
+        assert_eq!(obs, StoreObservation::Inserted);
+        assert_eq!(post.kv.get("challenge:n").map(String::as_str), Some("login"));
+
+        let collision = Store {
+            kv: BTreeMap::from([(s("challenge:n"), s("enroll"))]),
+            ..Store::default()
+        };
+        let (obs, post) = challenge_nonce(&collision, "n", "login", None);
+        assert_eq!(obs, StoreObservation::KeyExists);
+        assert_eq!(post, collision);
+
+        let (obs, post) = insert_account(&Db::default(), "u", "now", "ek", "now", None);
+        assert_eq!(obs, InsertObservation::Inserted);
+        assert!(post.users.contains_key("u"));
+        // A duplicate id fails and changes nothing.
+        let (obs, post) = insert_account(&post, "u", "now", "ek", "now", None);
+        assert_eq!(obs, InsertObservation::Failed);
+
+        let (outs, post) = registration_transaction(
+            &Db::default(),
+            "u",
+            "d",
+            "now",
+            "ek",
+            "since",
+            "name",
+            "desktop",
+            "ekb64",
+            "vkb64",
+            None,
+        );
+        assert_eq!(outs.len(), 3);
+        assert!(post.users.contains_key("u") && post.devices.contains_key("d"));
+        // Any failure leaves the starting state.
+        for k in 0..3 {
+            let (_, post) = registration_transaction(
+                &Db::default(),
+                "u",
+                "d",
+                "now",
+                "ek",
+                "since",
+                "name",
+                "desktop",
+                "ekb64",
+                "vkb64",
+                Some(k),
+            );
+            assert_eq!(post, Db::default(), "fault at {k}");
+        }
+    }
+
     #[test]
     fn login_failure_counter_refuses_after_its_window_quota() {
         let mut store = Store::default();
@@ -857,6 +1259,7 @@ mod tests {
             DeviceRow {
                 user_id: s("me"),
                 revoked: 0,
+                hybrid_ek: s("ek"),
                 hybrid_vk: s("vk"),
                 last_active: None,
                 name: s("n"),
@@ -883,12 +1286,16 @@ mod tests {
     #[test]
     fn deletion_transaction_removes_the_whole_account() {
         let mut db = Db::default();
-        db.users.insert(s("me"), UserRow { share_ek: s("ek"), share_ek_since: s("t") });
+        db.users.insert(
+            s("me"),
+            UserRow { share_ek: s("ek"), share_ek_since: s("t"), created_at: s("t0") },
+        );
         db.devices.insert(
             s("d1"),
             DeviceRow {
                 user_id: s("me"),
                 revoked: 0,
+                hybrid_ek: s("ek"),
                 hybrid_vk: s("vk"),
                 last_active: None,
                 name: s("n"),

@@ -8,8 +8,8 @@
 //! injected failures, against a real turso database and a real sled store.
 
 use vela_session_policy::store::{
-    render_sql, render_store, Rendered, RenderedStore, SqlStmt, StoreOp, StoreOutcome, StoreStmt,
-    TakeOutcome, WriteOutcome,
+    render_sql, render_store, NxOutcome, Rendered, RenderedStore, SqlStmt, StoreOp, StoreOutcome,
+    StoreStmt, TakeOutcome, WriteOutcome,
 };
 
 use crate::error::AppError;
@@ -22,15 +22,18 @@ use crate::store::Store;
 pub(crate) trait SessionSql {
     async fn query(&mut self, sql: &str, params: Vec<TursoValue>) -> anyhow::Result<Vec<VelaRow>>;
     async fn execute(&mut self, sql: &str, params: Vec<TursoValue>) -> anyhow::Result<u64>;
-    /// Like `execute`, but fails unless the handler's transaction is open (the
-    /// deletion handler's historical guard).
-    async fn execute_in_tx(
+    /// Like `execute`, but fails with `closed` unless the handler's
+    /// transaction is open (each handler's historical guard, and message).
+    async fn execute_in_tx_named(
         &mut self,
         sql: &str,
         params: Vec<TursoValue>,
+        closed: &'static str,
     ) -> anyhow::Result<u64>;
     async fn begin(&mut self) -> anyhow::Result<()>;
     async fn commit(&mut self) -> anyhow::Result<()>;
+    /// Like `commit`, but fails with `closed` when no transaction is open.
+    async fn commit_named(&mut self, closed: &'static str) -> anyhow::Result<()>;
     /// Drops an open transaction, rolling it back.
     fn rollback(&mut self);
 }
@@ -56,16 +59,15 @@ impl SessionSql for DbSql<'_> {
         }
     }
 
-    async fn execute_in_tx(
+    async fn execute_in_tx_named(
         &mut self,
         sql: &str,
         params: Vec<TursoValue>,
+        closed: &'static str,
     ) -> anyhow::Result<u64> {
         match self.tx.as_ref() {
             Some(tx) => tx.execute(sql, params).await,
-            None => Err(anyhow::anyhow!(
-                "account deletion transaction is not open"
-            )),
+            None => Err(anyhow::anyhow!(closed)),
         }
     }
 
@@ -75,11 +77,13 @@ impl SessionSql for DbSql<'_> {
     }
 
     async fn commit(&mut self) -> anyhow::Result<()> {
+        self.commit_named("account deletion transaction is not open").await
+    }
+
+    async fn commit_named(&mut self, closed: &'static str) -> anyhow::Result<()> {
         match self.tx.take() {
             Some(tx) => tx.commit().await,
-            None => Err(anyhow::anyhow!(
-                "account deletion transaction is not open"
-            )),
+            None => Err(anyhow::anyhow!(closed)),
         }
     }
 
@@ -105,6 +109,9 @@ pub(crate) trait SessionStore {
     fn reset_backoff(&mut self, streak_key: &str, backoff_key: &str) -> anyhow::Result<()>;
     /// `rate_limit::track_device_jti`: add `member` to the `key` set.
     fn add_member(&mut self, key: &str, member: &str, ttl: u64) -> anyhow::Result<()>;
+    /// `Store::set_ex_nx`: write only when the key is absent; `true` when this
+    /// call inserted it.
+    fn set_ex_nx(&mut self, key: &str, value: &[u8], ttl: u64) -> anyhow::Result<bool>;
 }
 
 /// The token issuer behind an executor's `issue_token` method.
@@ -172,6 +179,10 @@ impl SessionStore for SledStore<'_> {
         self.0.sadd(key, member, ttl as i64)?;
         Ok(())
     }
+
+    fn set_ex_nx(&mut self, key: &str, value: &[u8], ttl: u64) -> anyhow::Result<bool> {
+        Ok(self.0.set_ex_nx(key, value, ttl)?)
+    }
 }
 
 fn text_params(values: Vec<String>) -> Vec<TursoValue> {
@@ -225,11 +236,36 @@ pub(crate) async fn run_read<S: SessionSql>(
     }
 }
 
+/// Runs the one first-writer-wins statement of a plan (`set_ex_nx`).
+pub(crate) fn run_nonce<K: SessionStore>(
+    store: &mut K,
+    stmt: &StoreStmt,
+) -> (NxOutcome, Option<anyhow::Error>) {
+    match render_store(stmt) {
+        RenderedStore {
+            op: StoreOp::SetExNx,
+            key,
+            ttl,
+            member,
+            ..
+        } => match store.set_ex_nx(&key, member.as_bytes(), ttl) {
+            Ok(true) => (NxOutcome::Inserted, None),
+            Ok(false) => (NxOutcome::KeyExists, None),
+            Err(error) => (NxOutcome::Failed, Some(error)),
+        },
+        _ => (
+            NxOutcome::Failed,
+            Some(anyhow::anyhow!("a non-nonce statement in a nonce plan")),
+        ),
+    }
+}
+
 /// Runs the one take statement of a plan, returning the value it removed.
 pub(crate) fn run_take<K: SessionStore>(
     store: &mut K,
     stmt: &StoreStmt,
 ) -> (TakeOutcome, Option<anyhow::Error>) {
+
     match render_store(stmt) {
         RenderedStore {
             op: StoreOp::Take,
@@ -251,16 +287,55 @@ pub(crate) async fn run_sql_in_tx<S: SessionSql>(
     sql: &mut S,
     plan: &[SqlStmt],
 ) -> (Vec<WriteOutcome>, Option<anyhow::Error>) {
+    run_sql_in_tx_named(sql, plan, "account deletion transaction is not open").await
+}
+
+/// Runs one SQL plan where every write must run on the open transaction,
+/// failing with `closed` when the handler has not opened it (each handler has
+/// always kept its own message).
+pub(crate) async fn run_sql_in_tx_named<S: SessionSql>(
+    sql: &mut S,
+    plan: &[SqlStmt],
+    closed: &'static str,
+) -> (Vec<WriteOutcome>, Option<anyhow::Error>) {
     let mut outcomes = Vec::with_capacity(plan.len());
     for stmt in plan {
         let result = match render_sql(stmt) {
             Rendered::Execute { sql: text, params } => {
-                sql.execute_in_tx(text, text_params(params)).await
+                sql.execute_in_tx_named(text, text_params(params), closed).await
             }
             Rendered::Query { sql: text, params } => {
                 sql.query(text, text_params(params)).await.map(|rows| rows.len() as u64)
             }
-            Rendered::Commit => sql.commit().await.map(|()| 0),
+            Rendered::Commit => sql.commit_named(closed).await.map(|()| 0),
+        };
+        match result {
+            Ok(rows) => outcomes.push(WriteOutcome::Applied(rows)),
+            Err(error) => {
+                outcomes.push(WriteOutcome::Failed);
+                return (outcomes, Some(error));
+            }
+        }
+    }
+    (outcomes, None)
+}
+
+/// Runs one SQL plan with a handler-specific closed-transaction message.
+pub(crate) async fn run_sql_named<S: SessionSql>(
+    sql: &mut S,
+    plan: &[SqlStmt],
+    closed: &'static str,
+) -> (Vec<WriteOutcome>, Option<anyhow::Error>) {
+    let mut outcomes = Vec::with_capacity(plan.len());
+    for stmt in plan {
+        let result = match render_sql(stmt) {
+            Rendered::Query { sql: text, params } => {
+                sql.query(text, text_params(params)).await.map(|rows| rows.len() as u64)
+            }
+            Rendered::Execute { sql: text, params } => {
+                sql.execute(text, text_params(params)).await
+            }
+            Rendered::Commit => sql.commit_named(closed).await.map(|()| 0),
         };
         match result {
             Ok(rows) => outcomes.push(WriteOutcome::Applied(rows)),
@@ -322,6 +397,9 @@ pub(crate) fn run_store<K: SessionStore>(
             RenderedStore {
                 op: StoreOp::Take, ..
             } => Err(anyhow::anyhow!("a take statement in a write plan")),
+            RenderedStore {
+                op: StoreOp::SetExNx, ..
+            } => Err(anyhow::anyhow!("a nonce statement in a write plan")),
         };
         match result {
             Ok(()) => outcomes.push(StoreOutcome::Applied),
