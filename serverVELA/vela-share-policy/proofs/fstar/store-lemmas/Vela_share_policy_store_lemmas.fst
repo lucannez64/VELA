@@ -343,7 +343,9 @@ let vector_db : db =
     items = (fun k -> if k = s "i" then Some vector_item else None);
     inbox = (fun k -> if k = s "i" then Some vector_inbox else None);
     users = (fun _ -> None);
-    devices = (fun _ -> None)
+    devices = (fun _ -> None);
+    sends = (fun _ -> None);
+    clock = (fun (a b: text) -> false)
   }
 
 let vector_send_fresh ()

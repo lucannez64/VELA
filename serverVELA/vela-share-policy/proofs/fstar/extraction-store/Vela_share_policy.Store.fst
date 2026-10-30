@@ -380,3 +380,383 @@ let classify_device
     }
     <:
     Vela_share_policy.Driver.t_EkDeviceObservation
+
+/// One statement an `sends` executor may run (F-1, send-link driver). The
+/// `sends` table is keyed by its `UNIQUE` id; every statement here is
+/// autocommit, so no transaction or `Commit` statement exists.
+type t_SendStmt =
+  | SendStmt_InsertSend {
+    f_id:Alloc.String.t_String;
+    f_owner:Alloc.String.t_String;
+    f_ciphertext:Alloc.String.t_String;
+    f_has_passphrase:bool;
+    f_kdf_salt:Core_models.Option.t_Option Alloc.String.t_String;
+    f_label:Core_models.Option.t_Option Alloc.String.t_String;
+    f_view_once:bool;
+    f_max_views:Core_models.Option.t_Option i64;
+    f_created_at:Alloc.String.t_String;
+    f_expires_at:Alloc.String.t_String
+  }: t_SendStmt
+  | SendStmt_ConsumeSendView {
+    f_id:Alloc.String.t_String;
+    f_now:Alloc.String.t_String
+  }: t_SendStmt
+  | SendStmt_SelectSend { f_id:Alloc.String.t_String }: t_SendStmt
+  | SendStmt_DeleteSend { f_id:Alloc.String.t_String }: t_SendStmt
+  | SendStmt_DeleteOwnedSend {
+    f_id:Alloc.String.t_String;
+    f_owner:Alloc.String.t_String
+  }: t_SendStmt
+
+/// The cells of a `SelectSend` row, as the handler decodes them.
+type t_SendRowView = {
+  f_ciphertext:Core_models.Option.t_Option Alloc.String.t_String;
+  f_has_passphrase:Core_models.Option.t_Option i64;
+  f_kdf_salt:Core_models.Option.t_Option Alloc.String.t_String;
+  f_view_once:Core_models.Option.t_Option i64;
+  f_max_views:Core_models.Option.t_Option i64;
+  f_view_count:Core_models.Option.t_Option i64;
+  f_expires_at:Core_models.Option.t_Option Alloc.String.t_String
+}
+
+/// Which required cell of a fetched row was missing, so the handler keeps its
+/// historical error message.
+type t_SendCell =
+  | SendCell_Ciphertext : t_SendCell
+  | SendCell_ExpiresAt : t_SendCell
+
+/// The fetch read's whole observation: the driver's verdict, the response
+/// cells, and the missing cell that made a row unreadable.
+type t_SendFetchObservation = {
+  f_read:Vela_share_policy.Send_driver.t_ReadObservation;
+  f_missing_cell:Core_models.Option.t_Option t_SendCell;
+  f_ciphertext:Core_models.Option.t_Option Alloc.String.t_String;
+  f_has_passphrase:bool;
+  f_kdf_salt:Core_models.Option.t_Option Alloc.String.t_String;
+  f_view_once:bool;
+  f_max_views:Core_models.Option.t_Option i64;
+  f_view_count:i64;
+  f_expires_at:Core_models.Option.t_Option Alloc.String.t_String
+}
+
+/// The historical default for every cell the handler has not decoded.
+let empty_fetch
+      (read: Vela_share_policy.Send_driver.t_ReadObservation)
+      (missing_cell: Core_models.Option.t_Option t_SendCell)
+    : t_SendFetchObservation =
+  {
+    f_read = read;
+    f_missing_cell = missing_cell;
+    f_ciphertext
+    =
+    Core_models.Option.Option_None <: Core_models.Option.t_Option Alloc.String.t_String;
+    f_has_passphrase = false;
+    f_kdf_salt = Core_models.Option.Option_None <: Core_models.Option.t_Option Alloc.String.t_String;
+    f_view_once = false;
+    f_max_views = Core_models.Option.Option_None <: Core_models.Option.t_Option i64;
+    f_view_count = mk_i64 0;
+    f_expires_at
+    =
+    Core_models.Option.Option_None <: Core_models.Option.t_Option Alloc.String.t_String
+  }
+  <:
+  t_SendFetchObservation
+
+/// `row.bool_int(i).unwrap_or(false)`: a non-zero integer cell is true and an
+/// unreadable one is false.
+let bool_cell (cell: Core_models.Option.t_Option i64) : bool =
+  match cell <: Core_models.Option.t_Option i64 with
+  | Core_models.Option.Option_Some value -> value <>. mk_i64 0
+  | Core_models.Option.Option_None  -> false
+
+/// `CreateSendIo::insert_send`: one insert on the pool (autocommit).
+let plan_send_create
+      (id owner ciphertext: Alloc.String.t_String)
+      (has_passphrase: bool)
+      (kdf_salt label: Core_models.Option.t_Option Alloc.String.t_String)
+      (view_once: bool)
+      (max_views: Core_models.Option.t_Option i64)
+      (created_at expires_at: Alloc.String.t_String)
+    : Alloc.Vec.t_Vec t_SendStmt Alloc.Alloc.t_Global =
+  Alloc.Slice.impl__into_vec #t_SendStmt
+    #Alloc.Alloc.t_Global
+    ((let list =
+          [
+            SendStmt_InsertSend
+            ({
+                f_id = id;
+                f_owner = owner;
+                f_ciphertext = ciphertext;
+                f_has_passphrase = has_passphrase;
+                f_kdf_salt = kdf_salt;
+                f_label = label;
+                f_view_once = view_once;
+                f_max_views = max_views;
+                f_created_at = created_at;
+                f_expires_at = expires_at
+              })
+            <:
+            t_SendStmt
+          ]
+        in
+        FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+        Rust_primitives.Hax.array_of_list 1 list)
+      <:
+      t_Slice t_SendStmt)
+
+/// `FetchSendIo::consume_view`: the atomic view consume (autocommit).
+let plan_send_consume (id now: Alloc.String.t_String)
+    : Alloc.Vec.t_Vec t_SendStmt Alloc.Alloc.t_Global =
+  Alloc.Slice.impl__into_vec #t_SendStmt
+    #Alloc.Alloc.t_Global
+    ((let list = [SendStmt_ConsumeSendView ({ f_id = id; f_now = now }) <: t_SendStmt] in
+        FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+        Rust_primitives.Hax.array_of_list 1 list)
+      <:
+      t_Slice t_SendStmt)
+
+/// `FetchSendIo::read_send`: read the delivered row.
+let plan_send_read (id: Alloc.String.t_String) : t_SendStmt =
+  SendStmt_SelectSend ({ f_id = id }) <: t_SendStmt
+
+/// `FetchSendIo::remove_fetched`: drop the delivered view-once row
+/// (autocommit).
+let plan_send_remove (id: Alloc.String.t_String) : Alloc.Vec.t_Vec t_SendStmt Alloc.Alloc.t_Global =
+  Alloc.Slice.impl__into_vec #t_SendStmt
+    #Alloc.Alloc.t_Global
+    ((let list = [SendStmt_DeleteSend ({ f_id = id }) <: t_SendStmt] in
+        FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+        Rust_primitives.Hax.array_of_list 1 list)
+      <:
+      t_Slice t_SendStmt)
+
+/// `DeleteSendIo::delete_link`: the owner-scoped delete (autocommit).
+let plan_send_delete (id owner: Alloc.String.t_String)
+    : Alloc.Vec.t_Vec t_SendStmt Alloc.Alloc.t_Global =
+  Alloc.Slice.impl__into_vec #t_SendStmt
+    #Alloc.Alloc.t_Global
+    ((let list = [SendStmt_DeleteOwnedSend ({ f_id = id; f_owner = owner }) <: t_SendStmt] in
+        FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+        Rust_primitives.Hax.array_of_list 1 list)
+      <:
+      t_Slice t_SendStmt)
+
+/// `CreateSendIo::insert_send`: the rows the insert changed, or a storage
+/// failure.
+let classify_send_create (outcomes: t_Slice t_WriteOutcome)
+    : Vela_share_policy.Send_driver.t_RowsObservation =
+  if (Core_models.Slice.impl__len #t_WriteOutcome outcomes <: usize) =. mk_usize 1
+  then
+    match outcomes.[ mk_usize 0 ] <: t_WriteOutcome with
+    | WriteOutcome_Applied rows ->
+      {
+        Vela_share_policy.Send_driver.f_rows = rows;
+        Vela_share_policy.Send_driver.f_failed = false
+      }
+      <:
+      Vela_share_policy.Send_driver.t_RowsObservation
+    | WriteOutcome_Failed  ->
+      {
+        Vela_share_policy.Send_driver.f_rows = mk_u64 0;
+        Vela_share_policy.Send_driver.f_failed = true
+      }
+      <:
+      Vela_share_policy.Send_driver.t_RowsObservation
+  else
+    {
+      Vela_share_policy.Send_driver.f_rows = mk_u64 0;
+      Vela_share_policy.Send_driver.f_failed = true
+    }
+    <:
+    Vela_share_policy.Send_driver.t_RowsObservation
+
+/// `FetchSendIo::consume_view`: no row matched the SQL guard, one view was
+/// consumed, or the statement failed.
+let classify_send_consume (outcomes: t_Slice t_WriteOutcome)
+    : Vela_share_policy.Send_driver.t_ConsumeObservation =
+  if (Core_models.Slice.impl__len #t_WriteOutcome outcomes <: usize) =. mk_usize 1
+  then
+    match outcomes.[ mk_usize 0 ] <: t_WriteOutcome with
+    | WriteOutcome_Applied (Rust_primitives.Integers.MkInt 0) ->
+      Vela_share_policy.Send_driver.ConsumeObservation_Unavailable
+      <:
+      Vela_share_policy.Send_driver.t_ConsumeObservation
+    | WriteOutcome_Applied _ ->
+      Vela_share_policy.Send_driver.ConsumeObservation_Consumed
+      <:
+      Vela_share_policy.Send_driver.t_ConsumeObservation
+    | WriteOutcome_Failed  ->
+      Vela_share_policy.Send_driver.ConsumeObservation_Error
+      <:
+      Vela_share_policy.Send_driver.t_ConsumeObservation
+  else
+    Vela_share_policy.Send_driver.ConsumeObservation_Error
+    <:
+    Vela_share_policy.Send_driver.t_ConsumeObservation
+
+/// `FetchSendIo::remove_fetched`: the cleanup is reported as performed unless
+/// its one statement failed.
+let classify_send_remove (outcomes: t_Slice t_WriteOutcome)
+    : Vela_share_policy.Send_driver.t_RemoveObservation =
+  if (Core_models.Slice.impl__len #t_WriteOutcome outcomes <: usize) =. mk_usize 1
+  then
+    match outcomes.[ mk_usize 0 ] <: t_WriteOutcome with
+    | WriteOutcome_Applied _ ->
+      {
+        Vela_share_policy.Send_driver.f_removed = true;
+        Vela_share_policy.Send_driver.f_failed = false
+      }
+      <:
+      Vela_share_policy.Send_driver.t_RemoveObservation
+    | WriteOutcome_Failed  ->
+      {
+        Vela_share_policy.Send_driver.f_removed = false;
+        Vela_share_policy.Send_driver.f_failed = true
+      }
+      <:
+      Vela_share_policy.Send_driver.t_RemoveObservation
+  else
+    {
+      Vela_share_policy.Send_driver.f_removed = false;
+      Vela_share_policy.Send_driver.f_failed = true
+    }
+    <:
+    Vela_share_policy.Send_driver.t_RemoveObservation
+
+/// `DeleteSendIo::delete_link`: the rows the owner-scoped delete removed, or a
+/// storage failure.
+let classify_send_delete (outcomes: t_Slice t_WriteOutcome)
+    : Vela_share_policy.Send_driver.t_RowsObservation =
+  if (Core_models.Slice.impl__len #t_WriteOutcome outcomes <: usize) =. mk_usize 1
+  then
+    match outcomes.[ mk_usize 0 ] <: t_WriteOutcome with
+    | WriteOutcome_Applied rows ->
+      {
+        Vela_share_policy.Send_driver.f_rows = rows;
+        Vela_share_policy.Send_driver.f_failed = false
+      }
+      <:
+      Vela_share_policy.Send_driver.t_RowsObservation
+    | WriteOutcome_Failed  ->
+      {
+        Vela_share_policy.Send_driver.f_rows = mk_u64 0;
+        Vela_share_policy.Send_driver.f_failed = true
+      }
+      <:
+      Vela_share_policy.Send_driver.t_RowsObservation
+  else
+    {
+      Vela_share_policy.Send_driver.f_rows = mk_u64 0;
+      Vela_share_policy.Send_driver.f_failed = true
+    }
+    <:
+    Vela_share_policy.Send_driver.t_RowsObservation
+
+/// `FetchSendIo::read_send`: the row's cells, the driver's read verdict and
+/// (for an unreadable row) which required cell was missing. A failed query is
+/// `Unreadable` with no cell to blame; an absent row is `Missing`.
+let classify_send_read (outcome: t_ReadOutcome t_SendRowView) : t_SendFetchObservation =
+  match outcome <: t_ReadOutcome t_SendRowView with
+  | ReadOutcome_Failed  ->
+    empty_fetch (Vela_share_policy.Send_driver.ReadObservation_Unreadable
+        <:
+        Vela_share_policy.Send_driver.t_ReadObservation)
+      (Core_models.Option.Option_None <: Core_models.Option.t_Option t_SendCell)
+  | ReadOutcome_Row (Core_models.Option.Option_None ) ->
+    empty_fetch (Vela_share_policy.Send_driver.ReadObservation_Missing
+        <:
+        Vela_share_policy.Send_driver.t_ReadObservation)
+      (Core_models.Option.Option_None <: Core_models.Option.t_Option t_SendCell)
+  | ReadOutcome_Row (Core_models.Option.Option_Some row) ->
+    match
+      Core_models.Clone.f_clone #(Core_models.Option.t_Option Alloc.String.t_String)
+        #FStar.Tactics.Typeclasses.solve
+        row.f_ciphertext
+      <:
+      Core_models.Option.t_Option Alloc.String.t_String
+    with
+    | Core_models.Option.Option_Some ciphertext ->
+      let has_passphrase:bool = bool_cell row.f_has_passphrase in
+      let kdf_salt:Core_models.Option.t_Option Alloc.String.t_String =
+        Core_models.Clone.f_clone #(Core_models.Option.t_Option Alloc.String.t_String)
+          #FStar.Tactics.Typeclasses.solve
+          row.f_kdf_salt
+      in
+      let view_once:bool = bool_cell row.f_view_once in
+      let max_views:Core_models.Option.t_Option i64 = row.f_max_views in
+      let view_count:i64 =
+        match row.f_view_count <: Core_models.Option.t_Option i64 with
+        | Core_models.Option.Option_Some value -> value
+        | Core_models.Option.Option_None  -> mk_i64 0
+      in
+      (match
+          Core_models.Clone.f_clone #(Core_models.Option.t_Option Alloc.String.t_String)
+            #FStar.Tactics.Typeclasses.solve
+            row.f_expires_at
+          <:
+          Core_models.Option.t_Option Alloc.String.t_String
+        with
+        | Core_models.Option.Option_Some expires_at ->
+          {
+            f_read
+            =
+            Vela_share_policy.Send_driver.ReadObservation_Payload
+            ({ Vela_share_policy.Send_driver.f_view_once = view_once })
+            <:
+            Vela_share_policy.Send_driver.t_ReadObservation;
+            f_missing_cell
+            =
+            Core_models.Option.Option_None <: Core_models.Option.t_Option t_SendCell;
+            f_ciphertext
+            =
+            Core_models.Option.Option_Some ciphertext
+            <:
+            Core_models.Option.t_Option Alloc.String.t_String;
+            f_has_passphrase = has_passphrase;
+            f_kdf_salt = kdf_salt;
+            f_view_once = view_once;
+            f_max_views = max_views;
+            f_view_count = view_count;
+            f_expires_at
+            =
+            Core_models.Option.Option_Some expires_at
+            <:
+            Core_models.Option.t_Option Alloc.String.t_String
+          }
+          <:
+          t_SendFetchObservation
+        | _ ->
+          {
+            f_read
+            =
+            Vela_share_policy.Send_driver.ReadObservation_Unreadable
+            <:
+            Vela_share_policy.Send_driver.t_ReadObservation;
+            f_missing_cell
+            =
+            Core_models.Option.Option_Some (SendCell_ExpiresAt <: t_SendCell)
+            <:
+            Core_models.Option.t_Option t_SendCell;
+            f_ciphertext
+            =
+            Core_models.Option.Option_Some ciphertext
+            <:
+            Core_models.Option.t_Option Alloc.String.t_String;
+            f_has_passphrase = has_passphrase;
+            f_kdf_salt = kdf_salt;
+            f_view_once = view_once;
+            f_max_views = max_views;
+            f_view_count = view_count;
+            f_expires_at
+            =
+            Core_models.Option.Option_None <: Core_models.Option.t_Option Alloc.String.t_String
+          }
+          <:
+          t_SendFetchObservation)
+    | _ ->
+      empty_fetch (Vela_share_policy.Send_driver.ReadObservation_Unreadable
+          <:
+          Vela_share_policy.Send_driver.t_ReadObservation)
+        (Core_models.Option.Option_Some (SendCell_Ciphertext <: t_SendCell)
+          <:
+          Core_models.Option.t_Option t_SendCell)

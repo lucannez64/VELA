@@ -1,5 +1,6 @@
-//! The SQL behind the sharing executors, split so the observation each
-//! executor returns can be proved against a store model (F-1).
+//! The SQL behind the sharing and one-off send-link executors, split so the
+//! observation each executor returns can be proved against a store model
+//! (F-1).
 //!
 //! Every `impl ShareExecutor` method in `vela-server/src/share/mod.rs` is
 //!
@@ -22,6 +23,9 @@
 //! bound as SQL text parameters.
 
 use crate::driver::{CleanupObservation, EkDeviceObservation, RowsObservation, SendResultObservation};
+use crate::send_driver::{
+    ConsumeObservation, ReadObservation, RemoveObservation, RowsObservation as SendRowsObservation,
+};
 use crate::{EkRegistrationObservation, LinkMutationObservation, SHARE_EK_LEN};
 
 /// One statement an executor may run. Field names follow the bound
@@ -329,6 +333,276 @@ pub fn classify_device(
     }
 }
 
+// ── One-off send links: `sends` ────────────────────────────────────────────
+
+/// One statement an `sends` executor may run (F-1, send-link driver). The
+/// `sends` table is keyed by its `UNIQUE` id; every statement here is
+/// autocommit, so no transaction or `Commit` statement exists.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SendStmt {
+    /// `INSERT INTO sends (...)` with `view_count` and `revoked` pinned to 0.
+    InsertSend {
+        id: String,
+        owner: String,
+        ciphertext: String,
+        has_passphrase: bool,
+        kdf_salt: Option<String>,
+        label: Option<String>,
+        view_once: bool,
+        max_views: Option<i64>,
+        created_at: String,
+        expires_at: String,
+    },
+    /// Consume one view of a live, unexpired, unexhausted link.
+    ConsumeSendView { id: String, now: String },
+    /// The row the fetch handler returns to the anonymous reader.
+    SelectSend { id: String },
+    /// Drop the delivered view-once row.
+    DeleteSend { id: String },
+    /// Delete one link, only from its owner's rows.
+    DeleteOwnedSend { id: String, owner: String },
+}
+
+/// The cells of a `SelectSend` row, as the handler decodes them.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SendRowView {
+    pub ciphertext: Option<String>,
+    pub has_passphrase: Option<i64>,
+    pub kdf_salt: Option<String>,
+    pub view_once: Option<i64>,
+    pub max_views: Option<i64>,
+    pub view_count: Option<i64>,
+    pub expires_at: Option<String>,
+}
+
+/// Which required cell of a fetched row was missing, so the handler keeps its
+/// historical error message.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SendCell {
+    Ciphertext,
+    ExpiresAt,
+}
+
+/// The fetch read's whole observation: the driver's verdict, the response
+/// cells, and the missing cell that made a row unreadable.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SendFetchObservation {
+    pub read: ReadObservation,
+    pub missing_cell: Option<SendCell>,
+    pub ciphertext: Option<String>,
+    pub has_passphrase: bool,
+    pub kdf_salt: Option<String>,
+    pub view_once: bool,
+    pub max_views: Option<i64>,
+    pub view_count: i64,
+    pub expires_at: Option<String>,
+}
+
+/// The historical default for every cell the handler has not decoded.
+fn empty_fetch(read: ReadObservation, missing_cell: Option<SendCell>) -> SendFetchObservation {
+    SendFetchObservation {
+        read,
+        missing_cell,
+        ciphertext: None,
+        has_passphrase: false,
+        kdf_salt: None,
+        view_once: false,
+        max_views: None,
+        view_count: 0,
+        expires_at: None,
+    }
+}
+
+/// `row.bool_int(i).unwrap_or(false)`: a non-zero integer cell is true and an
+/// unreadable one is false.
+fn bool_cell(cell: Option<i64>) -> bool {
+    match cell {
+        Some(value) => value != 0,
+        None => false,
+    }
+}
+
+// ── Send plans ─────────────────────────────────────────────────────────────
+
+/// `CreateSendIo::insert_send`: one insert on the pool (autocommit).
+#[allow(clippy::too_many_arguments)]
+pub fn plan_send_create(
+    id: String,
+    owner: String,
+    ciphertext: String,
+    has_passphrase: bool,
+    kdf_salt: Option<String>,
+    label: Option<String>,
+    view_once: bool,
+    max_views: Option<i64>,
+    created_at: String,
+    expires_at: String,
+) -> Vec<SendStmt> {
+    vec![SendStmt::InsertSend {
+        id,
+        owner,
+        ciphertext,
+        has_passphrase,
+        kdf_salt,
+        label,
+        view_once,
+        max_views,
+        created_at,
+        expires_at,
+    }]
+}
+
+/// `FetchSendIo::consume_view`: the atomic view consume (autocommit).
+pub fn plan_send_consume(id: String, now: String) -> Vec<SendStmt> {
+    vec![SendStmt::ConsumeSendView { id, now }]
+}
+
+/// `FetchSendIo::read_send`: read the delivered row.
+pub fn plan_send_read(id: String) -> SendStmt {
+    SendStmt::SelectSend { id }
+}
+
+/// `FetchSendIo::remove_fetched`: drop the delivered view-once row
+/// (autocommit).
+pub fn plan_send_remove(id: String) -> Vec<SendStmt> {
+    vec![SendStmt::DeleteSend { id }]
+}
+
+/// `DeleteSendIo::delete_link`: the owner-scoped delete (autocommit).
+pub fn plan_send_delete(id: String, owner: String) -> Vec<SendStmt> {
+    vec![SendStmt::DeleteOwnedSend { id, owner }]
+}
+
+// ── Send classification ────────────────────────────────────────────────────
+
+/// `CreateSendIo::insert_send`: the rows the insert changed, or a storage
+/// failure.
+pub fn classify_send_create(outcomes: &[WriteOutcome]) -> SendRowsObservation {
+    if outcomes.len() == 1 {
+        match outcomes[0] {
+            WriteOutcome::Applied(rows) => SendRowsObservation {
+                rows,
+                failed: false,
+            },
+            WriteOutcome::Failed => SendRowsObservation {
+                rows: 0,
+                failed: true,
+            },
+        }
+    } else {
+        SendRowsObservation {
+            rows: 0,
+            failed: true,
+        }
+    }
+}
+
+/// `FetchSendIo::consume_view`: no row matched the SQL guard, one view was
+/// consumed, or the statement failed.
+pub fn classify_send_consume(outcomes: &[WriteOutcome]) -> ConsumeObservation {
+    if outcomes.len() == 1 {
+        match outcomes[0] {
+            WriteOutcome::Applied(0) => ConsumeObservation::Unavailable,
+            WriteOutcome::Applied(_) => ConsumeObservation::Consumed,
+            WriteOutcome::Failed => ConsumeObservation::Error,
+        }
+    } else {
+        ConsumeObservation::Error
+    }
+}
+
+/// `FetchSendIo::remove_fetched`: the cleanup is reported as performed unless
+/// its one statement failed.
+pub fn classify_send_remove(outcomes: &[WriteOutcome]) -> RemoveObservation {
+    if outcomes.len() == 1 {
+        match outcomes[0] {
+            WriteOutcome::Applied(_) => RemoveObservation {
+                removed: true,
+                failed: false,
+            },
+            WriteOutcome::Failed => RemoveObservation {
+                removed: false,
+                failed: true,
+            },
+        }
+    } else {
+        RemoveObservation {
+            removed: false,
+            failed: true,
+        }
+    }
+}
+
+/// `DeleteSendIo::delete_link`: the rows the owner-scoped delete removed, or a
+/// storage failure.
+pub fn classify_send_delete(outcomes: &[WriteOutcome]) -> SendRowsObservation {
+    if outcomes.len() == 1 {
+        match outcomes[0] {
+            WriteOutcome::Applied(rows) => SendRowsObservation {
+                rows,
+                failed: false,
+            },
+            WriteOutcome::Failed => SendRowsObservation {
+                rows: 0,
+                failed: true,
+            },
+        }
+    } else {
+        SendRowsObservation {
+            rows: 0,
+            failed: true,
+        }
+    }
+}
+
+/// `FetchSendIo::read_send`: the row's cells, the driver's read verdict and
+/// (for an unreadable row) which required cell was missing. A failed query is
+/// `Unreadable` with no cell to blame; an absent row is `Missing`.
+#[allow(clippy::ptr_arg)]
+pub fn classify_send_read(outcome: &ReadOutcome<SendRowView>) -> SendFetchObservation {
+    match outcome {
+        ReadOutcome::Failed => empty_fetch(ReadObservation::Unreadable, None),
+        ReadOutcome::Row(None) => empty_fetch(ReadObservation::Missing, None),
+        ReadOutcome::Row(Some(row)) => {
+            let Some(ciphertext) = row.ciphertext.clone() else {
+                return empty_fetch(ReadObservation::Unreadable, Some(SendCell::Ciphertext));
+            };
+            let has_passphrase = bool_cell(row.has_passphrase);
+            let kdf_salt = row.kdf_salt.clone();
+            let view_once = bool_cell(row.view_once);
+            let max_views = row.max_views;
+            let view_count = match row.view_count {
+                Some(value) => value,
+                None => 0,
+            };
+            let Some(expires_at) = row.expires_at.clone() else {
+                return SendFetchObservation {
+                    read: ReadObservation::Unreadable,
+                    missing_cell: Some(SendCell::ExpiresAt),
+                    ciphertext: Some(ciphertext),
+                    has_passphrase,
+                    kdf_salt,
+                    view_once,
+                    max_views,
+                    view_count,
+                    expires_at: None,
+                };
+            };
+            SendFetchObservation {
+                read: ReadObservation::Payload { view_once },
+                missing_cell: None,
+                ciphertext: Some(ciphertext),
+                has_passphrase,
+                kdf_salt,
+                view_once,
+                max_views,
+                view_count,
+                expires_at: Some(expires_at),
+            }
+        }
+    }
+}
+
 // ── Rendering (not extracted; pinned by the tests below) ───────────────────
 
 /// One statement as the database receives it.
@@ -428,6 +702,90 @@ pub fn render(stmt: &ShareStmt) -> Rendered {
             params: vec![share_ek.clone(), since.clone(), device_id.clone(), user.clone()],
         },
         ShareStmt::Commit => Rendered::Commit,
+    }
+}
+
+/// One bound parameter of a rendered `sends` statement: the handler binds
+/// text, integers and NULL (for the nullable columns) exactly as before.
+#[cfg(not(hax))]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SqlParam {
+    Text(String),
+    Int(i64),
+    Null,
+}
+
+/// One `sends` statement as the database receives it.
+#[cfg(not(hax))]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SendRendered {
+    /// A read (`query`).
+    Query { sql: &'static str, params: Vec<SqlParam> },
+    /// A write (`execute`).
+    Execute { sql: &'static str, params: Vec<SqlParam> },
+}
+
+/// The exact SQL text and parameters each `sends` statement has always used.
+#[cfg(not(hax))]
+pub fn render_send(stmt: &SendStmt) -> SendRendered {
+    match stmt {
+        SendStmt::InsertSend {
+            id,
+            owner,
+            ciphertext,
+            has_passphrase,
+            kdf_salt,
+            label,
+            view_once,
+            max_views,
+            created_at,
+            expires_at,
+        } => SendRendered::Execute {
+            sql: "INSERT INTO sends
+                (id, owner_user_id, ciphertext, has_passphrase, kdf_salt, label,
+                 view_once, max_views, view_count, created_at, expires_at, revoked)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 0)",
+            params: vec![
+                SqlParam::Text(id.clone()),
+                SqlParam::Text(owner.clone()),
+                SqlParam::Text(ciphertext.clone()),
+                SqlParam::Int(if *has_passphrase { 1 } else { 0 }),
+                match kdf_salt {
+                    Some(value) => SqlParam::Text(value.clone()),
+                    None => SqlParam::Null,
+                },
+                match label {
+                    Some(value) => SqlParam::Text(value.clone()),
+                    None => SqlParam::Null,
+                },
+                SqlParam::Int(if *view_once { 1 } else { 0 }),
+                match max_views {
+                    Some(value) => SqlParam::Int(*value),
+                    None => SqlParam::Null,
+                },
+                SqlParam::Text(created_at.clone()),
+                SqlParam::Text(expires_at.clone()),
+            ],
+        },
+        SendStmt::ConsumeSendView { id, now } => SendRendered::Execute {
+            sql: "UPDATE sends SET view_count = view_count + 1
+             WHERE id = ? AND revoked = 0 AND expires_at > ?
+               AND (max_views IS NULL OR view_count < max_views)",
+            params: vec![SqlParam::Text(id.clone()), SqlParam::Text(now.clone())],
+        },
+        SendStmt::SelectSend { id } => SendRendered::Query {
+            sql: "SELECT ciphertext, has_passphrase, kdf_salt, view_once, max_views, view_count, expires_at
+             FROM sends WHERE id = ?",
+            params: vec![SqlParam::Text(id.clone())],
+        },
+        SendStmt::DeleteSend { id } => SendRendered::Execute {
+            sql: "DELETE FROM sends WHERE id = ?",
+            params: vec![SqlParam::Text(id.clone())],
+        },
+        SendStmt::DeleteOwnedSend { id, owner } => SendRendered::Execute {
+            sql: "DELETE FROM sends WHERE id = ? AND owner_user_id = ?",
+            params: vec![SqlParam::Text(id.clone()), SqlParam::Text(owner.clone())],
+        },
     }
 }
 
@@ -612,5 +970,203 @@ mod tests {
         let absent = classify_device(&me, 7, &ReadOutcome::Row(None), verdicts);
         assert!(!absent.registration.device_row_present);
         assert!(!absent.registration.device_active);
+    }
+
+    fn send_exec(stmt: &SendStmt) -> (&'static str, Vec<SqlParam>) {
+        match render_send(stmt) {
+            SendRendered::Execute { sql, params } => (sql, params),
+            other => panic!("expected a write, got {other:?}"),
+        }
+    }
+
+    fn send_query(stmt: &SendStmt) -> (&'static str, Vec<SqlParam>) {
+        match render_send(stmt) {
+            SendRendered::Query { sql, params } => (sql, params),
+            other => panic!("expected a read, got {other:?}"),
+        }
+    }
+
+    // Byte-for-byte copies of the literals `vela-server/src/send.rs` used
+    // before the split, including their line breaks and indentation.
+
+    #[test]
+    fn send_plans_render_the_historical_statements() {
+        let create = plan_send_create(
+            s("id"),
+            s("own"),
+            s("ct"),
+            true,
+            Some(s("salt")),
+            Some(s("label")),
+            false,
+            Some(5),
+            s("t0"),
+            s("t1"),
+        );
+        assert_eq!(create.len(), 1);
+        assert_eq!(
+            send_exec(&create[0]),
+            (
+                "INSERT INTO sends
+                (id, owner_user_id, ciphertext, has_passphrase, kdf_salt, label,
+                 view_once, max_views, view_count, created_at, expires_at, revoked)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 0)",
+                vec![
+                    SqlParam::Text(s("id")),
+                    SqlParam::Text(s("own")),
+                    SqlParam::Text(s("ct")),
+                    SqlParam::Int(1),
+                    SqlParam::Text(s("salt")),
+                    SqlParam::Text(s("label")),
+                    SqlParam::Int(0),
+                    SqlParam::Int(5),
+                    SqlParam::Text(s("t0")),
+                    SqlParam::Text(s("t1")),
+                ]
+            )
+        );
+        // Nullable columns bind NULL, never an empty string.
+        let bare = plan_send_create(
+            s("id"),
+            s("own"),
+            s("ct"),
+            false,
+            None,
+            None,
+            true,
+            None,
+            s("t0"),
+            s("t1"),
+        );
+        assert_eq!(
+            send_exec(&bare[0]).1,
+            vec![
+                SqlParam::Text(s("id")),
+                SqlParam::Text(s("own")),
+                SqlParam::Text(s("ct")),
+                SqlParam::Int(0),
+                SqlParam::Null,
+                SqlParam::Null,
+                SqlParam::Int(1),
+                SqlParam::Null,
+                SqlParam::Text(s("t0")),
+                SqlParam::Text(s("t1")),
+            ]
+        );
+
+        let consume = plan_send_consume(s("id"), s("now"));
+        assert_eq!(consume.len(), 1);
+        assert_eq!(
+            send_exec(&consume[0]),
+            (
+                "UPDATE sends SET view_count = view_count + 1
+             WHERE id = ? AND revoked = 0 AND expires_at > ?
+               AND (max_views IS NULL OR view_count < max_views)",
+                vec![SqlParam::Text(s("id")), SqlParam::Text(s("now"))]
+            )
+        );
+
+        assert_eq!(
+            send_query(&plan_send_read(s("id"))),
+            (
+                "SELECT ciphertext, has_passphrase, kdf_salt, view_once, max_views, view_count, expires_at
+             FROM sends WHERE id = ?",
+                vec![SqlParam::Text(s("id"))]
+            )
+        );
+
+        let remove = plan_send_remove(s("id"));
+        assert_eq!(remove.len(), 1);
+        assert_eq!(
+            send_exec(&remove[0]),
+            ("DELETE FROM sends WHERE id = ?", vec![SqlParam::Text(s("id"))])
+        );
+
+        let delete = plan_send_delete(s("id"), s("own"));
+        assert_eq!(delete.len(), 1);
+        assert_eq!(
+            send_exec(&delete[0]),
+            (
+                "DELETE FROM sends WHERE id = ? AND owner_user_id = ?",
+                vec![SqlParam::Text(s("id")), SqlParam::Text(s("own"))]
+            )
+        );
+    }
+
+    #[test]
+    fn send_classifiers_keep_the_historical_observations() {
+        use WriteOutcome::{Applied, Failed};
+        assert_eq!(
+            classify_send_create(&[Applied(1)]),
+            SendRowsObservation { rows: 1, failed: false }
+        );
+        assert_eq!(
+            classify_send_create(&[Failed]),
+            SendRowsObservation { rows: 0, failed: true }
+        );
+        assert_eq!(classify_send_consume(&[Applied(0)]), ConsumeObservation::Unavailable);
+        assert_eq!(classify_send_consume(&[Applied(1)]), ConsumeObservation::Consumed);
+        assert_eq!(classify_send_consume(&[Applied(3)]), ConsumeObservation::Consumed);
+        assert_eq!(classify_send_consume(&[Failed]), ConsumeObservation::Error);
+        assert_eq!(
+            classify_send_remove(&[Applied(0)]),
+            RemoveObservation { removed: true, failed: false }
+        );
+        assert_eq!(
+            classify_send_remove(&[Failed]),
+            RemoveObservation { removed: false, failed: true }
+        );
+        assert_eq!(
+            classify_send_delete(&[Applied(0)]),
+            SendRowsObservation { rows: 0, failed: false }
+        );
+        assert_eq!(
+            classify_send_delete(&[Failed]),
+            SendRowsObservation { rows: 0, failed: true }
+        );
+
+        let failed = classify_send_read(&ReadOutcome::Failed);
+        assert_eq!(failed.read, ReadObservation::Unreadable);
+        assert_eq!(failed.missing_cell, None);
+        assert_eq!(failed.ciphertext, None);
+
+        let missing = classify_send_read(&ReadOutcome::Row(None));
+        assert_eq!(missing.read, ReadObservation::Missing);
+        assert_eq!(missing.missing_cell, None);
+
+        let row = |ciphertext: Option<&str>, expires_at: Option<&str>| {
+            ReadOutcome::Row(Some(SendRowView {
+                ciphertext: ciphertext.map(s),
+                has_passphrase: Some(1),
+                kdf_salt: Some(s("salt")),
+                view_once: Some(1),
+                max_views: Some(4),
+                view_count: Some(2),
+                expires_at: expires_at.map(s),
+            }))
+        };
+        let payload = classify_send_read(&row(Some("ct"), Some("exp")));
+        assert_eq!(payload.read, ReadObservation::Payload { view_once: true });
+        assert_eq!(payload.missing_cell, None);
+        assert_eq!(payload.ciphertext, Some(s("ct")));
+        assert!(payload.has_passphrase);
+        assert_eq!(payload.kdf_salt, Some(s("salt")));
+        assert!(payload.view_once);
+        assert_eq!(payload.max_views, Some(4));
+        assert_eq!(payload.view_count, 2);
+        assert_eq!(payload.expires_at, Some(s("exp")));
+
+        let no_ciphertext = classify_send_read(&row(None, Some("exp")));
+        assert_eq!(no_ciphertext.read, ReadObservation::Unreadable);
+        assert_eq!(no_ciphertext.missing_cell, Some(SendCell::Ciphertext));
+        assert_eq!(no_ciphertext.ciphertext, None);
+
+        let no_expiry = classify_send_read(&row(Some("ct"), None));
+        assert_eq!(no_expiry.read, ReadObservation::Unreadable);
+        assert_eq!(no_expiry.missing_cell, Some(SendCell::ExpiresAt));
+        // The handler assigns the earlier cells before it notices the expiry.
+        assert_eq!(no_expiry.ciphertext, Some(s("ct")));
+        assert!(no_expiry.view_once);
+        assert_eq!(no_expiry.expires_at, None);
     }
 }

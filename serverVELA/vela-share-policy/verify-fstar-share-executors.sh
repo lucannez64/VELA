@@ -36,15 +36,25 @@ done
   echo 'run verify-fstar-driver.sh first' >&2
   exit 1
 }
+[[ -f proofs/fstar/extraction-send-driver/Vela_share_policy.Send_driver.fst ]] || {
+  echo 'run verify-fstar-send-driver.sh first' >&2
+  exit 1
+}
 
 # Rendering pins and the Rust mirror's shared vectors.
 cargo test --lib store
 
+# The F-1 send-link executors (verified by verify-fstar-send-executors.sh)
+# share this crate and this store model, so their plans and classifiers are
+# extracted into the same `Vela_share_policy.Store` module.
 items=(
   plan_send_insert plan_link_read plan_link_update plan_link_revoke
   plan_linked_inbox_cleanup plan_inbox_delete plan_device_read
   plan_share_ek_update classify_send classify_rows classify_cleanup
   classify_link classify_device
+  plan_send_create plan_send_consume plan_send_read plan_send_remove
+  plan_send_delete classify_send_create classify_send_consume
+  classify_send_remove classify_send_delete classify_send_read
 )
 include='-**'
 for item in "${items[@]}"; do
@@ -56,13 +66,15 @@ cargo hax into \
   --output-dir proofs/fstar/extraction-store \
   -i "$include" \
   fstar --z3rlimit 500
-# The partial driver and root modules hax writes alongside are superseded by
-# the full driver extraction.
+# The partial driver, send-driver and root modules hax writes alongside are
+# superseded by the full driver and send-driver extractions.
 rm -f proofs/fstar/extraction-store/Vela_share_policy.Driver.fst
+rm -f proofs/fstar/extraction-store/Vela_share_policy.Send_driver.fst
 rm -f proofs/fstar/extraction-store/Vela_share_policy.fst
 
 generated=(proofs/fstar/extraction-store/Vela_share_policy.Store.fst)
 driver=(proofs/fstar/extraction-driver/*.fst)
+send_driver=(proofs/fstar/extraction-send-driver/Vela_share_policy.Send_driver.fst)
 model=(proofs/fstar/store-lemmas/Vela_share_policy_store_model.fst)
 lemmas=(proofs/fstar/store-lemmas/Vela_share_policy_store_lemmas.fst)
 for f in "${generated[@]}" "${model[@]}" "${lemmas[@]}"; do
@@ -70,7 +82,7 @@ for f in "${generated[@]}" "${model[@]}" "${lemmas[@]}"; do
 done
 
 python3 "$proof_root/../../security/formal/check-driver-proof-sources.py" \
-  --generated "${generated[@]}" "${driver[@]}" \
+  --generated "${generated[@]}" "${driver[@]}" "${send_driver[@]}" \
   --proof "${model[@]}" "${lemmas[@]}" \
   --include-dir "$proof_root"
 
@@ -94,6 +106,7 @@ fstar_args=(
   --include "$hax_lib_root/proof-libs/fstar/rust_primitives"
   --include "$hax_lib_root/proofs/fstar/extraction"
   --include proofs/fstar/extraction-driver
+  --include proofs/fstar/extraction-send-driver
   --include proofs/fstar/extraction-store
   --include proofs/fstar/store-lemmas
 )

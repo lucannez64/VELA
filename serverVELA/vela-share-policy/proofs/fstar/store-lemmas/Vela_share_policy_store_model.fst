@@ -70,6 +70,22 @@ type device_row = {
   dv_revoked: i64;
 }
 
+/// A `sends` row (one-off share links). The handler stores timestamps as
+/// text; `db.clock` is the model's order on that text.
+type send_row = {
+  sd_owner: text;
+  sd_ciphertext: text;
+  sd_has_passphrase: i64;
+  sd_kdf_salt: Core_models.Option.t_Option text;
+  sd_label: Core_models.Option.t_Option text;
+  sd_view_once: i64;
+  sd_max_views: Core_models.Option.t_Option i64;
+  sd_view_count: i64;
+  sd_created_at: text;
+  sd_expires_at: text;
+  sd_revoked: i64;
+}
+
 type tbl (a: Type) = text -> option a
 
 let upd (#a: Type) (t: tbl a) (k: text) (x: option a) : tbl a =
@@ -80,6 +96,12 @@ noeq type db = {
   inbox: tbl inbox_row;
   users: tbl user_row;
   devices: tbl device_row;
+  sends: tbl send_row;
+  /// The order the database compares stored timestamps with: SQLite compares
+  /// them as text, which for the handler's RFC3339 cells is chronological
+  /// order. It is a parameter of the model, not an axiom; the conformance
+  /// test supplies the engine's own comparison.
+  clock: text -> text -> bool;
 }
 
 // ── Statement semantics ────────────────────────────────────────────────────
@@ -155,6 +177,67 @@ let exec (d: db) (s: t_ShareStmt) : option (u64 & db) =
      | None -> Some (mk_u64 0, d))
   | _ -> None
 
+// ── The one-off share-link statements ─────────────────────────────────────
+
+/// The SQL guard of the view consume: unrevoked, unexpired at `now`, and a
+/// view remaining (`max_views IS NULL OR view_count < max_views`).
+let send_live (d: db) (r: send_row) (now: text) : bool =
+  r.sd_revoked = mk_i64 0 &&
+  d.clock r.sd_expires_at now &&
+  (match r.sd_max_views with
+   | Core_models.Option.Option_Some m -> r.sd_view_count <. m
+   | Core_models.Option.Option_None -> true)
+
+/// One `sends` write statement: the rows it changed and the new state, or
+/// `None` when it errors. The table is keyed by its `UNIQUE` id, so an
+/// `INSERT` of a present id fails; a `DELETE` reports the one matching row or
+/// none. `SelectSend` is not a write.
+let exec_send (d: db) (s: t_SendStmt) : option (u64 & db) =
+  match s with
+  | SendStmt_InsertSend
+    { f_id = id; f_owner = owner; f_ciphertext = ciphertext;
+      f_has_passphrase = has_passphrase; f_kdf_salt = salt; f_label = label;
+      f_view_once = view_once; f_max_views = max_views;
+      f_created_at = created; f_expires_at = expires } ->
+    (match d.sends id with
+     | Some _ -> None
+     | None ->
+       let row : send_row = {
+         sd_owner = owner;
+         sd_ciphertext = ciphertext;
+         sd_has_passphrase = (if has_passphrase then mk_i64 1 else mk_i64 0);
+         sd_kdf_salt = salt;
+         sd_label = label;
+         sd_view_once = (if view_once then mk_i64 1 else mk_i64 0);
+         sd_max_views = max_views;
+         sd_view_count = mk_i64 0;
+         sd_created_at = created;
+         sd_expires_at = expires;
+         sd_revoked = mk_i64 0;
+       } in
+       Some (mk_u64 1, { d with sends = upd d.sends id (Some row) }))
+  | SendStmt_ConsumeSendView { f_id = id; f_now = now } ->
+    (match d.sends id with
+     | Some r ->
+       if send_live d r now
+       then
+         let row : send_row = { r with sd_view_count = r.sd_view_count +. mk_i64 1 } in
+         Some (mk_u64 1, { d with sends = upd d.sends id (Some row) })
+       else Some (mk_u64 0, d)
+     | None -> Some (mk_u64 0, d))
+  | SendStmt_DeleteSend { f_id = id } ->
+    (match d.sends id with
+     | Some _ -> Some (mk_u64 1, { d with sends = upd d.sends id None })
+     | None -> Some (mk_u64 0, d))
+  | SendStmt_DeleteOwnedSend { f_id = id; f_owner = owner } ->
+    (match d.sends id with
+     | Some r ->
+       if r.sd_owner = owner
+       then Some (mk_u64 1, { d with sends = upd d.sends id None })
+       else Some (mk_u64 0, d)
+     | None -> Some (mk_u64 0, d))
+  | _ -> None
+
 /// The k-th statement is the injected failure.
 let faulted (f: option nat) (k: nat) : bool =
   match f with
@@ -194,6 +277,22 @@ let rec run_auto (d: db) (stmts: list t_ShareStmt) (k: nat) (f: option nat)
       | None -> ([WriteOutcome_Failed], d)
       | Some (n, d') ->
         let r = run_auto d' rest (k + 1) f in
+        (WriteOutcome_Applied n :: fst r, snd r)
+
+/// A `sends` plan on the pool: each statement commits on its own, and a
+/// failed statement changes nothing.
+let rec run_send_auto (d: db) (stmts: list t_SendStmt) (k: nat) (f: option nat)
+  : Tot (r: (list t_WriteOutcome & db){L.length (fst r) <= L.length stmts}) (decreases stmts) =
+  match stmts with
+  | [] -> ([], d)
+  | s :: rest ->
+    if faulted f k
+    then ([WriteOutcome_Failed], d)
+    else
+      match exec_send d s with
+      | None -> ([WriteOutcome_Failed], d)
+      | Some (n, d') ->
+        let r = run_send_auto d' rest (k + 1) f in
         (WriteOutcome_Applied n :: fst r, snd r)
 
 /// `SelectLink`: the row with that id, decoded as the handler decodes it.
@@ -241,6 +340,32 @@ let read_device (d: db) (s: t_ShareStmt) (failed: bool) : t_ReadOutcome t_Device
                     } <: t_DeviceRowView))
             | None -> ReadOutcome_Row Core_models.Option.Option_None)
          else ReadOutcome_Row Core_models.Option.Option_None
+       | None -> ReadOutcome_Row Core_models.Option.Option_None)
+    | _ -> ReadOutcome_Failed
+
+/// `SelectSend`: the row with that id, decoded as the handler decodes it.
+/// Schema-conforming rows have every required cell, so a present row decodes
+/// in full; the conformance test checks the handler's canonical timestamp
+/// against the stored text.
+let read_send (d: db) (s: t_SendStmt) (failed: bool) : t_ReadOutcome t_SendRowView =
+  if failed
+  then ReadOutcome_Failed
+  else
+    match s with
+    | SendStmt_SelectSend { f_id = id } ->
+      (match d.sends id with
+       | Some r ->
+         ReadOutcome_Row
+           (Core_models.Option.Option_Some
+             ({
+                 f_ciphertext = Core_models.Option.Option_Some r.sd_ciphertext;
+                 f_has_passphrase = Core_models.Option.Option_Some r.sd_has_passphrase;
+                 f_kdf_salt = r.sd_kdf_salt;
+                 f_view_once = Core_models.Option.Option_Some r.sd_view_once;
+                 f_max_views = r.sd_max_views;
+                 f_view_count = Core_models.Option.Option_Some r.sd_view_count;
+                 f_expires_at = Core_models.Option.Option_Some r.sd_expires_at
+               } <: t_SendRowView))
        | None -> ReadOutcome_Row Core_models.Option.Option_None)
     | _ -> ReadOutcome_Failed
 
@@ -305,3 +430,50 @@ let observe_device
       (f: option nat)
   : Vela_share_policy.Driver.t_EkDeviceObservation =
   classify_device caller ek_len (read_device d (plan_device_read device_id caller) (faulted f 0)) verdicts
+
+// ── The one-off share-link executors: plan, run, classify ──────────────────
+
+let stmts_of_send (p: Alloc.Vec.t_Vec t_SendStmt Alloc.Alloc.t_Global) : list t_SendStmt =
+  Seq.seq_to_list p._0
+
+/// `CreateSendIo::insert_send`, after the driver's permit.
+let send_create
+      (d: db) (id owner ciphertext: text)
+      (has_passphrase: bool)
+      (kdf_salt label: Core_models.Option.t_Option text)
+      (view_once: bool)
+      (max_views: Core_models.Option.t_Option i64)
+      (created_at expires_at: text)
+      (f: option nat)
+  : (Vela_share_policy.Send_driver.t_RowsObservation & db) =
+  let r =
+    run_send_auto d
+      (stmts_of_send
+        (plan_send_create id owner ciphertext has_passphrase kdf_salt label view_once
+          max_views created_at expires_at))
+      0 f
+  in
+  (classify_send_create (slice_of (fst r)), snd r)
+
+/// `FetchSendIo::consume_view`.
+let send_consume (d: db) (id now: text) (f: option nat)
+  : (Vela_share_policy.Send_driver.t_ConsumeObservation & db) =
+  let r = run_send_auto d (stmts_of_send (plan_send_consume id now)) 0 f in
+  (classify_send_consume (slice_of (fst r)), snd r)
+
+/// `FetchSendIo::remove_fetched`.
+let send_remove (d: db) (id: text) (f: option nat)
+  : (Vela_share_policy.Send_driver.t_RemoveObservation & db) =
+  let r = run_send_auto d (stmts_of_send (plan_send_remove id)) 0 f in
+  (classify_send_remove (slice_of (fst r)), snd r)
+
+/// `DeleteSendIo::delete_link` for caller `owner`.
+let send_delete (d: db) (id owner: text) (f: option nat)
+  : (Vela_share_policy.Send_driver.t_RowsObservation & db) =
+  let r = run_send_auto d (stmts_of_send (plan_send_delete id owner)) 0 f in
+  (classify_send_delete (slice_of (fst r)), snd r)
+
+/// `FetchSendIo::read_send`. Reads change nothing.
+let send_fetch_read (d: db) (id: text) (f: option nat)
+  : t_SendFetchObservation =
+  classify_send_read (read_send d (plan_send_read id) (faulted f 0))

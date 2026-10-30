@@ -34,6 +34,13 @@ use crate::{
     state::AppState,
 };
 use vela_share_policy::send_driver::SendFailure;
+use vela_share_policy::store::{self, ReadOutcome, SendCell};
+
+#[cfg(test)]
+mod conformance;
+mod sql;
+
+use sql::SendSql;
 
 /// A link carries one item (or note); generous for a large secure note, far
 /// below inbox-sized payloads.
@@ -73,8 +80,8 @@ pub struct CreateSendResponse {
 /// The I/O behind one create request. Decoding is a request observation (the
 /// driver decides whether it is admissible); the insert uses only the driver's
 /// permit, so the clamped TTL/view bounds cannot drift from the proof.
-struct CreateSendIo<'a> {
-    state: &'a AppState,
+struct CreateSendIo<S> {
+    sql: S,
     owner_user_id: Uuid,
     ciphertext: Vec<u8>,
     has_passphrase: bool,
@@ -86,53 +93,35 @@ struct CreateSendIo<'a> {
     error: Option<AppError>,
 }
 
-impl CreateSendIo<'_> {
+impl<S: SendSql> CreateSendIo<S> {
     async fn insert_send(
         &mut self,
         permit: vela_share_policy::send_driver::CreatePermit,
     ) -> vela_share_policy::send_driver::RowsObservation {
-        use vela_share_policy::send_driver::RowsObservation;
         self.expires_at = self.now + chrono::Duration::seconds(permit.ttl_secs());
         let max_views = if permit.max_views_present() {
-            TursoValue::Integer(permit.max_views())
+            Some(permit.max_views())
         } else {
-            TursoValue::Null
+            None
         };
-        match self
-            .state
-            .sqldb
-            .execute(
-                "INSERT INTO sends
-                (id, owner_user_id, ciphertext, has_passphrase, kdf_salt, label,
-                 view_once, max_views, view_count, created_at, expires_at, revoked)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 0)",
-                vec![
-                    TursoValue::Text(self.id.to_string()),
-                    TursoValue::Text(self.owner_user_id.to_string()),
-                    TursoValue::Text(db::encode_b64(&self.ciphertext)),
-                    TursoValue::Integer(if self.has_passphrase { 1 } else { 0 }),
-                    self.kdf_salt
-                        .clone()
-                        .map(TursoValue::Text)
-                        .unwrap_or(TursoValue::Null),
-                    self.label
-                        .clone()
-                        .map(TursoValue::Text)
-                        .unwrap_or(TursoValue::Null),
-                    TursoValue::Integer(if permit.view_once() { 1 } else { 0 }),
-                    max_views,
-                    TursoValue::Text(self.now.to_rfc3339()),
-                    TursoValue::Text(self.expires_at.to_rfc3339()),
-                ],
-            )
-            .await
-        {
-            Ok(rows) => RowsObservation { rows, failed: false },
-            Err(error) => {
-                self.error = Some(AppError::Internal(error.to_string()));
-                RowsObservation { rows: 0, failed: true }
-            }
+        let plan = store::plan_send_create(
+            self.id.to_string(),
+            self.owner_user_id.to_string(),
+            db::encode_b64(&self.ciphertext),
+            self.has_passphrase,
+            self.kdf_salt.clone(),
+            self.label.clone(),
+            permit.view_once(),
+            max_views,
+            self.now.to_rfc3339(),
+            self.expires_at.to_rfc3339(),
+        );
+        let (outcomes, error) = sql::run_writes(&mut self.sql, &plan).await;
+        let observation = store::classify_send_create(&outcomes);
+        if let Some(error) = error {
+            self.error = Some(AppError::Internal(error.to_string()));
         }
+        observation
     }
 
     /// Unreachable for a create request: the driver's request kind never emits
@@ -222,7 +211,7 @@ pub async fn post_share_link(
         },
     );
     let mut io = CreateSendIo {
-        state: &state,
+        sql: sql::PoolSql(&state.sqldb),
         owner_user_id: session.user_id,
         ciphertext,
         has_passphrase: body.has_passphrase,
@@ -282,8 +271,8 @@ pub struct FetchSendResponse {
 /// The I/O behind one anonymous fetch. The atomic consume, the row read and the
 /// view-once cleanup are the driver's effects; the response data is what the
 /// read returned.
-struct FetchSendIo<'a> {
-    state: &'a AppState,
+struct FetchSendIo<S> {
+    sql: S,
     id: Uuid,
     ciphertext: Option<String>,
     has_passphrase: bool,
@@ -295,93 +284,56 @@ struct FetchSendIo<'a> {
     error: Option<AppError>,
 }
 
-impl FetchSendIo<'_> {
+impl<S: SendSql> FetchSendIo<S> {
     async fn consume_view(&mut self) -> vela_share_policy::send_driver::ConsumeObservation {
-        use vela_share_policy::send_driver::ConsumeObservation;
         let now = Utc::now().to_rfc3339();
-        match self
-            .state
-            .sqldb
-            .execute(
-                "UPDATE sends SET view_count = view_count + 1
-             WHERE id = ? AND revoked = 0 AND expires_at > ?
-               AND (max_views IS NULL OR view_count < max_views)",
-                vec![TursoValue::Text(self.id.to_string()), TursoValue::Text(now)],
-            )
-            .await
-        {
-            Ok(0) => ConsumeObservation::Unavailable,
-            Ok(_) => ConsumeObservation::Consumed,
-            Err(error) => {
-                self.error = Some(AppError::Internal(error.to_string()));
-                ConsumeObservation::Error
-            }
+        let plan = store::plan_send_consume(self.id.to_string(), now);
+        let (outcomes, error) = sql::run_writes(&mut self.sql, &plan).await;
+        let observation = store::classify_send_consume(&outcomes);
+        if let Some(error) = error {
+            self.error = Some(AppError::Internal(error.to_string()));
         }
+        observation
     }
 
     async fn read_send(&mut self) -> vela_share_policy::send_driver::ReadObservation {
-        use vela_share_policy::send_driver::ReadObservation;
-        let rows = match self
-            .state
-            .sqldb
-            .query(
-                "SELECT ciphertext, has_passphrase, kdf_salt, view_once, max_views, view_count, expires_at
-             FROM sends WHERE id = ?",
-                vec![TursoValue::Text(self.id.to_string())],
-            )
-            .await
-        {
-            Ok(rows) => rows,
+        let plan = store::plan_send_read(self.id.to_string());
+        let outcome = match sql::run_read(&mut self.sql, &plan).await {
+            Ok(rows) => ReadOutcome::Row(sql::send_row_view(&rows)),
             Err(error) => {
                 self.error = Some(AppError::Internal(error.to_string()));
-                return ReadObservation::Unreadable;
+                ReadOutcome::Failed
             }
         };
-        let Some(row) = rows.first() else {
-            return ReadObservation::Missing;
-        };
-        let Some(ciphertext) = row.text(0) else {
-            self.error = Some(AppError::Internal("send row missing ciphertext".into()));
-            return ReadObservation::Unreadable;
-        };
-        self.ciphertext = Some(ciphertext.to_string());
-        self.has_passphrase = row.bool_int(1).unwrap_or(false);
-        self.kdf_salt = row.text(2).map(String::from);
-        self.view_once = row.bool_int(3).unwrap_or(false);
-        self.max_views = row.i64(4);
-        self.view_count = row.i64(5).unwrap_or(0);
-        let Some(expires_at) = row.timestamp(6) else {
-            self.error = Some(AppError::Internal("send row missing expires_at".into()));
-            return ReadObservation::Unreadable;
-        };
-        self.expires_at = Some(expires_at);
-        ReadObservation::Payload {
-            view_once: self.view_once,
+        let observation = store::classify_send_read(&outcome);
+        if let Some(cell) = observation.missing_cell {
+            let message = match cell {
+                SendCell::Ciphertext => "send row missing ciphertext",
+                SendCell::ExpiresAt => "send row missing expires_at",
+            };
+            self.error = Some(AppError::Internal(message.into()));
         }
+        self.ciphertext = observation.ciphertext;
+        self.has_passphrase = observation.has_passphrase;
+        self.kdf_salt = observation.kdf_salt;
+        self.view_once = observation.view_once;
+        self.max_views = observation.max_views;
+        self.view_count = observation.view_count;
+        self.expires_at = observation
+            .expires_at
+            .as_deref()
+            .and_then(|text| DateTime::parse_from_rfc3339(text).ok())
+            .map(|at| at.with_timezone(&Utc));
+        observation.read
     }
 
     async fn remove_fetched(&mut self) -> vela_share_policy::send_driver::RemoveObservation {
-        use vela_share_policy::send_driver::RemoveObservation;
         // A view-once link is deleted the moment it is served; the conditional
-        // update above guarantees only one caller ever reaches this point.
-        match self
-            .state
-            .sqldb
-            .execute(
-                "DELETE FROM sends WHERE id = ?",
-                vec![TursoValue::Text(self.id.to_string())],
-            )
-            .await
-        {
-            Ok(_) => RemoveObservation {
-                removed: true,
-                failed: false,
-            },
-            Err(_) => RemoveObservation {
-                removed: false,
-                failed: true,
-            },
-        }
+        // update above guarantees only one caller ever reaches this point. The
+        // handler ignores the cleanup outcome.
+        let plan = store::plan_send_remove(self.id.to_string());
+        let (outcomes, _error) = sql::run_writes(&mut self.sql, &plan).await;
+        store::classify_send_remove(&outcomes)
     }
 
     /// Unreachable for a fetch request: the driver's request kind never emits
@@ -424,7 +376,7 @@ pub async fn get_share_link(
 
     let start = vela_share_policy::send_interpreter::start_fetch();
     let mut io = FetchSendIo {
-        state: &state,
+        sql: sql::PoolSql(&state.sqldb),
         id,
         ciphertext: None,
         has_passphrase: false,
@@ -527,37 +479,26 @@ pub async fn list_share_links(
 }
 
 /// The I/O behind one owner delete.
-struct DeleteSendIo<'a> {
-    state: &'a AppState,
+struct DeleteSendIo<S> {
+    sql: S,
     id: Uuid,
     owner_user_id: Uuid,
     error: Option<AppError>,
 }
 
-impl DeleteSendIo<'_> {
+impl<S: SendSql> DeleteSendIo<S> {
     async fn delete_link(
         &mut self,
         _permit: vela_share_policy::send_driver::DeletePermit,
     ) -> vela_share_policy::send_driver::RowsObservation {
-        use vela_share_policy::send_driver::RowsObservation;
-        match self
-            .state
-            .sqldb
-            .execute(
-                "DELETE FROM sends WHERE id = ? AND owner_user_id = ?",
-                vec![
-                    TursoValue::Text(self.id.to_string()),
-                    TursoValue::Text(self.owner_user_id.to_string()),
-                ],
-            )
-            .await
-        {
-            Ok(rows) => RowsObservation { rows, failed: false },
-            Err(error) => {
-                self.error = Some(AppError::Internal(error.to_string()));
-                RowsObservation { rows: 0, failed: true }
-            }
+        let plan =
+            store::plan_send_delete(self.id.to_string(), self.owner_user_id.to_string());
+        let (outcomes, error) = sql::run_writes(&mut self.sql, &plan).await;
+        let observation = store::classify_send_delete(&outcomes);
+        if let Some(error) = error {
+            self.error = Some(AppError::Internal(error.to_string()));
         }
+        observation
     }
 
     /// Unreachable for a delete request: the driver's request kind never emits
@@ -608,7 +549,7 @@ pub async fn delete_share_link(
     let start =
         vela_share_policy::send_interpreter::start_delete(!session.user_id.is_nil());
     let mut io = DeleteSendIo {
-        state: &state,
+        sql: sql::PoolSql(&state.sqldb),
         id,
         owner_user_id: session.user_id,
         error: None,
