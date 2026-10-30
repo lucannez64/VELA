@@ -211,6 +211,8 @@ The [enrollment executors](enrollment-executors/README.md) evidence does the
 same for the seven enrollment and pairing executors.
 The [session executors](session-executors/README.md) evidence does the same for
 login, logout, device revocation and account deletion.
+The [vault executors](vault-executors/README.md) evidence does the same for
+vault chunks, rotation, ORAM, schema and device capsules.
 
 The [cancellation evidence](cancellation/README.md) proves every interpreter
 loop leaves a sound driver state when cancelled after any turn, and reviews
