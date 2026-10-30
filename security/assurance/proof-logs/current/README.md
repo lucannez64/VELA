@@ -210,7 +210,7 @@ for recovery device redemption, the recovery share and possession proofs.
 The [enrollment executors](enrollment-executors/README.md) evidence does the
 same for the seven enrollment and pairing executors.
 The [session executors](session-executors/README.md) evidence does the same for
-login, logout, device revocation and account deletion.
+login, registration, challenge issue, logout, device revocation and account deletion.
 The [vault executors](vault-executors/README.md) evidence does the same for
 vault chunks, rotation, ORAM, schema and device capsules.
 
