@@ -206,11 +206,12 @@ with fault injection, and checks it on the real database (F-1 pilot).
 The [send-link executors](send-executors/README.md) evidence does the same for
 the three one-off share-link executors.
 The [recovery executors](recovery-executors/README.md) evidence does the same
-for recovery device redemption, the recovery share and possession proofs.
+for all four recovery families: device redemption, the recovery share,
+possession proofs and WebAuthn.
 The [enrollment executors](enrollment-executors/README.md) evidence does the
 same for the seven enrollment and pairing executors.
 The [session executors](session-executors/README.md) evidence does the same for
-login, registration, challenge issue, logout, device revocation and account deletion.
+login, registration, challenge issue, web sessions, logout, device revocation and account deletion.
 The [vault executors](vault-executors/README.md) evidence does the same for
 vault chunks, rotation, ORAM, schema and device capsules.
 

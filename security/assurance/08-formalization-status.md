@@ -468,33 +468,39 @@ injected failure) match the model. No dishonest executor was found.
 `post_send`'s quota reads, the listing and the expiry cleanup remain outside.
 [Evidence](proof-logs/current/send-executors/README.md).
 
-## Executor honesty: recovery redemption, recovery share and possession (F-1)
+## Executor honesty: recovery (F-1)
 
-`EnrollDeviceIo` (grant redemption), the four recovery-share executors
-(`PutShareIo`, `FinalizeShareIo`, `GetShareIo`, `DeleteShareIo`) and the two
-possession-proof executors (`InitiateProofIo`, `RecoverProofIo`) use the same
-plan, render and classify design, against a key-value and SQL store model. For
-every starting state and failing operation:
+Every recovery executor uses the same plan, render and classify design,
+against a key-value and SQL store model:
+
+- grant redemption (`EnrollDeviceIo`);
+- the recovery share (`PutShareIo`, `FinalizeShareIo`, `GetShareIo`,
+  `DeleteShareIo`);
+- possession proofs (`InitiateProofIo`, `RecoverProofIo`);
+- WebAuthn recovery (`InitiateIo`, `RecoverIo`, `RegisterStartIo`,
+  `RegisterFinishIo`).
+
+For every starting state and failing operation:
 
 - taking a grant consumes it once and matches only the stored grant;
 - a device is inserted only for the owner, at the current key epoch, outside
-  rotation, and only when the WebAuthn credential or possession commitment
-  guard holds;
-- a share is staged only at the live epoch outside rotation, as the exact
-  candidate;
-- promotion makes exactly the pending split active;
-- deletion clears the active and pending share;
-- a stored proof challenge is the drawn one, and a lost write changed
-  nothing;
-- a proof attempt is consumed once;
+  rotation, and only when the credential or commitment guard holds;
+- a share is staged only at the live epoch as the exact candidate, promotion
+  makes exactly the pending split active, and deletion clears it;
+- proof and WebAuthn attempts are stored first-writer-wins and consumed once,
+  and a lost race changes nothing;
+- a credential is updated only if it is still the current one, and a
+  registered credential has no other holder;
+- the released share is the row's share;
 - an issued grant is live;
-- every read reports the stored row;
 - any failure changes nothing.
 
-Sixteen mutations each break a theorem. 360 real-store cases (194 with an
-injected failure) match the model. No dishonest executor was found. The
-WebAuthn executors are still open.
-[Evidence](proof-logs/current/recovery-executors/README.md).
+Twenty-eight mutations each break a theorem. 797 real-store cases (471 with an
+injected failure) match the model. Conformance confirmed that `key_epoch` is
+`NOT NULL` and that the recovery credential id is UNIQUE. No dishonest
+executor was found. WebAuthn ceremony results are inputs. The rate limiters,
+the pre-driver grant and account reads and the startup credential backfill
+remain outside. [Evidence](proof-logs/current/recovery-executors/README.md).
 
 ## Executor honesty: enrollment and pairing (F-1)
 
@@ -517,13 +523,17 @@ injected failure) match the model. Conformance found that
 executor was found. The pre-driver grant reads, `get_claim` and the rate
 limiters remain outside. [Evidence](proof-logs/current/enrollment-executors/README.md).
 
-## Executor honesty: login, registration, challenge issue, logout, device revocation and account deletion (F-1)
+## Executor honesty: session, login, registration and web sessions (F-1)
 
-`VerifyIo`, `RegisterIo`, `ChallengeIssueIo`, `LogoutJtiIo`, `RevokeDeviceIo`
-and `DeleteAccountIo` use the same plan, render and classify design. The store
-model covers:
+All ten session executors use the same plan, render and classify design:
 
-- the eight account tables;
+- `VerifyIo`, `RegisterIo` and `ChallengeIssueIo`;
+- `LogoutJtiIo`, `RevokeDeviceIo` and `DeleteAccountIo`;
+- the web-session `StartIo`, `GrantIo`, `TokenIo` and `DeleteSessionIo`.
+
+The store model covers:
+
+- the account tables and web sessions;
 - the token markers, challenge keys and rate-limit counters;
 - the registration and deletion transactions.
 
@@ -531,20 +541,25 @@ For every starting state and failing statement:
 
 - login accepts only its own stored challenge tag, removed once, and only an
   unrevoked device row, and tracks the issued token id;
-- a challenge nonce is written first-writer-wins, and a collision keeps the
-  live nonce;
+- a challenge nonce is written first-writer-wins;
 - registration publishes the account and device rows exactly when both ids
-  were fresh and the commit ran; otherwise it leaves the starting state;
-- the account budget counts the stored accounts;
-- logout completes only when its marker was written;
-- revocation completes only when the device is locked out, and revokes
-  exactly the target;
+  were fresh and the commit ran;
+- a web session is granted only while pending, by its approver, at the live
+  epoch outside rotation, and with an active device owned by the account. The
+  existence guards are modelled against the stored tables, not taken as
+  inputs.
+- a web token is claimed first-writer-wins, issued only if the session is not
+  locked out, and tracked;
+- logout, revocation and session lockout complete only when their markers
+  were written;
 - the account is reported deleted exactly when it existed;
 - every observation is exactly what the run did.
 
-Twenty-three mutations each break a theorem. 401 real-store cases (244 with an
-injected failure) match the model. No dishonest executor was found. The
-web-session executors remain open.
+Every mutation of the plans and classifiers breaks a theorem. 498 real-store
+cases (294 with an injected failure) match the model. No dishonest executor
+was found. Not covered: the session reads inside the web-session handlers, the
+per-IP limiters and backoff prechecks, the session listing and the cleanup
+task. Token issuance and signature checks are inputs.
 [Evidence](proof-logs/current/session-executors/README.md).
 
 ## Executor honesty: vault, rotation and device capsules (F-1)
@@ -791,7 +806,7 @@ and complete handler traces remain open.
 
 | Area | Status | Required to close |
 |---|---|---|
-| F-1: handler facts | Partial: observation constructors and policy checks hosted on fdee2bc; the sharing, one-off share-link, enrollment/pairing, recovery redemption, recovery-share and possession, login, registration, challenge-issue, logout, device-revocation, account-deletion, vault, rotation and device-capsule executors' observations proved honest against a transactional store model with fault injection, and matched on the real database; still open: the recovery WebAuthn and web-session executors; I/O outside executors (pre-driver reads, quota reads, rate limiters); the vault completeness probes, which are model inputs; origins; and full handlers | Maintain the sharing contracts reproduced on 5d8c366; verify the observation producers (SQL rows, store lookups, signature verifier, session ids) themselves; complete UTF-8/object and authenticated-open composition after the checked byte-frame parser; prove independent context origins; cover remaining token, epoch, recovery and handler fact construction |
+| F-1: handler facts | Partial: observation constructors and policy checks hosted on fdee2bc; the sharing, one-off share-link, enrollment/pairing, executors' observations proved honest for every planned executor (sharing, one-off share links, enrollment and pairing, all four recovery families, all ten session executors including web sessions, and vault, rotation and device capsules) against a transactional store model with fault injection, and matched on the real database; still open: I/O outside executors (pre-driver reads, quota reads, rate limiters); the vault completeness probes, which are model inputs; origins; and full handlers | Maintain the sharing contracts reproduced on 5d8c366; verify the observation producers (SQL rows, store lookups, signature verifier, session ids) themselves; complete UTF-8/object and authenticated-open composition after the checked byte-frame parser; prove independent context origins; cover remaining token, epoch, recovery and handler fact construction |
 | F-2: state transitions | Partial: preflight ordering/readiness checked against an independent specification; enrollment-redemption decisions extracted into a driver with unbounded per-request trace lemmas (hosted aaf708f) and a concurrent at-most-one-device-per-grant composition (hosted edaee5a); sharing decisions extracted into a driver with per-request and concurrent composition proofs (hosted e89ebed); possession-proof recovery decisions likewise (hosted 7a6d108); device revocation, logout and revocation admission likewise (hosted bd765ab); WebAuthn recovery registration, initiation and release likewise (hosted a79cba7); device pairing likewise (hosted 54b38b3, found U-19); device enrollment and send links likewise; the recovery-share lifecycle likewise, composed with the WebAuthn and possession drivers over one share; registration and challenge issue likewise, with nonce single use and purpose binding composed across all three consumers (found U-21, U-22); login, revocation, deletion, pairing and recovery redemption composed in one concurrent world over shared accounts, devices, tokens and grants; every interpreter loop proved to leave a sound driver state when its handler is cancelled after any turn (found U-23, closed U-20); web-session start, grant, token and delete per request and under any interleaving with deletes and approver revocation (found U-25, U-26); vault key rotation (start, capsules, commit, abort) per request and under any interleaving over the shared key row (at most one commit per epoch, no commit after abort, starter-only authority, no web-session authority); chunk delete, ORAM path writes, schema floor, capsule ack and rekey-capable per request; account deletion likewise (hosted cdffe46); vault chunk upload and read likewise (hosted cdffe46), including no stale or unauthorized row committed under concurrent rotations against a modelled atomic SQL guard (hosted 727d447); sharing handlers: every sequence up to depth 3 (CI) / 4 (local) matches the M19b/M21 state machine against the real router and database, with mutation checks; possession-proof recovery handlers: every sequence up to depth 4 (CI) matches the M18/M26a chain, with mutation checks (WebAuthn path not driven); device invitation/rendezvous handlers: every sequence up to depth 3 (CI, 5,220 traces) / 4 (local, 88,741) matches the M13 ceremony, with a mutation check ([evidence](proof-logs/current/pairing-conformance/README.md)); challenge consumers (`/auth/verify`, `/device/enroll`, `/web-session/:id/token`): every sequence up to depth 3 (CI, 7,240 traces) / 4 (local, 137,561) keeps each nonce single-use across all three, plus a 16-way concurrent race test and a mutation check ([evidence](proof-logs/current/challenge-single-use/README.md); each nonce is now bound to one purpose, see U-16); account deletion: every sequence up to depth 3 (CI, 2,380 traces) leaves no row in any of the eight tables and no sled key of the deleted account, and its tokens and devices stop working everywhere; this found and fixed two residues (send links and pending web sessions survived deletion) ([evidence](proof-logs/current/account-deletion-conformance/README.md); deletion now runs in one transaction, see U-17); device revocation and logout: every sequence up to depth 3 (CI, 11,155 traces) shows a revoked device loses every token and cannot log in again, logout ends only its own token, revoked devices cannot revoke and no cross-account revocation succeeds, with mutation checks ([evidence](proof-logs/current/device-revocation-conformance/README.md); revoking a device now also ends the web sessions it approved, see U-18) ; every server handler that runs one of these drivers reaches it only through a proved interpreter loop: for every executor the loop performs exactly the driver's effects, stops at its verdict within a budget and ends in a state the per-request theorems cover (hosted 6be552c/36b877e) | Verify the executor methods themselves (each effect's SQL/store I/O and the honesty of its observation) against a store/SQL model; machine-check the remaining handler/database transitions outside the drivers |
 | F-3: persistence/recovery | Partial: M28 and composed M29 | Prove the actual journal implementation refines M28; formalize collection equality and filesystem outcomes; compose local edits/deletions and RMS migration; cover or explicitly exclude independent processes |
 | F-4: construction security | Partial: CryptoVerif proofs for idealized v2 KEM games, modular KEM-DEM, AND-signature, v2 possession-proof and authenticated-share games under the explicit assumptions | Close the combiner gaps listed in `security/formal/cryptoverif/README.md` (concrete X25519 clamping/cofactor/encoding correspondence after conditional nonuniform distribution accounting, SHA-256 step, quantum-query and multi-user composition; KEM-DEM is proved modularly); computational games and reductions for envelope framing and KDF use beyond the random-oracle model, under named primitive assumptions (share tags and the v2 possession proof are now proved in CryptoVerif with KDFs as random oracles; legacy v1 possession commitments are not covered); verify application randomness/error/erasure handling. Primitive internals and leakage resistance are trusted under the selected boundary |
