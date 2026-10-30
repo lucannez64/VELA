@@ -206,7 +206,7 @@ with fault injection, and checks it on the real database (F-1 pilot).
 The [send-link executors](send-executors/README.md) evidence does the same for
 the three one-off share-link executors.
 The [recovery executors](recovery-executors/README.md) evidence does the same
-for recovery device redemption and the recovery share.
+for recovery device redemption, the recovery share and possession proofs.
 The [enrollment executors](enrollment-executors/README.md) evidence does the
 same for the seven enrollment and pairing executors.
 The [session executors](session-executors/README.md) evidence does the same for
