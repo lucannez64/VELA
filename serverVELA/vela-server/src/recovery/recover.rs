@@ -27,8 +27,7 @@ use crate::{
 /// enough to bound the window where a stolen grant is useful, long enough to
 /// cover a slow "combine shares, generate a device keypair" step on a new
 /// device before it calls `/recovery/enroll-device`.
-const ENROLL_GRANT_TTL_SECS: u64 = 600;
-
+pub(crate) const ENROLL_GRANT_TTL_SECS: u64 = 600;
 #[derive(Deserialize)]
 pub struct RecoverRequest {
     pub user_id: Uuid,
@@ -526,7 +525,7 @@ impl RecoveryEnrollGrant {
     }
 }
 
-fn decode_enroll_grant(value: &[u8]) -> Result<RecoveryEnrollGrant> {
+pub(crate) fn decode_enroll_grant(value: &[u8]) -> Result<RecoveryEnrollGrant> {
     let grant: RecoveryEnrollGrant = serde_json::from_slice(value)
         .map_err(|_| AppError::Unauthorized("recovery grant is invalid".into()))?;
     if grant.key_epoch < 1 || grant.credential_id.is_empty() {
@@ -594,26 +593,4 @@ pub(crate) fn observe_enroll_grant(
         return Ok(None);
     };
     decode_enroll_grant(&value).map(Some)
-}
-
-/// Consume a grant issued by `post_recover`. `None` means it was missing,
-/// expired or already redeemed; grants are single-use.
-pub(crate) fn take_enroll_grant_observed(
-    state: &AppState,
-    user_id: Uuid,
-    grant: Uuid,
-) -> Result<Option<RecoveryEnrollGrant>> {
-    let Some(value) = state.store.get_del(&enroll_grant_key(user_id, grant))? else {
-        return Ok(None);
-    };
-    decode_enroll_grant(&value).map(Some)
-}
-
-pub(crate) fn restore_enroll_grant(
-    state: &AppState,
-    user_id: Uuid,
-    grant: Uuid,
-    grant_value: &RecoveryEnrollGrant,
-) -> Result<()> {
-    store_enroll_grant(state, user_id, grant, grant_value)
 }

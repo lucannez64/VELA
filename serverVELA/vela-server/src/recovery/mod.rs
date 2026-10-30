@@ -4,6 +4,10 @@ pub mod possess;
 pub mod recover;
 pub mod webauthn;
 
+mod sql;
+#[cfg(test)]
+mod conformance;
+
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
