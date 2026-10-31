@@ -8,7 +8,8 @@
 //! injected failures, against a real database.
 
 use vela_share_policy::store::{
-    render, DeviceRowView, LinkRowView, Rendered, ShareStmt, WriteOutcome,
+    render_handler, render, CursorRowView, DeviceRowView, EkRowView, HandlerRendered, HandlerStmt,
+    LinkRowView, Rendered, ShareStmt, SqlParam, WriteOutcome,
 };
 
 use crate::sqldb::{Db as _, TursoDb, TursoValue, TxGuard, VelaRow};
@@ -124,5 +125,60 @@ pub(super) fn device_row_view(rows: &[VelaRow]) -> Option<DeviceRowView> {
         },
         share_ek_since: row.text(2).map(String::from),
         user_id: row.text(3).map(String::from),
+    })
+}
+
+// ── Handler statements (F-1 wave 2) ────────────────────────────────────────
+//
+// The same thin loop for the I/O a share handler runs outside an executor
+// method: render the plan's statement, run it, hand the result to the
+// classifier.
+
+/// The bound parameters as turso values.
+pub(super) fn bound(values: Vec<SqlParam>) -> Vec<TursoValue> {
+    values
+        .into_iter()
+        .map(|value| match value {
+            SqlParam::Text(text) => TursoValue::Text(text),
+            SqlParam::Int(number) => TursoValue::Integer(number),
+            SqlParam::Null => TursoValue::Null,
+        })
+        .collect()
+}
+
+/// Runs one handler read.
+pub(super) async fn run_handler_read<S: ShareSql>(
+    sql: &mut S,
+    stmt: &HandlerStmt,
+) -> anyhow::Result<Vec<VelaRow>> {
+    match render_handler(stmt) {
+        HandlerRendered::Query { sql: text, params } => sql.query(text, bound(params)).await,
+        _ => Err(anyhow::anyhow!("a write statement in a read plan")),
+    }
+}
+
+/// Runs one handler write.
+pub(super) async fn run_handler_write<S: ShareSql>(
+    sql: &mut S,
+    stmt: &HandlerStmt,
+) -> anyhow::Result<u64> {
+    match render_handler(stmt) {
+        HandlerRendered::Execute { sql: text, params } => sql.execute(text, bound(params)).await,
+        _ => Err(anyhow::anyhow!("a read statement in a write plan")),
+    }
+}
+
+/// The first share-key row: `share_ek`, `share_ek_since`.
+pub(super) fn ek_row_view(rows: &[VelaRow]) -> Option<EkRowView> {
+    rows.first().map(|row| EkRowView {
+        share_ek: row.text(0).map(String::from),
+        share_ek_since: row.text(1).map(String::from),
+    })
+}
+
+/// The first cursor row: `created_at`.
+pub(super) fn cursor_row_view(rows: &[VelaRow]) -> Option<CursorRowView> {
+    rows.first().map(|row| CursorRowView {
+        created_at: row.text(0).map(String::from),
     })
 }

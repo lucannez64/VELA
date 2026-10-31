@@ -18,10 +18,11 @@ use uuid::Uuid;
 use vela_share_policy::send_driver::{
     begin_create, begin_delete, CreateObservation, ReadObservation, SendEffect,
 };
-use vela_share_policy::store;
+use vela_share_policy::store::{self, HandlerOutcome};
 use vela_share_policy::store_model::{self as model, Db as Model, SendRow};
 
-use super::sql::{PoolSql, SendSql};
+use super::sql::{run_handler_read, run_handler_write, PoolSql, SendSql};
+use super::OWN_SENDS_LIMIT;
 use super::{CreateSendIo, DeleteSendIo, FetchSendIo};
 use crate::db;
 use crate::sqldb::{Db as _, TursoDb, TursoValue, VelaRow};
@@ -589,4 +590,96 @@ async fn an_unparsable_expiry_makes_the_row_unreadable() {
     assert_eq!(io.view_count, 3);
     assert!(io.expires_at.is_none());
     assert_eq!(snapshot(&db).await, pre);
+}
+
+// ── `GET /sends` and the expiry sweep (F-1 wave 2) ────────────────────────
+//
+// The two remaining reads/writes in `send.rs` that are not executor methods:
+// the owner listing and the periodic expiry sweep. Same comparison: the real
+// plan, rendered SQL, row decoding and classifier against the mirror.
+
+/// The ids of a listing's returned rows.
+fn listing_ids(rows: &[VelaRow]) -> Vec<String> {
+    rows.iter()
+        .map(|row| row.text(0).expect("id column").to_string())
+        .collect()
+}
+
+#[tokio::test]
+async fn owner_listing_and_expiry_sweep_match_the_store_model() {
+    let db = temp_db().await;
+    let mut states = 0usize;
+    let mut cases = 0usize;
+    let mut faulted = 0usize;
+
+    for pre in send_states() {
+        states += 1;
+
+        // list_share_links for the owner and for a stranger.
+        for caller in [owner(0), owner(1)] {
+            let plan = store::plan_own_sends(caller.clone(), NOW.into(), OWN_SENDS_LIMIT);
+            let matches = model::own_send_matches(&pre, &plan);
+            for fault in faults(1) {
+                load(&db, &pre).await;
+                let rows = run_handler_read(
+                    &mut Faulty::new(PoolSql(&db), fault),
+                    &plan,
+                )
+                .await;
+                let case = format!("own sends as {caller} fault {fault:?} pre {pre:?}");
+                cases += 1;
+                if fault.is_some() {
+                    assert!(rows.is_err(), "{case}");
+                    faulted += 1;
+                    continue;
+                }
+                let ids = listing_ids(&rows.unwrap());
+                for id in &ids {
+                    assert!(matches.contains(id), "{case}: {id} is not the owner's live link");
+                }
+                assert_eq!(ids.len(), matches.len().min(OWN_SENDS_LIMIT), "{case}");
+                for id in &matches {
+                    assert!(ids.contains(id), "{case}: {id} was not returned");
+                }
+                assert_eq!(snapshot(&db).await, pre, "{case}");
+            }
+        }
+
+        // cleanup_task, at both boundaries.
+        for cutoff in [
+            "2025-12-31T23:59:59+00:00",
+            "2026-01-01T00:00:00+00:00",
+            "2026-11-01T00:00:00+00:00",
+        ] {
+            let plan = store::plan_expired_sends_cleanup(cutoff.into());
+            for fault in faults(1) {
+                load(&db, &pre).await;
+                let outcome = match run_handler_write(
+                    &mut Faulty::new(PoolSql(&db), fault),
+                    &plan,
+                )
+                .await
+                {
+                    Ok(purged) => vec![HandlerOutcome::Written(purged)],
+                    Err(_) => vec![HandlerOutcome::Failed],
+                };
+                let (expected, expected_post) = model::run_sweep(&pre, &plan, fault);
+                let case = format!("sends sweep {cutoff} fault {fault:?} pre {pre:?}");
+                cases += 1;
+                if fault.is_some() {
+                    faulted += 1;
+                }
+                assert_eq!(
+                    store::classify_sweep(&outcome),
+                    store::classify_sweep(&expected),
+                    "{case}"
+                );
+                assert_eq!(snapshot(&db).await, expected_post, "{case}");
+            }
+        }
+    }
+
+    eprintln!(
+        "send handler conformance: {states} states, {cases} cases, {faulted} with an injected failure"
+    );
 }

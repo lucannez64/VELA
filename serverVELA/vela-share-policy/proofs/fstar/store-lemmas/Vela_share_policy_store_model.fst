@@ -91,12 +91,24 @@ type tbl (a: Type) = text -> option a
 let upd (#a: Type) (t: tbl a) (k: text) (x: option a) : tbl a =
   fun k' -> if k' = k then x else t k'
 
+/// The key list with `k` removed (all its occurrences).
+let rec drop_key (keys: list text) (k: text) : list text =
+  match keys with
+  | [] -> []
+  | h :: rest -> if h = k then drop_key rest k else h :: drop_key rest k
+
 noeq type db = {
   items: tbl item;
   inbox: tbl inbox_row;
   users: tbl user_row;
   devices: tbl device_row;
   sends: tbl send_row;
+  /// The keys present in each finite table, so the handler's `COUNT(*)`,
+  /// `SUM(LENGTH(capsule))` and listing reads can be modelled over a finite
+  /// association. `tables_wf` states each list is duplicate-free and complete.
+  item_ids: list text;
+  inbox_ids: list text;
+  send_ids: list text;
   /// The order the database compares stored timestamps with: SQLite compares
   /// them as text, which for the handler's RFC3339 cells is chronological
   /// order. It is a parameter of the model, not an axiom; the conformance
@@ -123,7 +135,8 @@ let exec (d: db) (s: t_ShareStmt) : option (u64 & db) =
          it_updated_at = now;
          it_revoked = mk_i64 0;
        } in
-       Some (mk_u64 1, { d with items = upd d.items id (Some row) }))
+       Some (mk_u64 1, { d with items = upd d.items id (Some row);
+                                item_ids = id :: d.item_ids }))
   | ShareStmt_InsertInboxItem
     { f_id = id; f_sender = sender; f_recipient = recipient; f_capsule = capsule; f_now = now } ->
     (match d.inbox id with
@@ -135,7 +148,8 @@ let exec (d: db) (s: t_ShareStmt) : option (u64 & db) =
          ib_capsule = capsule;
          ib_created_at = now;
        } in
-       Some (mk_u64 1, { d with inbox = upd d.inbox id (Some row) }))
+       Some (mk_u64 1, { d with inbox = upd d.inbox id (Some row);
+                                inbox_ids = id :: d.inbox_ids }))
   | ShareStmt_UpdateLinkedCapsule { f_capsule = capsule; f_now = now; f_id = id; f_sender = sender } ->
     (match d.items id with
      | Some r ->
@@ -156,13 +170,16 @@ let exec (d: db) (s: t_ShareStmt) : option (u64 & db) =
      | None -> Some (mk_u64 0, d))
   | ShareStmt_DeleteLinkedInbox { f_id = id } ->
     (match d.inbox id with
-     | Some _ -> Some (mk_u64 1, { d with inbox = upd d.inbox id None })
+     | Some _ ->
+       Some (mk_u64 1, { d with inbox = upd d.inbox id None;
+                                inbox_ids = drop_key d.inbox_ids id })
      | None -> Some (mk_u64 0, d))
   | ShareStmt_DeleteInboxItem { f_id = id; f_recipient = recipient } ->
     (match d.inbox id with
      | Some r ->
        if r.ib_recipient = recipient
-       then Some (mk_u64 1, { d with inbox = upd d.inbox id None })
+       then Some (mk_u64 1, { d with inbox = upd d.inbox id None;
+                                     inbox_ids = drop_key d.inbox_ids id })
        else Some (mk_u64 0, d)
      | None -> Some (mk_u64 0, d))
   | ShareStmt_UpdateShareEk { f_share_ek = ek; f_since = since; f_device_id = device; f_user = user } ->
@@ -215,7 +232,8 @@ let exec_send (d: db) (s: t_SendStmt) : option (u64 & db) =
          sd_expires_at = expires;
          sd_revoked = mk_i64 0;
        } in
-       Some (mk_u64 1, { d with sends = upd d.sends id (Some row) }))
+       Some (mk_u64 1, { d with sends = upd d.sends id (Some row);
+                                send_ids = id :: d.send_ids }))
   | SendStmt_ConsumeSendView { f_id = id; f_now = now } ->
     (match d.sends id with
      | Some r ->
@@ -227,13 +245,16 @@ let exec_send (d: db) (s: t_SendStmt) : option (u64 & db) =
      | None -> Some (mk_u64 0, d))
   | SendStmt_DeleteSend { f_id = id } ->
     (match d.sends id with
-     | Some _ -> Some (mk_u64 1, { d with sends = upd d.sends id None })
+     | Some _ ->
+       Some (mk_u64 1, { d with sends = upd d.sends id None;
+                                send_ids = drop_key d.send_ids id })
      | None -> Some (mk_u64 0, d))
   | SendStmt_DeleteOwnedSend { f_id = id; f_owner = owner } ->
     (match d.sends id with
      | Some r ->
        if r.sd_owner = owner
-       then Some (mk_u64 1, { d with sends = upd d.sends id None })
+       then Some (mk_u64 1, { d with sends = upd d.sends id None;
+                                     send_ids = drop_key d.send_ids id })
        else Some (mk_u64 0, d)
      | None -> Some (mk_u64 0, d))
   | _ -> None
@@ -374,8 +395,8 @@ let read_send (d: db) (s: t_SendStmt) (failed: bool) : t_ReadOutcome t_SendRowVi
 let stmts_of (p: Alloc.Vec.t_Vec t_ShareStmt Alloc.Alloc.t_Global) : list t_ShareStmt =
   Seq.seq_to_list p._0
 
-let slice_of (l: list t_WriteOutcome{L.length l <= Rust_primitives.Integers.max_usize})
-  : t_Slice t_WriteOutcome =
+let slice_of (#a: Type) (l: list a{L.length l <= Rust_primitives.Integers.max_usize})
+  : t_Slice a =
   Seq.seq_of_list l
 
 /// `SendIo::insert_capsule`, inside the transaction the handler opened.
@@ -477,3 +498,309 @@ let send_delete (d: db) (id owner: text) (f: option nat)
 let send_fetch_read (d: db) (id: text) (f: option nat)
   : t_SendFetchObservation =
   classify_send_read (read_send d (plan_send_read id) (faulted f 0))
+
+// ── Handler I/O outside executor methods (F-1 wave 2) ────────────────────
+//
+// `post_send`'s recipient gate, transaction begin and three quota reads;
+// `get_recipient_ek`; `get_inbox`'s cursor and page; `get_linked_items`;
+// `list_share_links`; the two expiry sweeps; and the four share/send rate
+// limiters. Same shape: the extracted plan, its SQL or store meaning here, and
+// the extracted classifier.
+
+/// `COUNT(*)`, `SUM(LENGTH(capsule))` and a page's row count are `nat`s in the
+/// model. These saturating conversions are total: every conformance state is
+/// far below the machine maximum, where they are the identity.
+let nat_i64 (n: nat) : i64 =
+  if n <= maxint I64 then mk_i64 n else mk_i64 (maxint I64)
+
+let nat_u64 (n: nat) : u64 =
+  if n <= maxint U64 then mk_u64 n else mk_u64 (maxint U64)
+
+let nat_usize (n: nat) : usize =
+  if n <= maxint USIZE then mk_usize n else mk_usize (maxint USIZE)
+
+/// Each finite table's key list names exactly the present rows, with no
+/// repeats. Every table is keyed by a `UNIQUE` id, so this is a property of the
+/// store; the conformance test derives the lists from the tables themselves.
+let tables_wf (d: db) : prop =
+  L.noRepeats d.item_ids /\
+  (forall (k: text). b2t (L.mem k d.item_ids) <==> Some? (d.items k)) /\
+  L.noRepeats d.inbox_ids /\
+  (forall (k: text). b2t (L.mem k d.inbox_ids) <==> Some? (d.inbox k)) /\
+  L.noRepeats d.send_ids /\
+  (forall (k: text). b2t (L.mem k d.send_ids) <==> Some? (d.sends k))
+
+/// An inbox row's stored capsule length: SQLite's `LENGTH(capsule)` over the
+/// base64 text the handlers store, which is ASCII, so its byte length is its
+/// string length.
+let capsule_text_len (r: inbox_row) : nat = FStar.String.length r.ib_capsule._0
+
+/// The inbox as a finite association: its key list paired with the rows.
+let rec inbox_pairs_of (d: db) (keys: list text) : list (text & inbox_row) =
+  match keys with
+  | [] -> []
+  | k :: rest ->
+    (match d.inbox k with
+     | Some r -> (k, r) :: inbox_pairs_of d rest
+     | None -> inbox_pairs_of d rest)
+
+let inbox_pairs (d: db) : list (text & inbox_row) = inbox_pairs_of d d.inbox_ids
+
+let rec sum_capsule_len (pairs: list (text & inbox_row)) : nat =
+  match pairs with
+  | [] -> 0
+  | (_, r) :: rest -> capsule_text_len r + sum_capsule_len rest
+
+/// `SELECT COUNT(*) FROM share_inbox WHERE recipient_user_id = ?`.
+let inbox_count (d: db) (recipient: text) : nat =
+  L.length (L.filter (fun kr -> (snd kr).ib_recipient = recipient) (inbox_pairs d))
+
+/// `SELECT COALESCE(SUM(LENGTH(capsule)), 0) ... WHERE recipient = ? AND
+/// sender = ?`.
+let inbox_pair_bytes (d: db) (recipient sender: text) : nat =
+  sum_capsule_len
+    (L.filter (fun kr -> (snd kr).ib_recipient = recipient && (snd kr).ib_sender = sender)
+       (inbox_pairs d))
+
+/// `SELECT COALESCE(SUM(LENGTH(capsule)), 0) ... WHERE recipient_user_id = ?`.
+let inbox_total_bytes (d: db) (recipient: text) : nat =
+  sum_capsule_len (L.filter (fun kr -> (snd kr).ib_recipient = recipient) (inbox_pairs d))
+
+/// The inbox rows `created_at < cutoff`: exactly what the sweep deletes.
+let inbox_expired (d: db) (cutoff: text) : list text =
+  L.filter
+    (fun k ->
+      match d.inbox k with
+      | Some r -> d.clock cutoff r.ib_created_at
+      | None -> false)
+    d.inbox_ids
+
+/// The one-off links `expires_at < cutoff`.
+let sends_expired (d: db) (cutoff: text) : list text =
+  L.filter
+    (fun k ->
+      match d.sends k with
+      | Some r -> d.clock cutoff r.sd_expires_at
+      | None -> false)
+    d.send_ids
+
+/// One handler statement: the rows it changed and the new state, or `None` for
+/// a read or a failure. Only the two sweeps are writes.
+let exec_handler (d: db) (s: t_HandlerStmt) : option (u64 & db) =
+  match s with
+  | HandlerStmt_DeleteExpiredInbox { f_cutoff = cutoff } ->
+    let gone = inbox_expired d cutoff in
+    Some
+      (nat_u64 (L.length gone),
+       { d with inbox = (fun k -> if L.mem k gone then None else d.inbox k);
+                inbox_ids = L.filter (fun k -> not (L.mem k gone)) d.inbox_ids })
+  | HandlerStmt_DeleteExpiredSends { f_cutoff = cutoff } ->
+    let gone = sends_expired d cutoff in
+    Some
+      (nat_u64 (L.length gone),
+       { d with sends = (fun k -> if L.mem k gone then None else d.sends k);
+                send_ids = L.filter (fun k -> not (L.mem k gone)) d.send_ids })
+  | _ -> None
+
+/// A plan of handler statements, each one statement per step, stopping at the
+/// first failure. Only the admission plan (a begin and three reads) is run this
+/// way, so a write statement is a failure.
+let rec run_handler (d: db) (stmts: list t_HandlerStmt) (k: nat) (f: option nat)
+  : Tot (r: list t_HandlerOutcome{L.length r <= L.length stmts}) (decreases stmts) =
+  match stmts with
+  | [] -> []
+  | s :: rest ->
+    if faulted f k
+    then [HandlerOutcome_Failed]
+    else
+      match s with
+      | HandlerStmt_Begin -> HandlerOutcome_Ran :: run_handler d rest (k + 1) f
+      | HandlerStmt_CountInbox { f_recipient = recipient } ->
+        HandlerOutcome_Number (Core_models.Option.Option_Some (nat_i64 (inbox_count d recipient)))
+        :: run_handler d rest (k + 1) f
+      | HandlerStmt_SumPairBytes { f_recipient = recipient; f_sender = sender } ->
+        HandlerOutcome_Number (Core_models.Option.Option_Some (nat_i64 (inbox_pair_bytes d recipient sender)))
+        :: run_handler d rest (k + 1) f
+      | HandlerStmt_SumRecipientBytes { f_recipient = recipient } ->
+        HandlerOutcome_Number (Core_models.Option.Option_Some (nat_i64 (inbox_total_bytes d recipient)))
+        :: run_handler d rest (k + 1) f
+      | _ -> [HandlerOutcome_Failed]
+
+/// The model's own option, as the extracted row views carry it.
+let to_opt (#a: Type) (o: option a) : Core_models.Option.t_Option a =
+  match o with
+  | Some x -> Core_models.Option.Option_Some x
+  | None -> Core_models.Option.Option_None
+
+/// `SelectRecipientEk`/`SelectRecipientEkSince`: the recipient's `users` row.
+let read_recipient_ek (d: db) (s: t_HandlerStmt) (failed: bool)
+  : t_ReadOutcome t_EkRowView =
+  if failed
+  then ReadOutcome_Failed
+  else
+    match s with
+    | HandlerStmt_SelectRecipientEk { f_user = user } ->
+      (match d.users user with
+       | Some u ->
+         ReadOutcome_Row
+           (Core_models.Option.Option_Some
+             ({ f_share_ek = to_opt u.us_share_ek;
+                f_share_ek_since = to_opt u.us_share_ek_since }
+              <: t_EkRowView))
+       | None -> ReadOutcome_Row Core_models.Option.Option_None)
+    | HandlerStmt_SelectRecipientEkSince { f_user = user } ->
+      (match d.users user with
+       | Some u ->
+         ReadOutcome_Row
+           (Core_models.Option.Option_Some
+             ({ f_share_ek = to_opt u.us_share_ek;
+                f_share_ek_since = to_opt u.us_share_ek_since }
+              <: t_EkRowView))
+       | None -> ReadOutcome_Row Core_models.Option.Option_None)
+    | _ -> ReadOutcome_Failed
+
+/// `SelectInboxCursor`: the caller's inbox row's timestamp.
+let read_inbox_cursor (d: db) (s: t_HandlerStmt) (failed: bool)
+  : t_ReadOutcome t_CursorRowView =
+  if failed
+  then ReadOutcome_Failed
+  else
+    match s with
+    | HandlerStmt_SelectInboxCursor { f_id = id; f_recipient = recipient } ->
+      (match d.inbox id with
+       | Some r ->
+         if r.ib_recipient = recipient
+         then
+           ReadOutcome_Row
+             (Core_models.Option.Option_Some
+               ({ f_created_at = Core_models.Option.Option_Some r.ib_created_at }
+                <: t_CursorRowView))
+         else ReadOutcome_Row Core_models.Option.Option_None
+       | None -> ReadOutcome_Row Core_models.Option.Option_None)
+    | _ -> ReadOutcome_Failed
+
+/// One `share_inbox` row of a page: the caller's, older than the cursor, and
+/// its linked item not revoked — the page query's three conditions.
+let inbox_page_row_ok
+      (d: db) (recipient: text) (before: Core_models.Option.t_Option text) (k: text)
+    : bool =
+  (match d.inbox k with
+   | Some r ->
+     r.ib_recipient = recipient &&
+     (match before with
+      | Core_models.Option.Option_Some b -> d.clock b r.ib_created_at
+      | Core_models.Option.Option_None -> true) &&
+     (match d.items k with
+      | Some it -> not (it.it_revoked = mk_i64 1)
+      | None -> true)
+   | None -> false)
+
+/// The rows `SelectInboxPage` selects, before the engine orders them and
+/// applies its page limit.
+let inbox_page_spec (d: db) (s: t_HandlerStmt) : list text =
+  match s with
+  | HandlerStmt_SelectInboxPage { f_recipient = recipient; f_before = before } ->
+    L.filter (inbox_page_row_ok d recipient before) d.inbox_ids
+  | _ -> []
+
+/// The same page for a request's own fields.
+let inbox_page_spec_of
+      (d: db) (recipient: text) (before: Core_models.Option.t_Option text)
+    : list text =
+  L.filter (inbox_page_row_ok d recipient before) d.inbox_ids
+
+/// One `shared_items` row of the caller's live linked items.
+let linked_item_row_ok (d: db) (user: text) (k: text) : bool =
+  match d.items k with
+  | Some it ->
+    it.it_revoked = mk_i64 0 && (it.it_sender = user || it.it_recipient = user)
+  | None -> false
+
+/// The rows `SelectSharedItems` selects.
+let linked_item_spec (d: db) (s: t_HandlerStmt) : list text =
+  match s with
+  | HandlerStmt_SelectSharedItems { f_user = user } ->
+    L.filter (linked_item_row_ok d user) d.item_ids
+  | _ -> []
+
+/// One `sends` row of the caller's live, unexpired links.
+let own_send_row_ok (d: db) (owner now: text) (k: text) : bool =
+  match d.sends k with
+  | Some r ->
+    r.sd_owner = owner && r.sd_revoked = mk_i64 0 && d.clock r.sd_expires_at now
+  | None -> false
+
+/// The rows `SelectOwnedSends` selects.
+let own_send_spec (d: db) (s: t_HandlerStmt) : list text =
+  match s with
+  | HandlerStmt_SelectOwnedSends { f_owner = owner; f_now = now } ->
+    L.filter (own_send_row_ok d owner now) d.send_ids
+  | _ -> []
+
+/// A listing page the engine may return: every returned row matches, and every
+/// matching row is returned when one page could hold them all (whatever order
+/// the engine chose).
+let page_of (spec got: list text) (limit: usize) : prop =
+  (forall (k: text). b2t (L.mem k got) ==> b2t (L.mem k spec)) /\
+  (L.length spec <= v limit ==> (forall (k: text). b2t (L.mem k spec) ==> b2t (L.mem k got)))
+
+// ── The handler I/O, plan → run → classify ────────────────────────────────
+
+let stmts_of_handler (p: Alloc.Vec.t_Vec t_HandlerStmt Alloc.Alloc.t_Global) : list t_HandlerStmt =
+  Seq.seq_to_list p._0
+
+/// `post_send`'s admission: the transaction begin and the three quota reads.
+let send_admission (d: db) (recipient sender: text) (f: option nat) : t_AdmissionObservation =
+  classify_send_admission
+    (slice_of (run_handler d (stmts_of_handler (plan_send_admission recipient sender)) 0 f))
+
+/// `post_send`'s recipient gate.
+let recipient_probe (d: db) (recipient: text) (f: option nat) : t_RecipientProbeObservation =
+  classify_recipient_probe
+    (read_recipient_ek d (plan_recipient_probe recipient) (faulted f 0))
+
+/// `get_recipient_ek`.
+let recipient_ek_read (d: db) (user: text) (f: option nat) : t_RecipientEkObservation =
+  classify_recipient_ek (read_recipient_ek d (plan_recipient_ek user) (faulted f 0))
+
+/// `get_inbox`'s cursor.
+let inbox_cursor_read (d: db) (id recipient: text) (f: option nat) : t_CursorObservation =
+  classify_inbox_cursor (read_inbox_cursor d (plan_inbox_cursor id recipient) (faulted f 0))
+
+/// One sweep: the plan's single write, or the injected failure.
+let sweep (d: db) (s: t_HandlerStmt) (f: option nat) : (t_SweepObservation & db) =
+  if faulted f 0
+  then (classify_sweep (slice_of [HandlerOutcome_Failed]), d)
+  else
+    match exec_handler d s with
+    | Some (n, d') -> (classify_sweep (slice_of [HandlerOutcome_Written n]), d')
+    | None -> (classify_sweep (slice_of [HandlerOutcome_Failed]), d)
+
+/// `inbox_cleanup_task`.
+let inbox_sweep (d: db) (cutoff: text) (f: option nat) : (t_SweepObservation & db) =
+  sweep d (plan_expired_inbox_cleanup cutoff) f
+
+/// `send::cleanup_task`.
+let sends_sweep (d: db) (cutoff: text) (f: option nat) : (t_SweepObservation & db) =
+  sweep d (plan_expired_sends_cleanup cutoff) f
+
+// ── Rate limiters (sled counters) ─────────────────────────────────────────
+
+/// The fixed-window counter store: the number of requests each key's current
+/// window has seen. A missing key is 0. Window rollover is a scheduler choice,
+/// not modelled.
+type kv = text -> nat
+
+let kv_incr (k: kv) (key: text) : kv =
+  fun k' -> if k' = key then k key + 1 else k k'
+
+/// One rate-limit plan: the counter increment, then the classifier's verdict.
+let rate_limit (k: kv) (key: text) (limit: u64) (window_secs: i64) (f: option nat)
+  : (t_RateLimitObservation & kv) =
+  let stmt = plan_rate_limit key limit window_secs in
+  if faulted f 0
+  then (classify_rate_limit (slice_of [RateOutcome_Failed]) stmt.f_limit, k)
+  else
+    let k' = kv_incr k key in
+    (classify_rate_limit (slice_of [RateOutcome_Count (nat_u64 (k' key))]) stmt.f_limit,
+     k')

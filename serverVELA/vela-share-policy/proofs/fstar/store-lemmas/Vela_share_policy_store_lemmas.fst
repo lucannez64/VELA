@@ -345,6 +345,9 @@ let vector_db : db =
     users = (fun _ -> None);
     devices = (fun _ -> None);
     sends = (fun _ -> None);
+    item_ids = [s "i"];
+    inbox_ids = [s "i"];
+    send_ids = [];
     clock = (fun (a b: text) -> false)
   }
 

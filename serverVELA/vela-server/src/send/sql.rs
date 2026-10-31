@@ -11,7 +11,8 @@
 //! transaction.
 
 use vela_share_policy::store::{
-    render_send, SendRendered, SendRowView, SendStmt, SqlParam, WriteOutcome,
+    render_handler, render_send, HandlerRendered, HandlerStmt, SendRendered, SendRowView, SendStmt,
+    SqlParam, WriteOutcome,
 };
 
 use crate::sqldb::{Db as _, TursoDb, TursoValue, VelaRow};
@@ -95,4 +96,31 @@ pub(super) fn send_row_view(rows: &[VelaRow]) -> Option<SendRowView> {
         view_count: row.i64(5),
         expires_at: row.timestamp(6).map(|at| at.to_rfc3339()),
     })
+}
+
+// ── Handler statements (F-1 wave 2) ────────────────────────────────────────
+//
+// The same thin loop for the I/O `send.rs` runs outside an executor method:
+// the owner listing and the expiry sweep.
+
+/// Runs one handler read.
+pub(super) async fn run_handler_read<S: SendSql>(
+    sql: &mut S,
+    stmt: &HandlerStmt,
+) -> anyhow::Result<Vec<VelaRow>> {
+    match render_handler(stmt) {
+        HandlerRendered::Query { sql: text, params } => sql.query(text, bound(params)).await,
+        _ => Err(anyhow::anyhow!("a write statement in a read plan")),
+    }
+}
+
+/// Runs one handler write.
+pub(super) async fn run_handler_write<S: SendSql>(
+    sql: &mut S,
+    stmt: &HandlerStmt,
+) -> anyhow::Result<u64> {
+    match render_handler(stmt) {
+        HandlerRendered::Execute { sql: text, params } => sql.execute(text, bound(params)).await,
+        _ => Err(anyhow::anyhow!("a read statement in a write plan")),
+    }
 }

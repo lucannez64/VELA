@@ -14,8 +14,11 @@ mod sql;
 mod conformance;
 
 use executor::ShareExecutor;
-use sql::{device_row_view, link_row_view, run_read, run_writes, PoolSql, ShareSql, TxSql};
-use vela_share_policy::store::{self, DeviceVerdicts, ReadOutcome};
+use sql::{
+    cursor_row_view, device_row_view, ek_row_view, link_row_view, run_handler_read,
+    run_handler_write, run_read, run_writes, PoolSql, ShareSql, TxSql,
+};
+use vela_share_policy::store::{self, AdmissionStage, DeviceVerdicts, HandlerOutcome, ReadOutcome};
 use vela_share_policy::driver::{
     CleanupObservation, EkDeviceObservation, EkRegistrationStartObservation, InboxDeletePermit,
     LinkUpdatePermit, LinkUpdateStartObservation, RowsObservation, SendInsertPermit,
@@ -27,7 +30,7 @@ use crate::{
     db,
     error::{AppError, Result},
     middleware::{maybe_append_new_token, AuthSession, DeviceSession},
-    sqldb::{Db as _, TursoDb, TursoValue},
+    sqldb::TursoDb,
     state::AppState,
 };
 
@@ -43,6 +46,8 @@ const MAX_SENDER_TO_RECIPIENT_BYTES: i64 = vela_share_policy::driver::MAX_SENDER
 const MAX_RECIPIENT_INBOX_BYTES: i64 = vela_share_policy::MAX_RECIPIENT_INBOX_BYTES;
 
 pub const INBOX_TTL_SECS: i64 = 30 * 24 * 60 * 60;
+/// The linked-items listing's page size, the number its SQL has always used.
+const LINKED_ITEMS_LIMIT: usize = 1000;
 
 #[derive(Deserialize)]
 pub struct SendRequest {
@@ -166,6 +171,57 @@ impl<S: ShareSql> ShareExecutor for SendIo<S> {
     }
 }
 
+/// Runs the send admission plan — the transaction begin and the three quota
+/// reads — on the transaction it opens, and classifies the per-statement
+/// outcomes. The caller keeps the open transaction for the inserts.
+async fn run_send_admission(
+    state: &AppState,
+    recipient: Uuid,
+    sender: Uuid,
+) -> Result<(store::AdmissionObservation, Option<TxSql>)> {
+    let mut outcomes = Vec::new();
+    let mut tx: Option<TxSql> = None;
+    let mut error: Option<anyhow::Error> = None;
+    for stmt in &store::plan_send_admission(recipient.to_string(), sender.to_string()) {
+        if let store::HandlerStmt::Begin = stmt {
+            match state.sqldb.tx().await {
+                Ok(guard) => {
+                    tx = Some(TxSql(Some(guard)));
+                    outcomes.push(HandlerOutcome::Ran);
+                }
+                Err(e) => {
+                    outcomes.push(HandlerOutcome::Failed);
+                    error = Some(e.into());
+                    break;
+                }
+            }
+            continue;
+        }
+        let read = match tx.as_mut() {
+            Some(sql) => run_handler_read(sql, stmt).await,
+            None => Err(anyhow::anyhow!("quota read without an open transaction")),
+        };
+        match read {
+            Ok(rows) => outcomes.push(HandlerOutcome::Number(
+                rows.first().and_then(|row| row.i64(0)),
+            )),
+            Err(e) => {
+                outcomes.push(HandlerOutcome::Failed);
+                error = Some(e);
+                break;
+            }
+        }
+    }
+    let admission = store::classify_send_admission(&outcomes);
+    if admission.stage != AdmissionStage::Ready {
+        return Err(AppError::Internal(match error {
+            Some(error) => error.to_string(),
+            None => "share send storage failure".into(),
+        }));
+    }
+    Ok((admission, tx))
+}
+
 pub async fn post_send(
     State(state): State<AppState>,
     session: AuthSession,
@@ -173,20 +229,15 @@ pub async fn post_send(
 ) -> Result<(HeaderMap, Json<SendResponse>)> {
     crate::rate_limit::share_send_by_sender(&state.store, &session.user_id.to_string())?;
 
-    // Gate on the share key, not on mere existence (red-team RT-3).
-    let recipient_rows = state
-        .sqldb
-        .query(
-            "SELECT share_ek FROM users WHERE id = ?",
-            vec![TursoValue::Text(body.recipient_user_id.to_string())],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-
-    let recipient_can_receive = recipient_rows
-        .first()
-        .and_then(|r| r.text(0))
-        .is_some_and(|ek| !ek.is_empty());
+    // Gate on the share key, not on mere existence (red-team RT-3). The plan
+    // pins the SQL; the classifier decides whether the stored cell admits a
+    // recipient.
+    let probe_stmt = store::plan_recipient_probe(body.recipient_user_id.to_string());
+    let probe = match run_handler_read(&mut PoolSql(&state.sqldb), &probe_stmt).await {
+        Ok(rows) => store::classify_recipient_probe(&ReadOutcome::Row(ek_row_view(&rows))),
+        Err(error) => return Err(AppError::Internal(error.to_string())),
+    };
+    let recipient_can_receive = probe.can_receive;
 
     // Preserve the historical precedence: recipient availability is decided
     // before the body is decoded. The verified driver renders every one of
@@ -206,51 +257,18 @@ pub async fn post_send(
     // Quota checks and the two inserts (shared_items + share_inbox, which must
     // share the same id) run inside one transaction so a crash/error between
     // them can never leave an orphaned row in one table without the other.
-    let mut tx = None;
+    // The begin and the three quota reads are one admitted plan: a failure at
+    // any step is a storage failure and nothing is published.
+    let mut tx: Option<TxSql> = None;
     let (inbox_count, pair_bytes, total_bytes) = if recipient_can_receive && !decode_failed {
-        let guard = state
-            .sqldb
-            .tx()
-            .await
-            .map_err(|e| AppError::Internal(e.to_string()))?;
-
-        let count_rows = guard
-            .query(
-                "SELECT COUNT(*) FROM share_inbox WHERE recipient_user_id = ?",
-                vec![TursoValue::Text(body.recipient_user_id.to_string())],
-            )
-            .await
-            .map_err(|e| AppError::Internal(e.to_string()))?;
-        let inbox_count = count_rows.first().and_then(|r| r.i64(0)).unwrap_or(0);
-
-        // Anti-flooding: cap pending bytes per (sender → recipient) pair and
-        // per recipient inbox, so a single sender cannot fill the victim's
-        // disk.
-        let pair_rows = guard
-            .query(
-                "SELECT COALESCE(SUM(LENGTH(capsule)), 0) FROM share_inbox
-                 WHERE recipient_user_id = ? AND sender_user_id = ?",
-                vec![
-                    TursoValue::Text(body.recipient_user_id.to_string()),
-                    TursoValue::Text(session.user_id.to_string()),
-                ],
-            )
-            .await
-            .map_err(|e| AppError::Internal(e.to_string()))?;
-        let pair_bytes = pair_rows.first().and_then(|r| r.i64(0)).unwrap_or(0);
-
-        let total_rows = guard
-            .query(
-                "SELECT COALESCE(SUM(LENGTH(capsule)), 0) FROM share_inbox
-                 WHERE recipient_user_id = ?",
-                vec![TursoValue::Text(body.recipient_user_id.to_string())],
-            )
-            .await
-            .map_err(|e| AppError::Internal(e.to_string()))?;
-        let total_bytes = total_rows.first().and_then(|r| r.i64(0)).unwrap_or(0);
-
-        tx = Some(guard);
-        (inbox_count, pair_bytes, total_bytes)
+        let (admission, opened) =
+            run_send_admission(&state, body.recipient_user_id, session.user_id).await?;
+        tx = opened;
+        (
+            admission.inbox_count,
+            admission.pair_bytes,
+            admission.total_bytes,
+        )
     } else {
         (0, 0, 0)
     };
@@ -277,7 +295,7 @@ pub async fn post_send(
         capsule_bytes,
         inbox_id,
         now,
-        tx: tx.map(|guard| TxSql(Some(guard))),
+        tx,
         insert_error: None,
         commit_error: None,
     };
@@ -364,66 +382,43 @@ pub async fn get_inbox(
     let fetch_limit = limit + 1;
 
     let rows = if let Some(before_id) = query.before {
-        let cursor_rows = state
-            .sqldb
-            .query(
-                "SELECT created_at FROM share_inbox
-             WHERE id = ? AND recipient_user_id = ?",
-                vec![
-                    TursoValue::Text(before_id.to_string()),
-                    TursoValue::Text(session.user_id.to_string()),
-                ],
-            )
-            .await
-            .map_err(|e| AppError::Internal(e.to_string()))?;
-
-        let cursor_row = cursor_rows
-            .first()
-            .ok_or_else(|| AppError::NotFound("cursor inbox_id not found".into()))?;
-        let cursor_ts = cursor_row
-            .timestamp(0)
+        let cursor_stmt =
+            store::plan_inbox_cursor(before_id.to_string(), session.user_id.to_string());
+        let cursor = match run_handler_read(&mut PoolSql(&state.sqldb), &cursor_stmt).await {
+            Ok(rows) => store::classify_inbox_cursor(&ReadOutcome::Row(cursor_row_view(&rows))),
+            Err(error) => return Err(AppError::Internal(error.to_string())),
+        };
+        if cursor.absent {
+            return Err(AppError::NotFound("cursor inbox_id not found".into()));
+        }
+        let stored = cursor
+            .created_at
             .ok_or_else(|| AppError::Internal("expected timestamp".into()))?;
+        // Keep the historical value: the stored cell parsed and re-rendered.
+        let cursor_ts = DateTime::parse_from_rfc3339(&stored)
+            .map_err(|_| AppError::Internal("expected timestamp".into()))?
+            .with_timezone(&Utc)
+            .to_rfc3339();
 
-        state
-            .sqldb
-            .query(
-                "SELECT id, sender_user_id, capsule, created_at
-             FROM share_inbox
-             WHERE recipient_user_id = ?
-               AND created_at < ?
-               AND NOT EXISTS (SELECT 1 FROM shared_items
-                               WHERE shared_items.id = share_inbox.id
-                                 AND shared_items.revoked = 1)
-             ORDER BY created_at DESC
-             LIMIT ?",
-                vec![
-                    TursoValue::Text(session.user_id.to_string()),
-                    TursoValue::Text(cursor_ts.to_rfc3339()),
-                    TursoValue::Integer(fetch_limit),
-                ],
-            )
-            .await
-            .map_err(|e| AppError::Internal(e.to_string()))?
+        let page_stmt = store::plan_inbox_page(
+            session.user_id.to_string(),
+            Some(cursor_ts),
+            fetch_limit as usize,
+        );
+        match run_handler_read(&mut PoolSql(&state.sqldb), &page_stmt).await {
+            Ok(rows) => rows,
+            Err(error) => return Err(AppError::Internal(error.to_string())),
+        }
     } else {
-        state
-            .sqldb
-            .query(
-                "SELECT id, sender_user_id, capsule, created_at
-             FROM share_inbox
-             WHERE recipient_user_id = ?
-               AND NOT EXISTS (SELECT 1 FROM shared_items
-                               WHERE shared_items.id = share_inbox.id
-                                 AND shared_items.revoked = 1)
-             ORDER BY created_at DESC
-             LIMIT ?",
-                vec![
-                    TursoValue::Text(session.user_id.to_string()),
-                    TursoValue::Integer(fetch_limit),
-                ],
-            )
-            .await
-            .map_err(|e| AppError::Internal(e.to_string()))?
+        let page_stmt =
+            store::plan_inbox_page(session.user_id.to_string(), None, fetch_limit as usize);
+        match run_handler_read(&mut PoolSql(&state.sqldb), &page_stmt).await {
+            Ok(rows) => rows,
+            Err(error) => return Err(AppError::Internal(error.to_string())),
+        }
     };
+
+    let page = store::classify_listing(rows.len(), false, limit as usize);
 
     let mut all_items: Vec<InboxItem> = Vec::new();
     for row in &rows {
@@ -451,8 +446,8 @@ pub async fn get_inbox(
         });
     }
 
-    let has_more = all_items.len() as i64 > limit;
-    all_items.truncate(limit as usize);
+    let has_more = page.has_more;
+    all_items.truncate(page.keep);
 
     let mut headers = HeaderMap::new();
     maybe_append_new_token(&mut headers, &session);
@@ -546,25 +541,15 @@ pub async fn get_linked_items(
     State(state): State<AppState>,
     session: AuthSession,
 ) -> Result<(HeaderMap, Json<LinkedSharesResponse>)> {
-    let rows = state
-        .sqldb
-        .query(
-            "SELECT id, sender_user_id, recipient_user_id, capsule, created_at, updated_at, revoked
-         FROM shared_items
-         WHERE (sender_user_id = ? OR recipient_user_id = ?)
-           AND revoked = 0
-         ORDER BY updated_at DESC
-         LIMIT 1000",
-            vec![
-                TursoValue::Text(session.user_id.to_string()),
-                TursoValue::Text(session.user_id.to_string()),
-            ],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let stmt = store::plan_linked_items(session.user_id.to_string(), LINKED_ITEMS_LIMIT);
+    let rows = match run_handler_read(&mut PoolSql(&state.sqldb), &stmt).await {
+        Ok(rows) => rows,
+        Err(error) => return Err(AppError::Internal(error.to_string())),
+    };
+    let page = store::classify_listing(rows.len(), false, LINKED_ITEMS_LIMIT);
 
     let mut items = Vec::new();
-    for row in &rows {
+    for row in &rows[..page.keep] {
         let shared = db::parse_shared_item_row_turso(row)?;
         let id = Uuid::parse_str(&shared.id)
             .map_err(|e| AppError::Internal(format!("uuid parse: {e}")))?;
@@ -779,23 +764,18 @@ pub async fn get_recipient_ek(
     Path(user_id): Path<Uuid>,
     session: AuthSession,
 ) -> Result<(HeaderMap, Json<serde_json::Value>)> {
-    let rows = state
-        .sqldb
-        .query(
-            "SELECT share_ek, share_ek_since FROM users WHERE id = ?",
-            vec![TursoValue::Text(user_id.to_string())],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let stmt = store::plan_recipient_ek(user_id.to_string());
+    let outcome = match run_handler_read(&mut PoolSql(&state.sqldb), &stmt).await {
+        Ok(rows) => ReadOutcome::Row(ek_row_view(&rows)),
+        Err(error) => return Err(AppError::Internal(error.to_string())),
+    };
+    let ek = store::classify_recipient_ek(&outcome);
 
-    let share_ek = rows
-        .first()
-        .and_then(|r| r.text(0))
-        .filter(|s| !s.is_empty())
-        .map(String::from)
-        .ok_or_else(|| AppError::NotFound(SHARE_RECIPIENT_UNAVAILABLE.into()))?;
+    let share_ek =
+        ek.share_ek
+            .ok_or_else(|| AppError::NotFound(SHARE_RECIPIENT_UNAVAILABLE.into()))?;
 
-    let signed_at = rows.first().and_then(|r| r.text(1));
+    let signed_at = ek.signed_at;
 
     let mut headers = HeaderMap::new();
     maybe_append_new_token(&mut headers, &session);
@@ -1054,21 +1034,20 @@ pub async fn inbox_cleanup_task(db: Arc<TursoDb>) {
 
         let cutoff = Utc::now() - chrono::Duration::seconds(INBOX_TTL_SECS);
 
-        match db
-            .execute(
-                "DELETE FROM share_inbox WHERE created_at < ?",
-                vec![TursoValue::Text(cutoff.to_rfc3339())],
-            )
-            .await
-        {
-            Ok(n) => {
-                if n > 0 {
-                    tracing::info!(purged = n, "inbox cleanup: expired share items removed");
-                }
-            }
+        let stmt = store::plan_expired_inbox_cleanup(cutoff.to_rfc3339());
+        let outcome = match run_handler_write(&mut PoolSql(&db), &stmt).await {
+            Ok(purged) => HandlerOutcome::Written(purged),
             Err(e) => {
                 tracing::error!(error = %e, "inbox cleanup task failed");
+                HandlerOutcome::Failed
             }
+        };
+        let sweep = store::classify_sweep(&[outcome]);
+        if !sweep.failed && sweep.purged > 0 {
+            tracing::info!(
+                purged = sweep.purged,
+                "inbox cleanup: expired share items removed"
+            );
         }
     }
 }

@@ -603,6 +603,504 @@ pub fn classify_send_read(outcome: &ReadOutcome<SendRowView>) -> SendFetchObserv
     }
 }
 
+// ── Handler I/O that is not an executor method ────────────────────────────
+//
+// Everything a share/send handler reads or writes outside a `ShareExecutor`
+// method, with the same shape: a typed statement, a pinned rendering and an
+// extracted classifier. `post_send`'s recipient probe, the transaction begin
+// and the three inbox quota reads; `get_recipient_ek`'s row; `get_inbox`'s
+// cursor and page; `get_linked_items`; `list_share_links`; and the two expiry
+// sweeps.
+
+/// One read or housekeeping statement a share/send handler runs outside an
+/// executor method. Field names follow the bound parameters; [`render_handler`]
+/// fixes their order.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum HandlerStmt {
+    /// `post_send`'s recipient gate: the recipient's share key, if any.
+    SelectRecipientEk { user: String },
+    /// Begin the transaction the send's quota reads and inserts run in.
+    Begin,
+    /// The recipient's pending inbox size, in items.
+    CountInbox { recipient: String },
+    /// The pending bytes one sender has pushed to one recipient.
+    SumPairBytes { recipient: String, sender: String },
+    /// The pending bytes in one recipient's inbox.
+    SumRecipientBytes { recipient: String },
+    /// `get_recipient_ek`: the share key and its binding instant.
+    SelectRecipientEkSince { user: String },
+    /// `get_inbox`'s cursor: the timestamp of the caller's inbox row.
+    SelectInboxCursor { id: String, recipient: String },
+    /// `get_inbox`'s page, optionally older than a cursor timestamp.
+    SelectInboxPage {
+        recipient: String,
+        before: Option<String>,
+        limit: usize,
+    },
+    /// `get_linked_items`: the caller's live linked items.
+    SelectSharedItems { user: String, limit: usize },
+    /// `list_share_links`: the caller's live, unexpired one-off links.
+    SelectOwnedSends { owner: String, now: String, limit: usize },
+    /// The inbox expiry sweep.
+    DeleteExpiredInbox { cutoff: String },
+    /// The one-off-link expiry sweep.
+    DeleteExpiredSends { cutoff: String },
+}
+
+/// What one handler statement returned.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HandlerOutcome {
+    /// `Begin` ran: the transaction is open.
+    Ran,
+    /// A read returned its first row's single integer cell (`None` for NULL).
+    Number(Option<i64>),
+    /// A write ran; the number of rows it changed.
+    Written(u64),
+    /// It failed.
+    Failed,
+}
+
+/// What one rate-limit statement returned: the counter's new value, or an
+/// error.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RateOutcome {
+    Count(u64),
+    Failed,
+}
+
+/// One rate limiter: the exact counter key, its budget and its window.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RateStmt {
+    pub key: String,
+    pub limit: u64,
+    pub window_secs: i64,
+}
+
+// ── Handler row views ──────────────────────────────────────────────────────
+
+/// The cells of a `SelectRecipientEk`/`SelectRecipientEkSince` row.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EkRowView {
+    pub share_ek: Option<String>,
+    pub share_ek_since: Option<String>,
+}
+
+/// The cells of a `SelectInboxCursor` row.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CursorRowView {
+    pub created_at: Option<String>,
+}
+
+// ── Handler observations ───────────────────────────────────────────────────
+
+/// The recipient gate's verdict: whether anyone can receive a share there.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RecipientProbeObservation {
+    pub can_receive: bool,
+    pub failed: bool,
+}
+
+/// Where a send's admission stopped. `Ready` means the transaction is open
+/// and all three quota reads returned their values.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AdmissionStage {
+    Begin,
+    Count,
+    Pair,
+    Total,
+    Ready,
+}
+
+/// The send admission: the open transaction's three quota facts, or the step
+/// that failed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AdmissionObservation {
+    pub stage: AdmissionStage,
+    pub inbox_count: i64,
+    pub pair_bytes: i64,
+    pub total_bytes: i64,
+}
+
+/// `get_recipient_ek`'s observation: the share key to publish (absent when the
+/// stored cell is missing or empty) and its binding instant.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RecipientEkObservation {
+    pub share_ek: Option<String>,
+    pub signed_at: Option<String>,
+    pub failed: bool,
+}
+
+/// `get_inbox`'s cursor: the stored timestamp, or that the row is not the
+/// caller's, or that the read failed.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CursorObservation {
+    pub created_at: Option<String>,
+    pub absent: bool,
+    pub failed: bool,
+}
+
+/// One page of a listing: how many of the returned rows to keep, whether more
+/// rows exist, or that the read failed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PageObservation {
+    pub keep: usize,
+    pub has_more: bool,
+    pub failed: bool,
+}
+
+/// A sweep's observation: the rows it deleted, or that it failed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SweepObservation {
+    pub purged: u64,
+    pub failed: bool,
+}
+
+/// A rate limiter's observation: the counter after this request, whether the
+/// request is within budget, or that the store failed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RateLimitObservation {
+    pub count: u64,
+    pub allowed: bool,
+    pub failed: bool,
+}
+
+// ── Handler plans ──────────────────────────────────────────────────────────
+
+/// `post_send`'s recipient gate.
+pub fn plan_recipient_probe(recipient: String) -> HandlerStmt {
+    HandlerStmt::SelectRecipientEk { user: recipient }
+}
+
+/// `post_send`'s admission: the transaction begin and the three quota reads,
+/// in the order the handler has always run them.
+pub fn plan_send_admission(recipient: String, sender: String) -> Vec<HandlerStmt> {
+    vec![
+        HandlerStmt::Begin,
+        HandlerStmt::CountInbox {
+            recipient: recipient.clone(),
+        },
+        HandlerStmt::SumPairBytes {
+            recipient: recipient.clone(),
+            sender,
+        },
+        HandlerStmt::SumRecipientBytes { recipient },
+    ]
+}
+
+/// `get_recipient_ek`'s read.
+pub fn plan_recipient_ek(user: String) -> HandlerStmt {
+    HandlerStmt::SelectRecipientEkSince { user }
+}
+
+/// `get_inbox`'s cursor read.
+pub fn plan_inbox_cursor(id: String, recipient: String) -> HandlerStmt {
+    HandlerStmt::SelectInboxCursor { id, recipient }
+}
+
+/// `get_inbox`'s page read.
+pub fn plan_inbox_page(recipient: String, before: Option<String>, limit: usize) -> HandlerStmt {
+    HandlerStmt::SelectInboxPage {
+        recipient,
+        before,
+        limit,
+    }
+}
+
+/// `get_linked_items`' read.
+pub fn plan_linked_items(user: String, limit: usize) -> HandlerStmt {
+    HandlerStmt::SelectSharedItems { user, limit }
+}
+
+/// `list_share_links`' read.
+pub fn plan_own_sends(owner: String, now: String, limit: usize) -> HandlerStmt {
+    HandlerStmt::SelectOwnedSends { owner, now, limit }
+}
+
+/// The inbox expiry sweep.
+pub fn plan_expired_inbox_cleanup(cutoff: String) -> HandlerStmt {
+    HandlerStmt::DeleteExpiredInbox { cutoff }
+}
+
+/// The one-off-link expiry sweep.
+pub fn plan_expired_sends_cleanup(cutoff: String) -> HandlerStmt {
+    HandlerStmt::DeleteExpiredSends { cutoff }
+}
+
+/// One rate limiter's counter increment.
+pub fn plan_rate_limit(key: String, limit: u64, window_secs: i64) -> RateStmt {
+    RateStmt {
+        key,
+        limit,
+        window_secs,
+    }
+}
+
+// ── Handler classification ─────────────────────────────────────────────────
+
+/// A share key cell counts only when it is present and not empty — the
+/// historical `!share_ek.is_empty()` gate (red-team RT-3). Comparing with the
+/// empty `String` is the same predicate on the concrete `String` type, and it
+/// keeps the extracted check as built-in equality.
+fn ek_cell_present(cell: Option<String>) -> bool {
+    match cell {
+        Some(ek) => !(ek == String::new()),
+        None => false,
+    }
+}
+
+/// The recipient gate: someone can receive when their row holds a non-empty
+/// share key. A failed read cannot receive.
+#[allow(clippy::ptr_arg)]
+pub fn classify_recipient_probe(outcome: &ReadOutcome<EkRowView>) -> RecipientProbeObservation {
+    match outcome {
+        ReadOutcome::Row(Some(row)) => RecipientProbeObservation {
+            can_receive: ek_cell_present(row.share_ek.clone()),
+            failed: false,
+        },
+        ReadOutcome::Row(None) => RecipientProbeObservation {
+            can_receive: false,
+            failed: false,
+        },
+        ReadOutcome::Failed => RecipientProbeObservation {
+            can_receive: false,
+            failed: true,
+        },
+    }
+}
+
+/// A quota cell: a NULL counts as zero, as the handler's `unwrap_or(0)` did.
+fn quota_cell(cell: Option<i64>) -> i64 {
+    match cell {
+        Some(value) => value,
+        None => 0,
+    }
+}
+
+/// The send admission: the three quota values, or the first step that failed.
+/// A read that returns no cell counts as zero, as the handler's `unwrap_or(0)`
+/// always did.
+pub fn classify_send_admission(outcomes: &[HandlerOutcome]) -> AdmissionObservation {
+    use AdmissionStage::{Begin, Count, Pair, Ready, Total};
+    let zero = AdmissionObservation {
+        stage: Begin,
+        inbox_count: 0,
+        pair_bytes: 0,
+        total_bytes: 0,
+    };
+    if outcomes.len() == 4 {
+        match (outcomes[0], outcomes[1], outcomes[2], outcomes[3]) {
+            (
+                HandlerOutcome::Ran,
+                HandlerOutcome::Number(count),
+                HandlerOutcome::Number(pair),
+                HandlerOutcome::Number(total),
+            ) => AdmissionObservation {
+                stage: Ready,
+                inbox_count: quota_cell(count),
+                pair_bytes: quota_cell(pair),
+                total_bytes: quota_cell(total),
+            },
+            (
+                HandlerOutcome::Ran,
+                HandlerOutcome::Number(count),
+                HandlerOutcome::Number(pair),
+                _,
+            ) => AdmissionObservation {
+                stage: Total,
+                inbox_count: quota_cell(count),
+                pair_bytes: quota_cell(pair),
+                total_bytes: 0,
+            },
+            (HandlerOutcome::Ran, HandlerOutcome::Number(count), _, _) => AdmissionObservation {
+                stage: Pair,
+                inbox_count: quota_cell(count),
+                pair_bytes: 0,
+                total_bytes: 0,
+            },
+            (HandlerOutcome::Ran, _, _, _) => AdmissionObservation {
+                stage: Count,
+                inbox_count: 0,
+                pair_bytes: 0,
+                total_bytes: 0,
+            },
+            _ => zero,
+        }
+    } else if outcomes.len() == 3 {
+        match (outcomes[0], outcomes[1], outcomes[2]) {
+            (
+                HandlerOutcome::Ran,
+                HandlerOutcome::Number(count),
+                HandlerOutcome::Number(pair),
+            ) => AdmissionObservation {
+                stage: Total,
+                inbox_count: quota_cell(count),
+                pair_bytes: quota_cell(pair),
+                total_bytes: 0,
+            },
+            (HandlerOutcome::Ran, HandlerOutcome::Number(count), _) => AdmissionObservation {
+                stage: Pair,
+                inbox_count: quota_cell(count),
+                pair_bytes: 0,
+                total_bytes: 0,
+            },
+            (HandlerOutcome::Ran, _, _) => AdmissionObservation {
+                stage: Count,
+                inbox_count: 0,
+                pair_bytes: 0,
+                total_bytes: 0,
+            },
+            _ => zero,
+        }
+    } else if outcomes.len() == 2 {
+        match (outcomes[0], outcomes[1]) {
+            (HandlerOutcome::Ran, HandlerOutcome::Number(count)) => AdmissionObservation {
+                stage: Pair,
+                inbox_count: quota_cell(count),
+                pair_bytes: 0,
+                total_bytes: 0,
+            },
+            (HandlerOutcome::Ran, _) => AdmissionObservation {
+                stage: Count,
+                inbox_count: 0,
+                pair_bytes: 0,
+                total_bytes: 0,
+            },
+            _ => zero,
+        }
+    } else {
+        zero
+    }
+}
+
+/// `get_recipient_ek`: publish the stored key only when it is non-empty, and
+/// the binding instant beside it. A failed read reports no key.
+#[allow(clippy::ptr_arg)]
+pub fn classify_recipient_ek(outcome: &ReadOutcome<EkRowView>) -> RecipientEkObservation {
+    match outcome {
+        ReadOutcome::Row(Some(row)) => RecipientEkObservation {
+            share_ek: match row.share_ek.clone() {
+                Some(ek) => {
+                    if ek == String::new() {
+                        None
+                    } else {
+                        Some(ek)
+                    }
+                }
+                None => None,
+            },
+            signed_at: row.share_ek_since.clone(),
+            failed: false,
+        },
+        ReadOutcome::Row(None) => RecipientEkObservation {
+            share_ek: None,
+            signed_at: None,
+            failed: false,
+        },
+        ReadOutcome::Failed => RecipientEkObservation {
+            share_ek: None,
+            signed_at: None,
+            failed: true,
+        },
+    }
+}
+
+/// `get_inbox`'s cursor: the stored timestamp, or that the row does not exist
+/// for this recipient, or that the read failed.
+#[allow(clippy::ptr_arg)]
+pub fn classify_inbox_cursor(outcome: &ReadOutcome<CursorRowView>) -> CursorObservation {
+    match outcome {
+        ReadOutcome::Row(Some(row)) => CursorObservation {
+            created_at: row.created_at.clone(),
+            absent: false,
+            failed: false,
+        },
+        ReadOutcome::Row(None) => CursorObservation {
+            created_at: None,
+            absent: true,
+            failed: false,
+        },
+        ReadOutcome::Failed => CursorObservation {
+            created_at: None,
+            absent: false,
+            failed: true,
+        },
+    }
+}
+
+/// One page of a listing: keep at most `limit` of the `returned` rows and
+/// report whether the read returned more. A failed read keeps nothing.
+pub fn classify_listing(returned: usize, failed: bool, limit: usize) -> PageObservation {
+    if failed {
+        PageObservation {
+            keep: 0,
+            has_more: false,
+            failed: true,
+        }
+    } else if returned > limit {
+        PageObservation {
+            keep: limit,
+            has_more: true,
+            failed: false,
+        }
+    } else {
+        PageObservation {
+            keep: returned,
+            has_more: false,
+            failed: false,
+        }
+    }
+}
+
+/// A sweep: the rows it deleted, or that it failed.
+pub fn classify_sweep(outcomes: &[HandlerOutcome]) -> SweepObservation {
+    if outcomes.len() == 1 {
+        match outcomes[0] {
+            HandlerOutcome::Written(purged) => SweepObservation {
+                purged,
+                failed: false,
+            },
+            HandlerOutcome::Failed => SweepObservation {
+                purged: 0,
+                failed: true,
+            },
+            _ => SweepObservation {
+                purged: 0,
+                failed: true,
+            },
+        }
+    } else {
+        SweepObservation {
+            purged: 0,
+            failed: true,
+        }
+    }
+}
+
+/// A rate limiter: allowed exactly when the counter after this request is
+/// within the budget. A failed store operation allows nothing.
+pub fn classify_rate_limit(outcomes: &[RateOutcome], limit: u64) -> RateLimitObservation {
+    if outcomes.len() == 1 {
+        match outcomes[0] {
+            RateOutcome::Count(count) => RateLimitObservation {
+                count,
+                allowed: count <= limit,
+                failed: false,
+            },
+            RateOutcome::Failed => RateLimitObservation {
+                count: 0,
+                allowed: false,
+                failed: true,
+            },
+        }
+    } else {
+        RateLimitObservation {
+            count: 0,
+            allowed: false,
+            failed: true,
+        }
+    }
+}
+
 // ── Rendering (not extracted; pinned by the tests below) ───────────────────
 
 /// One statement as the database receives it.
@@ -786,6 +1284,141 @@ pub fn render_send(stmt: &SendStmt) -> SendRendered {
             sql: "DELETE FROM sends WHERE id = ? AND owner_user_id = ?",
             params: vec![SqlParam::Text(id.clone()), SqlParam::Text(owner.clone())],
         },
+    }
+}
+
+/// One handler statement as the database receives it.
+#[cfg(not(hax))]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum HandlerRendered {
+    /// A read (`query`).
+    Query {
+        sql: &'static str,
+        params: Vec<SqlParam>,
+    },
+    /// A write (`execute`).
+    Execute {
+        sql: &'static str,
+        params: Vec<SqlParam>,
+    },
+    /// The transaction begin.
+    Begin,
+}
+
+/// One rate-limit statement as the store receives it.
+#[cfg(not(hax))]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RateRendered {
+    /// `incr_fixed_window(key, delta, window_secs)`.
+    IncrFixedWindow {
+        key: String,
+        delta: u64,
+        window_secs: i64,
+    },
+}
+
+/// The exact SQL text and parameters each handler statement has always used.
+#[cfg(not(hax))]
+pub fn render_handler(stmt: &HandlerStmt) -> HandlerRendered {
+    match stmt {
+        HandlerStmt::SelectRecipientEk { user } => HandlerRendered::Query {
+            sql: "SELECT share_ek FROM users WHERE id = ?",
+            params: vec![SqlParam::Text(user.clone())],
+        },
+        HandlerStmt::Begin => HandlerRendered::Begin,
+        HandlerStmt::CountInbox { recipient } => HandlerRendered::Query {
+            sql: "SELECT COUNT(*) FROM share_inbox WHERE recipient_user_id = ?",
+            params: vec![SqlParam::Text(recipient.clone())],
+        },
+        HandlerStmt::SumPairBytes { recipient, sender } => HandlerRendered::Query {
+            sql: "SELECT COALESCE(SUM(LENGTH(capsule)), 0) FROM share_inbox
+                 WHERE recipient_user_id = ? AND sender_user_id = ?",
+            params: vec![
+                SqlParam::Text(recipient.clone()),
+                SqlParam::Text(sender.clone()),
+            ],
+        },
+        HandlerStmt::SumRecipientBytes { recipient } => HandlerRendered::Query {
+            sql: "SELECT COALESCE(SUM(LENGTH(capsule)), 0) FROM share_inbox
+                 WHERE recipient_user_id = ?",
+            params: vec![SqlParam::Text(recipient.clone())],
+        },
+        HandlerStmt::SelectRecipientEkSince { user } => HandlerRendered::Query {
+            sql: "SELECT share_ek, share_ek_since FROM users WHERE id = ?",
+            params: vec![SqlParam::Text(user.clone())],
+        },
+        HandlerStmt::SelectInboxCursor { id, recipient } => HandlerRendered::Query {
+            sql: "SELECT created_at FROM share_inbox
+             WHERE id = ? AND recipient_user_id = ?",
+            params: vec![SqlParam::Text(id.clone()), SqlParam::Text(recipient.clone())],
+        },
+        HandlerStmt::SelectInboxPage {
+            recipient,
+            before,
+            limit,
+        } => match before {
+            Some(cursor) => HandlerRendered::Query {
+                sql: "SELECT id, sender_user_id, capsule, created_at
+             FROM share_inbox
+             WHERE recipient_user_id = ?
+               AND created_at < ?
+               AND NOT EXISTS (SELECT 1 FROM shared_items
+                               WHERE shared_items.id = share_inbox.id
+                                 AND shared_items.revoked = 1)
+             ORDER BY created_at DESC
+             LIMIT ?",
+                params: vec![
+                    SqlParam::Text(recipient.clone()),
+                    SqlParam::Text(cursor.clone()),
+                    SqlParam::Int(*limit as i64),
+                ],
+            },
+            None => HandlerRendered::Query {
+                sql: "SELECT id, sender_user_id, capsule, created_at
+             FROM share_inbox
+             WHERE recipient_user_id = ?
+               AND NOT EXISTS (SELECT 1 FROM shared_items
+                               WHERE shared_items.id = share_inbox.id
+                                 AND shared_items.revoked = 1)
+             ORDER BY created_at DESC
+             LIMIT ?",
+                params: vec![SqlParam::Text(recipient.clone()), SqlParam::Int(*limit as i64)],
+            },
+        },
+        HandlerStmt::SelectSharedItems { user, .. } => HandlerRendered::Query {
+            sql: "SELECT id, sender_user_id, recipient_user_id, capsule, created_at, updated_at, revoked
+         FROM shared_items
+         WHERE (sender_user_id = ? OR recipient_user_id = ?)
+           AND revoked = 0
+         ORDER BY updated_at DESC
+         LIMIT 1000",
+            params: vec![SqlParam::Text(user.clone()), SqlParam::Text(user.clone())],
+        },
+        HandlerStmt::SelectOwnedSends { owner, now, .. } => HandlerRendered::Query {
+            sql: "SELECT id, label, has_passphrase, view_once, max_views, view_count, created_at, expires_at
+             FROM sends
+             WHERE owner_user_id = ? AND revoked = 0 AND expires_at > ?
+             ORDER BY created_at DESC LIMIT 200",
+            params: vec![SqlParam::Text(owner.clone()), SqlParam::Text(now.clone())],
+        },
+        HandlerStmt::DeleteExpiredInbox { cutoff } => HandlerRendered::Execute {
+            sql: "DELETE FROM share_inbox WHERE created_at < ?",
+            params: vec![SqlParam::Text(cutoff.clone())],
+        },
+        HandlerStmt::DeleteExpiredSends { cutoff } => HandlerRendered::Execute {
+            sql: "DELETE FROM sends WHERE expires_at < ?",
+            params: vec![SqlParam::Text(cutoff.clone())],
+        },
+    }
+}
+
+/// The exact store call a rate limiter has always made.
+#[cfg(not(hax))]
+pub fn render_rate(stmt: &RateStmt) -> RateRendered {
+    RateRendered::IncrFixedWindow {
+        key: stmt.key.clone(),
+        delta: 1,
+        window_secs: stmt.window_secs,
     }
 }
 
@@ -1168,5 +1801,288 @@ mod tests {
         assert_eq!(no_expiry.ciphertext, Some(s("ct")));
         assert!(no_expiry.view_once);
         assert_eq!(no_expiry.expires_at, None);
+    }
+
+    fn handler_query(stmt: &HandlerStmt) -> (&'static str, Vec<SqlParam>) {
+        match render_handler(stmt) {
+            HandlerRendered::Query { sql, params } => (sql, params),
+            other => panic!("expected a read, got {other:?}"),
+        }
+    }
+
+    fn handler_exec(stmt: &HandlerStmt) -> (&'static str, Vec<SqlParam>) {
+        match render_handler(stmt) {
+            HandlerRendered::Execute { sql, params } => (sql, params),
+            other => panic!("expected a write, got {other:?}"),
+        }
+    }
+
+    // Byte-for-byte copies of the literals the handlers used before the split
+    // (vela-server/src/share/mod.rs and src/send.rs), including their line
+    // breaks and indentation.
+
+    #[test]
+    fn send_admission_plan_renders_the_historical_statements() {
+        assert_eq!(
+            handler_query(&plan_recipient_probe(s("rcp"))),
+            (
+                "SELECT share_ek FROM users WHERE id = ?",
+                vec![SqlParam::Text(s("rcp"))]
+            )
+        );
+        let plan = plan_send_admission(s("rcp"), s("snd"));
+        assert_eq!(plan.len(), 4);
+        assert_eq!(render_handler(&plan[0]), HandlerRendered::Begin);
+        assert_eq!(
+            handler_query(&plan[1]),
+            (
+                "SELECT COUNT(*) FROM share_inbox WHERE recipient_user_id = ?",
+                vec![SqlParam::Text(s("rcp"))]
+            )
+        );
+        assert_eq!(
+            handler_query(&plan[2]),
+            (
+                "SELECT COALESCE(SUM(LENGTH(capsule)), 0) FROM share_inbox
+                 WHERE recipient_user_id = ? AND sender_user_id = ?",
+                vec![SqlParam::Text(s("rcp")), SqlParam::Text(s("snd"))]
+            )
+        );
+        assert_eq!(
+            handler_query(&plan[3]),
+            (
+                "SELECT COALESCE(SUM(LENGTH(capsule)), 0) FROM share_inbox
+                 WHERE recipient_user_id = ?",
+                vec![SqlParam::Text(s("rcp"))]
+            )
+        );
+    }
+
+    #[test]
+    fn share_reader_plans_render_the_historical_statements() {
+        assert_eq!(
+            handler_query(&plan_recipient_ek(s("me"))),
+            (
+                "SELECT share_ek, share_ek_since FROM users WHERE id = ?",
+                vec![SqlParam::Text(s("me"))]
+            )
+        );
+        assert_eq!(
+            handler_query(&plan_inbox_cursor(s("i"), s("me"))),
+            (
+                "SELECT created_at FROM share_inbox
+             WHERE id = ? AND recipient_user_id = ?",
+                vec![SqlParam::Text(s("i")), SqlParam::Text(s("me"))]
+            )
+        );
+        assert_eq!(
+            handler_query(&plan_inbox_page(s("me"), None, 51)),
+            (
+                "SELECT id, sender_user_id, capsule, created_at
+             FROM share_inbox
+             WHERE recipient_user_id = ?
+               AND NOT EXISTS (SELECT 1 FROM shared_items
+                               WHERE shared_items.id = share_inbox.id
+                                 AND shared_items.revoked = 1)
+             ORDER BY created_at DESC
+             LIMIT ?",
+                vec![SqlParam::Text(s("me")), SqlParam::Int(51)]
+            )
+        );
+        assert_eq!(
+            handler_query(&plan_inbox_page(s("me"), Some(s("t0")), 51)),
+            (
+                "SELECT id, sender_user_id, capsule, created_at
+             FROM share_inbox
+             WHERE recipient_user_id = ?
+               AND created_at < ?
+               AND NOT EXISTS (SELECT 1 FROM shared_items
+                               WHERE shared_items.id = share_inbox.id
+                                 AND shared_items.revoked = 1)
+             ORDER BY created_at DESC
+             LIMIT ?",
+                vec![
+                    SqlParam::Text(s("me")),
+                    SqlParam::Text(s("t0")),
+                    SqlParam::Int(51)
+                ]
+            )
+        );
+        // The two fixed page sizes live in the SQL text; the plan carries the
+        // same number so the classifier's bound is the query's bound.
+        let linked = plan_linked_items(s("me"), 1000);
+        let (linked_sql, _) = handler_query(&linked);
+        assert_eq!(linked_sql.rsplit(' ').next(), Some("1000"));
+        assert_eq!(
+            handler_query(&linked),
+            (
+                "SELECT id, sender_user_id, recipient_user_id, capsule, created_at, updated_at, revoked
+         FROM shared_items
+         WHERE (sender_user_id = ? OR recipient_user_id = ?)
+           AND revoked = 0
+         ORDER BY updated_at DESC
+         LIMIT 1000",
+                vec![SqlParam::Text(s("me")), SqlParam::Text(s("me"))]
+            )
+        );
+        let own = plan_own_sends(s("me"), s("now"), 200);
+        let (own_sql, _) = handler_query(&own);
+        assert_eq!(own_sql.rsplit(' ').next(), Some("200"));
+        assert_eq!(
+            handler_query(&own),
+            (
+                "SELECT id, label, has_passphrase, view_once, max_views, view_count, created_at, expires_at
+             FROM sends
+             WHERE owner_user_id = ? AND revoked = 0 AND expires_at > ?
+             ORDER BY created_at DESC LIMIT 200",
+                vec![SqlParam::Text(s("me")), SqlParam::Text(s("now"))]
+            )
+        );
+    }
+
+    #[test]
+    fn cleanup_plans_render_the_historical_statements() {
+        assert_eq!(
+            handler_exec(&plan_expired_inbox_cleanup(s("cut"))),
+            (
+                "DELETE FROM share_inbox WHERE created_at < ?",
+                vec![SqlParam::Text(s("cut"))]
+            )
+        );
+        assert_eq!(
+            handler_exec(&plan_expired_sends_cleanup(s("cut"))),
+            ("DELETE FROM sends WHERE expires_at < ?", vec![SqlParam::Text(s("cut"))])
+        );
+    }
+
+    #[test]
+    fn rate_plans_render_the_historical_store_call() {
+        let stmt = plan_rate_limit(s("rl:share:send:user:me"), 120, 3600);
+        assert_eq!(stmt.limit, 120);
+        assert_eq!(
+            render_rate(&stmt),
+            RateRendered::IncrFixedWindow {
+                key: s("rl:share:send:user:me"),
+                delta: 1,
+                window_secs: 3600
+            }
+        );
+    }
+
+    #[test]
+    fn handler_classifiers_keep_the_historical_observations() {
+        use HandlerOutcome::{Failed, Number, Ran, Written};
+
+        // The recipient gate.
+        let with_ek = |ek: Option<&str>| {
+            ReadOutcome::Row(Some(EkRowView {
+                share_ek: ek.map(s),
+                share_ek_since: None,
+            }))
+        };
+        assert!(classify_recipient_probe(&with_ek(Some("ek"))).can_receive);
+        assert!(!classify_recipient_probe(&with_ek(Some(""))).can_receive);
+        assert!(!classify_recipient_probe(&with_ek(None)).can_receive);
+        assert!(!classify_recipient_probe(&ReadOutcome::Row(None)).can_receive);
+        let failed = classify_recipient_probe(&ReadOutcome::Failed);
+        assert!(!failed.can_receive);
+        assert!(failed.failed);
+
+        // The admission.
+        let ready = classify_send_admission(&[
+            Ran,
+            Number(Some(2)),
+            Number(Some(30)),
+            Number(Some(90)),
+        ]);
+        assert_eq!(ready.stage, AdmissionStage::Ready);
+        assert_eq!(ready.inbox_count, 2);
+        assert_eq!(ready.pair_bytes, 30);
+        assert_eq!(ready.total_bytes, 90);
+        // A missing cell counts as zero, as `.unwrap_or(0)` did.
+        let nulls = classify_send_admission(&[Ran, Number(None), Number(None), Number(None)]);
+        assert_eq!(nulls.stage, AdmissionStage::Ready);
+        assert_eq!(nulls.total_bytes, 0);
+        assert_eq!(
+            classify_send_admission(&[Failed]).stage,
+            AdmissionStage::Begin
+        );
+        assert_eq!(
+            classify_send_admission(&[Ran, Failed]).stage,
+            AdmissionStage::Count
+        );
+        assert_eq!(
+            classify_send_admission(&[Ran, Number(Some(1)), Failed]).stage,
+            AdmissionStage::Pair
+        );
+        assert_eq!(
+            classify_send_admission(&[Ran, Number(Some(1)), Number(Some(2)), Failed]).stage,
+            AdmissionStage::Total
+        );
+        assert_eq!(
+            classify_send_admission(&[Ran, Number(Some(1)), Number(Some(2))]).stage,
+            AdmissionStage::Total
+        );
+        assert_eq!(
+            classify_send_admission(&[Ran, Number(Some(1))]).stage,
+            AdmissionStage::Pair
+        );
+        assert_eq!(classify_send_admission(&[Ran]).stage, AdmissionStage::Begin);
+
+        // The recipient key read.
+        let ek = classify_recipient_ek(&ReadOutcome::Row(Some(EkRowView {
+            share_ek: Some(s("ek")),
+            share_ek_since: Some(s("t0")),
+        })));
+        assert_eq!(ek.share_ek, Some(s("ek")));
+        assert_eq!(ek.signed_at, Some(s("t0")));
+        assert!(!ek.failed);
+        let empty = classify_recipient_ek(&ReadOutcome::Row(Some(EkRowView {
+            share_ek: Some(s("")),
+            share_ek_since: None,
+        })));
+        assert_eq!(empty.share_ek, None);
+        assert!(!empty.failed);
+
+        // The inbox cursor.
+        let cursor = classify_inbox_cursor(&ReadOutcome::Row(Some(CursorRowView {
+            created_at: Some(s("t0")),
+        })));
+        assert_eq!(cursor.created_at, Some(s("t0")));
+        assert!(!cursor.absent && !cursor.failed);
+        let missing = classify_inbox_cursor(&ReadOutcome::Row(None));
+        assert!(missing.absent && !missing.failed);
+        let unreadable = classify_inbox_cursor(&ReadOutcome::Row(Some(CursorRowView {
+            created_at: None,
+        })));
+        assert!(!unreadable.absent && !unreadable.failed);
+        assert!(classify_inbox_cursor(&ReadOutcome::Failed).failed);
+
+        // A page.
+        let page = classify_listing(51, false, 50);
+        assert_eq!(page.keep, 50);
+        assert!(page.has_more && !page.failed);
+        let exact = classify_listing(50, false, 50);
+        assert_eq!(exact.keep, 50);
+        assert!(!exact.has_more);
+        assert_eq!(classify_listing(3, false, 50).keep, 3);
+        assert!(classify_listing(3, true, 50).failed);
+
+        // A sweep.
+        let sweep = classify_sweep(&[Written(4)]);
+        assert_eq!(sweep.purged, 4);
+        assert!(!sweep.failed);
+        assert!(classify_sweep(&[Failed]).failed);
+        assert_eq!(classify_sweep(&[Written(4), Failed]).purged, 0);
+
+        // A rate limiter.
+        use RateOutcome::{Count, Failed as RateFailed};
+        let under = classify_rate_limit(&[Count(1)], 120);
+        assert!(under.allowed && !under.failed);
+        assert_eq!(under.count, 1);
+        assert!(classify_rate_limit(&[Count(120)], 120).allowed);
+        assert!(!classify_rate_limit(&[Count(121)], 120).allowed);
+        let store_error = classify_rate_limit(&[RateFailed], 120);
+        assert!(!store_error.allowed && store_error.failed);
     }
 }

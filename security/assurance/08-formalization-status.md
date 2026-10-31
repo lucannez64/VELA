@@ -450,6 +450,36 @@ match the model, and a schema check pins the columns the model uses. No
 dishonest executor was found. Assumed: serialized transactions and atomic
 statements. [Evidence](proof-logs/current/share-executors/README.md).
 
+## Handler I/O outside the sharing executors (F-1 wave 2)
+
+The sharing and one-off send-link handlers also read and write outside their
+executor methods. That I/O now uses the same plan, render and classify design:
+`post_send`'s recipient `share_ek` probe, its transaction begin and its three
+inbox quota reads (`COUNT(*)` and two `SUM(LENGTH(capsule))`), `get_inbox`'s
+cursor and page, `get_linked_items`, `list_share_links`, the two expiry sweeps,
+and the four share/send rate limiters. The store model gained a finite
+association per table (its key list plus `tables_wf`) so the aggregates count
+and sum over the modelled inbox, and a counter store for the limiters. For
+every starting database and every fault point F* proves: the admission is
+`Ready` exactly when the begin and the three reads all ran, and then its three
+values are the inbox's true count and byte sums (and the driver's quota
+decision sees the true pending bytes); the recipient gate admits exactly a
+stored non-empty share key; the published share key is the stored one unless
+absent or empty; the inbox cursor is the caller's own row's timestamp; both
+listings carry the caller's request and expose exactly the caller's matching
+rows, with `has_more` exact and both page directions checked on the real
+database; the sweeps delete exactly the rows the cutoff names and report the
+exact count; a rate limiter allows a request exactly when its counter was
+below the budget and records exactly one more against its own key; every
+failure leaves the tables and the counter unchanged. Ten plan and classifier
+mutations each break a named theorem. 2,020 real turso/sled cases (910 with an
+injected failure at every fault point) match the Rust mirror of the model,
+with the SQL text, parameters, keys and TTLs pinned byte for byte by unit
+tests. Assumed: `tables_wf` (a property of `UNIQUE`-keyed tables), statement
+atomicity, the counter's window rollover, and that a listing's engine order is
+not part of its observation. [Evidence](proof-logs/current/share-executors/README.md)
+and [send-side evidence](proof-logs/current/send-executors/README.md).
+
 ## Executor honesty: one-off share links (F-1)
 
 The three send-link executors (create, fetch, delete) now use the same plan,
@@ -464,8 +494,8 @@ to the same store model. For every starting table and failing statement:
 - any failure leaves the table unchanged.
 
 Five mutations each break a theorem. 456 real-database cases (228 with an
-injected failure) match the model. No dishonest executor was found.
-`post_send`'s quota reads, the listing and the expiry cleanup remain outside.
+injected failure) match the model. No dishonest executor was found. The owner
+listing and the expiry sweep are covered by the wave-2 handler proofs above.
 [Evidence](proof-logs/current/send-executors/README.md).
 
 ## Executor honesty: recovery (F-1)
