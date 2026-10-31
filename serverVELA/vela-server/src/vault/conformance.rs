@@ -1101,14 +1101,27 @@ async fn rotation_executors_match_the_store_model() {
                 load(&db, &store, pre).await;
                 let stmt = policy::plan_read_inventory(user(1).clone(), epoch);
                 let mut sql = Faulty::new(Pool { db: &db, store: &store }, fault);
-                let observed = match run_read(&mut sql, &stmt).await {
-                    Err(_) => policy::classify_inventory(&ReadOutcome::Failed),
-                    Ok(rows) => policy::classify_inventory(&ReadOutcome::Rows(inventory_rows(
-                        &rows,
-                    ))),
+                let (observed, observed_rows) = match run_read(&mut sql, &stmt).await {
+                    Err(_) => (
+                        policy::classify_inventory(&ReadOutcome::Failed),
+                        Vec::new(),
+                    ),
+                    Ok(rows) => (
+                        policy::classify_inventory(&ReadOutcome::Rows(inventory_rows(
+                            &rows,
+                        ))),
+                        inventory_rows(&rows),
+                    ),
                 };
                 let expected = model::inventory(pre, &user(1), epoch, fault);
                 assert_eq!(observed, expected, "inventory {epoch} {fault:?}");
+                // The row set is a function of the state too.
+                let expected_rows = if fault.is_some() {
+                    Vec::new()
+                } else {
+                    model::inventory_row_set(pre, &user(1), epoch)
+                };
+                assert_eq!(observed_rows, expected_rows, "inventory rows {epoch} {fault:?}");
                 counts.case(fault);
             }
         }
