@@ -50,11 +50,13 @@ items=(
   plan_claim_write plan_account_read plan_completion_preflight plan_take_ceremony
   plan_completion_insert plan_result_write plan_result_read plan_claim_read
   plan_device_by_grant plan_active_device_read plan_enroll_insert plan_challenge_take
+  plan_grant_read plan_grant_exists plan_ceremony_restore plan_rate_limit
   classify_store classify_redeem classify_challenge_take classify_claim_check
   classify_claim_write classify_account account_fields classify_completion_preflight
   classify_take_ceremony classify_insert_completion classify_insert_enroll
   classify_result_read classify_claim_read classify_enrolled_device
-  classify_device_check
+  classify_device_check classify_grant_read classify_grant_exists
+  classify_claim_inspection classify_ceremony_restore under_limit classify_rate_limit
 )
 include='-**'
 for item in "${items[@]}"; do

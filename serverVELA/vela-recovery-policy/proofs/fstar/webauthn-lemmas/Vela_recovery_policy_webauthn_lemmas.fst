@@ -489,6 +489,102 @@ let persisted_credential_is_live
      | _ -> True) =
   credential_persist_is_honest d user credential credential_id encoded fk
 
+// ── The startup credential-id backfill ─────────────────────────────────────
+
+/// Every id the scan keeps was offered by the caller, and every kept id still
+/// needs a backfill.
+let rec keep_legacy_is_honest (d: db) (candidates: list text) (u: text)
+  : Lemma
+    (ensures
+      (L.mem u (keep_legacy d candidates) ==>
+       (L.mem u candidates /\
+        (match d.users u with
+         | Some row -> needs_backfill row
+         | None -> false))))
+    (decreases candidates) =
+  match candidates with
+  | [] -> ()
+  | c :: rest ->
+    (match d.users c with
+     | Some row ->
+       if needs_backfill row
+       then (if c = u then () else keep_legacy_is_honest d rest u)
+       else keep_legacy_is_honest d rest u
+     | None -> keep_legacy_is_honest d rest u)
+
+/// The scan returns the candidates that still need a backfill, or a failure.
+let legacy_scan_is_honest (d: db) (candidates: list text) (fs: option nat) (k: nat)
+  : Lemma
+    (match legacy_scan d candidates fs k with
+     | Failed -> faulted fs k
+     | Row rows ->
+       (forall (u: text). L.mem u rows ==> L.mem u candidates)) =
+  let aux (u: text) : Lemma (L.mem u (keep_legacy d candidates) ==> L.mem u candidates) =
+    keep_legacy_is_honest d candidates u
+  in
+  match legacy_scan d candidates fs k with
+  | Failed -> ()
+  | Row rows -> FStar.Classical.forall_intro aux
+
+/// One backfill write changes only the named account, and only its indexed
+/// credential id (a missing account changes nothing).
+let backfill_write_is_honest (d: db) (u cred: text)
+  : Lemma
+    ((match d.users u with
+      | None -> backfill_row d u cred == d
+      | Some row ->
+        (backfill_row d u cred).users u
+        == Some ({ row with ws_cred_id = Some cred }) /\
+        (backfill_row d u cred).attempts == d.attempts /\
+        (backfill_row d u cred).registrations == d.registrations /\
+        (backfill_row d u cred).grants == d.grants /\
+        (backfill_row d u cred).holders == d.holders)) =
+  ()
+
+/// A write for another account changes nothing on this one.
+let backfill_write_changes_only_its_user (d: db) (u cred x: text) (h: x <> u)
+  : Lemma ((backfill_row d u cred).users x == d.users x) =
+  ()
+
+/// With no failure the run performs exactly the plan's writes, in order; with
+/// a failure it omits exactly the failed ones and keeps the rest.
+let rec backfill_run_names_the_rows
+      (d: db) (rows: list (text & text)) (k: nat)
+  : Lemma (ensures fst (run_backfill d (backfill_plan rows) k None) == rows)
+          (decreases rows) =
+  match rows with
+  | [] -> ()
+  | (u, cred) :: rest ->
+    backfill_run_names_the_rows (backfill_row d u cred) rest (k + 1)
+
+/// The run's post-state is exactly the fold of the writes that landed; every
+/// landed write names a scanned row.
+let rec backfill_run_is_honest
+      (d: db) (rows: list (text & text)) (k: nat) (fs: option nat)
+  : Lemma
+    (ensures
+      (let r = run_backfill d (backfill_plan rows) k fs in
+       snd r == fold_rows d (fst r) /\
+       L.length (fst r) <= L.length rows))
+    (decreases rows) =
+  match rows with
+  | [] -> ()
+  | (u, cred) :: rest ->
+    if faulted fs k
+    then backfill_run_is_honest d rest (k + 1) fs
+    else backfill_run_is_honest (backfill_row d u cred) rest (k + 1) fs
+
+/// A user no landed write names is unchanged by the whole run.
+let rec backfill_only_touches_landed_rows
+      (d: db) (rows: list (text & text)) (x: text)
+  : Lemma (requires ~(L.mem x (L.map fst rows)))
+          (ensures (fold_rows d rows).users x == d.users x)
+          (decreases rows) =
+  match rows with
+  | [] -> ()
+  | (u, cred) :: rest ->
+    backfill_only_touches_landed_rows (backfill_row d u cred) rest x
+
 // ── Vectors shared with `redemption_model.rs::shared_webauthn_vectors` ─────
 
 let vector_user : user_row =

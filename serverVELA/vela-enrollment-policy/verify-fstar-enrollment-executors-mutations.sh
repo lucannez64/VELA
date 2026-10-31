@@ -19,6 +19,12 @@ set -euo pipefail
 #   plan-drop            the completion preflight drops the opener read
 #   plan-swap            store_grant swaps the user and opener in the record
 #   account-classify     the account preflight always reports a successful query
+#   grant-exists         a missing grant is reported live
+#   grant-read-binding   the grant read compares the device id with the user
+#   claim-inspect        a stored claim is reported absent
+#   restore-classify     a failed ceremony restore is reported Stored
+#   rate-classify        a limited counter is reported Admitted
+#   rate-plan-key        the counter is incremented at the empty key
 
 proof_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cd "$proof_root"
@@ -43,6 +49,8 @@ hax_lib_root=$(
 mutants=(
   classify-error classify-claim-write classify-skip classify-take
   classify-device plan-drop plan-swap account-classify
+  grant-exists grant-read-binding claim-inspect restore-classify
+  rate-classify rate-plan-key
 )
 declare -A expect=(
   [classify-error]=store_package_is_honest
@@ -53,6 +61,12 @@ declare -A expect=(
   [plan-drop]=completion_preflight_is_honest
   [plan-swap]=store_grant_is_honest
   [account-classify]=account_read_is_honest
+  [grant-exists]=grant_exists_is_honest
+  [grant-read-binding]=grant_read_is_honest
+  [claim-inspect]=claim_inspection_is_honest
+  [restore-classify]=ceremony_restore_is_honest
+  [rate-classify]=rate_limit_is_honest
+  [rate-plan-key]=rate_limit_is_honest
 )
 
 failures=0
@@ -155,6 +169,57 @@ elif name == 'account-classify':
     if count != 1:
         sys.exit(f'{name}: classify_account shape changed')
     text = text[:start] + replaced + text[end:]
+elif name == 'grant-exists':
+    start, end = body('let classify_grant_exists', "/// `get_claim`\'s payload read")
+    segment = text[start:end]
+    old = '| ReadOutcome_GrantExists true -> true'
+    if segment.count(old) != 1:
+        sys.exit(f'{name}: grant-exists classifier shape changed')
+    text = text[:start] + segment.replace(old, '| ReadOutcome_GrantExists _ -> true') + text[end:]
+elif name == 'grant-read-binding':
+    start, end = body('let classify_grant_read', "/// `post_claim`\'s pre-driver liveness bit")
+    segment = text[start:end]
+    old = 'f_opener_matches = row.f_device_id =. session_device'
+    if segment.count(old) != 1:
+        sys.exit(f'{name}: grant read bindings shape changed')
+    text = text[:start] + segment.replace(
+        old, 'f_opener_matches = row.f_user_id =. session_device') + text[end:]
+elif name == 'claim-inspect':
+    start, end = body('let classify_claim_inspection', "/// The completion\'s ceremony restore")
+    segment = text[start:end]
+    old = 'f_claim_present = true;'
+    if segment.count(old) != 1:
+        sys.exit(f'{name}: claim inspection shape changed')
+    text = text[:start] + segment.replace(old, 'f_claim_present = false;') + text[end:]
+elif name == 'restore-classify':
+    start, end = body('let classify_ceremony_restore', '/// Whether a counter value is within')
+    segment = text[start:end]
+    old = ('    | _ ->\n'
+           '      Vela_enrollment_policy.Pairing_driver.StoreObservation_Failed')
+    if segment.count(old) != 1:
+        sys.exit(f'{name}: ceremony restore shape changed')
+    text = text[:start] + segment.replace(
+        old,
+        '    | _ ->\n'
+        '      Vela_enrollment_policy.Pairing_driver.StoreObservation_Stored') + text[end:]
+elif name == 'rate-classify':
+    # classify_rate_limit is last in the generated module; run to the end.
+    start = text.index('let classify_rate_limit')
+    segment = text[start:]
+    old = ('      if under_limit count limit\n'
+           '      then RateObservation_Admitted <: t_RateObservation\n'
+           '      else RateObservation_Limited <: t_RateObservation')
+    if segment.count(old) != 1:
+        sys.exit(f'{name}: rate classifier shape changed')
+    text = text[:start] + segment.replace(
+        old, '      RateObservation_Admitted <: t_RateObservation')
+elif name == 'rate-plan-key':
+    start, end = body('let plan_rate_limit', '/// A single unconditional store write')
+    segment = text[start:end]
+    old = 'f_key = key'
+    if segment.count(old) != 1:
+        sys.exit(f'{name}: rate plan key shape changed')
+    text = text[:start] + segment.replace(old, 'f_key = Alloc.String.String ""') + text[end:]
 else:
     sys.exit(f'unknown mutant {name}')
 

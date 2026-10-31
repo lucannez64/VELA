@@ -12,6 +12,14 @@ set -euo pipefail
 # modified. The checked-in lemma module must FAIL against every mutant, and the
 # named theorem must be among those that fail.
 #
+#   pre-driver and rate families
+#   peek-classify     a stored grant is reported absent
+#   account-classify  a rotating account reports an active epoch
+#   account-gate      the commitment length ignores the epoch/rotation gate
+#   backfill-plan-id  a backfill write names the user id as its credential id
+#   rate-classify     a limited counter is reported Admitted
+#   rate-plan-key     the counter is incremented at the empty key
+#
 #   redemption family (`src/redemption_store.rs`)
 #   classify-match     classify_take reports a match for any consumed grant
 #   classify-error     classify_insert maps a failed insert to Inserted
@@ -46,6 +54,8 @@ possession_store=$proof_root/proofs/fstar/extraction-possession/Vela_recovery_po
 possession_lemmas=$proof_root/proofs/fstar/possession-lemmas/Vela_recovery_policy_possession_lemmas.fst
 webauthn_store=$proof_root/proofs/fstar/extraction-webauthn/Vela_recovery_policy.Webauthn_store.fst
 webauthn_lemmas=$proof_root/proofs/fstar/webauthn-lemmas/Vela_recovery_policy_webauthn_lemmas.fst
+rate_store=$proof_root/proofs/fstar/extraction-rate/Vela_recovery_policy.Rate_store.fst
+rate_lemmas=$proof_root/proofs/fstar/rate-lemmas/Vela_recovery_policy_rate_lemmas.fst
 [[ -f $redemption_store && -f $redemption_lemmas ]] || {
   echo "run verify-fstar-recovery-executors.sh first" >&2; exit 1
 }
@@ -56,6 +66,9 @@ webauthn_lemmas=$proof_root/proofs/fstar/webauthn-lemmas/Vela_recovery_policy_we
   echo "run verify-fstar-recovery-executors.sh first" >&2; exit 1
 }
 [[ -f $webauthn_store && -f $webauthn_lemmas ]] || {
+  echo "run verify-fstar-recovery-executors.sh first" >&2; exit 1
+}
+[[ -f $rate_store && -f $rate_lemmas ]] || {
   echo "run verify-fstar-recovery-executors.sh first" >&2; exit 1
 }
 mut=$(mktemp -d "${TMPDIR:-/tmp}/vela-recovery-executor-mut.XXXXXX")
@@ -79,6 +92,8 @@ mutants=(
   webauthn-classify-persist webauthn-classify-uniqueness
   webauthn-classify-release webauthn-plan-select-share
   webauthn-plan-grant-key webauthn-plan-persist-user
+  peek-classify account-classify account-gate webauthn-backfill-plan-id
+  rate-classify rate-plan-key
 )
 declare -A expect=(
   [classify-match]=take_grant_is_honest
@@ -109,6 +124,12 @@ declare -A expect=(
   [webauthn-plan-select-share]=auth_start_observation_is_honest
   [webauthn-plan-grant-key]=grant_store_is_honest
   [webauthn-plan-persist-user]=credential_persist_is_honest
+  [peek-classify]=peek_grant_is_honest
+  [account-classify]=enrollment_account_is_honest
+  [account-gate]=enrollment_account_is_honest
+  [webauthn-backfill-plan-id]=backfill_run_names_the_rows
+  [rate-classify]=rate_limit_is_honest
+  [rate-plan-key]=rate_limit_is_honest
 )
 
 failures=0
@@ -142,6 +163,15 @@ for name in "${mutants[@]}"; do
       includes=(
         --include "$proof_root/proofs/fstar/extraction-webauthn-driver"
         --include "$proof_root/proofs/fstar/extraction-webauthn"
+      )
+      ;;
+    rate-*)
+      store=$rate_store
+      lemmas=$rate_lemmas
+      lemma_dir=$proof_root/proofs/fstar/rate-lemmas
+      store_module=Vela_recovery_policy.Rate_store.fst
+      includes=(
+        --include "$proof_root/proofs/fstar/extraction-rate"
       )
       ;;
     *)
@@ -373,6 +403,59 @@ elif name == 'webauthn-plan-persist-user':
     if body.count('f_user = user') != 1:
         sys.exit(f'{name}: persist user field not found')
     text = text[:start] + body.replace('f_user = user', 'f_user = credential') + text[end:]
+elif name == 'peek-classify':
+    start = text.index('let classify_peek_grant')
+    body = text[start:]
+    old = '''  | Core_models.Option.Option_Some grant ->
+    GrantPeekObservation_Present
+    (Core_models.Clone.f_clone #t_GrantView #FStar.Tactics.Typeclasses.solve grant)
+    <:
+    t_GrantPeekObservation'''
+    if body.count(old) != 1:
+        sys.exit(f'{name}: classify_peek_grant shape changed')
+    text = text[:start] + body.replace(old, '''  | Core_models.Option.Option_Some _grant ->
+    GrantPeekObservation_Absent <: t_GrantPeekObservation''')
+elif name == 'account-classify':
+    start = text.index('let classify_enrollment_account')
+    body = text[start:]
+    end = len(text)
+    if body.count('let epoch_active:bool = ~.row.f_rotation_active in') != 1:
+        sys.exit(f'{name}: account classifier shape changed')
+    text = text[:start] + body.replace(
+        'let epoch_active:bool = ~.row.f_rotation_active in',
+        'let epoch_active:bool = true in') + text[end:]
+elif name == 'account-gate':
+    start = text.index('let classify_enrollment_account')
+    body = text[start:]
+    end = len(text)
+    if body.count('f_commitment_len = if gate_open then row.f_commitment_len else mk_usize 0') != 1:
+        sys.exit(f'{name}: account gate shape changed')
+    text = text[:start] + body.replace(
+        'f_commitment_len = if gate_open then row.f_commitment_len else mk_usize 0',
+        'f_commitment_len = row.f_commitment_len') + text[end:]
+elif name == 'webauthn-backfill-plan-id':
+    start, body, end = region('let plan_backfill_write', 'let classify_auth_start')
+    if body.count('f_user = user; f_credential_id = credential_id') != 1:
+        sys.exit(f'{name}: backfill plan shape changed')
+    text = text[:start] + body.replace(
+        'f_user = user; f_credential_id = credential_id',
+        'f_user = user; f_credential_id = user') + text[end:]
+elif name == 'rate-classify':
+    start = text.index('let classify_rate_limit')
+    body = text[start:]
+    old = '''      if under_limit count limit
+      then RateObservation_Admitted <: t_RateObservation
+      else RateObservation_Limited <: t_RateObservation'''
+    if body.count(old) != 1:
+        sys.exit(f'{name}: rate classifier shape changed')
+    text = text[:start] + body.replace(old, '      RateObservation_Admitted <: t_RateObservation')
+elif name == 'rate-plan-key':
+    start = text.index('let plan_rate_limit')
+    body = text[start:]
+    old = 'f_key = key'
+    if body.count(old) != 1:
+        sys.exit(f'{name}: rate plan key shape changed')
+    text = text[:start] + body.replace(old, 'f_key = Alloc.String.String ""')
 else:
     sys.exit(f'{name}: unknown mutant')
 path.write_text(text)
@@ -395,7 +478,7 @@ PY
   fi
   # Every theorem with an error; the expected one must be among them.
   rejected=$(grep -oE "$(basename "$lemmas" | sed 's/\./\\./g')\(([0-9]+)," <<<"$out" | grep -oE '[0-9]+' | sort -un |
-    while read -r line; do head -n "$line" "$lemmas" | grep -oE '^let [a-z_0-9]+' | tail -n1 | cut -d' ' -f2; done | sort -u | tr '\n' ' ') || true
+    while read -r line; do head -n "$line" "$lemmas" | grep -oE '^let (rec )?[a-z_0-9]+' | tail -n1 | sed 's/^let rec //; s/^let //'; done | sort -u | tr '\n' ' ') || true
   if [[ -z ${rejected// /} ]]; then
     # No lemma error: F* was killed or failed elsewhere. Say so instead of exiting silently.
     echo "mutant $name: F* exited $status without an error in the lemma module; last output:" >&2

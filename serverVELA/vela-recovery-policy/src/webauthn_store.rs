@@ -91,6 +91,11 @@ pub enum WebAuthnStmt {
         grant: CredentialGrantView,
         ttl_secs: u64,
     },
+    /// The startup backfill's scan: rows whose stored credential has no
+    /// indexed credential id yet.
+    SelectLegacyCredentials,
+    /// Write one decoded credential id onto its account row.
+    BackfillCredentialId { user: String, credential_id: String },
 }
 
 /// What one attempt slot holds, as the plan writes it: the bindings the
@@ -190,6 +195,38 @@ pub enum CredentialHolderView {
     OnlyCaller,
     /// The lookup could not be read.
     Unreadable,
+}
+
+/// One candidate row of the startup backfill's scan: the account id and its
+/// stored credential JSON.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LegacyCredentialRowView {
+    pub user: String,
+    /// The stored `recovery_webauthn_credential` JSON.
+    pub credential: String,
+}
+
+/// One backfill write: the account and the credential id its own stored
+/// credential decodes to.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BackfillWrite {
+    pub user: String,
+    pub credential_id: String,
+}
+
+/// The backfill scan's observation: exactly the candidate rows it returned.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BackfillScan {
+    pub rows: Vec<LegacyCredentialRowView>,
+}
+
+/// One backfill write's verdict.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BackfillWriteObservation {
+    /// The update ran; the row now carries the credential id.
+    Stored,
+    /// The update failed; nothing changed.
+    Failed,
 }
 
 // ── Plans ──────────────────────────────────────────────────────────────────
@@ -311,6 +348,26 @@ pub fn plan_store_credential_grant(
         grant,
         ttl_secs,
     }
+}
+
+/// The startup backfill's scan statement.
+pub fn plan_backfill_scan() -> WebAuthnStmt {
+    WebAuthnStmt::SelectLegacyCredentials
+}
+
+/// The startup backfill's writes: one per scanned row, in scan order.
+pub fn plan_backfill_writes(rows: Vec<BackfillWrite>) -> Vec<WebAuthnStmt> {
+    rows.into_iter()
+        .map(|row| WebAuthnStmt::BackfillCredentialId {
+            user: row.user,
+            credential_id: row.credential_id,
+        })
+        .collect()
+}
+
+/// One backfill write's plan: exactly the statement the loop runs for one row.
+pub fn plan_backfill_write(user: String, credential_id: String) -> Vec<WebAuthnStmt> {
+    vec![WebAuthnStmt::BackfillCredentialId { user, credential_id }]
 }
 
 // ── Classification ─────────────────────────────────────────────────────────
@@ -502,6 +559,22 @@ pub fn classify_persist_credential(
     }
 }
 
+/// The startup backfill's scan: exactly the rows the query returned.
+pub fn classify_backfill_scan(rows: &[LegacyCredentialRowView]) -> BackfillScan {
+    BackfillScan {
+        rows: rows.to_vec(),
+    }
+}
+
+/// One backfill write: `Stored` exactly when the update ran.
+pub fn classify_backfill_write(outcomes: &[WriteOutcome]) -> BackfillWriteObservation {
+    if outcomes.len() == 1 && matches!(outcomes[0], WriteOutcome::Applied(_)) {
+        BackfillWriteObservation::Stored
+    } else {
+        BackfillWriteObservation::Failed
+    }
+}
+
 // ── Rendering (not extracted; pinned by the tests below) ───────────────────
 
 #[cfg(not(hax))]
@@ -587,6 +660,18 @@ pub fn render(stmt: &WebAuthnStmt) -> Rendered {
             key: key.clone(),
             value: value.as_bytes().to_vec(),
             ttl_secs: *ttl_secs,
+        },
+        WebAuthnStmt::SelectLegacyCredentials => Rendered::Query {
+            sql: "SELECT id, recovery_webauthn_credential FROM users
+             WHERE recovery_webauthn_credential IS NOT NULL AND recovery_webauthn_cred_id IS NULL",
+            params: vec![],
+        },
+        WebAuthnStmt::BackfillCredentialId {
+            user,
+            credential_id,
+        } => Rendered::Execute {
+            sql: "UPDATE users SET recovery_webauthn_cred_id = ? WHERE id = ?",
+            params: vec![Param::Text(credential_id.clone()), Param::Text(user.clone())],
         },
     }
 }
@@ -745,6 +830,46 @@ mod tests {
                 value: b"{\"key_epoch\":7}".to_vec(),
                 ttl_secs: 600,
             }
+        );
+    }
+
+    #[test]
+    fn backfill_plans_render_the_historical_statements() {
+        match render(&plan_backfill_scan()) {
+            Rendered::Query { sql, params } => {
+                assert_eq!(
+                    sql,
+                    "SELECT id, recovery_webauthn_credential FROM users
+             WHERE recovery_webauthn_credential IS NOT NULL AND recovery_webauthn_cred_id IS NULL"
+                );
+                assert!(params.is_empty());
+            }
+            other => panic!("expected a read, got {other:?}"),
+        }
+        let plan = plan_backfill_writes(vec![
+            BackfillWrite {
+                user: s("u1"),
+                credential_id: s("cred1"),
+            },
+            BackfillWrite {
+                user: s("u2"),
+                credential_id: s("cred2"),
+            },
+        ]);
+        assert_eq!(plan.len(), 2);
+        assert_eq!(
+            exec(&plan[0]),
+            (
+                "UPDATE users SET recovery_webauthn_cred_id = ? WHERE id = ?",
+                vec![Param::Text(s("cred1")), Param::Text(s("u1"))]
+            )
+        );
+        assert_eq!(
+            exec(&plan[1]),
+            (
+                "UPDATE users SET recovery_webauthn_cred_id = ? WHERE id = ?",
+                vec![Param::Text(s("cred2")), Param::Text(s("u2"))]
+            )
         );
     }
 

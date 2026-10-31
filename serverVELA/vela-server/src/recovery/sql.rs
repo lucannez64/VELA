@@ -13,14 +13,15 @@ use vela_recovery_policy::possession_store::{
     self, InitiateRowView, PossessionStmt, ProofAccountRowView,
 };
 use vela_recovery_policy::redemption_store::{
-    self, AuthorityRowView, Param, Rendered, RedemptionStmt, WriteOutcome,
+    self, AuthorityRowView, EnrollmentAccountRowView, Param, Rendered, RedemptionStmt, WriteOutcome,
 };
 use vela_recovery_policy::share_store::{
     self, FinalizeAccountRowView, ShareRowView, ShareStmt, StageAccountRowView,
 };
 use vela_recovery_policy::webauthn_store::{
-    self, AuthStateView, CredentialHolderView, CredentialRowView, FinishAccountRowView, SetNxOutcome,
-    SetOutcome, ShareRowView as WebAuthnShareRowView, WebAuthnStmt,
+    self, AuthStateView, CredentialHolderView, CredentialRowView, FinishAccountRowView,
+    LegacyCredentialRowView, SetNxOutcome, SetOutcome, ShareRowView as WebAuthnShareRowView,
+    WebAuthnStmt,
 };
 use webauthn_rs::prelude::Passkey;
 
@@ -50,6 +51,8 @@ impl RecoverySql for PoolSql<'_> {
 /// Where an executor's enrollment-grant and challenge operations run.
 pub(super) trait RecoveryKv {
     fn take(&mut self, key: &str) -> Result<Option<Vec<u8>>>;
+    /// Read a key without removing it.
+    fn get(&mut self, key: &str) -> Result<Option<Vec<u8>>>;
     fn put(&mut self, key: &str, value: &[u8]) -> Result<()>;
     /// Whether the exact key is present.
     fn exists(&mut self, key: &str) -> Result<bool>;
@@ -65,6 +68,10 @@ pub(super) struct StoreKv<'a>(pub &'a crate::store::Store);
 impl RecoveryKv for StoreKv<'_> {
     fn take(&mut self, key: &str) -> Result<Option<Vec<u8>>> {
         self.0.get_del(key)
+    }
+
+    fn get(&mut self, key: &str) -> Result<Option<Vec<u8>>> {
+        self.0.get(key)
     }
 
     fn put(&mut self, key: &str, value: &[u8]) -> Result<()> {
@@ -107,10 +114,12 @@ pub(super) async fn run_writes<S: RecoverySql>(
             Rendered::Execute { sql: text, params } => sql.execute(text, turso_params(params)).await,
             Rendered::Query { .. } => Err(anyhow::anyhow!("a read statement in a write plan")),
             Rendered::KvTake { .. }
+            | Rendered::KvGet { .. }
             | Rendered::KvPut { .. }
             | Rendered::KvExists { .. }
             | Rendered::KvSetNx { .. }
-            | Rendered::KvSetEx { .. } => {
+            | Rendered::KvSetEx { .. }
+            | Rendered::KvIncr { .. } => {
                 Err(anyhow::anyhow!("a store statement in a SQL write plan"))
             }
         };
@@ -147,10 +156,12 @@ pub(super) async fn run_share_writes<S: RecoverySql>(
             Rendered::Execute { sql: text, params } => sql.execute(text, turso_params(params)).await,
             Rendered::Query { .. } => Err(anyhow::anyhow!("a read statement in a write plan")),
             Rendered::KvTake { .. }
+            | Rendered::KvGet { .. }
             | Rendered::KvPut { .. }
             | Rendered::KvExists { .. }
             | Rendered::KvSetNx { .. }
-            | Rendered::KvSetEx { .. } => {
+            | Rendered::KvSetEx { .. }
+            | Rendered::KvIncr { .. } => {
                 Err(anyhow::anyhow!("a store statement in a SQL write plan"))
             }
         };
@@ -188,6 +199,19 @@ pub(super) fn take_grant<K: RecoveryKv>(    kv: &mut K,
     }
 }
 
+/// Runs the non-consuming grant read.
+pub(super) fn peek_grant<K: RecoveryKv>(
+    kv: &mut K,
+    stmt: &RedemptionStmt,
+) -> Result<Option<Vec<u8>>> {
+    match redemption_store::render(stmt) {
+        Rendered::KvGet { key } => kv.get(&key),
+        _ => Err(crate::error::AppError::Internal(
+            "a non-get statement in a peek plan".into(),
+        )),
+    }
+}
+
 /// Runs one grant restoration.
 pub(super) fn put_grant<K: RecoveryKv>(kv: &mut K, stmt: &RedemptionStmt) -> Result<()> {
     match redemption_store::render(stmt) {
@@ -205,6 +229,38 @@ pub(super) fn authority_row_view(rows: &[VelaRow]) -> Option<AuthorityRowView> {
         credential_id: row.text(0).map(String::from),
         auth_hash: row.text(1).filter(|hash| !hash.is_empty()).map(String::from),
     })
+}
+
+/// The first `SelectEnrollmentAccount` row, with the commitment decoded exactly
+/// when the historical preflight decoded it (epoch matches and the account is
+/// not rotating), so a corrupt commitment on a closed guard never fails the
+/// request.
+pub(super) fn enrollment_account_row_view(
+    rows: &[VelaRow],
+    grant: &crate::recovery::recover::RecoveryEnrollGrant,
+) -> Result<Option<EnrollmentAccountRowView>> {
+    let Some(row) = rows.first() else {
+        return Ok(None);
+    };
+    let stored_epoch = row.i64(0);
+    let epoch_active = row.text(1).is_none();
+    let commitment_len = if vela_recovery_policy::observed_recovery_epoch(stored_epoch)
+        == grant.key_epoch
+        && epoch_active
+    {
+        match row.get(3) {
+            Some(TursoValue::Text(text)) => crate::db::decode_b64(text)?.len(),
+            _ => 0,
+        }
+    } else {
+        0
+    };
+    Ok(Some(EnrollmentAccountRowView {
+        stored_epoch,
+        rotation_active: !epoch_active,
+        credential_id: row.text(2).map(String::from),
+        commitment_len,
+    }))
 }
 
 /// The first `SelectStageAccount` row.
@@ -599,6 +655,21 @@ pub(super) fn finish_account_row_view(rows: &[VelaRow]) -> Option<FinishAccountR
         stored_credential_id: row.text(3).map(String::from),
         split_id: row.text(4).map(String::from),
     })
+}
+
+/// The startup backfill's scanned rows: the account id and its stored
+/// credential JSON, skipping a row whose cells do not read as text (the
+/// handler skips those too).
+pub(super) fn legacy_credential_rows(rows: &[VelaRow]) -> Vec<LegacyCredentialRowView> {
+    rows.iter()
+        .filter_map(|row| match (row.text(0), row.text(1)) {
+            (Some(user), Some(credential)) => Some(LegacyCredentialRowView {
+                user: user.to_string(),
+                credential: credential.to_string(),
+            }),
+            _ => None,
+        })
+        .collect()
 }
 
 /// The credential-holder lookup: whether a row belongs to another account, and

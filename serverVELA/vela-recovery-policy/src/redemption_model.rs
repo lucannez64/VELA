@@ -28,13 +28,14 @@ use crate::possession_store::{
     self, EnrollmentGrantView, InitiateRowView, PossessionStmt, ProofAccountRowView,
     ProofAttemptTake, ProofAttemptView,
 };
+use crate::rate_store;
 use crate::recovery_share_driver::{
     DeleteUpdateObservation, FinalizeAccountObservation, FinalizeUpdateObservation, ReadObservation,
     StageAccountObservation, StageUpdateObservation,
 };
 use crate::redemption_store::{
-    self, AuthorityRowView, GrantGuard, GrantTake, GrantView, ReadOutcome, RedemptionStmt,
-    WriteOutcome,
+    self, AuthorityRowView, EnrollmentAccountRowView, EnrollmentAccountView, GrantGuard,
+    GrantPeekObservation, GrantTake, GrantView, ReadOutcome, RedemptionStmt, WriteOutcome,
 };
 use crate::share_store::{
     self, FinalizeAccountRowView, ShareRowView, ShareStmt, StageAccountRowView,
@@ -142,7 +143,10 @@ pub fn exec(db: &Db, stmt: &RedemptionStmt) -> Option<(u64, Db)> {
                 Some((0, next))
             }
         }
-        RedemptionStmt::TakeGrant { .. } | RedemptionStmt::SelectAuthority { .. } => None,
+        RedemptionStmt::TakeGrant { .. }
+        | RedemptionStmt::SelectAuthority { .. }
+        | RedemptionStmt::PeekGrant { .. }
+        | RedemptionStmt::SelectEnrollmentAccount { .. } => None,
     }
 }
 
@@ -291,6 +295,51 @@ pub fn restore_grant(
         Some(WriteOutcome::Applied(_)) => Some(post),
         _ => None,
     }
+}
+
+/// The non-consuming grant read: `None` when the fault fires (the request
+/// aborts), otherwise the stored grant or absence, and the unchanged state.
+/// F*: `peek_grant`.
+pub fn peek_grant(
+    db: &Db,
+    key: &str,
+    fault: Option<usize>,
+) -> Option<(GrantPeekObservation, Db)> {
+    if faulted(fault, 0) {
+        return None;
+    }
+    let stored = db.grants.get(key);
+    Some((redemption_store::classify_peek_grant(stored), db.clone()))
+}
+
+/// `post_enroll_device`'s preflight account read: `None` when the fault fires,
+/// otherwise the live row's observation and the unchanged state. F*:
+/// `enrollment_account`.
+pub fn enrollment_account(
+    db: &Db,
+    user: &str,
+    grant_epoch: i64,
+    grant_credential_id: &str,
+    commitment_len: usize,
+    fault: Option<usize>,
+) -> Option<(Option<EnrollmentAccountView>, Db)> {
+    if faulted(fault, 0) {
+        return None;
+    }
+    let row = db.users.get(user).map(|row| EnrollmentAccountRowView {
+        stored_epoch: Some(row.epoch),
+        rotation_active: row.rekey,
+        credential_id: row.credential_id.clone(),
+        commitment_len,
+    });
+    Some((
+        redemption_store::classify_enrollment_account(
+            row.as_ref(),
+            grant_epoch,
+            &grant_credential_id.to_string(),
+        ),
+        db.clone(),
+    ))
 }
 
 // ── Recovery share model ───────────────────────────────────────────────────
@@ -1265,6 +1314,98 @@ pub fn persist_credential(
     }
 }
 
+// ── Rate-limit and backfill models ─────────────────────────────────────────
+
+/// F*: `rate_limit` in `Vela_recovery_policy_rate_model`.
+pub fn rate_limit(
+    counters: &BTreeMap<String, u64>,
+    key: &str,
+    window_secs: u64,
+    limit: u64,
+    fault: Option<usize>,
+) -> (rate_store::RateObservation, BTreeMap<String, u64>) {
+    let plan = rate_store::plan_rate_limit(key.to_string(), window_secs);
+    assert_eq!(plan.len(), 1, "a rate plan is one statement");
+    let mut next = counters.clone();
+    if faulted(fault, 0) {
+        return (
+            rate_store::classify_rate_limit(&[rate_store::RateOutcome::Failed], limit),
+            next,
+        );
+    }
+    let count = next.get(key).copied().unwrap_or(0).saturating_add(1);
+    next.insert(key.to_string(), count);
+    (
+        rate_store::classify_rate_limit(&[rate_store::RateOutcome::Count(count)], limit),
+        next,
+    )
+}
+
+/// Whether a users row still needs its credential id backfilled. F*:
+/// `needs_backfill`.
+pub fn needs_backfill(row: &WebAuthnUserRow) -> bool {
+    matches!(row.credential, CredentialCell::Valid(_)) && row.credential_id.is_none()
+}
+
+/// The startup backfill's scan: the candidates that still need a backfill.
+/// `None` when the injected read failure fires. F*: `backfill_scan`.
+pub fn backfill_scan(
+    db: &WebAuthnDb,
+    candidates: &[String],
+    fault: Option<usize>,
+) -> Option<Vec<String>> {
+    if wfault(fault, 0) {
+        return None;
+    }
+    Some(
+        candidates
+            .iter()
+            .filter(|user| {
+                db.users
+                    .get(*user)
+                    .map(needs_backfill)
+                    .unwrap_or(false)
+            })
+            .cloned()
+            .collect(),
+    )
+}
+
+/// One backfill write: the row's indexed credential id becomes exactly the
+/// given one; a missing row changes nothing. F*: `backfill_row`.
+pub fn backfill_row(db: &WebAuthnDb, user: &str, credential_id: &str) -> WebAuthnDb {
+    let mut next = db.clone();
+    if let Some(row) = next.users.get(user).cloned() {
+        next.users.insert(
+            user.to_string(),
+            WebAuthnUserRow {
+                credential_id: Some(credential_id.to_string()),
+                ..row
+            },
+        );
+    }
+    next
+}
+
+/// The backfill writes in order, stopping at the injected failure. Returns the
+/// writes that landed (in order) and the post-state. F*: `backfill_writes`.
+pub fn backfill_writes(
+    db: &WebAuthnDb,
+    rows: &[(String, String)],
+    fault: Option<usize>,
+) -> (Vec<(String, String)>, WebAuthnDb) {
+    let mut landed = Vec::new();
+    let mut state = db.clone();
+    for (k, (user, credential_id)) in rows.iter().enumerate() {
+        if wfault(fault, k) {
+            return (landed, state);
+        }
+        state = backfill_row(&state, user, credential_id);
+        landed.push((user.clone(), credential_id.clone()));
+    }
+    (landed, state)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1717,5 +1858,101 @@ mod tests {
             persist_credential(&pre, "u", "{}", "cred2", false, None);
         assert_eq!(obs, CredentialPersistObservation::EncodingFailed);
         assert_eq!(post, pre);
+    }
+
+    /// The F* lemmas `vector_peek_*`, `vector_account_*`, `vector_rate_*` and
+    /// `vector_backfill_*` prove the same runs.
+    #[test]
+    fn pre_driver_rate_and_backfill_vectors() {
+        // peek_grant: present, absent, faulted.
+        let mut pre = Db::default();
+        let grant = GrantView { key_epoch: 7, credential_id: s("c"), possession: false };
+        pre.grants.insert(s("k"), grant.clone());
+        let (obs, post) = peek_grant(&pre, "k", None).unwrap();
+        assert_eq!(
+            obs,
+            GrantPeekObservation::Present(grant.clone())
+        );
+        assert_eq!(post, pre);
+        let (obs, post) = peek_grant(&pre, "other", None).unwrap();
+        assert_eq!(obs, GrantPeekObservation::Absent);
+        assert_eq!(post, pre);
+        assert!(peek_grant(&pre, "k", Some(0)).is_none());
+
+        // enrollment_account: present (matching and not), absent, faulted.
+        let mut users = Db::default();
+        users.users.insert(s("u"), user_row(7, Some("c"), Some("h")));
+        let (obs, post) = enrollment_account(&users, "u", 7, "c", 1, None).unwrap();
+        assert_eq!(
+            obs,
+            Some(EnrollmentAccountView {
+                stored_epoch: Some(7),
+                epoch_active: true,
+                credential_id_matches: true,
+                commitment_len: 1,
+            })
+        );
+        assert_eq!(post, users);
+        let (obs, _) = enrollment_account(&users, "u", 7, "other", 1, None).unwrap();
+        assert!(matches!(obs, Some(facts) if !facts.credential_id_matches));
+        let (obs, _) = enrollment_account(&users, "absent", 7, "c", 1, None).unwrap();
+        assert_eq!(obs, None);
+        assert!(enrollment_account(&users, "u", 7, "c", 1, Some(0)).is_none());
+
+        // rate_limit: admitted at the limit, limited past it, faulted.
+        let mut counters = BTreeMap::new();
+        counters.insert(s("rl"), 2u64);
+        let (obs, post) = rate_limit(&counters, "rl", 3600, 3, None);
+        assert_eq!(obs, rate_store::RateObservation::Admitted);
+        assert_eq!(post[&s("rl")], 3);
+        let (obs, post) = rate_limit(&post, "rl", 3600, 3, None);
+        assert_eq!(obs, rate_store::RateObservation::Limited);
+        assert_eq!(post[&s("rl")], 4);
+        let (obs, post) = rate_limit(&counters, "rl", 3600, 3, Some(0));
+        assert_eq!(obs, rate_store::RateObservation::StorageFailed);
+        assert_eq!(post, counters);
+
+        // backfill_scan and backfill_writes.
+        let mut web = WebAuthnDb::default();
+        web.users.insert(
+            s("legacy"),
+            WebAuthnUserRow {
+                share: None,
+                credential: CredentialCell::Valid("{pk}".into()),
+                credential_id: None,
+                epoch: Some(7),
+                rekey: false,
+                split: None,
+            },
+        );
+        web.users.insert(
+            s("indexed"),
+            WebAuthnUserRow {
+                share: None,
+                credential: CredentialCell::Valid("{pk}".into()),
+                credential_id: Some(s("cred")),
+                epoch: Some(7),
+                rekey: false,
+                split: None,
+            },
+        );
+        let candidates = vec![s("legacy"), s("indexed"), s("absent")];
+        let scan = backfill_scan(&web, &candidates, None).unwrap();
+        assert_eq!(scan, vec![s("legacy")]);
+        assert!(backfill_scan(&web, &candidates, Some(0)).is_none());
+
+        let rows = vec![
+            (s("legacy"), s("cred1")),
+            (s("missing"), s("cred2")),
+        ];
+        let (landed, post) = backfill_writes(&web, &rows, None);
+        assert_eq!(landed.len(), 2);
+        assert_eq!(post.users[&s("legacy")].credential_id, Some(s("cred1")));
+        assert!(post.users.get(&s("missing")).is_none());
+        assert_eq!(post.users[&s("indexed")], web.users[&s("indexed")]);
+        let (landed, post) = backfill_writes(&web, &rows, Some(1));
+        assert_eq!(landed, vec![(s("legacy"), s("cred1"))]);
+        assert_eq!(post.users[&s("legacy")].credential_id, Some(s("cred1")));
+        assert_eq!(post.users[&s("legacy")].credential, web.users[&s("legacy")].credential);
     }
 }

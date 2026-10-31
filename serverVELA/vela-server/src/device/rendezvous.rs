@@ -63,17 +63,20 @@ use vela_rekey_policy::{
 };
 
 use super::exec_io::{ExecError, ExecIo, RawRead};
-use vela_enrollment_policy::executor::{claim_key, grant_key, result_key};
 use super::pairing_executor::PairingExecutor;
+#[cfg(test)]
+use vela_enrollment_policy::executor::{claim_key, grant_key, result_key};
 use vela_enrollment_policy::executor::{
-    account_fields, classify_account, classify_claim_check, classify_claim_read,
-    classify_claim_write, classify_completion_preflight, classify_enrolled_device,
-    classify_insert_completion, classify_result_read, classify_store, classify_take_ceremony,
-    plan_account_read,
-    plan_claim_check, plan_claim_read, plan_claim_write, plan_completion_insert,
-    plan_completion_preflight, plan_device_by_grant, plan_result_read, plan_result_write,
-    plan_store_grant, plan_take_ceremony, AccountRowView, ClaimRowView, CollectorVerdicts,
-    CompletionVerdicts, DeviceRowView, ReadOutcome, ResultRowView,
+    account_fields, classify_account, classify_ceremony_restore, classify_claim_check,
+    classify_claim_inspection, classify_claim_read, classify_claim_write,
+    classify_completion_preflight, classify_enrolled_device, classify_grant_exists,
+    classify_grant_read, classify_insert_completion, classify_result_read, classify_store,
+    classify_take_ceremony, plan_account_read, plan_ceremony_restore, plan_claim_check,
+    plan_claim_read, plan_claim_write, plan_completion_insert, plan_completion_preflight,
+    plan_device_by_grant, plan_grant_exists, plan_grant_read, plan_result_read, plan_result_write,
+    plan_store_grant, plan_take_ceremony, AccountRowView, ClaimInspection, ClaimRecordView,
+    ClaimRowView, CollectorVerdicts, CompletionVerdicts, DeviceRowView, GrantRecordView,
+    ReadOutcome, ResultRowView,
 };
 use crate::{
     error::{AppError, Result},
@@ -93,7 +96,7 @@ const HYBRID_SIG_LEN: usize = 4627 + 64;
 
 /// Who may drive this grant. Written when the grant is created and never again.
 #[derive(Serialize, Deserialize)]
-struct Grant {
+pub(crate) struct Grant {
     user_id: String,
     device_id: String,
 }
@@ -373,7 +376,16 @@ pub async fn post_claim(
     // The grant must exist, but is deliberately *not* consumed here: the primary
     // still has to read the claim and complete, and burning it now would let an
     // unauthenticated caller destroy a grant it cannot otherwise use.
-    let grant_live = state.store.exists(&grant_key(grant_id))?;
+    let mut probe = ExecIo::new(&state);
+    let (reads, error) = probe.run_reads(&plan_grant_exists(grant_id.to_string())).await;
+    let outcome = match reads.first() {
+        Some(RawRead::Exists(exists)) => ReadOutcome::GrantExists(*exists),
+        _ => ReadOutcome::Failed,
+    };
+    let grant_live = classify_grant_exists(&[outcome]);
+    if let Some(error) = error {
+        return Err(error.into_app());
+    }
     let start = vela_enrollment_policy::pairing_interpreter::start_claim(grant_live);
     let mut io = ClaimIo {
         io: ExecIo::new(&state),
@@ -417,15 +429,24 @@ pub async fn get_claim(
     session: DeviceSession,
 ) -> Result<(HeaderMap, Json<ClaimView>)> {
     let grant_id = crate::ids::validate_id("grant_id", &grant_id)?;
-    let (grant, _) = authorize_grant(&state, grant_id, &session)?;
+    let (_grant, _bytes, grant_observation) = authorize_grant(&state, grant_id, &session).await?;
 
-    let claim = load_claim(&state, grant_id)?;
-    let claim_present = claim.is_some();
+    let (inspection, claim) = load_claim(&state, grant_id).await?;
+    let claim_present = inspection.claim_present;
+    let GrantObservation::Present {
+        user_matches,
+        opener_matches,
+    } = grant_observation
+    else {
+        return Err(AppError::NotFound(
+            "enrollment grant not found or expired".into(),
+        ));
+    };
     let _permit =
         match vela_enrollment_policy::authorize_inspection(inspect_facts(InspectObservation {
             claim_present,
-            user_matches: grant.user_id == session.user_id.to_string(),
-            opener_matches: grant.device_id == session.device_id.to_string(),
+            user_matches,
+            opener_matches,
         })) {
             InspectDecision::Inspect(permit) => permit,
             InspectDecision::Reject if !claim_present => {
@@ -500,6 +521,8 @@ pub(crate) struct CompleteIo<'a> {
     account_epoch_active: bool,
     claim_materials: std::result::Result<(Claim, Vec<u8>, Vec<u8>), AppError>,
     claim_present: bool,
+    /// The decoded claim record, kept for the restore's typed statement.
+    claim_record: Option<ClaimRecordView>,
     expected_claim_bytes: Option<Vec<u8>>,
     claim_read_error: Option<AppError>,
     rms_capsule_result: std::result::Result<Vec<u8>, AppError>,
@@ -616,6 +639,12 @@ impl PairingExecutor for CompleteIo<'_> {
                             device_name: claim.device_name.clone(),
                             device_type: claim.device_type.clone(),
                         };
+                        self.claim_record = Some(ClaimRecordView {
+                            hybrid_ek: claim.hybrid_ek.clone(),
+                            hybrid_vk: claim.hybrid_vk.clone(),
+                            device_name: claim.device_name.clone(),
+                            device_type: claim.device_type.clone(),
+                        });
                         match crate::db::decode_b64(&claim.hybrid_ek).and_then(|ek| {
                             crate::db::decode_b64(&claim.hybrid_vk).map(|vk| (ek, vk))
                         }) {
@@ -850,6 +879,38 @@ impl CompleteIo<'_> {
         self.new_device_id = id;
     }
 
+    /// Put back the grant and claim the single-use take consumed, atomically.
+    /// The restore's plan carries the typed records the model checks and the
+    /// exact bytes the take removed; a store failure replaces the driver's
+    /// failure exactly as the inline `?` did.
+    pub(crate) async fn restore_ceremony(&mut self) -> Result<()> {
+        let Some((grant_bytes, claim_bytes)) = self.taken_pair.clone() else {
+            return Ok(());
+        };
+        let Some(claim) = self.claim_record.clone() else {
+            return Err(AppError::Internal(
+                "completion driver restored an unobserved ceremony".into(),
+            ));
+        };
+        let plan = plan_ceremony_restore(
+            self.grant_id.clone(),
+            grant_bytes,
+            claim_bytes,
+            GrantRecordView {
+                user_id: self.grant.user_id.clone(),
+                device_id: self.grant.device_id.clone(),
+            },
+            claim,
+        );
+        let (outcomes, error) = self.io.run_writes(&plan).await;
+        match classify_ceremony_restore(&outcomes) {
+            StoreObservation::Stored => Ok(()),
+            _ => Err(error.map(ExecError::into_app).unwrap_or_else(|| {
+                AppError::Internal("atomic TTL pair restore aborted".into())
+            })),
+        }
+    }
+
 
     /// The capsule bytes the verified preflight accepted. The driver only
     /// authorizes the insert after that preflight, so the value is present;
@@ -860,6 +921,70 @@ impl CompleteIo<'_> {
             Err(_) => Vec::new(),
         }
     }
+}
+
+#[cfg(test)]
+impl CompleteIo<'_> {
+    pub(crate) fn set_claim_record_for_test(&mut self, claim: ClaimRecordView) {
+        self.claim_record = Some(claim);
+    }
+
+    pub(crate) fn set_taken_pair_for_test(&mut self, pair: Option<(Vec<u8>, Vec<u8>)>) {
+        self.taken_pair = pair;
+    }
+}
+
+/// The pre-driver grant read, with a failure injectable at its one statement.
+#[cfg(test)]
+pub(crate) async fn grant_read_for_test(
+    state: &AppState,
+    fault: Option<usize>,
+    grant_id: &str,
+    user: &str,
+    device: &str,
+) -> GrantRead {
+    read_grant(ExecIo::faulty(state, fault), grant_id, user, device).await
+}
+
+/// `post_claim`'s pre-driver liveness check, with its failure injectable.
+#[cfg(test)]
+pub(crate) async fn grant_exists_for_test(
+    state: &AppState,
+    fault: Option<usize>,
+    grant_id: &str,
+) -> (bool, bool) {
+    let mut io = ExecIo::faulty(state, fault);
+    let (reads, error) = io.run_reads(&plan_grant_exists(grant_id.to_string())).await;
+    let outcome = match reads.first() {
+        Some(RawRead::Exists(exists)) => ReadOutcome::GrantExists(*exists),
+        _ => ReadOutcome::Failed,
+    };
+    (classify_grant_exists(&[outcome]), error.is_some())
+}
+
+/// `get_claim`'s payload read, with its failure injectable.
+#[cfg(test)]
+pub(crate) async fn claim_inspection_for_test(
+    state: &AppState,
+    fault: Option<usize>,
+    grant_id: &str,
+) -> (ClaimInspection, bool) {
+    let mut io = ExecIo::faulty(state, fault);
+    let (reads, error) = io.run_reads(&plan_claim_read(grant_id.to_string())).await;
+    let outcome = match reads.first() {
+        Some(RawRead::Value(None)) => ReadOutcome::Claim(None),
+        Some(RawRead::Value(Some(raw))) => match serde_json::from_slice::<Claim>(raw) {
+            Ok(claim) => ReadOutcome::Claim(Some(ClaimRowView {
+                hybrid_ek: Some(claim.hybrid_ek.clone()),
+                hybrid_vk: Some(claim.hybrid_vk.clone()),
+                device_name: claim.device_name.clone(),
+                device_type: claim.device_type.clone(),
+            })),
+            Err(_) => ReadOutcome::Undecodable,
+        },
+        _ => ReadOutcome::Failed,
+    };
+    (classify_claim_inspection(&[outcome]), error.is_some())
 }
 
 #[cfg(test)]
@@ -887,6 +1012,7 @@ pub(crate) fn complete_io_for_test<'a>(
         account_epoch_active: false,
         claim_materials: Err(preflight_placeholder()),
         claim_present: false,
+        claim_record: None,
         expected_claim_bytes,
         claim_read_error: None,
         rms_capsule_result: Err(preflight_placeholder()),
@@ -912,30 +1038,19 @@ pub async fn post_complete(
     // Read the grant once. The extracted driver owns the user/opener binding
     // decision; the handler keeps the bytes because the single-use take below
     // compares them with what the ceremony validated.
-    let (grant_observation, grant, expected_grant_bytes, grant_error) =
-        match state.store.get(&grant_key(grant_id)) {
-            Ok(Some(bytes)) => match serde_json::from_slice::<Grant>(&bytes) {
-                Ok(grant) => (
-                    GrantObservation::Present {
-                        user_matches: grant.user_id == session.user_id.to_string(),
-                        opener_matches: grant.device_id == session.device_id.to_string(),
-                    },
-                    Some(grant),
-                    Some(bytes),
-                    None,
-                ),
-                Err(error) => (
-                    GrantObservation::Error,
-                    None,
-                    None,
-                    Some(AppError::Internal(format!(
-                        "stored grant is unreadable: {error}"
-                    ))),
-                ),
-            },
-            Ok(None) => (GrantObservation::Absent, None, None, None),
-            Err(error) => (GrantObservation::Error, None, None, Some(error)),
-        };
+    let read = read_grant(
+        ExecIo::new(&state),
+        grant_id,
+        &session.user_id.to_string(),
+        &session.device_id.to_string(),
+    )
+    .await;
+    let (grant_observation, grant, expected_grant_bytes, grant_error) = (
+        read.observation,
+        read.grant,
+        read.bytes,
+        read.error,
+    );
 
     let start = vela_enrollment_policy::pairing_interpreter::start_completion(grant_observation);
     let mut io = CompleteIo {
@@ -957,6 +1072,7 @@ pub async fn post_complete(
         account_epoch_active: false,
         claim_materials: Err(preflight_placeholder()),
         claim_present: false,
+        claim_record: None,
         expected_claim_bytes: None,
         claim_read_error: None,
         rms_capsule_result: Err(preflight_placeholder()),
@@ -1048,29 +1164,13 @@ pub async fn post_complete(
             ));
         }
         PairingEffect::RestoreAndFail(PairingFailure::CeremonyChanged) => {
-            if let Some((grant_bytes, claim_bytes)) = &io.taken_pair {
-                state.store.set_ex_pair(
-                    &grant_key(&io.grant_id),
-                    grant_bytes,
-                    &claim_key(&io.grant_id),
-                    claim_bytes,
-                    GRANT_TTL_SECS,
-                )?;
-            }
+            io.restore_ceremony().await?;
             return Err(AppError::Conflict(
                 "enrollment ceremony changed while it was being confirmed".into(),
             ));
         }
         PairingEffect::RestoreAndFail(PairingFailure::Rotation) => {
-            if let Some((grant_bytes, claim_bytes)) = &io.taken_pair {
-                state.store.set_ex_pair(
-                    &grant_key(&io.grant_id),
-                    grant_bytes,
-                    &claim_key(&io.grant_id),
-                    claim_bytes,
-                    GRANT_TTL_SECS,
-                )?;
-            }
+            io.restore_ceremony().await?;
             return Err(AppError::Conflict(
                 "device enrollment key epoch changed or rotation is in progress".into(),
             ));
@@ -1091,15 +1191,7 @@ pub async fn post_complete(
                 .unwrap_or_else(|| AppError::Internal("enrollment result store failed".into())));
         }
         PairingEffect::RestoreAndFail(failure) => {
-            if let Some((grant_bytes, claim_bytes)) = &io.taken_pair {
-                state.store.set_ex_pair(
-                    &grant_key(&io.grant_id),
-                    grant_bytes,
-                    &claim_key(&io.grant_id),
-                    claim_bytes,
-                    GRANT_TTL_SECS,
-                )?;
-            }
+            io.restore_ceremony().await?;
             return Err(rendezvous_failure_error(failure));
         }
         PairingEffect::Fail(failure) => return Err(rendezvous_failure_error(failure)),
@@ -1459,43 +1551,142 @@ fn verify_result_signature(vk: &[u8], grant_id: &str, signature: &[u8]) -> Resul
 
 // ── shared ──────────────────────────────────────────────────────────────────
 
+/// What the pre-driver grant read observed: its classification, the decoded
+/// record, the exact bytes (kept for the ceremony comparison) and the retained
+/// error behind an `Error` observation.
+pub(crate) struct GrantRead {
+    pub observation: GrantObservation,
+    pub grant: Option<Grant>,
+    pub bytes: Option<Vec<u8>>,
+    pub error: Option<AppError>,
+}
+
+/// The one non-consuming grant read behind `post_complete` and `get_claim`:
+/// plan, run, classify, then decode the record the classifier reported.
+pub(crate) async fn read_grant(
+    mut io: ExecIo<'_>,
+    grant_id: &str,
+    session_user: &str,
+    session_device: &str,
+) -> GrantRead {
+    let (reads, error) = io.run_reads(&plan_grant_read(grant_id.to_string())).await;
+    let (outcome, grant, bytes, decode_error) = match reads.first() {
+        Some(RawRead::Value(None)) => (ReadOutcome::Grant(None), None, None, None),
+        Some(RawRead::Value(Some(raw))) => match serde_json::from_slice::<Grant>(raw) {
+            Ok(grant) => (
+                ReadOutcome::Grant(Some(GrantRecordView {
+                    user_id: grant.user_id.clone(),
+                    device_id: grant.device_id.clone(),
+                })),
+                Some(grant),
+                Some(raw.clone()),
+                None,
+            ),
+            Err(error) => (
+                ReadOutcome::Undecodable,
+                None,
+                None,
+                Some(AppError::Internal(format!(
+                    "stored grant is unreadable: {error}"
+                ))),
+            ),
+        },
+        _ => (ReadOutcome::Failed, None, None, None),
+    };
+    let observation = classify_grant_read(
+        &[outcome],
+        &session_user.to_string(),
+        &session_device.to_string(),
+    );
+    let error = match observation {
+        GrantObservation::Error => Some(
+            decode_error
+                .or_else(|| error.map(ExecError::into_app))
+                .unwrap_or_else(|| AppError::Internal("enrollment grant read failed".into())),
+        ),
+        _ => None,
+    };
+    GrantRead {
+        observation,
+        grant,
+        bytes,
+        error,
+    }
+}
+
 /// Load a grant and require the caller to be the device that opened it.
 ///
 /// Not just the same *user*: a second device of the same account must not be
 /// able to drive an enrollment its owner started elsewhere, because then a
 /// compromised secondary could enroll an attacker's key against a code the user
 /// is reading off their primary.
-fn authorize_grant(
+async fn authorize_grant(
     state: &AppState,
     grant_id: &str,
     session: &AuthSession,
-) -> Result<(Grant, Vec<u8>)> {
-    let bytes = state
-        .store
-        .get(&grant_key(grant_id))?
-        .ok_or_else(|| AppError::NotFound("enrollment grant not found or expired".into()))?;
-    let grant: Grant = serde_json::from_slice(&bytes)
-        .map_err(|e| AppError::Internal(format!("stored grant is unreadable: {e}")))?;
-
-    if grant.user_id != session.user_id.to_string()
-        || grant.device_id != session.device_id.to_string()
-    {
-        // Same message as "not found": whether a grant exists is not something
-        // an unrelated caller should be able to probe.
-        return Err(AppError::NotFound(
+) -> Result<(Grant, Vec<u8>, GrantObservation)> {
+    let read = read_grant(
+        ExecIo::new(state),
+        grant_id,
+        &session.user_id.to_string(),
+        &session.device_id.to_string(),
+    )
+    .await;
+    match read.observation {
+        GrantObservation::Present {
+            user_matches: true,
+            opener_matches: true,
+        } => Ok((
+            read.grant.expect("a present grant read decoded"),
+            read.bytes.expect("a present grant read kept its bytes"),
+            read.observation,
+        )),
+        GrantObservation::Present { .. } => {
+            // Same message as "not found": whether a grant exists is not
+            // something an unrelated caller should be able to probe.
+            Err(AppError::NotFound(
+                "enrollment grant not found or expired".into(),
+            ))
+        }
+        GrantObservation::Absent => Err(AppError::NotFound(
             "enrollment grant not found or expired".into(),
-        ));
+        )),
+        GrantObservation::Error => Err(read
+            .error
+            .unwrap_or_else(|| AppError::Internal("enrollment grant read failed".into()))),
     }
-    Ok((grant, bytes))
 }
 
-fn load_claim(state: &AppState, grant_id: &str) -> Result<Option<Claim>> {
-    match state.store.get(&claim_key(grant_id))? {
-        Some(bytes) => Ok(Some(serde_json::from_slice(&bytes).map_err(|e| {
-            AppError::Internal(format!("stored claim is unreadable: {e}"))
-        })?)),
-        None => Ok(None),
+/// The claim payload read behind `get_claim`: plan, run, classify, then decode.
+async fn load_claim(state: &AppState, grant_id: &str) -> Result<(ClaimInspection, Option<Claim>)> {
+    let mut io = ExecIo::new(state);
+    let (reads, error) = io.run_reads(&plan_claim_read(grant_id.to_string())).await;
+    let (outcome, claim) = match reads.first() {
+        Some(RawRead::Value(None)) => (ReadOutcome::Claim(None), None),
+        Some(RawRead::Value(Some(raw))) => match serde_json::from_slice::<Claim>(raw) {
+            Ok(claim) => (
+                ReadOutcome::Claim(Some(ClaimRowView {
+                    hybrid_ek: Some(claim.hybrid_ek.clone()),
+                    hybrid_vk: Some(claim.hybrid_vk.clone()),
+                    device_name: claim.device_name.clone(),
+                    device_type: claim.device_type.clone(),
+                })),
+                Some(claim),
+            ),
+            Err(error) => {
+                return Err(AppError::Internal(format!(
+                    "stored claim is unreadable: {error}"
+                )))
+            }
+        },
+        _ => (ReadOutcome::Failed, None),
+    };
+    if matches!(reads.first(), Some(RawRead::Failed)) {
+        return Err(error
+            .map(ExecError::into_app)
+            .unwrap_or_else(|| AppError::Internal("stored claim read failed".into())));
     }
+    Ok((classify_claim_inspection(&[outcome]), claim))
 }
 
 /// Decode base64 without imposing a length. The verified claim policy decides

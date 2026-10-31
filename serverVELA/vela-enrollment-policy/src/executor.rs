@@ -27,8 +27,8 @@
 use crate::pairing_driver::{
     ClaimReadObservation, ClaimWriteObservation, CompletionAccountObservation,
     CompletionPreflightObservation, DeviceGrantObservation, DeviceInsertObservation,
-    OpenerObservation, RedeemObservation, ResultReadObservation, SignatureObservation,
-    StoreObservation, TakeObservation,
+    GrantObservation, OpenerObservation, RedeemObservation, ResultReadObservation,
+    SignatureObservation, StoreObservation, TakeObservation,
 };
 
 /// TTL of an invitation package (`ENROLLMENT_PACKAGE_TTL_SECS`).
@@ -135,6 +135,52 @@ pub enum PairingStmt {
     },
     /// `get_del(challenge:<challenge>)`
     TakeChallenge { challenge: String },
+    /// `get(enroll_grant:<id>)`: the non-consuming grant read the completion
+    /// handler and `get_claim` do before their drivers.
+    ReadGrant { grant_id: String },
+    /// `exists(enroll_grant:<id>)`: the pre-driver grant liveness bit that
+    /// `post_claim` feeds the claim driver.
+    GrantExists { grant_id: String },
+    /// `set_ex_pair(enroll_grant:<id>, grant, enroll_claim:<id>, claim, 300)`:
+    /// the atomic restore on the completion's failing arms.
+    RestoreCeremony {
+        grant_id: String,
+        /// The exact bytes the take removed, restored verbatim.
+        grant_bytes: Vec<u8>,
+        claim_bytes: Vec<u8>,
+        /// The same records, typed, so the model can say what the keys hold.
+        grant: GrantRecordView,
+        claim: ClaimRecordView,
+    },
+    /// One fixed-window counter increment (`rate_limit::check`): the count
+    /// grows by one in the key's window and the request is refused once it
+    /// exceeds the endpoint's limit.
+    RateLimitIncr { key: String, window_secs: u64 },
+}
+
+/// One decoded grant record: the user and opener device it binds.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GrantRecordView {
+    pub user_id: String,
+    pub device_id: String,
+}
+
+/// One decoded claim record: exactly the fields the claim write stores.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClaimRecordView {
+    pub hybrid_ek: String,
+    pub hybrid_vk: String,
+    pub device_name: Option<String>,
+    pub device_type: Option<String>,
+}
+
+/// The claim payload `get_claim` reads after the grant binding admitted it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClaimInspection {
+    /// The claim record exists (and the read succeeded).
+    pub claim_present: bool,
+    /// The decoded record, exactly as stored.
+    pub claim: Option<ClaimRowView>,
 }
 
 /// What one write statement returned.
@@ -161,6 +207,24 @@ pub enum TakeOutcome {
     Missing,
     /// The value (or the pair) was removed.
     Present,
+}
+
+/// What one fixed-window counter increment returned.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RateOutcome {
+    /// The store call itself failed; the counter did not grow.
+    Failed,
+    /// It ran; the counter now holds this count.
+    Count(u64),
+}
+
+/// The rate limiter's verdict: admitted exactly while the new count is within
+/// the endpoint's limit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RateObservation {
+    Admitted,
+    Limited,
+    StorageFailed,
 }
 
 /// The cells of a `claim` record after JSON decoding. Decoding itself is
@@ -222,6 +286,10 @@ pub enum ReadOutcome {
     Claim(Option<ClaimRowView>),
     /// `get(enroll_result:<id>)`; `None` means the key was absent.
     Result(Option<ResultRowView>),
+    /// `get(enroll_grant:<id>)`; `None` means the key was absent.
+    Grant(Option<GrantRecordView>),
+    /// `exists(enroll_grant:<id>)`.
+    GrantExists(bool),
 }
 
 /// Verdicts the handler computes from a request and a stored row (base64 and
@@ -434,6 +502,77 @@ pub fn plan_enroll_insert(
 /// `EnrollIo::consume_challenge`.
 pub fn plan_challenge_take(challenge: String) -> Vec<PairingStmt> {
     vec![PairingStmt::TakeChallenge { challenge }]
+}
+
+/// `post_complete`'s pre-driver read and `get_claim`'s `authorize_grant`: the
+/// non-consuming grant read.
+pub fn plan_grant_read(grant_id: String) -> Vec<PairingStmt> {
+    vec![PairingStmt::ReadGrant { grant_id }]
+}
+
+/// `post_claim`'s pre-driver liveness check: the grant key's presence.
+pub fn plan_grant_exists(grant_id: String) -> Vec<PairingStmt> {
+    vec![PairingStmt::GrantExists { grant_id }]
+}
+
+/// The completion's atomic restore of the ceremony it consumed.
+pub fn plan_ceremony_restore(
+    grant_id: String,
+    grant_bytes: Vec<u8>,
+    claim_bytes: Vec<u8>,
+    grant: GrantRecordView,
+    claim: ClaimRecordView,
+) -> Vec<PairingStmt> {
+    vec![PairingStmt::RestoreCeremony {
+        grant_id,
+        grant_bytes,
+        claim_bytes,
+        grant,
+        claim,
+    }]
+}
+
+/// One fixed-window counter increment at the exact key and window.
+pub fn plan_rate_limit(key: String, window_secs: u64) -> Vec<PairingStmt> {
+    vec![PairingStmt::RateLimitIncr { key, window_secs }]
+}
+
+/// `rate_limit::enroll_by_ip`: `POST /device/enroll`'s per-IP window.
+#[cfg(not(hax))]
+pub fn plan_rate_enroll_by_ip(ip: &str) -> Vec<PairingStmt> {
+    plan_rate_limit(format!("rl:enroll:ip:{ip}"), 60)
+}
+
+/// `rate_limit::enrollment_package_store_by_ip`: the package store's hourly
+/// window.
+#[cfg(not(hax))]
+pub fn plan_rate_package_store(ip: &str) -> Vec<PairingStmt> {
+    plan_rate_limit(format!("rl:enroll_pkg:store:ip:{ip}"), 3600)
+}
+
+/// `rate_limit::enrollment_package_fetch_by_ip`: the package fetch's hourly
+/// window.
+#[cfg(not(hax))]
+pub fn plan_rate_package_fetch(ip: &str) -> Vec<PairingStmt> {
+    plan_rate_limit(format!("rl:enroll_pkg:fetch:ip:{ip}"), 3600)
+}
+
+/// `rate_limit::enrollment_grant_by_user`: the grant open's hourly window.
+#[cfg(not(hax))]
+pub fn plan_rate_grant_by_user(user: &str) -> Vec<PairingStmt> {
+    plan_rate_limit(format!("rl:enroll:grant:{user}"), 3600)
+}
+
+/// `rate_limit::enrollment_claim_by_ip`: the claim's hourly window.
+#[cfg(not(hax))]
+pub fn plan_rate_claim_by_ip(ip: &str) -> Vec<PairingStmt> {
+    plan_rate_limit(format!("rl:enroll:claim:ip:{ip}"), 3600)
+}
+
+/// `rate_limit::enrollment_result_by_ip`: the result poll's minute window.
+#[cfg(not(hax))]
+pub fn plan_rate_result_by_ip(ip: &str) -> Vec<PairingStmt> {
+    plan_rate_limit(format!("rl:enroll:result:ip:{ip}"), 60)
 }
 
 // ── Classification ─────────────────────────────────────────────────────────
@@ -752,6 +891,96 @@ pub fn classify_device_check(
     }
 }
 
+/// The pre-driver grant read behind `post_complete` and `get_claim`: the
+/// record's presence and its two bindings against the caller's session. A
+/// failed or undecodable read is `Error` (the handler returns the retained
+/// error); an absent key is `Absent`; a present record reports whether the
+/// session user and opener device are the ones it binds.
+pub fn classify_grant_read(
+    outcomes: &[ReadOutcome],
+    session_user: &String,
+    session_device: &String,
+) -> GrantObservation {
+    if outcomes.len() == 1 {
+        match &outcomes[0] {
+            ReadOutcome::Grant(Some(row)) => GrantObservation::Present {
+                user_matches: &row.user_id == session_user,
+                opener_matches: &row.device_id == session_device,
+            },
+            ReadOutcome::Grant(None) => GrantObservation::Absent,
+            _ => GrantObservation::Error,
+        }
+    } else {
+        GrantObservation::Error
+    }
+}
+
+/// `post_claim`'s pre-driver liveness bit: `grant_live` is exactly the key's
+/// presence. A failed read reports false (the driver then rejects).
+pub fn classify_grant_exists(outcomes: &[ReadOutcome]) -> bool {
+    outcomes.len() == 1 && matches!(&outcomes[0], ReadOutcome::GrantExists(true))
+}
+
+/// `get_claim`'s payload read: the stored claim, present exactly when the key
+/// held a decodable record.
+pub fn classify_claim_inspection(outcomes: &[ReadOutcome]) -> ClaimInspection {
+    if outcomes.len() == 1 {
+        match &outcomes[0] {
+            ReadOutcome::Claim(Some(row)) => ClaimInspection {
+                claim_present: true,
+                claim: Some(row.clone()),
+            },
+            _ => ClaimInspection {
+                claim_present: false,
+                claim: None,
+            },
+        }
+    } else {
+        ClaimInspection {
+            claim_present: false,
+            claim: None,
+        }
+    }
+}
+
+/// The completion's ceremony restore: `Stored` exactly when the atomic pair
+/// write ran.
+pub fn classify_ceremony_restore(outcomes: &[WriteOutcome]) -> StoreObservation {
+    if outcomes.len() == 1 {
+        match &outcomes[0] {
+            WriteOutcome::Applied(_) => StoreObservation::Stored,
+            _ => StoreObservation::Failed,
+        }
+    } else {
+        StoreObservation::Failed
+    }
+}
+
+/// Whether a counter value is within an endpoint's limit.
+pub fn under_limit(count: u64, limit: u64) -> bool {
+    count <= limit
+}
+
+/// The fixed-window limiter: `Admitted` exactly while the counter's new value
+/// is within the endpoint's limit, `Limited` past it, `StorageFailed` when the
+/// counter write did not run.
+pub fn classify_rate_limit(outcomes: &[RateOutcome], limit: u64) -> RateObservation {
+    if outcomes.len() == 1 {
+        match &outcomes[0] {
+            RateOutcome::Count(count) => {
+                if under_limit(*count, limit) {
+                    RateObservation::Admitted
+                } else {
+                    RateObservation::Limited
+                }
+            }
+            RateOutcome::Failed => RateObservation::StorageFailed,
+        }
+    } else {
+        RateObservation::StorageFailed
+    }
+}
+
 // ── Rendering (not extracted; pinned by the tests below) ───────────────────
 
 /// One statement as the database or the store receives it.
@@ -790,6 +1019,16 @@ pub enum Rendered {
     },
     /// `take_live_pair`: consume two records together.
     StoreTakePair { first: String, second: String },
+    /// `set_ex_pair`: restore two records in one serializable transaction.
+    StoreSetPair {
+        first: String,
+        first_value: Vec<u8>,
+        second: String,
+        second_value: Vec<u8>,
+        ttl: u64,
+    },
+    /// `incr_fixed_window(key, 1, window_secs)`: one fixed-window counter.
+    KvIncr { key: String, window_secs: u64 },
 }
 
 #[cfg(not(hax))]
@@ -983,6 +1222,28 @@ pub fn render(stmt: &PairingStmt) -> Rendered {
         },
         PairingStmt::TakeChallenge { challenge } => Rendered::StoreTake {
             key: challenge_key(challenge),
+        },
+        PairingStmt::ReadGrant { grant_id } => Rendered::StoreGet {
+            key: grant_key(grant_id),
+        },
+        PairingStmt::GrantExists { grant_id } => Rendered::StoreExists {
+            key: grant_key(grant_id),
+        },
+        PairingStmt::RestoreCeremony {
+            grant_id,
+            grant_bytes,
+            claim_bytes,
+            ..
+        } => Rendered::StoreSetPair {
+            first: grant_key(grant_id),
+            first_value: grant_bytes.clone(),
+            second: claim_key(grant_id),
+            second_value: claim_bytes.clone(),
+            ttl: GRANT_TTL_SECS,
+        },
+        PairingStmt::RateLimitIncr { key, window_secs } => Rendered::KvIncr {
+            key: key.clone(),
+            window_secs: *window_secs,
         },
     }
 }
@@ -1274,5 +1535,185 @@ mod tests {
         assert_eq!(short.claim, ClaimMaterialObservation::Error);
         assert_eq!(short.opener, OpenerObservation::Inactive);
         assert!(!short.capsule_valid);
+    }
+
+    #[test]
+    fn pre_driver_plans_render_the_historical_io() {
+        assert_eq!(
+            render(&one(plan_grant_read(s("g")))),
+            Rendered::StoreGet { key: s("enroll_grant:g") }
+        );
+        assert_eq!(
+            render(&one(plan_grant_exists(s("g")))),
+            Rendered::StoreExists { key: s("enroll_grant:g") }
+        );
+        assert_eq!(
+            render(&one(plan_ceremony_restore(
+                s("g"),
+                br#"{"user_id":"u","device_id":"d"}"#.to_vec(),
+                br#"{"hybrid_ek":"ek","hybrid_vk":"vk","device_name":null,"device_type":null}"#
+                    .to_vec(),
+                GrantRecordView {
+                    user_id: s("u"),
+                    device_id: s("d"),
+                },
+                ClaimRecordView {
+                    hybrid_ek: s("ek"),
+                    hybrid_vk: s("vk"),
+                    device_name: None,
+                    device_type: None,
+                },
+            ))),
+            Rendered::StoreSetPair {
+                first: s("enroll_grant:g"),
+                first_value: br#"{"user_id":"u","device_id":"d"}"#.to_vec(),
+                second: s("enroll_claim:g"),
+                second_value:
+                    br#"{"hybrid_ek":"ek","hybrid_vk":"vk","device_name":null,"device_type":null}"#
+                        .to_vec(),
+                ttl: 300,
+            }
+        );
+    }
+
+    #[test]
+    fn rate_limit_plans_render_the_historical_keys_and_windows() {
+        assert_eq!(
+            render(&one(plan_rate_enroll_by_ip("203.0.113.1"))),
+            Rendered::KvIncr {
+                key: s("rl:enroll:ip:203.0.113.1"),
+                window_secs: 60,
+            }
+        );
+        assert_eq!(
+            render(&one(plan_rate_package_store("203.0.113.1"))),
+            Rendered::KvIncr {
+                key: s("rl:enroll_pkg:store:ip:203.0.113.1"),
+                window_secs: 3600,
+            }
+        );
+        assert_eq!(
+            render(&one(plan_rate_package_fetch("203.0.113.1"))),
+            Rendered::KvIncr {
+                key: s("rl:enroll_pkg:fetch:ip:203.0.113.1"),
+                window_secs: 3600,
+            }
+        );
+        assert_eq!(
+            render(&one(plan_rate_grant_by_user("user-1"))),
+            Rendered::KvIncr {
+                key: s("rl:enroll:grant:user-1"),
+                window_secs: 3600,
+            }
+        );
+        assert_eq!(
+            render(&one(plan_rate_claim_by_ip("203.0.113.1"))),
+            Rendered::KvIncr {
+                key: s("rl:enroll:claim:ip:203.0.113.1"),
+                window_secs: 3600,
+            }
+        );
+        assert_eq!(
+            render(&one(plan_rate_result_by_ip("203.0.113.1"))),
+            Rendered::KvIncr {
+                key: s("rl:enroll:result:ip:203.0.113.1"),
+                window_secs: 60,
+            }
+        );
+    }
+
+    #[test]
+    fn pre_driver_classifiers_keep_the_historical_observations() {
+        use crate::pairing_driver::GrantObservation;
+
+        let row = GrantRecordView {
+            user_id: s("u"),
+            device_id: s("d"),
+        };
+        assert_eq!(
+            classify_grant_read(&[ReadOutcome::Grant(Some(row.clone()))], &s("u"), &s("d")),
+            GrantObservation::Present {
+                user_matches: true,
+                opener_matches: true,
+            }
+        );
+        assert_eq!(
+            classify_grant_read(&[ReadOutcome::Grant(Some(row))], &s("u"), &s("x")),
+            GrantObservation::Present {
+                user_matches: true,
+                opener_matches: false,
+            }
+        );
+        assert_eq!(
+            classify_grant_read(&[ReadOutcome::Grant(None)], &s("u"), &s("d")),
+            GrantObservation::Absent
+        );
+        assert_eq!(
+            classify_grant_read(&[ReadOutcome::Failed], &s("u"), &s("d")),
+            GrantObservation::Error
+        );
+        assert_eq!(
+            classify_grant_read(&[ReadOutcome::Undecodable], &s("u"), &s("d")),
+            GrantObservation::Error
+        );
+
+        assert!(classify_grant_exists(&[ReadOutcome::GrantExists(true)]));
+        assert!(!classify_grant_exists(&[ReadOutcome::GrantExists(false)]));
+        assert!(!classify_grant_exists(&[ReadOutcome::Failed]));
+        assert!(!classify_grant_exists(&[]));
+
+        let claim = ClaimRowView {
+            hybrid_ek: Some(s("ek")),
+            hybrid_vk: Some(s("vk")),
+            device_name: None,
+            device_type: None,
+        };
+        assert_eq!(
+            classify_claim_inspection(&[ReadOutcome::Claim(Some(claim.clone()))]),
+            ClaimInspection {
+                claim_present: true,
+                claim: Some(claim),
+            }
+        );
+        assert_eq!(
+            classify_claim_inspection(&[ReadOutcome::Claim(None)]),
+            ClaimInspection {
+                claim_present: false,
+                claim: None,
+            }
+        );
+        assert_eq!(
+            classify_claim_inspection(&[ReadOutcome::Failed]),
+            ClaimInspection {
+                claim_present: false,
+                claim: None,
+            }
+        );
+
+        assert_eq!(
+            classify_ceremony_restore(&[WriteOutcome::Applied(1)]),
+            StoreObservation::Stored
+        );
+        assert_eq!(
+            classify_ceremony_restore(&[WriteOutcome::Failed]),
+            StoreObservation::Failed
+        );
+        assert_eq!(classify_ceremony_restore(&[]), StoreObservation::Failed);
+
+        assert!(under_limit(3, 3));
+        assert!(!under_limit(4, 3));
+        assert_eq!(
+            classify_rate_limit(&[RateOutcome::Count(3)], 3),
+            RateObservation::Admitted
+        );
+        assert_eq!(
+            classify_rate_limit(&[RateOutcome::Count(4)], 3),
+            RateObservation::Limited
+        );
+        assert_eq!(
+            classify_rate_limit(&[RateOutcome::Failed], 3),
+            RateObservation::StorageFailed
+        );
+        assert_eq!(classify_rate_limit(&[], 3), RateObservation::StorageFailed);
     }
 }

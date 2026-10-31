@@ -15,6 +15,9 @@ type t_GrantView = {
   f_possession:bool
 }
 
+let impl_5: Core_models.Clone.t_Clone t_GrantView =
+  { f_clone = (fun x -> x); f_clone_pre = (fun _ -> True); f_clone_post = (fun _ _ -> True) }
+
 /// What the atomic `get_del` of one grant observed. A store error aborts the
 /// request before classification, so it is not a variant here.
 type t_GrantTake =
@@ -24,6 +27,7 @@ type t_GrantTake =
 /// One statement an executor method runs.
 type t_RedemptionStmt =
   | RedemptionStmt_TakeGrant { f_key:Alloc.String.t_String }: t_RedemptionStmt
+  | RedemptionStmt_PeekGrant { f_key:Alloc.String.t_String }: t_RedemptionStmt
   | RedemptionStmt_InsertDevice {
     f_device_id:Alloc.String.t_String;
     f_user:Alloc.String.t_String;
@@ -36,6 +40,7 @@ type t_RedemptionStmt =
     f_guard:t_GrantGuard
   }: t_RedemptionStmt
   | RedemptionStmt_SelectAuthority { f_user:Alloc.String.t_String }: t_RedemptionStmt
+  | RedemptionStmt_SelectEnrollmentAccount { f_user:Alloc.String.t_String }: t_RedemptionStmt
   | RedemptionStmt_PutGrant {
     f_key:Alloc.String.t_String;
     f_value:Alloc.String.t_String;
@@ -58,6 +63,21 @@ type t_AuthorityRowView = {
   f_credential_id:Core_models.Option.t_Option Alloc.String.t_String;
   f_auth_hash:Core_models.Option.t_Option Alloc.String.t_String
 }
+
+/// The cells of a `SelectEnrollmentAccount` row: `key_epoch`,
+/// `rekey_state`, `recovery_webauthn_cred_id` and the decoded length of the
+/// staged possession commitment.
+type t_EnrollmentAccountRowView = {
+  f_stored_epoch:Core_models.Option.t_Option i64;
+  f_rotation_active:bool;
+  f_credential_id:Core_models.Option.t_Option Alloc.String.t_String;
+  f_commitment_len:usize
+}
+
+/// The non-consuming grant read's observation.
+type t_GrantPeekObservation =
+  | GrantPeekObservation_Absent : t_GrantPeekObservation
+  | GrantPeekObservation_Present : t_GrantView -> t_GrantPeekObservation
 
 /// `consume_grant`: the single-use `get_del` of the exact grant key.
 let plan_take_grant (key: Alloc.String.t_String) : t_RedemptionStmt =
@@ -98,6 +118,15 @@ let plan_insert_device
 /// `recheck_authority`: read the live credential and commitment columns.
 let plan_authority_read (user: Alloc.String.t_String) : t_RedemptionStmt =
   RedemptionStmt_SelectAuthority ({ f_user = user }) <: t_RedemptionStmt
+
+/// The non-consuming grant read (`observe_enroll_grant`).
+let plan_peek_grant (key: Alloc.String.t_String) : t_RedemptionStmt =
+  RedemptionStmt_PeekGrant ({ f_key = key }) <: t_RedemptionStmt
+
+/// `post_enroll_device`'s preflight account read: the live epoch, rotation
+/// flag, credential id and staged commitment.
+let plan_enrollment_account (user: Alloc.String.t_String) : t_RedemptionStmt =
+  RedemptionStmt_SelectEnrollmentAccount ({ f_user = user }) <: t_RedemptionStmt
 
 /// `restore_grant`: overwrite the exact grant key with the consumed grant.
 let plan_restore_grant (key value: Alloc.String.t_String) (grant: t_GrantView)
@@ -210,3 +239,65 @@ let classify_authority
         Vela_recovery_policy.Driver.AuthorityRecheckObservation_CredentialReplaced
         <:
         Vela_recovery_policy.Driver.t_AuthorityRecheckObservation
+
+/// The non-consuming grant read's classification: the stored grant, or absence.
+let classify_peek_grant (stored: Core_models.Option.t_Option t_GrantView) : t_GrantPeekObservation =
+  match stored <: Core_models.Option.t_Option t_GrantView with
+  | Core_models.Option.Option_Some grant ->
+    GrantPeekObservation_Present
+    (Core_models.Clone.f_clone #t_GrantView #FStar.Tactics.Typeclasses.solve grant)
+    <:
+    t_GrantPeekObservation
+  | Core_models.Option.Option_None  -> GrantPeekObservation_Absent <: t_GrantPeekObservation
+
+/// The preflight account view: the live row's facts as the classifier decides
+/// them. `None` is an absent row.
+type t_EnrollmentAccountView = {
+  f_stored_epoch:Core_models.Option.t_Option i64;
+  f_epoch_active:bool;
+  f_credential_id_matches:bool;
+  f_commitment_len:usize
+}
+
+/// The epoch the preflight compares with the grant's: `observed_recovery_epoch`
+/// with a missing or non-positive stored epoch normalized to the first epoch.
+/// Pinned against the policy function by the unit tests below.
+let observed_epoch (stored: Core_models.Option.t_Option i64) : i64 =
+  match stored <: Core_models.Option.t_Option i64 with
+  | Core_models.Option.Option_None  -> mk_i64 1
+  | Core_models.Option.Option_Some value -> if value <. mk_i64 1 then mk_i64 1 else value
+
+/// The preflight account observation, in the handler's historical precedence.
+/// The commitment's decoded length is reported only when the historical
+/// preflight would have decoded it: the normalized epoch matches the grant's
+/// and the account is not rotating.
+let classify_enrollment_account
+      (row: Core_models.Option.t_Option t_EnrollmentAccountRowView)
+      (grant_epoch: i64)
+      (grant_credential_id: Alloc.String.t_String)
+    : Core_models.Option.t_Option t_EnrollmentAccountView =
+  Core_models.Option.impl__map #t_EnrollmentAccountRowView
+    #t_EnrollmentAccountView
+    #(t_EnrollmentAccountRowView -> t_EnrollmentAccountView)
+    row
+    (fun row ->
+        let row:t_EnrollmentAccountRowView = row in
+        let epoch_active:bool = ~.row.f_rotation_active in
+        let gate_open:bool =
+          (observed_epoch row.f_stored_epoch <: i64) =. grant_epoch && epoch_active
+        in
+        {
+          f_stored_epoch = row.f_stored_epoch;
+          f_epoch_active = epoch_active;
+          f_credential_id_matches
+          =
+          (Core_models.Option.impl__as_ref #Alloc.String.t_String row.f_credential_id
+            <:
+            Core_models.Option.t_Option Alloc.String.t_String) =.
+          (Core_models.Option.Option_Some grant_credential_id
+            <:
+            Core_models.Option.t_Option Alloc.String.t_String);
+          f_commitment_len = if gate_open then row.f_commitment_len else mk_usize 0
+        }
+        <:
+        t_EnrollmentAccountView)

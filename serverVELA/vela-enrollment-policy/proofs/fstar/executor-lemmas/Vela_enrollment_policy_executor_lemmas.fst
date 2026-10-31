@@ -555,6 +555,155 @@ let device_check_only_from_active_row
          | None -> False))) =
   active_device_is_honest d device_id verdict f
 
+// ── Pre-driver reads, the ceremony restore and the rate limiter ────────────
+
+/// `post_claim`'s pre-driver liveness check: `grant_live` is exactly the grant
+/// key's presence, and the read changes nothing.
+let grant_exists_is_honest (d: db) (grant_id: text) (f: option nat)
+  : Lemma
+    (let (live, post) = grant_exists d grant_id f in
+     post == d /\
+     (faulted f 0 ==> live == false) /\
+     (not (faulted f 0) ==> (live <==> Some? (d.grants grant_id)))) =
+  let r = run_reads d (stmts_of (plan_grant_exists grant_id)) 0 f in
+  seq_of_list_facts r
+
+/// The non-consuming grant read behind `post_complete` and `get_claim`: an
+/// absent key is `Absent`, a stored record is `Present` with exactly its two
+/// bindings compared with the caller, and a failure or an undecodable record
+/// is `Error`. The read changes nothing.
+let grant_read_is_honest
+      (d: db) (grant_id user device: text) (f: option nat)
+  : Lemma
+    (let (obs, post) = grant_read d grant_id user device f in
+     post == d /\
+     (faulted f 0 ==> obs == D.GrantObservation_Error) /\
+     (not (faulted f 0) ==>
+        ((obs == D.GrantObservation_Absent) <==> None? (d.grants grant_id)) /\
+        (match d.grants grant_id with
+         | None -> obs == D.GrantObservation_Absent
+         | Some row ->
+           (match obs with
+            | D.GrantObservation_Present p ->
+              p.f_user_matches == (row.g_user = user) /\
+              p.f_opener_matches == (row.g_device = device)
+            | _ -> False)))) =
+  let r = run_reads d (stmts_of (plan_grant_read grant_id)) 0 f in
+  seq_of_list_facts r
+
+/// `get_claim`'s payload read: the claim is reported present exactly when the
+/// key held a decodable record, and then the view is the stored record's own
+/// cells. The read changes nothing.
+let claim_inspection_is_honest (d: db) (grant_id: text) (f: option nat)
+  : Lemma
+    (let (obs, post) = claim_inspection d grant_id f in
+     post == d /\
+     (faulted f 0 ==>
+        (obs.f_claim_present == false /\
+         (match obs.f_claim with
+          | Core_models.Option.Option_None -> True
+          | Core_models.Option.Option_Some _ -> False))) /\
+     (not (faulted f 0) ==>
+        ((obs.f_claim_present <==> Some? (d.claims grant_id)) /\
+         (match d.claims grant_id with
+          | None -> obs.f_claim_present == false
+          | Some row ->
+            (match obs.f_claim with
+             | Core_models.Option.Option_Some view ->
+               view.f_hybrid_ek == Core_models.Option.Option_Some row.c_ek /\
+               view.f_hybrid_vk == Core_models.Option.Option_Some row.c_vk /\
+               view.f_device_name == to_core row.c_name /\
+               view.f_device_type == to_core row.c_type_
+             | Core_models.Option.Option_None -> False))))) =
+  let r = run_reads d (stmts_of (plan_claim_read grant_id)) 0 f in
+  seq_of_list_facts r
+
+/// The completion's ceremony restore: `Stored` exactly when the atomic pair
+/// write ran, and then both keys hold exactly the plan's records; a failure
+/// changes nothing.
+let ceremony_restore_is_honest
+      (d: db) (grant_id: text)
+      (grant_bytes claim_bytes: Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global)
+      (g: t_GrantRecordView) (c: t_ClaimRecordView) (f: option nat)
+  : Lemma
+    (let (obs, post) = ceremony_restore d grant_id grant_bytes claim_bytes g c f in
+     (obs == D.StoreObservation_Stored <==> not (faulted f 0)) /\
+     (obs == D.StoreObservation_Stored ==>
+        post == { d with
+                  grants = upd d.grants grant_id
+                    (Some ({ g_user = g.f_user_id; g_device = g.f_device_id }
+                           <: grant_row));
+                  claims = upd d.claims grant_id
+                    (Some ({ c_ek = c.f_hybrid_ek; c_vk = c.f_hybrid_vk;
+                             c_name = of_core c.f_device_name;
+                             c_type_ = of_core c.f_device_type } <: claim_row)) }) /\
+     (obs =!= D.StoreObservation_Stored ==> post == d)) =
+  let r =
+    run_writes d
+      (stmts_of (plan_ceremony_restore grant_id grant_bytes claim_bytes g c)) 0 f in
+  seq_of_list_facts (fst r)
+
+/// The fixed-window limiter: the counter grows by exactly one at the plan's
+/// key (saturating), a failure leaves it unchanged, and the verdict is exactly
+/// the new count against the endpoint's limit.
+let rate_limit_is_honest
+      (d: db) (key: text) (window_secs limit: u64) (f: option nat)
+  : Lemma
+    (let (obs, post) = rate_limit d key window_secs limit f in
+     (obs == RateObservation_StorageFailed <==> faulted f 0) /\
+     (obs == RateObservation_Admitted <==>
+        (not (faulted f 0) /\ under_limit (bump (counter d key)) limit)) /\
+     (obs == RateObservation_Limited <==>
+        (not (faulted f 0) /\ not (under_limit (bump (counter d key)) limit))) /\
+     (not (faulted f 0) ==>
+        post == { d with
+                  counters = upd d.counters key (Some (bump (counter d key))) }) /\
+     (faulted f 0 ==> post == d)) =
+  let r = run_rate d (stmts_of (plan_rate_limit key window_secs)) 0 f in
+  seq_of_list_facts [fst r]
+
+// ── Facts the pre-driver decisions rely on ─────────────────────────────────
+
+/// The claim driver's liveness bit is the stored grant's presence.
+let grant_live_is_the_stored_grant (d: db) (grant_id: text) (f: option nat)
+  : Lemma
+    (not (faulted f 0) ==>
+       (fst (grant_exists d grant_id f) <==> Some? (d.grants grant_id))) =
+  grant_exists_is_honest d grant_id f
+
+/// A completion or inspection that saw both bindings match read the stored
+/// grant, and it binds exactly that user and opener.
+let grant_read_admits_only_the_stored_opener
+      (d: db) (grant_id user device: text) (f: option nat)
+  : Lemma
+    ((match fst (grant_read d grant_id user device f) with
+      | D.GrantObservation_Present p ->
+        p.f_user_matches = true /\ p.f_opener_matches = true
+      | _ -> False) ==>
+     (match d.grants grant_id with
+      | Some row -> row.g_user = user /\ row.g_device = device
+      | None -> False)) =
+  grant_read_is_honest d grant_id user device f
+
+/// `get_claim` can only answer with a claim the store holds.
+let claim_inspection_admits_only_the_stored_claim
+      (d: db) (grant_id: text) (f: option nat)
+  : Lemma
+    (not (faulted f 0) ==>
+       ((fst (claim_inspection d grant_id f)).f_claim_present <==>
+        Some? (d.claims grant_id))) =
+  claim_inspection_is_honest d grant_id f
+
+/// An admitted request grew the counter by exactly one.
+let rate_limit_only_counts_one
+      (d: db) (key: text) (window_secs limit: u64) (f: option nat)
+  : Lemma
+    (fst (rate_limit d key window_secs limit f) == RateObservation_Admitted ==>
+       (not (faulted f 0) /\
+        (snd (rate_limit d key window_secs limit f)).counters key
+        == Some (bump (counter d key)))) =
+  rate_limit_is_honest d key window_secs limit f
+
 // ── Vectors shared with `executor_model.rs::tests::shared_vectors` ─────────
 
 let s (x: string) : text = Alloc.String.String x
@@ -579,6 +728,7 @@ let vector_db : db =
                       else None);
     devices = (fun _ -> None);
     grant_index = (fun _ -> None);
+    counters = (fun _ -> None);
   }
 
 /// The same state with no claim yet: a claim lands while the grant is live.
@@ -629,5 +779,48 @@ let vector_ceremony_replay ()
            fst (take_ceremony post (s "g") true true None)
            == D.TakeObservation_Missing) =
   ceremony_take_is_single_use vector_db (s "g") None true true None
+
+/// The pre-driver vectors: the liveness bit, the stored binding and the
+/// limiter's counter.
+let vector_grant_live ()
+  : Lemma (let (present, post) = grant_exists vector_empty_db (s "g") None in
+           present == false /\ post == vector_empty_db /\
+           fst (grant_exists vector_db (s "g") None) == true) =
+  grant_exists_is_honest vector_empty_db (s "g") None;
+  grant_exists_is_honest vector_db (s "g") None
+
+let vector_grant_read ()
+  : Lemma (let (obs, post) = grant_read vector_db (s "g") (s "u") (s "d") None in
+           obs == D.GrantObservation_Present
+                    ({ D.f_user_matches = true; D.f_opener_matches = true }) /\
+           post == vector_db /\
+           (fst (grant_read vector_db (s "g") (s "u") (s "other") None)
+            == D.GrantObservation_Present
+                 ({ D.f_user_matches = true; D.f_opener_matches = false }))) =
+  grant_read_is_honest vector_db (s "g") (s "u") (s "d") None;
+  grant_read_is_honest vector_db (s "g") (s "u") (s "other") None
+
+let vector_claim_inspection ()
+  : Lemma (let (obs, post) = claim_inspection vector_db (s "g") None in
+           obs.f_claim_present == true /\ post == vector_db) =
+  claim_inspection_is_honest vector_db (s "g") None
+
+let vector_rate_db : db =
+  { vector_db with
+    counters = (fun k -> if k = s "rl" then Some (mk_u64 2) else None) }
+
+let vector_rate ()
+  : Lemma
+    (let (obs, post) = rate_limit vector_rate_db (s "rl") (mk_u64 60) (mk_u64 3) None in
+     obs == RateObservation_Admitted /\
+     post.counters (s "rl") == Some (mk_u64 3) /\
+     (fst (rate_limit post (s "rl") (mk_u64 60) (mk_u64 3) None)
+      == RateObservation_Limited) /\
+     (fst (rate_limit post (s "rl") (mk_u64 60) (mk_u64 3) None) =!=
+      RateObservation_Admitted ==> post.counters (s "rl") == Some (mk_u64 3))) =
+  rate_limit_is_honest vector_rate_db (s "rl") (mk_u64 60) (mk_u64 3) None;
+  rate_limit_is_honest
+    (snd (rate_limit vector_rate_db (s "rl") (mk_u64 60) (mk_u64 3) None))
+    (s "rl") (mk_u64 60) (mk_u64 3) None
 
 #pop-options

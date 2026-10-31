@@ -109,6 +109,11 @@ impl<K: RecoveryKv> RecoveryKv for FaultyKv<K> {
         self.inner.take(key)
     }
 
+    fn get(&mut self, key: &str) -> Result<Option<Vec<u8>>> {
+        self.hit()?;
+        self.inner.get(key)
+    }
+
     fn put(&mut self, key: &str, value: &[u8]) -> Result<()> {
         self.hit()?;
         self.inner.put(key, value)
@@ -2540,4 +2545,334 @@ async fn schema_has_the_webauthn_columns() {
         )
         .await;
     assert!(duplicate.is_err(), "recovery_webauthn_cred_id must be unique");
+}
+
+/// The pre-driver grant read, the preflight account read, the startup backfill
+/// and every recovery rate limiter against the models.
+#[tokio::test]
+async fn pre_driver_reads_backfill_and_rate_limits_match_the_model() {
+    use std::collections::BTreeMap;
+    use vela_recovery_policy::rate_store::{self as rate_store, render as render_rate, RateStmt};
+    use vela_recovery_policy::redemption_store::{GrantPeekObservation, Rendered};
+
+    let db = temp_db().await;
+    let store = temp_store();
+
+    // observe_enroll_grant: present, absent, corrupt and a store failure.
+    let key = super::recover::enroll_grant_key(user(0), grant(0));
+    let grant_row = GrantView {
+        key_epoch: 7,
+        credential_id: t("c"),
+        possession: false,
+    };
+    let mut present_model = Model::default();
+    present_model.grants.insert(key.clone(), grant_row.clone());
+    for present in [false, true] {
+        for fault in faults(1) {
+            let _ = store.del(&key);
+            if present {
+                store.set(&key, &grant_json(&grant_row)).unwrap();
+            }
+            let observed = super::recover::observe_enroll_grant_with(
+                &mut FaultyKv::new(StoreKv(&store), fault),
+                user(0),
+                grant(0),
+            );
+            let model_db = if present { present_model.clone() } else { Model::default() };
+            let expected = model::peek_grant(&model_db, &key, fault);
+            let case = format!("peek present {present} fault {fault:?}");
+            match (fault, observed) {
+                (Some(_), Err(_)) => assert!(expected.is_none(), "{case}"),
+                (None, Ok(None)) => {
+                    assert!(!present, "{case}");
+                    assert_eq!(expected.unwrap().0, GrantPeekObservation::Absent, "{case}");
+                    assert_eq!(store.get(&key).unwrap(), None, "{case}");
+                }
+                (None, Ok(Some(grant))) => {
+                    assert!(present, "{case}");
+                    assert_eq!(
+                        Some(grant),
+                        super::recover::decode_enroll_grant(&grant_json(&grant_row)).ok(),
+                        "{case}"
+                    );
+                    assert_eq!(
+                        expected.unwrap().0,
+                        GrantPeekObservation::Present(grant_row.clone()),
+                        "{case}"
+                    );
+                    assert_eq!(
+                        store.get(&key).unwrap(),
+                        Some(grant_json(&grant_row)),
+                        "{case}"
+                    );
+                }
+                other => panic!("{case}: {other:?}"),
+            }
+        }
+    }
+    // A stored value that does not decode is the historical invalid-grant
+    // error, not an absence.
+    let _ = store.del(&key);
+    store.set(&key, b"not a grant").unwrap();
+    let corrupt = super::recover::observe_enroll_grant_with(
+        &mut FaultyKv::new(StoreKv(&store), None),
+        user(0),
+        grant(0),
+    );
+    assert!(matches!(corrupt, Err(AppError::Unauthorized(_))));
+
+    // post_enroll_device's preflight account read.
+    let preflight = credential_preflight();
+    // The commitment is decoded only under the epoch/rotation gate, so the
+    // seeded cell is real base64 (the model treats its decoded length as a
+    // trusted input).
+    let account_states: Vec<Option<UserRow>> = user_states()
+        .into_iter()
+        .map(|shape| {
+            shape.map(|mut row| {
+                row.auth_hash = row.auth_hash.map(|_| t("aGFzaA=="));
+                row
+            })
+        })
+        .collect();
+    for shape in account_states {
+        let mut state = Model::default();
+        if let Some(row) = &shape {
+            state.users.insert(s(user(0)), row.clone());
+        }
+        let commitment_len = shape
+            .as_ref()
+            .and_then(|row| row.auth_hash.as_ref())
+            .map(|hash| B64.decode(hash).map(|bytes| bytes.len()).unwrap_or(0))
+            .unwrap_or(0);
+        for fault in faults(1) {
+            load(&db, &store, &state, &[]).await;
+            let observed = super::enroll_device::enrollment_account_preflight(
+                &mut Faulty::new(PoolSql(&db), fault),
+                &user(0),
+                &preflight,
+            )
+            .await;
+            let expected = model::enrollment_account(
+                &state,
+                &s(user(0)),
+                7,
+                "c",
+                commitment_len,
+                fault,
+            );
+            let case = format!("account {shape:?} fault {fault:?}");
+            match (fault, observed) {
+                (Some(_), Err(_)) => assert!(expected.is_none(), "{case}"),
+                (None, Ok(observation)) => {
+                    let (view, post) = expected.unwrap();
+                    assert_eq!(post, state, "{case}");
+                    match (observation, view) {
+                        (
+                            vela_recovery_policy::EnrollmentAccountObservation::Absent,
+                            None,
+                        ) => {}
+                        (
+                            vela_recovery_policy::EnrollmentAccountObservation::Present(facts),
+                            Some(view),
+                        ) => {
+                            assert_eq!(facts.stored_epoch, view.stored_epoch, "{case}");
+                            assert_eq!(facts.epoch_active, view.epoch_active, "{case}");
+                            assert_eq!(
+                                facts.credential_id_matches, view.credential_id_matches,
+                                "{case}"
+                            );
+                            assert_eq!(facts.commitment_len, view.commitment_len, "{case}");
+                        }
+                        other => panic!("{case}: {other:?}"),
+                    }
+                }
+                other => panic!("{case}: {other:?}"),
+            }
+        }
+    }
+
+    // The startup credential-id backfill: a legacy row, an already indexed
+    // row, an account with no credential, an undecodable credential and an
+    // absent account.
+    let legacy_cred = cred_id(7);
+    let indexed_cred = cred_id(8);
+    let candidate_users = [user(10), user(11), user(12), user(13), user(14)];
+    let legacy_json = serde_json::to_string(&stored_passkey(&legacy_cred)).unwrap();
+    let indexed_json = serde_json::to_string(&stored_passkey(&indexed_cred)).unwrap();
+    let mut pre_web = model::WebAuthnDb::default();
+    pre_web.users.insert(
+        s(user(10)),
+        webauthn_user_row(None, model::CredentialCell::Valid(legacy_cred.clone()), None, Some(7), false, None),
+    );
+    pre_web.users.insert(
+        s(user(11)),
+        webauthn_user_row(
+            None,
+            model::CredentialCell::Valid(indexed_cred.clone()),
+            Some(&indexed_cred),
+            Some(7),
+            false,
+            None,
+        ),
+    );
+    pre_web.users.insert(
+        s(user(12)),
+        webauthn_user_row(None, model::CredentialCell::Absent, None, Some(7), false, None),
+    );
+    pre_web.users.insert(
+        s(user(13)),
+        webauthn_user_row(None, model::CredentialCell::Undecodable, None, Some(7), false, None),
+    );
+    let candidates: Vec<String> = candidate_users.iter().map(|id| s(*id)).collect();
+    for fault in faults(2) {
+        db.execute_batch("DELETE FROM users;").await.unwrap();
+        for (id, credential, credential_id) in [
+            (user(10), Some(legacy_json.as_str()), None),
+            (user(11), Some(indexed_json.as_str()), Some(indexed_cred.as_str())),
+            (user(12), None, None),
+            (user(13), Some("not a passkey"), None),
+        ] {
+            db.execute(
+                "INSERT INTO users (id, created_at, key_epoch, recovery_webauthn_credential, recovery_webauthn_cred_id)
+                 VALUES (?, 't', 7, ?, ?)",
+                vec![
+                    TursoValue::Text(id.to_string()),
+                    credential.map_or(TursoValue::Null, |c| TursoValue::Text(c.to_string())),
+                    credential_id.map_or(TursoValue::Null, |c| TursoValue::Text(c.to_string())),
+                ],
+            )
+            .await
+            .unwrap();
+        }
+        let observed =
+            super::webauthn::backfill_with(&mut Faulty::new(PoolSql(&db), fault)).await;
+        let case = format!("backfill fault {fault:?}");
+        if fault == Some(0) {
+            assert!(observed.is_err(), "{case}");
+        } else {
+            assert!(observed.is_ok(), "{case}");
+        }
+        let scanned = model::backfill_scan(&pre_web, &candidates, fault).unwrap_or_default();
+        if fault != Some(0) {
+            assert_eq!(scanned, vec![s(user(10))], "{case}");
+        }
+        let writes: Vec<(String, String)> = scanned
+            .iter()
+            .map(|id| (id.clone(), legacy_cred.clone()))
+            .collect();
+        let write_fault = fault.and_then(|k| if k >= 1 { Some(k - 1) } else { None });
+        let (landed, post) = model::backfill_writes(&pre_web, &writes, write_fault);
+        assert_eq!(
+            landed,
+            if write_fault.is_none() { writes.clone() } else { Vec::new() },
+            "{case}"
+        );
+        for candidate in &candidates {
+            let stored = db
+                .query(
+                    "SELECT recovery_webauthn_cred_id FROM users WHERE id = ?",
+                    vec![TursoValue::Text(candidate.clone())],
+                )
+                .await
+                .unwrap();
+            let actual = stored.first().and_then(|row| row.text(0)).map(String::from);
+            let expected = post
+                .users
+                .get(candidate)
+                .and_then(|row| row.credential_id.clone());
+            assert_eq!(actual, expected, "{case} user {candidate}");
+        }
+    }
+
+    // Every recovery fixed-window limiter, at the limit edge.
+    const IP: &str = "203.0.113.1";
+    let endpoints: Vec<(&str, Vec<RateStmt>, u64, u64)> = vec![
+        ("initiate ip", rate_store::plan_initiate_by_ip(IP), 10, 3600),
+        (
+            "initiate ip/user",
+            rate_store::plan_initiate_by_ip_user(IP, &s(user(0))),
+            5,
+            3600,
+        ),
+        (
+            "initiate user",
+            rate_store::plan_initiate_by_user(&s(user(0))),
+            50,
+            3600,
+        ),
+        (
+            "recover ip/user",
+            rate_store::plan_recover_by_ip_user(IP, &s(user(0))),
+            5,
+            3600,
+        ),
+        (
+            "recover user",
+            rate_store::plan_recover_by_user(&s(user(0))),
+            50,
+            3600,
+        ),
+        ("enroll ip", rate_store::plan_enroll_by_ip(IP), 10, 3600),
+        (
+            "enroll ip/user",
+            rate_store::plan_enroll_by_ip_user(IP, &s(user(0))),
+            5,
+            3600,
+        ),
+        (
+            "enroll user",
+            rate_store::plan_enroll_by_user(&s(user(0))),
+            50,
+            3600,
+        ),
+        (
+            "webauthn register",
+            rate_store::plan_webauthn_register_by_user(&s(user(0))),
+            20,
+            3600,
+        ),
+    ];
+    for (name, plan, limit, window) in endpoints {
+        let key = match render_rate(&plan[0]) {
+            Rendered::KvIncr { key, .. } => key,
+            other => panic!("{name}: expected a counter, got {other:?}"),
+        };
+        for preseed in [0u64, limit - 1, limit] {
+            for fault in faults(1) {
+                let _ = store.del(&key);
+                for _ in 0..preseed {
+                    store.incr_fixed_window(&key, 1, window as i64).unwrap();
+                }
+                let mut counters = BTreeMap::new();
+                if preseed > 0 {
+                    counters.insert(key.clone(), preseed);
+                }
+                let (observation, error) = crate::rate_limit::recovery_window(
+                    |k, delta, w| {
+                        if fault.is_some() {
+                            return Err(AppError::Internal(
+                                "injected rate-limit failure".into(),
+                            ));
+                        }
+                        store.incr_fixed_window(k, delta, w)
+                    },
+                    &plan,
+                    limit,
+                );
+                let (expected, post) =
+                    model::rate_limit(&counters, &key, window, limit, fault);
+                let case = format!("rate {name} preseed {preseed} fault {fault:?}");
+                assert_eq!(observation, expected, "{case}");
+                assert_eq!(error.is_some(), fault.is_some(), "{case}");
+                let count = store.incr_fixed_window(&key, 0, window as i64).unwrap();
+                assert_eq!(
+                    count,
+                    post.get(&key).copied().unwrap_or(0),
+                    "{case}"
+                );
+            }
+        }
+        let _ = store.del(&key);
+    }
 }

@@ -206,6 +206,85 @@ let restored_grant_is_live
      | None -> True) =
   restore_grant_is_honest d key value g f
 
+// ── The pre-driver grant read and the enrollment preflight account read ────
+
+/// `observe_enroll_grant`: a present observation is exactly the stored grant,
+/// absence is an absent key, the read changes nothing, and a fault is
+/// unobserved (the handler aborts with the store's error).
+let peek_grant_is_honest (d: db) (key: text) (f: option nat)
+  : Lemma
+    (match peek_grant d key f with
+     | None -> faulted f 0
+     | Some (obs, post) ->
+       post == d /\
+       (match d.grants key with
+        | None -> obs == GrantPeekObservation_Absent
+        | Some g -> obs == GrantPeekObservation_Present g)) =
+  ()
+
+/// `post_enroll_device`'s preflight account read: every field is the live
+/// row's truth (the normalized epoch under the grant's epoch and no rotation
+/// gate for the commitment length), absence is an absent row, the read changes
+/// nothing, and a fault is unobserved.
+let enrollment_account_is_honest
+      (d: db) (user: text) (epoch: i64) (credential_id: text)
+      (commitment_len: usize) (f: option nat)
+  : Lemma
+    (match enrollment_account d user epoch credential_id commitment_len f with
+     | None -> faulted f 0
+     | Some (view, post) ->
+       post == d /\
+       (match d.users user with
+        | None -> view == (None <: option t_EnrollmentAccountView)
+        | Some row ->
+          (match view with
+           | Some facts ->
+             facts.f_stored_epoch == Core_models.Option.Option_Some row.us_epoch /\
+             facts.f_epoch_active == not row.us_rekey /\
+             facts.f_credential_id_matches ==
+               (match row.us_cred with
+                | Some c -> c =. credential_id
+                | None -> false) /\
+             facts.f_commitment_len ==
+               (if (observed_epoch (Core_models.Option.Option_Some row.us_epoch) =. epoch)
+                     && not row.us_rekey
+                then commitment_len
+                else mk_usize 0)
+           | _ -> False))) =
+  ()
+
+/// The enrollment preflight cannot read account state for a grant it did not
+/// observe: the peek is the stored truth, so an absent observation is an
+/// absent key.
+let absent_peek_means_no_grant (d: db) (key: text) (f: option nat)
+  : Lemma
+    (match peek_grant d key f with
+     | Some (GrantPeekObservation_Absent, _) -> None? (d.grants key)
+     | _ -> True) =
+  peek_grant_is_honest d key f
+
+/// The preflight's live-row facts are the stored row's: the epoch, the
+/// rotation flag and the credential match the `users` row the grant is bound
+/// to. The preflight decision therefore compares the stored state, not a
+/// caller-supplied one.
+let account_facts_are_the_stored_row
+      (d: db) (user: text) (epoch: i64) (credential_id: text)
+      (commitment_len: usize) (f: option nat)
+  : Lemma
+    (match enrollment_account d user epoch credential_id commitment_len f with
+     | Some (Some facts, _) ->
+       (match d.users user with
+        | Some row ->
+          facts.f_stored_epoch == Core_models.Option.Option_Some row.us_epoch /\
+          facts.f_epoch_active == not row.us_rekey /\
+          facts.f_credential_id_matches ==
+            (match row.us_cred with
+             | Some c -> c =. credential_id
+             | None -> false)
+        | None -> False)
+     | _ -> True) =
+  enrollment_account_is_honest d user epoch credential_id commitment_len f
+
 // ── Vectors shared with `redemption_model.rs::tests::shared_vectors` ───────
 
 let s (x: string) : text = Alloc.String.String x
@@ -286,5 +365,25 @@ let vector_restore_grant ()
   restore_grant_is_honest
     { users = (fun _ -> None); devices = (fun _ -> None); grants = (fun _ -> None) }
     (s "k") (s "v") vector_grant None
+
+let vector_peek_grant ()
+  : Lemma
+    (match peek_grant vector_db (s "k") None with
+     | Some (GrantPeekObservation_Present g, post) ->
+       g == vector_grant /\ post == vector_db
+     | _ -> False) =
+  peek_grant_is_honest vector_db (s "k") None
+
+let vector_account ()
+  : Lemma
+    (match enrollment_account vector_db (s "u") (mk_i64 7) (s "c")
+             (mk_usize 1) None with
+     | Some (Some facts, post) ->
+       facts.f_credential_id_matches == true /\
+       facts.f_commitment_len == mk_usize 1 /\
+       post == vector_db
+     | _ -> False) =
+  enrollment_account_is_honest vector_db (s "u") (mk_i64 7) (s "c")
+    (mk_usize 1) None
 
 #pop-options

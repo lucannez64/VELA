@@ -15,21 +15,23 @@ use std::collections::BTreeMap;
 
 use crate::executor::{
     account_fields, classify_account, classify_challenge_take, classify_claim_check,
-    classify_claim_read, classify_claim_write, classify_completion_preflight,
-    classify_device_check, classify_enrolled_device, classify_insert_completion,
-    classify_insert_enroll, classify_redeem, classify_result_read, classify_store,
-    classify_take_ceremony, plan_account_read, plan_active_device_read, plan_challenge_take,
-    plan_claim_check, plan_claim_read, plan_claim_write, plan_completion_preflight,
-    plan_device_by_grant, plan_redeem_package, plan_result_read, plan_result_write,
-    plan_store_grant, plan_store_package, plan_take_ceremony, AccountRowView, ClaimRowView,
-    CollectorVerdicts,
-    CompletionVerdicts, DeviceRowView, EnrollAuthVerdict, PairingStmt, ReadOutcome, ResultRowView,
-    TakeOutcome, WriteOutcome,
+    classify_claim_inspection, classify_claim_read, classify_claim_write,
+    classify_completion_preflight, classify_ceremony_restore, classify_device_check,
+    classify_enrolled_device, classify_grant_exists, classify_grant_read,
+    classify_insert_completion, classify_insert_enroll, classify_rate_limit, classify_redeem,
+    classify_result_read, classify_store, classify_take_ceremony, plan_account_read,
+    plan_active_device_read, plan_ceremony_restore, plan_challenge_take, plan_claim_check,
+    plan_claim_read, plan_claim_write, plan_completion_preflight, plan_device_by_grant,
+    plan_grant_exists, plan_grant_read, plan_rate_limit, plan_redeem_package, plan_result_read,
+    plan_result_write, plan_store_grant, plan_store_package, plan_take_ceremony, AccountRowView,
+    ClaimInspection, ClaimRecordView, ClaimRowView, CollectorVerdicts, CompletionVerdicts,
+    DeviceRowView, EnrollAuthVerdict, GrantRecordView, PairingStmt, RateObservation, RateOutcome,
+    ReadOutcome, ResultRowView, TakeOutcome, WriteOutcome,
 };
 use crate::pairing_driver::{
     ClaimReadObservation, ClaimWriteObservation, CompletionAccountObservation,
     CompletionPreflightObservation, DeviceGrantObservation, DeviceInsertObservation,
-    RedeemObservation, ResultReadObservation, StoreObservation, TakeObservation,
+    GrantObservation, RedeemObservation, ResultReadObservation, StoreObservation, TakeObservation,
 };
 
 // ── Rows ───────────────────────────────────────────────────────────────────
@@ -86,6 +88,8 @@ pub struct Db {
     pub devices: BTreeMap<String, DeviceRow>,
     /// `devices.enrollment_grant_id`, indexed: grant id -> device id.
     pub grant_index: BTreeMap<String, String>,
+    /// The fixed-window rate-limit counters: key -> count.
+    pub counters: BTreeMap<String, u64>,
 }
 
 // ── Statement semantics ────────────────────────────────────────────────────
@@ -266,6 +270,30 @@ pub fn write_step(d: &Db, stmt: &PairingStmt) -> Option<(WriteOutcome, Db)> {
             );
             Some((WriteOutcome::Applied(1), next))
         }
+        PairingStmt::RestoreCeremony {
+            grant_id,
+            grant,
+            claim,
+            ..
+        } => {
+            next.grants.insert(
+                grant_id.clone(),
+                GrantRow {
+                    user_id: grant.user_id.clone(),
+                    device_id: grant.device_id.clone(),
+                },
+            );
+            next.claims.insert(
+                grant_id.clone(),
+                ClaimRow {
+                    hybrid_ek: claim.hybrid_ek.clone(),
+                    hybrid_vk: claim.hybrid_vk.clone(),
+                    device_name: claim.device_name.clone(),
+                    device_type: claim.device_type.clone(),
+                },
+            );
+            Some((WriteOutcome::Applied(1), next))
+        }
         _ => panic!("not a write statement: {stmt:?}"),
     }
 }
@@ -304,6 +332,17 @@ pub fn read_step(d: &Db, stmt: &PairingStmt) -> Option<ReadOutcome> {
         PairingStmt::ReadResult { grant_id } => Some(ReadOutcome::Result(
             d.results.get(grant_id).map(view_result),
         )),
+        PairingStmt::ReadGrant { grant_id } => {
+            Some(ReadOutcome::Grant(d.grants.get(grant_id).map(|row| {
+                GrantRecordView {
+                    user_id: row.user_id.clone(),
+                    device_id: row.device_id.clone(),
+                }
+            })))
+        }
+        PairingStmt::GrantExists { grant_id } => {
+            Some(ReadOutcome::GrantExists(d.grants.contains_key(grant_id)))
+        }
         _ => panic!("not a read statement: {stmt:?}"),
     }
 }
@@ -396,6 +435,69 @@ pub fn run_take_pair(d: &Db, plan: &[PairingStmt], fault: Option<usize>) -> (Tak
 }
 
 // ── The executables: plan, run, classify ───────────────────────────────────
+
+/// A fixed-window plan: one counter increment, or the injected failure. The
+/// counter saturates at `u64::MAX`, as `Store::incr_fixed_window` does.
+pub fn run_rate(d: &Db, plan: &[PairingStmt], fault: Option<usize>) -> (RateOutcome, Db) {
+    assert_eq!(plan.len(), 1, "a rate plan is one statement");
+    if faulted(fault, 0) {
+        return (RateOutcome::Failed, d.clone());
+    }
+    let PairingStmt::RateLimitIncr { key, .. } = &plan[0] else {
+        panic!("not a rate statement");
+    };
+    let mut next = d.clone();
+    let count = next.counters.get(key).copied().unwrap_or(0).saturating_add(1);
+    next.counters.insert(key.clone(), count);
+    (RateOutcome::Count(count), next)
+}
+
+pub fn grant_read(
+    d: &Db,
+    grant_id: String,
+    session_user: String,
+    session_device: String,
+    fault: Option<usize>,
+) -> (GrantObservation, Db) {
+    let (outcomes, post) = run_reads(d, &plan_grant_read(grant_id), fault);
+    (classify_grant_read(&outcomes, &session_user, &session_device), post)
+}
+
+pub fn grant_exists(d: &Db, grant_id: String, fault: Option<usize>) -> (bool, Db) {
+    let (outcomes, post) = run_reads(d, &plan_grant_exists(grant_id), fault);
+    (classify_grant_exists(&outcomes), post)
+}
+
+pub fn claim_inspection(d: &Db, grant_id: String, fault: Option<usize>) -> (ClaimInspection, Db) {
+    let (outcomes, post) = run_reads(d, &plan_claim_read(grant_id), fault);
+    (classify_claim_inspection(&outcomes), post)
+}
+
+pub fn ceremony_restore(
+    d: &Db,
+    grant_id: String,
+    grant_bytes: Vec<u8>,
+    claim_bytes: Vec<u8>,
+    grant: GrantRecordView,
+    claim: ClaimRecordView,
+    fault: Option<usize>,
+) -> (StoreObservation, Db) {
+    let plan = plan_ceremony_restore(grant_id, grant_bytes, claim_bytes, grant, claim);
+    let (outcomes, post) = run_writes(d, &plan, fault);
+    (classify_ceremony_restore(&outcomes), post)
+}
+
+pub fn rate_limit(
+    d: &Db,
+    key: String,
+    window_secs: u64,
+    limit: u64,
+    fault: Option<usize>,
+) -> (RateObservation, Db) {
+    let (outcome, post) = run_rate(d, &plan_rate_limit(key, window_secs), fault);
+    (classify_rate_limit(&[outcome], limit), post)
+}
+
 
 pub fn store_package(
     d: &Db,
@@ -673,5 +775,103 @@ mod tests {
         let (obs, post) = take_ceremony(&empty, s("g"), true, true, None);
         assert_eq!(obs, TakeObservation::Missing);
         assert_eq!(post, empty);
+    }
+
+    /// The vectors for the pre-driver reads, the restore and the rate limiter,
+    /// shared with the `vector_pre_driver_*` lemmas.
+    #[test]
+    fn pre_driver_and_rate_vectors() {
+        use crate::pairing_driver::GrantObservation;
+
+        let d = base();
+        let (obs, post) = grant_read(&d, s("g"), s("u"), s("d"), None);
+        assert_eq!(
+            obs,
+            GrantObservation::Present {
+                user_matches: true,
+                opener_matches: true,
+            }
+        );
+        assert_eq!(post, d);
+        let (obs, _) = grant_read(&d, s("g"), s("u"), s("other"), None);
+        assert_eq!(
+            obs,
+            GrantObservation::Present {
+                user_matches: true,
+                opener_matches: false,
+            }
+        );
+        let (obs, _) = grant_read(&d, s("absent"), s("u"), s("d"), None);
+        assert_eq!(obs, GrantObservation::Absent);
+        let (obs, post) = grant_read(&d, s("g"), s("u"), s("d"), Some(0));
+        assert_eq!(obs, GrantObservation::Error);
+        assert_eq!(post, d);
+
+        let (live, post) = grant_exists(&d, s("g"), None);
+        assert!(live);
+        assert_eq!(post, d);
+        let (live, _) = grant_exists(&d, s("absent"), None);
+        assert!(!live);
+        let (live, _) = grant_exists(&d, s("g"), Some(0));
+        assert!(!live);
+
+        let inspection = claim_inspection(&d, s("g"), None);
+        assert!(inspection.0.claim_present);
+        assert_eq!(inspection.0.claim.unwrap().hybrid_ek, Some(s("ek")));
+        assert_eq!(inspection.1, d);
+        let (inspection, _) = claim_inspection(&d, s("absent"), None);
+        assert!(!inspection.claim_present);
+        assert_eq!(inspection.claim, None);
+
+        let grant = GrantRecordView {
+            user_id: s("u"),
+            device_id: s("d"),
+        };
+        let claim = ClaimRecordView {
+            hybrid_ek: s("ek"),
+            hybrid_vk: s("vk"),
+            device_name: None,
+            device_type: None,
+        };
+        let (obs, post) = ceremony_restore(
+            &Db::default(),
+            s("g"),
+            br#"{"user_id":"u","device_id":"d"}"#.to_vec(),
+            br#"{"hybrid_ek":"ek","hybrid_vk":"vk","device_name":null,"device_type":null}"#
+                .to_vec(),
+            grant.clone(),
+            claim.clone(),
+            None,
+        );
+        assert_eq!(obs, StoreObservation::Stored);
+        assert_eq!(post.grants[&s("g")].user_id, s("u"));
+        assert_eq!(post.claims[&s("g")].hybrid_ek, s("ek"));
+        let (obs, post) = ceremony_restore(
+            &Db::default(),
+            s("g"),
+            Vec::new(),
+            Vec::new(),
+            grant,
+            claim,
+            Some(0),
+        );
+        assert_eq!(obs, StoreObservation::Failed);
+        assert_eq!(post, Db::default());
+
+        let mut fresh = Db::default();
+        fresh.counters.insert(s("rl"), 2);
+        let (obs, post) = rate_limit(&fresh, s("rl"), 60, 3, None);
+        assert_eq!(obs, RateObservation::Admitted);
+        assert_eq!(post.counters[&s("rl")], 3);
+        let (obs, post) = rate_limit(&post, s("rl"), 60, 3, None);
+        assert_eq!(obs, RateObservation::Limited);
+        assert_eq!(post.counters[&s("rl")], 4);
+        let (obs, post) = rate_limit(&fresh, s("rl"), 60, 3, Some(0));
+        assert_eq!(obs, RateObservation::StorageFailed);
+        assert_eq!(post, fresh);
+        // An untouched key starts at one.
+        let (obs, post) = rate_limit(&Db::default(), s("new"), 60, 1, None);
+        assert_eq!(obs, RateObservation::Admitted);
+        assert_eq!(post.counters[&s("new")], 1);
     }
 }

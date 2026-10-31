@@ -473,3 +473,84 @@ let persist_credential
                        ws_cred_id = Some new_id }));
             holders = rebind d.holders u row.ws_cred_id new_id }))
   | _ -> (classify_persist_credential true (one_outcome RS.WriteOutcome_Failed), d)
+
+// ── The startup credential-id backfill ─────────────────────────────────────
+
+/// A row the startup scan still has to backfill: a decodable stored credential
+/// with no indexed credential id.
+let needs_backfill (row: user_row) : bool =
+  match row.ws_credential with
+  | Cred_Valid _ -> None? row.ws_cred_id
+  | _ -> false
+
+/// The scan's filter, in scan order.
+let rec keep_legacy (d: db) (candidates: list text)
+  : Tot (list text) (decreases candidates) =
+  match candidates with
+  | [] -> []
+  | u :: rest ->
+    (match d.users u with
+     | Some row ->
+       if needs_backfill row
+       then u :: keep_legacy d rest
+       else keep_legacy d rest
+     | None -> keep_legacy d rest)
+
+/// The scan: the candidate ids that still need a backfill, or a failed read.
+let legacy_scan (d: db) (candidates: list text) (fs: option nat) (k: nat)
+  : read_outcome (list text) =
+  if faulted fs k
+  then Failed
+  else Row (keep_legacy d candidates)
+
+let stmts_of (p: Alloc.Vec.t_Vec t_WebAuthnStmt Alloc.Alloc.t_Global)
+  : list t_WebAuthnStmt =
+  Seq.seq_to_list p._0
+
+/// The statement a backfill write names.
+let stmt_naming (u cred: text) : t_WebAuthnStmt =
+  WebAuthnStmt_BackfillCredentialId { f_user = u; f_credential_id = cred }
+
+/// One extracted write as a plan list (the builder writes one per row).
+let single_backfill (u cred: text) : list t_WebAuthnStmt =
+  stmts_of (plan_backfill_write u cred)
+
+/// The plan for a scanned row list: one extracted write per row, in order.
+let rec backfill_plan (rows: list (text & text))
+  : Tot (list t_WebAuthnStmt) (decreases rows) =
+  match rows with
+  | [] -> []
+  | (u, cred) :: rest ->
+    L.append (single_backfill u cred) (backfill_plan rest)
+
+/// One backfill write: the row's indexed id becomes exactly `cred`; a missing
+/// row is untouched (the SQL update matches no row).
+let backfill_row (d: db) (u cred: text) : db =
+  match d.users u with
+  | None -> d
+  | Some row ->
+    { d with users = upd d.users u (Some ({ row with ws_cred_id = Some cred })) }
+
+/// The landed writes and the post-state. The startup backfill is best-effort:
+/// a failed update is logged and the remaining rows still run, so a fault
+/// omits exactly that one write and leaves the state as the next row sees it.
+let rec run_backfill
+      (d: db) (plan: list t_WebAuthnStmt) (k: nat) (fs: option nat)
+  : Tot (list (text & text) & db) (decreases plan) =
+  match plan with
+  | [] -> ([], d)
+  | s :: rest ->
+    match s with
+    | WebAuthnStmt_BackfillCredentialId { f_user = u; f_credential_id = cred } ->
+      if faulted fs k
+      then run_backfill d rest (k + 1) fs
+      else
+        let r = run_backfill (backfill_row d u cred) rest (k + 1) fs in
+        ((u, cred) :: fst r, snd r)
+    | _ -> ([], d)
+
+/// The fold the run performs.
+let rec fold_rows (d: db) (rows: list (text & text)) : Tot db (decreases rows) =
+  match rows with
+  | [] -> d
+  | (u, cred) :: rest -> fold_rows (backfill_row d u cred) rest

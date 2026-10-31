@@ -221,3 +221,72 @@ let restore_grant (d: db) (key value: text) (g: grant) (f: option nat) : option 
   match fst r with
   | [WriteOutcome_Applied _] -> Some (snd r)
   | _ -> None
+
+// ── The pre-driver grant read and the enrollment preflight account read ────
+
+/// The extracted classifier reads the store's native option, so the model
+/// lifts its own to the extracted type.
+let core_grant (o: option grant) : Core_models.Option.t_Option grant =
+  match o with
+  | Some g -> Core_models.Option.Option_Some g
+  | None -> Core_models.Option.Option_None
+
+/// The non-consuming grant read (`observe_enroll_grant`): the stored grant or
+/// absence, or `None` when the injected failure fires. The read changes
+/// nothing.
+let peek_grant (d: db) (key: text) (f: option nat)
+  : option (t_GrantPeekObservation & db) =
+  if faulted f 0
+  then None
+  else
+    match plan_peek_grant key with
+    | RedemptionStmt_PeekGrant { f_key = k } ->
+      Some (classify_peek_grant (core_grant (d.grants k)), d)
+    | _ -> None
+
+/// The preflight account row, as the handler's view reports it. The commitment
+/// length is the caller's trusted decode of the stored commitment (zero when
+/// the handler did not decode it).
+let account_row (d: db) (user: text) (commitment_len: usize)
+  : option t_EnrollmentAccountRowView =
+  match d.users user with
+  | None -> None
+  | Some row ->
+    Some ({ f_stored_epoch = Core_models.Option.Option_Some row.us_epoch;
+            f_rotation_active = row.us_rekey;
+            f_credential_id =
+              (match row.us_cred with
+               | Some c -> Core_models.Option.Option_Some c
+               | None -> Core_models.Option.Option_None);
+            f_commitment_len = commitment_len } <: t_EnrollmentAccountRowView)
+
+/// `post_enroll_device`'s preflight account read: `None` when the injected
+/// failure fires, otherwise the live row's view (or its absence). The read
+/// changes nothing.
+let core_account_row
+      (o: option t_EnrollmentAccountRowView)
+  : Core_models.Option.t_Option t_EnrollmentAccountRowView =
+  match o with
+  | Some row -> Core_models.Option.Option_Some row
+  | None -> Core_models.Option.Option_None
+
+let of_core_account
+      (o: Core_models.Option.t_Option t_EnrollmentAccountView)
+  : option t_EnrollmentAccountView =
+  match o with
+  | Core_models.Option.Option_Some view -> Some view
+  | Core_models.Option.Option_None -> None
+
+let enrollment_account
+      (d: db) (user: text) (epoch: i64) (credential_id: text)
+      (commitment_len: usize) (f: option nat)
+  : option (option t_EnrollmentAccountView & db) =
+  if faulted f 0
+  then None
+  else
+    match plan_enrollment_account user with
+    | RedemptionStmt_SelectEnrollmentAccount { f_user = u } ->
+      Some (of_core_account
+              (classify_enrollment_account
+                 (core_account_row (account_row d u commitment_len)) epoch credential_id), d)
+    | _ -> None

@@ -18,10 +18,20 @@ against the real stores (turso and sled), for:
   (`vela-server/src/recovery/recover.rs`), and `RegisterStartIo` /
   `RegisterFinishIo` (`vela-server/src/recovery/webauthn.rs`).
 
-Every recovery executor family is now covered. WebAuthn ceremony results
-(challenges, registration states, assertion results, updated credential
-metadata) stay inputs, as do the rate limiters and the read-only preflight
-lookups listed under "Assumptions and limits".
+Every recovery executor family is now covered, and so is the I/O that was
+still outside an executor (wave 2, F-1):
+
+- the non-consuming `observe_enroll_grant` preflight peek;
+- `post_enroll_device`'s preflight account `SELECT`;
+- the startup `backfill_webauthn_cred_ids` scan and its per-row writes;
+- every recovery rate-limit counter (`recovery_initiate_by_ip`,
+  `recovery_initiate_by_ip_user`, `recovery_initiate_by_user`,
+  `recovery_recover_by_ip_user`, `recovery_recover_by_user`,
+  `recovery_enroll_by_ip`, `recovery_enroll_by_ip_user`,
+  `recovery_enroll_by_user`, `webauthn_register_by_user`).
+
+WebAuthn ceremony results (challenges, registration states, assertion results,
+updated credential metadata) stay inputs.
 
 ## Design
 
@@ -36,6 +46,11 @@ Redemption statements:
 
 - `TakeGrant { key }`: an atomic get-and-delete of
   `recovery:enroll_grant:{user}:{grant}`.
+- `PeekGrant { key }`: the non-consuming read of the same key
+  (`observe_enroll_grant`).
+- `SelectEnrollmentAccount { user }`: `post_enroll_device`'s preflight read of
+  `key_epoch`, `rekey_state`, `recovery_webauthn_cred_id` and
+  `recovery_auth_hash`.
 - `InsertDevice { .., epoch, guard }`: `INSERT … SELECT … WHERE EXISTS` over
   the user's id, key epoch and rekey state, plus a guard:
   - `Credential { credential_id }` for a WebAuthn grant;
@@ -94,6 +109,16 @@ WebAuthn statements:
 - `TakeRegistrationState { key }`: the atomic read-and-delete of that state.
 - `StoreCredentialGrant { key, grant, .. }`: the `set_ex` of the single-use
   credential-bound enrollment grant (600 s TTL).
+- `SelectLegacyCredentials`: the startup backfill's scan of rows with a stored
+  credential and no indexed id.
+- `BackfillCredentialId { user, credential_id }`: the startup backfill's
+  `UPDATE users SET recovery_webauthn_cred_id = ? WHERE id = ?`.
+
+Rate-limit statements (`vela-recovery-policy/src/rate_store.rs`):
+
+- `Incr { key, window_secs }`: one `Store::incr_fixed_window(key, 1, window)`
+  at the endpoint's exact key and window, with an extracted admission
+  classifier (`new count <= limit`).
 
 `render` and the key constructors give the exact SQL, parameters, keys and
 bytes used before, pinned byte for byte by unit tests.
@@ -102,13 +127,15 @@ bytes used before, pinned byte for byte by unit tests.
 
 `Vela_recovery_policy_redemption_lemmas.fst`,
 `Vela_recovery_policy_share_lemmas.fst`,
-`Vela_recovery_policy_possession_lemmas.fst` and
-`Vela_recovery_policy_webauthn_lemmas.fst`, for every starting state, row,
-attempt slot, credential cell, credential index, registration slot, grant and
-fault point:
+`Vela_recovery_policy_possession_lemmas.fst`,
+`Vela_recovery_policy_webauthn_lemmas.fst` and
+`Vela_recovery_policy_rate_lemmas.fst`, for every starting state, row,
+attempt slot, credential cell, credential index, registration slot, grant,
+backfill candidate set, counter table and fault point:
 
 - **Redemption operations:** `take_grant_is_honest`, `insert_device_is_honest`,
-  `authority_observation_is_honest` and `restore_grant_is_honest`.
+  `authority_observation_is_honest`, `restore_grant_is_honest`,
+  `peek_grant_is_honest` and `enrollment_account_is_honest`.
 - **Recovery-share operations:** `stage_share_is_honest`,
   `promote_staged_split_is_honest`, `delete_share_is_honest`,
   `stage_account_is_honest`, `finalize_account_is_honest` and
@@ -129,8 +156,10 @@ fault point:
   `share_release_is_honest`, `grant_store_is_honest`,
   `registration_start_observation_is_honest`,
   `registration_state_store_is_honest`,
-  `registration_state_consumption_is_honest`, `uniqueness_is_honest` and
-  `credential_persist_is_honest`. Every availability, context, account,
+  `registration_state_consumption_is_honest`, `uniqueness_is_honest`,
+  `credential_persist_is_honest`, `legacy_scan_is_honest`,
+  `backfill_write_is_honest`, `backfill_run_is_honest`,
+  `backfill_run_names_the_rows` and `backfill_only_touches_landed_rows`. Every availability, context, account,
   credential, split and uniqueness field is the live row's (or credential
   index's) truth; the attempt slot is fresh exactly when it was empty; a stored
   attempt is exactly the drawn envelope; a lost `set_ex_nx` writes nothing; a
@@ -139,6 +168,10 @@ fault point:
   then exactly the new credential cell and indexed credential id were written
   and the index seed moved with them; a zero-row update, a failed statement or a
   serialization failure changes nothing.
+- **Rate limiters:** `rate_limit_is_honest`: the counter at the plan's key
+  grows by exactly one (saturating), a failed store call changes no counter,
+  and `Admitted` holds exactly while the new value is within the endpoint's
+  limit.
 - **Facts the drivers rely on:**
   - redemption: `take_match_is_the_stored_grant`, `take_is_single_use`,
     `inserted_device_is_owned_and_guarded`, `restored_grant_is_live`;
@@ -148,6 +181,8 @@ fault point:
     `stored_challenge_is_the_drawn_one`, `lost_challenge_changed_nothing`,
     `consumed_attempt_is_single_use`, `corrupt_attempt_is_not_missing` and
     `issued_grant_is_live`;
+  - rate limits: `rate_limit_only_counts_one` and
+    `limited_only_past_the_limit`;
   - WebAuthn: `observed_credential_is_the_live_one`,
     `fresh_attempt_is_an_empty_slot`, `stored_attempt_is_the_drawn_one`,
     `lost_attempt_race_changed_nothing`, `consumed_attempt_is_single_use`,
@@ -156,17 +191,20 @@ fault point:
     `released_share_is_the_rows_share`, `issued_credential_grant_is_live`,
     `registration_state_is_single_use`,
     `unique_credential_has_no_other_holder` and
-    `persisted_credential_is_live`.
-- **Vectors:** 7 redemption `vector_*` lemmas, 7 recovery-share
-  `vector_share_*` lemmas, 12 possession `vector_possession_*` lemmas and 29
-  WebAuthn `vector_webauthn_*` lemmas, shared with the Rust mirror
+    `persisted_credential_is_live`, `absent_peek_means_no_grant` and
+    `account_facts_are_the_stored_row`.
+- **Vectors:** 9 redemption `vector_*` lemmas (including `vector_peek_grant`
+  and `vector_account`), 7 recovery-share `vector_share_*` lemmas, 12
+  possession `vector_possession_*` lemmas, 29 WebAuthn `vector_webauthn_*`
+  lemmas and 2 rate `vector_rate*` lemmas, shared with the Rust mirror
   (`redemption_model.rs`).
 
 Each module is checked in its own process under 700 MB, `--z3rlimit 200`, no
-admits. The recovery-share modules take 35–44 s each; the redemption modules
-are unchanged at 39–47 s; the possession model and lemmas take 29 s each at
-596 MB / 577 MB peak; the WebAuthn store, model and lemma modules take
-32 s, 31 s and 36 s at 616 MB, 616 MB and 649 MB peak.
+admits. The recovery-share modules take 29–32 s at 589–622 MB peak; the redemption
+modules take 27–32 s at 582–606 MB peak; the possession model and lemmas take
+28–30 s at 596 MB / 579 MB peak; the WebAuthn store, model and lemma modules
+take 30 s, 31 s and 35 s at 625 MB, 653 MB and 709 MB peak; the rate store,
+model and lemmas take 27 s each at 569 MB, 558 MB and 568 MB peak.
 
 ## Mutations
 
@@ -203,6 +241,12 @@ named theorem:
 | `webauthn-plan-select-share`: the share read names the wrong account | `auth_start_observation_is_honest` |
 | `webauthn-plan-grant-key`: the grant is stored under the value, not its key | `grant_store_is_honest` |
 | `webauthn-plan-persist-user`: the credential write names another account | `credential_persist_is_honest` |
+| `peek-classify`: a stored grant is reported absent | `peek_grant_is_honest` |
+| `account-classify`: a rotating account reports an active epoch | `enrollment_account_is_honest` |
+| `account-gate`: the commitment length ignores the epoch/rotation gate | `enrollment_account_is_honest` |
+| `webauthn-backfill-plan-id`: a backfill write names the user id as its credential id | `backfill_run_names_the_rows` |
+| `rate-classify`: a limited counter reports `Admitted` | `rate_limit_is_honest` |
+| `rate-plan-key`: the counter is incremented at the empty key | `rate_limit_is_honest` |
 
 ## Real-store conformance
 
@@ -237,6 +281,15 @@ Rust mirror.
   including the credential-id index. Schema check: the six modelled columns
   exist and `recovery_webauthn_cred_id` rejects a duplicate.
 
+- **Pre-driver, backfill and rate limits:** 8 `users` shapes for the preflight
+  account read, a present/absent/undecodable grant, 5 backfill user shapes,
+  and 9 limiters at three preseed levels. 23 cases for the reads and backfill
+  (11 with an injected failure, every SQL and store fault point) plus 54
+  rate-limit cases (27 with an injected store failure, every counter). The
+  test compares the observation, the decoded grant, the preflight view's four
+  fields, the backfilled credential ids and the counter values with the Rust
+  mirror.
+
 No executor was found dishonest.
 
 ## Rust changes
@@ -259,8 +312,19 @@ No executor was found dishonest.
   plan/run/classify write (`write_auth_state`, `write_registration_state`,
   `write_updated_credential`, `persist_credential_json`), so conformance can
   exercise the write with a fault while the ceremony result stays an input.
-- `RecoveryKv` gained `exists`, `set_nx` and `set_ex`, and `Rendered` gained
-  `KvExists`, `KvSetNx` and `KvSetEx`.
+- `RecoveryKv` gained `exists`, `set_nx`, `set_ex` and `get`, and `Rendered`
+  gained `KvExists`, `KvSetNx`, `KvSetEx`, `KvGet` and `KvIncr`.
+- `observe_enroll_grant` runs through `plan_peek_grant`; a
+  `pub(super)` entry point takes any store so conformance can inject a fault.
+- `post_enroll_device`'s account read is a `plan_enrollment_account` query
+  classified by the extracted gate; the four facts are copied from the
+  extracted view. The commitment is decoded only when the epoch/rotation gate
+  is open, exactly as before.
+- `backfill_webauthn_cred_ids` runs the extracted scan and per-row write plans;
+  a failed update is still logged and the remaining rows still run.
+- The nine recovery limiter functions in `rate_limit.rs` run their extracted
+  plans through `recovery_window`; `check` keeps its old body for the other
+  limiters. Keys, windows, limits and the refusal text are unchanged.
 - The insert timestamp can be injected for tests. Production still uses the
   current time inside the insert.
 - The issued possession grant id and the drawn WebAuthn attempt id and grant id
@@ -285,11 +349,14 @@ No executor was found dishonest.
   serialized ceremony state decodes and that a serialized passkey round-trips.
 - The credential-id index is modelled as one holder per credential id, which
   the `UNIQUE` index on `recovery_webauthn_cred_id` enforces.
-- Not covered:
-  - the read-only grant check before redemption (`observe_enroll_grant`);
-  - `post_enroll_device`'s account read before redemption;
-  - the rate limiters;
-  - TTL expiry.
+- Not covered: none of the SQL/store I/O in the recovery handlers remains
+  outside a plan. The four-field adapter from the extracted
+  `EnrollmentAccountView` to the driver's `EnrollmentAccountFacts` is a
+  structural copy, checked by conformance, not extracted.
+- The startup backfill is best-effort: a failed `UPDATE` is logged and the
+  remaining rows still run; the model states exactly that (the landed list is
+  the plan's writes minus the failed ones).
+- TTL expiry and fixed-window boundaries are abstracted as scheduler choices.
 
 ## Reproduction
 

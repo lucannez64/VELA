@@ -27,8 +27,8 @@ use vela_recovery_policy::{
         InsertObservation, RedemptionEffect, RedemptionFailure, RedemptionInsertPermit,
         RekeyObservation,
     },
-    observed_recovery_epoch, plan_enrollment_preflight, EnrollmentAccountFacts,
-    EnrollmentAccountObservation, EnrollmentGrantFacts, EnrollmentObservation,
+    plan_enrollment_preflight, EnrollmentAccountFacts, EnrollmentAccountObservation,
+    EnrollmentGrantFacts, EnrollmentObservation,
     EnrollmentPreflightDecision, EnrollmentPreflightObservation, EnrollmentPreflightRejection,
 };
 use vela_rekey_policy::{MutationAuthority, MutationDecision, MutationKind, MutationRequest};
@@ -36,14 +36,13 @@ use vela_rekey_policy::{MutationAuthority, MutationDecision, MutationKind, Mutat
 use crate::{
     error::{AppError, Result},
     net, rate_limit,
-    sqldb::{Db as _, TursoValue},
     state::AppState,
 };
 use vela_recovery_policy::redemption_store::{self, GrantGuard, GrantTake, GrantView, ReadOutcome};
 
 use super::sql::{
-    authority_row_view, put_grant, run_read, run_writes, take_grant, PoolSql, RecoveryKv,
-    RecoverySql, StoreKv,
+    authority_row_view, enrollment_account_row_view, put_grant, run_read, run_writes, take_grant,
+    PoolSql, RecoveryKv, RecoverySql, StoreKv,
 };
 
 const HYBRID_EK_LEN: usize = vela_recovery_policy::HYBRID_EK_LEN;
@@ -78,12 +77,7 @@ pub async fn post_enroll_device(
     Json(body): Json<EnrollDeviceRequest>,
 ) -> Result<Json<EnrollDeviceResponse>> {
     let ip = net::client_ip(&headers, addr.map(|ConnectInfo(a)| a.ip()), &state.config);
-    rate_limit::check(
-        &state.store,
-        &format!("rl:recover:enroll:ip:{ip}"),
-        10,
-        3600,
-    )?;
+    rate_limit::recovery_enroll_by_ip(&state.store, &ip)?;
     // Keyed on the caller as well as the target (red-team RT-1) — see the note
     // in `recover.rs`. This check also runs before the grant is verified, so the
     // per-user-only form was spendable with a garbage body.
@@ -126,42 +120,8 @@ pub async fn post_enroll_device(
     let account_observation = match observed_grant.as_ref() {
         None => EnrollmentAccountObservation::NotQueried,
         Some(grant) => {
-            let user_rows = state
-                .sqldb
-                .query(
-                    "SELECT key_epoch, rekey_state, recovery_webauthn_cred_id, recovery_auth_hash
-                     FROM users WHERE id = ?",
-                    vec![TursoValue::Text(body.user_id.to_string())],
-                )
-                .await
-                .map_err(|e| AppError::Internal(e.to_string()))?;
-            match user_rows.first() {
-                None => EnrollmentAccountObservation::Absent,
-                Some(user_row) => {
-                    let stored_epoch = user_row.i64(0);
-                    let epoch_active = user_row.text(1).is_none();
-                    // Preserve epoch/rotation rejection before decoding a
-                    // possibly malformed stored commitment. Its length is
-                    // irrelevant when preflight rejects at either guard.
-                    let commitment_len = if observed_recovery_epoch(stored_epoch) == grant.key_epoch
-                        && epoch_active
-                    {
-                        match user_row.get(3) {
-                            Some(TursoValue::Text(text)) => crate::db::decode_b64(text)?.len(),
-                            _ => 0,
-                        }
-                    } else {
-                        0
-                    };
-                    EnrollmentAccountObservation::Present(EnrollmentAccountFacts {
-                        stored_epoch,
-                        epoch_active,
-                        credential_id_matches: user_row.text(2)
-                            == Some(grant.credential_id.as_str()),
-                        commitment_len,
-                    })
-                }
-            }
+            let mut sql = PoolSql(&state.sqldb);
+            enrollment_account_preflight(&mut sql, &body.user_id, grant).await?
         }
     };
     let account_present = matches!(
@@ -474,6 +434,33 @@ impl<S: RecoverySql, K: RecoveryKv> EnrollDeviceIo<S, K> {
             }
         }
     }
+}
+
+/// `post_enroll_device`'s preflight account read: the plan's one query, the
+/// live-row view and the extracted classifier, adapted to the driver's facts.
+pub(super) async fn enrollment_account_preflight<S: RecoverySql>(
+    sql: &mut S,
+    user_id: &Uuid,
+    grant: &crate::recovery::recover::RecoveryEnrollGrant,
+) -> Result<EnrollmentAccountObservation> {
+    let stmt = redemption_store::plan_enrollment_account(user_id.to_string());
+    let user_rows = run_read(sql, &stmt)
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let row = enrollment_account_row_view(&user_rows, grant)?;
+    Ok(match redemption_store::classify_enrollment_account(
+        row.as_ref(),
+        grant.key_epoch,
+        &grant.credential_id,
+    ) {
+        None => EnrollmentAccountObservation::Absent,
+        Some(view) => EnrollmentAccountObservation::Present(EnrollmentAccountFacts {
+            stored_epoch: view.stored_epoch,
+            epoch_active: view.epoch_active,
+            credential_id_matches: view.credential_id_matches,
+            commitment_len: view.commitment_len,
+        }),
+    })
 }
 
 fn grant_view(grant: &crate::recovery::recover::RecoveryEnrollGrant) -> GrantView {
