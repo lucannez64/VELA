@@ -28,6 +28,22 @@ since the same increment.
 - `DeleteSessionIo` (`web_session/mod.rs`): `lockout_session` and
   `record_revocation`.
 
+Wave 2 extends the same proof to the I/O that was still outside an executor:
+
+- `load_session`, the shared web-session row lookup behind `GrantIo`,
+  `TokenIo` and `DeleteSessionIo` (and the poll handler);
+- `get_sessions_list` (the account's granted sessions);
+- `get_session`'s one-shot capsule clear and `get_keys`'s approver-scoped key
+  lookup;
+- `cleanup_task`'s three deletes (revoked, expired, stale pending);
+- `post_verify`'s per-IP limiter and `(ip, device)` backoff precheck;
+- `StartIo::check_rate_limit`, `TokenIo::check_token_limits` (per-IP,
+  per-session and backoff), `TokenIo::record_token_failure` /
+  `reset_token_backoff`, `get_session`'s poll limiter and `get_keys`'s
+  per-user limiter;
+- the challenge take's key is now built by the proved `plan_take_challenge`
+  rather than by the handler.
+
 Each method is a thin loop (plan → render → run → classify) over pure pieces
 in `vela-session-policy/src/store.rs`. hax extracts the plans and classifiers.
 `vela-server/src/auth/session_store.rs` holds the database handles, including
@@ -36,16 +52,20 @@ so messages are identical.
 
 ## Model
 
-There are 15 SQL statement types (`SqlStmt`):
+There are 31 SQL statement types (`SqlStmt`):
 
 - the device and web-session scans and lookups;
 - one guarded delete for each of the eight account tables;
 - the device revocation and web-session cascade updates;
+- the whole web-session row lookup, the granted-session list, the one-shot
+  capsule clear and the approver-scoped key lookup;
+- the three cleanup deletes;
 - `Commit`.
 
-There are 2 store statement types (`StoreStmt`):
+There are 11 store statement types (`StoreStmt`):
 
 - `SetEx`: a key, a value byte and a TTL;
+- `Ttl`: the backoff precheck's remaining-TTL read (a live window refuses);
 - `RevokeJtis`: the token markers plus the set drop, as one logical statement;
 - for login: `Take` (atomic read-and-delete of the challenge), `Incr` (the
   failure counter, which grows before it refuses), `BackoffFailure` and
@@ -137,6 +157,18 @@ fault point:
   `revoke_record_marks_the_session`.
 - **Plan shapes:** 31 `plan_*_shape` lemmas state the statements each plan must
   emit; the honesty proofs build on them.
+- **Wave 2 reads, cleanup and limiters:** `session_lookup_is_honest`,
+  `session_list_is_honest`, `session_keys_is_honest`,
+  `cleanup_runs_every_delete`, `cleanup_revoked_fault`,
+  `cleanup_expired_fault`, `cleanup_pending_fault`,
+  `cleanup_report_is_honest`, `capsule_clear_is_honest`,
+  `login_limits_is_honest`, `start_limit_is_honest`,
+  `token_limits_is_honest`, `poll_limit_is_honest`,
+  `keys_limit_is_honest`, and the shape lemmas
+  `plan_load_session_shape`, `plan_sessions_list_shape`,
+  `plan_capsule_clear_shape`, `plan_session_keys_shape`,
+  `plan_cleanup_{revoked,expired,pending}_shape`,
+  `plan_{login,start,token,poll,keys}_limit_shape`.
 - **Vectors:** 27 `vector_*` lemmas and state definitions, shared with
   `store_model.rs`.
 
@@ -184,6 +216,24 @@ theorem:
 | `classify-lockout-session-error` | `lockout_session_is_honest` |
 | `plan-revoke-session-key` | `plan_revoke_session_shape` |
 | `classify-revoke-session-error` | `revoke_session_observes_its_run` |
+| `plan-load-session-key` | `plan_load_session_shape` |
+| `plan-sessions-list-user` | `plan_sessions_list_shape` |
+| `plan-capsule-clear-key` | `plan_capsule_clear_shape` |
+| `plan-session-keys-user` | `plan_session_keys_shape` |
+| `plan-cleanup-expired-swap` | `plan_cleanup_expired_shape` |
+| `classify-cleanup-error` | `cleanup_revoked_fault` |
+| `classify-start-limit-error` | `start_limit_is_honest` |
+| `classify-login-limits-error` | `login_limits_is_honest` |
+| `classify-token-limits-error` | `token_limits_is_honest` |
+| `classify-poll-limit-error` | `poll_limit_is_honest` |
+| `classify-keys-limit-error` | `keys_limit_is_honest` |
+| `classify-capsule-clear-error` | `capsule_clear_is_honest` |
+| `classify-session-keys-error` | `session_keys_is_honest` |
+| `plan-login-limit-budget` | `plan_login_limits_shape` |
+| `plan-start-limit-budget` | `plan_start_limit_shape` |
+| `plan-token-limit-budget` | `plan_token_limits_shape` |
+| `plan-poll-limit-budget` | `plan_poll_limit_shape` |
+| `plan-keys-limit-budget` | `plan_keys_limit_shape` |
 
 ## Real-store conformance
 
@@ -199,7 +249,8 @@ and sled, with a failure injected at every statement:
 | Challenge issue | 2 | 10 | 5 |
 | Registration | 3 | 96 | 57 |
 | Web sessions | 37 | 97 | 50 |
-| **Total** | | **498** | **294** |
+| Wave 2 reads/cleanup/limits | 35 | 150 | 84 |
+| **Total** | | **648** | **378** |
 
 Every statement kind is faulted at least once. The schema check pins the
 modelled columns of all eight tables and rejects a duplicate id. The
@@ -218,8 +269,10 @@ dishonest.
   over the whole run.
 - Each operation is atomic and requests serialize.
 - TTLs are abstracted.
-- Login's per-IP limiter and backoff precheck before the driver are not
-  covered; token issuance and signature verdicts are inputs.
+- Login's per-IP limiter and backoff precheck before the driver, the
+  web-session start/token/poll/key-fetch limiters and the token backoff
+  precheck are now the planned `*Limits` passes; token issuance and signature
+  verdicts remain inputs.
 - Registration's PASETO issuance is an input, exactly as login's is; its
   per-IP limiter and account-count budget *are* covered.
 - The challenge's 32-byte nonce and its uniqueness are the OS random source's
@@ -235,8 +288,11 @@ dishonest.
 - Web-session PASETO issuance is an input (the plan policy is proved
   elsewhere); the executor's proof is that `Issued` is only reported while no
   `device:revoked:` sentinel is stored and the JTI was tracked.
-- `TokenIo`'s per-IP/per-session limiters and backoff precheck before the
-  driver are not covered (the same shape as login's per-IP limiter).
+- `get_sessions_list`'s `ORDER BY created_at DESC LIMIT 1000` is presentation:
+  the model states the exact set and conformance compares it. Cleanup decides
+  `expires_at < ?` and `created_at < ?` on the numeric instant the stored
+  RFC3339 text denotes; conformance pins that pairing. A live sled key is the
+  only state the `Ttl` read models (TTLs are abstracted).
 
 ## Reproduction
 

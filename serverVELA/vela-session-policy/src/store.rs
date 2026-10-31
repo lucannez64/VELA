@@ -44,7 +44,8 @@ use crate::revocation_driver::{
 };
 use crate::websession_driver::{
     DeleteRecordObservation, DeleteSentinelObservation, GrantUpdateObservation,
-    StartInsertObservation, TokenClaimObservation, TokenIssueObservation,
+    StartInsertObservation, TokenClaimObservation, TokenFailureRecordObservation,
+    TokenIssueObservation,
 };
 
 /// The remaining-lifetime TTL of a revoked JTI, in seconds
@@ -155,6 +156,10 @@ pub enum SqlStmt {
         web_vk: String,
         link_nonce: String,
         now: String,
+        /// `now` as a unix instant, so the model can decide the stale-pending
+        /// cleanup predicate without text ordering (conformance pins that
+        /// `now_secs` is what `now` denotes).
+        now_secs: u64,
     },
     /// The grant compare-and-swap:
     /// `UPDATE web_sessions SET user_id = ?, mode = ?, status = 'granted',
@@ -176,10 +181,33 @@ pub enum SqlStmt {
         capsule: String,
         expires_at: String,
         epoch: i64,
+        /// `expires_at` as a unix instant (see `InsertPendingSession::now_secs`).
+        expires_secs: u64,
     },
     /// `UPDATE web_sessions SET status = 'revoked', capsule = NULL WHERE id = ?`
     /// (the delete handler's audit record; its row count is not observed).
     RevokeSessionById { session: String },
+    /// The whole `web_sessions` row, by id (the web-session handlers' shared
+    /// lookup).
+    SelectWebSessionById { session: String },
+    /// The account's granted sessions for `GET /web-sessions`:
+    /// `SELECT id, mode, status, created_at, expires_at FROM web_sessions
+    /// WHERE user_id = ? AND status = 'granted' ORDER BY created_at DESC LIMIT 1000`.
+    SelectGrantedSessionsByUser { user: String },
+    /// `DELETE FROM web_sessions WHERE status = 'revoked'` (cleanup).
+    DeleteRevokedWebSessions,
+    /// `DELETE FROM web_sessions WHERE expires_at IS NOT NULL AND expires_at < ?`
+    /// (cleanup).
+    DeleteExpiredWebSessions { now: String, now_secs: u64 },
+    /// `DELETE FROM web_sessions WHERE status = 'pending' AND created_at < ?`
+    /// (cleanup).
+    DeleteStalePendingWebSessions { cutoff: String, cutoff_secs: u64 },
+    /// `UPDATE web_sessions SET capsule = NULL WHERE id = ? AND capsule IS NOT NULL`
+    /// (the poll endpoint's one-shot delivery).
+    ClearSessionCapsule { session: String },
+    /// `SELECT ephemeral_pk, web_vk, status FROM web_sessions WHERE id = ? AND
+    /// approver_user_id = ?` (the approver's key fetch).
+    SelectSessionKeys { session: String, user: String },
     /// Commit the open transaction.
     Commit,
 }
@@ -227,6 +255,9 @@ pub enum StoreStmt {
     },
     /// `Store::exists(key)`: a read, so it never changes the store.
     Exists { key: String },
+    /// `Store::ttl(key) > 0`: the exponential-backoff precheck. A read, so it
+    /// never changes the store; a live key is the refusal.
+    Ttl { key: String },
 }
 
 /// What one SQL statement returned.
@@ -312,6 +343,92 @@ pub enum DeviceReadOutcome {
     Missing,
     /// The query returned an error.
     Failed,
+}
+
+/// The cells of a `SelectWebSessionById` row: the whole row the web-session
+/// grant, token and delete handlers read. Text cells stay text, exactly as the
+/// database returned them; the handler decodes them as it always did.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SessionRowView {
+    pub user_id: Option<String>,
+    pub approver_user_id: Option<String>,
+    pub poll_secret_hash: Option<String>,
+    pub web_vk: Option<String>,
+    pub link_nonce: Option<String>,
+    pub mode: Option<String>,
+    pub status: Option<String>,
+    pub capsule: Option<String>,
+    pub expires_at: Option<String>,
+    pub key_epoch: Option<i64>,
+}
+
+/// What the shared web-session lookup observed: the stored row, no row, or the
+/// query error.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SessionLookup {
+    Row(SessionRowView),
+    Absent,
+    QueryFailed,
+}
+
+/// One row of `GET /web-sessions`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SessionListRowView {
+    pub id: String,
+    pub mode: String,
+    pub status: String,
+    pub created_at: String,
+    pub expires_at: Option<String>,
+}
+
+/// What the `GET /web-sessions` query observed. The SQL orders and bounds the
+/// result; the model states the exact set (order is presentation).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SessionsList {
+    Rows(Vec<SessionListRowView>),
+    QueryFailed,
+}
+
+/// What one cleanup statement removed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Default)]
+pub struct CleanupReport {
+    pub revoked: u64,
+    pub expired: u64,
+    pub pending: u64,
+}
+
+/// Whether a rate limiter let the request through. `Denied` covers both a
+/// spent budget and a live backoff window, which the handlers have always
+/// reported through the same error path.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LimitObservation {
+    Allowed,
+    Denied,
+}
+
+/// What the one-shot capsule clear did: exactly one caller retracts the
+/// capsule, everyone else finds it already gone.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CapsuleClearObservation {
+    Cleared,
+    AlreadyCollected,
+    StorageFailed,
+}
+
+/// The cells of a `SelectSessionKeys` row.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SessionKeysView {
+    pub ephemeral_pk: Option<String>,
+    pub web_vk: Option<String>,
+    pub status: Option<String>,
+}
+
+/// What the approver's key fetch observed.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SessionKeysLookup {
+    Row(SessionKeysView),
+    Absent,
+    QueryFailed,
 }
 
 // ── Plans ──────────────────────────────────────────────────────────────────
@@ -583,6 +700,7 @@ pub fn plan_insert_pending(
     web_vk: String,
     link_nonce: String,
     now: String,
+    now_secs: u64,
 ) -> SqlStmt {
     SqlStmt::InsertPendingSession {
         session,
@@ -592,6 +710,7 @@ pub fn plan_insert_pending(
         web_vk,
         link_nonce,
         now,
+        now_secs,
     }
 }
 
@@ -607,6 +726,7 @@ pub fn plan_grant_update(
     capsule: String,
     expires_at: String,
     epoch: i64,
+    expires_secs: u64,
 ) -> SqlStmt {
     SqlStmt::GrantWebSession {
         session,
@@ -616,12 +736,133 @@ pub fn plan_grant_update(
         capsule,
         expires_at,
         epoch,
+        expires_secs,
     }
 }
 
 /// `DeleteSessionIo::record_revocation`: the audit row.
 pub fn plan_revoke_session(session: String) -> SqlStmt {
     SqlStmt::RevokeSessionById { session }
+}
+
+/// The shared web-session lookup behind `GrantIo`, `TokenIo` and
+/// `DeleteSessionIo` (`load_session`).
+pub fn plan_load_session(session: String) -> SqlStmt {
+    SqlStmt::SelectWebSessionById { session }
+}
+
+/// `get_sessions_list`: the account's granted sessions.
+pub fn plan_sessions_list(user: String) -> SqlStmt {
+    SqlStmt::SelectGrantedSessionsByUser { user }
+}
+
+/// `cleanup_task`'s first delete.
+pub fn plan_cleanup_revoked() -> SqlStmt {
+    SqlStmt::DeleteRevokedWebSessions
+}
+
+/// `cleanup_task`'s second delete.
+pub fn plan_cleanup_expired(now: String, now_secs: u64) -> SqlStmt {
+    SqlStmt::DeleteExpiredWebSessions { now, now_secs }
+}
+
+/// `cleanup_task`'s third delete.
+pub fn plan_cleanup_pending(pending_cutoff: String, pending_cutoff_secs: u64) -> SqlStmt {
+    SqlStmt::DeleteStalePendingWebSessions {
+        cutoff: pending_cutoff,
+        cutoff_secs: pending_cutoff_secs,
+    }
+}
+
+/// `post_verify`'s per-IP request limiter and then its `(ip, device)` backoff
+/// precheck, in the historical order.
+pub fn plan_login_limits(ip: String, device: String) -> Vec<StoreStmt> {
+    vec![
+        StoreStmt::Incr {
+            key: format!("rl:verify:ip:{}", ip),
+            limit: 10,
+            ttl: 60,
+        },
+        StoreStmt::Ttl {
+            key: format!("rl:backoff:verify:{}:{}", ip, device),
+        },
+    ]
+}
+
+/// `StartIo::check_rate_limit`: 30 starts/hour per IP.
+pub fn plan_start_limit(ip: String) -> Vec<StoreStmt> {
+    vec![StoreStmt::Incr {
+        key: format!("rl:websession:start:ip:{}", ip),
+        limit: 30,
+        ttl: 60 * 60,
+    }]
+}
+
+/// `TokenIo::check_token_limits`: the per-(ip, session) budget, then the
+/// per-session backstop, then the `(ip, session)` backoff precheck, in the
+/// historical order.
+pub fn plan_token_limits(ip: String, session: String) -> Vec<StoreStmt> {
+    vec![
+        StoreStmt::Incr {
+            key: format!("rl:websession:token:ip:{}:{}", ip, session),
+            limit: 10,
+            ttl: 60,
+        },
+        StoreStmt::Incr {
+            key: format!("rl:websession:token:{}", session),
+            limit: 30,
+            ttl: 60,
+        },
+        StoreStmt::Ttl {
+            key: format!("rl:backoff:websession:token:{}:{}", ip, session),
+        },
+    ]
+}
+
+/// `TokenIo::record_token_failure`: the log-only backoff record on the
+/// `(ip, session)` scope.
+pub fn plan_token_backoff_record(ip: String, session: String) -> Vec<StoreStmt> {
+    vec![StoreStmt::BackoffFailure {
+        streak: format!("rl:streak:websession:token:{}:{}", ip, session),
+        backoff: format!("rl:backoff:websession:token:{}:{}", ip, session),
+    }]
+}
+
+/// `TokenIo::reset_token_backoff`: drop the success streak and backoff marker.
+pub fn plan_token_backoff_reset(ip: String, session: String) -> Vec<StoreStmt> {
+    vec![StoreStmt::ResetBackoff {
+        streak: format!("rl:streak:websession:token:{}:{}", ip, session),
+        backoff: format!("rl:backoff:websession:token:{}:{}", ip, session),
+    }]
+}
+
+/// `get_session`'s per-IP poll limiter: 120 polls/min per IP.
+pub fn plan_poll_limit(ip: String) -> Vec<StoreStmt> {
+    vec![StoreStmt::Incr {
+        key: format!("rl:websession:poll:ip:{}", ip),
+        limit: 120,
+        ttl: 60,
+    }]
+}
+
+/// `get_keys`'s per-user key-fetch limiter: 60/min.
+pub fn plan_keys_limit(user: String) -> Vec<StoreStmt> {
+    vec![StoreStmt::Incr {
+        key: format!("rl:websession:keys:user:{}", user),
+        limit: 60,
+        ttl: 60,
+    }]
+}
+
+/// `get_session`'s one-shot capsule delivery: clear only a non-NULL capsule.
+pub fn plan_capsule_clear(session: String) -> SqlStmt {
+    SqlStmt::ClearSessionCapsule { session }
+}
+
+/// `get_keys`: the approver's lookup, scoped to the account the browser
+/// committed to at `start`.
+pub fn plan_session_keys(session: String, user: String) -> SqlStmt {
+    SqlStmt::SelectSessionKeys { session, user }
 }
 
 /// `TokenIo::claim_token`: the one `web_session:token_issued:` marker, first
@@ -967,6 +1208,134 @@ pub fn classify_revoke_session(outcome: &WriteOutcome) -> DeleteRecordObservatio
     }
 }
 
+// ── Shared web-session reads and cleanup ───────────────────────────────────
+
+/// `load_session`: the stored row exactly as the query returned it, `Absent`
+/// exactly when no row matched, `QueryFailed` on the query error.
+pub fn classify_session_lookup(outcome: &ReadOutcome<SessionRowView>) -> SessionLookup {
+    match outcome {
+        ReadOutcome::Row(Some(row)) => SessionLookup::Row(row.clone()),
+        ReadOutcome::Row(None) => SessionLookup::Absent,
+        ReadOutcome::Failed => SessionLookup::QueryFailed,
+    }
+}
+
+/// `get_sessions_list`: the exact rows the query returned, or the error. The
+/// handler drops expired entries; the SQL orders and bounds them.
+pub fn classify_sessions_list(
+    outcome: &ReadOutcome<Vec<SessionListRowView>>,
+) -> SessionsList {
+    match outcome {
+        ReadOutcome::Row(Some(rows)) => SessionsList::Rows(rows.clone()),
+        ReadOutcome::Row(None) => SessionsList::Rows(Vec::new()),
+        ReadOutcome::Failed => SessionsList::QueryFailed,
+    }
+}
+
+/// One cleanup delete's applied row count; a failed statement purged nothing.
+fn cleaned_rows(outcome: &WriteOutcome) -> u64 {
+    match outcome {
+        WriteOutcome::Applied(rows) => *rows,
+        WriteOutcome::Failed => 0,
+    }
+}
+
+/// `cleanup_task`: each delete's exact count, or zero when it failed.
+pub fn classify_cleanup(
+    revoked: &WriteOutcome,
+    expired: &WriteOutcome,
+    pending: &WriteOutcome,
+) -> CleanupReport {
+    CleanupReport {
+        revoked: cleaned_rows(revoked),
+        expired: cleaned_rows(expired),
+        pending: cleaned_rows(pending),
+    }
+}
+
+/// `StartIo::check_rate_limit`: `Allowed` exactly when the one counter statement
+/// ran (it grows before it refuses, so a refusal is `Failed`).
+pub fn classify_start_limit(outcomes: &[StoreOutcome]) -> LimitObservation {
+    if outcomes.len() == 1 && matches!(outcomes[0], StoreOutcome::Applied) {
+        LimitObservation::Allowed
+    } else {
+        LimitObservation::Denied
+    }
+}
+
+/// `post_verify`: `Allowed` exactly when the per-IP counter and the backoff
+/// precheck both ran (a live or unreadable backoff key is `Failed`).
+pub fn classify_login_limits(outcomes: &[StoreOutcome]) -> LimitObservation {
+    if outcomes.len() == 2
+        && matches!(outcomes[0], StoreOutcome::Applied)
+        && matches!(outcomes[1], StoreOutcome::Applied)
+    {
+        LimitObservation::Allowed
+    } else {
+        LimitObservation::Denied
+    }
+}
+
+/// `TokenIo::check_token_limits`: `Allowed` exactly when both counters and the
+/// backoff precheck ran.
+pub fn classify_token_limits(outcomes: &[StoreOutcome]) -> LimitObservation {
+    if outcomes.len() == 3
+        && matches!(outcomes[0], StoreOutcome::Applied)
+        && matches!(outcomes[1], StoreOutcome::Applied)
+        && matches!(outcomes[2], StoreOutcome::Applied)
+    {
+        LimitObservation::Allowed
+    } else {
+        LimitObservation::Denied
+    }
+}
+
+/// `TokenIo::record_token_failure`: `Recorded` exactly when the record ran.
+pub fn classify_token_failure_record(outcome: &StoreOutcome) -> TokenFailureRecordObservation {
+    match outcome {
+        StoreOutcome::Applied => TokenFailureRecordObservation::Recorded,
+        StoreOutcome::Failed => TokenFailureRecordObservation::StorageFailed,
+    }
+}
+
+/// `get_session`'s poll limiter: one counter statement.
+pub fn classify_poll_limit(outcomes: &[StoreOutcome]) -> LimitObservation {
+    if outcomes.len() == 1 && matches!(outcomes[0], StoreOutcome::Applied) {
+        LimitObservation::Allowed
+    } else {
+        LimitObservation::Denied
+    }
+}
+
+/// `get_keys`'s per-user limiter: one counter statement.
+pub fn classify_keys_limit(outcomes: &[StoreOutcome]) -> LimitObservation {
+    if outcomes.len() == 1 && matches!(outcomes[0], StoreOutcome::Applied) {
+        LimitObservation::Allowed
+    } else {
+        LimitObservation::Denied
+    }
+}
+
+/// `get_session`'s capsule clear: `Cleared` exactly when the statement matched
+/// a live capsule; zero rows is another poll that got there first; a failure
+/// retracted nothing.
+pub fn classify_capsule_clear(outcome: &WriteOutcome) -> CapsuleClearObservation {
+    match outcome {
+        WriteOutcome::Applied(0) => CapsuleClearObservation::AlreadyCollected,
+        WriteOutcome::Applied(_) => CapsuleClearObservation::Cleared,
+        WriteOutcome::Failed => CapsuleClearObservation::StorageFailed,
+    }
+}
+
+/// `get_keys`: the stored key row or none, or the query error.
+pub fn classify_session_keys(outcome: &ReadOutcome<SessionKeysView>) -> SessionKeysLookup {
+    match outcome {
+        ReadOutcome::Row(Some(view)) => SessionKeysLookup::Row(view.clone()),
+        ReadOutcome::Row(None) => SessionKeysLookup::Absent,
+        ReadOutcome::Failed => SessionKeysLookup::QueryFailed,
+    }
+}
+
 // ── Rendering (not extracted; pinned by the tests below) ───────────────────
 
 /// One SQL statement as the database receives it.
@@ -1006,6 +1375,7 @@ pub enum StoreOp {
     SetExNx,
     SetExNxByte,
     Exists,
+    Ttl,
 }
 
 /// One store statement as the handler sends it.
@@ -1167,6 +1537,7 @@ pub fn render_sql(stmt: &SqlStmt) -> Rendered {
             web_vk,
             link_nonce,
             now,
+            ..
         } => Rendered::Execute {
             sql: "INSERT INTO web_sessions
                     (id, user_id, approver_user_id, poll_secret_hash, ephemeral_pk, web_vk, link_nonce, mode, status, capsule, approved_by, created_at, expires_at)
@@ -1189,6 +1560,7 @@ pub fn render_sql(stmt: &SqlStmt) -> Rendered {
             capsule,
             expires_at,
             epoch,
+            ..
         } => Rendered::ExecuteMixed {
             sql: "UPDATE web_sessions
                  SET user_id = ?, mode = ?, status = 'granted', capsule = ?,
@@ -1223,6 +1595,41 @@ pub fn render_sql(stmt: &SqlStmt) -> Rendered {
         SqlStmt::RevokeSessionById { session } => Rendered::Execute {
             sql: "UPDATE web_sessions SET status = 'revoked', capsule = NULL WHERE id = ?",
             params: vec![session.clone()],
+        },
+        SqlStmt::SelectWebSessionById { session } => Rendered::Query {
+            sql: "SELECT user_id, web_vk, link_nonce, mode, status, capsule, expires_at,
+                    approver_user_id, poll_secret_hash, key_epoch
+             FROM web_sessions WHERE id = ?",
+            params: vec![session.clone()],
+        },
+        SqlStmt::SelectGrantedSessionsByUser { user } => Rendered::Query {
+            sql: "SELECT id, mode, status, created_at, expires_at
+             FROM web_sessions
+             WHERE user_id = ? AND status = 'granted'
+             ORDER BY created_at DESC
+             LIMIT 1000",
+            params: vec![user.clone()],
+        },
+        SqlStmt::DeleteRevokedWebSessions => Rendered::Execute {
+            sql: "DELETE FROM web_sessions WHERE status = 'revoked'",
+            params: vec![],
+        },
+        SqlStmt::DeleteExpiredWebSessions { now, .. } => Rendered::Execute {
+            sql: "DELETE FROM web_sessions WHERE expires_at IS NOT NULL AND expires_at < ?",
+            params: vec![now.clone()],
+        },
+        SqlStmt::DeleteStalePendingWebSessions { cutoff, .. } => Rendered::Execute {
+            sql: "DELETE FROM web_sessions WHERE status = 'pending' AND created_at < ?",
+            params: vec![cutoff.clone()],
+        },
+        SqlStmt::ClearSessionCapsule { session } => Rendered::Execute {
+            sql: "UPDATE web_sessions SET capsule = NULL WHERE id = ? AND capsule IS NOT NULL",
+            params: vec![session.clone()],
+        },
+        SqlStmt::SelectSessionKeys { session, user } => Rendered::Query {
+            sql: "SELECT ephemeral_pk, web_vk, status FROM web_sessions
+             WHERE id = ? AND approver_user_id = ?",
+            params: vec![session.clone(), user.clone()],
         },
         SqlStmt::Commit => Rendered::Commit,
     }
@@ -1306,6 +1713,14 @@ pub fn render_store(stmt: &StoreStmt) -> RenderedStore {
         },
         StoreStmt::Exists { key } => RenderedStore {
             op: StoreOp::Exists,
+            key: key.clone(),
+            value: 0,
+            ttl: 0,
+            limit: 0,
+            member: String::new(),
+        },
+        StoreStmt::Ttl { key } => RenderedStore {
+            op: StoreOp::Ttl,
             key: key.clone(),
             value: 0,
             ttl: 0,
@@ -1985,6 +2400,7 @@ mod tests {
             s("vk"),
             s("nonce"),
             s("now"),
+            1_000,
         ));
         assert_eq!(
             sql,
@@ -2005,6 +2421,7 @@ mod tests {
             s("cap"),
             s("exp"),
             7,
+            2_000,
         ));
         assert_eq!(
             sql,
@@ -2089,6 +2506,296 @@ mod tests {
                 limit: 0,
                 member: String::new()
             }
+        );
+    }
+
+    #[test]
+    fn web_session_reads_and_cleanup_render_the_historical_statements() {
+        let (sql, params) = query(&plan_load_session(s("sess")));
+        assert_eq!(
+            sql,
+            "SELECT user_id, web_vk, link_nonce, mode, status, capsule, expires_at,
+                    approver_user_id, poll_secret_hash, key_epoch
+             FROM web_sessions WHERE id = ?"
+        );
+        assert_eq!(params, vec![s("sess")]);
+
+        let (sql, params) = query(&plan_sessions_list(s("acct")));
+        assert_eq!(
+            sql,
+            "SELECT id, mode, status, created_at, expires_at
+             FROM web_sessions
+             WHERE user_id = ? AND status = 'granted'
+             ORDER BY created_at DESC
+             LIMIT 1000"
+        );
+        assert_eq!(params, vec![s("acct")]);
+
+        let plan = vec![
+            plan_cleanup_revoked(),
+            plan_cleanup_expired(s("now"), 1_000),
+            plan_cleanup_pending(s("cut"), 500),
+        ];
+        assert_eq!(plan.len(), 3);
+        let (sql, params) = exec(&plan[0]);
+        assert_eq!(sql, "DELETE FROM web_sessions WHERE status = 'revoked'");
+        assert!(params.is_empty());
+        let (sql, params) = exec(&plan[1]);
+        assert_eq!(
+            sql,
+            "DELETE FROM web_sessions WHERE expires_at IS NOT NULL AND expires_at < ?"
+        );
+        assert_eq!(params, vec![s("now")]);
+        let (sql, params) = exec(&plan[2]);
+        assert_eq!(
+            sql,
+            "DELETE FROM web_sessions WHERE status = 'pending' AND created_at < ?"
+        );
+        assert_eq!(params, vec![s("cut")]);
+    }
+
+    #[test]
+    fn limiter_plans_render_the_historical_keys_and_budgets() {
+        let plan = plan_login_limits(s("1.2.3.4"), s("dev"));
+        assert_eq!(
+            render_store(&plan[0]),
+            RenderedStore {
+                op: StoreOp::Incr,
+                key: s("rl:verify:ip:1.2.3.4"),
+                value: 1,
+                ttl: 60,
+                limit: 10,
+                member: String::new()
+            }
+        );
+        assert_eq!(
+            render_store(&plan[1]),
+            RenderedStore {
+                op: StoreOp::Ttl,
+                key: s("rl:backoff:verify:1.2.3.4:dev"),
+                value: 0,
+                ttl: 0,
+                limit: 0,
+                member: String::new()
+            }
+        );
+
+        let plan = plan_start_limit(s("1.2.3.4"));
+        assert_eq!(
+            render_store(&plan[0]),
+            RenderedStore {
+                op: StoreOp::Incr,
+                key: s("rl:websession:start:ip:1.2.3.4"),
+                value: 1,
+                ttl: 3_600,
+                limit: 30,
+                member: String::new()
+            }
+        );
+
+        let plan = plan_token_limits(s("1.2.3.4"), s("sess"));
+        assert_eq!(
+            render_store(&plan[0]),
+            RenderedStore {
+                op: StoreOp::Incr,
+                key: s("rl:websession:token:ip:1.2.3.4:sess"),
+                value: 1,
+                ttl: 60,
+                limit: 10,
+                member: String::new()
+            }
+        );
+        assert_eq!(
+            render_store(&plan[1]),
+            RenderedStore {
+                op: StoreOp::Incr,
+                key: s("rl:websession:token:sess"),
+                value: 1,
+                ttl: 60,
+                limit: 30,
+                member: String::new()
+            }
+        );
+        assert_eq!(
+            render_store(&plan[2]),
+            RenderedStore {
+                op: StoreOp::Ttl,
+                key: s("rl:backoff:websession:token:1.2.3.4:sess"),
+                value: 0,
+                ttl: 0,
+                limit: 0,
+                member: String::new()
+            }
+        );
+
+        let plan = plan_token_backoff_record(s("1.2.3.4"), s("sess"));
+        assert_eq!(
+            render_store(&plan[0]),
+            RenderedStore {
+                op: StoreOp::BackoffFailure,
+                key: s("rl:streak:websession:token:1.2.3.4:sess"),
+                value: 0,
+                ttl: 0,
+                limit: 0,
+                member: s("rl:backoff:websession:token:1.2.3.4:sess")
+            }
+        );
+        let plan = plan_token_backoff_reset(s("1.2.3.4"), s("sess"));
+        assert_eq!(
+            render_store(&plan[0]),
+            RenderedStore {
+                op: StoreOp::ResetBackoff,
+                key: s("rl:streak:websession:token:1.2.3.4:sess"),
+                value: 0,
+                ttl: 0,
+                limit: 0,
+                member: s("rl:backoff:websession:token:1.2.3.4:sess")
+            }
+        );
+    }
+
+    #[test]
+    fn poll_and_keys_plans_render_the_historical_statements() {
+        let plan = plan_poll_limit(s("1.2.3.4"));
+        assert_eq!(
+            render_store(&plan[0]),
+            RenderedStore {
+                op: StoreOp::Incr,
+                key: s("rl:websession:poll:ip:1.2.3.4"),
+                value: 1,
+                ttl: 60,
+                limit: 120,
+                member: String::new()
+            }
+        );
+        let plan = plan_keys_limit(s("acct"));
+        assert_eq!(
+            render_store(&plan[0]),
+            RenderedStore {
+                op: StoreOp::Incr,
+                key: s("rl:websession:keys:user:acct"),
+                value: 1,
+                ttl: 60,
+                limit: 60,
+                member: String::new()
+            }
+        );
+
+        let (sql, params) = exec(&plan_capsule_clear(s("sess")));
+        assert_eq!(
+            sql,
+            "UPDATE web_sessions SET capsule = NULL WHERE id = ? AND capsule IS NOT NULL"
+        );
+        assert_eq!(params, vec![s("sess")]);
+
+        let (sql, params) = query(&plan_session_keys(s("sess"), s("acct")));
+        assert_eq!(
+            sql,
+            "SELECT ephemeral_pk, web_vk, status FROM web_sessions
+             WHERE id = ? AND approver_user_id = ?"
+        );
+        assert_eq!(params, vec![s("sess"), s("acct")]);
+    }
+
+    #[test]
+    fn read_and_limit_classifiers_keep_the_historical_observations() {
+        let view = SessionRowView {
+            user_id: Some(s("acct")),
+            approver_user_id: Some(s("acct")),
+            poll_secret_hash: Some(s("hash")),
+            web_vk: Some(s("vk")),
+            link_nonce: Some(s("nonce")),
+            mode: Some(s("rw")),
+            status: Some(s("granted")),
+            capsule: Some(s("cap")),
+            expires_at: Some(s("exp")),
+            key_epoch: Some(3),
+        };
+        assert_eq!(
+            classify_session_lookup(&ReadOutcome::Row(Some(view.clone()))),
+            SessionLookup::Row(view)
+        );
+        assert_eq!(
+            classify_session_lookup(&ReadOutcome::Row(None)),
+            SessionLookup::Absent
+        );
+        assert_eq!(
+            classify_session_lookup(&ReadOutcome::Failed),
+            SessionLookup::QueryFailed
+        );
+
+        let row = SessionListRowView {
+            id: s("sess"),
+            mode: s("rw"),
+            status: s("granted"),
+            created_at: s("t"),
+            expires_at: Some(s("exp")),
+        };
+        assert_eq!(
+            classify_sessions_list(&ReadOutcome::Row(Some(vec![row.clone()]))),
+            SessionsList::Rows(vec![row])
+        );
+        assert_eq!(
+            classify_sessions_list(&ReadOutcome::Failed),
+            SessionsList::QueryFailed
+        );
+
+        assert_eq!(
+            classify_cleanup(
+                &WriteOutcome::Applied(2),
+                &WriteOutcome::Applied(3),
+                &WriteOutcome::Failed
+            ),
+            CleanupReport {
+                revoked: 2,
+                expired: 3,
+                pending: 0
+            }
+        );
+        assert_eq!(
+            classify_cleanup(
+                &WriteOutcome::Failed,
+                &WriteOutcome::Failed,
+                &WriteOutcome::Failed
+            ),
+            CleanupReport::default()
+        );
+
+        assert_eq!(
+            classify_start_limit(&[StoreOutcome::Applied]),
+            LimitObservation::Allowed
+        );
+        assert_eq!(
+            classify_start_limit(&[StoreOutcome::Failed]),
+            LimitObservation::Denied
+        );
+        assert_eq!(
+            classify_login_limits(&[StoreOutcome::Applied, StoreOutcome::Applied]),
+            LimitObservation::Allowed
+        );
+        assert_eq!(
+            classify_login_limits(&[StoreOutcome::Applied, StoreOutcome::Failed]),
+            LimitObservation::Denied
+        );
+        assert_eq!(
+            classify_token_limits(&[
+                StoreOutcome::Applied,
+                StoreOutcome::Applied,
+                StoreOutcome::Applied
+            ]),
+            LimitObservation::Allowed
+        );
+        assert_eq!(
+            classify_token_limits(&[StoreOutcome::Applied, StoreOutcome::Applied]),
+            LimitObservation::Denied
+        );
+        assert_eq!(
+            classify_token_failure_record(&StoreOutcome::Applied),
+            TokenFailureRecordObservation::Recorded
+        );
+        assert_eq!(
+            classify_token_failure_record(&StoreOutcome::Failed),
+            TokenFailureRecordObservation::StorageFailed
         );
     }
 

@@ -146,6 +146,11 @@ impl<T: SessionStore> SessionStore for Faulty<T> {
         self.hit()?;
         self.inner.exists(key)
     }
+
+    fn ttl(&mut self, key: &str) -> anyhow::Result<i64> {
+        self.hit()?;
+        self.inner.ttl(key)
+    }
 }
 
 const NOW: &str = "2026-10-29T12:00:00+00:00";
@@ -221,11 +226,14 @@ async fn load(db: &TursoDb, state: &Model) {
     }
     for (id, row) in &state.sessions {
         db.execute(
-            "INSERT INTO web_sessions (id, user_id, approver_user_id, ephemeral_pk, link_nonce, mode, status, capsule, approved_by, key_epoch, created_at, expires_at) VALUES (?, ?, ?, 'pk', 'nonce', ?, ?, ?, ?, ?, 't', ?)",
+            "INSERT INTO web_sessions (id, user_id, approver_user_id, poll_secret_hash, ephemeral_pk, web_vk, link_nonce, mode, status, capsule, approved_by, key_epoch, created_at, expires_at) VALUES (?, ?, ?, ?, 'pk', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             vec![
                 TursoValue::Text(id.clone()),
                 opt(&row.user_id),
                 opt(&row.approver_user_id),
+                opt(&row.poll_secret_hash),
+                opt(&row.web_vk),
+                opt(&row.link_nonce),
                 opt(&row.mode),
                 TursoValue::Text(row.status.clone()),
                 opt(&row.capsule),
@@ -234,6 +242,7 @@ async fn load(db: &TursoDb, state: &Model) {
                     Some(epoch) => TursoValue::Integer(epoch),
                     None => TursoValue::Null,
                 },
+                TursoValue::Text(row.created_at.clone()),
                 opt(&row.expires_at),
             ],
         )
@@ -305,6 +314,15 @@ fn text_opt(row: &VelaRow, i: usize) -> Option<String> {
     row.text(i).map(String::from)
 }
 
+/// The instant an RFC3339 column denotes, as cleanup's numeric cutoff model
+/// carries it. Text that is not an instant (the older fixtures' `t`) has no
+/// instant.
+fn instant_secs(text: &Option<String>) -> Option<u64> {
+    text.as_deref()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|at| at.timestamp().max(0) as u64)
+}
+
 /// The modelled columns of all eight tables.
 async fn snapshot(db: &TursoDb) -> Model {
     let mut state = Model::default();
@@ -352,12 +370,14 @@ async fn snapshot(db: &TursoDb) -> Model {
     }
     for row in db
         .query(
-            "SELECT id, user_id, approver_user_id, status, capsule, approved_by, mode, key_epoch, expires_at FROM web_sessions",
+            "SELECT id, user_id, approver_user_id, status, capsule, approved_by, mode, key_epoch, expires_at, poll_secret_hash, web_vk, link_nonce, created_at, ephemeral_pk FROM web_sessions",
             vec![],
         )
         .await
         .unwrap()
     {
+        let expires_at = text_opt(&row, 8);
+        let created_at = text_opt(&row, 12).unwrap_or_default();
         state.sessions.insert(
             text(&row, 0),
             SessionRow {
@@ -368,7 +388,14 @@ async fn snapshot(db: &TursoDb) -> Model {
                 approved_by: text_opt(&row, 5),
                 mode: text_opt(&row, 6),
                 key_epoch: row.i64(7),
-                expires_at: text_opt(&row, 8),
+                created_at: created_at.clone(),
+                expires_secs: instant_secs(&expires_at),
+                created_secs: instant_secs(&Some(created_at)).unwrap_or(0),
+                expires_at,
+                poll_secret_hash: text_opt(&row, 9),
+                ephemeral_pk: text_opt(&row, 13).unwrap_or_default(),
+                web_vk: text_opt(&row, 10),
+                link_nonce: text_opt(&row, 11),
             },
         );
     }
@@ -490,12 +517,19 @@ fn base_state() -> Model {
         SessionRow {
             user_id: Some(user(0)),
             approver_user_id: Some(user(1)),
+            poll_secret_hash: None,
+            ephemeral_pk: s("pk"),
+            web_vk: Some(s("vk")),
+            link_nonce: Some(s("nonce")),
             status: s("granted"),
             capsule: Some(s("cap")),
             approved_by: Some(device(0)),
             mode: Some(s("rw")),
             key_epoch: Some(1),
             expires_at: Some(s("t")),
+            created_at: s("t"),
+            expires_secs: None,
+            created_secs: 0,
         },
     );
     state.sessions.insert(
@@ -503,12 +537,19 @@ fn base_state() -> Model {
         SessionRow {
             user_id: None,
             approver_user_id: Some(user(0)),
+            poll_secret_hash: None,
+            ephemeral_pk: s("pk"),
+            web_vk: Some(s("vk")),
+            link_nonce: Some(s("nonce")),
             status: s("pending"),
             capsule: None,
             approved_by: None,
             mode: None,
             key_epoch: None,
             expires_at: None,
+            created_at: s("t"),
+            expires_secs: None,
+            created_secs: 0,
         },
     );
     state.sessions.insert(
@@ -516,12 +557,19 @@ fn base_state() -> Model {
         SessionRow {
             user_id: Some(user(0)),
             approver_user_id: Some(user(0)),
+            poll_secret_hash: None,
+            ephemeral_pk: s("pk"),
+            web_vk: Some(s("vk")),
+            link_nonce: Some(s("nonce")),
             status: s("granted"),
             capsule: Some(s("cap")),
             approved_by: Some(device(1)),
             mode: Some(s("ro")),
             key_epoch: Some(1),
             expires_at: Some(s("t")),
+            created_at: s("t"),
+            expires_secs: None,
+            created_secs: 0,
         },
     );
     state.sessions.insert(
@@ -529,12 +577,19 @@ fn base_state() -> Model {
         SessionRow {
             user_id: Some(user(1)),
             approver_user_id: Some(user(1)),
+            poll_secret_hash: None,
+            ephemeral_pk: s("pk"),
+            web_vk: Some(s("vk")),
+            link_nonce: Some(s("nonce")),
             status: s("revoked"),
             capsule: None,
             approved_by: Some(device(1)),
             mode: None,
             key_epoch: None,
             expires_at: None,
+            created_at: s("t"),
+            expires_secs: None,
+            created_secs: 0,
         },
     );
     state.inbox.insert(s("i0"), MailRow { sender: user(0), recipient: user(1) });
@@ -635,9 +690,17 @@ async fn schema_has_the_modelled_columns() {
                 ("id", "TEXT UNIQUE NOT NULL"),
                 ("user_id", "TEXT"),
                 ("approver_user_id", "TEXT"),
+                ("poll_secret_hash", "TEXT"),
+                ("ephemeral_pk", "TEXT NOT NULL"),
+                ("web_vk", "TEXT"),
+                ("link_nonce", "TEXT NOT NULL"),
+                ("mode", "TEXT"),
                 ("status", "TEXT NOT NULL"),
                 ("capsule", "TEXT"),
                 ("approved_by", "TEXT"),
+                ("key_epoch", "INTEGER"),
+                ("created_at", "TEXT NOT NULL"),
+                ("expires_at", "TEXT"),
             ],
         ),
         (
@@ -2006,12 +2069,19 @@ fn web_states() -> Vec<Model> {
             SessionRow {
                 user_id: None,
                 approver_user_id: Some(user(0)),
+                poll_secret_hash: None,
+                ephemeral_pk: s("pk"),
+                web_vk: Some(s("vk")),
+                link_nonce: Some(s("nonce")),
                 status: s("pending"),
                 capsule: None,
                 approved_by: None,
                 mode: None,
                 key_epoch: None,
                 expires_at: None,
+                created_at: s("t"),
+                expires_secs: None,
+                created_secs: 0,
             },
         );
         state
@@ -2108,11 +2178,13 @@ async fn web_session_executors_match_the_store_model() {
     // failure) is proved in the model and pinned by the schema check.
     for pre in web_states() {
         counts.states += 1;
+        let scratch = Store::open_temp().unwrap();
         for fault in faults(1) {
             load(&db, &pre).await;
             let mut io = StartIo {
                 state: &state,
                 sql: Faulty::new(DbSql { pool: &db, tx: None }, fault),
+                store: Faulty::new(SledStore(&scratch), None),
                 body: web_start_request(),
                 ip: s("203.0.113.9"),
                 session_id: None,
@@ -2120,6 +2192,21 @@ async fn web_session_executors_match_the_store_model() {
             };
             let observed = io.insert_pending().await;
             let id = io.session_id.map(|id| id.to_string()).unwrap_or_default();
+            // The executor stamps `Utc::now()`; read the instant it actually
+            // stored so the model is given the same creation time.
+            let created = if id.is_empty() {
+                None
+            } else {
+                db.query(
+                    "SELECT created_at FROM web_sessions WHERE id = ?",
+                    vec![TursoValue::Text(id.clone())],
+                )
+                .await
+                .unwrap()
+                .first()
+                .and_then(|row| row.text(0).map(String::from))
+            };
+            let created = created.unwrap_or_else(|| s(NOW));
             let (expected, want) = model::insert_pending(
                 &pre,
                 &id,
@@ -2128,7 +2215,8 @@ async fn web_session_executors_match_the_store_model() {
                 "epk",
                 "vk",
                 "nonce",
-                NOW,
+                &created,
+                seg(instant_secs(&Some(created.clone()))),
                 fault,
             );
             let case = format!("insert pending fault {fault:?}");
@@ -2186,6 +2274,7 @@ async fn web_session_executors_match_the_store_model() {
                     "cap",
                     &exp,
                     epoch,
+                    instant_secs(&Some(exp.clone())).unwrap_or(0),
                     fault,
                 );
                 let case = format!("grant epoch {epoch} fault {fault:?}");
@@ -2376,6 +2465,345 @@ async fn web_session_executors_match_the_store_model() {
 
     eprintln!(
         "session executor conformance (web sessions): {} states, {} cases, {} with an injected failure",
+        counts.states, counts.cases, counts.faulted
+    );
+}
+
+// ── Wave 2: shared reads, cleanup and pre-driver limiters ─────────────────
+
+/// The seeded instants the cleanup test uses (all RFC3339, so `load` and
+/// `snapshot` agree on their numeric form).
+const CLEANUP_NOW: &str = "2026-10-30T12:00:00+00:00";
+const CLEANUP_EXPIRED: &str = "2026-10-30T11:00:00+00:00";
+const CLEANUP_LIVE: &str = "2026-10-30T13:00:00+00:00";
+const CLEANUP_CUTOFF: &str = "2026-10-30T11:50:00+00:00";
+const CLEANUP_STALE: &str = "2026-10-30T10:00:00+00:00";
+const CLEANUP_FRESH: &str = "2026-10-30T11:55:00+00:00";
+
+fn cleanup_state() -> Model {
+    let mut state = base_state();
+    // session 0: a granted session already past its expiry, its capsule
+    // already collected (the capsule-clear cases seed one themselves).
+    let row = state.sessions.get_mut(&session_id(0)).unwrap();
+    row.status = s("granted");
+    row.capsule = None;
+    row.expires_at = Some(s(CLEANUP_EXPIRED));
+    row.expires_secs = instant_secs(&Some(s(CLEANUP_EXPIRED)));
+    row.created_at = s(CLEANUP_STALE);
+    row.created_secs = instant_secs(&Some(s(CLEANUP_STALE))).unwrap();
+    // session 3: revoked, so cleanup removes it regardless of timestamps.
+    let row = state.sessions.get_mut(&session_id(3)).unwrap();
+    row.status = s("revoked");
+    row.created_at = s(CLEANUP_STALE);
+    row.created_secs = instant_secs(&Some(s(CLEANUP_STALE))).unwrap();
+    // session 1: a stale pending session.
+    let row = state.sessions.get_mut(&session_id(1)).unwrap();
+    row.status = s("pending");
+    row.created_at = s(CLEANUP_STALE);
+    row.created_secs = instant_secs(&Some(s(CLEANUP_STALE))).unwrap();
+    // session 2: a pending session still inside the pending window.
+    let row = state.sessions.get_mut(&session_id(2)).unwrap();
+    row.status = s("pending");
+    row.expires_at = Some(s(CLEANUP_LIVE));
+    row.expires_secs = instant_secs(&Some(s(CLEANUP_LIVE)));
+    row.created_at = s(CLEANUP_FRESH);
+    row.created_secs = instant_secs(&Some(s(CLEANUP_FRESH))).unwrap();
+    state
+}
+
+fn seg(value: Option<u64>) -> u64 {
+    value.unwrap_or(0)
+}
+
+#[tokio::test]
+async fn web_session_reads_cleanup_and_limits_match_the_store_model() {
+    use vela_session_policy::store::{
+        classify_capsule_clear, classify_cleanup, classify_login_limits, classify_poll_limit,
+        classify_keys_limit, classify_session_keys, classify_session_lookup,
+        classify_sessions_list, classify_start_limit, classify_token_limits, plan_capsule_clear, plan_cleanup_expired,
+        plan_cleanup_pending, plan_cleanup_revoked, plan_keys_limit, plan_load_session,
+        plan_login_limits, plan_poll_limit, plan_session_keys, plan_sessions_list,
+        plan_start_limit, plan_token_limits, CapsuleClearObservation, LimitObservation,
+        ReadOutcome, SessionKeysLookup, SessionLookup, SessionRowView, SessionsList,
+    };
+    let db = temp_db().await;
+    let mut counts = Counts::default();
+
+    // `load_session`: every stored row, a missing id, and the read failure.
+    for pre in web_states() {
+        counts.states += 1;
+        load(&db, &pre).await;
+        for id in [session_id(4), s("absent")] {
+            for fault in [None, Some(0)] {
+                let mut sql = Faulty::new(DbSql { pool: &db, tx: None }, fault);
+                let (rows, error) = super::session_store::run_read(
+                    &mut sql,
+                    plan_load_session(id.clone()),
+                )
+                .await;
+                let outcome = match (rows, error) {
+                    (Some(rows), None) => ReadOutcome::Row(rows.first().map(|row| {
+                        super::super::web_session::session_row_view(row)
+                    })),
+                    _ => ReadOutcome::Failed,
+                };
+                let observed = classify_session_lookup(&outcome);
+                let expected = classify_session_lookup(&model::read_session(
+                    &pre,
+                    &id,
+                    fault.is_some(),
+                ));
+                let case = format!("load {id} fault {fault:?}");
+                assert_eq!(observed, expected, "{case}");
+                counts.case(fault);
+            }
+        }
+    }
+
+    // `get_sessions_list`: the exact granted set (order is presentation).
+    for pre in web_states() {
+        counts.states += 1;
+        for fault in [None, Some(0)] {
+            load(&db, &pre).await;
+            let mut sql = Faulty::new(DbSql { pool: &db, tx: None }, fault);
+            let (rows, error) =
+                super::session_store::run_read(&mut sql, plan_sessions_list(user(0))).await;
+            let outcome = match (rows, error) {
+                (Some(rows), None) => ReadOutcome::Row(Some(
+                    rows.iter()
+                        .map(|row| super::super::web_session::session_list_row_view(row))
+                        .collect(),
+                )),
+                _ => ReadOutcome::Failed,
+            };
+            let observed = classify_sessions_list(&outcome);
+            let case = format!("list fault {fault:?}");
+            if fault.is_some() {
+                assert_eq!(observed, SessionsList::QueryFailed, "{case}");
+            } else {
+                let mut got = match observed {
+                    SessionsList::Rows(rows) => rows,
+                    SessionsList::QueryFailed => panic!("the list query failed without a fault"),
+                };
+                let mut expected_rows = model::sessions_list_rows(&pre, &user(0));
+                got.sort_by(|a, b| a.id.cmp(&b.id));
+                expected_rows.sort_by(|a, b| a.id.cmp(&b.id));
+                assert_eq!(got, expected_rows, "{case}");
+            }
+            counts.case(fault);
+        }
+    }
+
+    // `cleanup_task`: every fault point, each delete independent.
+    for fault in [None, Some(0), Some(1), Some(2)] {
+        counts.states += 1;
+        let pre = cleanup_state();
+        load(&db, &pre).await;
+        let plan = vec![
+            plan_cleanup_revoked(),
+            plan_cleanup_expired(s(CLEANUP_NOW), seg(instant_secs(&Some(s(CLEANUP_NOW))))),
+            plan_cleanup_pending(s(CLEANUP_CUTOFF), seg(instant_secs(&Some(s(CLEANUP_CUTOFF))))),
+        ];
+        let mut sql = Faulty::new(DbSql { pool: &db, tx: None }, fault);
+        let mut outcomes = Vec::new();
+        for stmt in &plan {
+            let (observed, _) =
+                super::session_store::run_sql(&mut sql, std::slice::from_ref(stmt)).await;
+            outcomes.extend(observed);
+        }
+        let report = classify_cleanup(
+            outcomes.first().unwrap_or(&vela_session_policy::store::WriteOutcome::Failed),
+            outcomes.get(1).unwrap_or(&vela_session_policy::store::WriteOutcome::Failed),
+            outcomes.get(2).unwrap_or(&vela_session_policy::store::WriteOutcome::Failed),
+        );
+        let (expected_report, want) = model::cleanup(
+            &pre,
+            seg(instant_secs(&Some(s(CLEANUP_NOW)))),
+            seg(instant_secs(&Some(s(CLEANUP_CUTOFF)))),
+            fault,
+        );
+        let case = format!("cleanup fault {fault:?}");
+        assert_eq!(report, expected_report, "{case}");
+        assert_eq!(snapshot(&db).await, want, "{case}");
+        counts.case(fault);
+    }
+
+    // `get_session`'s capsule clear: a live capsule, one already taken.
+    for seed in [false, true] {
+        counts.states += 1;
+        for fault in [None, Some(0)] {
+            let pre = cleanup_state();
+            load(&db, &pre).await;
+            if seed {
+                db.execute(
+                    "UPDATE web_sessions SET capsule = 'cap' WHERE id = ?",
+                    vec![TursoValue::Text(session_id(0))],
+                )
+                .await
+                .unwrap();
+            }
+            let mut sql = Faulty::new(DbSql { pool: &db, tx: None }, fault);
+            let (outcomes, _) = super::session_store::run_sql(
+                &mut sql,
+                std::slice::from_ref(&plan_capsule_clear(session_id(0))),
+            )
+            .await;
+            let observed = classify_capsule_clear(
+                outcomes.first().unwrap_or(&vela_session_policy::store::WriteOutcome::Failed),
+            );
+            let (expected, want) = model::capsule_clear(
+                &{
+                    let mut seeded = pre.clone();
+                    if seed {
+                        seeded.sessions.get_mut(&session_id(0)).unwrap().capsule = Some(s("cap"));
+                    }
+                    seeded
+                },
+                &session_id(0),
+                fault,
+            );
+            let case = format!("capsule seed {seed} fault {fault:?}");
+            assert_eq!(observed, expected, "{case}");
+            assert_eq!(snapshot(&db).await, want, "{case}");
+            counts.case(fault);
+        }
+    }
+
+    // `get_keys`: the committed approver, another account, a missing row.
+    for (caller, id, fault) in [
+        (user(0), session_id(4), None),
+        (user(1), session_id(4), None),
+        (user(0), s("absent"), None),
+        (user(0), session_id(4), Some(0)),
+    ] {
+        counts.states += 1;
+        let pre = web_states().remove(0);
+        load(&db, &pre).await;
+        let mut sql = Faulty::new(DbSql { pool: &db, tx: None }, fault);
+        let (rows, error) = super::session_store::run_read(
+            &mut sql,
+            plan_session_keys(id.clone(), caller.clone()),
+        )
+        .await;
+        let outcome = match (rows, error) {
+            (Some(rows), None) => ReadOutcome::Row(rows.first().map(|row| {
+                vela_session_policy::store::SessionKeysView {
+                    ephemeral_pk: row.text(0).map(String::from),
+                    web_vk: row.text(1).map(String::from),
+                    status: row.text(2).map(String::from),
+                }
+            })),
+            _ => ReadOutcome::Failed,
+        };
+        let observed = classify_session_keys(&outcome);
+        let expected = model::session_keys(&pre, &id, &caller, fault);
+        let case = format!("keys {id} caller {caller} fault {fault:?}");
+        assert_eq!(observed, expected, "{case}");
+        assert!(!matches!(observed, SessionKeysLookup::Row(_))
+            || !matches!(expected, SessionKeysLookup::Absent));
+        counts.case(fault);
+    }
+
+    // The pre-driver limiters, over a real sled store and every fault point.
+    type LimitFn = fn(&ModelStore, Option<usize>) -> (LimitObservation, ModelStore);
+    let limiter_cases: [(&str, Vec<vela_session_policy::store::StoreStmt>, LimitFn, usize); 5] = [
+        (
+            "login",
+            plan_login_limits(s("1.2.3.4"), s("dev")),
+            |s, f| model::login_limits(s, "1.2.3.4", "dev", f),
+            2,
+        ),
+        (
+            "start",
+            plan_start_limit(s("1.2.3.4")),
+            |s, f| model::start_limit(s, "1.2.3.4", f),
+            1,
+        ),
+        (
+            "token",
+            plan_token_limits(s("1.2.3.4"), s("sess")),
+            |s, f| model::token_limits(s, "1.2.3.4", "sess", f),
+            3,
+        ),
+        (
+            "poll",
+            plan_poll_limit(s("1.2.3.4")),
+            |s, f| model::poll_limit(s, "1.2.3.4", f),
+            1,
+        ),
+        (
+            "keys",
+            plan_keys_limit(user(0)),
+            |s, f| model::keys_limit(s, &user(0), f),
+            1,
+        ),
+    ];
+    for (name, plan, model_fn, _) in limiter_cases {
+        counts.states += 1;
+        let first = vela_session_policy::store::render_store(&plan[0]);
+        for seed in [first.limit.saturating_sub(1), first.limit, 0] {
+            for backoff in [false, true] {
+                for fault in faults(plan.len()) {
+                    let store = Store::open_temp().unwrap();
+                    let mut ms = ModelStore::default();
+                    if seed > 0 {
+                        // Seed a fixed-window counter at `seed` by hand: the
+                        // model's counters and sled's value must agree.
+                        for _ in 0..seed {
+                            ms.counters
+                                .entry(first.key.clone())
+                                .and_modify(|n| *n += 1)
+                                .or_insert(1);
+                        }
+                        let count = *ms.counters.get(&first.key).unwrap();
+                        assert_eq!(
+                            store
+                                .incr_fixed_window(&first.key, count, 60)
+                                .unwrap(),
+                            count
+                        );
+                    }
+                    if backoff {
+                        if let Some(ttl_stmt) = plan.iter().find(|stmt| {
+                            matches!(
+                                vela_session_policy::store::render_store(stmt).op,
+                                vela_session_policy::store::StoreOp::Ttl
+                            )
+                        }) {
+                            let key = vela_session_policy::store::render_store(ttl_stmt).key;
+                            store.set_ex(&key, &[1], 60).unwrap();
+                            ms.kv.insert(key, s("1"));
+                        }
+                    }
+                    let mut faulty = Faulty::new(SledStore(&store), fault);
+                    let (observed_outcomes, observed_error) =
+                        super::session_store::run_store(&mut faulty, &plan);
+                    let observed = match name {
+                        "login" => classify_login_limits(&observed_outcomes),
+                        "start" => classify_start_limit(&observed_outcomes),
+                        "token" => classify_token_limits(&observed_outcomes),
+                        "poll" => classify_poll_limit(&observed_outcomes),
+                        "keys" => classify_keys_limit(&observed_outcomes),
+                        _ => unreachable!(),
+                    };
+                    let (expected, _) = model_fn(&ms, fault);
+                    let case = format!(
+                        "{name} seed {seed} backoff {backoff} fault {fault:?}"
+                    );
+                    assert_eq!(observed, expected, "{case}");
+                    assert_eq!(
+                        observed == LimitObservation::Allowed,
+                        observed_error.is_none(),
+                        "{case}"
+                    );
+                    counts.case(fault);
+                }
+            }
+        }
+    }
+
+    eprintln!(
+        "session executor conformance (wave 2 reads/cleanup/limits): {} states, {} cases, {} with an injected failure",
         counts.states, counts.cases, counts.faulted
     );
 }

@@ -14,11 +14,11 @@
 //! `run_login` that hax extracts and F* checks. Only the effect the driver just
 //! emitted is performed, and nothing after its verdict.
 //!
-//! The per-IP limiter and the backoff precheck stay outside the macro: they run
-//! before the challenge take, i.e. before the driver begins. The best-effort
-//! `last_active` update is performed by the executor's `reset_backoff` method,
-//! which is the effect that precedes issuance, so the observable order is
-//! unchanged.
+//! The per-IP limiter and the backoff precheck are the planned `*Limits`
+//! passes in `store.rs`: they run before the challenge take, i.e. before the
+//! driver begins. The best-effort `last_active` update is performed by the
+//! executor's `reset_backoff` method, which is the effect that precedes
+//! issuance, so the observable order is unchanged.
 
 use crate::{
     auth::session_store::{
@@ -28,7 +28,7 @@ use crate::{
     auth::token::TokenService,
     device::enroll::{unify_device_auth_error, verify_auth_signature, DEVICE_AUTH_FAILED},
     error::{AppError, Result},
-    net, rate_limit,
+    net,
     state::AppState,
 };
 use axum::{
@@ -320,11 +320,25 @@ pub async fn post_verify(
     let ip = net::client_ip(&headers, addr.map(|ConnectInfo(a)| a.ip()), &state.config);
     let device_id_str = body.device_id.to_string();
 
-    // The IP limiter and the backoff precheck remain handler glue: they run
-    // before any challenge is taken, exactly as before. The pure driver starts
-    // at the single-use challenge take.
-    rate_limit::verify_by_ip(&state.store, &ip)?;
-    rate_limit::check_verify_backoff(&state.store, &ip, &device_id_str)?;
+    // The IP limiter and the backoff precheck are the planned executor passes
+    // that run before any challenge is taken, exactly as before. The pure
+    // driver starts at the single-use challenge take.
+    let mut limit_store = SledStore(&state.store);
+    let limit_plan = vela_session_policy::store::plan_login_limits(
+        ip.clone(),
+        device_id_str.clone(),
+    );
+    let (limit_outcomes, limit_error) = run_store(&mut limit_store, &limit_plan);
+    if let Some(error) = limit_error {
+        let mut slot = None;
+        keep_error(&mut slot, error);
+        return Err(slot.expect("a limit error was just kept"));
+    }
+    if vela_session_policy::store::classify_login_limits(&limit_outcomes)
+        != vela_session_policy::store::LimitObservation::Allowed
+    {
+        return Err(AppError::RateLimited("too many attempts".into()));
+    }
 
     let requested_name = body
         .device_name

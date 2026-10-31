@@ -77,6 +77,14 @@ mutants=(
   classify-claim-error plan-claim-ttl classify-issue-track
   classify-lockout-session-error plan-revoke-session-key
   classify-revoke-session-error
+  plan-load-session-key plan-sessions-list-user plan-capsule-clear-key
+  plan-session-keys-user plan-cleanup-expired-swap classify-cleanup-error
+  classify-start-limit-error classify-login-limits-error
+  classify-token-limits-error classify-poll-limit-error
+  classify-keys-limit-error classify-capsule-clear-error
+  classify-session-keys-error plan-login-limit-budget
+  plan-start-limit-budget plan-token-limit-budget plan-poll-limit-budget
+  plan-keys-limit-budget
 )
 declare -A expect=(
   [classify-logout-error]=logout_is_honest
@@ -113,6 +121,24 @@ declare -A expect=(
   [classify-lockout-session-error]=lockout_session_is_honest
   [plan-revoke-session-key]=plan_revoke_session_shape
   [classify-revoke-session-error]=revoke_session_observes_its_run
+  [plan-load-session-key]=plan_load_session_shape
+  [plan-sessions-list-user]=plan_sessions_list_shape
+  [plan-capsule-clear-key]=plan_capsule_clear_shape
+  [plan-session-keys-user]=plan_session_keys_shape
+  [plan-cleanup-expired-swap]=plan_cleanup_expired_shape
+  [classify-cleanup-error]=cleanup_revoked_fault
+  [classify-start-limit-error]=start_limit_is_honest
+  [classify-login-limits-error]=login_limits_is_honest
+  [classify-token-limits-error]=token_limits_is_honest
+  [classify-poll-limit-error]=poll_limit_is_honest
+  [classify-keys-limit-error]=keys_limit_is_honest
+  [classify-capsule-clear-error]=capsule_clear_is_honest
+  [classify-session-keys-error]=session_keys_is_honest
+  [plan-login-limit-budget]=plan_login_limits_shape
+  [plan-start-limit-budget]=plan_start_limit_shape
+  [plan-token-limit-budget]=plan_token_limits_shape
+  [plan-poll-limit-budget]=plan_poll_limit_shape
+  [plan-keys-limit-budget]=plan_keys_limit_shape
 )
 
 failures=0
@@ -194,7 +220,8 @@ elif name == 'classify-login-device-failed':
          '''  | DeviceReadOutcome_Failed  ->
     Vela_session_policy.Login_driver.DeviceObservation_Present''')
 elif name == 'classify-failure-counter-error':
-    once('''    (match outcomes.[ mk_usize 0 ] <: t_StoreOutcome with
+    in_body('let classify_failure_counter', 'let classify_backoff_reset',
+         '''    (match outcomes.[ mk_usize 0 ] <: t_StoreOutcome with
       | StoreOutcome_Applied  -> true''',
          '''    (match outcomes.[ mk_usize 0 ] <: t_StoreOutcome with
       | StoreOutcome_Applied  -> false''')
@@ -296,6 +323,67 @@ elif name == 'plan-sentinel-ttl':
     if body.count(old) != 1:
         sys.exit(f'{name}: expected one sentinel TTL, found {body.count(old)}')
     text = text[:start] + body.replace(old, 'f_ttl = mk_u64 901') + text[end:]
+elif name == 'plan-load-session-key':
+    in_body('let plan_load_session', 'let plan_sessions_list',
+            'SqlStmt_SelectWebSessionById ({ f_session = session })',
+            'SqlStmt_SelectWebSessionById ({ f_session = Alloc.String.String "" })')
+elif name == 'plan-sessions-list-user':
+    in_body('let plan_sessions_list', 'let plan_capsule_clear',
+            'SqlStmt_SelectGrantedSessionsByUser ({ f_user = user })',
+            'SqlStmt_SelectGrantedSessionsByUser ({ f_user = Alloc.String.String "" })')
+elif name == 'plan-capsule-clear-key':
+    in_body('let plan_capsule_clear', 'let plan_session_keys',
+            'SqlStmt_ClearSessionCapsule ({ f_session = session })',
+            'SqlStmt_ClearSessionCapsule ({ f_session = Alloc.String.String "" })')
+elif name == 'plan-session-keys-user':
+    in_body('let plan_session_keys', 'let plan_token_claim',
+            'SqlStmt_SelectSessionKeys ({ f_session = session; f_user = user })',
+            'SqlStmt_SelectSessionKeys ({ f_session = session; f_user = Alloc.String.String "" })')
+elif name == 'plan-cleanup-expired-swap':
+    in_body('let plan_cleanup_expired', 'let plan_cleanup_pending',
+            'SqlStmt_DeleteExpiredWebSessions ({ f_now = now; f_now_secs = now_secs })',
+            'SqlStmt_DeleteRevokedWebSessions')
+elif name == 'classify-cleanup-error':
+    in_body('let cleaned_rows', 'let classify_cleanup',
+            '| WriteOutcome_Failed  -> mk_u64 0',
+            '| WriteOutcome_Failed  -> mk_u64 1')
+elif name == 'classify-start-limit-error':
+    in_body('let classify_start_limit', 'let classify_login_limits',
+            'then LimitObservation_Allowed', 'then LimitObservation_Denied')
+elif name == 'classify-login-limits-error':
+    in_body('let classify_login_limits', 'let classify_token_limits',
+            'then LimitObservation_Allowed', 'then LimitObservation_Denied')
+elif name == 'classify-token-limits-error':
+    in_body('let classify_token_limits', 'let classify_poll_limit',
+            'then LimitObservation_Allowed', 'then LimitObservation_Denied')
+elif name == 'classify-poll-limit-error':
+    in_body('let classify_poll_limit', 'let classify_keys_limit',
+            'then LimitObservation_Allowed', 'then LimitObservation_Denied')
+elif name == 'classify-keys-limit-error':
+    in_body('let classify_keys_limit', 'let classify_capsule_clear',
+            'then LimitObservation_Allowed', 'then LimitObservation_Denied')
+elif name == 'classify-capsule-clear-error':
+    in_body('let classify_capsule_clear', 'let classify_session_keys',
+            '| WriteOutcome_Failed  -> CapsuleClearObservation_StorageFailed',
+            '| WriteOutcome_Failed  -> CapsuleClearObservation_Cleared')
+elif name == 'classify-session-keys-error':
+    once('| ReadOutcome_Failed  -> SessionKeysLookup_QueryFailed <: t_SessionKeysLookup',
+         '| ReadOutcome_Failed  -> SessionKeysLookup_Absent <: t_SessionKeysLookup')
+elif name == 'plan-login-limit-budget':
+    in_body('let plan_login_limits', 'let plan_start_limit',
+            'f_limit = mk_u64 10;', 'f_limit = mk_u64 11;')
+elif name == 'plan-start-limit-budget':
+    in_body('let plan_start_limit', 'let plan_token_limits',
+            'f_limit = mk_u64 30;', 'f_limit = mk_u64 31;')
+elif name == 'plan-token-limit-budget':
+    in_body('let plan_token_limits', 'let plan_poll_limit',
+            'f_limit = mk_u64 10;', 'f_limit = mk_u64 11;')
+elif name == 'plan-poll-limit-budget':
+    in_body('let plan_poll_limit', 'let plan_keys_limit',
+            'f_limit = mk_u64 120;', 'f_limit = mk_u64 121;')
+elif name == 'plan-keys-limit-budget':
+    in_body('let plan_keys_limit', 'let classify_session_lookup',
+            'f_limit = mk_u64 60;', 'f_limit = mk_u64 61;')
 path.write_text(text)
 PY
   set +e

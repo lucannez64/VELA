@@ -28,13 +28,17 @@ use crate::revocation_driver::{
     TargetObservation,
 };
 use crate::store::{
-    classify_backoff_reset, classify_cascade, classify_commit, classify_failure_counter,
-    classify_grant_update, classify_lockout_device, classify_lockout_ignored,
-    classify_lockout_session, classify_login_challenge, classify_login_device, classify_logout,
-    classify_record, classify_revoke_session, classify_scan, classify_start_insert,
-    classify_table_delete, classify_token_claim, classify_token_issue, classify_track_jti,
-    classify_transaction, classify_users_delete, CountOutcome, DeviceReadOutcome, ExistsOutcome,
-    IdsOutcome, NxOutcome, ReadOutcome, SqlStmt, StoreOutcome, StoreStmt, TakeOutcome,
+    classify_backoff_reset, classify_capsule_clear, classify_cascade, classify_cleanup,
+    classify_commit, classify_failure_counter, classify_grant_update, classify_keys_limit,
+    classify_lockout_device, classify_lockout_ignored, classify_lockout_session,
+    classify_login_challenge, classify_login_device, classify_login_limits, classify_logout,
+    classify_poll_limit, classify_record, classify_revoke_session, classify_scan,
+    classify_session_keys, classify_start_insert,
+    classify_start_limit, classify_table_delete, classify_token_claim, classify_token_issue,
+    classify_token_limits, classify_track_jti, classify_transaction, classify_users_delete,
+    CapsuleClearObservation, CleanupReport, CountOutcome, DeviceReadOutcome, ExistsOutcome,
+    IdsOutcome, LimitObservation, NxOutcome, ReadOutcome, SessionKeysLookup, SessionKeysView,
+    SessionListRowView, SessionRowView, SqlStmt, StoreOutcome, StoreStmt, TakeOutcome,
     TargetRowView, WriteOutcome,
 };
 use crate::websession_driver::{
@@ -78,12 +82,22 @@ pub struct DeviceRow {
 pub struct SessionRow {
     pub user_id: Option<String>,
     pub approver_user_id: Option<String>,
+    pub poll_secret_hash: Option<String>,
+    pub ephemeral_pk: String,
+    pub web_vk: Option<String>,
+    pub link_nonce: Option<String>,
     pub status: String,
     pub capsule: Option<String>,
     pub approved_by: Option<String>,
     pub mode: Option<String>,
     pub key_epoch: Option<i64>,
     pub expires_at: Option<String>,
+    pub created_at: String,
+    /// The instant `expires_at` denotes, so cleanup's `expires_at < ?` can be
+    /// decided without text ordering. Conformance pins the pairing.
+    pub expires_secs: Option<u64>,
+    /// The instant `created_at` denotes (see `expires_secs`).
+    pub created_secs: u64,
 }
 
 /// A `share_inbox` or `shared_items` row.
@@ -131,6 +145,8 @@ pub enum WriteResult {
     WroteAbsent,
     /// An `INSERT` whose `UNIQUE` id was already taken: the statement fails.
     WroteConflict,
+    /// A `DELETE` whose exact affected count the handler reads (cleanup).
+    WroteRows(usize),
 }
 
 impl WriteResult {
@@ -139,6 +155,7 @@ impl WriteResult {
             WriteResult::Wrote | WriteResult::WroteOne => WriteOutcome::Applied(1),
             WriteResult::WroteAbsent => WriteOutcome::Applied(0),
             WriteResult::WroteConflict => WriteOutcome::Failed,
+            WriteResult::WroteRows(n) => WriteOutcome::Applied(n as u64),
         }
     }
 }
@@ -277,24 +294,59 @@ impl Db {
 
     /// F*: `inserted_pending_session`. The `start` insert leaves every grant
     /// field NULL and `user_id` unset; only the committed approver is stored.
-    pub fn inserted_pending_session(approver: &str) -> SessionRow {
+    pub fn inserted_pending_session(
+        approver: &str,
+        poll_secret_hash: &str,
+        ephemeral_pk: &str,
+        web_vk: &str,
+        link_nonce: &str,
+        now: &str,
+        now_secs: u64,
+    ) -> SessionRow {
         SessionRow {
             user_id: None,
             approver_user_id: Some(approver.to_string()),
+            poll_secret_hash: Some(poll_secret_hash.to_string()),
+            ephemeral_pk: ephemeral_pk.to_string(),
+            web_vk: Some(web_vk.to_string()),
+            link_nonce: Some(link_nonce.to_string()),
             status: s("pending"),
             capsule: None,
             approved_by: None,
             mode: None,
             key_epoch: None,
             expires_at: None,
+            created_at: now.to_string(),
+            expires_secs: None,
+            created_secs: now_secs,
         }
     }
 
     /// F*: `st_insert_pending`.
-    pub fn st_insert_pending(&self, session: &str, approver: &str) -> Db {
+    pub fn st_insert_pending(
+        &self,
+        session: &str,
+        approver: &str,
+        poll_secret_hash: &str,
+        ephemeral_pk: &str,
+        web_vk: &str,
+        link_nonce: &str,
+        now: &str,
+        now_secs: u64,
+    ) -> Db {
         let mut next = self.clone();
-        next.sessions
-            .insert(session.to_string(), Db::inserted_pending_session(approver));
+        next.sessions.insert(
+            session.to_string(),
+            Db::inserted_pending_session(
+                approver,
+                poll_secret_hash,
+                ephemeral_pk,
+                web_vk,
+                link_nonce,
+                now,
+                now_secs,
+            ),
+        );
         next
     }
 
@@ -329,16 +381,24 @@ impl Db {
         capsule: &str,
         expires_at: &str,
         epoch: i64,
+        expires_secs: u64,
     ) -> SessionRow {
         SessionRow {
             user_id: Some(user.to_string()),
             approver_user_id: row.approver_user_id.clone(),
+            poll_secret_hash: row.poll_secret_hash.clone(),
+            ephemeral_pk: row.ephemeral_pk.clone(),
+            web_vk: row.web_vk.clone(),
+            link_nonce: row.link_nonce.clone(),
             status: s("granted"),
             capsule: Some(capsule.to_string()),
             approved_by: Some(device.to_string()),
             mode: Some(mode.to_string()),
             key_epoch: Some(epoch),
             expires_at: Some(expires_at.to_string()),
+            created_at: row.created_at.clone(),
+            expires_secs: Some(expires_secs),
+            created_secs: row.created_secs,
         }
     }
 
@@ -353,14 +413,44 @@ impl Db {
         capsule: &str,
         expires_at: &str,
         epoch: i64,
+        expires_secs: u64,
     ) -> Db {
         let mut next = self.clone();
         if let Some(row) = next.sessions.get(session) {
             let replacement =
-                Db::granted_session(row, user, device, mode, capsule, expires_at, epoch);
+                Db::granted_session(row, user, device, mode, capsule, expires_at, epoch, expires_secs);
             next.sessions.insert(session.to_string(), replacement);
         }
         next
+    }
+
+    /// F*: `st_delete_revoked`. `DELETE ... WHERE status = 'revoked'`.
+    pub fn st_delete_revoked(&self) -> Db {
+        Db {
+            sessions: delete_where(&self.sessions, |r| r.status == "revoked"),
+            ..self.clone()
+        }
+    }
+
+    /// F*: `st_delete_expired`. `DELETE ... WHERE expires_at < ?`.
+    pub fn st_delete_expired(&self, now_secs: u64) -> Db {
+        Db {
+            sessions: delete_where(&self.sessions, |r| {
+                r.expires_secs.map(|e| e < now_secs).unwrap_or(false)
+            }),
+            ..self.clone()
+        }
+    }
+
+    /// F*: `st_delete_stale_pending`. `DELETE ... WHERE status = 'pending' AND
+    /// created_at < ?`.
+    pub fn st_delete_stale_pending(&self, cutoff_secs: u64) -> Db {
+        Db {
+            sessions: delete_where(&self.sessions, |r| {
+                r.status == "pending" && r.created_secs < cutoff_secs
+            }),
+            ..self.clone()
+        }
     }
 
     /// F*: `st_revoke_session`. The audit update rewrites the one row, or none.
@@ -368,6 +458,15 @@ impl Db {
         let mut next = self.clone();
         if let Some(row) = next.sessions.get_mut(session) {
             row.status = s("revoked");
+            row.capsule = None;
+        }
+        next
+    }
+
+    /// F*: `st_clear_capsule`. The one-shot delivery retracts the capsule.
+    pub fn st_clear_capsule(&self, session: &str) -> Db {
+        let mut next = self.clone();
+        if let Some(row) = next.sessions.get_mut(session) {
             row.capsule = None;
         }
         next
@@ -382,6 +481,9 @@ pub fn exec_stmt(db: &Db, stmt: &SqlStmt) -> Option<(WriteResult, Db)> {
         | SqlStmt::SelectDeviceById { .. }
         | SqlStmt::SelectWebSessionIdsApprovedBy { .. }
         | SqlStmt::SelectUnrevokedDeviceById { .. }
+        | SqlStmt::SelectWebSessionById { .. }
+        | SqlStmt::SelectGrantedSessionsByUser { .. }
+        | SqlStmt::SelectSessionKeys { .. }
         | SqlStmt::Commit => None,
         SqlStmt::DeleteWebSessionsByUser { user } => {
             Some((WriteResult::Wrote, db.st_web_sessions(user)))
@@ -480,11 +582,33 @@ pub fn exec_stmt(db: &Db, stmt: &SqlStmt) -> Option<(WriteResult, Db)> {
             }
         }
         SqlStmt::CountUsers => None,
-        SqlStmt::InsertPendingSession { session, approver, .. } => {
+        SqlStmt::InsertPendingSession {
+            session,
+            approver,
+            poll_secret_hash,
+            ephemeral_pk,
+            web_vk,
+            link_nonce,
+            now,
+            now_secs,
+            ..
+        } => {
             if db.sessions.contains_key(session) {
                 Some((WriteResult::WroteConflict, db.clone()))
             } else {
-                Some((WriteResult::Wrote, db.st_insert_pending(session, approver)))
+                Some((
+                    WriteResult::Wrote,
+                    db.st_insert_pending(
+                        session,
+                        approver,
+                        poll_secret_hash,
+                        ephemeral_pk,
+                        web_vk,
+                        link_nonce,
+                        now,
+                        *now_secs,
+                    ),
+                ))
             }
         }
         SqlStmt::GrantWebSession {
@@ -495,16 +619,59 @@ pub fn exec_stmt(db: &Db, stmt: &SqlStmt) -> Option<(WriteResult, Db)> {
             capsule,
             expires_at,
             epoch,
+            expires_secs,
         } => {
             if db.grant_guard(session, user, device, *epoch) {
                 Some((
                     WriteResult::WroteOne,
-                    db.st_grant_session(session, user, device, mode, capsule, expires_at, *epoch),
+                    db.st_grant_session(
+                        session,
+                        user,
+                        device,
+                        mode,
+                        capsule,
+                        expires_at,
+                        *epoch,
+                        *expires_secs,
+                    ),
                 ))
             } else {
                 Some((WriteResult::WroteAbsent, db.clone()))
             }
         }
+        SqlStmt::DeleteRevokedWebSessions => Some((
+            WriteResult::WroteRows(
+                db.sessions
+                    .values()
+                    .filter(|r| r.status == "revoked")
+                    .count(),
+            ),
+            db.st_delete_revoked(),
+        )),
+        SqlStmt::DeleteExpiredWebSessions { now_secs, .. } => Some((
+            WriteResult::WroteRows(
+                db.sessions
+                    .values()
+                    .filter(|r| r.expires_secs.map(|e| e < *now_secs).unwrap_or(false))
+                    .count(),
+            ),
+            db.st_delete_expired(*now_secs),
+        )),
+        SqlStmt::DeleteStalePendingWebSessions { cutoff_secs, .. } => Some((
+            WriteResult::WroteRows(
+                db.sessions
+                    .values()
+                    .filter(|r| r.status == "pending" && r.created_secs < *cutoff_secs)
+                    .count(),
+            ),
+            db.st_delete_stale_pending(*cutoff_secs),
+        )),
+        SqlStmt::ClearSessionCapsule { session } => match db.sessions.get(session) {
+            Some(row) if row.capsule.is_some() => {
+                Some((WriteResult::WroteOne, db.st_clear_capsule(session)))
+            }
+            _ => Some((WriteResult::WroteAbsent, db.clone())),
+        },
         SqlStmt::RevokeSessionById { session } => {
             if db.sessions.contains_key(session) {
                 Some((WriteResult::WroteOne, db.st_revoke_session(session)))
@@ -606,6 +773,15 @@ pub fn exec_store(store: &Store, stmt: &StoreStmt) -> (StoreOutcome, Store) {
             (StoreOutcome::Applied, next)
         }
         StoreStmt::Exists { .. } => (StoreOutcome::Applied, next),
+        StoreStmt::Ttl { key } => {
+            // A live backoff key refuses; a missing or expired one allows.
+            let outcome = if next.kv.contains_key(key) {
+                StoreOutcome::Failed
+            } else {
+                StoreOutcome::Applied
+            };
+            (outcome, next)
+        }
     }
 }
 
@@ -1275,6 +1451,7 @@ pub fn insert_pending(
     web_vk: &str,
     link_nonce: &str,
     now: &str,
+    now_secs: u64,
     fault: Option<usize>,
 ) -> (StartInsertObservation, Db) {
     if faulted(fault, 0) {
@@ -1288,6 +1465,7 @@ pub fn insert_pending(
             s(web_vk),
             s(link_nonce),
             s(now),
+            now_secs,
         );
         match exec_stmt(db, &plan) {
             Some((rows, next)) => (classify_start_insert(&rows.outcome()), next),
@@ -1307,6 +1485,7 @@ pub fn grant_update(
     capsule: &str,
     expires_at: &str,
     epoch: i64,
+    expires_secs: u64,
     fault: Option<usize>,
 ) -> (GrantUpdateObservation, Db) {
     if faulted(fault, 0) {
@@ -1320,6 +1499,7 @@ pub fn grant_update(
             s(capsule),
             s(expires_at),
             epoch,
+            expires_secs,
         );
         match exec_stmt(db, &plan) {
             Some((rows, next)) => (classify_grant_update(&rows.outcome()), next),
@@ -1444,6 +1624,196 @@ pub fn token_issue(
             store.clone(),
         )
     }
+}
+
+/// F*: `session_view`. The stored row projected into the lookup's view.
+pub fn session_view(row: &SessionRow) -> SessionRowView {
+    SessionRowView {
+        user_id: row.user_id.clone(),
+        approver_user_id: row.approver_user_id.clone(),
+        poll_secret_hash: row.poll_secret_hash.clone(),
+        web_vk: row.web_vk.clone(),
+        link_nonce: row.link_nonce.clone(),
+        mode: row.mode.clone(),
+        status: Some(row.status.clone()),
+        capsule: row.capsule.clone(),
+        expires_at: row.expires_at.clone(),
+        key_epoch: row.key_epoch,
+    }
+}
+
+/// F*: `read_session`. The shared web-session lookup: exactly the stored row,
+/// or none, or the query error.
+pub fn read_session(db: &Db, session: &str, failed: bool) -> ReadOutcome<SessionRowView> {
+    if failed {
+        ReadOutcome::Failed
+    } else {
+        ReadOutcome::Row(db.sessions.get(session).map(session_view))
+    }
+}
+
+/// F*: `sessions_list_rows`. The account's granted sessions, in table order
+/// (the SQL orders them for presentation; conformance compares the set).
+pub fn sessions_list_rows(db: &Db, user: &str) -> Vec<SessionListRowView> {
+    db.sessions
+        .iter()
+        .filter(|(_, row)| {
+            row.user_id.as_deref() == Some(user) && row.status == "granted"
+        })
+        .map(|(id, row)| SessionListRowView {
+            id: id.clone(),
+            mode: row.mode.clone().unwrap_or_default(),
+            status: row.status.clone(),
+            created_at: row.created_at.clone(),
+            expires_at: row.expires_at.clone(),
+        })
+        .collect()
+}
+
+/// F*: `read_sessions_list`.
+pub fn read_sessions_list(
+    db: &Db,
+    user: &str,
+    failed: bool,
+) -> ReadOutcome<Vec<SessionListRowView>> {
+    if failed {
+        ReadOutcome::Failed
+    } else {
+        ReadOutcome::Row(Some(sessions_list_rows(db, user)))
+    }
+}
+
+/// F*: `cleanup`. The three independent deletes, each faultable at its own
+/// call (a failed one purged nothing and left the table unchanged).
+pub fn cleanup(
+    db: &Db,
+    now_secs: u64,
+    cutoff_secs: u64,
+    fault: Option<usize>,
+) -> (CleanupReport, Db) {
+    let plan = vec![
+        crate::store::plan_cleanup_revoked(),
+        crate::store::plan_cleanup_expired(s("now"), now_secs),
+        crate::store::plan_cleanup_pending(s("cut"), cutoff_secs),
+    ];
+    let mut state = db.clone();
+    let mut outcomes = Vec::with_capacity(3);
+    for (k, stmt) in plan.iter().enumerate() {
+        if faulted(fault, k) {
+            outcomes.push(WriteOutcome::Failed);
+        } else {
+            match exec_stmt(&state, stmt) {
+                Some((rows, next)) => {
+                    state = next;
+                    outcomes.push(rows.outcome());
+                }
+                None => outcomes.push(WriteOutcome::Failed),
+            }
+        }
+    }
+    (classify_cleanup(&outcomes[0], &outcomes[1], &outcomes[2]), state)
+}
+
+/// F*: `start_limit`. The per-IP start limiter.
+pub fn start_limit(store: &Store, ip: &str, fault: Option<usize>) -> (LimitObservation, Store) {
+    let plan = crate::store::plan_start_limit(s(ip));
+    let (outcomes, post) = run_store(store, &plan, fault);
+    (classify_start_limit(&outcomes), post)
+}
+
+/// F*: `login_limits`. The per-IP request limiter and the backoff precheck.
+pub fn login_limits(
+    store: &Store,
+    ip: &str,
+    device: &str,
+    fault: Option<usize>,
+) -> (LimitObservation, Store) {
+    let plan = crate::store::plan_login_limits(s(ip), s(device));
+    let (outcomes, post) = run_store(store, &plan, fault);
+    (classify_login_limits(&outcomes), post)
+}
+
+/// F*: `token_limits`. The two token budgets and the backoff precheck.
+pub fn token_limits(
+    store: &Store,
+    ip: &str,
+    session: &str,
+    fault: Option<usize>,
+) -> (LimitObservation, Store) {
+    let plan = crate::store::plan_token_limits(s(ip), s(session));
+    let (outcomes, post) = run_store(store, &plan, fault);
+    (classify_token_limits(&outcomes), post)
+}
+
+/// F*: `poll_limit`. The per-IP poll budget.
+pub fn poll_limit(store: &Store, ip: &str, fault: Option<usize>) -> (LimitObservation, Store) {
+    let plan = crate::store::plan_poll_limit(s(ip));
+    let (outcomes, post) = run_store(store, &plan, fault);
+    (classify_poll_limit(&outcomes), post)
+}
+
+/// F*: `keys_limit`. The per-user key-fetch budget.
+pub fn keys_limit(store: &Store, user: &str, fault: Option<usize>) -> (LimitObservation, Store) {
+    let plan = crate::store::plan_keys_limit(s(user));
+    let (outcomes, post) = run_store(store, &plan, fault);
+    (classify_keys_limit(&outcomes), post)
+}
+
+/// F*: `capsule_clear`. `Cleared` exactly when a live capsule was retracted;
+/// a missing/empty capsule reports `AlreadyCollected` and changes nothing.
+pub fn capsule_clear(
+    db: &Db,
+    session: &str,
+    fault: Option<usize>,
+) -> (CapsuleClearObservation, Db) {
+    if faulted(fault, 0) {
+        (classify_capsule_clear(&WriteOutcome::Failed), db.clone())
+    } else {
+        let plan = crate::store::plan_capsule_clear(s(session));
+        match exec_stmt(db, &plan) {
+            Some((rows, next)) => (classify_capsule_clear(&rows.outcome()), next),
+            None => (classify_capsule_clear(&WriteOutcome::Failed), db.clone()),
+        }
+    }
+}
+
+/// F*: `keys_view`. The stored cells the approver's key fetch reads.
+pub fn keys_view(row: &SessionRow) -> SessionKeysView {
+    SessionKeysView {
+        ephemeral_pk: Some(row.ephemeral_pk.clone()),
+        web_vk: row.web_vk.clone(),
+        status: Some(row.status.clone()),
+    }
+}
+
+/// F*: `read_session_keys`. The approver-scoped key lookup.
+pub fn read_session_keys(
+    db: &Db,
+    session: &str,
+    user: &str,
+    failed: bool,
+) -> ReadOutcome<SessionKeysView> {
+    if failed {
+        ReadOutcome::Failed
+    } else {
+        ReadOutcome::Row(db.sessions.get(session).and_then(|row| {
+            if row.approver_user_id.as_deref() == Some(user) {
+                Some(keys_view(row))
+            } else {
+                None
+            }
+        }))
+    }
+}
+
+/// F*: `session_keys`. The key fetch's observation.
+pub fn session_keys(
+    db: &Db,
+    session: &str,
+    user: &str,
+    fault: Option<usize>,
+) -> SessionKeysLookup {
+    classify_session_keys(&read_session_keys(db, session, user, faulted(fault, 0)))
 }
 
 #[cfg(test)]
@@ -1653,12 +2023,19 @@ mod tests {
             SessionRow {
                 user_id: None,
                 approver_user_id: Some(s("me")),
+                poll_secret_hash: None,
+                ephemeral_pk: s("pk"),
+                web_vk: None,
+                link_nonce: None,
                 status: s("pending"),
                 capsule: None,
                 approved_by: None,
                 mode: None,
                 key_epoch: None,
                 expires_at: None,
+                created_at: s("t"),
+                expires_secs: None,
+                created_secs: 0,
             },
         );
         db.inbox.insert(s("i1"), MailRow { sender: s("me"), recipient: s("you") });
@@ -1705,12 +2082,19 @@ mod tests {
             SessionRow {
                 user_id: None,
                 approver_user_id: Some(s("u")),
+                poll_secret_hash: None,
+                ephemeral_pk: s("pk"),
+                web_vk: None,
+                link_nonce: None,
                 status: s("pending"),
                 capsule: None,
                 approved_by: None,
                 mode: None,
                 key_epoch: None,
                 expires_at: None,
+                created_at: s("t"),
+                expires_secs: None,
+                created_secs: 0,
             },
         );
         db
@@ -1725,7 +2109,7 @@ mod tests {
         let db = web_session_state();
 
         let (obs, post) = insert_pending(
-            &db, "fresh", "u", "hash", "epk", "", "nonce", "now", None,
+            &db, "fresh", "u", "hash", "epk", "", "nonce", "now", 1_000, None,
         );
         assert_eq!(obs, StartInsertObservation::Inserted);
         assert_eq!(
@@ -1733,12 +2117,13 @@ mod tests {
             Some("pending")
         );
         // A duplicate id is the statement failure.
-        let (obs, post) = insert_pending(&db, "s", "u", "hash", "epk", "", "nonce", "now", None);
+        let (obs, post) =
+            insert_pending(&db, "s", "u", "hash", "epk", "", "nonce", "now", 1_000, None);
         assert_eq!(obs, StartInsertObservation::Failed);
         assert_eq!(post, db);
 
         let (obs, post) =
-            grant_update(&db, "s", "u", "d", "rw", "cap", "exp", 3, None);
+            grant_update(&db, "s", "u", "d", "rw", "cap", "exp", 3, 2_000, None);
         assert_eq!(obs, GrantUpdateObservation::Updated);
         let granted = post.sessions.get("s").unwrap();
         assert_eq!(granted.status, "granted");
@@ -1747,7 +2132,7 @@ mod tests {
         assert_eq!(granted.mode.as_deref(), Some("rw"));
         // A moved epoch fails the CAS without changing anything.
         let (obs, post) =
-            grant_update(&db, "s", "u", "d", "rw", "cap", "exp", 4, None);
+            grant_update(&db, "s", "u", "d", "rw", "cap", "exp", 4, 2_000, None);
         assert_eq!(obs, GrantUpdateObservation::Conflict);
         assert_eq!(post, db);
 

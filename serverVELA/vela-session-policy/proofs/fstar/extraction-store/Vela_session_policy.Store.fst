@@ -96,7 +96,8 @@ type t_SqlStmt =
     f_ephemeral_pk:Alloc.String.t_String;
     f_web_vk:Alloc.String.t_String;
     f_link_nonce:Alloc.String.t_String;
-    f_now:Alloc.String.t_String
+    f_now:Alloc.String.t_String;
+    f_now_secs:u64
   }: t_SqlStmt
   | SqlStmt_GrantWebSession {
     f_session:Alloc.String.t_String;
@@ -105,9 +106,26 @@ type t_SqlStmt =
     f_mode:Alloc.String.t_String;
     f_capsule:Alloc.String.t_String;
     f_expires_at:Alloc.String.t_String;
-    f_epoch:i64
+    f_epoch:i64;
+    f_expires_secs:u64
   }: t_SqlStmt
   | SqlStmt_RevokeSessionById { f_session:Alloc.String.t_String }: t_SqlStmt
+  | SqlStmt_SelectWebSessionById { f_session:Alloc.String.t_String }: t_SqlStmt
+  | SqlStmt_SelectGrantedSessionsByUser { f_user:Alloc.String.t_String }: t_SqlStmt
+  | SqlStmt_DeleteRevokedWebSessions : t_SqlStmt
+  | SqlStmt_DeleteExpiredWebSessions {
+    f_now:Alloc.String.t_String;
+    f_now_secs:u64
+  }: t_SqlStmt
+  | SqlStmt_DeleteStalePendingWebSessions {
+    f_cutoff:Alloc.String.t_String;
+    f_cutoff_secs:u64
+  }: t_SqlStmt
+  | SqlStmt_ClearSessionCapsule { f_session:Alloc.String.t_String }: t_SqlStmt
+  | SqlStmt_SelectSessionKeys {
+    f_session:Alloc.String.t_String;
+    f_user:Alloc.String.t_String
+  }: t_SqlStmt
   | SqlStmt_Commit : t_SqlStmt
 
 /// One store statement an executor may run.
@@ -148,6 +166,7 @@ type t_StoreStmt =
     f_ttl:u64
   }: t_StoreStmt
   | StoreStmt_Exists { f_key:Alloc.String.t_String }: t_StoreStmt
+  | StoreStmt_Ttl { f_key:Alloc.String.t_String }: t_StoreStmt
 
 /// What one SQL statement returned.
 type t_WriteOutcome =
@@ -207,6 +226,87 @@ type t_DeviceReadOutcome =
   | DeviceReadOutcome_Undecodable : t_DeviceReadOutcome
   | DeviceReadOutcome_Missing : t_DeviceReadOutcome
   | DeviceReadOutcome_Failed : t_DeviceReadOutcome
+
+/// The cells of a `SelectWebSessionById` row: the whole row the web-session
+/// grant, token and delete handlers read. Text cells stay text, exactly as the
+/// database returned them; the handler decodes them as it always did.
+type t_SessionRowView = {
+  f_user_id:Core_models.Option.t_Option Alloc.String.t_String;
+  f_approver_user_id:Core_models.Option.t_Option Alloc.String.t_String;
+  f_poll_secret_hash:Core_models.Option.t_Option Alloc.String.t_String;
+  f_web_vk:Core_models.Option.t_Option Alloc.String.t_String;
+  f_link_nonce:Core_models.Option.t_Option Alloc.String.t_String;
+  f_mode:Core_models.Option.t_Option Alloc.String.t_String;
+  f_status:Core_models.Option.t_Option Alloc.String.t_String;
+  f_capsule:Core_models.Option.t_Option Alloc.String.t_String;
+  f_expires_at:Core_models.Option.t_Option Alloc.String.t_String;
+  f_key_epoch:Core_models.Option.t_Option i64
+}
+
+let impl_64: Core_models.Clone.t_Clone t_SessionRowView =
+  { f_clone = (fun x -> x); f_clone_pre = (fun _ -> True); f_clone_post = (fun _ _ -> True) }
+
+/// What the shared web-session lookup observed: the stored row, no row, or the
+/// query error.
+type t_SessionLookup =
+  | SessionLookup_Row : t_SessionRowView -> t_SessionLookup
+  | SessionLookup_Absent : t_SessionLookup
+  | SessionLookup_QueryFailed : t_SessionLookup
+
+/// One row of `GET /web-sessions`.
+type t_SessionListRowView = {
+  f_id:Alloc.String.t_String;
+  f_mode:Alloc.String.t_String;
+  f_status:Alloc.String.t_String;
+  f_created_at:Alloc.String.t_String;
+  f_expires_at:Core_models.Option.t_Option Alloc.String.t_String
+}
+
+let impl_74: Core_models.Clone.t_Clone t_SessionListRowView =
+  { f_clone = (fun x -> x); f_clone_pre = (fun _ -> True); f_clone_post = (fun _ _ -> True) }
+
+/// What the `GET /web-sessions` query observed. The SQL orders and bounds the
+/// result; the model states the exact set (order is presentation).
+type t_SessionsList =
+  | SessionsList_Rows : Alloc.Vec.t_Vec t_SessionListRowView Alloc.Alloc.t_Global -> t_SessionsList
+  | SessionsList_QueryFailed : t_SessionsList
+
+/// What one cleanup statement removed.
+type t_CleanupReport = {
+  f_revoked:u64;
+  f_expired:u64;
+  f_pending:u64
+}
+
+/// Whether a rate limiter let the request through. `Denied` covers both a
+/// spent budget and a live backoff window, which the handlers have always
+/// reported through the same error path.
+type t_LimitObservation =
+  | LimitObservation_Allowed : t_LimitObservation
+  | LimitObservation_Denied : t_LimitObservation
+
+/// What the one-shot capsule clear did: exactly one caller retracts the
+/// capsule, everyone else finds it already gone.
+type t_CapsuleClearObservation =
+  | CapsuleClearObservation_Cleared : t_CapsuleClearObservation
+  | CapsuleClearObservation_AlreadyCollected : t_CapsuleClearObservation
+  | CapsuleClearObservation_StorageFailed : t_CapsuleClearObservation
+
+/// The cells of a `SelectSessionKeys` row.
+type t_SessionKeysView = {
+  f_ephemeral_pk:Core_models.Option.t_Option Alloc.String.t_String;
+  f_web_vk:Core_models.Option.t_Option Alloc.String.t_String;
+  f_status:Core_models.Option.t_Option Alloc.String.t_String
+}
+
+let impl_103: Core_models.Clone.t_Clone t_SessionKeysView =
+  { f_clone = (fun x -> x); f_clone_pre = (fun _ -> True); f_clone_post = (fun _ _ -> True) }
+
+/// What the approver's key fetch observed.
+type t_SessionKeysLookup =
+  | SessionKeysLookup_Row : t_SessionKeysView -> t_SessionKeysLookup
+  | SessionKeysLookup_Absent : t_SessionKeysLookup
+  | SessionKeysLookup_QueryFailed : t_SessionKeysLookup
 
 /// `LogoutJtiIo::revoke_jti`: the caller's JTI marker, with the token
 /// lifetime's TTL.
@@ -879,6 +979,7 @@ let plan_insert_device (device user name kind now ek vk: Alloc.String.t_String) 
 /// account the browser committed to and `user_id`/grant fields still NULL.
 let plan_insert_pending
       (session approver poll_secret_hash ephemeral_pk web_vk link_nonce now: Alloc.String.t_String)
+      (now_secs: u64)
     : t_SqlStmt =
   SqlStmt_InsertPendingSession
   ({
@@ -888,7 +989,8 @@ let plan_insert_pending
       f_ephemeral_pk = ephemeral_pk;
       f_web_vk = web_vk;
       f_link_nonce = link_nonce;
-      f_now = now
+      f_now = now;
+      f_now_secs = now_secs
     })
   <:
   t_SqlStmt
@@ -900,6 +1002,7 @@ let plan_insert_pending
 let plan_grant_update
       (session user device mode capsule expires_at: Alloc.String.t_String)
       (epoch: i64)
+      (expires_secs: u64)
     : t_SqlStmt =
   SqlStmt_GrantWebSession
   ({
@@ -909,7 +1012,8 @@ let plan_grant_update
       f_mode = mode;
       f_capsule = capsule;
       f_expires_at = expires_at;
-      f_epoch = epoch
+      f_epoch = epoch;
+      f_expires_secs = expires_secs
     })
   <:
   t_SqlStmt
@@ -917,6 +1021,477 @@ let plan_grant_update
 /// `DeleteSessionIo::record_revocation`: the audit row.
 let plan_revoke_session (session: Alloc.String.t_String) : t_SqlStmt =
   SqlStmt_RevokeSessionById ({ f_session = session }) <: t_SqlStmt
+
+/// The shared web-session lookup behind `GrantIo`, `TokenIo` and
+/// `DeleteSessionIo` (`load_session`).
+let plan_load_session (session: Alloc.String.t_String) : t_SqlStmt =
+  SqlStmt_SelectWebSessionById ({ f_session = session }) <: t_SqlStmt
+
+/// `get_sessions_list`: the account's granted sessions.
+let plan_sessions_list (user: Alloc.String.t_String) : t_SqlStmt =
+  SqlStmt_SelectGrantedSessionsByUser ({ f_user = user }) <: t_SqlStmt
+
+/// `cleanup_task`'s first delete.
+let plan_cleanup_revoked (_: Prims.unit) : t_SqlStmt = SqlStmt_DeleteRevokedWebSessions <: t_SqlStmt
+
+/// `cleanup_task`'s second delete.
+let plan_cleanup_expired (now: Alloc.String.t_String) (now_secs: u64) : t_SqlStmt =
+  SqlStmt_DeleteExpiredWebSessions ({ f_now = now; f_now_secs = now_secs }) <: t_SqlStmt
+
+/// `cleanup_task`'s third delete.
+let plan_cleanup_pending (pending_cutoff: Alloc.String.t_String) (pending_cutoff_secs: u64)
+    : t_SqlStmt =
+  SqlStmt_DeleteStalePendingWebSessions
+  ({ f_cutoff = pending_cutoff; f_cutoff_secs = pending_cutoff_secs })
+  <:
+  t_SqlStmt
+
+/// `post_verify`'s per-IP request limiter and then its `(ip, device)` backoff
+/// precheck, in the historical order.
+let plan_login_limits (ip device: Alloc.String.t_String)
+    : Alloc.Vec.t_Vec t_StoreStmt Alloc.Alloc.t_Global =
+  let args:Alloc.String.t_String = ip <: Alloc.String.t_String in
+  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 1) =
+    let list = [Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args] in
+    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+    Rust_primitives.Hax.array_of_list 1 list
+  in
+  let args:(Alloc.String.t_String & Alloc.String.t_String) =
+    ip, device <: (Alloc.String.t_String & Alloc.String.t_String)
+  in
+  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 2) =
+    let list =
+      [
+        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._1;
+        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._2
+      ]
+    in
+    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
+    Rust_primitives.Hax.array_of_list 2 list
+  in
+  Alloc.Slice.impl__into_vec #t_StoreStmt
+    #Alloc.Alloc.t_Global
+    ((let list =
+          [
+            StoreStmt_Incr
+            ({
+                f_key
+                =
+                Core_models.Hint.must_use #Alloc.String.t_String
+                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 1)
+                          (mk_usize 1)
+                          (let list = ["rl:verify:ip:"] in
+                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+                            Rust_primitives.Hax.array_of_list 1 list)
+                          args
+                        <:
+                        Core_models.Fmt.t_Arguments)
+                    <:
+                    Alloc.String.t_String);
+                f_limit = mk_u64 10;
+                f_ttl = mk_u64 60
+              })
+            <:
+            t_StoreStmt;
+            StoreStmt_Ttl
+            ({
+                f_key
+                =
+                Core_models.Hint.must_use #Alloc.String.t_String
+                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 2)
+                          (mk_usize 2)
+                          (let list = ["rl:backoff:verify:"; ":"] in
+                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
+                            Rust_primitives.Hax.array_of_list 2 list)
+                          args
+                        <:
+                        Core_models.Fmt.t_Arguments)
+                    <:
+                    Alloc.String.t_String)
+              })
+            <:
+            t_StoreStmt
+          ]
+        in
+        FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
+        Rust_primitives.Hax.array_of_list 2 list)
+      <:
+      t_Slice t_StoreStmt)
+
+/// `StartIo::check_rate_limit`: 30 starts/hour per IP.
+let plan_start_limit (ip: Alloc.String.t_String) : Alloc.Vec.t_Vec t_StoreStmt Alloc.Alloc.t_Global =
+  let args:Alloc.String.t_String = ip <: Alloc.String.t_String in
+  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 1) =
+    let list = [Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args] in
+    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+    Rust_primitives.Hax.array_of_list 1 list
+  in
+  Alloc.Slice.impl__into_vec #t_StoreStmt
+    #Alloc.Alloc.t_Global
+    ((let list =
+          [
+            StoreStmt_Incr
+            ({
+                f_key
+                =
+                Core_models.Hint.must_use #Alloc.String.t_String
+                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 1)
+                          (mk_usize 1)
+                          (let list = ["rl:websession:start:ip:"] in
+                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+                            Rust_primitives.Hax.array_of_list 1 list)
+                          args
+                        <:
+                        Core_models.Fmt.t_Arguments)
+                    <:
+                    Alloc.String.t_String);
+                f_limit = mk_u64 30;
+                f_ttl = mk_u64 60 *! mk_u64 60
+              })
+            <:
+            t_StoreStmt
+          ]
+        in
+        FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+        Rust_primitives.Hax.array_of_list 1 list)
+      <:
+      t_Slice t_StoreStmt)
+
+/// `TokenIo::check_token_limits`: the per-(ip, session) budget, then the
+/// per-session backstop, then the `(ip, session)` backoff precheck, in the
+/// historical order.
+let plan_token_limits (ip session: Alloc.String.t_String)
+    : Alloc.Vec.t_Vec t_StoreStmt Alloc.Alloc.t_Global =
+  let args:(Alloc.String.t_String & Alloc.String.t_String) =
+    ip, session <: (Alloc.String.t_String & Alloc.String.t_String)
+  in
+  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 2) =
+    let list =
+      [
+        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._1;
+        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._2
+      ]
+    in
+    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
+    Rust_primitives.Hax.array_of_list 2 list
+  in
+  let args:Alloc.String.t_String = session <: Alloc.String.t_String in
+  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 1) =
+    let list = [Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args] in
+    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+    Rust_primitives.Hax.array_of_list 1 list
+  in
+  let args:(Alloc.String.t_String & Alloc.String.t_String) =
+    ip, session <: (Alloc.String.t_String & Alloc.String.t_String)
+  in
+  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 2) =
+    let list =
+      [
+        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._1;
+        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._2
+      ]
+    in
+    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
+    Rust_primitives.Hax.array_of_list 2 list
+  in
+  Alloc.Slice.impl__into_vec #t_StoreStmt
+    #Alloc.Alloc.t_Global
+    ((let list =
+          [
+            StoreStmt_Incr
+            ({
+                f_key
+                =
+                Core_models.Hint.must_use #Alloc.String.t_String
+                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 2)
+                          (mk_usize 2)
+                          (let list = ["rl:websession:token:ip:"; ":"] in
+                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
+                            Rust_primitives.Hax.array_of_list 2 list)
+                          args
+                        <:
+                        Core_models.Fmt.t_Arguments)
+                    <:
+                    Alloc.String.t_String);
+                f_limit = mk_u64 10;
+                f_ttl = mk_u64 60
+              })
+            <:
+            t_StoreStmt;
+            StoreStmt_Incr
+            ({
+                f_key
+                =
+                Core_models.Hint.must_use #Alloc.String.t_String
+                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 1)
+                          (mk_usize 1)
+                          (let list = ["rl:websession:token:"] in
+                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+                            Rust_primitives.Hax.array_of_list 1 list)
+                          args
+                        <:
+                        Core_models.Fmt.t_Arguments)
+                    <:
+                    Alloc.String.t_String);
+                f_limit = mk_u64 30;
+                f_ttl = mk_u64 60
+              })
+            <:
+            t_StoreStmt;
+            StoreStmt_Ttl
+            ({
+                f_key
+                =
+                Core_models.Hint.must_use #Alloc.String.t_String
+                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 2)
+                          (mk_usize 2)
+                          (let list = ["rl:backoff:websession:token:"; ":"] in
+                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
+                            Rust_primitives.Hax.array_of_list 2 list)
+                          args
+                        <:
+                        Core_models.Fmt.t_Arguments)
+                    <:
+                    Alloc.String.t_String)
+              })
+            <:
+            t_StoreStmt
+          ]
+        in
+        FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 3);
+        Rust_primitives.Hax.array_of_list 3 list)
+      <:
+      t_Slice t_StoreStmt)
+
+/// `TokenIo::record_token_failure`: the log-only backoff record on the
+/// `(ip, session)` scope.
+let plan_token_backoff_record (ip session: Alloc.String.t_String)
+    : Alloc.Vec.t_Vec t_StoreStmt Alloc.Alloc.t_Global =
+  let args:(Alloc.String.t_String & Alloc.String.t_String) =
+    ip, session <: (Alloc.String.t_String & Alloc.String.t_String)
+  in
+  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 2) =
+    let list =
+      [
+        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._1;
+        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._2
+      ]
+    in
+    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
+    Rust_primitives.Hax.array_of_list 2 list
+  in
+  let args:(Alloc.String.t_String & Alloc.String.t_String) =
+    ip, session <: (Alloc.String.t_String & Alloc.String.t_String)
+  in
+  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 2) =
+    let list =
+      [
+        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._1;
+        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._2
+      ]
+    in
+    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
+    Rust_primitives.Hax.array_of_list 2 list
+  in
+  Alloc.Slice.impl__into_vec #t_StoreStmt
+    #Alloc.Alloc.t_Global
+    ((let list =
+          [
+            StoreStmt_BackoffFailure
+            ({
+                f_streak
+                =
+                Core_models.Hint.must_use #Alloc.String.t_String
+                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 2)
+                          (mk_usize 2)
+                          (let list = ["rl:streak:websession:token:"; ":"] in
+                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
+                            Rust_primitives.Hax.array_of_list 2 list)
+                          args
+                        <:
+                        Core_models.Fmt.t_Arguments)
+                    <:
+                    Alloc.String.t_String);
+                f_backoff
+                =
+                Core_models.Hint.must_use #Alloc.String.t_String
+                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 2)
+                          (mk_usize 2)
+                          (let list = ["rl:backoff:websession:token:"; ":"] in
+                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
+                            Rust_primitives.Hax.array_of_list 2 list)
+                          args
+                        <:
+                        Core_models.Fmt.t_Arguments)
+                    <:
+                    Alloc.String.t_String)
+              })
+            <:
+            t_StoreStmt
+          ]
+        in
+        FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+        Rust_primitives.Hax.array_of_list 1 list)
+      <:
+      t_Slice t_StoreStmt)
+
+/// `TokenIo::reset_token_backoff`: drop the success streak and backoff marker.
+let plan_token_backoff_reset (ip session: Alloc.String.t_String)
+    : Alloc.Vec.t_Vec t_StoreStmt Alloc.Alloc.t_Global =
+  let args:(Alloc.String.t_String & Alloc.String.t_String) =
+    ip, session <: (Alloc.String.t_String & Alloc.String.t_String)
+  in
+  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 2) =
+    let list =
+      [
+        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._1;
+        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._2
+      ]
+    in
+    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
+    Rust_primitives.Hax.array_of_list 2 list
+  in
+  let args:(Alloc.String.t_String & Alloc.String.t_String) =
+    ip, session <: (Alloc.String.t_String & Alloc.String.t_String)
+  in
+  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 2) =
+    let list =
+      [
+        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._1;
+        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._2
+      ]
+    in
+    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
+    Rust_primitives.Hax.array_of_list 2 list
+  in
+  Alloc.Slice.impl__into_vec #t_StoreStmt
+    #Alloc.Alloc.t_Global
+    ((let list =
+          [
+            StoreStmt_ResetBackoff
+            ({
+                f_streak
+                =
+                Core_models.Hint.must_use #Alloc.String.t_String
+                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 2)
+                          (mk_usize 2)
+                          (let list = ["rl:streak:websession:token:"; ":"] in
+                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
+                            Rust_primitives.Hax.array_of_list 2 list)
+                          args
+                        <:
+                        Core_models.Fmt.t_Arguments)
+                    <:
+                    Alloc.String.t_String);
+                f_backoff
+                =
+                Core_models.Hint.must_use #Alloc.String.t_String
+                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 2)
+                          (mk_usize 2)
+                          (let list = ["rl:backoff:websession:token:"; ":"] in
+                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
+                            Rust_primitives.Hax.array_of_list 2 list)
+                          args
+                        <:
+                        Core_models.Fmt.t_Arguments)
+                    <:
+                    Alloc.String.t_String)
+              })
+            <:
+            t_StoreStmt
+          ]
+        in
+        FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+        Rust_primitives.Hax.array_of_list 1 list)
+      <:
+      t_Slice t_StoreStmt)
+
+/// `get_session`'s per-IP poll limiter: 120 polls/min per IP.
+let plan_poll_limit (ip: Alloc.String.t_String) : Alloc.Vec.t_Vec t_StoreStmt Alloc.Alloc.t_Global =
+  let args:Alloc.String.t_String = ip <: Alloc.String.t_String in
+  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 1) =
+    let list = [Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args] in
+    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+    Rust_primitives.Hax.array_of_list 1 list
+  in
+  Alloc.Slice.impl__into_vec #t_StoreStmt
+    #Alloc.Alloc.t_Global
+    ((let list =
+          [
+            StoreStmt_Incr
+            ({
+                f_key
+                =
+                Core_models.Hint.must_use #Alloc.String.t_String
+                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 1)
+                          (mk_usize 1)
+                          (let list = ["rl:websession:poll:ip:"] in
+                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+                            Rust_primitives.Hax.array_of_list 1 list)
+                          args
+                        <:
+                        Core_models.Fmt.t_Arguments)
+                    <:
+                    Alloc.String.t_String);
+                f_limit = mk_u64 120;
+                f_ttl = mk_u64 60
+              })
+            <:
+            t_StoreStmt
+          ]
+        in
+        FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+        Rust_primitives.Hax.array_of_list 1 list)
+      <:
+      t_Slice t_StoreStmt)
+
+/// `get_keys`'s per-user key-fetch limiter: 60/min.
+let plan_keys_limit (user: Alloc.String.t_String) : Alloc.Vec.t_Vec t_StoreStmt Alloc.Alloc.t_Global =
+  let args:Alloc.String.t_String = user <: Alloc.String.t_String in
+  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 1) =
+    let list = [Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args] in
+    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+    Rust_primitives.Hax.array_of_list 1 list
+  in
+  Alloc.Slice.impl__into_vec #t_StoreStmt
+    #Alloc.Alloc.t_Global
+    ((let list =
+          [
+            StoreStmt_Incr
+            ({
+                f_key
+                =
+                Core_models.Hint.must_use #Alloc.String.t_String
+                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 1)
+                          (mk_usize 1)
+                          (let list = ["rl:websession:keys:user:"] in
+                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+                            Rust_primitives.Hax.array_of_list 1 list)
+                          args
+                        <:
+                        Core_models.Fmt.t_Arguments)
+                    <:
+                    Alloc.String.t_String);
+                f_limit = mk_u64 60;
+                f_ttl = mk_u64 60
+              })
+            <:
+            t_StoreStmt
+          ]
+        in
+        FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+        Rust_primitives.Hax.array_of_list 1 list)
+      <:
+      t_Slice t_StoreStmt)
+
+/// `get_session`'s one-shot capsule delivery: clear only a non-NULL capsule.
+let plan_capsule_clear (session: Alloc.String.t_String) : t_SqlStmt =
+  SqlStmt_ClearSessionCapsule ({ f_session = session }) <: t_SqlStmt
+
+/// `get_keys`: the approver's lookup, scoped to the account the browser
+/// committed to at `start`.
+let plan_session_keys (session user: Alloc.String.t_String) : t_SqlStmt =
+  SqlStmt_SelectSessionKeys ({ f_session = session; f_user = user }) <: t_SqlStmt
 
 /// `TokenIo::claim_token`: the one `web_session:token_issued:` marker, first
 /// writer wins for the session's whole token ceiling.
@@ -1480,3 +2055,145 @@ let classify_revoke_session (outcome: t_WriteOutcome)
     Vela_session_policy.Websession_driver.DeleteRecordObservation_Failed
     <:
     Vela_session_policy.Websession_driver.t_DeleteRecordObservation
+
+/// `load_session`: the stored row exactly as the query returned it, `Absent`
+/// exactly when no row matched, `QueryFailed` on the query error.
+let classify_session_lookup (outcome: t_ReadOutcome t_SessionRowView) : t_SessionLookup =
+  match outcome <: t_ReadOutcome t_SessionRowView with
+  | ReadOutcome_Row (Core_models.Option.Option_Some row) ->
+    SessionLookup_Row
+    (Core_models.Clone.f_clone #t_SessionRowView #FStar.Tactics.Typeclasses.solve row)
+    <:
+    t_SessionLookup
+  | ReadOutcome_Row (Core_models.Option.Option_None ) -> SessionLookup_Absent <: t_SessionLookup
+  | ReadOutcome_Failed  -> SessionLookup_QueryFailed <: t_SessionLookup
+
+/// `get_sessions_list`: the exact rows the query returned, or the error. The
+/// handler drops expired entries; the SQL orders and bounds them.
+let classify_sessions_list
+      (outcome: t_ReadOutcome (Alloc.Vec.t_Vec t_SessionListRowView Alloc.Alloc.t_Global))
+    : t_SessionsList =
+  match outcome <: t_ReadOutcome (Alloc.Vec.t_Vec t_SessionListRowView Alloc.Alloc.t_Global) with
+  | ReadOutcome_Row (Core_models.Option.Option_Some rows) ->
+    SessionsList_Rows
+    (Core_models.Clone.f_clone #(Alloc.Vec.t_Vec t_SessionListRowView Alloc.Alloc.t_Global)
+        #FStar.Tactics.Typeclasses.solve
+        rows)
+    <:
+    t_SessionsList
+  | ReadOutcome_Row (Core_models.Option.Option_None ) ->
+    SessionsList_Rows (Alloc.Vec.impl__new #t_SessionListRowView ()) <: t_SessionsList
+  | ReadOutcome_Failed  -> SessionsList_QueryFailed <: t_SessionsList
+
+/// One cleanup delete's applied row count; a failed statement purged nothing.
+let cleaned_rows (outcome: t_WriteOutcome) : u64 =
+  match outcome <: t_WriteOutcome with
+  | WriteOutcome_Applied rows -> rows
+  | WriteOutcome_Failed  -> mk_u64 0
+
+/// `cleanup_task`: each delete's exact count, or zero when it failed.
+let classify_cleanup (revoked expired pending: t_WriteOutcome) : t_CleanupReport =
+  {
+    f_revoked = cleaned_rows revoked;
+    f_expired = cleaned_rows expired;
+    f_pending = cleaned_rows pending
+  }
+  <:
+  t_CleanupReport
+
+/// `StartIo::check_rate_limit`: `Allowed` exactly when the one counter statement
+/// ran (it grows before it refuses, so a refusal is `Failed`).
+let classify_start_limit (outcomes: t_Slice t_StoreOutcome) : t_LimitObservation =
+  if
+    (Core_models.Slice.impl__len #t_StoreOutcome outcomes <: usize) =. mk_usize 1 &&
+    (match outcomes.[ mk_usize 0 ] <: t_StoreOutcome with
+      | StoreOutcome_Applied  -> true
+      | _ -> false)
+  then LimitObservation_Allowed <: t_LimitObservation
+  else LimitObservation_Denied <: t_LimitObservation
+
+/// `post_verify`: `Allowed` exactly when the per-IP counter and the backoff
+/// precheck both ran (a live or unreadable backoff key is `Failed`).
+let classify_login_limits (outcomes: t_Slice t_StoreOutcome) : t_LimitObservation =
+  if
+    (Core_models.Slice.impl__len #t_StoreOutcome outcomes <: usize) =. mk_usize 2 &&
+    (match outcomes.[ mk_usize 0 ] <: t_StoreOutcome with
+      | StoreOutcome_Applied  -> true
+      | _ -> false) &&
+    (match outcomes.[ mk_usize 1 ] <: t_StoreOutcome with
+      | StoreOutcome_Applied  -> true
+      | _ -> false)
+  then LimitObservation_Allowed <: t_LimitObservation
+  else LimitObservation_Denied <: t_LimitObservation
+
+/// `TokenIo::check_token_limits`: `Allowed` exactly when both counters and the
+/// backoff precheck ran.
+let classify_token_limits (outcomes: t_Slice t_StoreOutcome) : t_LimitObservation =
+  if
+    (Core_models.Slice.impl__len #t_StoreOutcome outcomes <: usize) =. mk_usize 3 &&
+    (match outcomes.[ mk_usize 0 ] <: t_StoreOutcome with
+      | StoreOutcome_Applied  -> true
+      | _ -> false) &&
+    (match outcomes.[ mk_usize 1 ] <: t_StoreOutcome with
+      | StoreOutcome_Applied  -> true
+      | _ -> false) &&
+    (match outcomes.[ mk_usize 2 ] <: t_StoreOutcome with
+      | StoreOutcome_Applied  -> true
+      | _ -> false)
+  then LimitObservation_Allowed <: t_LimitObservation
+  else LimitObservation_Denied <: t_LimitObservation
+
+/// `TokenIo::record_token_failure`: `Recorded` exactly when the record ran.
+let classify_token_failure_record (outcome: t_StoreOutcome)
+    : Vela_session_policy.Websession_driver.t_TokenFailureRecordObservation =
+  match outcome <: t_StoreOutcome with
+  | StoreOutcome_Applied  ->
+    Vela_session_policy.Websession_driver.TokenFailureRecordObservation_Recorded
+    <:
+    Vela_session_policy.Websession_driver.t_TokenFailureRecordObservation
+  | StoreOutcome_Failed  ->
+    Vela_session_policy.Websession_driver.TokenFailureRecordObservation_StorageFailed
+    <:
+    Vela_session_policy.Websession_driver.t_TokenFailureRecordObservation
+
+/// `get_session`'s poll limiter: one counter statement.
+let classify_poll_limit (outcomes: t_Slice t_StoreOutcome) : t_LimitObservation =
+  if
+    (Core_models.Slice.impl__len #t_StoreOutcome outcomes <: usize) =. mk_usize 1 &&
+    (match outcomes.[ mk_usize 0 ] <: t_StoreOutcome with
+      | StoreOutcome_Applied  -> true
+      | _ -> false)
+  then LimitObservation_Allowed <: t_LimitObservation
+  else LimitObservation_Denied <: t_LimitObservation
+
+/// `get_keys`'s per-user limiter: one counter statement.
+let classify_keys_limit (outcomes: t_Slice t_StoreOutcome) : t_LimitObservation =
+  if
+    (Core_models.Slice.impl__len #t_StoreOutcome outcomes <: usize) =. mk_usize 1 &&
+    (match outcomes.[ mk_usize 0 ] <: t_StoreOutcome with
+      | StoreOutcome_Applied  -> true
+      | _ -> false)
+  then LimitObservation_Allowed <: t_LimitObservation
+  else LimitObservation_Denied <: t_LimitObservation
+
+/// `get_session`'s capsule clear: `Cleared` exactly when the statement matched
+/// a live capsule; zero rows is another poll that got there first; a failure
+/// retracted nothing.
+let classify_capsule_clear (outcome: t_WriteOutcome) : t_CapsuleClearObservation =
+  match outcome <: t_WriteOutcome with
+  | WriteOutcome_Applied (Rust_primitives.Integers.MkInt 0) ->
+    CapsuleClearObservation_AlreadyCollected <: t_CapsuleClearObservation
+  | WriteOutcome_Applied _ -> CapsuleClearObservation_Cleared <: t_CapsuleClearObservation
+  | WriteOutcome_Failed  -> CapsuleClearObservation_StorageFailed <: t_CapsuleClearObservation
+
+/// `get_keys`: the stored key row or none, or the query error.
+let classify_session_keys (outcome: t_ReadOutcome t_SessionKeysView) : t_SessionKeysLookup =
+  match outcome <: t_ReadOutcome t_SessionKeysView with
+  | ReadOutcome_Row (Core_models.Option.Option_Some view) ->
+    SessionKeysLookup_Row
+    (Core_models.Clone.f_clone #t_SessionKeysView #FStar.Tactics.Typeclasses.solve view)
+    <:
+    t_SessionKeysLookup
+  | ReadOutcome_Row (Core_models.Option.Option_None ) ->
+    SessionKeysLookup_Absent <: t_SessionKeysLookup
+  | ReadOutcome_Failed  -> SessionKeysLookup_QueryFailed <: t_SessionKeysLookup

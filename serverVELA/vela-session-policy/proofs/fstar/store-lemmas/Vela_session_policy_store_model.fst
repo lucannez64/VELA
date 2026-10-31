@@ -77,6 +77,11 @@ let erase_row (#a: Type0) (t: tbl a) (k: text) : tbl a =
 let delete_rows (#a: Type0) (p: a -> bool) (t: tbl a) : tbl a =
   keep (fun (kv: text & a) -> not (p (snd kv))) t
 
+/// How many rows `delete_rows p t` removes: the exact count an observed
+/// `DELETE` returns.
+let delete_count (#a: Type0) (p: a -> bool) (t: tbl a) : nat =
+  L.length (keep (fun (kv: text & a) -> p (snd kv)) t)
+
 /// `SELECT id FROM t WHERE <row predicate>`.
 let ids_of (#a: Type0) (p: a -> bool) (t: tbl a) : list text =
   L.map fst (keep (fun (kv: text & a) -> p (snd kv)) t)
@@ -121,6 +126,16 @@ type session_row = {
   ws_mode: option text;
   ws_key_epoch: option i64;
   ws_expires_at: option text;
+  ws_poll_secret_hash: option text;
+  ws_ephemeral_pk: text;
+  ws_web_vk: option text;
+  ws_link_nonce: option text;
+  ws_created_at: text;
+  /// The instant `ws_expires_at` denotes, so cleanup's `expires_at < ?` can be
+  /// decided without text ordering (conformance pins the pairing).
+  ws_expires_secs: option nat;
+  /// The instant `ws_created_at` denotes (see `ws_expires_secs`).
+  ws_created_secs: nat;
 }
 
 /// A `share_inbox` or `shared_items` row.
@@ -149,13 +164,15 @@ noeq type db = {
 
 /// What a write statement's row count means to the handler. `WroteOne` and
 /// `WroteAbsent` are the `users` delete's one-or-zero rows; `WroteConflict` is
-/// an `INSERT` whose `UNIQUE` id was taken, which the handler sees as failure.
+/// an `INSERT` whose `UNIQUE` id was taken, which the handler sees as failure;
+/// `WroteRows n` is a `DELETE` whose exact affected count the handler reads
+/// (cleanup).
 type write_result =
   | Wrote
   | WroteOne
   | WroteAbsent
   | WroteConflict
-
+  | WroteRows : nat -> write_result
 /// A web session the cascade may end: approved by `dev`, owned by `usr`, and
 /// not already revoked (the handler's `status != 'revoked'`).
 let live_approved (dev usr: text) (r: session_row) : bool =
@@ -254,14 +271,26 @@ let registration_published (d: db) (usr dev now sek since nm kd dek vk: text) : 
 // ── Web sessions: rows and guards ──────────────────────────────────────────
 
 /// The row `start` inserts: the committed approver, `user_id` and every grant
-/// field still NULL.
-let inserted_pending_session (approver: text) : session_row =
+/// field still NULL; the browser's key material and the creation instant.
+let inserted_pending_session
+      (approver poll_hash ephemeral_pk web_vk link_nonce created_at: text) (created_secs: u64)
+  : session_row =
   { ws_user = None; ws_approver = Some approver; ws_status = v_pending;
     ws_capsule = None; ws_approved_by = None; ws_mode = None;
-    ws_key_epoch = None; ws_expires_at = None }
+    ws_key_epoch = None; ws_expires_at = None;
+    ws_poll_secret_hash = Some poll_hash; ws_ephemeral_pk = ephemeral_pk;
+    ws_web_vk = Some web_vk; ws_link_nonce = Some link_nonce;
+    ws_created_at = created_at; ws_expires_secs = None;
+    ws_created_secs = v created_secs }
 
-let st_insert_pending (d: db) (sess approver: text) : db =
-  { d with sessions = insert_row d.sessions sess (inserted_pending_session approver) }
+let st_insert_pending
+      (d: db) (sess approver poll_hash ephemeral_pk web_vk link_nonce created_at: text)
+      (created_secs: u64)
+  : db =
+  { d with sessions =
+      insert_row d.sessions sess
+        (inserted_pending_session approver poll_hash ephemeral_pk web_vk link_nonce created_at
+           created_secs) }
 
 /// The SQL guard of the grant CAS: the session is pending for this approver,
 /// the account exists and is not mid-rekey at the declared epoch, and the
@@ -279,7 +308,8 @@ let grant_guard (d: db) (sess usr dev: text) (epoch: i64) : bool =
 
 /// The row the CAS publishes: the grant fields set, the approver binding and
 /// every other column kept.
-let granted_session (r: session_row) (usr dev mode capsule expires: text) (epoch: i64)
+let granted_session
+      (r: session_row) (usr dev mode capsule expires: text) (epoch: i64) (expires_secs: u64)
   : session_row =
   { r with ws_user = Some usr;
            ws_mode = Some mode;
@@ -287,15 +317,41 @@ let granted_session (r: session_row) (usr dev mode capsule expires: text) (epoch
            ws_capsule = Some capsule;
            ws_approved_by = Some dev;
            ws_key_epoch = Some epoch;
-           ws_expires_at = Some expires }
+           ws_expires_at = Some expires;
+           ws_expires_secs = Some (v expires_secs) }
 
-let st_grant_session (d: db) (sess usr dev mode capsule expires: text) (epoch: i64) : db =
+let st_grant_session
+      (d: db) (sess usr dev mode capsule expires: text) (epoch: i64) (expires_secs: u64)
+  : db =
   { d with sessions =
-      update_rows d.sessions sess (fun r -> granted_session r usr dev mode capsule expires epoch) }
+      update_rows d.sessions sess
+        (fun r -> granted_session r usr dev mode capsule expires epoch expires_secs) }
 
 /// `UPDATE web_sessions SET status = 'revoked', capsule = NULL WHERE id = ?`.
 let st_revoke_session (d: db) (sess: text) : db =
   { d with sessions = update_rows d.sessions sess revoked_session }
+
+/// `DELETE FROM web_sessions WHERE status = 'revoked'`.
+let st_delete_revoked (d: db) : db =
+  { d with sessions = delete_rows (fun r -> r.ws_status = v_revoked) d.sessions }
+
+/// `DELETE FROM web_sessions WHERE expires_at IS NOT NULL AND expires_at < ?`.
+let st_delete_expired (d: db) (now_secs: u64) : db =
+  { d with sessions =
+      delete_rows (fun r -> (match r.ws_expires_secs with
+                             | Some e -> e < v now_secs
+                             | None -> false)) d.sessions }
+
+/// `DELETE FROM web_sessions WHERE status = 'pending' AND created_at < ?`.
+let st_delete_stale_pending (d: db) (cutoff_secs: u64) : db =
+  { d with sessions =
+      delete_rows (fun r -> r.ws_status = v_pending && r.ws_created_secs < v cutoff_secs)
+        d.sessions }
+
+/// `UPDATE web_sessions SET capsule = NULL WHERE id = ? AND capsule IS NOT NULL`.
+let st_clear_capsule (d: db) (sess: text) : db =
+  { d with sessions =
+      update_rows d.sessions sess (fun r -> { r with ws_capsule = None }) }
 
 /// One write statement on a state, or `None` when a read or `Commit` was
 /// passed where a write belongs.
@@ -342,26 +398,56 @@ let exec_stmt (d: db) (s: t_SqlStmt) : option (write_result & db) =
      | Some _ -> Some (WroteConflict, d)
      | None -> Some (Wrote, st_insert_device d dev usr now nm kd ek vk))
   | SqlStmt_InsertPendingSession
-      { f_session = sess; f_approver = approver; f_poll_secret_hash = _;
-        f_ephemeral_pk = _; f_web_vk = _; f_link_nonce = _; f_now = _ } ->
+      { f_session = sess; f_approver = approver; f_poll_secret_hash = poll_hash;
+        f_ephemeral_pk = ephemeral_pk; f_web_vk = web_vk; f_link_nonce = link_nonce;
+        f_now = now; f_now_secs = now_secs } ->
     (match lookup d.sessions sess with
      | Some _ -> Some (WroteConflict, d)
-     | None -> Some (Wrote, st_insert_pending d sess approver))
+     | None -> Some (Wrote, st_insert_pending d sess approver poll_hash ephemeral_pk web_vk
+                            link_nonce now now_secs))
   | SqlStmt_GrantWebSession
       { f_session = sess; f_user = usr; f_device = dev; f_mode = mode;
-        f_capsule = capsule; f_expires_at = expires; f_epoch = epoch } ->
+        f_capsule = capsule; f_expires_at = expires; f_epoch = epoch;
+        f_expires_secs = expires_secs } ->
     if grant_guard d sess usr dev epoch
-    then Some (WroteOne, st_grant_session d sess usr dev mode capsule expires epoch)
+    then Some (WroteOne, st_grant_session d sess usr dev mode capsule expires epoch expires_secs)
     else Some (WroteAbsent, d)
   | SqlStmt_RevokeSessionById { f_session = sess } ->
     (match lookup d.sessions sess with
      | Some _ -> Some (WroteOne, st_revoke_session d sess)
+     | None -> Some (WroteAbsent, d))
+  | SqlStmt_DeleteRevokedWebSessions ->
+    Some (WroteRows (delete_count (fun r -> r.ws_status = v_revoked) d.sessions),
+          st_delete_revoked d)
+  | SqlStmt_DeleteExpiredWebSessions { f_now = _; f_now_secs = now_secs } ->
+    Some (WroteRows
+            (delete_count
+               (fun r -> (match r.ws_expires_secs with
+                          | Some e -> e < v now_secs
+                          | None -> false)) d.sessions),
+          st_delete_expired d now_secs)
+  | SqlStmt_DeleteStalePendingWebSessions
+      { f_cutoff = _; f_cutoff_secs = cutoff_secs } ->
+    Some (WroteRows
+            (delete_count
+               (fun r -> r.ws_status = v_pending && r.ws_created_secs < v cutoff_secs)
+               d.sessions),
+          st_delete_stale_pending d cutoff_secs)
+  | SqlStmt_ClearSessionCapsule { f_session = sess } ->
+    (match lookup d.sessions sess with
+     | Some r ->
+       if Some? r.ws_capsule
+       then Some (WroteOne, st_clear_capsule d sess)
+       else Some (WroteAbsent, d)
      | None -> Some (WroteAbsent, d))
   | SqlStmt_SelectDeviceIdsByUser _
   | SqlStmt_SelectWebSessionIdsByUser _
   | SqlStmt_SelectDeviceById _
   | SqlStmt_SelectWebSessionIdsApprovedBy _
   | SqlStmt_SelectUnrevokedDeviceById _
+  | SqlStmt_SelectWebSessionById _
+  | SqlStmt_SelectGrantedSessionsByUser _
+  | SqlStmt_SelectSessionKeys _
   | SqlStmt_CountUsers
   | SqlStmt_Commit -> None
 
@@ -371,6 +457,9 @@ let exec_write (d: db) (s: t_SqlStmt) : db =
   | Some (_, d') -> d'
   | None -> d
 
+/// A nat as a `u64` (the exact value for every count a real table returns).
+let u64_of_nat (n: nat) : u64 = mk_u64 (n % 18446744073709551616)
+
 /// The outcome the handler records for a statement it ran.
 let outcome_of (w: write_result) : t_WriteOutcome =
   match w with
@@ -378,6 +467,7 @@ let outcome_of (w: write_result) : t_WriteOutcome =
   | WroteOne -> WriteOutcome_Applied (mk_u64 1)
   | WroteAbsent -> WriteOutcome_Applied (mk_u64 0)
   | WroteConflict -> WriteOutcome_Failed
+  | WroteRows n -> WriteOutcome_Applied (u64_of_nat n)
 
 /// The k-th statement is the injected failure.
 let faulted (f: option nat) (k: nat) : bool =
@@ -488,15 +578,19 @@ let exec_store (s: store) (st: t_StoreStmt) : store =
   | StoreStmt_SetExNxByte { f_key = k; f_value = _; f_ttl = _ } ->
     { s with kv = (if Some? (s.kv k) then s.kv else kv_set s.kv k (Some v_one)) }
   | StoreStmt_Exists { f_key = _ } -> s
+  | StoreStmt_Ttl { f_key = _ } -> s
 
 /// One store statement and the outcome the handler observed. Only a fixed
-/// window counter can refuse: it grew before it reported the refusal.
+/// window counter can refuse, and only a live backoff key refuses a `Ttl`
+/// read; the counter grows before it reports the refusal.
 let exec_store_out (s: store) (st: t_StoreStmt) : (t_StoreOutcome & store) =
   match st with
   | StoreStmt_Incr { f_key = k; f_limit = lim; f_ttl = _ } ->
     let n = s.counters k + 1 in
     let s' = { s with counters = cnt_set s.counters k n } in
     ((if n <= v lim then StoreOutcome_Applied else StoreOutcome_Failed), s')
+  | StoreStmt_Ttl { f_key = k } ->
+    ((if Some? (s.kv k) then StoreOutcome_Failed else StoreOutcome_Applied), s)
   | _ -> (StoreOutcome_Applied, exec_store s st)
 
 /// A plan of store statements: stop at the first failure.
@@ -891,23 +985,24 @@ let registration_transaction (d: db) (usr dev now sek since nm kd dek vk: text) 
 
 /// `StartIo::insert_pending`: one `INSERT` on the pool.
 let insert_pending
-      (d: db) (sess approver hash epk vk nonce now: text) (f: option nat)
+      (d: db) (sess approver hash epk vk nonce now: text) (now_secs: u64) (f: option nat)
   : (Vela_session_policy.Websession_driver.t_StartInsertObservation & db) =
   if faulted f 0
   then (classify_start_insert WriteOutcome_Failed, d)
   else
-    match exec_stmt d (plan_insert_pending sess approver hash epk vk nonce now) with
+    match exec_stmt d (plan_insert_pending sess approver hash epk vk nonce now now_secs) with
     | Some (w, d') -> (classify_start_insert (outcome_of w), d')
     | None -> (classify_start_insert WriteOutcome_Failed, d)
 
 /// `GrantIo::update_grant`: the one guarded compare-and-swap on the pool.
 let grant_update
-      (d: db) (sess usr dev mode capsule expires: text) (epoch: i64) (f: option nat)
+      (d: db) (sess usr dev mode capsule expires: text) (epoch: i64) (expires_secs: u64)
+      (f: option nat)
   : (Vela_session_policy.Websession_driver.t_GrantUpdateObservation & db) =
   if faulted f 0
   then (classify_grant_update WriteOutcome_Failed, d)
   else
-    match exec_stmt d (plan_grant_update sess usr dev mode capsule expires epoch) with
+    match exec_stmt d (plan_grant_update sess usr dev mode capsule expires epoch expires_secs) with
     | Some (w, d') -> (classify_grant_update (outcome_of w), d')
     | None -> (classify_grant_update WriteOutcome_Failed, d)
 
@@ -982,3 +1077,159 @@ let token_issue (s: store) (sess jti: text) (paseto_ok: bool) (f: option nat)
                 (if faulted f 1 then Some 0 else None) in
       (classify_token_issue true sent (first_out (fst r)), snd r)
     | _ -> (classify_token_issue true sent StoreOutcome_Failed, s)
+
+// ── Shared web-session reads, cleanup and pre-driver limiters ──────────────
+
+/// A SQL plan's statements (hax extracts `Vec` as a sequence).
+let sql_stmts_of (p: Alloc.Vec.t_Vec t_SqlStmt Alloc.Alloc.t_Global) : list t_SqlStmt =
+  Seq.seq_to_list p._0
+
+/// The stored row, as the shared lookup returns it.
+let session_view (r: session_row) : t_SessionRowView =
+  { f_user_id = cm_option r.ws_user;
+    f_approver_user_id = cm_option r.ws_approver;
+    f_poll_secret_hash = cm_option r.ws_poll_secret_hash;
+    f_web_vk = cm_option r.ws_web_vk;
+    f_link_nonce = cm_option r.ws_link_nonce;
+    f_mode = cm_option r.ws_mode;
+    f_status = cm_option (Some r.ws_status);
+    f_capsule = cm_option r.ws_capsule;
+    f_expires_at = cm_option r.ws_expires_at;
+    f_key_epoch = cm_option r.ws_key_epoch }
+
+/// `load_session`: exactly the stored row, or none, or the query error. The
+/// session the query names is the one the extracted plan carries.
+let read_session_stmt (d: db) (st: t_SqlStmt) (failed: bool)
+  : t_ReadOutcome t_SessionRowView =
+  if failed then ReadOutcome_Failed
+  else
+    match st with
+    | SqlStmt_SelectWebSessionById { f_session = sess } ->
+      (match lookup d.sessions sess with
+       | None -> ReadOutcome_Row Core_models.Option.Option_None
+       | Some r ->
+         ReadOutcome_Row (Core_models.Option.Option_Some (session_view r)))
+    | _ -> ReadOutcome_Failed
+
+let read_session (d: db) (sess: text) (failed: bool) : t_ReadOutcome t_SessionRowView =
+  read_session_stmt d (plan_load_session sess) failed
+
+/// One row of `GET /web-sessions`, as the account's granted-sessions query
+/// returns it.
+let sessions_list_view (id: text) (r: session_row) : t_SessionListRowView =
+  { f_id = id;
+    f_mode = (match r.ws_mode with
+              | Some m -> m
+              | None -> Alloc.String.String "");
+    f_status = r.ws_status;
+    f_created_at = r.ws_created_at;
+    f_expires_at = cm_option r.ws_expires_at }
+
+/// The exact set `SELECT ... WHERE user_id = ? AND status = 'granted'` returns
+/// (order is presentation; conformance compares the set).
+let session_list_truth (d: db) (usr: text) : list t_SessionListRowView =
+  L.map (fun (kv: text & session_row) -> sessions_list_view (fst kv) (snd kv))
+        (keep (fun (kv: text & session_row) ->
+                 (snd kv).ws_user = Some usr && (snd kv).ws_status = v_granted)
+              d.sessions)
+
+/// The `GET /web-sessions` query result, as the classifier sees it. The query's
+/// account is the one the extracted plan carries (`plan_sessions_list_shape`);
+/// the returned set is the harness's read of the database
+/// (`session_list_truth`), which conformance compares with the real rows.
+let read_sessions_list (d: db) (usr: text)
+      (v: Alloc.Vec.t_Vec t_SessionListRowView Alloc.Alloc.t_Global) (failed: bool)
+  : t_ReadOutcome (Alloc.Vec.t_Vec t_SessionListRowView Alloc.Alloc.t_Global) =
+  let _ = plan_sessions_list usr in
+  if failed then ReadOutcome_Failed
+  else ReadOutcome_Row (Core_models.Option.Option_Some v)
+
+/// A slice of the three cleanup outcomes the classifier reads.
+let slice3_write (a b c: t_WriteOutcome) : t_Slice t_WriteOutcome =
+  Seq.seq_of_list [a; b; c]
+
+/// One cleanup delete, faultable at its own call: a failure changes nothing.
+let cleanup_one (d: db) (st: t_SqlStmt) (f: option nat) (k: nat)
+  : (t_WriteOutcome & db) =
+  if faulted f k then (WriteOutcome_Failed, d)
+  else
+    match exec_stmt d st with
+    | Some (w, d') -> (outcome_of w, d')
+    | None -> (WriteOutcome_Failed, d)
+
+/// `cleanup_task`: each delete runs independently (a failure does not stop
+/// the next), and the report carries each statement's exact row count.
+let cleanup (d: db) (now: text) (now_secs: u64) (cutoff: text) (cutoff_secs: u64)
+      (f: option nat)
+  : (t_CleanupReport & db) =
+  let (o0, d1) = cleanup_one d (plan_cleanup_revoked ()) f 0 in
+  let (o1, d2) =
+    cleanup_one d1 (plan_cleanup_expired now now_secs) f 1 in
+  let (o2, d3) =
+    cleanup_one d2 (plan_cleanup_pending cutoff cutoff_secs) f 2 in
+  (classify_cleanup o0 o1 o2, d3)
+
+/// `post_verify`'s per-IP limiter and backoff precheck.
+let login_limits (s: store) (ip dev: text) (f: option nat)
+  : (t_LimitObservation & store) =
+  let r = run_store s (stmts_of (plan_login_limits ip dev)) 0 f in
+  (classify_login_limits (slice_of (fst r)), snd r)
+
+/// `StartIo::check_rate_limit`.
+let start_limit (s: store) (ip: text) (f: option nat)
+  : (t_LimitObservation & store) =
+  let r = run_store s (stmts_of (plan_start_limit ip)) 0 f in
+  (classify_start_limit (slice_of (fst r)), snd r)
+
+/// `TokenIo::check_token_limits`.
+let token_limits (s: store) (ip sess: text) (f: option nat)
+  : (t_LimitObservation & store) =
+  let r = run_store s (stmts_of (plan_token_limits ip sess)) 0 f in
+  (classify_token_limits (slice_of (fst r)), snd r)
+
+/// `get_session`'s per-IP poll limiter.
+let poll_limit (s: store) (ip: text) (f: option nat)
+  : (t_LimitObservation & store) =
+  let r = run_store s (stmts_of (plan_poll_limit ip)) 0 f in
+  (classify_poll_limit (slice_of (fst r)), snd r)
+
+/// `get_keys`'s per-user limiter.
+let keys_limit (s: store) (usr: text) (f: option nat)
+  : (t_LimitObservation & store) =
+  let r = run_store s (stmts_of (plan_keys_limit usr)) 0 f in
+  (classify_keys_limit (slice_of (fst r)), snd r)
+
+/// `get_session`'s one-shot capsule clear.
+let capsule_clear (d: db) (sess: text) (f: option nat)
+  : (t_CapsuleClearObservation & db) =
+  if faulted f 0 then (classify_capsule_clear WriteOutcome_Failed, d)
+  else
+    match exec_stmt d (plan_capsule_clear sess) with
+    | Some (w, d') -> (classify_capsule_clear (outcome_of w), d')
+    | None -> (classify_capsule_clear WriteOutcome_Failed, d)
+
+/// The stored cells the approver's key fetch reads.
+let keys_view (r: session_row) : t_SessionKeysView =
+  { f_ephemeral_pk = cm_option (Some r.ws_ephemeral_pk);
+    f_web_vk = cm_option r.ws_web_vk;
+    f_status = cm_option (Some r.ws_status) }
+
+/// `get_keys`: the approver-scoped key row, or none, or the query error. The
+/// session and account are the ones the extracted plan carries.
+let read_session_keys_stmt (d: db) (st: t_SqlStmt) (failed: bool)
+  : t_ReadOutcome t_SessionKeysView =
+  if failed then ReadOutcome_Failed
+  else
+    match st with
+    | SqlStmt_SelectSessionKeys { f_session = sess; f_user = usr } ->
+      (match lookup d.sessions sess with
+       | Some r ->
+         if r.ws_approver = Some usr
+         then ReadOutcome_Row (Core_models.Option.Option_Some (keys_view r))
+         else ReadOutcome_Row Core_models.Option.Option_None
+       | None -> ReadOutcome_Row Core_models.Option.Option_None)
+    | _ -> ReadOutcome_Failed
+
+let read_session_keys (d: db) (sess usr: text) (failed: bool)
+  : t_ReadOutcome t_SessionKeysView =
+  read_session_keys_stmt d (plan_session_keys sess usr) failed
