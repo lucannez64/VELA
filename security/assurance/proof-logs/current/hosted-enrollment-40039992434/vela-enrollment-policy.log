@@ -1,0 +1,36 @@
+[1m[92m   Compiling[0m vela-enrollment-policy v0.1.0 (/home/runner/work/VELA/VELA/serverVELA/vela-enrollment-policy)
+[1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 0.36s
+[1m[92m     Running[0m unittests src/lib.rs (/home/runner/work/VELA/VELA/target/debug/deps/vela_enrollment_policy-70aa54528fb788e0)
+
+running 2 tests
+test tests::completion_requires_every_binding ... ok
+test tests::result_requires_the_claimed_private_key ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests/fact_construction.rs (/home/runner/work/VELA/VELA/target/debug/deps/fact_construction-2ff67b8b445aa05c)
+
+running 5 tests
+test claim_facts_are_exactly_the_grant_store_and_lengths ... ok
+test completion_facts_are_exactly_the_store_sql_epoch_and_signature_observations ... ok
+test inspect_facts_are_exactly_the_claim_and_session_bindings ... ok
+test open_facts_are_exactly_the_session_observations ... ok
+test result_facts_are_exactly_the_store_key_and_signature_observations ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m   Doc-tests[0m vela_enrollment_policy
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m    Checking[0m vela-enrollment-policy v0.1.0 (/home/runner/work/VELA/VELA/serverVELA/vela-enrollment-policy)
+[1m[92m    Finished[0m `dev` profile [unoptimized + debuginfo] target(s) in 0.43s
+[1m[94minfo[0m: [1mhax: wrote file ./proofs/fstar/extraction/Vela_enrollment_policy.fst[0m
+::warning file=Rust_primitives.Char.fsti,line=0,endLine=0::(241) * Warning 241 at /home/runner/.local/opt/vela-hax-0.3.7/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti(0,0-0,0):%0A  - Unable to load%0A    /home/runner/.local/opt/vela-hax-0.3.7/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti.checked%0A    since checked file%0A    /home/runner/.local/opt/vela-hax-0.3.7/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti.checked%0A    does not exist; will recheck%0A    /home/runner/.local/opt/vela-hax-0.3.7/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti%0A    (suppressing this warning for further modules)%0A
+::warning file=Rust_primitives.Float.fsti,line=5,endLine=5::(239) * Warning 239 at /home/runner/.local/opt/vela-hax-0.3.7/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):%0A  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float%0A
+::warning file=dummy,line=0,endLine=0::(242) * Warning 242 at /home/runner/.local/opt/vela-hax-0.3.7/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):%0A  - Definitions of inner let-rec while_loop_internal and its enclosing top-level%0A    letbinding are not encoded to the solver, you will only be able to reason%0A    with their types%0A  - Also see: /home/runner/.local/opt/vela-hax-0.3.7/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)%0A
+::warning file=dummy,line=0,endLine=0::(242) * Warning 242 at /home/runner/.local/opt/vela-hax-0.3.7/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):%0A  - Definitions of inner let-rec while_loop_internal and its enclosing top-level%0A    letbinding are not encoded to the solver, you will only be able to reason%0A    with their types%0A  - Also see: /home/runner/.local/opt/vela-hax-0.3.7/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)%0A
+Verified module: Vela_enrollment_policy
+All verification conditions discharged successfully

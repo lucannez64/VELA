@@ -43,6 +43,7 @@ getrandom      = { version = "0.2" }
 zeroize        = { version = "1", features = ["derive"] }
 thiserror      = "1"
 vela-client-recovery-policy = { path = "../vela-client-recovery-policy" }
+vela-client-share-policy = { path = "../vela-client-share-policy" }
 
 [dev-dependencies]
 hex            = "0.4"

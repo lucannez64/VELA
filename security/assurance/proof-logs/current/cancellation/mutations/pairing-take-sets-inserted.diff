@@ -1,0 +1,11 @@
+--- /tmp/vela-f2-cancel-mut/pairing/pristine.fst	2026-10-27 22:16:34.116466020 +0100
++++ serverVELA/vela-enrollment-policy/proofs/fstar/extraction-pairing-driver/Vela_enrollment_policy.Pairing_driver.fst	2026-10-27 22:16:34.262379515 +0100
+@@ -1023,7 +1023,7 @@
+   | TakeObservation_Taken { f_grant_matches = grant_matches ; f_claim_matches = claim_matches } ->
+     if grant_matches && claim_matches
+     then
+-      transition ({ d with f_stage = PairingStage_InFlight <: t_PairingStage; f_consumed = true }
++      transition ({ d with f_stage = PairingStage_InFlight <: t_PairingStage; f_consumed = true; f_inserted = true }
+           <:
+           t_PairingDriver)
+         (PairingEffect_InsertDevice <: t_PairingEffect)

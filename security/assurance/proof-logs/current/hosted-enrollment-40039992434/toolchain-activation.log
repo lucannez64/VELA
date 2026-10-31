@@ -1,0 +1,8 @@
+version=0.3.7
+F* 2025.10.06
+platform=Linux_x86_64
+compiler=OCaml 4.14.2
+date=2025-10-06 12:00:42 -0700
+commit=7b347386330d0e5a331a220535b6f15288903234
+Z3 version 4.13.3 - 64 bit
+rustc 1.93.0-nightly (843f8ce2e 2025-11-07)

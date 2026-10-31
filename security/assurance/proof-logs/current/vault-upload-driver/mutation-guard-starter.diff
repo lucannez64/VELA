@@ -1,0 +1,15 @@
+--- /home/hirew/.t3/worktrees/VELA/t3-d0ca44cd/serverVELA/vela-rekey-policy/proofs/fstar/vault-upload-driver-composition/Vela_rekey_policy_vault_upload_driver_composition.fst	2026-10-27 00:19:56.661995313 +0100
++++ /tmp/opencode/mutants/guard-starter/vault-upload-driver-composition/Vela_rekey_policy_vault_upload_driver_composition.fst	2026-10-27 00:45:13.507400319 +0100
+@@ -328,11 +328,8 @@
+ /// `rekey_id` is a fresh non-empty value, so the absent-header default (`''`,
+ /// modelled as id zero) never matches; hence the explicit `rid > 0`.
+ let sql_shadow_guard (a: account) (wr: writer) (rid: nat) (p: t_UploadWritePermit) : bool =
+-  rid > 0 &&
+   a.a_epoch = p.f_read_epoch &&
+-  a.a_phase = Phase_Freezing &&
+-  a.a_starter = wr.wr_device &&
+-  a.a_rid = rid
++  a.a_phase = Phase_Freezing
+ 
+ /// A committed active row is acceptable only at the live epoch of an ACTIVE
+ /// account.

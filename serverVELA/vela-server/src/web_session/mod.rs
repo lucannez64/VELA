@@ -28,11 +28,24 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use uuid::Uuid;
 use vela_session_policy::{
-    GrantDecision, GrantFacts, SessionMode as PolicyMode, SessionPhase as PolicyPhase,
-    TokenDecision, WebTokenFacts,
+    websession_driver::{
+        DeleteEffect, DeleteFailure, DeleteLookupObservation,
+        DeleteRecordObservation, DeleteSentinelObservation, GrantActorObservation, GrantEffect,
+        GrantFailure, GrantLookupObservation, GrantUpdate, GrantUpdateObservation,
+        StartEffect, StartFailure, StartInsertObservation, StartLimitObservation,
+        StartValidationObservation, TokenChallengeObservation, TokenClaimObservation,
+        TokenEffect, TokenFailure, TokenFailureRecordObservation, TokenIssueObservation,
+        TokenLimitObservation, TokenLookupObservation, TokenResetObservation,
+        TokenSessionObservation, TokenSignatureObservation,
+    },
+    GrantObservation, SessionMode as PolicyMode, SessionPhase as PolicyPhase,
 };
 
 use crate::{
+    auth::session_store::{
+        keep_error, run_exists, run_nonce, run_sql, run_store, DbSql, PasetoTokens, SessionSql,
+        SessionStore, SessionTokens, SledStore,
+    },
     auth::token::TokenService,
     device::enroll::verify_auth_signature,
     error::{AppError, Result},
@@ -65,7 +78,9 @@ const PENDING_TTL_SECS: i64 = 5 * 60;
 /// RO snapshots seal the whole decrypted vault, so allow a generous ceiling.
 const MAX_CAPSULE_BYTES: usize = 16 * 1024 * 1024;
 
-/// M25: the clamp lives in the verified policy layer.
+/// M25: the clamp lives in the verified policy layer. (Tests pin the policy
+/// constants; production always calls the policy function directly.)
+#[cfg(test)]
 fn clamp_ttl(requested: Option<i64>) -> i64 {
     vela_session_policy::clamp_web_ttl(requested)
 }
@@ -121,6 +136,97 @@ pub struct StartResponse {
     pub session_id: Uuid,
 }
 
+/// The I/O behind each start effect. The driver decides which method runs and
+/// when (through the shared `websession_start_interpreter!` loop, proved in F*
+/// as `run_start`); each method only performs its effect and reports the
+/// outcome.
+pub(crate) struct StartIo<'a, S: SessionSql = DbSql<'a>> {
+    pub state: &'a AppState,
+    pub sql: S,
+    pub body: StartRequest,
+    pub ip: String,
+    pub session_id: Option<Uuid>,
+    pub error: Option<AppError>,
+}
+
+impl<S: SessionSql> StartIo<'_, S> {
+    async fn check_rate_limit(&mut self) -> StartLimitObservation {
+        match rate_limit::web_session_start_by_ip(&self.state.store, &self.ip) {
+            Ok(()) => StartLimitObservation::Allowed,
+            Err(error) => {
+                self.error = Some(error);
+                StartLimitObservation::Limited
+            }
+        }
+    }
+
+    async fn validate_start(&mut self) -> StartValidationObservation {
+        let fail = |this: &mut Self, error: AppError| {
+            this.error = Some(error);
+            StartValidationObservation::Invalid
+        };
+        if let Err(error) = decode_exact(&self.body.ephemeral_pk, EPHEMERAL_PK_LEN, "ephemeral_pk")
+        {
+            return fail(self, error);
+        }
+        if let Err(error) = decode_exact(&self.body.link_nonce, LINK_NONCE_LEN, "link_nonce") {
+            return fail(self, error);
+        }
+        if let Err(error) = decode_exact(
+            &self.body.poll_secret_hash,
+            POLL_SECRET_HASH_LEN,
+            "poll_secret_hash",
+        ) {
+            return fail(self, error);
+        }
+        if let Some(ref vk) = self.body.web_vk {
+            if let Err(error) = decode_exact(vk, WEB_VK_LEN, "web_vk") {
+                return fail(self, error);
+            }
+        }
+        StartValidationObservation::Valid
+    }
+
+    /// The committed approver is stored verbatim and never checked against the
+    /// `users` table: this endpoint is unauthenticated, so confirming that an
+    /// account exists would turn it into a user-enumeration oracle. A typo
+    /// simply yields a session nobody can grant, which expires in 5 minutes.
+    pub(crate) async fn insert_pending(&mut self) -> StartInsertObservation {
+        let id = Uuid::new_v4();
+        let plan = vela_session_policy::store::plan_insert_pending(
+            id.to_string(),
+            self.body.approver_user_id.to_string(),
+            self.body.poll_secret_hash.clone(),
+            self.body.ephemeral_pk.clone(),
+            self.body.web_vk.as_deref().unwrap_or("").to_string(),
+            self.body.link_nonce.clone(),
+            Utc::now().to_rfc3339(),
+        );
+        let (outcomes, error) = run_sql(&mut self.sql, std::slice::from_ref(&plan)).await;
+        if let Some(error) = error {
+            keep_error(&mut self.error, error);
+        }
+        let outcome = outcomes
+            .first()
+            .copied()
+            .unwrap_or(vela_session_policy::store::WriteOutcome::Failed);
+        let observed = vela_session_policy::store::classify_start_insert(&outcome);
+        if observed == StartInsertObservation::Inserted {
+            self.session_id = Some(id);
+        }
+        observed
+    }
+}
+
+fn start_failure_error<S: SessionSql>(failure: StartFailure, io: &mut StartIo<'_, S>) -> AppError {
+    match failure {
+        StartFailure::RateLimited | StartFailure::Validation | StartFailure::InsertStorage => io
+            .error
+            .take()
+            .unwrap_or_else(|| AppError::Internal("web session start failed".into())),
+    }
+}
+
 pub async fn post_start(
     State(state): State<AppState>,
     addr: Option<ConnectInfo<SocketAddr>>,
@@ -128,46 +234,33 @@ pub async fn post_start(
     Json(body): Json<StartRequest>,
 ) -> Result<Json<StartResponse>> {
     let ip = net::client_ip(&headers, addr.map(|ConnectInfo(a)| a.ip()), &state.config);
-    rate_limit::web_session_start_by_ip(&state.store, &ip)?;
+    let mut io = StartIo {
+        state: &state,
+        sql: DbSql {
+            pool: state.sqldb.as_ref(),
+            tx: None,
+        },
+        body,
+        ip,
+        session_id: None,
+        error: None,
+    };
+    // The proved loop: only the effect the driver just emitted is performed.
+    let transition = vela_session_policy::websession_start_interpreter!(io, await);
 
-    decode_exact(&body.ephemeral_pk, EPHEMERAL_PK_LEN, "ephemeral_pk")?;
-    decode_exact(&body.link_nonce, LINK_NONCE_LEN, "link_nonce")?;
-    decode_exact(
-        &body.poll_secret_hash,
-        POLL_SECRET_HASH_LEN,
-        "poll_secret_hash",
-    )?;
-    if let Some(ref vk) = body.web_vk {
-        decode_exact(vk, WEB_VK_LEN, "web_vk")?;
+    match transition.effect {
+        StartEffect::Complete => {
+            let id = io
+                .session_id
+                .ok_or_else(|| AppError::Internal("web session start lost its id".into()))?;
+            tracing::info!(session_id = %id, "web session started (pending)");
+            Ok(Json(StartResponse { session_id: id }))
+        }
+        StartEffect::Fail(failure) => Err(start_failure_error(failure, &mut io)),
+        _ => Err(AppError::Internal(
+            "web session start driver reached no verdict".into(),
+        )),
     }
-
-    // The committed approver is stored verbatim and never checked against the
-    // `users` table: this endpoint is unauthenticated, so confirming that an
-    // account exists would turn it into a user-enumeration oracle. A typo simply
-    // yields a session nobody can grant, which expires in 5 minutes.
-    let id = Uuid::new_v4();
-    let now = Utc::now().to_rfc3339();
-    state
-        .sqldb
-        .execute(
-            "INSERT INTO web_sessions
-                (id, user_id, approver_user_id, poll_secret_hash, ephemeral_pk, web_vk, link_nonce, mode, status, capsule, approved_by, created_at, expires_at)
-             VALUES (?, NULL, ?, ?, ?, ?, ?, NULL, 'pending', NULL, NULL, ?, NULL)",
-            vec![
-                TursoValue::Text(id.to_string()),
-                TursoValue::Text(body.approver_user_id.to_string()),
-                TursoValue::Text(body.poll_secret_hash),
-                TursoValue::Text(body.ephemeral_pk),
-                TursoValue::Text(body.web_vk.as_deref().unwrap_or("").to_string()), // empty = no RW signing key
-                TursoValue::Text(body.link_nonce),
-                TursoValue::Text(now),
-            ],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-
-    tracing::info!(session_id = %id, "web session started (pending)");
-    Ok(Json(StartResponse { session_id: id }))
 }
 
 // ── GET /web-session/:id (browser polls) ────────────────────────────────────────
@@ -460,152 +553,232 @@ pub struct GrantResponse {
     pub expires_at: DateTime<Utc>,
 }
 
+/// The I/O behind each grant effect. The driver decides which method runs and
+/// when (through the shared `websession_grant_interpreter!` loop, proved in F*
+/// as `run_grant`); each method only performs its effect and reports the
+/// outcome.
+pub(crate) struct GrantIo<'a, S: SessionSql = DbSql<'a>> {
+    pub state: &'a AppState,
+    pub sql: S,
+    pub id: Uuid,
+    pub session: DeviceSession,
+    pub body: GrantRequest,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub error: Option<AppError>,
+}
+
+impl<S: SessionSql> GrantIo<'_, S> {
+    async fn validate_grant(&mut self) -> vela_session_policy::websession_driver::GrantValidationObservation {
+        use vela_session_policy::websession_driver::GrantValidationObservation;
+        let invalid = |this: &mut Self, error: AppError| {
+            this.error = Some(error);
+            GrantValidationObservation::Invalid
+        };
+        match self.body.mode.as_str() {
+            "ro" | "rw" => {}
+            _ => {
+                return invalid(
+                    self,
+                    AppError::BadRequest("mode must be 'ro' or 'rw'".into()),
+                )
+            }
+        }
+        if self.body.key_epoch < 1 {
+            return invalid(
+                self,
+                AppError::BadRequest("key_epoch must be positive".into()),
+            );
+        }
+        let capsule_bytes = match B64.decode(self.body.capsule.as_bytes()) {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                return invalid(
+                    self,
+                    AppError::BadRequest("capsule is not valid base64".into()),
+                )
+            }
+        };
+        if capsule_bytes.is_empty() || capsule_bytes.len() > MAX_CAPSULE_BYTES {
+            return invalid(
+                self,
+                AppError::BadRequest(format!(
+                    "capsule must be 1..={MAX_CAPSULE_BYTES} bytes"
+                )),
+            );
+        }
+        GrantValidationObservation::Valid
+    }
+
+    async fn grant_load_session(&mut self) -> GrantLookupObservation {
+        let existing = match load_session(self.state, self.id).await {
+            Ok(existing) => existing,
+            Err(AppError::NotFound(_)) => return GrantLookupObservation::Absent,
+            Err(error) => {
+                self.error = Some(error);
+                return GrantLookupObservation::QueryFailed;
+            }
+        };
+        // The nonce comparison is the handler's existing constant-time check.
+        // A missing or malformed nonce is represented as a zero-length,
+        // unequal observation, which the checked policy refuses.
+        let given_nonce = B64
+            .decode(self.body.link_nonce.as_bytes())
+            .unwrap_or_default();
+        let stored_nonce = existing
+            .link_nonce
+            .as_deref()
+            .and_then(|s| B64.decode(s.as_bytes()).ok());
+        let nonce_equal = match stored_nonce {
+            Some(stored) => given_nonce.len() == LINK_NONCE_LEN && ct_eq(&given_nonce, &stored),
+            None => false,
+        };
+        GrantLookupObservation::Present(GrantObservation {
+            phase: match existing.status.as_str() {
+                "pending" => PolicyPhase::Pending,
+                "granted" => PolicyPhase::Granted,
+                "revoked" => PolicyPhase::Revoked,
+                _ => PolicyPhase::Expired,
+            },
+            mode: if self.body.mode == "rw" {
+                PolicyMode::ReadWrite
+            } else {
+                PolicyMode::ReadOnly
+            },
+            approver_user: existing.approver_user_id.map(|user| user.as_u128()),
+            authenticated_user: self.session.user_id.as_u128(),
+            nonce_length: given_nonce.len(),
+            nonce_equal,
+            has_web_vk: existing.web_vk.is_some(),
+            declared_epoch: self.body.key_epoch,
+        })
+    }
+
+    pub(crate) async fn update_grant(&mut self, update: GrantUpdate) -> GrantUpdateObservation {
+        let verified_mode = match update.mode {
+            PolicyMode::ReadOnly => "ro",
+            PolicyMode::ReadWrite => "rw",
+        };
+        let expires_at = Utc::now() + chrono::Duration::seconds(update.ttl_secs);
+        // `approver_user_id` is re-checked in the statement so the binding
+        // also holds against a concurrent grant, not just the read above.
+        let plan = vela_session_policy::store::plan_grant_update(
+            self.id.to_string(),
+            self.session.user_id.to_string(),
+            self.session.device_id.to_string(),
+            verified_mode.to_string(),
+            self.body.capsule.clone(),
+            expires_at.to_rfc3339(),
+            update.epoch,
+        );
+        let (outcomes, error) = run_sql(&mut self.sql, std::slice::from_ref(&plan)).await;
+        if let Some(error) = error {
+            keep_error(&mut self.error, error);
+        }
+        let outcome = outcomes
+            .first()
+            .copied()
+            .unwrap_or(vela_session_policy::store::WriteOutcome::Failed);
+        let observed = vela_session_policy::store::classify_grant_update(&outcome);
+        if observed == GrantUpdateObservation::Updated {
+            self.expires_at = Some(expires_at);
+        }
+        observed
+    }
+}
+
+fn grant_failure_error<S: SessionSql>(failure: GrantFailure, io: &mut GrantIo<'_, S>) -> AppError {
+    match failure {
+        GrantFailure::Unauthenticated => AppError::Forbidden(
+            "web session grant capability facts are inconsistent".into(),
+        ),
+        GrantFailure::Validation => io
+            .error
+            .take()
+            .unwrap_or_else(|| AppError::BadRequest("invalid grant request".into())),
+        GrantFailure::NotFound => AppError::NotFound("web session not found".into()),
+        GrantFailure::LookupStorage => io
+            .error
+            .take()
+            .unwrap_or_else(|| AppError::Internal("web session lookup failed".into())),
+        GrantFailure::NotPending => AppError::Conflict(
+            "web session is not pending (already granted or revoked)".into(),
+        ),
+        GrantFailure::CrossAccount => AppError::Forbidden(
+            "this web request was started for a different VELA account".into(),
+        ),
+        GrantFailure::NonceMismatch => AppError::Unauthorized(
+            "link_nonce mismatch — scanned QR does not match this session".into(),
+        ),
+        GrantFailure::MissingWebVk => AppError::BadRequest(
+            "rw grant requires the browser to have registered web_vk at start".into(),
+        ),
+        GrantFailure::InconsistentFacts => AppError::Forbidden(
+            "web session grant capability facts are inconsistent".into(),
+        ),
+        GrantFailure::Conflict => AppError::Conflict(
+            "web session was not pending, its vault key epoch changed, or the approving device was revoked".into(),
+        ),
+        GrantFailure::UpdateStorage => io
+            .error
+            .take()
+            .unwrap_or_else(|| AppError::Internal("web session grant failed".into())),
+    }
+}
+
 pub async fn post_grant(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
     session: DeviceSession,
     Json(body): Json<GrantRequest>,
 ) -> Result<(HeaderMap, Json<GrantResponse>)> {
-    let mode = match body.mode.as_str() {
-        "ro" | "rw" => body.mode.as_str(),
-        _ => return Err(AppError::BadRequest("mode must be 'ro' or 'rw'".into())),
+    let actor = GrantActorObservation {
+        authenticated: true,
+        device_active: true,
     };
-    if body.key_epoch < 1 {
-        return Err(AppError::BadRequest("key_epoch must be positive".into()));
-    }
-
-    let capsule_bytes = B64
-        .decode(body.capsule.as_bytes())
-        .map_err(|_| AppError::BadRequest("capsule is not valid base64".into()))?;
-    if capsule_bytes.is_empty() || capsule_bytes.len() > MAX_CAPSULE_BYTES {
-        return Err(AppError::BadRequest(format!(
-            "capsule must be 1..={MAX_CAPSULE_BYTES} bytes"
-        )));
-    }
-
-    let existing = load_session(&state, id).await?;
-    if existing.status != "pending" {
-        return Err(AppError::Conflict(
-            "web session is not pending (already granted or revoked)".into(),
-        ));
-    }
-
-    // Authorization binding: the browser named the account it wants access to at
-    // `start`, and only that account may grant. Without this, the bearer token of
-    // *any* VELA user who saw the QR (shoulder-surf, screen share, leaked URL)
-    // was enough to hand the browser an attacker-controlled vault or RMS.
-    if existing.approver_user_id != Some(session.user_id) {
-        return Err(AppError::Forbidden(
-            "this web request was started for a different VELA account".into(),
-        ));
-    }
-
-    // Anti-phishing binding: the QR the approver scanned must carry the same
-    // link nonce the browser registered at start. Compared in constant time;
-    // any failure yields the same error so an attacker cannot tell a missing
-    // session from a nonce mismatch.
-    let given_nonce = B64.decode(body.link_nonce.as_bytes()).map_err(|_| {
-        AppError::Unauthorized(
-            "link_nonce mismatch — scanned QR does not match this session".into(),
-        )
-    })?;
-    let stored_nonce = existing
-        .link_nonce
-        .as_deref()
-        .and_then(|s| B64.decode(s.as_bytes()).ok())
-        .ok_or_else(|| {
-            AppError::Unauthorized(
-                "link_nonce mismatch — scanned QR does not match this session".into(),
-            )
-        })?;
-    if given_nonce.len() != LINK_NONCE_LEN || !ct_eq(&given_nonce, &stored_nonce) {
-        return Err(AppError::Unauthorized(
-            "link_nonce mismatch — scanned QR does not match this session".into(),
-        ));
-    }
-
-    if mode == "rw" && existing.web_vk.is_none() {
-        return Err(AppError::BadRequest(
-            "rw grant requires the browser to have registered web_vk at start".into(),
-        ));
-    }
-
-    let grant_decision = vela_session_policy::plan_grant(GrantFacts {
-        phase: match existing.status.as_str() {
-            "pending" => PolicyPhase::Pending,
-            "granted" => PolicyPhase::Granted,
-            "revoked" => PolicyPhase::Revoked,
-            _ => PolicyPhase::Expired,
+    let requested_ttl = body.ttl_secs;
+    let mut io = GrantIo {
+        state: &state,
+        sql: DbSql {
+            pool: state.sqldb.as_ref(),
+            tx: None,
         },
-        mode: if mode == "rw" {
-            PolicyMode::ReadWrite
-        } else {
-            PolicyMode::ReadOnly
-        },
-        approver_matches: existing.approver_user_id == Some(session.user_id),
-        nonce_matches: ct_eq(&given_nonce, &stored_nonce),
-        has_web_vk: existing.web_vk.is_some(),
-        declared_epoch: body.key_epoch,
-    });
-    let GrantDecision::Grant(grant_permit) = grant_decision else {
-        return Err(AppError::Forbidden(
-            "web session grant capability facts are inconsistent".into(),
-        ));
+        id,
+        session,
+        body,
+        expires_at: None,
+        error: None,
     };
-    let verified_mode = match grant_permit.mode() {
-        PolicyMode::ReadOnly => "ro",
-        PolicyMode::ReadWrite => "rw",
-    };
+    // The proved loop: only the effect the driver just emitted is performed.
+    let transition =
+        vela_session_policy::websession_grant_interpreter!(io, actor, requested_ttl, await);
 
-    let ttl = clamp_ttl(body.ttl_secs);
-    let expires_at = Utc::now() + chrono::Duration::seconds(ttl);
-
-    let n = state
-        .sqldb
-        .execute(
-            // `approver_user_id` is re-checked here so the binding also holds
-            // against a concurrent grant, not just the read above.
-            "UPDATE web_sessions
-             SET user_id = ?, mode = ?, status = 'granted', capsule = ?,
-                 approved_by = ?, expires_at = ?,
-                 key_epoch = ?
-             WHERE id = ? AND status = 'pending' AND approver_user_id = ?
-               AND EXISTS (
-                   SELECT 1 FROM users
-                   WHERE id = ? AND rekey_state IS NULL AND key_epoch = ?
-               )",
-            vec![
-                TursoValue::Text(session.user_id.to_string()),
-                TursoValue::Text(verified_mode.to_string()),
-                TursoValue::Text(body.capsule),
-                TursoValue::Text(session.device_id.to_string()),
-                TursoValue::Text(expires_at.to_rfc3339()),
-                TursoValue::Integer(grant_permit.epoch()),
-                TursoValue::Text(id.to_string()),
-                TursoValue::Text(session.user_id.to_string()),
-                TursoValue::Text(session.user_id.to_string()),
-                TursoValue::Integer(grant_permit.epoch()),
-            ],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    if n == 0 {
-        return Err(AppError::Conflict(
-            "web session was not pending or its vault key epoch changed".into(),
-        ));
+    match transition.effect {
+        GrantEffect::Complete => {
+            let expires_at = io
+                .expires_at
+                .ok_or_else(|| AppError::Internal("web session grant lost its expiry".into()))?;
+            tracing::info!(
+                session_id = %id,
+                user_id = %io.session.user_id,
+                mode = %io.body.mode,
+                ttl = %transition.driver.ttl_secs,
+                "web session granted"
+            );
+            let mut headers = HeaderMap::new();
+            maybe_append_new_token(&mut headers, &io.session);
+            Ok((
+                headers,
+                Json(GrantResponse {
+                    granted: true,
+                    expires_at,
+                }),
+            ))
+        }
+        GrantEffect::Fail(failure) => Err(grant_failure_error(failure, &mut io)),
+        _ => Err(AppError::Internal(
+            "web session grant driver reached no verdict".into(),
+        )),
     }
-
-    tracing::info!(session_id = %id, user_id = %session.user_id, mode, ttl, "web session granted");
-
-    let mut headers = HeaderMap::new();
-    maybe_append_new_token(&mut headers, &session);
-    Ok((
-        headers,
-        Json(GrantResponse {
-            granted: true,
-            expires_at,
-        }),
-    ))
 }
 
 // ── POST /web-session/:id/token (browser, RW) ───────────────────────────────────
@@ -623,6 +796,359 @@ pub struct TokenResponse {
     pub expires_at: DateTime<Utc>,
 }
 
+/// The I/O behind each token effect. The driver decides which method runs and
+/// when (through the shared `websession_token_interpreter!` loop, proved in F*
+/// as `run_token`); each method only performs its effect and reports the
+/// outcome.
+pub(crate) struct TokenIo<'a, K: SessionStore = SledStore<'a>, T: SessionTokens = PasetoTokens> {
+    pub state: &'a AppState,
+    pub store: K,
+    pub tokens: T,
+    pub id: Uuid,
+    pub id_str: String,
+    pub ip: String,
+    pub body: TokenRequest,
+    pub user_id: Option<Uuid>,
+    pub web_vk: Option<Vec<u8>>,
+    pub session_expires_at: Option<DateTime<Utc>>,
+    pub token: Option<String>,
+    pub jti: Option<String>,
+    pub error: Option<AppError>,
+}
+
+impl<K: SessionStore, T: SessionTokens> TokenIo<'_, K, T> {
+    async fn check_token_limits(&mut self) -> TokenLimitObservation {
+        // Both the budget and the backoff are scoped to the caller, not to the
+        // session (red-team RT-2). The session id is in the QR and this
+        // endpoint does not require the poll secret, so a shared scope let an
+        // onlooker's three bad proofs lock the real browser out for the
+        // session's lifetime. The per-session cap stays behind it as a
+        // distributed-grind backstop.
+        let result = rate_limit::web_session_token_by_ip_session(
+            &self.state.store,
+            &self.ip,
+            &self.id_str,
+        )
+        .and_then(|()| {
+            rate_limit::web_session_token_by_session(&self.state.store, &self.id_str)
+        })
+        .and_then(|()| {
+            // The flat rate limit let a guesser keep trying the ephemeral-key
+            // proof at a steady rate indefinitely. `/auth/verify` has had
+            // exponential backoff on consecutive failures since the spec asked
+            // for it; this proof is the same shape and now gets the same
+            // treatment — keyed the same way too, on (ip, id) rather than on
+            // id alone.
+            let backoff_scope = format!("websession:token:{}:{}", self.ip, self.id_str);
+            rate_limit::check_backoff(&self.state.store, &backoff_scope)
+        });
+        match result {
+            Ok(()) => TokenLimitObservation::Allowed,
+            Err(error) => {
+                self.error = Some(error);
+                TokenLimitObservation::Limited
+            }
+        }
+    }
+
+    async fn token_load_session(&mut self) -> TokenLookupObservation {
+        let session = match load_session(self.state, self.id).await {
+            Ok(session) => session,
+            Err(AppError::NotFound(_)) => return TokenLookupObservation::Absent,
+            Err(error) => {
+                self.error = Some(error);
+                return TokenLookupObservation::QueryFailed;
+            }
+        };
+        let now = Utc::now().timestamp();
+        let phase = match session.status.as_str() {
+            "pending" => PolicyPhase::Pending,
+            "granted" => PolicyPhase::Granted,
+            "revoked" => PolicyPhase::Revoked,
+            _ => PolicyPhase::Expired,
+        };
+        let mode = match session.mode.as_deref() {
+            Some("rw") => PolicyMode::ReadWrite,
+            _ => PolicyMode::ReadOnly,
+        };
+        let expires_at = session.expires_at.map(|e| e.timestamp());
+        let eligible = matches!(phase, PolicyPhase::Granted)
+            && matches!(mode, PolicyMode::ReadWrite)
+            && expires_at.map(|expires| now < expires).unwrap_or(false)
+            && session.user_id.is_some()
+            && session.web_vk.is_some();
+        // Decode the registered key only where the handler historically did:
+        // after the status/mode/expiry/user checks and before the challenge
+        // take. A malformed key is an internal error that must not spend the
+        // nonce.
+        if eligible {
+            if let Some(ref web_vk_b64) = session.web_vk {
+                match B64.decode(web_vk_b64.as_bytes()) {
+                    Ok(bytes) => self.web_vk = Some(bytes),
+                    Err(error) => {
+                        self.error = Some(AppError::Internal(format!("web_vk decode: {error}")));
+                        return TokenLookupObservation::Malformed;
+                    }
+                }
+            }
+        }
+        self.user_id = session.user_id;
+        self.session_expires_at = session.expires_at;
+        TokenLookupObservation::Present(TokenSessionObservation {
+            phase,
+            mode,
+            granted_user: session.user_id.map(|user| user.as_u128()),
+            approver_user: session.approver_user_id.map(|user| user.as_u128()),
+            nonce_present: session.link_nonce.is_some(),
+            web_vk_present: session.web_vk.is_some(),
+            key_epoch: session.key_epoch.unwrap_or(1),
+            now,
+            expires_at,
+        })
+    }
+
+    async fn consume_web_token_challenge(&mut self) -> TokenChallengeObservation {
+        // Single-use challenge issued by `/auth/challenge?purpose=web_token`.
+        // `take_challenge` removes the nonce whatever its purpose, so a
+        // wrong-purpose presentation spends it.
+        match crate::auth::challenge::take_challenge(
+            self.state,
+            &self.body.challenge,
+            crate::auth::challenge::ChallengePurpose::WebToken,
+        ) {
+            Ok(consumption) => {
+                TokenChallengeObservation::Observed(consumption)
+            }
+            Err(error) => {
+                self.error = Some(error);
+                TokenChallengeObservation::StorageFailed
+            }
+        }
+    }
+
+    async fn verify_web_signature(&mut self) -> TokenSignatureObservation {
+        let challenge_bytes = match B64.decode(&self.body.challenge) {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                self.error = Some(AppError::BadRequest(
+                    "invalid challenge encoding".into(),
+                ));
+                return TokenSignatureObservation::InvalidChallengeEncoding;
+            }
+        };
+        let Some(ref web_vk) = self.web_vk else {
+            self.error = Some(AppError::Internal(
+                "granted session lost its signing key".into(),
+            ));
+            return TokenSignatureObservation::Rejected;
+        };
+        match verify_auth_signature(
+            web_vk,
+            &challenge_bytes,
+            &self.id_str,
+            &self.body.signature,
+        ) {
+            Ok(()) => TokenSignatureObservation::Valid,
+            Err(error) => {
+                self.error = Some(error);
+                TokenSignatureObservation::Rejected
+            }
+        }
+    }
+
+    async fn record_token_failure(&mut self) -> TokenFailureRecordObservation {
+        let backoff_scope = format!("websession:token:{}:{}", self.ip, self.id_str);
+        match rate_limit::record_backoff_failure(&self.state.store, &backoff_scope) {
+            Ok(()) => TokenFailureRecordObservation::Recorded,
+            Err(error) => {
+                self.error = Some(error);
+                TokenFailureRecordObservation::StorageFailed
+            }
+        }
+    }
+
+    async fn reset_token_backoff(&mut self) -> TokenResetObservation {
+        let backoff_scope = format!("websession:token:{}:{}", self.ip, self.id_str);
+        match rate_limit::reset_backoff(&self.state.store, &backoff_scope) {
+            Ok(()) => TokenResetObservation::Reset {
+                now: Utc::now().timestamp(),
+            },
+            Err(error) => {
+                self.error = Some(error);
+                TokenResetObservation::StorageFailed
+            }
+        }
+    }
+
+    /// First-writer-wins claim of the one token this grant may issue. A second
+    /// valid proof with a fresh `web_token` nonce therefore cannot mint a
+    /// second token for the same granted session.
+    pub(crate) async fn claim_token(&mut self) -> TokenClaimObservation {
+        let plan = vela_session_policy::store::plan_token_claim(self.id_str.clone());
+        let outcome = match plan.first() {
+            Some(stmt) => {
+                let (outcome, error) = run_nonce(&mut self.store, stmt);
+                if let Some(error) = error {
+                    keep_error(&mut self.error, error);
+                }
+                outcome
+            }
+            None => {
+                self.error = Some(AppError::Internal("token claim plan is empty".into()));
+                vela_session_policy::store::NxOutcome::Failed
+            }
+        };
+        vela_session_policy::store::classify_token_claim(&outcome)
+    }
+
+    pub(crate) async fn issue_token(
+        &mut self,
+        plan: vela_session_policy::TokenPlan,
+    ) -> TokenIssueObservation {
+        use vela_session_policy::store::{
+            classify_token_issue, plan_token_sentinel, plan_track_jti, ExistsOutcome, StoreOutcome,
+        };
+        let Some(user_id) = self.user_id else {
+            self.error = Some(AppError::Internal(
+                "granted session lost its account".into(),
+            ));
+            return classify_token_issue(false, &ExistsOutcome::Failed, &StoreOutcome::Failed);
+        };
+        // device_id = session_id; hard_cap = session expiry, so renewals never
+        // outlive the granted TTL and revocation via
+        // `device:revoked:<session_id>` applies.
+        let (token, jti) = match self.tokens.issue_web(user_id, self.id, plan) {
+            Ok(pair) => pair,
+            Err(error) => {
+                keep_error(&mut self.error, error);
+                return classify_token_issue(false, &ExistsOutcome::Failed, &StoreOutcome::Failed);
+            }
+        };
+        // `DELETE /web-session/:id` and the approving-device revocation
+        // cascade write `device:revoked:<session_id>` *before* the SQL row
+        // flips. An exchange that observed the granted row before that lockout
+        // must not release a token after it: re-check the sentinel at the
+        // point of issue and fail closed on a storage error too. This is the
+        // composition proof's issue-time lockout guard.
+        let sentinel = match plan_token_sentinel(self.id_str.clone()).first() {
+            Some(stmt) => {
+                let (outcome, error) = run_exists(&mut self.store, stmt);
+                if let Some(error) = error {
+                    keep_error(&mut self.error, error);
+                }
+                outcome
+            }
+            None => {
+                self.error = Some(AppError::Internal(
+                    "token sentinel plan is empty".into(),
+                ));
+                ExistsOutcome::Failed
+            }
+        };
+        if sentinel == ExistsOutcome::Present {
+            self.error = Some(AppError::Unauthorized(
+                "web session was revoked during token issuance".into(),
+            ));
+            return classify_token_issue(true, &sentinel, &StoreOutcome::Failed);
+        }
+        if sentinel == ExistsOutcome::Failed {
+            return classify_token_issue(true, &sentinel, &StoreOutcome::Failed);
+        }
+        // Track the JTI before the driver may respond. A tracking failure is a
+        // failed exchange, exactly as the historical separate step was.
+        let track = plan_track_jti(self.id_str.clone(), jti.clone());
+        let (outcomes, error) = run_store(&mut self.store, &track);
+        if let Some(error) = error {
+            keep_error(&mut self.error, error);
+        }
+        let tracked = outcomes.first().copied().unwrap_or(StoreOutcome::Failed);
+        let observed = classify_token_issue(true, &sentinel, &tracked);
+        if observed == TokenIssueObservation::Issued {
+            self.token = Some(token);
+            self.jti = Some(jti);
+        }
+        observed
+    }
+}
+
+fn token_failure_error<K: SessionStore, T: SessionTokens>(
+    failure: TokenFailure,
+    io: &mut TokenIo<'_, K, T>,
+) -> AppError {
+    match failure {
+        TokenFailure::RateLimited => io
+            .error
+            .take()
+            .unwrap_or_else(|| AppError::RateLimited("too many attempts".into())),
+        TokenFailure::NotFound => AppError::NotFound("web session not found".into()),
+        TokenFailure::LookupStorage => io
+            .error
+            .take()
+            .unwrap_or_else(|| AppError::Internal("web session lookup failed".into())),
+        TokenFailure::NotGranted => {
+            AppError::Unauthorized("web session is not active".into())
+        }
+        TokenFailure::ReadOnly => AppError::BadRequest("session is read-only".into()),
+        TokenFailure::Expired => AppError::Unauthorized("web session expired".into()),
+        TokenFailure::MissingExpiry => {
+            AppError::Internal("granted session missing expiry".into())
+        }
+        TokenFailure::MissingUser => {
+            AppError::Internal("granted session missing user".into())
+        }
+        TokenFailure::MissingSigningKey => {
+            AppError::Unauthorized("session has no signing key".into())
+        }
+        TokenFailure::MissingGrantFields => AppError::Unauthorized(
+            "web session capability facts are inconsistent".into(),
+        ),
+        TokenFailure::MalformedSession => io
+            .error
+            .take()
+            .unwrap_or_else(|| AppError::Internal("web session row could not be decoded".into())),
+        TokenFailure::ChallengeMissing => {
+            AppError::Unauthorized("challenge not found or already used".into())
+        }
+        TokenFailure::ChallengeWrongPurpose => AppError::Unauthorized(
+            "challenge was issued for a different purpose".into(),
+        ),
+        TokenFailure::ChallengeStorage => io
+            .error
+            .take()
+            .unwrap_or_else(|| AppError::Internal("challenge lookup failed".into())),
+        TokenFailure::InvalidChallengeEncoding => io
+            .error
+            .take()
+            .unwrap_or_else(|| AppError::BadRequest("invalid challenge encoding".into())),
+        TokenFailure::SignatureRejected => io
+            .error
+            .take()
+            .unwrap_or_else(|| AppError::Unauthorized("signature verification failed".into())),
+        TokenFailure::FailureRecordStorage => io
+            .error
+            .take()
+            .unwrap_or_else(|| AppError::Internal("failure counter update failed".into())),
+        TokenFailure::BackoffResetStorage => io
+            .error
+            .take()
+            .unwrap_or_else(|| AppError::Internal("backoff reset failed".into())),
+        TokenFailure::AlreadyIssued => AppError::Conflict(
+            "web session has already issued the token for this grant".into(),
+        ),
+        TokenFailure::ClaimStorage => io
+            .error
+            .take()
+            .unwrap_or_else(|| AppError::Internal("token claim failed".into())),
+        TokenFailure::IssueFailed => io
+            .error
+            .take()
+            .unwrap_or_else(|| AppError::Internal("token issuance failed".into())),
+        TokenFailure::InconsistentFacts => AppError::Unauthorized(
+            "web session capability facts are inconsistent".into(),
+        ),
+    }
+}
+
 pub async fn post_token(
     State(state): State<AppState>,
     addr: Option<ConnectInfo<SocketAddr>>,
@@ -630,158 +1156,175 @@ pub async fn post_token(
     Path(id): Path<Uuid>,
     Json(body): Json<TokenRequest>,
 ) -> Result<Json<TokenResponse>> {
-    // Both the budget and the backoff are scoped to the caller, not to the
-    // session (red-team RT-2). The session id is in the QR and this endpoint
-    // does not require the poll secret, so a shared scope let an onlooker's
-    // three bad proofs lock the real browser out for the session's lifetime.
-    // The per-session cap stays behind it as a distributed-grind backstop.
     let ip = net::client_ip(&headers, addr.map(|ConnectInfo(a)| a.ip()), &state.config);
-    rate_limit::web_session_token_by_ip_session(&state.store, &ip, &id.to_string())?;
-    rate_limit::web_session_token_by_session(&state.store, &id.to_string())?;
-    // The flat rate limit let a guesser keep trying the ephemeral-key proof at a
-    // steady rate indefinitely. `/auth/verify` has had exponential backoff on
-    // consecutive failures since the spec asked for it; this proof is the same
-    // shape and now gets the same treatment — keyed the same way too, on
-    // (ip, id) rather than on id alone.
-    let backoff_scope = format!("websession:token:{ip}:{id}");
-    rate_limit::check_backoff(&state.store, &backoff_scope)?;
-
-    let session = load_session(&state, id).await?;
-    if session.status != "granted" {
-        return Err(AppError::Unauthorized("web session is not active".into()));
-    }
-    if session.mode.as_deref() != Some("rw") {
-        return Err(AppError::BadRequest("session is read-only".into()));
-    }
-    if is_expired(session.expires_at) {
-        return Err(AppError::Unauthorized("web session expired".into()));
-    }
-    let expires_at = session
-        .expires_at
-        .ok_or_else(|| AppError::Internal("granted session missing expiry".into()))?;
-    let user_id = session
-        .user_id
-        .ok_or_else(|| AppError::Internal("granted session missing user".into()))?;
-    let web_vk_b64 = session
-        .web_vk
-        .ok_or_else(|| AppError::Unauthorized("session has no signing key".into()))?;
-    let web_vk = B64
-        .decode(web_vk_b64.as_bytes())
-        .map_err(|e| AppError::Internal(format!("web_vk decode: {e}")))?;
-
-    // Single-use challenge (issued by /auth/challenge), consumed here.
-    let consumed = state
-        .store
-        .get_del(&format!("challenge:{}", body.challenge))?;
-    if consumed.is_none() {
-        return Err(AppError::Unauthorized(
-            "challenge not found or already used".into(),
-        ));
-    }
-
-    let challenge_bytes = B64
-        .decode(&body.challenge)
-        .map_err(|_| AppError::BadRequest("invalid challenge encoding".into()))?;
-
-    if let Err(e) =
-        verify_auth_signature(&web_vk, &challenge_bytes, &id.to_string(), &body.signature)
-    {
-        rate_limit::record_backoff_failure(&state.store, &backoff_scope)?;
-        return Err(e);
-    }
-    rate_limit::reset_backoff(&state.store, &backoff_scope)?;
-
-    // device_id = session_id; hard_cap = session expiry, so renewals never outlive
-    // the granted TTL and revocation via `device:revoked:<session_id>` applies.
-    //
-    // Scoped `WebSession` (red-team RT-4). Without that claim this token was
-    // byte-for-byte as authoritative as an enrolled laptop's: it could rotate
-    // the recovery share, register the attacker's recovery passkey, revoke the
-    // user's real devices, and delete the account. The design calls this session
-    // temporary and non-enrolling; the scope is what makes that true rather than
-    // merely stated.
-    // Bind the token to the epoch whose keys were sealed into this grant's
-    // capsule. Using the epoch at token-exchange time would let a pre-rotation
-    // grant redeemed after commit masquerade as current.
-    let key_epoch = session.key_epoch.unwrap_or(1);
-    let now = Utc::now();
-    let decision = vela_session_policy::plan_web_session_token(
-        WebTokenFacts {
-            phase: match session.status.as_str() {
-                "pending" => PolicyPhase::Pending,
-                "granted" => PolicyPhase::Granted,
-                "revoked" => PolicyPhase::Revoked,
-                _ => PolicyPhase::Expired,
-            },
-            mode: match session.mode.as_deref() {
-                Some("rw") => PolicyMode::ReadWrite,
-                _ => PolicyMode::ReadOnly,
-            },
-            approver_bound: session.user_id.is_some()
-                && session.user_id == session.approver_user_id,
-            nonce_bound: session.link_nonce.is_some(),
-            challenge_consumed: consumed.is_some(),
-            signature_valid: true,
-        },
-        now.timestamp(),
-        expires_at.timestamp(),
-        key_epoch,
-    );
-    let TokenDecision::Issue(plan) = decision else {
-        return Err(AppError::Unauthorized(
-            "web session capability facts are inconsistent".into(),
-        ));
+    let mut io = TokenIo {
+        state: &state,
+        store: SledStore(&state.store),
+        tokens: PasetoTokens(TokenService::new(
+            state.paseto_sk.clone(),
+            state.paseto_pk.clone(),
+        )),
+        id,
+        id_str: id.to_string(),
+        ip,
+        body,
+        user_id: None,
+        web_vk: None,
+        session_expires_at: None,
+        token: None,
+        jti: None,
+        error: None,
     };
-    let ts = TokenService::new(state.paseto_sk.clone(), state.paseto_pk.clone());
-    let (token, jti) = ts.issue_from_plan(user_id, id, plan)?;
-    rate_limit::track_device_jti(&state.store, &id.to_string(), &jti)?;
+    // The proved loop: only the effect the driver just emitted is performed.
+    let transition = vela_session_policy::websession_token_interpreter!(io, await);
 
-    tracing::info!(session_id = %id, user_id = %user_id, "web session rw token issued");
-    Ok(Json(TokenResponse {
-        token,
-        user_id: user_id.to_string(),
-        expires_at,
-    }))
+    match transition.effect {
+        TokenEffect::Complete => {
+            let token = io
+                .token
+                .take()
+                .ok_or_else(|| AppError::Internal("web session token lost its token".into()))?;
+            let user_id = io
+                .user_id
+                .ok_or_else(|| AppError::Internal("web session token lost its user".into()))?;
+            let expires_at = io.session_expires_at.ok_or_else(|| {
+                AppError::Internal("granted session missing expiry".into())
+            })?;
+            tracing::info!(session_id = %id, user_id = %user_id, "web session rw token issued");
+            Ok(Json(TokenResponse {
+                token,
+                user_id: user_id.to_string(),
+                expires_at,
+            }))
+        }
+        TokenEffect::Fail(failure) => Err(token_failure_error(failure, &mut io)),
+        _ => Err(AppError::Internal(
+            "web session token driver reached no verdict".into(),
+        )),
+    }
 }
 
 // ── DELETE /web-session/:id (revoke) ────────────────────────────────────────────
+
+/// The I/O behind each delete effect. The driver decides which method runs and
+/// when (through the shared `websession_delete_interpreter!` loop, proved in F*
+/// as `run_delete`); each method only performs its effect and reports the
+/// outcome.
+pub(crate) struct DeleteSessionIo<
+    'a,
+    S: SessionSql = DbSql<'a>,
+    K: SessionStore = SledStore<'a>,
+> {
+    pub state: &'a AppState,
+    pub sql: S,
+    pub store: K,
+    pub id: Uuid,
+    pub error: Option<AppError>,
+}
+
+impl<S: SessionSql, K: SessionStore> DeleteSessionIo<'_, S, K> {
+    async fn delete_load_session(&mut self) -> DeleteLookupObservation {
+        match load_session(self.state, self.id).await {
+            Ok(session) => DeleteLookupObservation::Present(
+                vela_session_policy::websession_driver::DeleteSessionFacts {
+                    session_user: session.user_id.map(|user| user.as_u128()),
+                    approver_user: session.approver_user_id.map(|user| user.as_u128()),
+                },
+            ),
+            Err(AppError::NotFound(_)) => DeleteLookupObservation::Absent,
+            Err(error) => {
+                self.error = Some(error);
+                DeleteLookupObservation::QueryFailed
+            }
+        }
+    }
+
+    /// Reject any already-issued RW token (device_id == session_id) before the
+    /// SQL audit row says the session is revoked. If SQL subsequently fails,
+    /// the safe partial state is locked-out-but-visible, not marked-but-live.
+    pub(crate) async fn lockout_session(&mut self) -> DeleteSentinelObservation {
+        let plan = vela_session_policy::store::plan_sentinel(
+            self.id.to_string(),
+            vela_session_policy::store::WEB_SESSION_MAX_TTL_SECS,
+        );
+        let (outcomes, error) = run_store(&mut self.store, &plan);
+        if let Some(error) = error {
+            keep_error(&mut self.error, error);
+        }
+        let outcome = outcomes
+            .first()
+            .copied()
+            .unwrap_or(vela_session_policy::store::StoreOutcome::Failed);
+        vela_session_policy::store::classify_lockout_session(&outcome)
+    }
+
+    pub(crate) async fn record_revocation(&mut self) -> DeleteRecordObservation {
+        let plan = vela_session_policy::store::plan_revoke_session(self.id.to_string());
+        let (outcomes, error) = run_sql(&mut self.sql, std::slice::from_ref(&plan)).await;
+        if let Some(error) = error {
+            keep_error(&mut self.error, error);
+        }
+        let outcome = outcomes
+            .first()
+            .copied()
+            .unwrap_or(vela_session_policy::store::WriteOutcome::Failed);
+        vela_session_policy::store::classify_revoke_session(&outcome)
+    }
+}
+
+fn delete_failure_error<S: SessionSql, K: SessionStore>(
+    failure: DeleteFailure,
+    io: &mut DeleteSessionIo<'_, S, K>,
+) -> AppError {
+    match failure {
+        DeleteFailure::Unauthenticated => AppError::Unauthorized("unauthorized".into()),
+        DeleteFailure::NotFound => AppError::NotFound("web session not found".into()),
+        DeleteFailure::LookupStorage | DeleteFailure::LockoutStorage | DeleteFailure::RecordStorage => {
+            io.error
+                .take()
+                .unwrap_or_else(|| AppError::Internal("web session revocation failed".into()))
+        }
+    }
+}
 
 pub async fn delete_session(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
     session: DeviceSession,
 ) -> Result<(HeaderMap, Json<serde_json::Value>)> {
-    let existing = load_session(&state, id).await?;
-    // Only the owner may revoke: the granting user for a granted session, or the
-    // committed approver for one still pending (declining the request).
-    let owner = existing.user_id.or(existing.approver_user_id);
-    if owner != Some(session.user_id) {
-        return Err(AppError::NotFound("web session not found".into()));
+    let actor_user = session.user_id.as_u128();
+    let mut io = DeleteSessionIo {
+        state: &state,
+        sql: DbSql {
+            pool: state.sqldb.as_ref(),
+            tx: None,
+        },
+        store: SledStore(&state.store),
+        id,
+        error: None,
+    };
+    // The proved loop: only the effect the driver just emitted is performed.
+    let transition = vela_session_policy::websession_delete_interpreter!(
+        io,
+        vela_session_policy::websession_driver::DeleteActorObservation {
+            authenticated: true,
+            user: actor_user,
+        },
+        await
+    );
+
+    match transition.effect {
+        DeleteEffect::Complete => {
+            tracing::info!(session_id = %id, user_id = %session.user_id, "web session revoked");
+            let mut headers = HeaderMap::new();
+            maybe_append_new_token(&mut headers, &session);
+            Ok((headers, Json(serde_json::json!({ "revoked": true }))))
+        }
+        DeleteEffect::Fail(failure) => Err(delete_failure_error(failure, &mut io)),
+        _ => Err(AppError::Internal(
+            "web session delete driver reached no verdict".into(),
+        )),
     }
-
-    // Reject any already-issued RW token (device_id == session_id) before the
-    // SQL audit row says the session is revoked. If SQL subsequently fails,
-    // the safe partial state is locked-out-but-visible, not marked-but-live.
-    state.store.set_ex(
-        &format!("device:revoked:{}", id),
-        &[1u8],
-        MAX_TTL_SECS as u64,
-    )?;
-
-    state
-        .sqldb
-        .execute(
-            "UPDATE web_sessions SET status = 'revoked', capsule = NULL WHERE id = ?",
-            vec![TursoValue::Text(id.to_string())],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-
-    tracing::info!(session_id = %id, user_id = %session.user_id, "web session revoked");
-
-    let mut headers = HeaderMap::new();
-    maybe_append_new_token(&mut headers, &session);
-    Ok((headers, Json(serde_json::json!({ "revoked": true }))))
 }
 
 // ── GET /web-sessions (list user's active sessions) ─────────────────────────────

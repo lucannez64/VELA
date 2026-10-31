@@ -1,0 +1,9 @@
+Parent integration on 5d8c366 without mobile ancestor57d8bf6.
+11 existing Rust postconditions +20 handwritten lemmas; total Rust corpus245 unchanged.
+97198bc89b8c257ec3f734d36f66ac229e6b8a7edd1c3a557b0219ff4567f109  libVELA/vela-sync-policy/src/lib.rs
+0a3569c4494fa2ddcfeab20216be52f66bc6b5e5dae8cdaad8ad6b7089ab23b2  libVELA/vela-sync-policy/verify-fstar.sh
+cc681958363b24f5eaa9f86cd6362e672362b0ba7ffc3974356c8907a4def53f  libVELA/vela-sync-policy/verify-fstar-chunk.sh
+e23bc7556ebb25eaf091ae5f8dd3718f490330e7efd9ea9245714655b1f14add  libVELA/vela-sync-policy/proofs/fstar/extraction/Vela_sync_policy.fst
+b6aa6204fc78dc1cdb7a389d453d6a71ba97b25a03c553d88a5d4f928121eb84  libVELA/vela-sync-policy/proofs/fstar/chunk-lemmas/Vela_sync_policy_chunk_lemmas.fst
+dc4309c7729ac2526c58c604c0d8cc39f48ba0ffa6f405da32ec536a5a66623a  security/formal/check-sync-chunk-proof.py
+4acd7746d57f6b7d94de7793ae2e88824d967b840af4ee86b0c234ae1a8fdcb4  security/formal/tests/test_sync_chunk_guard.py

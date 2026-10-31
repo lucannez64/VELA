@@ -1,0 +1,13 @@
+--- serverVELA/vela-recovery-policy/proofs/fstar/extraction-redemption-interpreter/Vela_recovery_policy.Redemption_interpreter.fst	2026-10-27 15:09:16.038780664 +0100
++++ /tmp/vela-mut-redemption/b/Vela_recovery_policy.Redemption_interpreter.fst	2026-10-27 16:35:10.838696572 +0100
+@@ -258,6 +258,10 @@
+               | Vela_recovery_policy.Driver.RedemptionEffect_Complete
+               | Vela_recovery_policy.Driver.RedemptionEffect_Fail _
+               | Vela_recovery_policy.Driver.RedemptionEffect_Idle  ->
++                let (tmp0: v_Io), (out: Core_models.Option.t_Option Prims.unit) =
++                  f_restore_grant #v_Io #FStar.Tactics.Typeclasses.solve io
++                in
++                let io:v_Io = tmp0 in
+                 (aborted, io, restore_done <: (bool & v_Io & bool)), transition
+                 <:
+                 ((bool & v_Io & bool) & Vela_recovery_policy.Driver.t_RedemptionTransition)

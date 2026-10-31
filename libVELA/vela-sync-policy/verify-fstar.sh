@@ -40,3 +40,11 @@ fstar.exe \
   --include "$hax_lib_root/proofs/fstar/extraction" \
   --include proofs/fstar/extraction \
   "${proof_files[@]}"
+
+# F-5: the focused mobile epoch-agreement kernel keeps its own artifact
+# directory so the historical selected set above stays byte-identical.
+"$proof_root/verify-fstar-epoch.sh"
+
+# Universal chunk-admission lemmas import this freshly checked extraction.
+# Run separately so future focused modules with the same name cannot shadow it.
+"$proof_root/verify-fstar-chunk.sh"

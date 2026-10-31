@@ -1,0 +1,50 @@
+F* 2025.10.06
+platform=Linux_x86_64
+compiler=OCaml 4.14.2
+date=2025-10-06 12:00:42 -0700
+commit=7b347386330d0e5a331a220535b6f15288903234
+Z3 version 4.13.3 - 64 bit
+rustc: rustc 1.93.0-nightly (843f8ce2e 2025-11-07)
+cargo hax: hax  version=0.3.7 commit=unknown 
+historical extraction before: f558711ac3d165952846d03d1d7b2b91186fa3ff1925a0780b35fdf824f2dd1d  proofs/fstar/extraction/Vela_session_policy.fst
+Driver source policy: 2 extracted modules, 4 proof modules; no unreviewed escapes/options
+F* login-composition argv: --cmi --cache_off --warn_error -331 --z3rlimit 16000 --z3version 4.13.3 --already_cached +Prims+FStar+LowStar+C+Spec.Loops+TestLib --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/core --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proofs/fstar/extraction --include proofs/fstar/extraction-login-driver --include proofs/fstar/challenge-lemmas --include proofs/fstar/login-driver-lemmas --include proofs/fstar/login-driver-composition proofs/fstar/extraction-login-driver/Vela_session_policy.Challenge.fst proofs/fstar/extraction-login-driver/Vela_session_policy.Login_driver.fst proofs/fstar/challenge-lemmas/Vela_session_policy_challenge_lemmas.fst proofs/fstar/challenge-lemmas/Vela_session_policy_tag_producer_lemmas.fst proofs/fstar/login-driver-lemmas/Vela_session_policy_login_driver_lemmas.fst proofs/fstar/login-driver-composition/Vela_session_policy_login_driver_composition.fst
+* Warning 271 at /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+Verified module: Vela_session_policy.Challenge
+Verified module: Vela_session_policy.Login_driver
+Verified module: Vela_session_policy_challenge_lemmas
+Verified module: Vela_session_policy_tag_producer_lemmas
+Verified module: Vela_session_policy_login_driver_lemmas
+Verified module: Vela_session_policy_login_driver_composition
+All verification conditions discharged successfully
+historical extraction after:  f558711ac3d165952846d03d1d7b2b91186fa3ff1925a0780b35fdf824f2dd1d  proofs/fstar/extraction/Vela_session_policy.fst
+login composition: 0 new Rust postconditions; the two extracted modules are inputs and are byte-identical
+login composition: one nonce admits at most one request, one Respond effect and one successful token-issue observation
+login composition: an absent or non-login nonce yields no admission, Respond effect or successful issue observation
+49f7d740311506bbf346a272da5840f729acd905c1cdb0b05a32ac37b3d68806  proofs/fstar/extraction-login-driver/Vela_session_policy.Challenge.fst
+ab5f233536bd6e98fe5b34433b4b7665f89906fac0ac900588926723bac72bb5  proofs/fstar/extraction-login-driver/Vela_session_policy.Login_driver.fst
+a92351ddbe6692cbb14704f048af4ab2f0b97157532984c00351ccba39d96776  proofs/fstar/challenge-lemmas/Vela_session_policy_challenge_lemmas.fst
+aa62c89bbe13110f249f6244dd68fee871a4fc108471eedd90ee72fd7f5a8238  proofs/fstar/challenge-lemmas/Vela_session_policy_tag_producer_lemmas.fst
+52ce34104cc4617b05be04aa0f8cd5d951eb9737e0b4ecee69192828ae06c4dc  proofs/fstar/login-driver-lemmas/Vela_session_policy_login_driver_lemmas.fst
+c747ddc0d09e984b5ae0a17b1f488c3f964276e06ffe788e32454684cc59176b  proofs/fstar/login-driver-composition/Vela_session_policy_login_driver_composition.fst
+6ddb8af59d99aff1dfaa7b51f89becde9b5a39bb9e73d69c60fbf0461f2f8c11  src/challenge.rs
+455602a9035d8766c5cd30b9b901ef9cbaab3cb48da685aa832f6408a8b1e441  src/login_driver.rs

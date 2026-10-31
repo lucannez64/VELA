@@ -5,7 +5,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import java.security.SecureRandom
-import java.util.Arrays
 import javax.crypto.Cipher
 
 class SecureVaultManager(context: Context) {
@@ -13,7 +12,7 @@ class SecureVaultManager(context: Context) {
     private val vaultStore = EncryptedVaultStore(context.filesDir.resolve("vault"))
     private val biometricProtector = AndroidKeystoreRmsProtector(storeDir)
     private val passwordProtector = PasswordRmsProtector(storeDir)
-    private var rms: ByteArray? = null
+    private val rms = RmsHolder()
 
     private val _session = MutableStateFlow(snapshot(null))
     val session: StateFlow<SecureSessionState> = _session
@@ -56,9 +55,7 @@ class SecureVaultManager(context: Context) {
     /// UI ever branches on `session.provider`, treat null-while-unlocked as
     /// "protect this device now", not as a bug.
     fun adoptRms(importedRms: ByteArray) {
-        rms?.fill(0)
-        rms = importedRms.copyOf()
-        Arrays.fill(importedRms, 0)
+        rms.replaceAndWipeInput(importedRms)
         _session.value = snapshot(null).copy(unlocked = true, provider = null)
     }
 
@@ -76,8 +73,7 @@ class SecureVaultManager(context: Context) {
     }
 
     fun lock() {
-        rms?.fill(0)
-        rms = null
+        rms.clear()
         _session.value = snapshot(null)
         onLocked?.invoke()
     }
@@ -94,23 +90,23 @@ class SecureVaultManager(context: Context) {
         _session.update { current -> snapshot(current.provider).copy(error = message) }
     }
 
-    fun currentRmsCopy(): ByteArray? = rms?.copyOf()
+    fun currentRmsCopy(): ByteArray? = rms.copy()
 
     private fun unlockInMemory(unwrappedRms: ByteArray, provider: UnlockProvider) {
-        rms?.fill(0)
-        rms = unwrappedRms.copyOf()
-        Arrays.fill(unwrappedRms, 0)
+        rms.replaceAndWipeInput(unwrappedRms)
         _session.value = snapshot(provider).copy(unlocked = true, provider = provider, error = null)
     }
 
-    private fun snapshot(provider: UnlockProvider?): SecureSessionState =
-        SecureSessionState(
-            unlocked = rms != null,
-            provider = if (rms == null) null else provider,
+    private fun snapshot(provider: UnlockProvider?): SecureSessionState {
+        val unlocked = rms.isUnlocked()
+        return SecureSessionState(
+            unlocked = unlocked,
+            provider = if (!unlocked) null else provider,
             hasBiometricVault = runCatching { biometricProtector.hasWrappedRms() }.getOrDefault(false),
             hasPasswordVault = passwordProtector.hasWrappedRms(),
             error = null
         )
+    }
 
     companion object {
         private const val RMS_LEN = 32

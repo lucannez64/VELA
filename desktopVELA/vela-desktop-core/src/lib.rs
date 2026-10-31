@@ -1,6 +1,6 @@
 pub mod api;
-pub use vela_core::rich_items;
 pub use uuid::Uuid;
+pub use vela_core::rich_items;
 pub mod audit;
 pub mod biometric;
 pub mod breach;
@@ -115,6 +115,8 @@ pub struct AppState {
     pub extension_connected: Arc<AtomicBool>,
     /// Serializes sync runs so local edits and merges cannot interleave.
     pub sync_mutex: tokio::sync::Mutex<()>,
+    /// Serializes all sharing snapshots across network awaits and durable commits.
+    pub(crate) sharing_mutex: tokio::sync::Mutex<()>,
     /// Wakes the live-sync listener after a local vault mutation so the change
     /// reaches the server without waiting for the next scheduled tick. `Notify`
     /// coalesces a burst of saves into at most one pending wake-up.
@@ -265,6 +267,7 @@ impl AppState {
             secret_key: token::SecretKey::generate(),
             extension_connected: Arc::new(AtomicBool::new(false)),
             sync_mutex: tokio::sync::Mutex::new(()),
+            sharing_mutex: tokio::sync::Mutex::new(()),
             vault_changed: tokio::sync::Notify::new(),
             key_transition_lock: std::sync::RwLock::new(()),
             #[cfg(feature = "browser-login")]
@@ -525,6 +528,7 @@ impl Default for AppState {
             secret_key: token::SecretKey::generate(),
             extension_connected: Arc::new(AtomicBool::new(false)),
             sync_mutex: tokio::sync::Mutex::new(()),
+            sharing_mutex: tokio::sync::Mutex::new(()),
             vault_changed: tokio::sync::Notify::new(),
             key_transition_lock: std::sync::RwLock::new(()),
             #[cfg(feature = "browser-login")]

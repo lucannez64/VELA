@@ -1,0 +1,61 @@
+# Command: ~/.local/opt/vela-tools/bin/vela-heavy sh ./gradlew --no-daemon --offline -Dorg.gradle.jvmargs=-Xmx1536m --max-workers=1 :app:testDebugUnitTest
+# Workdir: androidVELA
+
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.11.1/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build 
+Warning: SDK processing. This version only understands SDK XML versions up to 3 but an SDK XML file of version 4 was encountered. This can happen if you use versions of Android Studio and the command-line tools that were released at different times.
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:buildRustBridge UP-TO-DATE
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:checkDebugAarMetadata UP-TO-DATE
+> Task :app:generateDebugResValues UP-TO-DATE
+> Task :app:mapDebugSourceSetPaths UP-TO-DATE
+> Task :app:generateDebugResources UP-TO-DATE
+> Task :app:mergeDebugResources UP-TO-DATE
+> Task :app:packageDebugResources UP-TO-DATE
+> Task :app:parseDebugLocalResources UP-TO-DATE
+> Task :app:createDebugCompatibleScreenManifests UP-TO-DATE
+> Task :app:extractDeepLinksDebug UP-TO-DATE
+> Task :app:processDebugMainManifest UP-TO-DATE
+> Task :app:processDebugManifest UP-TO-DATE
+> Task :app:processDebugManifestForPackage UP-TO-DATE
+> Task :app:processDebugResources UP-TO-DATE
+> Task :app:compileDebugKotlin
+> Task :app:javaPreCompileDebug UP-TO-DATE
+> Task :app:compileDebugJavaWithJavac NO-SOURCE
+> Task :app:bundleDebugClassesToRuntimeJar
+> Task :app:bundleDebugClassesToCompileJar
+> Task :app:compileDebugUnitTestKotlin
+> Task :app:preDebugUnitTestBuild UP-TO-DATE
+> Task :app:javaPreCompileDebugUnitTest UP-TO-DATE
+> Task :app:compileDebugUnitTestJavaWithJavac NO-SOURCE
+> Task :app:processDebugJavaRes UP-TO-DATE
+> Task :app:processDebugUnitTestJavaRes UP-TO-DATE
+> Task :app:testDebugUnitTest
+
+BUILD SUCCESSFUL in 19s
+23 actionable tasks: 5 executed, 18 up-to-date
+
+# Post-run counts parsed from app/build/test-results/testDebugUnitTest/*.xml
+com.vela.android.autofill.AssetLinksVerifierTest tests=9 failures=0 errors=0 skipped=0
+com.vela.android.autofill.AutofillMatcherTest tests=29 failures=0 errors=0 skipped=0
+com.vela.android.autofill.AutofillUnlockTokensTest tests=5 failures=0 errors=0 skipped=0
+com.vela.android.autofill.BrowserAllowlistTest tests=11 failures=0 errors=0 skipped=0
+com.vela.android.autofill.CardFieldDetectionTest tests=5 failures=0 errors=0 skipped=0
+com.vela.android.autofill.TrustedBrowserPinningTest tests=5 failures=0 errors=0 skipped=0
+com.vela.android.core.AdmittedChunkFailureTest tests=2 failures=0 errors=0 skipped=0
+com.vela.android.core.LocalVaultAdmissionTest tests=3 failures=0 errors=0 skipped=0
+com.vela.android.core.VaultJsonTest tests=6 failures=0 errors=0 skipped=0
+com.vela.android.security.EncryptedVaultStoreTest tests=5 failures=0 errors=0 skipped=0
+com.vela.android.security.PasswordRmsProtectorTest tests=2 failures=0 errors=0 skipped=0
+com.vela.android.security.passkey.PrivilegedAllowlistsTest tests=4 failures=0 errors=0 skipped=0
+com.vela.android.security.passkey.WebAuthnJsonTest tests=19 failures=0 errors=0 skipped=0
+com.vela.android.sync.EpochSyncContractTest tests=7 failures=0 errors=0 skipped=0
+com.vela.android.sync.IdentityBindingTest tests=5 failures=0 errors=0 skipped=0
+com.vela.android.sync.RecoveryPublicationJournalTest tests=4 failures=0 errors=0 skipped=0
+com.vela.android.sync.ServerUrlValidationTest tests=5 failures=0 errors=0 skipped=0
+com.vela.android.sync.SyncSettingsPublicationTest tests=3 failures=0 errors=0 skipped=0
+com.vela.android.sync.VaultEventStreamParserTest tests=5 failures=0 errors=0 skipped=0
+com.vela.android.sync.VaultSyncMergeTest tests=5 failures=0 errors=0 skipped=0
+total tests=139 failures=0 errors=0 skipped=0

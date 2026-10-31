@@ -1,0 +1,12 @@
+maude tool: 'maude'
+ checking version: 3.5.1. OK.
+ checking installation: OK.
+[Theory M18_PairSelection] Theory loaded
+[Theory M18_PairSelection] Theory translated
+[Theory M18_PairSelection] Derivation checks started
+[Theory M18_PairSelection] Derivation checks ended
+[Theory M18_PairSelection] Theory closed
+[Saturating Sources] Step 1 (Max 5)
+[Saturating Sources] Done
+m18_pair_selection: 15 verified
+m18 pair-selection formal proof gate: 15 verified, 0 falsified, 0 warnings

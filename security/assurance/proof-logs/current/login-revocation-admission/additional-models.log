@@ -1,0 +1,133 @@
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> vela-server/src/sqldb.rs:76:5
+   |
+76 |     async fn query(&self, sql: &str, params: Vec<turso::Value>) -> anyhow::Result<Vec<VelaRow>>;
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+   = note: `#[warn(async_fn_in_trait)]` on by default
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+76 -     async fn query(&self, sql: &str, params: Vec<turso::Value>) -> anyhow::Result<Vec<VelaRow>>;
+76 +     fn query(&self, sql: &str, params: Vec<turso::Value>) -> impl std::future::Future<Output = anyhow::Result<Vec<VelaRow>>> + Send;
+   |
+
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> vela-server/src/sqldb.rs:78:5
+   |
+78 |     async fn execute(&self, sql: &str, params: Vec<turso::Value>) -> anyhow::Result<u64>;
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+78 -     async fn execute(&self, sql: &str, params: Vec<turso::Value>) -> anyhow::Result<u64>;
+78 +     fn execute(&self, sql: &str, params: Vec<turso::Value>) -> impl std::future::Future<Output = anyhow::Result<u64>> + Send;
+   |
+
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> vela-server/src/sqldb.rs:80:5
+   |
+80 |     async fn execute_batch(&self, sql: &str) -> anyhow::Result<()>;
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+80 -     async fn execute_batch(&self, sql: &str) -> anyhow::Result<()>;
+80 +     fn execute_batch(&self, sql: &str) -> impl std::future::Future<Output = anyhow::Result<()>> + Send;
+   |
+
+warning: `vela-server` (lib) generated 3 warnings
+   Compiling vela-server v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-700776df/serverVELA/vela-server)
+warning: function `test_app` is never used
+  --> vela-server/tests/helpers/mod.rs:42:14
+   |
+42 | pub async fn test_app() -> Router {
+   |              ^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `vela-server` (test "challenge_single_use_model") generated 1 warning
+warning: `vela-server` (test "account_deletion_model") generated 1 warning (1 duplicate)
+warning: `vela-server` (test "share_channel_model") generated 1 warning (1 duplicate)
+warning: `vela-server` (test "rekey_state_model") generated 1 warning (1 duplicate)
+warning: `vela-server` (test "recovery_possession_model") generated 1 warning (1 duplicate)
+warning: `vela-server` (test "pairing_model") generated 1 warning (1 duplicate)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 32.28s
+     Running tests/account_deletion_model.rs (target/debug/build/vela-server/e88f699bb584bb80/out/account_deletion_model-e88f699bb584bb80)
+
+running 1 test
+test every_bounded_account_deletion_trace_matches_the_model ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 205.54s
+
+     Running tests/challenge_single_use_model.rs (target/debug/build/vela-server/001b03200d5173af/out/challenge_single_use_model-001b03200d5173af)
+
+running 3 tests
+test every_bounded_challenge_trace_matches_the_single_use_model ... ok
+test failed_or_unknown_or_expired_or_replayed_challenges_never_succeed ... ok
+test one_challenge_yields_exactly_one_success_under_concurrency ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.13s
+
+     Running tests/enrollment_ceremony_model.rs (target/debug/build/vela-server/2057825639c3b34c/out/enrollment_ceremony_model-2057825639c3b34c)
+
+running 3 tests
+test every_bounded_completion_matches_m13 ... ok
+test every_bounded_open_claim_and_inspection_matches_m13 ... ok
+test every_bounded_result_decision_matches_m13 ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/pairing_model.rs (target/debug/build/vela-server/ae21b3a94118679a/out/pairing_model-ae21b3a94118679a)
+
+running 2 tests
+test a_pairing_ceremony_completes_once_and_replays_are_refused ... ok
+test every_bounded_pairing_trace_matches_the_m13_ceremony ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 21.00s
+
+     Running tests/recovery_lifecycle_model.rs (target/debug/build/vela-server/b0fff85dca26d6de/out/recovery_lifecycle_model-b0fff85dca26d6de)
+
+running 3 tests
+test every_bounded_initiation_and_registration_matches_m14 ... ok
+test every_bounded_recovered_device_enrollment_matches_m14 ... ok
+test every_bounded_share_release_and_credential_update_matches_m14 ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/recovery_possession_model.rs (target/debug/build/vela-server/96bd9e93b8cadf62/out/recovery_possession_model-96bd9e93b8cadf62)
+
+running 1 test
+test every_bounded_possession_recovery_trace_matches_the_m18_chain ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 59.48s
+
+     Running tests/rekey_state_model.rs (target/debug/build/vela-server/8ae1a75efad9e43e/out/rekey_state_model-8ae1a75efad9e43e)
+
+running 5 tests
+test concurrent_start_and_active_write_have_a_lossless_linearization ... ok
+test every_bounded_reachable_state_preserves_epoch_invariants ... ok
+test every_completeness_order_matches_the_real_atomic_commit_guard ... ok
+test expired_rotation_beats_commit_and_cleans_every_attempt_artifact ... ok
+test verified_mutation_permit_matches_the_m11c_authority_relation ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+
+     Running tests/session_capability_model.rs (target/debug/build/vela-server/0efa76be6ffaf2f2/out/session_capability_model-0efa76be6ffaf2f2)
+
+running 3 tests
+test every_bounded_grant_and_exchange_matches_the_m12_relation ... ok
+test every_bounded_renewal_preserves_capability_or_fails_closed ... ok
+test route_matrix_never_gives_web_sessions_permanent_authority ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/share_channel_model.rs (target/debug/build/vela-server/9681c43c6bb3580e/out/share_channel_model-9681c43c6bb3580e)
+
+running 1 test
+test every_bounded_share_trace_matches_the_m19_m21_state_machine ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 24.57s
+

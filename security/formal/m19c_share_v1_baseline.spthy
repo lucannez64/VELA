@@ -1,0 +1,64 @@
+theory M19c_ShareV1Baseline
+begin
+
+/*
+  Baseline: share capsules before envelope v2 (unsigned), malicious server.
+
+  The v1 capsule was kem::seal_share(recipient_share_ek, item_json): public-key
+  encryption to a key anyone can fetch, with no sender signature. The
+  recipient applied any capsule on a linked share whose item `updated_at`
+  was newer than the copy it held. That timestamp travels inside the
+  capsule, but whoever seals the capsule chooses it.
+
+  The exists-trace lemma below is VERIFIED: it exhibits the attack. With no
+  key ever revealed, the recipient applies, as an edit from the sender,
+  content the sender never sent. m19c_share_sender_authentication.spthy is
+  the fixed design.
+
+  Expected verdict: all lemmas VERIFIED (the first one demonstrates the attack).
+*/
+
+builtins: asymmetric-encryption, natural-numbers
+
+rule Recipient_ShareKey:
+    [ Fr(~dk) ]
+  --[ ShareKeyCreated($B, pk(~dk)) ]->
+    [ !ShareKey($B, ~dk), Out(<$B, pk(~dk)>) ]
+
+rule Reveal_ShareKey:
+    [ !ShareKey(B, dk) ]
+  --[ ShareKeyRevealed(B) ]->
+    [ Out(dk) ]
+
+// v1 send and update: seal <item, updated_at> to the recipient. No signature.
+rule Sender_Send:
+    [ !ShareKey($B, dk), Fr(~item) ]
+  --[ Sent($S, $B, ~item) ]->
+    [ Out(aenc(<~item, %1>, pk(dk))) ]
+
+// The recipient accepts the first capsule the server attributes to S, then
+// applies any capsule on that linked share with a newer timestamp.
+rule Recipient_Accept:
+    [ !ShareKey($B, dk), Fr(~slot), In(<S, aenc(<item, t>, pk(dk))>) ]
+  --[ Accepted(~slot, $B, S, item) ]->
+    [ Held(~slot, $B, dk, S, t) ]
+
+rule Recipient_ApplyNewer:
+    [ Held(slot, $B, dk, S, t), In(<S, aenc(<item, t2>, pk(dk))>) ]
+  --[ Newer(t, t2), Applied(slot, $B, S, item) ]->
+    [ Held(slot, $B, dk, S, t2) ]
+
+restriction NewerTimestamp:
+  "All a b #i. Newer(a, b) @ #i ==> a << b"
+
+// The attack: an honest first contact, then an "edit" from S that S never sent.
+lemma forged_update_is_applied_without_any_key_compromise:
+  exists-trace
+  "Ex slot B S item0 item #a #b #c.
+     Sent(S, B, item0) @ #a &
+     Accepted(slot, B, S, item0) @ #b &
+     Applied(slot, B, S, item) @ #c &
+     not (Ex #s. Sent(S, B, item) @ #s) &
+     not (Ex b #r. ShareKeyRevealed(b) @ #r)"
+
+end

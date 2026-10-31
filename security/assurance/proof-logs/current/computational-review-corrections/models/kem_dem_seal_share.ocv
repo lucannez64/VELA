@@ -1,0 +1,68 @@
+(* VELA seal_share / open_share as public-key encryption: IND-CCA2.
+
+   Code: libVELA/vela-crypto/src/kem.rs (seal_share, open_share) and
+         libVELA/vela-crypto/src/aead.rs (encrypt, decrypt).
+
+     seal_share(pk, m) = "VKM2" ‖ capsule ‖ AEAD.encrypt(ss, m)   where (capsule, ss) = encapsulate(pk)
+     open_share(sk, c) = AEAD.decrypt(decapsulate(sk, capsule), ct)
+
+   Every share capsule, enrollment RMS capsule, rekey capsule and web-session
+   snapshot goes through this construction.
+
+   Assumptions:
+   - The hybrid KEM is IND-CCA2 (cryptolib IND_CCA2_KEM). That is what
+     kem_v2_x25519_gdh.ocv and kem_v2_mlkem_cca.ocv establish for combiner v2,
+     each under one component's assumption.
+   - XChaCha20-Poly1305 with a fresh random nonce and no associated data is an
+     IND-CPA and INT-CTXT probabilistic symmetric encryption (one key per
+     message here, so nonce reuse cannot occur).
+   - The 4-byte "VKM2" prefix is a constant and is omitted.
+
+   Game: one recipient key, one left-or-right challenge on equal-length
+   messages, Qd decryption queries on anything but the challenge ciphertext.
+
+   Expected: "All queries proved."
+*)
+
+param Qd.
+
+(* ── The hybrid KEM, abstracted as IND-CCA2 ── *)
+type kseed [large,fixed].
+type kpk [bounded].
+type ksk [bounded].
+type key [large,fixed].
+type kct [bounded].
+type kencout [bounded].
+proba Pkem.
+proba Pkeycoll.
+proba Pctxtcoll.
+expand IND_CCA2_KEM(kseed, kpk, ksk, key, kct, kencout, pkgen, skgen,
+                    encap, kpair, decap, kinjbot, Pkem, Pkeycoll, Pctxtcoll).
+
+(* ── XChaCha20-Poly1305: IND-CPA + INT-CTXT ── *)
+proba Penc.
+proba Pencctxt.
+expand IND_CPA_INT_CTXT_sym_enc(key, bitstring, bitstring, aead_enc, aead_dec,
+                                sinjbot, Zero, Penc, Pencctxt).
+
+query secret b [cv_bit].
+
+process
+  Ostart() :=
+    b <-R bool;
+    ks <-R kseed;
+    return(pkgen(ks));
+    ((
+      Ochall(m0: bitstring, m1: bitstring) :=
+        if Zero(m0) = Zero(m1) then
+        let kpair(k: key, c: kct) = encap(pkgen(ks)) in
+        ct: bitstring <- aead_enc(if b then m0 else m1, k);
+        return(c, ct)
+    ) | (
+      foreach id <= Qd do
+      Odec(cq: kct, ctq: bitstring) :=
+        find suchthat defined(c, ct) && cq = c && ctq = ct then yield else
+        let kinjbot(kq: key) = decap(cq, skgen(ks)) in
+        let sinjbot(m: bitstring) = aead_dec(ctq, kq) in
+        return(m)
+    ))

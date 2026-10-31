@@ -1,0 +1,11 @@
+--- /home/hirew/.t3/worktrees/VELA/t3-04703409/serverVELA/vela-enrollment-policy/proofs/fstar/extraction-pairing-driver/Vela_enrollment_policy.Pairing_driver.fst	2026-10-26 20:03:06.448931954 +0100
++++ /tmp/opencode/mutations/redeem-replay/Vela_enrollment_policy.Pairing_driver.fst	2026-10-26 20:15:34.964012989 +0100
+@@ -687,7 +687,7 @@
+           pairing_effect_is_sound result.f_driver result.f_effect &&
+           (~.(pairing_state_is_sound d <: bool) || pairing_state_is_sound result.f_driver)) =
+   match observation <: t_RedeemObservation with
+-  | RedeemObservation_Missing  -> terminal d (PairingFailure_PackageUnavailable <: t_PairingFailure)
++  | RedeemObservation_Missing  -> complete d
+   | RedeemObservation_Present { f_utf8_valid = utf8_valid } ->
+     if utf8_valid
+     then complete d

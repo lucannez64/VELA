@@ -1,0 +1,14 @@
+--- serverVELA/vela-recovery-policy/proofs/fstar/extraction-possession-interpreter/Vela_recovery_policy.Possession_interpreter.fst	2026-10-27 16:26:10.522086958 +0100
++++ /tmp/vela-mut-possession/b/Vela_recovery_policy.Possession_interpreter.fst	2026-10-27 16:35:24.313343465 +0100
+@@ -505,6 +505,11 @@
+               | Vela_recovery_policy.Possession_driver.ProofRecoverEffect_Complete
+               | Vela_recovery_policy.Possession_driver.ProofRecoverEffect_Fail _
+               | Vela_recovery_policy.Possession_driver.ProofRecoverEffect_Idle  ->
++                let (tmp0: v_Io), (out: Core_models.Option.t_Option Vela_recovery_policy.Possession_driver.t_GrantStoreObservation) =
++                  f_issue_grant #v_Io #FStar.Tactics.Typeclasses.solve io
++                    ({ Vela_recovery_policy.Possession_driver.f_epoch = mk_i64 0 })
++                in
++                let io:v_Io = tmp0 in
+                 (aborted, io <: (bool & v_Io)), transition
+                 <:
+                 ((bool & v_Io) & Vela_recovery_policy.Possession_driver.t_ProofRecoverTransition)

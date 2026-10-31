@@ -1,0 +1,20 @@
+--- serverVELA/vela-recovery-policy/proofs/fstar/recovery-share-driver-composition/Vela_recovery_policy_recovery_share_driver_composition.fst	2026-10-27 22:12:37.253050832 +0100
++++ /tmp/vela-f2-recshare-mut/comp-mut/Vela_recovery_policy_recovery_share_driver_composition.fst	2026-10-27 22:48:47.062596555 +0100
+@@ -227,7 +227,7 @@
+ let auth_account_observation (st: state) : t_AuthAccountObservation =
+   { f_account_present = true;
+     f_account_epoch_active = not st.st_rotation;
+-    f_share_present = current_share st;
++    f_share_present = true;
+     f_stored_credential_matches = true;
+     f_stored_epoch = Core_models.Option.Option_Some st.st_epoch }
+ 
+@@ -384,7 +384,7 @@
+ 
+ let auth_context_observation (st: state) : t_AuthFinishContextObservation =
+   { f_account_present = true;
+-    f_share_present = current_share st;
++    f_share_present = true;
+     f_credential = StoredCredentialObservation_Present;
+     f_attempt_id_present = true }
+ 

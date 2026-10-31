@@ -1,0 +1,7 @@
+export CARGO_TARGET_DIR=$PWD/target-own
+export CARGO_HOME=/tmp/vela-hax-cargo
+export OPAMROOT=$HOME/.local/opt/vela-tools/opam
+export PATH=/tmp/vela-fstar-prebuilt/fstar/bin:$HOME/.local/opt/vela-tools/bin:$HOME/.local/opt/vela-tools/opam/vela-hax/bin:$PATH
+cd serverVELA/vela-session-policy
+~/.local/opt/vela-tools/bin/vela-heavy ./verify-fstar-registration-driver.sh
+~/.local/opt/vela-tools/bin/vela-heavy ./verify-fstar-registration-interpreter.sh

@@ -1,0 +1,11 @@
+--- serverVELA/vela-share-policy/proofs/fstar/extraction-send-driver/Vela_share_policy.Send_driver.fst	2026-10-27 22:50:49.388227574 +0100
++++ /tmp/vela-f2-account-b-mut/send-create-without-owner/Vela_share_policy.Send_driver.fst	2026-10-27 22:49:36.713908251 +0100
+@@ -369,7 +369,7 @@
+           send_state_is_sound result.f_driver &&
+           send_effect_is_sound result.f_driver result.f_effect) =
+   let base:t_SendDriver = fresh_driver (SendRequestKind_Create <: t_SendRequestKind) in
+-  if ~.observation.f_owner_present
++  if false
+   then terminal base (SendFailure_Unauthenticated <: t_SendFailure)
+   else
+     if observation.f_ciphertext_decode_failed

@@ -1,0 +1,1119 @@
+Doing expand get, insert and prove unique annotations... No change.
+Doing simplify (non-expanded game)... No change.
+Doing expand... Done.
+Doing remove assignments of findcond... Done.
+Doing simplify... Run simplify 1 time(s). Fixpoint reached.
+No change.
+Doing move all binders... No change.
+Doing SA rename new without array accesses and remove assignments of findcond... Done.
+Doing merge branches... No change.
+Proof of (one-session) secrecy of b failed:
+  at 30, bad usage(s) of b.
+Trying equivalence int_ctxt(aead_enc)... Failed.
+Trying equivalence ind_cpa(aead_enc)... Failed.
+Trying equivalence ind_cca2(encap)... Transf. OK Proba. computed Transf. done Succeeded.
+Doing simplify (non-expanded game)... Done.
+Doing expand... Done.
+Doing remove assignments of findcond... Done.
+Doing simplify... Applied collision r <-R kseed; k_1 <-R encapseed; forall Y: kct; return((2-proj-kpair(encap_r(pkgen(r), k_1)) = Y)) <=(Pctxtcoll)=> return(false) if Y independent-of k_1 with k_1 -> kseed_2, r -> ks_1, Y -> cq Probability: Pctxtcoll * Qd
+Run simplify 2 time(s). Fixpoint reached.
+Done.
+Doing move all binders... Done.
+Doing SA rename new without array accesses and remove assignments of findcond... Done.
+Doing merge branches... No change.
+Proof of (one-session) secrecy of b failed:
+  at 28, bad usage(s) of b.
+Trying equivalence int_ctxt(aead_enc)... Transf. OK Proba. computed Transf. done Succeeded.
+Doing simplify (non-expanded game)... No change.
+Doing expand... Applied collision r <-R kseed; k_1 <-R encapseed; forall Y: kct; return((2-proj-kpair(encap_r(pkgen(r), k_1)) = Y)) <=(Pctxtcoll)=> return(false) if Y independent-of k_1 with k_1 -> kseed_2, r -> ks_1, Y -> cq Probability: Pctxtcoll * Qd
+Done.
+Doing remove assignments of findcond... Done.
+Doing simplify... Applied collision r <-R kseed; k_1 <-R encapseed; forall Y: kct; return((2-proj-kpair(encap_r(pkgen(r), k_1)) = Y)) <=(Pctxtcoll)=> return(false) if Y independent-of k_1 with k_1 -> kseed_2, r -> ks_1, Y -> cq Probability: Pctxtcoll * Qd
+Run simplify 2 time(s). Fixpoint reached.
+Done.
+Doing move all binders... Done.
+Doing SA rename new without array accesses and remove assignments of findcond... Done.
+Doing merge branches... No change.
+Proof of (one-session) secrecy of b failed:
+  at 27, bad usage(s) of b.
+Trying equivalence int_ctxt(aead_enc)... Failed.
+Trying equivalence ind_cpa(aead_enc)... Transf. OK Proba. computed Transf. done Succeeded.
+Doing simplify (non-expanded game)... No change.
+Doing expand... Applied collision r <-R kseed; k_1 <-R encapseed; forall Y: kct; return((2-proj-kpair(encap_r(pkgen(r), k_1)) = Y)) <=(Pctxtcoll)=> return(false) if Y independent-of k_1 with k_1 -> kseed_2, r -> ks_1, Y -> cq Probability: Pctxtcoll * Qd
+Done.
+Doing remove assignments of findcond... Done.
+Doing simplify... Run simplify 1 time(s). Fixpoint reached.
+No change.
+Doing move all binders... No change.
+Doing SA rename new without array accesses and remove assignments of findcond... No change.
+Doing merge branches... No change.
+Proof of (one-session) secrecy of b failed:
+  at 27, bad usage(s) of b.
+Trying equivalence int_ctxt(aead_enc)... Failed.
+Trying equivalence ind_cpa(aead_enc)... Transf. OK Proba. computed Transf. done Succeeded.
+Doing simplify (non-expanded game)... No change.
+Doing expand... Applied collision r <-R kseed; k_1 <-R encapseed; forall Y: kct; return((2-proj-kpair(encap_r(pkgen(r), k_1)) = Y)) <=(Pctxtcoll)=> return(false) if Y independent-of k_1 with k_1 -> kseed_2, r -> ks_1, Y -> cq Probability: Pctxtcoll * Qd
+Done.
+Doing remove assignments of findcond... Done.
+Doing simplify... Run simplify 1 time(s). Fixpoint reached.
+No change.
+Doing move all binders... No change.
+Doing SA rename new without array accesses and remove assignments of findcond... No change.
+Doing merge branches... Done.
+Proved one-session secrecy of b
+===================== Proof starts =======================
+Initial state
+Game 1 is
+     Ostart() :=
+     b <-R bool;
+     ks <-R kseed;
+     return(pkgen(ks));
+     ((
+       Ochall(m0: bitstring, m1: bitstring) :=
+       if Zero(m0) = Zero(m1) then
+ {15}  let kpair(k: key, c: kct) = (pk: kpk <- pkgen(ks); kseed_1 <-R encapseed; encap_r(pk, kseed_1)) in
+       ct: bitstring <- (m_1: bitstring <- (if b then m0 else m1); k_1: key <- k; r <-R enc_seed; enc_r(m_1, k_1, r));
+       return(c, ct)
+     ) | (
+       foreach id <= Qd do
+       Odec(cq: kct, ctq: bitstring) :=
+       if defined(c, ct) && (cq = c) && (ctq = ct) then
+         yield
+       else
+         let kinjbot(kq: key) = decap(cq, skgen(ks)) in
+         let sinjbot(m: bitstring) = aead_dec(ctq, kq) in
+         return(m)
+     ))
+
+
+Applying expand
+  - Expand if/find/let
+    - Simplify pattern kpair(k: key, c: kct) (bijective tuple expanded) at 15
+yields
+
+Game 2 is
+     Ostart() :=
+     b <-R bool;
+     ks <-R kseed;
+     return(pkgen(ks));
+     ((
+       Ochall(m0: bitstring, m1: bitstring) :=
+       if Zero(m0) = Zero(m1) then
+       pk: kpk <- pkgen(ks);
+       kseed_1 <-R encapseed;
+       v_3: kencout <- encap_r(pk, kseed_1);
+       c: kct <- 2-proj-kpair(v_3);
+       k: key <- 1-proj-kpair(v_3);
+       if b then
+         m_1: bitstring <- m0;
+         k_1: key <- k;
+         r <-R enc_seed;
+         ct: bitstring <- enc_r(m_1, k_1, r);
+         return(c, ct)
+       else
+         m_1: bitstring <- m1;
+         k_1: key <- k;
+         r <-R enc_seed;
+         ct: bitstring <- enc_r(m_1, k_1, r);
+         return(c, ct)
+     ) | (
+       foreach id <= Qd do
+       Odec(cq: kct, ctq: bitstring) :=
+       if defined(c, ct) && (cq = c) && (ctq = ct) then
+         yield
+       else
+         let kinjbot(kq: key) = decap(cq, skgen(ks)) in
+         let sinjbot(m: bitstring) = aead_dec(ctq, kq) in
+         return(m)
+     ))
+
+
+Applying remove assignments of findcond
+  - Remove assignments on m_1 (definition removed, all usages removed)
+  - Remove assignments on k_1 (definition removed, all usages removed)
+  - Remove assignments on m_1 (definition removed, all usages removed)
+  - Remove assignments on k_1 (definition removed, all usages removed)
+yields
+
+Game 3 is
+     Ostart() :=
+     b <-R bool;
+     ks <-R kseed;
+     return(pkgen(ks));
+     ((
+       Ochall(m0: bitstring, m1: bitstring) :=
+       if Zero(m0) = Zero(m1) then
+       pk: kpk <- pkgen(ks);
+       kseed_1 <-R encapseed;
+       v_3: kencout <- encap_r(pk, kseed_1);
+       c: kct <- 2-proj-kpair(v_3);
+       k: key <- 1-proj-kpair(v_3);
+       if b then
+         r <-R enc_seed;
+         ct: bitstring <- enc_r(m0, k, r);
+         return(c, ct)
+       else
+         r <-R enc_seed;
+         ct: bitstring <- enc_r(m1, k, r);
+         return(c, ct)
+     ) | (
+       foreach id <= Qd do
+       Odec(cq: kct, ctq: bitstring) :=
+       if defined(c, ct) && (cq = c) && (ctq = ct) then
+         yield
+       else
+         let kinjbot(kq: key) = decap(cq, skgen(ks)) in
+         let sinjbot(m: bitstring) = aead_dec(ctq, kq) in
+         return(m)
+     ))
+
+
+Applying SA rename new without array accesses and remove assignments of findcond
+  - Rename variable r into r_2, r_1
+yields
+
+Game 4 is
+     Ostart() :=
+     b <-R bool;
+     ks <-R kseed;
+     return(pkgen(ks));
+     ((
+       Ochall(m0: bitstring, m1: bitstring) :=
+       if Zero(m0) = Zero(m1) then
+       pk: kpk <- pkgen(ks);
+       kseed_1 <-R encapseed;
+       v_3: kencout <- encap_r(pk, kseed_1);
+       c: kct <- 2-proj-kpair(v_3);
+       k: key <- 1-proj-kpair(v_3);
+       if b then
+         r_2 <-R enc_seed;
+         ct: bitstring <- enc_r(m0, k, r_2);
+         return(c, ct)
+       else
+         r_1 <-R enc_seed;
+         ct: bitstring <- enc_r(m1, k, r_1);
+         return(c, ct)
+     ) | (
+       foreach id <= Qd do
+       Odec(cq: kct, ctq: bitstring) :=
+       if defined(c, ct) && (cq = c) && (ctq = ct) then
+         yield
+       else
+         let kinjbot(kq: key) = decap(cq, skgen(ks)) in
+         let sinjbot(m: bitstring) = aead_dec(ctq, kq) in
+         return(m)
+     ))
+
+
+Applying equivalence ind_cca2(encap) [probability Pkem(time_1, 1, 1, Qd)]
+  - Equivalence ind_cca2(encap) with variables: kseed_1 -> kseed_2, ks -> seed
+yields
+
+Game 5 is
+     Ostart() :=
+     b <-R bool;
+     ks_1 <-R kseed;
+     return(pkgen2(ks_1));
+     ((
+       Ochall(m0: bitstring, m1: bitstring) :=
+       if Zero(m0) = Zero(m1) then
+       pk: kpk <- pkgen2(ks_1);
+       kseed_2 <-R encapseed;
+       k1_1 <-R key;
+       v_3: kencout <- (pk_R: kpk <- pk; if {24}(pk_R = pkgen2(ks_1)) then encoded_i2: encoded_Nc_t <- encode_idx_ks(); v_4: kencout <- encap_r2(pk_R, kseed_2); ctxt: kct <- 2-proj-kpair(v_4); k1: key <- cst_key; kpair(k1_1, ctxt) else encap_r(pk_R, kseed_2));
+       c: kct <- 2-proj-kpair(v_3);
+       k: key <- 1-proj-kpair(v_3);
+       if b then
+         r_2 <-R enc_seed;
+         ct: bitstring <- enc_r(m0, k, r_2);
+         return(c, ct)
+       else
+         r_1 <-R enc_seed;
+         ct: bitstring <- enc_r(m1, k, r_1);
+         return(c, ct)
+     ) | (
+       foreach id <= Qd do
+       Odec(cq: kct, ctq: bitstring) :=
+       if defined(c, ct) && (cq = c) && (ctq = ct) then
+         yield
+       else
+         let kinjbot(kq: key) = (enc: kct <- cq; if defined(k1, encoded_i2, ctxt, k1_1) && (encoded_i2 = encode_idx_ks()) && (ctxt = enc) then kinjbot(k1_1) else decap2(enc, skgen2(ks_1))) in
+         let sinjbot(m: bitstring) = aead_dec(ctq, kq) in
+         return(m)
+     ))
+
+
+Applying simplify (non-expanded game)
+  - Simplification pass
+    - Replaced (pk_R = pkgen2(ks_1)) with true at 24
+yields
+
+Game 6 is
+     Ostart() :=
+     b <-R bool;
+     ks_1 <-R kseed;
+     return(pkgen2(ks_1));
+     ((
+       Ochall(m0: bitstring, m1: bitstring) :=
+       if Zero(m0) = Zero(m1) then
+       pk: kpk <- pkgen2(ks_1);
+       kseed_2 <-R encapseed;
+       k1_1 <-R key;
+       v_3: kencout <- (pk_R: kpk <- pk; {23}if true then encoded_i2: encoded_Nc_t <- encode_idx_ks(); v_4: kencout <- encap_r2(pk_R, kseed_2); ctxt: kct <- 2-proj-kpair(v_4); k1: key <- cst_key; kpair(k1_1, ctxt) else encap_r(pk_R, kseed_2));
+       c: kct <- 2-proj-kpair(v_3);
+       k: key <- 1-proj-kpair(v_3);
+       if b then
+         r_2 <-R enc_seed;
+         ct: bitstring <- enc_r(m0, k, r_2);
+         return(c, ct)
+       else
+         r_1 <-R enc_seed;
+         ct: bitstring <- enc_r(m1, k, r_1);
+         return(c, ct)
+     ) | (
+       foreach id <= Qd do
+       Odec(cq: kct, ctq: bitstring) :=
+       if defined(c, ct) && (cq = c) && (ctq = ct) then
+         yield
+       else
+ {90}    let kinjbot(kq: key) = (enc: kct <- cq; if defined(k1, encoded_i2, ctxt, k1_1) && (encoded_i2 = encode_idx_ks()) && (ctxt = enc) then kinjbot(k1_1) else decap2(enc, skgen2(ks_1))) in
+         let sinjbot(m: bitstring) = aead_dec(ctq, kq) in
+         return(m)
+     ))
+
+
+Applying expand
+  - Expand if/find/let
+    - Simplify pattern kinjbot(kq: key) (tuple expanded) at 90
+    - Transformed find at 23 into a test
+    - Test at 23 always true
+yields
+
+Game 7 is
+     Ostart() :=
+     b <-R bool;
+     ks_1 <-R kseed;
+     return(pkgen2(ks_1));
+     ((
+       Ochall(m0: bitstring, m1: bitstring) :=
+       if Zero(m0) = Zero(m1) then
+       pk: kpk <- pkgen2(ks_1);
+       kseed_2 <-R encapseed;
+       k1_1 <-R key;
+       pk_R: kpk <- pk;
+       encoded_i2: encoded_Nc_t <- encode_idx_ks();
+       v_4: kencout <- encap_r2(pk_R, kseed_2);
+       ctxt: kct <- 2-proj-kpair(v_4);
+       k1: key <- cst_key;
+       v_3: kencout <- kpair(k1_1, ctxt);
+       c: kct <- 2-proj-kpair(v_3);
+       k: key <- 1-proj-kpair(v_3);
+       if b then
+         r_2 <-R enc_seed;
+         ct: bitstring <- enc_r(m0, k, r_2);
+         return(c, ct)
+       else
+         r_1 <-R enc_seed;
+         ct: bitstring <- enc_r(m1, k, r_1);
+         return(c, ct)
+     ) | (
+       foreach id <= Qd do
+       Odec(cq: kct, ctq: bitstring) :=
+       if defined(c, ct) && (cq = c) && (ctq = ct) then
+         yield
+       else
+         enc: kct <- cq;
+         if defined(k1, encoded_i2, ctxt, k1_1) && (encoded_i2 = encode_idx_ks()) && (ctxt = enc) then
+         (
+           kq: key <- k1_1;
+           let sinjbot(m: bitstring) = aead_dec(ctq, kq) in
+           return(m)
+         )
+         else
+           let kinjbot(kq: key) = decap2(enc, skgen2(ks_1)) in
+           let sinjbot(m: bitstring) = aead_dec(ctq, kq) in
+           return(m)
+     ))
+
+
+Applying remove assignments of findcond
+  - Remove assignments on enc (definition removed, all usages removed)
+  - Remove assignments on kq (definition removed, all usages removed)
+  - Remove assignments on pk_R (definition removed, all usages removed)
+  - Remove assignments on k1 (definition removed, all usages removed)
+yields
+
+Game 8 is
+     Ostart() :=
+     b <-R bool;
+     ks_1 <-R kseed;
+     return(pkgen2(ks_1));
+     ((
+       Ochall(m0: bitstring, m1: bitstring) :=
+       if Zero(m0) = Zero(m1) then
+       pk: kpk <- pkgen2(ks_1);
+       kseed_2 <-R encapseed;
+       k1_1 <-R key;
+       encoded_i2: encoded_Nc_t <- encode_idx_ks();
+       v_4: kencout <- encap_r2(pk, kseed_2);
+       ctxt: kct <- 2-proj-kpair(v_4);
+       v_3: kencout <- kpair(k1_1, ctxt);
+       c: kct <- {34}2-proj-kpair(v_3);
+       k: key <- {37}1-proj-kpair(v_3);
+       if b then
+         r_2 <-R enc_seed;
+         ct: bitstring <- enc_r(m0, k, r_2);
+         return(c, ct)
+       else
+         r_1 <-R enc_seed;
+         ct: bitstring <- enc_r(m1, k, r_1);
+         return(c, ct)
+     ) | (
+       foreach id <= Qd do
+       Odec(cq: kct, ctq: bitstring) :=
+       if defined(c, ct) && (cq = c) && (ctq = ct) then
+         yield
+       else
+ {84}    if defined(encoded_i2, ctxt, k1_1) && {85}((encoded_i2 = encode_idx_ks()) && (ctxt = cq)) then
+         (
+           let sinjbot(m: bitstring) = aead_dec(ctq, k1_1) in
+           return(m)
+         )
+         else
+           let kinjbot(kq: key) = decap2(cq, skgen2(ks_1)) in
+           let sinjbot(m: bitstring) = aead_dec(ctq, kq) in
+           return(m)
+     ))
+
+
+Applying simplify [probability Qd * Pctxtcoll]
+  - Simplification pass
+    - Replaced ((encoded_i2 = encode_idx_ks()) && (ctxt = cq)) with (ctxt = cq) at 85
+    - Replaced defined condition encoded_i2, ctxt, k1_1 with k1_1, ctxt in find at 84
+    - Replaced 2-proj-kpair(v_3) with ctxt at 34
+    - Replaced 1-proj-kpair(v_3) with k1_1 at 37
+yields
+
+Game 9 is
+     Ostart() :=
+     b <-R bool;
+     ks_1 <-R kseed;
+     return(pkgen2(ks_1));
+     ((
+       Ochall(m0: bitstring, m1: bitstring) :=
+       if Zero(m0) = Zero(m1) then
+       pk: kpk <- pkgen2(ks_1);
+       kseed_2 <-R encapseed;
+       k1_1 <-R key;
+       encoded_i2: encoded_Nc_t <- encode_idx_ks();
+       v_4: kencout <- encap_r2(pk, kseed_2);
+       ctxt: kct <- 2-proj-kpair(v_4);
+       v_3: kencout <- kpair(k1_1, ctxt);
+       c: kct <- ctxt;
+       k: key <- k1_1;
+       if b then
+         r_2 <-R enc_seed;
+         ct: bitstring <- enc_r(m0, k, r_2);
+         return(c, ct)
+       else
+         r_1 <-R enc_seed;
+         ct: bitstring <- enc_r(m1, k, r_1);
+         return(c, ct)
+     ) | (
+       foreach id <= Qd do
+       Odec(cq: kct, ctq: bitstring) :=
+       if defined(c, ct) && (cq = c) && (ctq = ct) then
+         yield
+       else
+         if defined(k1_1, ctxt) && (ctxt = cq) then
+         (
+           let sinjbot(m: bitstring) = aead_dec(ctq, k1_1) in
+           return(m)
+         )
+         else
+           let kinjbot(kq: key) = decap2(cq, skgen2(ks_1)) in
+           let sinjbot(m: bitstring) = aead_dec(ctq, kq) in
+           return(m)
+     ))
+
+
+Applying move all binders
+  - Move assignment to encoded_i2
+yields
+
+Game 10 is
+     Ostart() :=
+     b <-R bool;
+     ks_1 <-R kseed;
+     return(pkgen2(ks_1));
+     ((
+       Ochall(m0: bitstring, m1: bitstring) :=
+       if Zero(m0) = Zero(m1) then
+       pk: kpk <- pkgen2(ks_1);
+       kseed_2 <-R encapseed;
+       k1_1 <-R key;
+       v_4: kencout <- encap_r2(pk, kseed_2);
+       ctxt: kct <- 2-proj-kpair(v_4);
+       v_3: kencout <- kpair(k1_1, ctxt);
+       c: kct <- ctxt;
+       k: key <- k1_1;
+       if b then
+         r_2 <-R enc_seed;
+         ct: bitstring <- enc_r(m0, k, r_2);
+         return(c, ct)
+       else
+         r_1 <-R enc_seed;
+         ct: bitstring <- enc_r(m1, k, r_1);
+         return(c, ct)
+     ) | (
+       foreach id <= Qd do
+       Odec(cq: kct, ctq: bitstring) :=
+       if defined(c, ct) && (cq = c) && (ctq = ct) then
+         yield
+       else
+         if defined(k1_1, ctxt) && (ctxt = cq) then
+         (
+           let sinjbot(m: bitstring) = aead_dec(ctq, k1_1) in
+           return(m)
+         )
+         else
+           let kinjbot(kq: key) = decap2(cq, skgen2(ks_1)) in
+           let sinjbot(m: bitstring) = aead_dec(ctq, kq) in
+           return(m)
+     ))
+
+
+Applying SA rename new without array accesses and remove assignments of findcond
+  - Remove assignments on v_3 (definition removed, all usages removed)
+  - Remove assignments on c (definition removed, all usages removed)
+  - Remove assignments on k (definition removed, all usages removed)
+yields
+
+Game 11 is
+     Ostart() :=
+     b <-R bool;
+     ks_1 <-R kseed;
+     return(pkgen2(ks_1));
+     ((
+       Ochall(m0: bitstring, m1: bitstring) :=
+       if Zero(m0) = Zero(m1) then
+       pk: kpk <- pkgen2(ks_1);
+       kseed_2 <-R encapseed;
+       k1_1 <-R key;
+       v_4: kencout <- encap_r2(pk, kseed_2);
+       ctxt: kct <- 2-proj-kpair(v_4);
+       if b then
+         r_2 <-R enc_seed;
+         ct: bitstring <- enc_r(m0, k1_1, r_2);
+         return(ctxt, ct)
+       else
+         r_1 <-R enc_seed;
+         ct: bitstring <- enc_r(m1, k1_1, r_1);
+         return(ctxt, ct)
+     ) | (
+       foreach id <= Qd do
+       Odec(cq: kct, ctq: bitstring) :=
+       if defined(ctxt, ct) && (cq = ctxt) && (ctq = ct) then
+         yield
+       else
+         if defined(k1_1, ctxt) && (ctxt = cq) then
+         (
+           let sinjbot(m: bitstring) = aead_dec(ctq, k1_1) in
+           return(m)
+         )
+         else
+           let kinjbot(kq: key) = decap2(cq, skgen2(ks_1)) in
+           let sinjbot(m: bitstring) = aead_dec(ctq, kq) in
+           return(m)
+     ))
+
+
+Applying equivalence int_ctxt(aead_enc) [probability Pencctxt(time_2, 1, Qd, max(maxlength(game 11: m0), maxlength(game 11: m1)), maxlength(game 11: ctq))]
+  - Equivalence int_ctxt(aead_enc) with variables: r_2 -> r_1, k1_1 -> k_2, r_1 -> r_1
+yields
+
+Game 12 is
+     Ostart() :=
+     b <-R bool;
+     ks_1 <-R kseed;
+     return(pkgen2(ks_1));
+     ((
+       Ochall(m0: bitstring, m1: bitstring) :=
+       if Zero(m0) = Zero(m1) then
+       pk: kpk <- pkgen2(ks_1);
+       kseed_2 <-R encapseed;
+       k1_1 <-R key;
+       v_4: kencout <- encap_r2(pk, kseed_2);
+       ctxt: kct <- 2-proj-kpair(v_4);
+       if b then
+         r_2 <-R enc_seed;
+         ct: bitstring <- (x_1: bitstring <- m0; z_1: bitstring <- enc_r(x_1, k1_1, r_2); z_1);
+         return(ctxt, ct)
+       else
+         r_1 <-R enc_seed;
+         ct: bitstring <- (x: bitstring <- m1; z: bitstring <- enc_r(x, k1_1, r_1); z);
+         return(ctxt, ct)
+     ) | (
+       foreach id <= Qd do
+       Odec(cq: kct, ctq: bitstring) :=
+       if defined(ctxt, ct) && (cq = ctxt) && (ctq = ct) then
+         yield
+       else
+         if defined(ctxt) && (ctxt = cq) then
+         (
+ {81}      let sinjbot(m: bitstring) = (y: bitstring <- ctq; find  suchthat defined(x, z) && (z = y) then sinjbot(x) orfind  suchthat defined(x_1, z_1) && (z_1 = y) then sinjbot(x_1) else bottom) in
+           return(m)
+         )
+         else
+           let kinjbot(kq: key) = decap2(cq, skgen2(ks_1)) in
+           let sinjbot(m: bitstring) = aead_dec(ctq, kq) in
+           return(m)
+     ))
+
+
+Applying expand [probability Qd * Pctxtcoll]
+  - Expand if/find/let
+    - Remove let at 81
+    - Simplify pattern sinjbot(m: bitstring) (tuple expanded) at 81
+    - Simplify pattern sinjbot(m: bitstring) (tuple expanded) at 81
+yields
+
+Game 13 is
+     Ostart() :=
+     b <-R bool;
+     ks_1 <-R kseed;
+     return(pkgen2(ks_1));
+     ((
+       Ochall(m0: bitstring, m1: bitstring) :=
+       if Zero(m0) = Zero(m1) then
+       pk: kpk <- pkgen2(ks_1);
+       kseed_2 <-R encapseed;
+       k1_1 <-R key;
+       v_4: kencout <- encap_r2(pk, kseed_2);
+       ctxt: kct <- 2-proj-kpair(v_4);
+       if b then
+         r_2 <-R enc_seed;
+         x_1: bitstring <- m0;
+         z_1: bitstring <- enc_r(x_1, k1_1, r_2);
+         ct: bitstring <- z_1;
+         return(ctxt, ct)
+       else
+         r_1 <-R enc_seed;
+         x: bitstring <- m1;
+         z: bitstring <- enc_r(x, k1_1, r_1);
+         ct: bitstring <- z;
+         return(ctxt, ct)
+     ) | (
+       foreach id <= Qd do
+       Odec(cq: kct, ctq: bitstring) :=
+       if defined(ctxt, ct) && (cq = ctxt) && (ctq = ct) then
+         yield
+       else
+         if defined(ctxt) && (ctxt = cq) then
+         (
+           y: bitstring <- ctq;
+           find  suchthat defined(x, z) && (z = y) then
+             m: bitstring <- x;
+             return(m)
+           orfind  suchthat defined(x_1, z_1) && (z_1 = y) then
+             m: bitstring <- x_1;
+             return(m)
+         )
+         else
+           let kinjbot(kq: key) = decap2(cq, skgen2(ks_1)) in
+           let sinjbot(m: bitstring) = aead_dec(ctq, kq) in
+           return(m)
+     ))
+
+
+Applying remove assignments of findcond
+  - Remove assignments on y (definition removed, all usages removed)
+  - Remove assignments on m (definition removed, all usages removed)
+  - Remove assignments on m (definition removed, all usages removed)
+  - Remove assignments on x (definition removed, all usages removed)
+  - Remove assignments on ct (definition kept, array references kept)
+  - Remove assignments on x_1 (definition removed, all usages removed)
+  - Remove assignments on ct (definition kept, array references kept)
+yields
+
+Game 14 is
+     Ostart() :=
+     b <-R bool;
+     ks_1 <-R kseed;
+     return(pkgen2(ks_1));
+     ((
+       Ochall(m0: bitstring, m1: bitstring) :=
+       if Zero(m0) = Zero(m1) then
+       pk: kpk <- pkgen2(ks_1);
+       kseed_2 <-R encapseed;
+       k1_1 <-R key;
+       v_4: kencout <- encap_r2(pk, kseed_2);
+       ctxt: kct <- 2-proj-kpair(v_4);
+       if b then
+         r_2 <-R enc_seed;
+         z_1: bitstring <- enc_r(m0, k1_1, r_2);
+         ct: bitstring <- z_1;
+         return(ctxt, z_1)
+       else
+         r_1 <-R enc_seed;
+         z: bitstring <- enc_r(m1, k1_1, r_1);
+         ct: bitstring <- z;
+         return(ctxt, z)
+     ) | (
+       foreach id <= Qd do
+       Odec(cq: kct, ctq: bitstring) :=
+       if defined(ctxt, ct) && (cq = ctxt) && (ctq = ct) then
+         yield
+       else
+         if defined(ctxt) && (ctxt = cq) then
+         (
+ {79}      find  suchthat defined(m1, r_1, z) && {80}(z = ctq) then
+             return(m1)
+           orfind  suchthat defined(m0, r_2, z_1) && {87}(z_1 = ctq) then
+             return(m0)
+         )
+         else
+           let kinjbot(kq: key) = decap2(cq, skgen2(ks_1)) in
+           let sinjbot(m: bitstring) = aead_dec(ctq, kq) in
+           return(m)
+     ))
+
+
+Applying simplify [probability Qd * Pctxtcoll]
+  - Simplification pass
+    - Replaced (z_1 = ctq) with false at 87
+    - Remove branch 2 in find at 79
+    - Replaced (z = ctq) with false at 80
+    - Remove branch 1 in find at 79
+    - Find at 79 removed (else branch kept if any)
+yields
+
+Game 15 is
+     Ostart() :=
+     b <-R bool;
+     ks_1 <-R kseed;
+     return(pkgen2(ks_1));
+     ((
+       Ochall(m0: bitstring, m1: bitstring) :=
+       if Zero(m0) = Zero(m1) then
+       pk: kpk <- pkgen2(ks_1);
+       kseed_2 <-R encapseed;
+       k1_1 <-R key;
+       v_4: kencout <- encap_r2(pk, kseed_2);
+       ctxt: kct <- 2-proj-kpair(v_4);
+       if b then
+         r_2 <-R enc_seed;
+         z_1: bitstring <- enc_r(m0, k1_1, r_2);
+         ct: bitstring <- z_1;
+         return(ctxt, z_1)
+       else
+         r_1 <-R enc_seed;
+         z: bitstring <- enc_r(m1, k1_1, r_1);
+         ct: bitstring <- z;
+         return(ctxt, z)
+     ) | (
+       foreach id <= Qd do
+       Odec(cq: kct, ctq: bitstring) :=
+       if defined(ctxt, ct) && (cq = ctxt) && (ctq = ct) then
+         yield
+       else
+         if defined(ctxt) && (ctxt = cq) then
+           yield
+         else
+           let kinjbot(kq: key) = decap2(cq, skgen2(ks_1)) in
+           let sinjbot(m: bitstring) = aead_dec(ctq, kq) in
+           return(m)
+     ))
+
+
+Applying move all binders
+  - Move random number generation k1_1
+yields
+
+Game 16 is
+     Ostart() :=
+     b <-R bool;
+     ks_1 <-R kseed;
+     return(pkgen2(ks_1));
+     ((
+       Ochall(m0: bitstring, m1: bitstring) :=
+       if Zero(m0) = Zero(m1) then
+       pk: kpk <- pkgen2(ks_1);
+       kseed_2 <-R encapseed;
+       v_4: kencout <- encap_r2(pk, kseed_2);
+       ctxt: kct <- 2-proj-kpair(v_4);
+       if b then
+         r_2 <-R enc_seed;
+         k1_1 <-R key;
+         z_1: bitstring <- enc_r(m0, k1_1, r_2);
+         ct: bitstring <- z_1;
+         return(ctxt, z_1)
+       else
+         r_1 <-R enc_seed;
+         k1_1 <-R key;
+         z: bitstring <- enc_r(m1, k1_1, r_1);
+         ct: bitstring <- z;
+         return(ctxt, z)
+     ) | (
+       foreach id <= Qd do
+       Odec(cq: kct, ctq: bitstring) :=
+       if defined(ctxt, ct) && (cq = ctxt) && (ctq = ct) then
+         yield
+       else
+         if defined(ctxt) && (ctxt = cq) then
+           yield
+         else
+           let kinjbot(kq: key) = decap2(cq, skgen2(ks_1)) in
+           let sinjbot(m: bitstring) = aead_dec(ctq, kq) in
+           return(m)
+     ))
+
+
+Applying SA rename new without array accesses and remove assignments of findcond
+  - Rename variable k1_1 into k1_3, k1_2
+yields
+
+Game 17 is
+     Ostart() :=
+     b <-R bool;
+     ks_1 <-R kseed;
+     return(pkgen2(ks_1));
+     ((
+       Ochall(m0: bitstring, m1: bitstring) :=
+       if Zero(m0) = Zero(m1) then
+       pk: kpk <- pkgen2(ks_1);
+       kseed_2 <-R encapseed;
+       v_4: kencout <- encap_r2(pk, kseed_2);
+       ctxt: kct <- 2-proj-kpair(v_4);
+       if b then
+         r_2 <-R enc_seed;
+         k1_3 <-R key;
+         z_1: bitstring <- enc_r(m0, k1_3, r_2);
+         ct: bitstring <- z_1;
+         return(ctxt, z_1)
+       else
+         r_1 <-R enc_seed;
+         k1_2 <-R key;
+         z: bitstring <- enc_r(m1, k1_2, r_1);
+         ct: bitstring <- z;
+         return(ctxt, z)
+     ) | (
+       foreach id <= Qd do
+       Odec(cq: kct, ctq: bitstring) :=
+       if defined(ctxt, ct) && (cq = ctxt) && (ctq = ct) then
+         yield
+       else
+         if defined(ctxt) && (ctxt = cq) then
+           yield
+         else
+           let kinjbot(kq: key) = decap2(cq, skgen2(ks_1)) in
+           let sinjbot(m: bitstring) = aead_dec(ctq, kq) in
+           return(m)
+     ))
+
+
+Applying equivalence ind_cpa(aead_enc) [probability Penc(time_3, 1, maxlength(game 17: m1))]
+  - Equivalence ind_cpa(aead_enc) with variables: k1_2 -> k_2, r_1 -> r_1
+yields
+
+Game 18 is
+     Ostart() :=
+     b <-R bool;
+     ks_1 <-R kseed;
+     return(pkgen2(ks_1));
+     ((
+       Ochall(m0: bitstring, m1: bitstring) :=
+       if Zero(m0) = Zero(m1) then
+       pk: kpk <- pkgen2(ks_1);
+       kseed_2 <-R encapseed;
+       v_4: kencout <- encap_r2(pk, kseed_2);
+       ctxt: kct <- 2-proj-kpair(v_4);
+       if b then
+         r_2 <-R enc_seed;
+         k1_3 <-R key;
+         z_1: bitstring <- enc_r(m0, k1_3, r_2);
+         ct: bitstring <- z_1;
+         return(ctxt, z_1)
+       else
+         r_3 <-R enc_seed;
+         k1_4 <-R key;
+         z: bitstring <- (x_2: bitstring <- m1; enc_r'(Zero(x_2), k1_4, r_3));
+         ct: bitstring <- z;
+         return(ctxt, z)
+     ) | (
+       foreach id <= Qd do
+       Odec(cq: kct, ctq: bitstring) :=
+       if defined(ctxt, ct) && (cq = ctxt) && (ctq = ct) then
+         yield
+       else
+         if defined(ctxt) && (ctxt = cq) then
+           yield
+         else
+           let kinjbot(kq: key) = decap2(cq, skgen2(ks_1)) in
+           let sinjbot(m: bitstring) = aead_dec(ctq, kq) in
+           return(m)
+     ))
+
+
+Applying expand [probability Qd * Pctxtcoll]
+  - Expand if/find/let
+yields
+
+Game 19 is
+     Ostart() :=
+     b <-R bool;
+     ks_1 <-R kseed;
+     return(pkgen2(ks_1));
+     ((
+       Ochall(m0: bitstring, m1: bitstring) :=
+       if Zero(m0) = Zero(m1) then
+       pk: kpk <- pkgen2(ks_1);
+       kseed_2 <-R encapseed;
+       v_4: kencout <- encap_r2(pk, kseed_2);
+       ctxt: kct <- 2-proj-kpair(v_4);
+       if b then
+         r_2 <-R enc_seed;
+         k1_3 <-R key;
+         z_1: bitstring <- enc_r(m0, k1_3, r_2);
+         ct: bitstring <- z_1;
+         return(ctxt, z_1)
+       else
+         r_3 <-R enc_seed;
+         k1_4 <-R key;
+         x_2: bitstring <- m1;
+         z: bitstring <- enc_r'(Zero(x_2), k1_4, r_3);
+         ct: bitstring <- z;
+         return(ctxt, z)
+     ) | (
+       foreach id <= Qd do
+       Odec(cq: kct, ctq: bitstring) :=
+       if defined(ctxt, ct) && (cq = ctxt) && (ctq = ct) then
+         yield
+       else
+         if defined(ctxt) && (ctxt = cq) then
+           yield
+         else
+           let kinjbot(kq: key) = decap2(cq, skgen2(ks_1)) in
+           let sinjbot(m: bitstring) = aead_dec(ctq, kq) in
+           return(m)
+     ))
+
+
+Applying remove assignments of findcond
+  - Remove assignments on x_2 (definition removed, all usages removed)
+yields
+
+Game 20 is
+     Ostart() :=
+     b <-R bool;
+     ks_1 <-R kseed;
+     return(pkgen2(ks_1));
+     ((
+       Ochall(m0: bitstring, m1: bitstring) :=
+       if Zero(m0) = Zero(m1) then
+       pk: kpk <- pkgen2(ks_1);
+       kseed_2 <-R encapseed;
+       v_4: kencout <- encap_r2(pk, kseed_2);
+       ctxt: kct <- 2-proj-kpair(v_4);
+       if b then
+         r_2 <-R enc_seed;
+         k1_3 <-R key;
+         z_1: bitstring <- enc_r(m0, k1_3, r_2);
+         ct: bitstring <- z_1;
+         return(ctxt, z_1)
+       else
+         r_3 <-R enc_seed;
+         k1_4 <-R key;
+         z: bitstring <- enc_r'(Zero(m1), k1_4, r_3);
+         ct: bitstring <- z;
+         return(ctxt, z)
+     ) | (
+       foreach id <= Qd do
+       Odec(cq: kct, ctq: bitstring) :=
+       if defined(ctxt, ct) && (cq = ctxt) && (ctq = ct) then
+         yield
+       else
+         if defined(ctxt) && (ctxt = cq) then
+           yield
+         else
+           let kinjbot(kq: key) = decap2(cq, skgen2(ks_1)) in
+           let sinjbot(m: bitstring) = aead_dec(ctq, kq) in
+           return(m)
+     ))
+
+
+Applying equivalence ind_cpa(aead_enc) [probability Penc(time_4, 1, maxlength(game 20: m0))]
+  - Equivalence ind_cpa(aead_enc) with variables: k1_3 -> k_2, r_2 -> r_1
+yields
+
+Game 21 is
+     Ostart() :=
+     b <-R bool;
+     ks_1 <-R kseed;
+     return(pkgen2(ks_1));
+     ((
+       Ochall(m0: bitstring, m1: bitstring) :=
+       if Zero(m0) = Zero(m1) then
+       pk: kpk <- pkgen2(ks_1);
+       kseed_2 <-R encapseed;
+       v_4: kencout <- encap_r2(pk, kseed_2);
+       ctxt: kct <- 2-proj-kpair(v_4);
+       if b then
+         r_4 <-R enc_seed;
+         k1_5 <-R key;
+         z_1: bitstring <- (x_3: bitstring <- m0; enc_r'(Zero(x_3), k1_5, r_4));
+         ct: bitstring <- z_1;
+         return(ctxt, z_1)
+       else
+         r_3 <-R enc_seed;
+         k1_4 <-R key;
+         z: bitstring <- enc_r'(Zero(m1), k1_4, r_3);
+         ct: bitstring <- z;
+         return(ctxt, z)
+     ) | (
+       foreach id <= Qd do
+       Odec(cq: kct, ctq: bitstring) :=
+       if defined(ctxt, ct) && (cq = ctxt) && (ctq = ct) then
+         yield
+       else
+         if defined(ctxt) && (ctxt = cq) then
+           yield
+         else
+           let kinjbot(kq: key) = decap2(cq, skgen2(ks_1)) in
+           let sinjbot(m: bitstring) = aead_dec(ctq, kq) in
+           return(m)
+     ))
+
+
+Applying expand [probability Qd * Pctxtcoll]
+  - Expand if/find/let
+yields
+
+Game 22 is
+     Ostart() :=
+     b <-R bool;
+     ks_1 <-R kseed;
+     return(pkgen2(ks_1));
+     ((
+       Ochall(m0: bitstring, m1: bitstring) :=
+       if Zero(m0) = Zero(m1) then
+       pk: kpk <- pkgen2(ks_1);
+       kseed_2 <-R encapseed;
+       v_4: kencout <- encap_r2(pk, kseed_2);
+       ctxt: kct <- 2-proj-kpair(v_4);
+       if b then
+         r_4 <-R enc_seed;
+         k1_5 <-R key;
+         x_3: bitstring <- m0;
+         z_1: bitstring <- enc_r'(Zero(x_3), k1_5, r_4);
+         ct: bitstring <- z_1;
+         return(ctxt, z_1)
+       else
+         r_3 <-R enc_seed;
+         k1_4 <-R key;
+         z: bitstring <- enc_r'(Zero(m1), k1_4, r_3);
+         ct: bitstring <- z;
+         return(ctxt, z)
+     ) | (
+       foreach id <= Qd do
+       Odec(cq: kct, ctq: bitstring) :=
+       if defined(ctxt, ct) && (cq = ctxt) && (ctq = ct) then
+         yield
+       else
+         if defined(ctxt) && (ctxt = cq) then
+           yield
+         else
+           let kinjbot(kq: key) = decap2(cq, skgen2(ks_1)) in
+           let sinjbot(m: bitstring) = aead_dec(ctq, kq) in
+           return(m)
+     ))
+
+
+Applying remove assignments of findcond
+  - Remove assignments on x_3 (definition removed, all usages removed)
+yields
+
+Game 23 is
+     Ostart() :=
+     b <-R bool;
+     ks_1 <-R kseed;
+     return(pkgen2(ks_1));
+     ((
+       Ochall(m0: bitstring, m1: bitstring) :=
+       if Zero(m0) = Zero(m1) then
+       pk: kpk <- pkgen2(ks_1);
+       kseed_2 <-R encapseed;
+       v_4: kencout <- encap_r2(pk, kseed_2);
+       ctxt: kct <- 2-proj-kpair(v_4);
+ {26}  if b then
+         r_4 <-R enc_seed;
+         k1_5 <-R key;
+         z_1: bitstring <- enc_r'(Zero(m0), k1_5, r_4);
+         ct: bitstring <- z_1;
+         return(ctxt, z_1)
+       else
+         r_3 <-R enc_seed;
+         k1_4 <-R key;
+         z: bitstring <- enc_r'(Zero(m1), k1_4, r_3);
+         ct: bitstring <- z;
+         return(ctxt, z)
+     ) | (
+       foreach id <= Qd do
+       Odec(cq: kct, ctq: bitstring) :=
+       if defined(ctxt, ct) && (cq = ctxt) && (ctq = ct) then
+         yield
+       else
+         if defined(ctxt) && (ctxt = cq) then
+           yield
+         else
+           let kinjbot(kq: key) = decap2(cq, skgen2(ks_1)) in
+           let sinjbot(m: bitstring) = aead_dec(ctq, kq) in
+           return(m)
+     ))
+
+
+Applying merge branches
+  - Merge branches of test at 26
+yields
+
+Game 24 is
+     Ostart() :=
+     b <-R bool;
+     ks_1 <-R kseed;
+     return(pkgen2(ks_1));
+     ((
+       Ochall(m0: bitstring, m1: bitstring) :=
+       if Zero(m0) = Zero(m1) then
+       pk: kpk <- pkgen2(ks_1);
+       kseed_2 <-R encapseed;
+       v_4: kencout <- encap_r2(pk, kseed_2);
+       ctxt: kct <- 2-proj-kpair(v_4);
+       r_3 <-R enc_seed;
+       k1_4 <-R key;
+       z: bitstring <- enc_r'(Zero(m1), k1_4, r_3);
+       ct: bitstring <- z;
+       return(ctxt, z)
+     ) | (
+       foreach id <= Qd do
+       Odec(cq: kct, ctq: bitstring) :=
+       if defined(ctxt, ct) && (cq = ctxt) && (ctq = ct) then
+         yield
+       else
+         if defined(ctxt) && (ctxt = cq) then
+           yield
+         else
+           let kinjbot(kq: key) = decap2(cq, skgen2(ks_1)) in
+           let sinjbot(m: bitstring) = aead_dec(ctq, kq) in
+           return(m)
+     ))
+
+
+Proved bit secrecy of b in game 24
+Adv[Game 1: bit secrecy of b] <= 2 * Penc(time_4, 1, maxlength(game 20: m0)) + 2 * Penc(time_3, 1, maxlength(game 17: m1)) + 2 * Pencctxt(time_2, 1, Qd, max(maxlength(game 11: m0), maxlength(game 11: m1)), maxlength(game 11: ctq)) + 10 * Qd * Pctxtcoll + 2 * Pkem(time_1, 1, 1, Qd) + Adv[Game 24: bit secrecy of b]
+Adv[Game 24: bit secrecy of b] <= 0
+RESULT Proved bit secrecy of b up to probability 2 * Penc(time_4, 1, maxlength(game 20: m0)) + 2 * Penc(time_3, 1, maxlength(game 17: m1)) + 2 * Pencctxt(time_2, 1, Qd, max(maxlength(game 11: m0), maxlength(game 11: m1)), maxlength(game 11: ctq)) + 10 * Qd * Pctxtcoll + 2 * Pkem(time_1, 1, 1, Qd)
+RESULT time_1 = time + time(context for game 4) = time(= bitstring, length(Zero, maxlength(game 4: m0)), length(Zero, maxlength(game 4: m1))) + time(Zero, maxlength(game 4: m1)) + time(Zero, maxlength(game 4: m0)) + time(2-proj-kpair) + time(1-proj-kpair) + time(enc_r, maxlength(game 4: m0)) + time(enc_r, maxlength(game 4: m1)) + Qd * time(= bitstring, maxlength(game 4: ctq), maxlength(game 4: ct)) + Qd * time(let kinjbot) + Qd * time(aead_dec, maxlength(game 4: ctq)) + Qd * time(let sinjbot, maxlength(game 4: m)) + time
+RESULT time_2 = time(= bitstring, length(Zero, maxlength(game 11: m0)), length(Zero, maxlength(game 11: m1))) + time(Zero, maxlength(game 11: m1)) + time(Zero, maxlength(game 11: m0)) + 2 * time(pkgen) + time(encap_r) + time(2-proj-kpair) + Qd * time(= bitstring, maxlength(game 11: ctq), maxlength(game 11: ct)) + Qd * time(decap) + Qd * time(skgen) + Qd * time(let kinjbot) + Qd * time(aead_dec, maxlength(game 11: ctq)) + Qd * time(let sinjbot, maxlength(game 11: m)) + time
+RESULT time_3 = time(= bitstring, length(Zero, maxlength(game 17: m0)), length(Zero, maxlength(game 17: m1))) + time(Zero, maxlength(game 17: m1)) + time(Zero, maxlength(game 17: m0)) + 2 * time(pkgen) + time(encap_r) + time(2-proj-kpair) + time(enc_r, maxlength(game 17: m0)) + Qd * time(= bitstring, maxlength(game 17: ctq), maxlength(game 17: ct)) + Qd * time(decap) + Qd * time(skgen) + Qd * time(let kinjbot) + Qd * time(aead_dec, maxlength(game 17: ctq)) + Qd * time(let sinjbot, maxlength(game 17: m)) + time
+RESULT time_4 = time(= bitstring, length(Zero, maxlength(game 20: m0)), length(Zero, maxlength(game 20: m1))) + time(Zero, maxlength(game 20: m0)) + 2 * time(pkgen) + time(encap_r) + time(2-proj-kpair) + time(enc_r, length(Zero, maxlength(game 20: m1))) + 2 * time(Zero, maxlength(game 20: m1)) + Qd * time(= bitstring, maxlength(game 20: ctq), maxlength(game 20: ct)) + Qd * time(decap) + Qd * time(skgen) + Qd * time(let kinjbot) + Qd * time(aead_dec, maxlength(game 20: ctq)) + Qd * time(let sinjbot, maxlength(game 20: m)) + time
+All queries proved.

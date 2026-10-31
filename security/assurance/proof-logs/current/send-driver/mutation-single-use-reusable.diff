@@ -1,0 +1,11 @@
+--- serverVELA/vela-share-policy/proofs/fstar/send-driver-composition/Vela_share_policy_send_driver_composition.fst	2026-10-27 21:43:51.433732731 +0100
++++ /tmp/vela-f2-account-b-mut/send-single-use-reusable/Vela_share_policy_send_driver_composition.fst	2026-10-27 22:49:36.755946020 +0100
+@@ -187,7 +187,7 @@
+         {
+           w with
+           w_link =
+-            (if single then Link_Deleted true
++            (if single then Link_Live true 1
+              else Link_Live false (live_views w.w_link - 1));
+           w_fetch_successes = w.w_fetch_successes + 1;
+           w_fetch_after_delete =

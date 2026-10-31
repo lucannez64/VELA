@@ -1,0 +1,478 @@
+maude tool: 'maude'
+ checking version: 3.5.1. OK.
+ checking installation: OK.
+[Theory M28_ShareJournal] Theory loaded
+[Theory M28_ShareJournal] Theory translated
+[Theory M28_ShareJournal] Derivation checks started
+[Theory M28_ShareJournal] Derivation checks ended
+[Theory M28_ShareJournal] Theory closed
+[Saturating Sources] Step 1 (Max 5)
+[Saturating Sources] Done
+theory M28_ShareJournal
+
+begin
+
+// Function signature and definition of the equational theory E
+
+functions: fst/1, pair/2, snd/1, successor/1
+equations: fst(<x.1, x.2>) = x.1, snd(<x.1, x.2>) = x.2
+
+rule (modulo E) Initialize:
+   [ Fr( ~slot ), Fr( ~item ) ]
+  --[ Initialized( ~slot ) ]->
+   [
+   !Profile( ~slot ), !ReadyGeneration( ~slot, 'initial', 'initial' ),
+   DiskClean( ~slot, 'initial', 'initial', 'initial', ~item ), Out( ~slot )
+   ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) ReadSnapshot:
+   [ !ReadyGeneration( slot, gen, pinned ), Fr( ~tx ) ]
+  --[ SnapshotRead( slot, ~tx, gen, pinned ) ]->
+   [ Snapshot( slot, ~tx, gen, pinned ) ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) PersistJournal:
+   [
+   DiskClean( slot, gen, pinned, vrev, vpayload ),
+   Snapshot( slot, tx, gen, pinned ), In( <next_revision, payload> )
+   ]
+  --[
+  RevisionIncreases( pinned, next_revision ),
+  JournalDurable( slot, tx, successor(gen), pinned, next_revision, payload
+  )
+  ]->
+   [
+   DiskPending( slot, tx, successor(gen), next_revision, payload, vrev,
+                vpayload
+   )
+   ]
+
+  // loop breakers: [0,1]
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) PersistVault:
+   [ DiskPending( slot, tx, gen, next, payload, vrev, vpayload ) ]
+  --[ VaultDurable( slot, tx, gen, next, payload ) ]->
+   [ DiskApplied( slot, tx, gen, next, payload, next, payload ) ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) ClearJournal:
+   [ DiskApplied( slot, tx, gen, pinned, intended, vrev, vpayload ) ]
+  --[ JournalCleared( slot, tx, gen, pinned ) ]->
+   [
+   DiskClean( slot, gen, pinned, vrev, vpayload ),
+   !ReadyGeneration( slot, gen, pinned )
+   ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) Crash:
+   [ !Profile( slot ) ] --[ Crash( slot ) ]-> [ ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) OpenVault:
+   [ DiskClean( slot, gen, pinned, revision, payload ) ]
+  --[ Opened( slot, gen, pinned, revision, payload ) ]->
+   [ DiskClean( slot, gen, pinned, revision, payload ) ]
+
+  // loop breaker: [0]
+  /* has exactly the trivial AC variant */
+
+restriction Increasing:
+  "∀ old next #i. (RevisionIncreases( old, next ) @ #i) ⇒ (old ⊏ next)"
+  // safety formula
+
+  /*
+  expanded formula:
+  "∀ old next #i. (RevisionIncreases( old, next ) @ #i) ⇒ (old ⊏ next)"
+  */
+
+lemma open_has_matching_content_and_pin [use_induction]:
+  all-traces
+  "∀ slot gen pinned revision payload #i.
+    (Opened( slot, gen, pinned, revision, payload ) @ #i) ⇒
+    (pinned = revision)"
+/*
+guarded formula characterizing all counter-examples:
+"∃ slot gen pinned revision payload #i.
+  (Opened( slot, gen, pinned, revision, payload ) @ #i)
+ ∧
+  ¬(pinned = revision)"
+*/
+induction
+  case empty_trace
+  by contradiction /* from formulas */
+next
+  case non_empty_trace
+  solve( (last(#i))  ∥ (pinned = revision) )
+    case case_1
+    solve( DiskClean( slot, gen, pinned, revision, payload ) ▶₀ #i )
+      case ClearJournal
+      by contradiction /* from formulas */
+    next
+      case Initialize
+      by contradiction /* from formulas */
+    next
+      case OpenVault
+      by contradiction /* from formulas */
+    qed
+  next
+    case case_2
+    by contradiction /* from formulas */
+  qed
+qed
+
+lemma application_requires_prior_durable_journal:
+  all-traces
+  "∀ slot tx gen revision payload #i.
+    (VaultDurable( slot, tx, gen, revision, payload ) @ #i) ⇒
+    (∃ old #j.
+      (JournalDurable( slot, tx, gen, old, revision, payload ) @ #j) ∧
+      (#j < #i))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ slot tx gen revision payload #i.
+  (VaultDurable( slot, tx, gen, revision, payload ) @ #i)
+ ∧
+  ∀ old #j.
+   (JournalDurable( slot, tx, gen, old, revision, payload ) @ #j)
+  ⇒
+   ¬(#j < #i)"
+*/
+simplify
+solve( DiskPending( slot, tx, gen, revision, payload, vrev, vpayload
+       ) ▶₀ #i )
+  case PersistJournal
+  by contradiction /* from formulas */
+qed
+
+lemma cleanup_requires_prior_durable_vault:
+  all-traces
+  "∀ slot tx gen revision #i.
+    (JournalCleared( slot, tx, gen, revision ) @ #i) ⇒
+    (∃ payload #j.
+      (VaultDurable( slot, tx, gen, revision, payload ) @ #j) ∧ (#j < #i))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ slot tx gen revision #i.
+  (JournalCleared( slot, tx, gen, revision ) @ #i)
+ ∧
+  ∀ payload #j.
+   (VaultDurable( slot, tx, gen, revision, payload ) @ #j) ⇒ ¬(#j < #i)"
+*/
+simplify
+solve( DiskApplied( slot, tx, gen, revision, intended, vrev, vpayload
+       ) ▶₀ #i )
+  case PersistVault
+  by contradiction /* from formulas */
+qed
+
+lemma commit_uses_snapshot_generation:
+  all-traces
+  "∀ slot tx g old next payload #i.
+    (JournalDurable( slot, tx, successor(g), old, next, payload ) @ #i) ⇒
+    (∃ #j. (SnapshotRead( slot, tx, g, old ) @ #j) ∧ (#j < #i))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ slot tx g old next payload #i.
+  (JournalDurable( slot, tx, successor(g), old, next, payload ) @ #i)
+ ∧
+  ∀ #j. (SnapshotRead( slot, tx, g, old ) @ #j) ⇒ ¬(#j < #i)"
+*/
+simplify
+solve( DiskClean( slot, g, old, vrev, vpayload ) ▶₀ #i )
+  case ClearJournal
+  solve( Snapshot( slot, tx, successor(gen), old ) ▶₁ #i )
+    case ReadSnapshot
+    by contradiction /* from formulas */
+  qed
+next
+  case Initialize
+  solve( Snapshot( ~slot, tx, 'initial', 'initial' ) ▶₁ #i )
+    case ReadSnapshot
+    by contradiction /* from formulas */
+  qed
+next
+  case OpenVault
+  solve( Snapshot( slot, tx, g, old ) ▶₁ #i )
+    case ReadSnapshot_case_1
+    by contradiction /* from formulas */
+  next
+    case ReadSnapshot_case_2
+    by contradiction /* from formulas */
+  qed
+qed
+
+lemma each_transaction_applies_at_most_once:
+  all-traces
+  "∀ slot tx g1 g2 r1 r2 p1 p2 #i #j.
+    ((VaultDurable( slot, tx, g1, r1, p1 ) @ #i) ∧
+     (VaultDurable( slot, tx, g2, r2, p2 ) @ #j)) ⇒
+    (#i = #j)"
+/*
+guarded formula characterizing all counter-examples:
+"∃ slot tx g1 g2 r1 r2 p1 p2 #i #j.
+  (VaultDurable( slot, tx, g1, r1, p1 ) @ #i) ∧
+  (VaultDurable( slot, tx, g2, r2, p2 ) @ #j)
+ ∧
+  ¬(#i = #j)"
+*/
+simplify
+solve( (#i < #j)  ∥ (#j < #i) )
+  case case_1
+  solve( DiskPending( slot, tx, g1, r1, p1, vrev, vpayload ) ▶₀ #i )
+    case PersistJournal
+    solve( DiskPending( slot, tx, g2, r2, p2, vrev.1, vpayload.1 ) ▶₀ #j )
+      case PersistJournal
+      solve( DiskClean( slot, gen, pinned, vrev, vpayload ) ▶₀ #vr )
+        case ClearJournal
+        solve( Snapshot( slot, tx, successor(gen), pinned ) ▶₁ #vr )
+          case ReadSnapshot
+          solve( DiskClean( slot, gen.1, pinned.1, vrev, vpayload.1 ) ▶₀ #vr.1 )
+            case ClearJournal
+            solve( Snapshot( slot, ~tx, successor(gen.1), vrev ) ▶₁ #vr.1 )
+              case ReadSnapshot
+              by contradiction /* cyclic */
+            qed
+          next
+            case Initialize
+            by solve( Snapshot( ~slot, ~tx, 'initial', 'initial' ) ▶₁ #vr.1 )
+          next
+            case OpenVault
+            by solve( Snapshot( slot, ~tx, gen.1, pinned.1 ) ▶₁ #vr.1 )
+          qed
+        qed
+      next
+        case Initialize
+        solve( Snapshot( ~slot, tx, 'initial', 'initial' ) ▶₁ #vr )
+          case ReadSnapshot
+          solve( DiskClean( ~slot, gen, pinned, vrev, vpayload ) ▶₀ #vr.1 )
+            case ClearJournal
+            by solve( Snapshot( ~slot, ~tx, successor(gen), pinned ) ▶₁ #vr.1 )
+          next
+            case Initialize
+            by contradiction /* cyclic */
+          next
+            case OpenVault
+            by solve( Snapshot( ~slot, ~tx, gen, pinned ) ▶₁ #vr.1 )
+          qed
+        qed
+      next
+        case OpenVault
+        solve( Snapshot( slot, tx, gen, pinned ) ▶₁ #vr )
+          case ReadSnapshot_case_1
+          solve( DiskClean( ~slot, gen, pinned, vrev.1, vpayload.1 ) ▶₀ #vr.1 )
+            case ClearJournal
+            by solve( Snapshot( ~slot, ~tx, successor(gen), pinned ) ▶₁ #vr.1 )
+          next
+            case Initialize
+            by solve( Snapshot( ~slot, ~tx, 'initial', 'initial' ) ▶₁ #vr.1 )
+          next
+            case OpenVault
+            solve( Snapshot( ~slot, ~tx, gen, pinned ) ▶₁ #vr.1 )
+              case ReadSnapshot
+              by contradiction /* cyclic */
+            qed
+          qed
+        next
+          case ReadSnapshot_case_2
+          solve( DiskClean( slot, gen.1, pinned.1, vrev.1, vpayload.1 ) ▶₀ #vr.1 )
+            case ClearJournal
+            by solve( Snapshot( slot, ~tx, successor(gen.1), pinned ) ▶₁ #vr.1 )
+          next
+            case Initialize
+            by solve( Snapshot( ~slot, ~tx, 'initial', 'initial' ) ▶₁ #vr.1 )
+          next
+            case OpenVault
+            solve( Snapshot( slot, ~tx, gen.1, pinned.1 ) ▶₁ #vr.1 )
+              case ReadSnapshot
+              by contradiction /* cyclic */
+            qed
+          qed
+        qed
+      qed
+    qed
+  qed
+next
+  case case_2
+  solve( DiskPending( slot, tx, g1, r1, p1, vrev, vpayload ) ▶₀ #i )
+    case PersistJournal
+    solve( DiskPending( slot, tx, g2, r2, p2, vrev.1, vpayload.1 ) ▶₀ #j )
+      case PersistJournal
+      solve( DiskClean( slot, gen, pinned, vrev, vpayload ) ▶₀ #vr )
+        case ClearJournal
+        solve( Snapshot( slot, tx, successor(gen), pinned ) ▶₁ #vr )
+          case ReadSnapshot
+          solve( DiskClean( slot, gen.1, pinned.1, vrev, vpayload.1 ) ▶₀ #vr.1 )
+            case ClearJournal
+            solve( Snapshot( slot, ~tx, successor(gen.1), vrev ) ▶₁ #vr.1 )
+              case ReadSnapshot
+              by contradiction /* cyclic */
+            qed
+          next
+            case Initialize
+            by contradiction /* cyclic */
+          next
+            case OpenVault
+            by solve( Snapshot( slot, ~tx, gen.1, pinned.1 ) ▶₁ #vr.1 )
+          qed
+        qed
+      next
+        case Initialize
+        solve( Snapshot( ~slot, tx, 'initial', 'initial' ) ▶₁ #vr )
+          case ReadSnapshot
+          solve( DiskClean( ~slot, gen, pinned, vrev, vpayload ) ▶₀ #vr.1 )
+            case ClearJournal
+            by contradiction /* cyclic */
+          next
+            case Initialize
+            by contradiction /* cyclic */
+          next
+            case OpenVault
+            by solve( Snapshot( ~slot, ~tx, gen, pinned ) ▶₁ #vr.1 )
+          qed
+        qed
+      next
+        case OpenVault
+        solve( Snapshot( slot, tx, gen, pinned ) ▶₁ #vr )
+          case ReadSnapshot_case_1
+          solve( DiskClean( ~slot, gen, pinned, vrev.1, vpayload.1 ) ▶₀ #vr.1 )
+            case ClearJournal
+            by contradiction /* cyclic */
+          next
+            case Initialize
+            by solve( Snapshot( ~slot, ~tx, 'initial', 'initial' ) ▶₁ #vr.1 )
+          next
+            case OpenVault
+            solve( Snapshot( ~slot, ~tx, gen, pinned ) ▶₁ #vr.1 )
+              case ReadSnapshot
+              by contradiction /* cyclic */
+            qed
+          qed
+        next
+          case ReadSnapshot_case_2
+          solve( DiskClean( slot, gen.1, pinned.1, vrev.1, vpayload.1 ) ▶₀ #vr.1 )
+            case ClearJournal
+            by solve( Snapshot( slot, ~tx, successor(gen.1), pinned ) ▶₁ #vr.1 )
+          next
+            case Initialize
+            by contradiction /* cyclic */
+          next
+            case OpenVault
+            solve( Snapshot( slot, ~tx, gen.1, pinned.1 ) ▶₁ #vr.1 )
+              case ReadSnapshot
+              by contradiction /* cyclic */
+            qed
+          qed
+        qed
+      qed
+    qed
+  qed
+qed
+
+lemma pins_advance_on_every_commit:
+  all-traces
+  "∀ slot tx gen old next payload #i.
+    (JournalDurable( slot, tx, gen, old, next, payload ) @ #i) ⇒
+    (old ⊏ next)"
+/*
+guarded formula characterizing all counter-examples:
+"∃ slot tx gen old next payload #i.
+  (JournalDurable( slot, tx, gen, old, next, payload ) @ #i)
+ ∧
+  ¬(old ⊏ next)"
+*/
+simplify
+by contradiction /* from formulas */
+
+lemma recovery_is_reachable:
+  exists-trace
+  "∃ slot tx gen old next payload #j #c #a #k #o.
+    ((((((((JournalDurable( slot, tx, gen, old, next, payload ) @ #j) ∧
+           (Crash( slot ) @ #c)) ∧
+          (VaultDurable( slot, tx, gen, next, payload ) @ #a)) ∧
+         (JournalCleared( slot, tx, gen, next ) @ #k)) ∧
+        (Opened( slot, gen, next, next, payload ) @ #o)) ∧
+       (#j < #c)) ∧
+      (#c < #a)) ∧
+     (#a < #k)) ∧
+    (#k < #o)"
+/*
+guarded formula characterizing all satisfying traces:
+"∃ slot tx gen old next payload #j #c #a #k #o.
+  (JournalDurable( slot, tx, gen, old, next, payload ) @ #j) ∧
+  (Crash( slot ) @ #c) ∧
+  (VaultDurable( slot, tx, gen, next, payload ) @ #a) ∧
+  (JournalCleared( slot, tx, gen, next ) @ #k) ∧
+  (Opened( slot, gen, next, next, payload ) @ #o)
+ ∧
+  (#j < #c) ∧ (#c < #a) ∧ (#a < #k) ∧ (#k < #o)"
+*/
+simplify
+solve( !Profile( slot ) ▶₀ #c )
+  case Initialize
+  solve( DiskPending( ~slot, tx, successor(gen), next, payload, vrev,
+                      vpayload
+         ) ▶₀ #a )
+    case PersistJournal
+    solve( DiskApplied( ~slot, tx, successor(gen), next, intended, vrev.2,
+                        vpayload.2
+           ) ▶₀ #k )
+      case PersistVault
+      solve( DiskClean( ~slot, gen, old, vrev.1, vpayload.1 ) ▶₀ #j )
+        case Initialize
+        solve( Snapshot( ~slot, tx, 'initial', 'initial' ) ▶₁ #j )
+          case ReadSnapshot
+          solve( DiskClean( ~slot, successor('initial'), next, next, payload
+                 ) ▶₀ #o )
+            case ClearJournal
+            solve( DiskClean( ~slot, 'initial', pinned, vrev, vpayload ) ▶₀ #vr.1 )
+              case Initialize
+              solve( DiskClean( ~slot, 'initial', pinned, vrev, vpayload ) ▶₀ #vr.2 )
+                case Initialize
+                solve( DiskClean( ~slot, 'initial', pinned, vrev, vpayload ) ▶₀ #vr.4 )
+                  case Initialize
+                  SOLVED // trace found
+                qed
+              qed
+            qed
+          qed
+        qed
+      qed
+    qed
+  qed
+qed
+
+/* All wellformedness checks were successful. */
+
+/*
+Generated from:
+Tamarin version 1.12.0
+Maude version 3.5.1
+Git revision: 82780bbaf3328a45f624ddb41e51bf75425f851c (with uncommited changes), branch: master
+Compiled at: 2026-03-07 14:22:39.174278293 UTC
+*/
+
+end
+
+==============================================================================
+summary of summaries:
+
+analyzed: /home/hirew/.t3/worktrees/VELA/t3-700776df/security/formal/m28_share_journal.spthy
+
+  processing time: 1.61s
+  
+  open_has_matching_content_and_pin (all-traces): verified (8 steps)
+  application_requires_prior_durable_journal (all-traces): verified (3 steps)
+  cleanup_requires_prior_durable_vault (all-traces): verified (3 steps)
+  commit_uses_snapshot_generation (all-traces): verified (9 steps)
+  each_transaction_applies_at_most_once (all-traces): verified (52 steps)
+  pins_advance_on_every_commit (all-traces): verified (2 steps)
+  recovery_is_reachable (exists-trace): verified (11 steps)
+
+==============================================================================

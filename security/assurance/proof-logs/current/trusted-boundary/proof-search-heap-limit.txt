@@ -1,0 +1,9 @@
+Exploratory run before lemma reuse was restricted; not proof evidence.
+Truncated diagnostic tail:
+     (#j.3091 < #j.3091)  ∥
+     (<S.3149, pk(x.3151), pk(x.3152), lineage.3150> =
+      <S.3149, pk(x.3151), pk(x.3152), lineage.3150
+      >) // nr: 5519" (useful2)"
+tamarin-prover: Heap exhausted;
+tamarin-prover: Current maximum heap size is 1572864000 bytes (1500 MB).
+tamarin-prover: Use `+RTS -M<size>' to increase it.

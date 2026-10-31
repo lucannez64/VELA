@@ -1154,6 +1154,9 @@ mod tests {
                 let deadline = Instant::now() + Duration::from_secs(8);
                 loop {
                     if let Ok((mut stream, _)) = listener.accept() {
+                        // Winsock inherits the listener's nonblocking mode.
+                        // Use blocking I/O so the read timeout waits for data.
+                        stream.set_nonblocking(false).unwrap();
                         stream
                             .set_read_timeout(Some(Duration::from_secs(3)))
                             .unwrap();

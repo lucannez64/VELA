@@ -45,7 +45,12 @@ data class SentShareRecord(
     val itemName: String,
     val itemType: String,
     val recipientUserId: String,
-    val recipientShareEkB64: String
+    val recipientShareEkB64: String,
+    /// Share envelope v2: signed into every envelope of this share. Blank for
+    /// shares sent before v2, which recipients no longer accept updates for.
+    val lineageId: String = "",
+    /// Last revision sealed (1 at first send).
+    val revision: Long = 0
 )
 
 class SentShareManifest(context: Context) {
@@ -75,7 +80,9 @@ class SentShareManifest(context: Context) {
         itemName = json.getString("item_name"),
         itemType = json.getString("item_type"),
         recipientUserId = json.getString("recipient_user_id"),
-        recipientShareEkB64 = json.getString("recipient_share_ek_b64")
+        recipientShareEkB64 = json.getString("recipient_share_ek_b64"),
+        lineageId = json.optString("lineage_id", ""),
+        revision = json.optLong("revision", 0)
     )
 
     private fun SentShareRecord.toJson() = JSONObject()
@@ -85,6 +92,8 @@ class SentShareManifest(context: Context) {
         .put("item_type", itemType)
         .put("recipient_user_id", recipientUserId)
         .put("recipient_share_ek_b64", recipientShareEkB64)
+        .put("lineage_id", lineageId)
+        .put("revision", revision)
 }
 
 class SharingRepository(
@@ -107,11 +116,15 @@ class SharingRepository(
         val identityHandle = identityStore.handle()
 
         val received = inbox.map { item ->
-            val decoded = identityHandle?.let { openShareItem(it, item.capsuleB64) }
+            // Only a signed envelope addressed to this account previews; an
+            // unverifiable one is listed but cannot be accepted.
+            val decoded = identityHandle?.let {
+                runCatching { admitShareItem(it, item.capsuleB64, item.senderUserId) }.getOrNull()
+            }
             VaultShare(
                 id = item.id,
                 itemId = item.id,
-                itemName = decoded?.name ?: "Shared item",
+                itemName = decoded?.name ?: "Unverified share",
                 itemType = decoded?.type?.name?.lowercase() ?: "item",
                 direction = ShareDirection.Received,
                 from = item.senderUserId,
@@ -146,8 +159,15 @@ class SharingRepository(
             val (recipientShareEkB64, recipientToken) =
                 client.getRecipientShareEk(currentToken, recipientUserId)
             recipientToken?.let { currentToken = it }
-            val capsuleB64 = NativeVelaCore.sealShare(recipientShareEkB64, itemJson)
-                ?: error("Native VELA bridge is required for sharing")
+            val identity = identityStore.load() ?: error("This device has no identity; re-enroll it to share")
+            val handle = identityStore.handle() ?: error("Share key not available")
+            val senderUserId = identity.userId ?: error("This device is not registered with the server")
+            val senderDeviceId = identity.deviceId ?: error("This device is not registered with the server")
+            val lineageId = UUID.randomUUID().toString()
+            val capsuleB64 = NativeVelaCore.identitySealSignedShare(
+                handle, senderUserId, senderDeviceId, recipientUserId,
+                recipientShareEkB64, lineageId, FIRST_REVISION, itemJson
+            ) ?: error("Native VELA bridge is required for sharing")
             val response = client.sendShare(currentToken, recipientUserId, capsuleB64)
             manifest.add(
                 SentShareRecord(
@@ -156,7 +176,9 @@ class SharingRepository(
                     itemName = item.name,
                     itemType = item.type.name.lowercase(),
                     recipientUserId = recipientUserId,
-                    recipientShareEkB64 = recipientShareEkB64
+                    recipientShareEkB64 = recipientShareEkB64,
+                    lineageId = lineageId,
+                    revision = FIRST_REVISION
                 )
             )
         }
@@ -169,8 +191,9 @@ class SharingRepository(
         sync.withAuthenticatedClient { client, token ->
             val (inbox, newToken) = client.getInbox(token)
             val item = inbox.find { it.id == shareId } ?: error("Share not found")
-            val decoded = openShareItem(identityHandle, item.capsuleB64)?.withReceivedShare()
-                ?: error("Could not decrypt shared item")
+            val decoded = admitShareItem(identityHandle, item.capsuleB64, item.senderUserId)
+                ?.withReceivedShare()
+                ?: error("Could not decode the shared item")
             vault.addItem(decoded)
             client.deleteInboxItem(newToken ?: token, shareId)
             VelaRepositories.audit.record("share_received", "From ${item.senderUserId.take(8)}")
@@ -192,13 +215,25 @@ class SharingRepository(
         val records = manifest.forItem(item.id)
         if (records.isEmpty()) return
         val itemJson = VaultJson.encodeItem(item).toString(Charsets.UTF_8)
+        val identity = identityStore.load() ?: return
+        val handle = identityStore.handle() ?: return
+        val senderUserId = identity.userId ?: return
+        val senderDeviceId = identity.deviceId ?: return
         sync.withAuthenticatedClient { client, token ->
             var currentToken = token
             for (record in records) {
-                val newCapsule = NativeVelaCore.sealShare(record.recipientShareEkB64, itemJson) ?: continue
+                // Shares sent before envelope v2 have no lineage; recipients
+                // refuse unsigned updates, so there is nothing to push.
+                if (record.lineageId.isBlank()) continue
+                val revision = record.revision + 1
+                val newCapsule = NativeVelaCore.identitySealSignedShare(
+                    handle, senderUserId, senderDeviceId, record.recipientUserId,
+                    record.recipientShareEkB64, record.lineageId, revision, itemJson
+                ) ?: continue
                 client.updateLinkedShare(currentToken, record.shareId, newCapsule)?.let {
                     currentToken = it
                 }
+                manifest.add(record.copy(revision = revision))
             }
         }
     }
@@ -303,9 +338,18 @@ class SharingRepository(
         return out.toString()
     }
 
-    private fun openShareItem(identityHandle: Long, capsuleB64: String): VaultItem? {
-        val json = NativeVelaCore.identityOpenShare(identityHandle, capsuleB64) ?: return null
-        return VaultJson.decodeItem(json.toByteArray(Charsets.UTF_8))
+    /// Open, verify, and admit a first-contact share (envelope v2). Throws if
+    /// the envelope is unsigned, forged, or addressed to someone else.
+    private fun admitShareItem(identityHandle: Long, capsuleB64: String, attributedSender: String): VaultItem? {
+        val recipientUserId = identityStore.load()?.userId ?: error("This device is not registered")
+        val admitted = NativeVelaCore.identityAdmitShare(
+            identityHandle, capsuleB64, recipientUserId, attributedSender
+        ) ?: return null
+        return VaultJson.decodeItem(admitted.itemJson.toByteArray(Charsets.UTF_8))
+    }
+
+    private companion object {
+        const val FIRST_REVISION = 1L
     }
 }
 

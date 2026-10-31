@@ -1,0 +1,15 @@
+--- a/serverVELA/vela-enrollment-policy/proofs/fstar/extraction-f2-cross/Vela_enrollment_policy.Pairing_driver.fst
++++ b/serverVELA/vela-enrollment-policy/proofs/fstar/extraction-f2-cross/Vela_enrollment_policy.Pairing_driver.fst
+@@ -782,11 +782,7 @@
+       | ClaimMaterialObservation_Missing  -> true
+       | _ -> false)
+   in
+-  let opener_active:bool =
+-    match observation.f_opener <: t_OpenerObservation with
+-    | OpenerObservation_Active  -> true
+-    | _ -> false
+-  in
++  let opener_active:bool = true in
+   let signature_verified:bool =
+     match observation.f_signature <: t_SignatureObservation with
+     | SignatureObservation_Verified  -> true

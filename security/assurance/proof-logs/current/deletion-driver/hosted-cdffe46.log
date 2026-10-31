@@ -1,0 +1,73 @@
+# security workflow 40408500479 on cdffe46 (all 15 PR checks passed)
+test deletion_driver::tests::a_lockout_storage_failure_still_deletes_the_account ... ok
+test deletion_driver::tests::absent_account_rolls_back_without_a_commit ... ok
+test deletion_driver::tests::bfs_reachable_states_preserve_the_invariant ... ok
+test deletion_driver::tests::done_is_inert_for_every_event ... ok
+test deletion_driver::tests::every_sql_failure_is_terminal_without_a_commit ... ok
+test deletion_driver::tests::exhaustive_stage_times_event_is_total_and_sound ... ok
+test deletion_driver::tests::lockouts_precede_the_transaction_and_commit_follows_users_delete ... ok
+test deletion_driver::tests::out_of_order_events_are_inert ... ok
+test deletion_driver::tests::revoked_or_cross_account_actor_never_reaches_an_effect ... ok
+test deletion_driver::tests::table_order_is_fixed_and_each_table_is_deleted_once ... ok
+All verification conditions discharged successfully
+test deletion_driver::tests::a_lockout_storage_failure_still_deletes_the_account ... ok
+test deletion_driver::tests::absent_account_rolls_back_without_a_commit ... ok
+test deletion_driver::tests::bfs_reachable_states_preserve_the_invariant ... ok
+test deletion_driver::tests::done_is_inert_for_every_event ... ok
+test deletion_driver::tests::every_sql_failure_is_terminal_without_a_commit ... ok
+test deletion_driver::tests::exhaustive_stage_times_event_is_total_and_sound ... ok
+test deletion_driver::tests::lockouts_precede_the_transaction_and_commit_follows_users_delete ... ok
+test deletion_driver::tests::out_of_order_events_are_inert ... ok
+test deletion_driver::tests::revoked_or_cross_account_actor_never_reaches_an_effect ... ok
+test deletion_driver::tests::table_order_is_fixed_and_each_table_is_deleted_once ... ok
+All verification conditions discharged successfully
+test deletion_driver::tests::a_lockout_storage_failure_still_deletes_the_account ... ok
+test deletion_driver::tests::absent_account_rolls_back_without_a_commit ... ok
+test deletion_driver::tests::bfs_reachable_states_preserve_the_invariant ... ok
+test deletion_driver::tests::done_is_inert_for_every_event ... ok
+test deletion_driver::tests::every_sql_failure_is_terminal_without_a_commit ... ok
+test deletion_driver::tests::exhaustive_stage_times_event_is_total_and_sound ... ok
+test deletion_driver::tests::lockouts_precede_the_transaction_and_commit_follows_users_delete ... ok
+test deletion_driver::tests::out_of_order_events_are_inert ... ok
+test deletion_driver::tests::revoked_or_cross_account_actor_never_reaches_an_effect ... ok
+test deletion_driver::tests::table_order_is_fixed_and_each_table_is_deleted_once ... ok
+All verification conditions discharged successfully
+test deletion_driver::tests::a_lockout_storage_failure_still_deletes_the_account ... ok
+test deletion_driver::tests::absent_account_rolls_back_without_a_commit ... ok
+test deletion_driver::tests::bfs_reachable_states_preserve_the_invariant ... ok
+test deletion_driver::tests::done_is_inert_for_every_event ... ok
+test deletion_driver::tests::every_sql_failure_is_terminal_without_a_commit ... ok
+test deletion_driver::tests::exhaustive_stage_times_event_is_total_and_sound ... ok
+test deletion_driver::tests::lockouts_precede_the_transaction_and_commit_follows_users_delete ... ok
+test deletion_driver::tests::out_of_order_events_are_inert ... ok
+test deletion_driver::tests::revoked_or_cross_account_actor_never_reaches_an_effect ... ok
+test deletion_driver::tests::table_order_is_fixed_and_each_table_is_deleted_once ... ok
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-deletion-driver/Vela_session_policy.Deletion_driver.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-deletion-driver/Vela_session_policy.Revocation_driver.fst[0m
+F* deletion-driver argv: --cmi --cache_off --warn_error -331 --z3rlimit 8000 --z3version 4.13.3 --already_cached +Prims+FStar+LowStar+C+Spec.Loops+TestLib --include /home/runner/.local/opt/vela-hax-0.3.7/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/core --include /home/runner/.local/opt/vela-hax-0.3.7/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives --include /home/runner/.local/opt/vela-hax-0.3.7/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proofs/fstar/extraction --include proofs/fstar/extraction-deletion-driver --include proofs/fstar/deletion-driver-lemmas --include proofs/fstar/deletion-driver-bridge --include proofs/fstar/deletion-driver-composition proofs/fstar/extraction-deletion-driver/Vela_session_policy.Deletion_driver.fst proofs/fstar/extraction-deletion-driver/Vela_session_policy.Revocation_driver.fst proofs/fstar/deletion-driver-lemmas/Vela_session_policy_deletion_driver_lemmas.fst proofs/fstar/deletion-driver-bridge/Vela_session_policy_deletion_driver_bridge.fst proofs/fstar/deletion-driver-composition/Vela_session_policy_deletion_driver_composition.fst
+::warning file=Vela_session_policy_deletion_driver_composition.fst,line=560,endLine=560::(337) * Warning 337 at proofs/fstar/deletion-driver-composition/Vela_session_policy_deletion_driver_composition.fst(560,29-560,30):%0A  - The operator '@' has been resolved to FStar.List.Tot.append even though%0A    FStar.List.Tot is not in scope. Please add an 'open FStar.List.Tot' to stop%0A    relying on this deprecated, special treatment of '@'.%0A
+::warning file=Vela_session_policy_deletion_driver_composition.fst,line=560,endLine=560::(337) * Warning 337 at proofs/fstar/deletion-driver-composition/Vela_session_policy_deletion_driver_composition.fst(560,54-560,55):%0A  - The operator '@' has been resolved to FStar.List.Tot.append even though%0A    FStar.List.Tot is not in scope. Please add an 'open FStar.List.Tot' to stop%0A    relying on this deprecated, special treatment of '@'.%0A
+::warning file=Vela_session_policy_deletion_driver_composition.fst,line=567,endLine=567::(337) * Warning 337 at proofs/fstar/deletion-driver-composition/Vela_session_policy_deletion_driver_composition.fst(567,29-567,30):%0A  - The operator '@' has been resolved to FStar.List.Tot.append even though%0A    FStar.List.Tot is not in scope. Please add an 'open FStar.List.Tot' to stop%0A    relying on this deprecated, special treatment of '@'.%0A
+::warning file=Vela_session_policy_deletion_driver_composition.fst,line=567,endLine=567::(337) * Warning 337 at proofs/fstar/deletion-driver-composition/Vela_session_policy_deletion_driver_composition.fst(567,54-567,55):%0A  - The operator '@' has been resolved to FStar.List.Tot.append even though%0A    FStar.List.Tot is not in scope. Please add an 'open FStar.List.Tot' to stop%0A    relying on this deprecated, special treatment of '@'.%0A
+::warning file=Vela_session_policy_deletion_driver_composition.fst,line=578,endLine=578::(337) * Warning 337 at proofs/fstar/deletion-driver-composition/Vela_session_policy_deletion_driver_composition.fst(578,46-578,47):%0A  - The operator '@' has been resolved to FStar.List.Tot.append even though%0A    FStar.List.Tot is not in scope. Please add an 'open FStar.List.Tot' to stop%0A    relying on this deprecated, special treatment of '@'.%0A
+::warning file=Vela_session_policy_deletion_driver_composition.fst,line=579,endLine=579::(337) * Warning 337 at proofs/fstar/deletion-driver-composition/Vela_session_policy_deletion_driver_composition.fst(579,32-579,33):%0A  - The operator '@' has been resolved to FStar.List.Tot.append even though%0A    FStar.List.Tot is not in scope. Please add an 'open FStar.List.Tot' to stop%0A    relying on this deprecated, special treatment of '@'.%0A
+::warning file=Vela_session_policy_deletion_driver_composition.fst,line=585,endLine=585::(337) * Warning 337 at proofs/fstar/deletion-driver-composition/Vela_session_policy_deletion_driver_composition.fst(585,46-585,47):%0A  - The operator '@' has been resolved to FStar.List.Tot.append even though%0A    FStar.List.Tot is not in scope. Please add an 'open FStar.List.Tot' to stop%0A    relying on this deprecated, special treatment of '@'.%0A
+::warning file=Vela_session_policy_deletion_driver_composition.fst,line=586,endLine=586::(337) * Warning 337 at proofs/fstar/deletion-driver-composition/Vela_session_policy_deletion_driver_composition.fst(586,32-586,33):%0A  - The operator '@' has been resolved to FStar.List.Tot.append even though%0A    FStar.List.Tot is not in scope. Please add an 'open FStar.List.Tot' to stop%0A    relying on this deprecated, special treatment of '@'.%0A
+::warning file=Vela_session_policy_deletion_driver_composition.fst,line=612,endLine=612::(337) * Warning 337 at proofs/fstar/deletion-driver-composition/Vela_session_policy_deletion_driver_composition.fst(612,29-612,30):%0A  - The operator '@' has been resolved to FStar.List.Tot.append even though%0A    FStar.List.Tot is not in scope. Please add an 'open FStar.List.Tot' to stop%0A    relying on this deprecated, special treatment of '@'.%0A
+::warning file=Vela_session_policy_deletion_driver_composition.fst,line=612,endLine=612::(337) * Warning 337 at proofs/fstar/deletion-driver-composition/Vela_session_policy_deletion_driver_composition.fst(612,54-612,55):%0A  - The operator '@' has been resolved to FStar.List.Tot.append even though%0A    FStar.List.Tot is not in scope. Please add an 'open FStar.List.Tot' to stop%0A    relying on this deprecated, special treatment of '@'.%0A
+::warning file=Vela_session_policy_deletion_driver_composition.fst,line=617,endLine=617::(337) * Warning 337 at proofs/fstar/deletion-driver-composition/Vela_session_policy_deletion_driver_composition.fst(617,29-617,30):%0A  - The operator '@' has been resolved to FStar.List.Tot.append even though%0A    FStar.List.Tot is not in scope. Please add an 'open FStar.List.Tot' to stop%0A    relying on this deprecated, special treatment of '@'.%0A
+::warning file=Vela_session_policy_deletion_driver_composition.fst,line=617,endLine=617::(337) * Warning 337 at proofs/fstar/deletion-driver-composition/Vela_session_policy_deletion_driver_composition.fst(617,54-617,55):%0A  - The operator '@' has been resolved to FStar.List.Tot.append even though%0A    FStar.List.Tot is not in scope. Please add an 'open FStar.List.Tot' to stop%0A    relying on this deprecated, special treatment of '@'.%0A
+Verified module: Vela_session_policy.Deletion_driver
+Verified module: Vela_session_policy_deletion_driver_lemmas
+Verified module: Vela_session_policy_deletion_driver_bridge
+Verified module: Vela_session_policy_deletion_driver_composition
+All verification conditions discharged successfully
+deletion driver: 11 focused Rust functions, 10 soundness postconditions (9 preconditions)
+deletion composition: arbitrary interleavings never authorize a cross-account effect, never commit a second deletion, and never admit a locked-out account's token
+881fc112102bd8277dba4876f30b495b2209aff40a94ba93a484e7fdd017c9f6  proofs/fstar/extraction-deletion-driver/Vela_session_policy.Deletion_driver.fst
+3c97fc3eb67bea019558713e382478042234cf6dfcab858033daa0c90b73bb6a  proofs/fstar/extraction-deletion-driver/Vela_session_policy.Revocation_driver.fst
+0a43f39a7b5a5af6c623f0993e54bfe36aa4be8b4860dd49ba46e1b17fb6150e  proofs/fstar/deletion-driver-lemmas/Vela_session_policy_deletion_driver_lemmas.fst
+4ee396d86e8411a1c9e1cc42449fd6de6ecce4236d72e62e2d8c740b8266ad5e  proofs/fstar/deletion-driver-bridge/Vela_session_policy_deletion_driver_bridge.fst
+2ffeba6c3ad4f296d5ae79d153dbfe4e635474fe3c5f0a3058087fa2802cbcd8  proofs/fstar/deletion-driver-composition/Vela_session_policy_deletion_driver_composition.fst
+eebe95ab8e22b2e9bf53b3fd52107450e9c516006331edad27cd137978d445c2  src/deletion_driver.rs
+# cargo test -p vela-session-policy --lib deletion_driver

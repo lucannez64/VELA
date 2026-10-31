@@ -17,7 +17,7 @@ use vela_crypto::kdf;
 use vela_crypto::kem;
 use vela_crypto::rekey;
 use vela_crypto::shamir;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 mod passkey;
 
@@ -200,6 +200,33 @@ struct DecryptChunkRequest {
     lamport_clock: i64,
     /// Authenticated manifest epoch. Mandatory and checked against the AEAD.
     key_epoch: i64,
+}
+
+/// Production mobile download request: the caller supplies the raw epoch and
+/// clock observations, never predicate booleans. The bridge derives
+/// `aad_binding_verified` only after the AEAD open below succeeds.
+#[derive(Debug, Serialize, Deserialize)]
+struct AdmittedChunkRequest {
+    chunk_id: String,
+    ciphertext_b64: String,
+    /// Revision the server claimed in the manifest.
+    lamport_clock: i64,
+    /// Manifest/account epoch the response was served under.
+    key_epoch: i64,
+    /// Epoch this device authenticated from `key_epoch.enc`. Mobile sync
+    /// requires exact agreement; there is no automatic adoption here.
+    local_key_epoch: i64,
+    /// Highest revision this device previously admitted for this chunk id.
+    /// `None` on first contact and for legacy layouts that predate tracking.
+    #[serde(default)]
+    last_seen_lamport: Option<i64>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct AdmittedChunkResponse {
+    vault_json: String,
+    /// Revision admitted by the policy, so callers record exactly what passed.
+    lamport_clock: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -407,6 +434,23 @@ pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeDecryptVa
 ) -> jstring {
     let response = jni_json_result_with_secret(&mut env, rms, request_json, |rms, request| {
         decrypt_vault_chunk_with_rms(rms, request)
+    });
+    jni_string(&mut env, &response)
+}
+
+/// Production download entry point: decrypts/authenticates the chunk and then
+/// runs the verified admission policy. Kept separate from the low-level
+/// `nativeDecryptVaultChunkJson` so legacy/unit callers cannot accidentally
+/// inherit a policy claim they did not request.
+#[no_mangle]
+pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeDecryptAdmittedVaultChunkJson(
+    mut env: JNIEnv,
+    _object: JObject,
+    rms: JByteArray,
+    request_json: JString,
+) -> jstring {
+    let response = jni_json_result_with_secret(&mut env, rms, request_json, |rms, request| {
+        decrypt_admitted_vault_chunk_with_rms(rms, request)
     });
     jni_string(&mut env, &response)
 }
@@ -624,6 +668,32 @@ pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeIdentityO
 ) -> jstring {
     let response = jni_json_result(&mut env, request_json, |request| {
         identity_open_enrollment_capsule(request)
+    });
+    jni_string(&mut env, &response)
+}
+
+/// Sign and seal a shared item (share envelope v2).
+#[no_mangle]
+pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeIdentitySealSignedShareJson(
+    mut env: JNIEnv,
+    _object: JObject,
+    request_json: JString,
+) -> jstring {
+    let response = jni_json_result(&mut env, request_json, |request| {
+        identity_seal_signed_share(request)
+    });
+    jni_string(&mut env, &response)
+}
+
+/// Open a received share envelope and run the verified admission policy.
+#[no_mangle]
+pub extern "system" fn Java_com_vela_android_core_NativeVelaCore_nativeIdentityAdmitShareJson(
+    mut env: JNIEnv,
+    _object: JObject,
+    request_json: JString,
+) -> jstring {
+    let response = jni_json_result(&mut env, request_json, |request| {
+        identity_admit_share(request)
     });
     jni_string(&mut env, &response)
 }
@@ -910,6 +980,113 @@ fn decrypt_vault_chunk_with_rms(
     })
 }
 
+/// Open a chunk on the production download path.
+///
+/// [`rekey::open_fleet_chunk`] deliberately keeps the pre-C-2 wire shape
+/// readable at epoch 1 so a fleet can upgrade one client at a time. That
+/// compatibility includes **unsealed** blobs (`aead::encrypt`), which
+/// authenticate neither the chunk id nor the revision — `aead::open_vault_chunk`
+/// simply decrypts them and ignores both labels. Admitting one here would make
+/// `plan_chunk_download`'s rollback decision meaningless, because any
+/// ciphertext would open at any claimed clock.
+///
+/// The sealed shape is self-describing (`aead::is_sealed`), so the production
+/// entry point requires it before opening:
+///
+/// - epoch 1 sealed: AAD binds `chunk_id ‖ lamport_clock`;
+/// - epoch 2+ sealed: AAD additionally binds the account epoch.
+///
+/// Pre-C-2 unsealed blobs have no such binding and must go through the explicit
+/// migration path (re-seal under the current epoch on a trusted client); they
+/// are refused here rather than silently trusted. The lower-level
+/// [`decrypt_vault_chunk_with_rms`] keeps reading them for that migration and
+/// for unit/legacy callers, and makes no admission claim.
+fn open_admitted_fleet_chunk(
+    key: &[u8; 32],
+    blob: &[u8],
+    epoch: u64,
+    chunk_id: &str,
+    lamport_clock: i64,
+) -> anyhow_like::Result<Zeroizing<Vec<u8>>> {
+    if !aead::is_sealed(blob) {
+        return Err(
+            "legacy unsealed chunk ciphertext cannot be admitted; migrate it through the \
+             explicit pre-C-2 path"
+                .into(),
+        );
+    }
+    Ok(rekey::open_fleet_chunk(
+        key,
+        blob,
+        epoch,
+        chunk_id,
+        lamport_clock,
+    )?)
+}
+
+/// Production mobile download admission (M23/F-5).
+///
+/// The untrusted server supplies `lamport_clock`, `key_epoch` and the blob;
+/// this device supplies its authenticated `local_key_epoch` and its recorded
+/// per-chunk baseline. The bridge:
+///
+/// 1. compares the two epoch *integers* through the verified shared policy
+///    (exact equality, both positive) — no caller-provided `is_next` flag;
+/// 2. performs the real AEAD open, so `aad_binding_verified` below is a fact
+///    about successful Rust decryption, never a JSON boolean; and
+/// 3. runs the verified `plan_chunk_download` rollback decision before any
+///    plaintext is returned to Kotlin.
+///
+/// The lower-level [`decrypt_vault_chunk_with_rms`] remains for unit and
+/// legacy callers; it makes no admission decision.
+fn decrypt_admitted_vault_chunk_with_rms(
+    rms: &[u8],
+    request_json: &str,
+) -> anyhow_like::Result<AdmittedChunkResponse> {
+    let request: AdmittedChunkRequest = serde_json::from_str(request_json)?;
+    if !vela_sync_policy::plan_sync_epoch_match(vela_sync_policy::SyncEpochFacts {
+        server_epoch: request.key_epoch,
+        local_epoch: request.local_key_epoch,
+    }) {
+        return Err("sync manifest epoch does not match this device's authenticated epoch".into());
+    }
+
+    let rms = unsafe { raw_rms(rms.as_ptr(), rms.len()) }?;
+    let ciphertext = B64.decode(request.ciphertext_b64.as_bytes())?;
+    let key = chunk_key(&rms, &request.chunk_id);
+    let epoch = u64::try_from(request.key_epoch).map_err(|_| "vault key epoch must be positive")?;
+    let plaintext = open_admitted_fleet_chunk(
+        &key,
+        &ciphertext,
+        epoch,
+        &request.chunk_id,
+        request.lamport_clock,
+    )?;
+    // The helper above refuses shapes without a self-describing sealed header
+    // and only returns after an AAD-bound open authenticated the chunk id and
+    // revision (epoch 1) or the epoch as well (epoch 2+). This is the *only*
+    // place the fact becomes true; nothing in the request can set it.
+    let aad_binding_verified = true;
+
+    match vela_sync_policy::plan_chunk_download(vela_sync_policy::ChunkDownloadFacts {
+        server_lamport: request.lamport_clock,
+        last_seen_lamport: request.last_seen_lamport,
+        aad_binding_verified,
+        key_epoch_positive: request.key_epoch >= vela_sync_policy::INITIAL_EPOCH,
+    }) {
+        vela_sync_policy::ChunkDownloadDecision::Accept(permit) => Ok(AdmittedChunkResponse {
+            vault_json: String::from_utf8(plaintext.to_vec())?,
+            lamport_clock: permit.lamport(),
+        }),
+        vela_sync_policy::ChunkDownloadDecision::Reject => Err(format!(
+            "server returned an older revision of {} (clock {}, last seen {:?}); \
+             refusing to admit it",
+            request.chunk_id, request.lamport_clock, request.last_seen_lamport
+        )
+        .into()),
+    }
+}
+
 fn web_session_chunk_keys_with_rms(
     rms: &[u8],
     _request_json: &str,
@@ -1071,6 +1248,98 @@ fn identity_sign_share_ek(request_json: &str) -> anyhow_like::Result<AuthSignatu
     })?;
     Ok(AuthSignatureResponse {
         signature: B64.encode(signature),
+    })
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct SharePinJson {
+    sender_user_id: String,
+    sender_vk_b64: String,
+    lineage_id: String,
+    revision: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct AdmitShareResponse {
+    item_json: String,
+    first_contact: bool,
+    pin: SharePinJson,
+    /// Fingerprint of the sending device's key, for out-of-band comparison.
+    sender_fingerprint: String,
+}
+
+fn identity_seal_signed_share(request_json: &str) -> anyhow_like::Result<SealShareResponse> {
+    #[derive(Deserialize)]
+    struct Request {
+        handle: u64,
+        sender_user_id: String,
+        sender_device_id: String,
+        recipient_user_id: String,
+        recipient_share_ek_b64: String,
+        lineage_id: String,
+        revision: u64,
+        item_json: String,
+    }
+    let request: Request = serde_json::from_str(request_json)?;
+    let recipient_ek = B64.decode(request.recipient_share_ek_b64.as_bytes())?;
+    let capsule = vela_crypto::identity::with_identity(request.handle, |identity| {
+        identity.seal_signed_share(
+            &request.sender_user_id,
+            &request.sender_device_id,
+            &request.recipient_user_id,
+            &recipient_ek,
+            &request.lineage_id,
+            request.revision,
+            request.item_json.as_bytes(),
+        )
+    })?;
+    Ok(SealShareResponse {
+        capsule_b64: B64.encode(capsule),
+    })
+}
+
+fn identity_admit_share(request_json: &str) -> anyhow_like::Result<AdmitShareResponse> {
+    use vela_crypto::share_envelope::{AdmissionContext, SharePin};
+    #[derive(Deserialize)]
+    struct Request {
+        handle: u64,
+        capsule_b64: String,
+        recipient_user_id: String,
+        attributed_sender_user_id: String,
+        #[serde(default)]
+        pin: Option<SharePinJson>,
+    }
+    let request: Request = serde_json::from_str(request_json)?;
+    let capsule = B64.decode(request.capsule_b64.as_bytes())?;
+    let pin = match &request.pin {
+        Some(p) => Some(SharePin {
+            sender_user_id: p.sender_user_id.clone(),
+            sender_vk: B64.decode(p.sender_vk_b64.as_bytes())?,
+            lineage_id: p.lineage_id.clone(),
+            revision: p.revision,
+        }),
+        None => None,
+    };
+    let admitted = vela_crypto::identity::with_identity(request.handle, |identity| {
+        identity.admit_share(
+            &capsule,
+            AdmissionContext {
+                recipient_user_id: &request.recipient_user_id,
+                attributed_sender_user_id: &request.attributed_sender_user_id,
+                pin: pin.as_ref(),
+            },
+        )
+    })?;
+    Ok(AdmitShareResponse {
+        item_json: String::from_utf8(admitted.opened.into_item())?,
+        first_contact: admitted.first_contact,
+        sender_fingerprint: vela_crypto::verification::signing_key_fingerprint(&admitted.pin.sender_vk),
+        pin: SharePinJson {
+            sender_user_id: admitted.pin.sender_user_id,
+            sender_vk_b64: B64.encode(&admitted.pin.sender_vk),
+            lineage_id: admitted.pin.lineage_id,
+            revision: admitted.pin.revision,
+        },
     })
 }
 
@@ -1633,8 +1902,8 @@ mod tests {
                 .expect("fingerprint");
         assert_eq!(
             fp.fingerprint,
-            vela_crypto::verification::enrollment_fingerprint(&hybrid_vk),
-            "both sides must be talking about the same key"
+            vela_crypto::verification::enrollment_fingerprint(&hybrid_vk, &hybrid_ek),
+            "both sides must be talking about the same keys"
         );
 
         let sig = identity_sign_enrollment_result(
@@ -1902,6 +2171,181 @@ mod tests {
         );
     }
 
+    #[test]
+    fn admitted_download_uses_verified_policy_and_real_decryption() {
+        let rms = [21u8; 32];
+        let chunk_id = "vault-data-000000";
+        let vault_json = r#"{"items":[],"tombstones":[]}"#;
+        let seal = |clock: i64, epoch: i64| {
+            encrypt_vault_chunk_with_rms(
+                &rms,
+                &serde_json::json!({
+                    "chunk_id": chunk_id,
+                    "vault_json": vault_json,
+                    "lamport_clock": clock,
+                    "key_epoch": epoch,
+                })
+                .to_string(),
+            )
+            .expect("seal")
+            .ciphertext_b64
+        };
+        let admit =
+            |clock: i64, epoch: i64, local_epoch: i64, last_seen: Option<i64>, ciphertext: &str| {
+                decrypt_admitted_vault_chunk_with_rms(
+                    &rms,
+                    &serde_json::json!({
+                        "chunk_id": chunk_id,
+                        "ciphertext_b64": ciphertext,
+                        "lamport_clock": clock,
+                        "key_epoch": epoch,
+                        "local_key_epoch": local_epoch,
+                        "last_seen_lamport": last_seen,
+                    })
+                    .to_string(),
+                )
+            };
+
+        // A valid positive, authentic, forward-moving chunk is admitted.
+        let epoch_two = seal(4, 2);
+        let admitted = admit(4, 2, 2, Some(3), &epoch_two).expect("valid download admitted");
+        assert_eq!(admitted.vault_json, vault_json);
+        assert_eq!(admitted.lamport_clock, 4);
+        // Equal-clock re-delivery of the same revision is also admitted.
+        assert!(admit(4, 2, 2, Some(4), &epoch_two).is_ok());
+        // First contact on a legacy layout has no baseline.
+        assert!(admit(4, 2, 2, None, &epoch_two).is_ok());
+
+        // Rollback: the ciphertext authenticates at clock 3, but this device
+        // recorded clock 7 for the same chunk.
+        let clock_three = seal(3, 2);
+        let rollback = admit(3, 2, 2, Some(7), &clock_three);
+        assert!(rollback.is_err(), "rollback must be rejected: {rollback:?}");
+
+        // Authentication failure: the same bytes relabelled to a different
+        // clock do not open. A caller-supplied "aad_binding_verified" boolean
+        // is ignored precisely because the bridge derives the fact itself.
+        let tampered = decrypt_admitted_vault_chunk_with_rms(
+            &rms,
+            &serde_json::json!({
+                "chunk_id": chunk_id,
+                "ciphertext_b64": epoch_two,
+                "lamport_clock": 5,
+                "key_epoch": 2,
+                "local_key_epoch": 2,
+                "last_seen_lamport": 4,
+                "aad_binding_verified": true,
+            })
+            .to_string(),
+        );
+        assert!(
+            tampered.is_err(),
+            "an untrusted JSON boolean must not substitute for a real open"
+        );
+        let mut corrupted = B64.decode(&epoch_two).unwrap();
+        let last = corrupted.len() - 1;
+        corrupted[last] ^= 0x80;
+        let corrupted = B64.encode(&corrupted);
+        assert!(admit(4, 2, 2, Some(3), &corrupted).is_err());
+
+        // Nonpositive server clock is never a revision.
+        let clock_zero = seal(0, 2);
+        assert!(admit(0, 2, 2, None, &clock_zero).is_err());
+        assert!(admit(-1, 2, 2, None, &seal(-1, 2)).is_err());
+
+        // Nonpositive or mismatched epochs are refused before admission. The
+        // comparison is on the integers, not on a caller-provided predicate.
+        for (epoch, local) in [(0, 0), (0, 2), (2, 0), (-1, -1), (2, 3), (3, 2)] {
+            let ciphertext = seal(4, 2);
+            assert!(
+                admit(4, epoch, local, None, &ciphertext).is_err(),
+                "epoch {epoch} vs local {local} must be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn admitted_download_reads_desktop_sealed_wire_ciphertext() {
+        // A desktop-style writer seals with the shared fleet wire policy; the
+        // Android admission entry point must read it at the same epoch/clock.
+        let rms = [22u8; 32];
+        let chunk_id = "vault-data-000001";
+        let plaintext = br#"{"items":[],"tombstones":[]}"#;
+        let key = chunk_key(&rms, chunk_id);
+        for epoch in 1..=3 {
+            let ciphertext = rekey::seal_fleet_chunk(&key, plaintext, epoch, chunk_id, 11)
+                .expect("desktop-style seal");
+            let admitted = decrypt_admitted_vault_chunk_with_rms(
+                &rms,
+                &serde_json::json!({
+                    "chunk_id": chunk_id,
+                    "ciphertext_b64": B64.encode(&ciphertext),
+                    "lamport_clock": 11,
+                    "key_epoch": epoch,
+                    "local_key_epoch": epoch,
+                    "last_seen_lamport": 10,
+                })
+                .to_string(),
+            )
+            .unwrap_or_else(|e| panic!("epoch {epoch} cross-client read failed: {e}"));
+            assert_eq!(admitted.vault_json, String::from_utf8_lossy(plaintext));
+            assert_eq!(admitted.lamport_clock, 11);
+        }
+    }
+
+    /// Pre-C-2 blobs are `aead::encrypt` output: no sealed header, no AAD, so
+    /// neither the chunk id nor the revision is authenticated. The shared fleet
+    /// reader still opens that shape at epoch 1 for migration, which is exactly
+    /// why the admission path has to refuse it — otherwise a server could label
+    /// any old blob with an arbitrarily high clock and pass the rollback check.
+    #[test]
+    fn admitted_download_refuses_legacy_unsealed_blobs_at_any_epoch() {
+        let rms = [26u8; 32];
+        let chunk_id = "vault-data-000000";
+        let key = chunk_key(&rms, chunk_id);
+        let legacy = aead::encrypt(&key, br#"{"items":[],"tombstones":[]}"#).unwrap();
+        assert!(!aead::is_sealed(&legacy));
+        let request = |epoch: i64, clock: i64, last_seen: Option<i64>| {
+            serde_json::json!({
+                "chunk_id": chunk_id,
+                "ciphertext_b64": B64.encode(&legacy),
+                "lamport_clock": clock,
+                "key_epoch": epoch,
+                "local_key_epoch": epoch,
+                "last_seen_lamport": last_seen,
+            })
+            .to_string()
+        };
+
+        for epoch in [1, 2] {
+            // Inflated clock *and* an inflated recorded baseline: if the gate
+            // were missing, this would open and be admitted.
+            let inflated = decrypt_admitted_vault_chunk_with_rms(
+                &rms,
+                &request(epoch, 9_000, Some(1)),
+            );
+            let error = inflated.expect_err("unsealed legacy blob must not be admitted");
+            assert!(
+                error.to_string().contains("unsealed"),
+                "epoch {epoch} must fail on the sealed-header gate, got: {error}"
+            );
+        }
+
+        // The low-level helper still reads the same bytes (the migration path
+        // uses it); the difference is admission, not the cipher.
+        assert!(decrypt_vault_chunk_with_rms(
+            &rms,
+            &serde_json::json!({
+                "chunk_id": chunk_id,
+                "ciphertext_b64": B64.encode(&legacy),
+                "lamport_clock": 9_000,
+                "key_epoch": 1,
+            })
+            .to_string(),
+        )
+        .is_ok());
+    }
+
     /// The recovery/enrollment paths hand the RMS back as raw bytes for the
     /// caller's `ByteArray`, never as base64 in a JVM string (audit C-1).
     #[test]
@@ -2049,6 +2493,61 @@ mod tests {
     /// The identity the app registers with the server is still the right shape,
     /// now that it is created behind a handle and only its public halves are
     /// returned (audit C-1).
+    /// Share envelope v2 through the JNI JSON surface: a signed share opens
+    /// for its recipient, pins the sender, and a forged update is refused.
+    #[test]
+    fn signed_shares_round_trip_and_forged_updates_are_refused() {
+        let alice = identity_create(&[1u8; 32], "{}").unwrap();
+        let mallory = identity_create(&[2u8; 32], "{}").unwrap();
+        let bob = identity_create(&[3u8; 32], "{}").unwrap();
+        let seal = |sender: u64, revision: u64, item: &str| {
+            identity_seal_signed_share(
+                &serde_json::json!({
+                    "handle": sender,
+                    "sender_user_id": "alice",
+                    "sender_device_id": "alice-phone",
+                    "recipient_user_id": "bob",
+                    "recipient_share_ek_b64": bob.share_ek_b64,
+                    "lineage_id": "lineage-1",
+                    "revision": revision,
+                    "item_json": item,
+                })
+                .to_string(),
+            )
+            .unwrap()
+            .capsule_b64
+        };
+        let admit = |capsule: &str, pin: Option<&SharePinJson>| {
+            identity_admit_share(
+                &serde_json::json!({
+                    "handle": bob.handle,
+                    "capsule_b64": capsule,
+                    "recipient_user_id": "bob",
+                    "attributed_sender_user_id": "alice",
+                    "pin": pin,
+                })
+                .to_string(),
+            )
+        };
+
+        let first = admit(&seal(alice.handle, 1, r#"{"a":1}"#), None).unwrap();
+        assert!(first.first_contact);
+        assert_eq!(first.item_json, r#"{"a":1}"#);
+        assert_eq!(first.pin.revision, 1);
+        assert!(!first.sender_fingerprint.is_empty());
+
+        let update = admit(&seal(alice.handle, 2, r#"{"a":2}"#), Some(&first.pin)).unwrap();
+        assert!(!update.first_contact);
+
+        assert!(admit(&seal(mallory.handle, 9, r#"{"a":"phish"}"#), Some(&update.pin)).is_err());
+        let unsigned = seal_share_json(
+            &serde_json::json!({"recipient_share_ek_b64": bob.share_ek_b64, "item_json": "{}"}).to_string(),
+        )
+        .unwrap()
+        .capsule_b64;
+        assert!(admit(&unsigned, None).is_err());
+    }
+
     #[test]
     fn identity_handle_returns_server_sized_public_keys_and_no_secrets() {
         let seal_key = [5u8; 32];

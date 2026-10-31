@@ -1,0 +1,9 @@
+# security workflow 40488103343 on f947ef7 (all 15 PR checks passed)
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-deletion-interpreter/Vela_session_policy.Deletion_interpreter.fst[0m
+Verified module: Vela_session_policy.Deletion_interpreter
+Verified module: Vela_session_policy_deletion_interpreter_lemmas
+All verification conditions discharged successfully
+deletion interpreter: the handler's loop calls only the executor method for the driver's current effect, stops at the verdict within 14 turns, and ends in the driver state the per-request theorems cover
+4d134c09e43113412fadf01a435f30b08fd470b6992233c04d2ecab799c05c3d  proofs/fstar/extraction-deletion-interpreter/Vela_session_policy.Deletion_interpreter.fst
+ef0704ed88a00a507182021f437deec3ac530f051db2c3f1c533461b17305969  proofs/fstar/deletion-interpreter-lemmas/Vela_session_policy_deletion_interpreter_lemmas.fst
+e2f378c648d04150b6a946543558e02c6ca45e674e6695d83f3afe042bf69859  src/deletion_interpreter.rs

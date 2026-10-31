@@ -1,0 +1,11 @@
+--- serverVELA/vela-session-policy/proofs/fstar/extraction-websession-driver/Vela_session_policy.Websession_driver.fst	2026-10-28 10:51:43.398233033 +0100
++++ /tmp/vela-f2-websession-mut/start/Vela_session_policy.Websession_driver.fst	2026-10-28 11:03:15.626084917 +0100
+@@ -206,7 +206,7 @@
+         }
+         <:
+         t_StartDriver)
+-      (StartEffect_InsertPending <: t_StartEffect)
++      (StartEffect_CheckRateLimit <: t_StartEffect)
+   | StartValidationObservation_Invalid  ->
+     start_terminal driver (StartFailure_Validation <: t_StartFailure)
+ 

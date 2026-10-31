@@ -88,15 +88,15 @@ pub fn epoch_adoption_decision_matches_spec(
     decision: AdoptionDecision,
 ) -> bool {
     if !facts.rotation_state_active {
-        decision == AdoptionDecision::Reject
+        matches!(decision, AdoptionDecision::Reject)
     } else if facts.server_epoch < INITIAL_EPOCH || facts.local_epoch < INITIAL_EPOCH {
-        decision == AdoptionDecision::Reject
+        matches!(decision, AdoptionDecision::Reject)
     } else if facts.server_epoch == facts.local_epoch {
-        decision == AdoptionDecision::Keep
+        matches!(decision, AdoptionDecision::Keep)
     } else if !facts.server_epoch_is_next {
-        decision == AdoptionDecision::Reject
+        matches!(decision, AdoptionDecision::Reject)
     } else if epoch_adoption_is_fetch_pending(facts) {
-        decision == AdoptionDecision::FetchCapsule
+        matches!(decision, AdoptionDecision::FetchCapsule)
     } else if epoch_adoption_is_authorized(facts) {
         matches!(
             decision,
@@ -104,7 +104,7 @@ pub fn epoch_adoption_decision_matches_spec(
                 if permit.epoch() == facts.server_epoch && permit.binds_capsule_epoch()
         )
     } else {
-        decision == AdoptionDecision::Reject
+        matches!(decision, AdoptionDecision::Reject)
     }
 }
 
@@ -164,6 +164,63 @@ pub fn freezing_rotation_can_adopt(mut facts: EpochAdoptionFacts) -> bool {
 pub fn foreign_capsule_can_adopt(mut facts: EpochAdoptionFacts) -> bool {
     facts.capsule_epoch_matches = Some(false);
     epoch_adoption_is_authorized(facts)
+}
+
+// ── Mobile sync epoch agreement ────────────────────────────────────────────
+
+/// Epoch observations for a client that deliberately does **not** adopt a
+/// rotated RMS automatically. The two integers are the epoch the server's
+/// manifest advertises and the epoch this device authenticated from its local
+/// `key_epoch.enc` marker. Passing two numbers — rather than a precomputed
+/// `matches`/`is_next` boolean — keeps the comparison itself in verified code.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SyncEpochFacts {
+    pub server_epoch: i64,
+    pub local_epoch: i64,
+}
+
+/// Mobile chunk downloads require the manifest epoch and the locally
+/// authenticated epoch to be exactly equal and positive. A mismatch is a
+/// rotation this device has not adopted yet; it must refuse rather than guess.
+pub fn sync_epochs_agree_for_download(facts: SyncEpochFacts) -> bool {
+    facts.server_epoch >= INITIAL_EPOCH
+        && facts.local_epoch >= INITIAL_EPOCH
+        && facts.server_epoch == facts.local_epoch
+}
+
+pub fn sync_epoch_decision_matches_spec(facts: SyncEpochFacts, allowed: bool) -> bool {
+    allowed == sync_epochs_agree_for_download(facts)
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|allowed| {
+    sync_epoch_decision_matches_spec(facts, allowed)
+}))]
+pub fn plan_sync_epoch_match(facts: SyncEpochFacts) -> bool {
+    sync_epochs_agree_for_download(facts)
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == true))]
+pub fn equal_positive_epoch_admits_download() -> bool {
+    sync_epochs_agree_for_download(SyncEpochFacts {
+        server_epoch: 4,
+        local_epoch: 4,
+    })
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn mismatched_positive_epoch_admits_download() -> bool {
+    sync_epochs_agree_for_download(SyncEpochFacts {
+        server_epoch: 4,
+        local_epoch: 5,
+    })
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn nonpositive_epoch_admits_download() -> bool {
+    sync_epochs_agree_for_download(SyncEpochFacts {
+        server_epoch: 0,
+        local_epoch: 0,
+    })
 }
 
 // ── Chunk download admission (Lamport rollback guard) ───────────────────────
@@ -295,7 +352,7 @@ pub fn merge_action_matches_spec(facts: ItemMergeFacts, action: MergeAction) -> 
     } else {
         MergeAction::KeepLocal
     };
-    action == expected
+    same_merge_action(action, expected)
 }
 
 #[cfg_attr(hax, hax_lib::ensures(|action| {
@@ -407,6 +464,200 @@ mod tests {
     }
 
     #[test]
+    fn chunk_admission_boundary_grid_matches_independent_predicate() {
+        // Boundary grid: both signed extremes, the positive-clock boundary
+        // (-1/0 rejected, 1 admitted), first contact (None), a recorded zero
+        // baseline, ordinary baselines and both i64 extremes as baselines,
+        // crossed with every flag combination.
+        // (The universal F* proof is in
+        // `proofs/fstar/chunk-lemmas/Vela_sync_policy_chunk_lemmas.fst`.)
+        let clocks = [i64::MIN, -1, 0, 1, 2, 5, i64::MAX];
+        let baselines = [
+            None,
+            Some(0),
+            Some(1),
+            Some(5),
+            Some(i64::MIN),
+            Some(i64::MAX),
+        ];
+        let mut accepted = 0usize;
+        let mut rejected = 0usize;
+        for &clock in &clocks {
+            for &baseline in &baselines {
+                for &aad in &[true, false] {
+                    for &epoch in &[true, false] {
+                        let facts = ChunkDownloadFacts {
+                            server_lamport: clock,
+                            last_seen_lamport: baseline,
+                            aad_binding_verified: aad,
+                            key_epoch_positive: epoch,
+                        };
+                        // Stated independently of `chunk_download_is_authorized`.
+                        let admissible = aad
+                            && epoch
+                            && clock >= 1
+                            && match baseline {
+                                None => true,
+                                Some(seen) => clock >= seen,
+                            };
+                        match plan_chunk_download(facts) {
+                            ChunkDownloadDecision::Accept(permit) => {
+                                assert!(
+                                    admissible,
+                                    "accepted inadmissible clock {clock} / baseline {baseline:?}"
+                                );
+                                assert_eq!(
+                                    permit.lamport(),
+                                    clock,
+                                    "permit must carry the admitted server clock"
+                                );
+                                accepted += 1;
+                            }
+                            ChunkDownloadDecision::Reject => {
+                                assert!(
+                                    !admissible,
+                                    "refused admissible clock {clock} / baseline {baseline:?}"
+                                );
+                                rejected += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Nonvacuity: the grid exercises both outcomes.
+        assert!(accepted > 0 && rejected > 0);
+
+        // `None` and `Some 0` decide identically at every clock: the `>= 1`
+        // conjunct already excludes the only clock where a naive
+        // "treat a missing baseline as zero" reading could differ. They remain
+        // distinct caller states (first contact vs. recorded zero), which the
+        // permit does not record.
+        for &clock in &clocks {
+            for &aad in &[true, false] {
+                for &epoch in &[true, false] {
+                    let first_contact = ChunkDownloadFacts {
+                        server_lamport: clock,
+                        last_seen_lamport: None,
+                        aad_binding_verified: aad,
+                        key_epoch_positive: epoch,
+                    };
+                    let zero_baseline = ChunkDownloadFacts {
+                        last_seen_lamport: Some(0),
+                        ..first_contact
+                    };
+                    assert_eq!(
+                        plan_chunk_download(first_contact),
+                        plan_chunk_download(zero_baseline)
+                    );
+                }
+            }
+        }
+
+        // Clock 0 is refused with no baseline and with a zero baseline; the
+        // least signed baseline does not launder a nonpositive clock; the least
+        // signed clock is always refused; and a positive epoch/AAD flag is
+        // load-bearing even at the largest clock.
+        let base = ChunkDownloadFacts {
+            server_lamport: 0,
+            last_seen_lamport: None,
+            aad_binding_verified: true,
+            key_epoch_positive: true,
+        };
+        assert_eq!(plan_chunk_download(base), ChunkDownloadDecision::Reject);
+        assert_eq!(
+            plan_chunk_download(ChunkDownloadFacts {
+                last_seen_lamport: Some(0),
+                ..base
+            }),
+            ChunkDownloadDecision::Reject
+        );
+        assert_eq!(
+            plan_chunk_download(ChunkDownloadFacts {
+                last_seen_lamport: Some(i64::MIN),
+                ..base
+            }),
+            ChunkDownloadDecision::Reject
+        );
+        assert_eq!(
+            plan_chunk_download(ChunkDownloadFacts {
+                server_lamport: i64::MIN,
+                last_seen_lamport: None,
+                ..base
+            }),
+            ChunkDownloadDecision::Reject
+        );
+        // The least signed baseline is dominated by the positive-clock floor.
+        assert!(matches!(
+            plan_chunk_download(ChunkDownloadFacts {
+                server_lamport: 1,
+                last_seen_lamport: Some(i64::MIN),
+                ..base
+            }),
+            ChunkDownloadDecision::Accept(permit) if permit.lamport() == 1
+        ));
+        let largest = ChunkDownloadFacts {
+            server_lamport: i64::MAX,
+            last_seen_lamport: None,
+            aad_binding_verified: true,
+            key_epoch_positive: false,
+        };
+        assert_eq!(plan_chunk_download(largest), ChunkDownloadDecision::Reject);
+        assert_eq!(
+            plan_chunk_download(ChunkDownloadFacts {
+                key_epoch_positive: true,
+                aad_binding_verified: false,
+                ..largest
+            }),
+            ChunkDownloadDecision::Reject
+        );
+    }
+
+    #[test]
+    fn mobile_sync_epoch_requires_exact_positive_agreement() {
+        assert!(plan_sync_epoch_match(SyncEpochFacts {
+            server_epoch: 4,
+            local_epoch: 4,
+        }));
+        // Any gap in either direction is an unadopted rotation, not a licence
+        // to guess which key to use.
+        for (server, local) in [(5, 4), (4, 5), (9, 3), (3, 9)] {
+            assert!(!plan_sync_epoch_match(SyncEpochFacts {
+                server_epoch: server,
+                local_epoch: local,
+            }));
+        }
+        // Zero and negative epochs never name a real account state.
+        for (server, local) in [(0, 0), (0, 1), (1, 0), (-1, -1), (-1, 1)] {
+            assert!(!plan_sync_epoch_match(SyncEpochFacts {
+                server_epoch: server,
+                local_epoch: local,
+            }));
+        }
+        assert!(equal_positive_epoch_admits_download());
+        assert!(!mismatched_positive_epoch_admits_download());
+        assert!(!nonpositive_epoch_admits_download());
+
+        // The same property on a grid, stated independently of the spec
+        // function: accepted exactly when both epochs are positive and equal.
+        // (The parametric proof lives in
+        // `proofs/fstar/epoch-lemmas/Vela_sync_policy_epoch_lemmas.fst`.)
+        for server in -3i64..=6 {
+            for local in -3i64..=6 {
+                let admissible = server > 0 && local > 0 && server == local;
+                assert_eq!(
+                    plan_sync_epoch_match(SyncEpochFacts {
+                        server_epoch: server,
+                        local_epoch: local,
+                    }),
+                    admissible,
+                    "epoch pair ({server}, {local}) must decide exactly as positivity + equality"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn merge_classification_covers_every_combination() {
         // Exhaustive over the four booleans: spec equality holds everywhere,
         // and the two impossibility claims hold globally.
@@ -449,5 +700,33 @@ mod tests {
             local_modified_by_this_device: true,
             already_conflicted: false,
         }));
+    }
+}
+
+fn same_merge_action(a: MergeAction, b: MergeAction) -> bool {
+    matches!(
+        (a, b),
+        (MergeAction::StayDeleted, MergeAction::StayDeleted)
+            | (MergeAction::AcceptServer, MergeAction::AcceptServer)
+            | (MergeAction::Conflict, MergeAction::Conflict)
+            | (MergeAction::KeepLocal, MergeAction::KeepLocal)
+    )
+}
+#[cfg(test)]
+mod structural_equality_tests {
+    use super::*;
+    #[test]
+    fn structural_merge_equality_matches_derived_equality_exhaustively() {
+        let values = [
+            MergeAction::StayDeleted,
+            MergeAction::AcceptServer,
+            MergeAction::Conflict,
+            MergeAction::KeepLocal,
+        ];
+        for a in values {
+            for b in values {
+                assert_eq!(same_merge_action(a, b), a == b);
+            }
+        }
     }
 }

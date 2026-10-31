@@ -1,0 +1,25 @@
+# security workflow 40538488807 on 6be552c (all 15 PR checks passed)
+test vault_upload_interpreter::tests::a_scripted_activity_failure_stops_at_the_verdict ... ok
+test vault_upload_interpreter::tests::an_unauthenticated_read_performs_nothing ... ok
+test vault_upload_interpreter::tests::an_unauthenticated_upload_performs_nothing ... ok
+test vault_upload_interpreter::tests::read_performs_exactly_the_driver_effects_for_every_lookup_outcome ... ok
+test vault_upload_interpreter::tests::the_longest_upload_path_uses_the_whole_budget_and_only_one_write ... ok
+test vault_upload_interpreter::tests::upload_performs_exactly_the_driver_effects_for_every_outcome_kind ... ok
+test vault_upload_interpreter::tests::a_scripted_activity_failure_stops_at_the_verdict ... ok
+test vault_upload_interpreter::tests::an_unauthenticated_read_performs_nothing ... ok
+test vault_upload_interpreter::tests::an_unauthenticated_upload_performs_nothing ... ok
+test vault_upload_interpreter::tests::read_performs_exactly_the_driver_effects_for_every_lookup_outcome ... ok
+test vault_upload_interpreter::tests::the_longest_upload_path_uses_the_whole_budget_and_only_one_write ... ok
+test vault_upload_interpreter::tests::upload_performs_exactly_the_driver_effects_for_every_outcome_kind ... ok
+test vault_upload_interpreter::tests::a_scripted_activity_failure_stops_at_the_verdict ... ok
+test vault_upload_interpreter::tests::an_unauthenticated_read_performs_nothing ... ok
+test vault_upload_interpreter::tests::an_unauthenticated_upload_performs_nothing ... ok
+test vault_upload_interpreter::tests::read_performs_exactly_the_driver_effects_for_every_lookup_outcome ... ok
+test vault_upload_interpreter::tests::the_longest_upload_path_uses_the_whole_budget_and_only_one_write ... ok
+test vault_upload_interpreter::tests::upload_performs_exactly_the_driver_effects_for_every_outcome_kind ... ok
+Verified module: Vela_rekey_policy.Vault_upload_interpreter
+Verified module: Vela_rekey_policy_vault_upload_interpreter_lemmas
+vault upload interpreter: the handler's loops call only the executor method for the driver's current effect, stop at the verdict within 7 (upload) / 2 (read) turns, and end in the driver state the per-request theorems cover
+1bb850f5a06282d219d040ddef6076b20acb6de7c5dbd2604e88e02cd30fbda4  proofs/fstar/extraction-vault-upload-interpreter/Vela_rekey_policy.Vault_upload_interpreter.fst
+80b0b7bc1379ecdbd5d009f063e16a313a1f11176ade7bf6c9e0d6f6d80108f1  proofs/fstar/vault-upload-interpreter-lemmas/Vela_rekey_policy_vault_upload_interpreter_lemmas.fst
+4574ddf4e3e4b756bb54af3926e9fe645346052f3e8261ea41b00c7bfb98dd00  src/vault_upload_interpreter.rs

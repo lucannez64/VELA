@@ -1,0 +1,74 @@
+F* 2025.10.06
+platform=Linux_x86_64
+compiler=OCaml 4.14.2
+date=2025-10-06 12:00:42 -0700
+commit=7b347386330d0e5a331a220535b6f15288903234
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.12s
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-f2-cross/Vela_session_policy.Challenge.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-f2-cross/Vela_session_policy.Deletion_driver.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-f2-cross/Vela_session_policy.Login_driver.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-f2-cross/Vela_session_policy.Revocation_driver.fst[0m
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.11s
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-f2-cross/Vela_enrollment_policy.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-f2-cross/Vela_enrollment_policy.Pairing_driver.fst[0m
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.11s
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-f2-cross/Vela_recovery_policy.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-f2-cross/Vela_recovery_policy.Driver.fst[0m
+session modules:
+  /home/hirew/.t3/worktrees/VELA/t3-c883d033/serverVELA/vela-session-policy/proofs/fstar/extraction-f2-cross/Vela_session_policy.Challenge.fst
+  /home/hirew/.t3/worktrees/VELA/t3-c883d033/serverVELA/vela-session-policy/proofs/fstar/extraction-f2-cross/Vela_session_policy.Deletion_driver.fst
+  /home/hirew/.t3/worktrees/VELA/t3-c883d033/serverVELA/vela-session-policy/proofs/fstar/extraction-f2-cross/Vela_session_policy.Login_driver.fst
+  /home/hirew/.t3/worktrees/VELA/t3-c883d033/serverVELA/vela-session-policy/proofs/fstar/extraction-f2-cross/Vela_session_policy.Revocation_driver.fst
+enrollment modules:
+  /home/hirew/.t3/worktrees/VELA/t3-c883d033/serverVELA/vela-enrollment-policy/proofs/fstar/extraction-f2-cross/Vela_enrollment_policy.Pairing_driver.fst
+  /home/hirew/.t3/worktrees/VELA/t3-c883d033/serverVELA/vela-enrollment-policy/proofs/fstar/extraction-f2-cross/Vela_enrollment_policy.fst
+recovery modules:
+  /home/hirew/.t3/worktrees/VELA/t3-c883d033/serverVELA/vela-recovery-policy/proofs/fstar/extraction-f2-cross/Vela_recovery_policy.Driver.fst
+  /home/hirew/.t3/worktrees/VELA/t3-c883d033/serverVELA/vela-recovery-policy/proofs/fstar/extraction-f2-cross/Vela_recovery_policy.fst
+Driver source policy: 8 extracted modules, 1 proof modules; no unreviewed escapes/options
+F* cross-driver argv: --cmi --cache_off --warn_error -331 --z3rlimit 32000 --z3version 4.13.3 --already_cached +Prims+FStar+LowStar+C+Spec.Loops+TestLib --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/core --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proofs/fstar/extraction --include /home/hirew/.t3/worktrees/VELA/t3-c883d033/serverVELA/vela-session-policy/proofs/fstar/extraction-f2-cross --include /home/hirew/.t3/worktrees/VELA/t3-c883d033/serverVELA/vela-enrollment-policy/proofs/fstar/extraction-f2-cross --include /home/hirew/.t3/worktrees/VELA/t3-c883d033/serverVELA/vela-recovery-policy/proofs/fstar/extraction-f2-cross --include /home/hirew/.t3/worktrees/VELA/t3-c883d033/security/formal/cross-driver /home/hirew/.t3/worktrees/VELA/t3-c883d033/serverVELA/vela-session-policy/proofs/fstar/extraction-f2-cross/Vela_session_policy.Challenge.fst /home/hirew/.t3/worktrees/VELA/t3-c883d033/serverVELA/vela-session-policy/proofs/fstar/extraction-f2-cross/Vela_session_policy.Deletion_driver.fst /home/hirew/.t3/worktrees/VELA/t3-c883d033/serverVELA/vela-session-policy/proofs/fstar/extraction-f2-cross/Vela_session_policy.Login_driver.fst /home/hirew/.t3/worktrees/VELA/t3-c883d033/serverVELA/vela-session-policy/proofs/fstar/extraction-f2-cross/Vela_session_policy.Revocation_driver.fst /home/hirew/.t3/worktrees/VELA/t3-c883d033/serverVELA/vela-enrollment-policy/proofs/fstar/extraction-f2-cross/Vela_enrollment_policy.Pairing_driver.fst /home/hirew/.t3/worktrees/VELA/t3-c883d033/serverVELA/vela-enrollment-policy/proofs/fstar/extraction-f2-cross/Vela_enrollment_policy.fst /home/hirew/.t3/worktrees/VELA/t3-c883d033/serverVELA/vela-recovery-policy/proofs/fstar/extraction-f2-cross/Vela_recovery_policy.Driver.fst /home/hirew/.t3/worktrees/VELA/t3-c883d033/serverVELA/vela-recovery-policy/proofs/fstar/extraction-f2-cross/Vela_recovery_policy.fst /home/hirew/.t3/worktrees/VELA/t3-c883d033/security/formal/cross-driver/Vela_cross_driver_composition.fst
+* Warning 271 at /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 328 at /home/hirew/.t3/worktrees/VELA/t3-c883d033/security/formal/cross-driver/Vela_cross_driver_composition.fst(1452,8-1452,40):
+  - Global binding
+        'Vela_cross_driver_composition.revoke_effect_requires_authority'
+    is recursive but not used in its body
+
+Verified module: Vela_session_policy.Challenge
+Verified module: Vela_session_policy.Deletion_driver
+Verified module: Vela_session_policy.Login_driver
+Verified module: Vela_session_policy.Revocation_driver
+Verified module: Vela_enrollment_policy
+Verified module: Vela_enrollment_policy.Pairing_driver
+Verified module: Vela_recovery_policy
+Verified module: Vela_recovery_policy.Driver
+Verified module: Vela_cross_driver_composition
+All verification conditions discharged successfully
+cross-driver composition: extracted login, revocation/admission, deletion, pairing-completion and recovery-redemption drivers over one shared world
+6087cb902d16a8720d187221a6bacb32d65a50505cece9aff7b12155b8377b3e  /home/hirew/.t3/worktrees/VELA/t3-c883d033/serverVELA/vela-session-policy/proofs/fstar/extraction-f2-cross/Vela_session_policy.Challenge.fst
+881fc112102bd8277dba4876f30b495b2209aff40a94ba93a484e7fdd017c9f6  /home/hirew/.t3/worktrees/VELA/t3-c883d033/serverVELA/vela-session-policy/proofs/fstar/extraction-f2-cross/Vela_session_policy.Deletion_driver.fst
+ab5f233536bd6e98fe5b34433b4b7665f89906fac0ac900588926723bac72bb5  /home/hirew/.t3/worktrees/VELA/t3-c883d033/serverVELA/vela-session-policy/proofs/fstar/extraction-f2-cross/Vela_session_policy.Login_driver.fst
+b790022190b787f397c5198850bfe34d474bce329a5dbe4307d607851f568e0a  /home/hirew/.t3/worktrees/VELA/t3-c883d033/serverVELA/vela-session-policy/proofs/fstar/extraction-f2-cross/Vela_session_policy.Revocation_driver.fst
+c7194d6dc7f04476afd7928a018c13966b61d2d2dd595e9d1c402b3b2e212619  /home/hirew/.t3/worktrees/VELA/t3-c883d033/serverVELA/vela-enrollment-policy/proofs/fstar/extraction-f2-cross/Vela_enrollment_policy.Pairing_driver.fst
+5be3cf44a9f1f44e153121b2f88f7e4e8c745708d0caad268edc8a40ca45c970  /home/hirew/.t3/worktrees/VELA/t3-c883d033/serverVELA/vela-enrollment-policy/proofs/fstar/extraction-f2-cross/Vela_enrollment_policy.fst
+1fe6d317eb20bba515092dc7d3181900968b5c64b65387195d58904db4fd1fe1  /home/hirew/.t3/worktrees/VELA/t3-c883d033/serverVELA/vela-recovery-policy/proofs/fstar/extraction-f2-cross/Vela_recovery_policy.Driver.fst
+fe2380cc9ccb38178ccd064abc79c0a5e3e33d2df2ef3670b5a07813feaac545  /home/hirew/.t3/worktrees/VELA/t3-c883d033/serverVELA/vela-recovery-policy/proofs/fstar/extraction-f2-cross/Vela_recovery_policy.fst
+a2b49eebd98375725667cbefe326a46358fcb15d4fda11657900f820aab17e2a  /home/hirew/.t3/worktrees/VELA/t3-c883d033/security/formal/cross-driver/Vela_cross_driver_composition.fst

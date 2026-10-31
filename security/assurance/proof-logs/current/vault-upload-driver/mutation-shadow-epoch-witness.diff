@@ -1,0 +1,62 @@
+--- /home/hirew/.t3/worktrees/VELA/t3-d0ca44cd/serverVELA/vela-rekey-policy/proofs/fstar/vault-upload-driver-composition/Vela_rekey_policy_vault_upload_driver_composition.fst	2026-10-27 00:19:56.661995313 +0100
++++ /tmp/opencode/mutants/shadow-epoch-witness/vault-upload-driver-composition/Vela_rekey_policy_vault_upload_driver_composition.fst	2026-10-27 00:45:13.513063095 +0100
+@@ -705,12 +705,8 @@
+           is_write (upload_step d e).f_driver /\
+           permit_matches_driver p (upload_step d e).f_driver
+       | _ -> True)) =
+-  match d.f_stage <: t_UploadStage with
+-  | UploadStage_Quota ->
+-      (match e <: t_UploadEvent with
+-       | UploadEvent_Quota (QuotaObservation_Allowed) -> ()
+-       | _ -> ())
+-  | _ -> ()
++  admit ()
++
+ 
+ /// The guarded write is the only event that flips the matched-write bit, and it
+ /// flips it exactly when the delivered observation was a commit.
+@@ -1426,21 +1422,21 @@
+       (account_at b1 0).a_rid = 1 /\
+       (account_at b1 0).a_epoch = mk_i64 1 /\
+       FStar.List.Tot.length b9.w_store = 1 /\
+-      (store_head b9.w_store).cr_epoch = mk_i64 2 /\
++      (store_head b9.w_store).cr_epoch = mk_i64 1 /\
+       (store_head b9.w_store).cr_account = 0 /\
+       (request_head b9.w_reqs).rq_committed = true /\
+       (request_head b9.w_reqs).rq_driver.f_responded = true /\
+       (request_head b9.w_reqs).rq_driver.f_shadow = true /\
+-      b9.w_stale_commit = 0 /\ b9.w_bad_shadow_commit = 0 /\
++      b9.w_stale_commit = 0 /\ b9.w_bad_shadow_commit = 1 /\
+       b9.w_success_without_commit = 0) = ()
+ 
+ let shadow_commit_is_reachable ()
+   : Lemma (
+       let w = run_world initial shadow_commit_schedule in
+       FStar.List.Tot.length w.w_store = 1 /\
+-      (store_head w.w_store).cr_epoch = mk_i64 2 /\
++      (store_head w.w_store).cr_epoch = mk_i64 1 /\
+       (request_head w.w_reqs).rq_committed = true /\
+-      w.w_stale_commit = 0 /\ w.w_bad_shadow_commit = 0 /\
++      w.w_stale_commit = 0 /\ w.w_bad_shadow_commit = 1 /\
+       w.w_success_without_commit = 0) =
+   run_cons initial (RekeyStart 0 0)
+     [Spawn 0 false 0 0 1; Resolve 0; Attempt 0;
+@@ -1596,18 +1592,4 @@
+   run_nil d8;
+   two_account_facts ()
+ 
+-/// Every witness schedule keeps the counters zero.
+-let witnesses_keep_counters_zero ()
+-  : Lemma (
+-      (run_world initial web_shadow_schedule).w_web_shadow = 0 /\
+-      (run_world initial web_shadow_schedule).w_bad_shadow_commit = 0 /\
+-      (run_world initial shadow_commit_schedule).w_stale_commit = 0 /\
+-      (run_world initial shadow_commit_schedule).w_bad_shadow_commit = 0 /\
+-      (run_world initial active_commit_schedule).w_stale_commit = 0 /\
+-      (run_world initial two_account_schedule).w_stale_commit = 0) =
+-  upload_store_theorem web_shadow_schedule;
+-  upload_store_theorem shadow_commit_schedule;
+-  upload_store_theorem active_commit_schedule;
+-  upload_store_theorem two_account_schedule
+-
+ #pop-options

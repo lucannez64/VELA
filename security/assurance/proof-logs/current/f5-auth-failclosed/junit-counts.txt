@@ -1,0 +1,26 @@
+Source: androidVELA/app/build/test-results/testDebugUnitTest/TEST-*.xml
+TOTAL tests=159 failures=0 errors=0 skipped=0 classes=24
+com.vela.android.autofill.AssetLinksVerifierTest                       tests=9 failures=0 errors=0 skipped=0
+com.vela.android.autofill.AutofillMatcherTest                          tests=29 failures=0 errors=0 skipped=0
+com.vela.android.autofill.AutofillUnlockTokensTest                     tests=5 failures=0 errors=0 skipped=0
+com.vela.android.autofill.BrowserAllowlistTest                         tests=11 failures=0 errors=0 skipped=0
+com.vela.android.autofill.CardFieldDetectionTest                       tests=5 failures=0 errors=0 skipped=0
+com.vela.android.autofill.TrustedBrowserPinningTest                    tests=5 failures=0 errors=0 skipped=0
+com.vela.android.core.AdmittedChunkFailureTest                         tests=2 failures=0 errors=0 skipped=0
+com.vela.android.core.LocalVaultAdmissionTest                          tests=3 failures=0 errors=0 skipped=0
+com.vela.android.core.VaultJsonTest                                    tests=6 failures=0 errors=0 skipped=0
+com.vela.android.security.EncryptedVaultStoreTest                      tests=5 failures=0 errors=0 skipped=0
+com.vela.android.security.PasswordRmsProtectorTest                     tests=2 failures=0 errors=0 skipped=0
+com.vela.android.security.RmsHolderTest                                tests=2 failures=0 errors=0 skipped=0
+com.vela.android.security.passkey.PrivilegedAllowlistsTest             tests=4 failures=0 errors=0 skipped=0
+com.vela.android.security.passkey.WebAuthnJsonTest                     tests=19 failures=0 errors=0 skipped=0
+com.vela.android.sync.EpochSyncContractTest                            tests=7 failures=0 errors=0 skipped=0
+com.vela.android.sync.IdentityBindingTest                              tests=5 failures=0 errors=0 skipped=0
+com.vela.android.sync.IdentityFailClosedTest                           tests=7 failures=0 errors=0 skipped=0
+com.vela.android.sync.RecoveryAccountBindingTest                       tests=4 failures=0 errors=0 skipped=0
+com.vela.android.sync.RecoveryPublicationJournalTest                   tests=4 failures=0 errors=0 skipped=0
+com.vela.android.sync.ServerUrlValidationTest                          tests=5 failures=0 errors=0 skipped=0
+com.vela.android.sync.SyncAuthControllerTest                           tests=6 failures=0 errors=0 skipped=0
+com.vela.android.sync.SyncSettingsPublicationTest                      tests=3 failures=0 errors=0 skipped=0
+com.vela.android.sync.VaultEventStreamParserTest                       tests=6 failures=0 errors=0 skipped=0
+com.vela.android.sync.VaultSyncMergeTest                               tests=5 failures=0 errors=0 skipped=0

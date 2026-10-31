@@ -192,7 +192,45 @@ impl DeviceIdentity {
         kem::open_share(&self.share_dk, capsule)
     }
 
-    /// This device's enrollment fingerprint (v3), over its *own* signing key.
+    /// Sign and seal a shared item for one recipient (share envelope v2).
+    ///
+    /// The header's `sender_vk` is filled in from this identity, so the
+    /// signature always names the key that made it.
+    #[allow(clippy::too_many_arguments)]
+    pub fn seal_signed_share(
+        &self,
+        sender_user_id: &str,
+        sender_device_id: &str,
+        recipient_user_id: &str,
+        recipient_share_ek: &[u8],
+        lineage_id: &str,
+        revision: u64,
+        item: &[u8],
+    ) -> Result<Vec<u8>> {
+        let recipient = kem::HybridPublicKey::from_bytes(recipient_share_ek)?;
+        let header = crate::share_envelope::ShareHeader {
+            sender_user_id: sender_user_id.to_owned(),
+            sender_device_id: sender_device_id.to_owned(),
+            sender_vk: self.publics.hybrid_vk.clone(),
+            recipient_user_id: recipient_user_id.to_owned(),
+            recipient_ek_digest: crate::share_envelope::recipient_ek_digest(recipient_share_ek),
+            lineage_id: lineage_id.to_owned(),
+            revision,
+        };
+        crate::share_envelope::seal_signed_item(&self.signing_sk, &header, &recipient, item)
+    }
+
+    /// Open a received share envelope and run the verified admission policy.
+    pub fn admit_share(
+        &self,
+        capsule: &[u8],
+        context: crate::share_envelope::AdmissionContext<'_>,
+    ) -> Result<crate::share_envelope::AdmittedShare> {
+        crate::share_envelope::admit(&self.share_dk, capsule, context)
+    }
+
+    /// This device's enrollment fingerprint (v4), over its *own* signing and
+    /// KEM keys.
     ///
     /// Deliberately takes no argument. The value a joining device shows its
     /// user has to be derived from the key it holds, and an API that accepted
@@ -201,7 +239,7 @@ impl DeviceIdentity {
     /// about a key, and every binding behind it stops meaning anything
     /// (audit P-1).
     pub fn enrollment_fingerprint(&self) -> String {
-        crate::verification::enrollment_fingerprint(&self.publics.hybrid_vk)
+        crate::verification::enrollment_fingerprint(&self.publics.hybrid_vk, &self.publics.hybrid_ek)
     }
 
     /// Sign a grant id, to collect the outcome of this device's own enrollment.

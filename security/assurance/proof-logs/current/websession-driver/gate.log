@@ -1,0 +1,74 @@
+F* 2025.10.06
+platform=Linux_x86_64
+compiler=OCaml 4.14.2
+date=2025-10-06 12:00:42 -0700
+commit=7b347386330d0e5a331a220535b6f15288903234
+rustc: rustc 1.101.0-nightly (e9bbadf68 2026-10-12)
+warning: unused variable: `plan`
+    --> vela-session-policy/src/websession_driver.rs:1155:33
+     |
+1155 |         TokenEffect::IssueToken(plan) => {
+     |                                 ^^^^ help: if this is intentional, prefix it with an underscore: `_plan`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `vela-session-policy` (lib test) generated 1 warning (run `cargo fix --lib -p vela-session-policy --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.13s
+     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-4ee7d210/target-own/debug/build/vela-session-policy/652ed2674f77390e/out/vela_session_policy-652ed2674f77390e)
+
+running 12 tests
+test websession_driver::tests::delete_requires_the_owning_account ... ok
+test websession_driver::tests::grant_requires_the_checked_plan_and_a_pending_row ... ok
+test websession_driver::tests::inactive_grant_actor_performs_nothing ... ok
+test websession_driver::tests::out_of_order_events_are_inert ... ok
+test websession_driver::tests::start_only_ever_reaches_the_pending_insert ... ok
+test websession_driver::tests::start_refuses_every_failure_before_an_insert ... ok
+test websession_driver::tests::token_rejects_terminal_sessions_and_wrong_challenges ... ok
+test websession_driver::tests::token_requires_every_fact_and_claims_once ... ok
+test websession_interpreter::tests::delete_interpreter_performs_only_the_emitted_effects ... ok
+test websession_interpreter::tests::grant_interpreter_performs_only_the_emitted_effects ... ok
+test websession_interpreter::tests::start_interpreter_performs_only_the_emitted_effects ... ok
+test websession_interpreter::tests::token_interpreter_performs_only_the_emitted_effects ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 55 filtered out; finished in 0.00s
+
+    Checking vela-session-policy v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-4ee7d210/serverVELA/vela-session-policy)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.90s
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-websession-driver/Vela_session_policy.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-websession-driver/Vela_session_policy.Challenge.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-websession-driver/Vela_session_policy.Websession_driver.fst[0m
+Driver source policy: 3 extracted modules, 1 proof modules; no unreviewed escapes/options
+F* web-session-driver argv: --cmi --cache_off --warn_error -331 --z3rlimit 8000 --z3version 4.13.3 --already_cached +Prims+FStar+LowStar+C+Spec.Loops+TestLib --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/core --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proofs/fstar/extraction --include proofs/fstar/extraction-websession-driver --include proofs/fstar/websession-driver-lemmas proofs/fstar/extraction-websession-driver/Vela_session_policy.Challenge.fst proofs/fstar/extraction-websession-driver/Vela_session_policy.Websession_driver.fst proofs/fstar/extraction-websession-driver/Vela_session_policy.fst proofs/fstar/websession-driver-lemmas/Vela_session_policy_websession_driver_lemmas.fst
+* Warning 271 at /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+Verified module: Vela_session_policy.Challenge
+Verified module: Vela_session_policy
+Verified module: Vela_session_policy.Websession_driver
+Verified module: Vela_session_policy_websession_driver_lemmas
+All verification conditions discharged successfully
+web-session drivers: start, grant, token exchange and delete
+per-request: pending-only start, checked grant plan + clamped TTL, checked token plan after a purpose-bound single-use challenge and one claim, owner-only delete
+traces: soundness over every event list, at most one success/failure (and one token issue) per request
+6087cb902d16a8720d187221a6bacb32d65a50505cece9aff7b12155b8377b3e  proofs/fstar/extraction-websession-driver/Vela_session_policy.Challenge.fst
+e2ed21a12597f9917a7d1bdaaf9451e4e380a5424c8e6e91a4c8461a9ab16f07  proofs/fstar/extraction-websession-driver/Vela_session_policy.Websession_driver.fst
+2d62964f3f986b5bb4114888e9ba61cc76014f14314cd68d1bd07094f5ae2cad  proofs/fstar/extraction-websession-driver/Vela_session_policy.fst
+c658513a30e0db32fd41e2138e02a7388a62fac1834b2bdfd7759a11e60136df  proofs/fstar/websession-driver-lemmas/Vela_session_policy_websession_driver_lemmas.fst
+0b2a40d47390f25203fbbc4f550aedff17fea02f6fd87b357aaeb8cd103979f1  src/websession_driver.rs

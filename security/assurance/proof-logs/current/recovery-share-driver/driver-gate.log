@@ -1,0 +1,48 @@
+F* 2025.10.06
+platform=Linux_x86_64
+compiler=OCaml 4.14.2
+date=2025-10-06 12:00:42 -0700
+commit=7b347386330d0e5a331a220535b6f15288903234
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.10s
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-recovery-share-driver/Vela_recovery_policy.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-recovery-share-driver/Vela_recovery_policy.Possession_driver.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-recovery-share-driver/Vela_recovery_policy.Recovery_share_driver.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-recovery-share-driver/Vela_recovery_policy.Webauthn_driver.fst[0m
+Driver source policy: 4 extracted modules, 2 proof modules; no unreviewed escapes/options
+F* recovery-share-driver argv: --cmi --cache_off --warn_error -331 --z3rlimit 8000 --z3version 4.13.3 --already_cached +Prims+FStar+LowStar+C+Spec.Loops+TestLib --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/core --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proofs/fstar/extraction --include proofs/fstar/extraction-recovery-share-driver --include proofs/fstar/recovery-share-driver-lemmas --include proofs/fstar/recovery-share-driver-composition proofs/fstar/extraction-recovery-share-driver/Vela_recovery_policy.Possession_driver.fst proofs/fstar/extraction-recovery-share-driver/Vela_recovery_policy.Recovery_share_driver.fst proofs/fstar/extraction-recovery-share-driver/Vela_recovery_policy.Webauthn_driver.fst proofs/fstar/extraction-recovery-share-driver/Vela_recovery_policy.fst proofs/fstar/recovery-share-driver-lemmas/Vela_recovery_policy_recovery_share_driver_lemmas.fst proofs/fstar/recovery-share-driver-composition/Vela_recovery_policy_recovery_share_driver_composition.fst
+* Warning 271 at /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+Verified module: Vela_recovery_policy
+Verified module: Vela_recovery_policy.Possession_driver
+Verified module: Vela_recovery_policy.Recovery_share_driver
+Verified module: Vela_recovery_policy.Webauthn_driver
+Verified module: Vela_recovery_policy_recovery_share_driver_lemmas
+Verified module: Vela_recovery_policy_recovery_share_driver_composition
+All verification conditions discharged successfully
+recovery-share driver proof: per-request stage/finalize/delete/read theorems over every event list
+recovery-share driver composition: any interleaving of stage, finalize, delete, WebAuthn release and possession keeps one current split and never releases a deleted or superseded share
+927178088c4f11b93cd86df9158c9a23763b19e39fbf4588eca0f9350129283b  proofs/fstar/extraction-recovery-share-driver/Vela_recovery_policy.Possession_driver.fst
+ebe9a57576e690ca1a1d4e34806bd861604a2635d7110965a48b20ae310034c4  proofs/fstar/extraction-recovery-share-driver/Vela_recovery_policy.Recovery_share_driver.fst
+9500afc20f33ad28bac0393beca994ecc9e74637db444e35f718860ff8a1f1e3  proofs/fstar/extraction-recovery-share-driver/Vela_recovery_policy.Webauthn_driver.fst
+6c14e69ab6065c2b99eb9075e5f6268d7c141e9aed3447881be048fae47e10f4  proofs/fstar/extraction-recovery-share-driver/Vela_recovery_policy.fst
+4bf97a00170f15dee0cfb06d15fdbcb5bc43b40a4e207246c2a0c8b2e2507b36  proofs/fstar/recovery-share-driver-lemmas/Vela_recovery_policy_recovery_share_driver_lemmas.fst
+1bdb72e4eb5415cccf08c78c3b80eb08352341a3eb303efc06f166ba517d9858  proofs/fstar/recovery-share-driver-composition/Vela_recovery_policy_recovery_share_driver_composition.fst
+0a8d7fa686a2df03586b26d0ae2826a8852b1a0fb2e4b0fc30f02c05686a85c8  src/recovery_share_driver.rs

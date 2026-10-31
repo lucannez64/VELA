@@ -69,6 +69,69 @@ final class Phase4Tests: XCTestCase {
             lamportClock: 0, keyEpoch: 1))
     }
 
+    func testAdmittedChunkDownloadEnforcesEpochAndRollback() {
+        let rms = Data(repeating: 8, count: 32)
+        let chunkID = "vault-data-000000"
+        let vaultJSON = #"{"items":[]}"#
+        guard let sealed = VelaCoreFFI.encryptVaultChunk(
+            rms: rms, chunkID: chunkID, vaultJSON: vaultJSON,
+            lamportClock: 4, keyEpoch: 2) else {
+            return XCTFail("seal failed")
+        }
+
+        // Valid positive, authentic, forward-moving download.
+        let admitted = VelaCoreFFI.decryptVaultChunkAdmitted(
+            rms: rms, chunkID: chunkID, ciphertextBase64: sealed,
+            lamportClock: 4, keyEpoch: 2, localKeyEpoch: 2,
+            lastSeenLamport: 3)
+        XCTAssertEqual(admitted?.vaultJSON, vaultJSON)
+        // The caller must baseline the clock the policy admitted.
+        XCTAssertEqual(admitted?.lamportClock, 4)
+        // Equal-clock re-delivery of the same revision is admitted.
+        XCTAssertEqual(
+            VelaCoreFFI.decryptVaultChunkAdmitted(
+                rms: rms, chunkID: chunkID, ciphertextBase64: sealed,
+                lamportClock: 4, keyEpoch: 2, localKeyEpoch: 2,
+                lastSeenLamport: 4)?.vaultJSON,
+            vaultJSON)
+        // A recorded clock ahead of the server's is a rollback.
+        XCTAssertNil(VelaCoreFFI.decryptVaultChunkAdmitted(
+            rms: rms, chunkID: chunkID, ciphertextBase64: sealed,
+            lamportClock: 4, keyEpoch: 2, localKeyEpoch: 2,
+            lastSeenLamport: 7))
+        // A relabelled clock fails the AEAD, so it never reaches admission.
+        XCTAssertNil(VelaCoreFFI.decryptVaultChunkAdmitted(
+            rms: rms, chunkID: chunkID, ciphertextBase64: sealed,
+            lamportClock: 5, keyEpoch: 2, localKeyEpoch: 2,
+            lastSeenLamport: 4))
+        // Epoch agreement is exact and positive; no automatic adoption.
+        for (server, local) in [(0, 0), (2, 3), (3, 2), (-1, -1)] {
+            XCTAssertNil(VelaCoreFFI.decryptVaultChunkAdmitted(
+                rms: rms, chunkID: chunkID, ciphertextBase64: sealed,
+                lamportClock: 4, keyEpoch: server, localKeyEpoch: local,
+                lastSeenLamport: 3))
+        }
+
+        // Epoch 1 is the pre-rotation wire shape boundary: its seal binds the
+        // chunk id and clock, so an epoch-1 blob is admitted at its own clock
+        // and refused at a relabelled one.
+        guard let epochOne = VelaCoreFFI.encryptVaultChunk(
+            rms: rms, chunkID: chunkID, vaultJSON: vaultJSON,
+            lamportClock: 3, keyEpoch: 1) else {
+            return XCTFail("epoch-1 seal failed")
+        }
+        XCTAssertEqual(
+            VelaCoreFFI.decryptVaultChunkAdmitted(
+                rms: rms, chunkID: chunkID, ciphertextBase64: epochOne,
+                lamportClock: 3, keyEpoch: 1, localKeyEpoch: 1,
+                lastSeenLamport: 2)?.lamportClock,
+            3)
+        XCTAssertNil(VelaCoreFFI.decryptVaultChunkAdmitted(
+            rms: rms, chunkID: chunkID, ciphertextBase64: epochOne,
+            lamportClock: 4, keyEpoch: 1, localKeyEpoch: 1,
+            lastSeenLamport: 2))
+    }
+
     func testRotatedVaultChunkBindsEpochAndRejectsLegacyCiphertext() {
         let rms = Data(repeating: 6, count: 32)
         let vaultJSON = #"{"items":[]}"#
@@ -431,16 +494,20 @@ final class Phase4Tests: XCTestCase {
     func testPerChunkRollbackHiddenBehindFreshChunkIsRejected() async throws {
         // A hostile server rolls one chunk back while keeping another ahead:
         // the manifest-max check passes, so the per-chunk baseline must catch
-        // it. Key names mirror SyncEngine's private constants.
+        // it. Baselines are namespaced by context, so seed the exact context
+        // the engine will compute.
+        let engine = SyncEngine(
+            client: mockClient(), repo: VaultRepository(
+                directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
+            keyEpoch: 1, accountID: "test-account")
+        defer { SyncEngine.clearBaselines() }
         let defaults = UserDefaults(suiteName: AppGroup.identifier) ?? .standard
-        defaults.set(5, forKey: "vela.sync.lastSeenLamport")
-        let baseline: [String: Int] = ["vault-data-000000": 5]
-        defaults.set(String(decoding: try JSONEncoder().encode(baseline), as: UTF8.self),
-                     forKey: "vela.sync.lastSeenLamportByChunk")
-        defer {
-            defaults.removeObject(forKey: "vela.sync.lastSeenLamport")
-            defaults.removeObject(forKey: "vela.sync.lastSeenLamportByChunk")
-        }
+        let chunks = [engine.baselineContext: ["vault-data-000000": 5]]
+        defaults.set(String(decoding: try JSONEncoder().encode(chunks), as: UTF8.self),
+                     forKey: "vela.sync.baselinesByContext.v2")
+        let manifest = [engine.baselineContext: 5]
+        defaults.set(String(decoding: try JSONEncoder().encode(manifest), as: UTF8.self),
+                     forKey: "vela.sync.manifestLamportByContext.v2")
 
         MockURLProtocol.handler = { req in
             XCTAssertEqual(req.url?.path, "/vault/sync")
@@ -449,9 +516,6 @@ final class Phase4Tests: XCTestCase {
             """
             return (Self.ok(req), Data(body.utf8))
         }
-        let repo = VaultRepository(
-            directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
-        let engine = SyncEngine(client: mockClient(), repo: repo, keyEpoch: 1)
         do {
             _ = try await engine.sync(rms: Data(repeating: 1, count: 32), localStore: VaultStore(items: []))
             XCTFail("expected the rolled-back chunk to be rejected")
@@ -459,6 +523,146 @@ final class Phase4Tests: XCTestCase {
             XCTAssertTrue(error.errorDescription?.contains("older revision") == true,
                           "unexpected error: \(error.localizedDescription)")
         }
+    }
+
+    /// A missing or re-created baseline must not be guessed into another
+    /// server/account/epoch namespace, and adopting a new epoch restarts the
+    /// server's counters without losing the old epoch's record.
+    func testBaselinesAreNamespacedPerContextAndPreserveSwitchingBack() throws {
+        SyncEngine.clearBaselines()
+        defer { SyncEngine.clearBaselines() }
+        let repo = VaultRepository(
+            directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let server = URL(string: "https://vault.example")!
+        let accountA = SyncEngine(
+            client: VelaClient(baseURL: server), repo: repo, keyEpoch: 1, accountID: "account-a")
+        let accountB = SyncEngine(
+            client: VelaClient(baseURL: server), repo: repo, keyEpoch: 1, accountID: "account-b")
+        let adoptedEpoch = SyncEngine(
+            client: VelaClient(baseURL: server), repo: repo, keyEpoch: 2, accountID: "account-a")
+        let otherServer = SyncEngine(
+            client: VelaClient(baseURL: URL(string: "https://other.example")!), repo: repo,
+            keyEpoch: 1, accountID: "account-a")
+
+        XCTAssertNotEqual(accountA.baselineContext, accountB.baselineContext)
+        XCTAssertNotEqual(accountA.baselineContext, adoptedEpoch.baselineContext)
+        XCTAssertNotEqual(accountA.baselineContext, otherServer.baselineContext)
+        // Host case and a trailing slash name the same context.
+        let sameServer = SyncEngine(
+            client: VelaClient(baseURL: URL(string: "https://VAULT.EXAMPLE/")!), repo: repo,
+            keyEpoch: 1, accountID: "account-a")
+        XCTAssertEqual(accountA.baselineContext, sameServer.baselineContext)
+
+        try accountA.recordAdmitted(
+            chunks: [(id: "vault-data-000000", clock: 9)], manifestClock: 9)
+        try accountB.recordAdmitted(
+            chunks: [(id: "vault-data-000000", clock: 2)], manifestClock: 2)
+
+        XCTAssertEqual(try accountA.recordedSeenClock(for: "vault-data-000000"), 9)
+        XCTAssertEqual(try accountB.recordedSeenClock(for: "vault-data-000000"), 2)
+        // Epoch adoption is an explicit first contact with restarted counters.
+        XCTAssertNil(try adoptedEpoch.recordedSeenClock(for: "vault-data-000000"))
+        XCTAssertNil(try adoptedEpoch.recordedManifestClock())
+        // Switching back to a context preserves its own baseline.
+        let accountAAgain = SyncEngine(
+            client: VelaClient(baseURL: server), repo: repo, keyEpoch: 1, accountID: "account-a")
+        XCTAssertEqual(try accountAAgain.recordedSeenClock(for: "vault-data-000000"), 9)
+        XCTAssertEqual(try accountAAgain.recordedManifestClock(), 9)
+        // A stale write cannot lower a recorded baseline.
+        try accountAAgain.recordAdmitted(
+            chunks: [(id: "vault-data-000000", clock: 3)], manifestClock: 3)
+        XCTAssertEqual(try accountAAgain.recordedSeenClock(for: "vault-data-000000"), 9)
+        XCTAssertEqual(try accountAAgain.recordedManifestClock(), 9)
+    }
+
+    /// Two engines advancing baselines concurrently must not lose each other's
+    /// writes. (Cross-process app/extension writes remain unsynchronized; see
+    /// SyncEngine's documented limitation.)
+    func testConcurrentBaselineWritersDoNotLoseAdvances() throws {
+        SyncEngine.clearBaselines()
+        defer { SyncEngine.clearBaselines() }
+        let repo = VaultRepository(
+            directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let engine = SyncEngine(
+            client: VelaClient(baseURL: URL(string: "https://vault.example")!), repo: repo,
+            keyEpoch: 1, accountID: "account-a")
+        let writers = 8
+        let iterations = 100
+        DispatchQueue.concurrentPerform(iterations: writers) { writer in
+            for step in 1...iterations {
+                try? engine.recordAdmitted(
+                    chunks: [(id: String(format: "vault-data-%06d", writer), clock: step)],
+                    manifestClock: step)
+            }
+        }
+        for writer in 0..<writers {
+            XCTAssertEqual(
+                try engine.recordedSeenClock(for: String(format: "vault-data-%06d", writer)),
+                Int64(iterations))
+        }
+        XCTAssertEqual(try engine.recordedManifestClock(), iterations)
+    }
+
+    /// Individually valid sealed chunks can form an invalid assembled document.
+    /// Decode failure must occur after admission and before persistence/floors.
+    func testFailedDecodeDoesNotAdvanceBaseline() async throws {
+        SyncEngine.clearBaselines()
+        defer { SyncEngine.clearBaselines() }
+        let rms = Data(repeating: 9, count: 32)
+        let chunkIDs = ["vault-data-000000", "vault-data-000001"]
+        let vaultJSON = "{\"items\":[],\"tombstones\":[]}"
+        var rawChunks: [String: Data] = [:]
+        for chunkID in chunkIDs {
+            // The production sealing API validates VaultStore input. Seal two
+            // complete stores; concatenating them is not one JSON document.
+            let ciphertext = try XCTUnwrap(VelaCoreFFI.encryptVaultChunk(
+                rms: rms, chunkID: chunkID, vaultJSON: vaultJSON,
+                lamportClock: 4, keyEpoch: 1))
+            rawChunks[chunkID] = try XCTUnwrap(Data(base64Encoded: ciphertext))
+            let admitted = try VelaCoreFFI.decryptVaultChunkAdmittedOrThrow(
+                rms: rms, chunkID: chunkID, ciphertextBase64: ciphertext,
+                lamportClock: 4, keyEpoch: 1, localKeyEpoch: 1,
+                lastSeenLamport: nil)
+            XCTAssertEqual(admitted.vaultJSON, vaultJSON)
+            XCTAssertEqual(admitted.lamportClock, 4)
+        }
+        let responses = rawChunks
+        MockURLProtocol.handler = { req in
+            switch req.url?.path ?? "" {
+            case "/vault/sync":
+                let body = """
+                {"epoch":1,"chunks":[{"chunk_id":"vault-data-000000","version":1,"lamport_clock":4,"last_writer":null},{"chunk_id":"vault-data-000001","version":1,"lamport_clock":4,"last_writer":null}]}
+                """
+                return (Self.ok(req), Data(body.utf8))
+            case let path where path.hasPrefix("/vault/chunk/"):
+                let chunkID = String(path.dropFirst("/vault/chunk/".count))
+                let raw = try XCTUnwrap(responses[chunkID])
+                let response = HTTPURLResponse(
+                    url: req.url!, statusCode: 200, httpVersion: nil,
+                    headerFields: ["X-Chunk-Version": "1", "X-Lamport-Clock": "4"])!
+                return (response, raw)
+            default:
+                XCTFail("unexpected request \(req.url?.path ?? "?")")
+                return (Self.ok(req), Data())
+            }
+        }
+        let repo = VaultRepository(
+            directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let engine = SyncEngine(
+            client: mockClient(), repo: repo, keyEpoch: 1, accountID: "test-account")
+        do {
+            _ = try await engine.sync(
+                rms: rms, localStore: VaultStore(items: []))
+            XCTFail("expected the assembled document to fail decoding")
+        } catch is DecodingError {
+            // Only the intended decode failure qualifies, not failed admission.
+        } catch {
+            XCTFail("expected DecodingError, got \(error)")
+        }
+        for chunkID in chunkIDs {
+            XCTAssertNil(try engine.recordedSeenClock(for: chunkID))
+        }
+        XCTAssertNil(try engine.recordedManifestClock())
     }
 
     private static func ok(_ req: URLRequest) -> HTTPURLResponse {

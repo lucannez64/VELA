@@ -1,0 +1,66 @@
+# Commands used (all heavy commands through vela-heavy)
+
+Environment for hax/F*:
+
+```
+export CARGO_HOME=/tmp/vela-hax-cargo
+export OPAMROOT=$HOME/.local/opt/vela-tools/opam
+export PATH=/tmp/vela-fstar-prebuilt/fstar/bin:$HOME/.local/opt/vela-tools/bin:$HOME/.local/opt/vela-tools/opam/vela-hax/bin:$PATH
+```
+
+`/tmp/vela-fstar-prebuilt/fstar` is a symlink to the pinned official
+`/home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar` install
+(F* 2025.10.06). Recreate it if `/tmp` was cleaned.
+
+Rust tests:
+
+```
+~/.local/opt/vela-tools/bin/vela-heavy env \
+  CARGO_TARGET_DIR=/home/hirew/.t3/worktrees/VELA/t3-700776df/target \
+  CARGO_PROFILE_DEV_CODEGEN_BACKEND=llvm \
+  cargo test --manifest-path serverVELA/vela-recovery-policy/Cargo.toml
+
+~/.local/opt/vela-tools/bin/vela-heavy env \
+  CARGO_TARGET_DIR=/home/hirew/.t3/worktrees/VELA/t3-700776df/target \
+  CARGO_PROFILE_DEV_CODEGEN_BACKEND=llvm \
+  cargo test --manifest-path serverVELA/vela-server/Cargo.toml --test integration
+
+~/.local/opt/vela-tools/bin/vela-heavy env \
+  CARGO_TARGET_DIR=/home/hirew/.t3/worktrees/VELA/t3-700776df/target \
+  CARGO_PROFILE_DEV_CODEGEN_BACKEND=llvm \
+  cargo test --manifest-path serverVELA/vela-server/Cargo.toml --test recovery_possession_model
+
+~/.local/opt/vela-tools/bin/vela-heavy env \
+  CARGO_TARGET_DIR=/home/hirew/.t3/worktrees/VELA/t3-700776df/target \
+  CARGO_PROFILE_DEV_CODEGEN_BACKEND=llvm \
+  cargo test --manifest-path serverVELA/vela-server/Cargo.toml --test recovery_lifecycle_model
+```
+
+F* (from `serverVELA/vela-recovery-policy`):
+
+```
+~/.local/opt/vela-tools/bin/vela-heavy ./verify-fstar-webauthn-driver.sh
+~/.local/opt/vela-tools/bin/vela-heavy ./verify-fstar.sh
+```
+
+The full run invokes `verify-fstar-driver.sh`,
+`verify-fstar-possession-driver.sh` and then
+`verify-fstar-webauthn-driver.sh` after the historical extraction check.
+
+Mutation runs (temporary copied extraction; nothing committed):
+
+```
+fstar.exe --cmi --cache_off --warn_error -331 --z3rlimit 4000 \
+  --z3version 4.13.3 \
+  --already_cached '+Prims+FStar+LowStar+C+Spec.Loops+TestLib' \
+  --include <hax-lib>/proof-libs/fstar/core \
+  --include <hax-lib>/proof-libs/fstar/rust_primitives \
+  --include <hax-lib>/proofs/fstar/extraction \
+  --include /tmp/webauthn-mutation-<name>/extraction-webauthn-driver \
+  --include <repo>/proofs/fstar/webauthn-driver-composition \
+  /tmp/webauthn-mutation-<name>/extraction-webauthn-driver/*.fst \
+  <repo>/proofs/fstar/webauthn-driver-composition/*.fst
+```
+
+See `mutation-budget.log`, `mutation-retry.log` and
+`mutation-live-guard.log` for the exact failure outputs.

@@ -1,0 +1,7 @@
+$ fstar.exe <share interpreter gate args; mutated driver passed explicitly>
+* Error 19 at proofs/fstar/extraction-send-driver/Vela_share_policy.Send_driver.fst(459,2-466,89):
+  - Could not prove post-condition
+  - The SMT solver could not prove the query. Use --query_stats for more
+    details.
+1 error was reported (see above)
+exit=1

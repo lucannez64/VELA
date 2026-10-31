@@ -1,0 +1,61 @@
+Vault upload/read driver increment
+==================================
+
+Rust (serverVELA/vela-rekey-policy/src/vault_upload_driver.rs)
+  public decision functions / constructors extracted: 14
+  hax_lib::ensures                                   2
+  hax_lib::requires                                  0 (the F* lemmas carry the
+                                                     soundness preconditions)
+  Rust conformance tests                            12 (25 total in the crate)
+  public enums/structs                              17
+  changes in round 2                                 0 (handler and driver
+                                                     behaviour unchanged)
+
+F* per-request lemmas (vault-upload-driver-lemmas, 1 module)
+  Lemma declarations                                42
+  recursive Pure definitions                         8
+  headline: upload_trace_theorem
+  write authorization: write_effect_route, write_effect_authority
+  read: read_step_sound, read_trace_theorem
+  reachability witnesses: active create, shadow, version conflict,
+                          unauthenticated, web shadow refusal, stale web,
+                          epoch rejection
+
+F* concurrent store composition (vault-upload-driver-composition, 1 module)
+  Lemma declarations                                67
+  recursive definitions                             19
+  modelled actions                                  11
+                                                     (Spawn, Resolve, Attempt,
+                                                     Quota, GuardedWrite,
+                                                     Reread, Activity, Publish,
+                                                     RekeyStart, RekeyCommit,
+                                                     RekeyAbort)
+  witness schedules                                 5
+  headline: upload_store_theorem
+  named consequences: no_stale_commit, no_bad_shadow_commit,
+                      no_success_without_commit
+  round-1 theorems kept: upload_composition_theorem, no_stale_active_write,
+                      no_web_shadow_write
+  commit-soundness lemmas: active_guard_commit_ok, shadow_guard_commit_ok,
+                      sql_write_committed_guard, stale_commit_increment_zero,
+                      bad_shadow_increment_zero, on_write_matched
+  witness lemmas: active_commit_is_reachable, shadow_commit_is_reachable,
+                      rotation_between_resolve_and_write_skips,
+                      web_shadow_is_refused, two_account_is_reachable
+
+Extraction
+  focused driver module: proofs/fstar/extraction-vault-upload-driver/
+  regenerated root dependency: proofs/fstar/extraction-vault-upload-driver-root/
+  historical artifact untouched: proofs/fstar/extraction/ (12 contracts)
+
+Mutation checks (round 2)
+  killed on the composition:
+    guard-epoch                 active guard drops key_epoch
+    shadow-epoch                driver sends read_epoch as a shadow write epoch
+    success-after-skip          driver reports a matched write for Skipped
+    guard-starter               shadow guard drops rekey_starter/rekey_id
+  concrete counterexamples (module admitted only the killed proof obligation
+  to let the counter evaluate):
+    guard-epoch-witness         w_stale_commit = 1, row at epoch 1, live epoch 2
+    shadow-epoch-witness        w_bad_shadow_commit = 1, shadow row at read epoch
+    success-after-skip-witness  w_success_without_commit = 1, no committed row

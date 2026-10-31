@@ -136,7 +136,20 @@ actor VelaClient {
         let lamport_clock: Int
         let last_writer: String?
     }
-    struct SyncManifest: Decodable { let chunks: [ChunkMeta] }
+    struct SyncManifest: Decodable {
+        let chunks: [ChunkMeta]
+        /// Account key epoch the manifest was served under. Pre-epoch servers
+        /// omit the field and can only serve epoch 1 (same rule as Android).
+        let epoch: Int
+
+        private enum CodingKeys: String, CodingKey { case chunks, epoch }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            chunks = try container.decode([ChunkMeta].self, forKey: .chunks)
+            epoch = try container.decodeIfPresent(Int.self, forKey: .epoch) ?? 1
+        }
+    }
 
     func syncManifest() async throws -> SyncManifest {
         try await request("GET", "/vault/sync", auth: true)

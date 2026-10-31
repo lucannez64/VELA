@@ -266,10 +266,20 @@ impl ApiClient {
         Ok(resp.status().is_success())
     }
 
+    /// A login challenge for `POST /auth/verify`.
     pub async fn get_challenge(&self) -> Result<ChallengeResponse> {
+        self.get_challenge_for("login").await
+    }
+
+    /// A challenge bound to `purpose` (`login`, `enroll` or `web_token`); the
+    /// server only accepts it at the matching endpoint.
+    pub async fn get_challenge_for(&self, purpose: &str) -> Result<ChallengeResponse> {
         let resp = self
             .send_request(true, |client| {
-                client.get(format!("{}/auth/challenge", self.base_url))
+                client.get(format!(
+                    "{}/auth/challenge?purpose={purpose}",
+                    self.base_url
+                ))
             })
             .await?;
 

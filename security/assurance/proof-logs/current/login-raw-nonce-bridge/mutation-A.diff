@@ -1,0 +1,13 @@
+--- serverVELA/vela-session-policy/proofs/fstar/login-raw-nonce-lemmas/Vela_session_policy_login_raw_nonce.fst	2026-10-25 15:31:54.081725631 +0100
++++ /tmp/vela-raw-nonce-mutations/purpose/Vela_session_policy_login_raw_nonce.fst	2026-10-25 15:34:16.330449368 +0100
+@@ -106,9 +106,7 @@
+   match o with
+   | None -> None
+   | Some b ->
+-      Some (if raw_login_decision b = ChallengeConsumption_Accepted
+-            then StoredPurpose_Login
+-            else StoredPurpose_Other)
++      Some StoredPurpose_Login
+
+ let raw_purpose_some_login (b: t_Slice u8)
+   : Lemma

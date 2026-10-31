@@ -1,0 +1,21 @@
+# Environment
+Host: Linux (this worktree)
+Parent commit: 5086395 (includes 57d8bf6 + 889b03c + 25bf944)
+Android SDK: /mnt/data/android-sdk
+JAVA_HOME: /usr/lib/jvm/java-17-openjdk
+Heavy runner: ~/.local/opt/vela-tools/bin/vela-heavy (global 3 GiB / no swap / 1 worker)
+Working directory for Gradle: androidVELA
+
+# Full JVM unit suite (log: android-kotlin-tests.log)
+cd androidVELA
+~/.local/opt/vela-tools/bin/vela-heavy sh ./gradlew --no-daemon --offline \
+  -Dorg.gradle.jvmargs=-Xmx1536m --max-workers=1 :app:testDebugUnitTest
+
+# Result: BUILD SUCCESSFUL; 159 tests, 0 failures, 0 errors (24 classes).
+# Prior parent count was 139 tests; this change adds 20 tests.
+
+# JUnit counts derivation (junit-counts.txt)
+python3 parse of androidVELA/app/build/test-results/testDebugUnitTest/TEST-*.xml
+
+# No Rust, F*, Swift, Gradle build-script, libVELA, global assurance,
+# correspondence, MANIFEST or CI commands were run or modified.

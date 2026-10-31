@@ -1,0 +1,15 @@
+--- /home/hirew/.t3/worktrees/VELA/t3-04703409/serverVELA/vela-enrollment-policy/proofs/fstar/extraction-pairing-driver/Vela_enrollment_policy.Pairing_driver.fst	2026-10-26 20:03:06.448931954 +0100
++++ /tmp/opencode/mutations/take-replay/Vela_enrollment_policy.Pairing_driver.fst	2026-10-26 20:12:44.844953870 +0100
+@@ -993,7 +993,11 @@
+           pairing_effect_is_sound result.f_driver result.f_effect &&
+           (~.(pairing_state_is_sound d <: bool) || pairing_state_is_sound result.f_driver)) =
+   match observation <: t_TakeObservation with
+-  | TakeObservation_Missing  -> terminal d (PairingFailure_CeremonyConsumed <: t_PairingFailure)
++  | TakeObservation_Missing  ->
++    transition ({ d with f_stage = PairingStage_InFlight <: t_PairingStage; f_consumed = true }
++        <:
++        t_PairingDriver)
++      (PairingEffect_InsertDevice <: t_PairingEffect)
+   | TakeObservation_Taken { f_grant_matches = grant_matches ; f_claim_matches = claim_matches } ->
+     if grant_matches && claim_matches
+     then

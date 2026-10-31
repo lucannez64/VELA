@@ -1,0 +1,11 @@
+--- serverVELA/vela-session-policy/proofs/fstar/extraction-websession-driver/Vela_session_policy.Websession_driver.fst	2026-10-28 10:51:43.398233033 +0100
++++ /tmp/vela-f2-websession-mut/delete/Vela_session_policy.Websession_driver.fst	2026-10-28 11:06:43.862354963 +0100
+@@ -1719,7 +1719,7 @@
+       delete_transition ({
+             driver with
+             f_stage = DeleteStage_Lockout <: t_DeleteStage;
+-            f_owner_matches = true
++            f_owner_matches = false
+           }
+           <:
+           t_DeleteDriver)

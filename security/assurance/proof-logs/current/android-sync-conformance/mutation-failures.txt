@@ -1,0 +1,12 @@
+=== adoptionLadderNeverAdoptsRollbackOrJump
+java.lang.AssertionError: mobile epoch gate must be exact equality expected:<false> but was:<true>
+
+=== epochOffersNeverChangeTheDownloadEpoch
+java.lang.AssertionError: offer 1->2/BOUND expected:<REFUSED> but was:<ACCEPTED>
+
+=== refusedCiphertextsNeverReachTheVault
+java.lang.AssertionError: expected refusal for Chunk(chunkId=vault-data-000001, clock=2, epoch=2, seal=SEALED) expected:<REFUSED> but was:<ACCEPTED>
+
+=== everyBoundedSyncTraceMatchesTheReferenceModel
+java.lang.AssertionError: full: verdict mismatch at step 3 of [HistoryEntry(command=Chunk(chunkId=vault-data-000000, clock=0, epoch=1, seal=SEALED), accepted=false), HistoryEntry(command=Chunk(chunkId=vault-data-000000, clock=0, epoch=1, seal=SEALED), accepted=false)] command=Chunk(chunkId=vault-data-000000, clock=1, epoch=2, seal=SEALED) target=Chunk(chunkId=vault-data-000000, clock=1, epoch=2, seal=SEALED) expected=REFUSED actual=ACCEPTED
+

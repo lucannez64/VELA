@@ -44,8 +44,9 @@ export async function pollSession(id: string, pollSecret: string): Promise<PollR
   return (await r.json()) as PollResponse;
 }
 
+/** A challenge for `POST /web-session/:id/token`; the server rejects it elsewhere. */
 export async function getChallenge(): Promise<string> {
-  const r = await fetch(`${BASE}/auth/challenge`);
+  const r = await fetch(`${BASE}/auth/challenge?purpose=web_token`);
   if (!r.ok) throw new Error(`Challenge failed (HTTP ${r.status})`);
   return ((await r.json()) as { challenge: string }).challenge;
 }

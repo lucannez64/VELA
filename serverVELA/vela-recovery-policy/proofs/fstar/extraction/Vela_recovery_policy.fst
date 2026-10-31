@@ -5,6 +5,10 @@ open Core_models
 
 let v_INITIAL_EPOCH: i64 = mk_i64 1
 
+let v_HYBRID_EK_LEN: usize = mk_usize 1568 +! mk_usize 32
+
+let v_HYBRID_VK_LEN: usize = mk_usize 2592 +! mk_usize 32
+
 type t_PublicationStageRequest = {
   f_declared_epoch:i64;
   f_split_id_present:bool;
@@ -187,12 +191,15 @@ type t_RecoveryPhase =
   | RecoveryPhase_Revoked : t_RecoveryPhase
   | RecoveryPhase_Expired : t_RecoveryPhase
 
-[@@ FStar.Tactics.Typeclasses.tcinstance]
-assume
-val impl_53': Core_models.Cmp.t_PartialEq t_RecoveryPhase t_RecoveryPhase
-
-unfold
-let impl_53 = impl_53'
+/// Raw observations from the recovery-initiation request, the `users` row and
+/// the store slot that will hold the new attempt.
+type t_InitiateObservation = {
+  f_account_present:bool;
+  f_share_present:bool;
+  f_credential_present:bool;
+  f_attempt_id_fresh:bool;
+  f_ttl_secs:u64
+}
 
 type t_InitiateFacts = {
   f_phase:t_RecoveryPhase;
@@ -210,11 +217,53 @@ type t_InitiateDecision =
   | InitiateDecision_Reject : t_InitiateDecision
 
 let initiation_is_authorized (facts: t_InitiateFacts) : bool =
-  facts.f_phase =. (RecoveryPhase_Ready <: t_RecoveryPhase) && facts.f_account_exists &&
+  (match facts.f_phase <: t_RecoveryPhase with
+    | RecoveryPhase_Ready  -> true
+    | _ -> false) &&
+  facts.f_account_exists &&
   facts.f_share_present &&
   facts.f_credential_present &&
   facts.f_attempt_id_fresh &&
   facts.f_ttl_positive
+
+/// Turn raw account/share/credential/store observations into the initiation
+/// facts. The phase names exactly the observed availability of an account,
+/// its recovery share and its recovery credential; it is not supplied by the
+/// caller.
+let initiate_facts (obs: t_InitiateObservation)
+    : Prims.Pure t_InitiateFacts
+      Prims.l_True
+      (ensures
+        fun facts ->
+          let facts:t_InitiateFacts = facts in
+          (match facts.f_phase <: t_RecoveryPhase with
+            | RecoveryPhase_Ready  -> true
+            | _ -> false) =.
+          (obs.f_account_present && obs.f_share_present && obs.f_credential_present) &&
+          (match facts.f_phase <: t_RecoveryPhase with
+            | RecoveryPhase_Unavailable  -> true
+            | _ -> false) =.
+          (~.(obs.f_account_present && obs.f_share_present && obs.f_credential_present) <: bool) &&
+          facts.f_account_exists =. obs.f_account_present &&
+          facts.f_share_present =. obs.f_share_present &&
+          facts.f_credential_present =. obs.f_credential_present &&
+          facts.f_attempt_id_fresh =. obs.f_attempt_id_fresh &&
+          facts.f_ttl_positive =. (obs.f_ttl_secs >. mk_u64 0 <: bool)) =
+  let available:bool = obs.f_account_present && obs.f_share_present && obs.f_credential_present in
+  {
+    f_phase
+    =
+    if available
+    then RecoveryPhase_Ready <: t_RecoveryPhase
+    else RecoveryPhase_Unavailable <: t_RecoveryPhase;
+    f_account_exists = obs.f_account_present;
+    f_share_present = obs.f_share_present;
+    f_credential_present = obs.f_credential_present;
+    f_attempt_id_fresh = obs.f_attempt_id_fresh;
+    f_ttl_positive = obs.f_ttl_secs >. mk_u64 0
+  }
+  <:
+  t_InitiateFacts
 
 let initiation_decision_matches_spec (facts: t_InitiateFacts) (decision: t_InitiateDecision) : bool =
   match decision <: t_InitiateDecision with
@@ -279,6 +328,25 @@ let plan_registration (facts: t_RegistrationFacts)
     t_RegistrationDecision
   else RegistrationDecision_Reject <: t_RegistrationDecision
 
+/// Where a `/recovery/recover` request found the stored challenge state.
+type t_RecoveryAttemptSource =
+  | RecoveryAttemptSource_Missing : t_RecoveryAttemptSource
+  | RecoveryAttemptSource_Consumed : t_RecoveryAttemptSource
+
+/// Raw observations from `/recovery/recover`, the consumed challenge state,
+/// the WebAuthn assertion and the `users` row.
+type t_RecoverObservation = {
+  f_attempt_source:t_RecoveryAttemptSource;
+  f_user_matches:bool;
+  f_attempt_matches:bool;
+  f_credential_matches_current:bool;
+  f_assertion_valid:bool;
+  f_user_verified:bool;
+  f_share_present:bool;
+  f_account_epoch_active:bool;
+  f_stored_epoch:Core_models.Option.t_Option i64
+}
+
 type t_RecoverFacts = {
   f_phase:t_RecoveryPhase;
   f_user_matches:bool;
@@ -302,7 +370,10 @@ type t_RecoverDecision =
   | RecoverDecision_Reject : t_RecoverDecision
 
 let recovery_is_authorized (facts: t_RecoverFacts) : bool =
-  facts.f_phase =. (RecoveryPhase_ChallengePending <: t_RecoveryPhase) && facts.f_user_matches &&
+  (match facts.f_phase <: t_RecoveryPhase with
+    | RecoveryPhase_ChallengePending  -> true
+    | _ -> false) &&
+  facts.f_user_matches &&
   facts.f_attempt_matches &&
   facts.f_challenge_consumed &&
   facts.f_credential_matches_current &&
@@ -311,6 +382,81 @@ let recovery_is_authorized (facts: t_RecoverFacts) : bool =
   facts.f_share_present &&
   facts.f_account_epoch_active &&
   facts.f_epoch >=. v_INITIAL_EPOCH
+
+/// Normalize a stored recovery epoch the same way the handler does: a missing
+/// or non-positive column falls back to the initial epoch.
+let observed_recovery_epoch (stored_epoch: Core_models.Option.t_Option i64)
+    : Prims.Pure i64
+      Prims.l_True
+      (ensures
+        fun epoch ->
+          let epoch:i64 = epoch in
+          epoch =.
+          (match stored_epoch <: Core_models.Option.t_Option i64 with
+            | Core_models.Option.Option_None  -> v_INITIAL_EPOCH
+            | Core_models.Option.Option_Some value ->
+              if value <. v_INITIAL_EPOCH <: bool then v_INITIAL_EPOCH else value)) =
+  match stored_epoch <: Core_models.Option.t_Option i64 with
+  | Core_models.Option.Option_None  -> v_INITIAL_EPOCH
+  | Core_models.Option.Option_Some value ->
+    if value <. v_INITIAL_EPOCH then v_INITIAL_EPOCH else value
+
+/// Turn the consumed-attempt, assertion, credential and row observations into
+/// the share-release facts. The phase and one-shot flag come from whether the
+/// store actually returned (and removed) the exact challenge.
+let recover_facts (obs: t_RecoverObservation)
+    : Prims.Pure t_RecoverFacts
+      Prims.l_True
+      (ensures
+        fun facts ->
+          let facts:t_RecoverFacts = facts in
+          (match facts.f_phase <: t_RecoveryPhase with
+            | RecoveryPhase_ChallengePending  -> true
+            | _ -> false) =.
+          (match obs.f_attempt_source <: t_RecoveryAttemptSource with
+            | RecoveryAttemptSource_Consumed  -> true
+            | _ -> false) &&
+          (match facts.f_phase <: t_RecoveryPhase with
+            | RecoveryPhase_Expired  -> true
+            | _ -> false) =.
+          (match obs.f_attempt_source <: t_RecoveryAttemptSource with
+            | RecoveryAttemptSource_Missing  -> true
+            | _ -> false) &&
+          facts.f_user_matches =. obs.f_user_matches &&
+          facts.f_attempt_matches =. obs.f_attempt_matches &&
+          facts.f_challenge_consumed =.
+          (match obs.f_attempt_source <: t_RecoveryAttemptSource with
+            | RecoveryAttemptSource_Consumed  -> true
+            | _ -> false) &&
+          facts.f_credential_matches_current =. obs.f_credential_matches_current &&
+          facts.f_assertion_valid =. obs.f_assertion_valid &&
+          facts.f_user_verified =. obs.f_user_verified &&
+          facts.f_share_present =. obs.f_share_present &&
+          facts.f_account_epoch_active =. obs.f_account_epoch_active &&
+          facts.f_epoch =. (observed_recovery_epoch obs.f_stored_epoch <: i64)) =
+  let challenge_consumed:bool =
+    match obs.f_attempt_source <: t_RecoveryAttemptSource with
+    | RecoveryAttemptSource_Consumed  -> true
+    | _ -> false
+  in
+  {
+    f_phase
+    =
+    if challenge_consumed
+    then RecoveryPhase_ChallengePending <: t_RecoveryPhase
+    else RecoveryPhase_Expired <: t_RecoveryPhase;
+    f_user_matches = obs.f_user_matches;
+    f_attempt_matches = obs.f_attempt_matches;
+    f_challenge_consumed = challenge_consumed;
+    f_credential_matches_current = obs.f_credential_matches_current;
+    f_assertion_valid = obs.f_assertion_valid;
+    f_user_verified = obs.f_user_verified;
+    f_share_present = obs.f_share_present;
+    f_account_epoch_active = obs.f_account_epoch_active;
+    f_epoch = observed_recovery_epoch obs.f_stored_epoch
+  }
+  <:
+  t_RecoverFacts
 
 let recovery_decision_matches_spec (facts: t_RecoverFacts) (decision: t_RecoverDecision) : bool =
   match decision <: t_RecoverDecision with
@@ -334,6 +480,17 @@ let plan_recovery (facts: t_RecoverFacts)
     t_RecoverDecision
   else RecoverDecision_Reject <: t_RecoverDecision
 
+/// Raw observations from the possession-proof initiation request, the `users`
+/// row and the store slot for the new attempt.
+type t_ProofInitiateObservation = {
+  f_account_present:bool;
+  f_share_present:bool;
+  f_commitment_len:usize;
+  f_rotation_active:bool;
+  f_attempt_id_fresh:bool;
+  f_ttl_secs:u64
+}
+
 /// Facts for starting a possession-proof recovery attempt.
 type t_ProofInitiateFacts = {
   f_phase:t_RecoveryPhase;
@@ -345,7 +502,10 @@ type t_ProofInitiateFacts = {
 }
 
 let proof_initiation_is_authorized (facts: t_ProofInitiateFacts) : bool =
-  facts.f_phase =. (RecoveryPhase_Ready <: t_RecoveryPhase) && facts.f_account_exists &&
+  (match facts.f_phase <: t_RecoveryPhase with
+    | RecoveryPhase_Ready  -> true
+    | _ -> false) &&
+  facts.f_account_exists &&
   facts.f_share_present &&
   facts.f_possession_hash_present &&
   facts.f_attempt_id_fresh &&
@@ -369,18 +529,82 @@ let plan_proof_initiation (facts: t_ProofInitiateFacts)
   then ProofInitiateDecision_Start <: t_ProofInitiateDecision
   else ProofInitiateDecision_Reject <: t_ProofInitiateDecision
 
+/// Turn the account, share, decoded-commitment, rotation, store-slot and TTL
+/// observations into the possession-initiation facts. `Ready` names exactly
+/// the observed availability of an account, its recovery share and a non-empty
+/// staged commitment on an account that is not rotating.
+let proof_initiate_facts (obs: t_ProofInitiateObservation)
+    : Prims.Pure t_ProofInitiateFacts
+      Prims.l_True
+      (ensures
+        fun facts ->
+          let facts:t_ProofInitiateFacts = facts in
+          (match facts.f_phase <: t_RecoveryPhase with
+            | RecoveryPhase_Ready  -> true
+            | _ -> false) =.
+          (obs.f_account_present && obs.f_share_present &&
+          (obs.f_commitment_len >. mk_usize 0 <: bool) &&
+          (~.obs.f_rotation_active <: bool)) &&
+          (match facts.f_phase <: t_RecoveryPhase with
+            | RecoveryPhase_Unavailable  -> true
+            | _ -> false) =.
+          (~.(obs.f_account_present && obs.f_share_present &&
+              (obs.f_commitment_len >. mk_usize 0 <: bool) &&
+              (~.obs.f_rotation_active <: bool))
+            <:
+            bool) &&
+          facts.f_account_exists =. obs.f_account_present &&
+          facts.f_share_present =. obs.f_share_present &&
+          facts.f_possession_hash_present =. (obs.f_commitment_len >. mk_usize 0 <: bool) &&
+          facts.f_attempt_id_fresh =. obs.f_attempt_id_fresh &&
+          facts.f_ttl_positive =. (obs.f_ttl_secs >. mk_u64 0 <: bool)) =
+  let available:bool =
+    obs.f_account_present && obs.f_share_present && obs.f_commitment_len >. mk_usize 0 &&
+    ~.obs.f_rotation_active
+  in
+  {
+    f_phase
+    =
+    if available
+    then RecoveryPhase_Ready <: t_RecoveryPhase
+    else RecoveryPhase_Unavailable <: t_RecoveryPhase;
+    f_account_exists = obs.f_account_present;
+    f_share_present = obs.f_share_present;
+    f_possession_hash_present = obs.f_commitment_len >. mk_usize 0;
+    f_attempt_id_fresh = obs.f_attempt_id_fresh;
+    f_ttl_positive = obs.f_ttl_secs >. mk_u64 0
+  }
+  <:
+  t_ProofInitiateFacts
+
 /// Facts for redeeming one possession-proof attempt. The cryptographic
 /// comparison itself stays outside this crate; `proof_verified` carries only
 /// its authenticated outcome.
 type t_PossessionRecoverFacts = {
   f_phase:t_RecoveryPhase;
+  f_account_present:bool;
   f_user_matches:bool;
   f_attempt_matches:bool;
   f_challenge_consumed:bool;
   f_proof_verified:bool;
   f_account_epoch_active:bool;
+  f_commitment_present:bool;
   f_commitment_epoch_matches:bool;
   f_epoch:i64
+}
+
+/// Raw observations from the consumed possession attempt, the decoded proof
+/// state, the verification result and the live `users` row.
+type t_PossessionRecoverObservation = {
+  f_attempt_source:t_RecoveryAttemptSource;
+  f_account_present:bool;
+  f_user_matches:bool;
+  f_attempt_matches:bool;
+  f_proof_verified:bool;
+  f_account_epoch_active:bool;
+  f_commitment_len:usize;
+  f_commitment_epoch:i64;
+  f_stored_epoch:Core_models.Option.t_Option i64
 }
 
 type t_PossessionGrantPermit = {
@@ -397,11 +621,16 @@ type t_PossessionRecoverDecision =
 let impl_PossessionGrantPermit__releases_server_share (self: t_PossessionGrantPermit) : bool = false
 
 let possession_recovery_is_authorized (facts: t_PossessionRecoverFacts) : bool =
-  facts.f_phase =. (RecoveryPhase_ChallengePending <: t_RecoveryPhase) && facts.f_user_matches &&
+  (match facts.f_phase <: t_RecoveryPhase with
+    | RecoveryPhase_ChallengePending  -> true
+    | _ -> false) &&
+  facts.f_account_present &&
+  facts.f_user_matches &&
   facts.f_attempt_matches &&
   facts.f_challenge_consumed &&
   facts.f_proof_verified &&
   facts.f_account_epoch_active &&
+  facts.f_commitment_present &&
   facts.f_commitment_epoch_matches &&
   facts.f_epoch >=. v_INITIAL_EPOCH
 
@@ -455,6 +684,74 @@ let stale_commitment_can_recover (facts: t_PossessionRecoverFacts)
   in
   possession_recovery_is_authorized facts
 
+/// Turn the consumed-attempt, decoded-envelope, verification and row
+/// observations into the possession-recovery facts. The phase and one-shot
+/// flag come from whether the store actually returned (and removed) the exact
+/// attempt; commitment presence and epoch equality come from the decoded
+/// commitment length and the decoded envelope epoch.
+let possession_recover_facts (obs: t_PossessionRecoverObservation)
+    : Prims.Pure t_PossessionRecoverFacts
+      Prims.l_True
+      (ensures
+        fun facts ->
+          let facts:t_PossessionRecoverFacts = facts in
+          (match facts.f_phase <: t_RecoveryPhase with
+            | RecoveryPhase_ChallengePending  -> true
+            | _ -> false) =.
+          (match obs.f_attempt_source <: t_RecoveryAttemptSource with
+            | RecoveryAttemptSource_Consumed  -> true
+            | _ -> false) &&
+          (match facts.f_phase <: t_RecoveryPhase with
+            | RecoveryPhase_Expired  -> true
+            | _ -> false) =.
+          (match obs.f_attempt_source <: t_RecoveryAttemptSource with
+            | RecoveryAttemptSource_Missing  -> true
+            | _ -> false) &&
+          facts.f_account_present =. obs.f_account_present &&
+          facts.f_user_matches =. obs.f_user_matches &&
+          facts.f_attempt_matches =. obs.f_attempt_matches &&
+          facts.f_challenge_consumed =.
+          (match obs.f_attempt_source <: t_RecoveryAttemptSource with
+            | RecoveryAttemptSource_Consumed  -> true
+            | _ -> false) &&
+          facts.f_proof_verified =. obs.f_proof_verified &&
+          facts.f_account_epoch_active =. obs.f_account_epoch_active &&
+          facts.f_commitment_present =. (obs.f_commitment_len >. mk_usize 0 <: bool) &&
+          facts.f_commitment_epoch_matches =.
+          (obs.f_commitment_epoch =. (observed_recovery_epoch obs.f_stored_epoch <: i64) <: bool) &&
+          facts.f_epoch =. (observed_recovery_epoch obs.f_stored_epoch <: i64)) =
+  let challenge_consumed:bool =
+    match obs.f_attempt_source <: t_RecoveryAttemptSource with
+    | RecoveryAttemptSource_Consumed  -> true
+    | _ -> false
+  in
+  let epoch:i64 = observed_recovery_epoch obs.f_stored_epoch in
+  {
+    f_phase
+    =
+    if challenge_consumed
+    then RecoveryPhase_ChallengePending <: t_RecoveryPhase
+    else RecoveryPhase_Expired <: t_RecoveryPhase;
+    f_account_present = obs.f_account_present;
+    f_user_matches = obs.f_user_matches;
+    f_attempt_matches = obs.f_attempt_matches;
+    f_challenge_consumed = challenge_consumed;
+    f_proof_verified = obs.f_proof_verified;
+    f_account_epoch_active = obs.f_account_epoch_active;
+    f_commitment_present = obs.f_commitment_len >. mk_usize 0;
+    f_commitment_epoch_matches = obs.f_commitment_epoch =. epoch;
+    f_epoch = epoch
+  }
+  <:
+  t_PossessionRecoverFacts
+
+/// Raw observations from the WebAuthn assertion and the live credential.
+type t_CredentialUpdateObservation = {
+  f_assertion_valid:bool;
+  f_credential_matches_current:bool;
+  f_needs_update:bool
+}
+
 type t_CredentialUpdateFacts = {
   f_assertion_valid:bool;
   f_credential_matches_current:bool;
@@ -466,24 +763,44 @@ type t_CredentialUpdateDecision =
   | CredentialUpdateDecision_Keep : t_CredentialUpdateDecision
   | CredentialUpdateDecision_Reject : t_CredentialUpdateDecision
 
-[@@ FStar.Tactics.Typeclasses.tcinstance]
-assume
-val impl_149': Core_models.Cmp.t_PartialEq t_CredentialUpdateDecision t_CredentialUpdateDecision
-
-unfold
-let impl_149 = impl_149'
+/// Turn the assertion result and stored-credential comparison into the
+/// metadata-update facts.
+let credential_update_facts (obs: t_CredentialUpdateObservation)
+    : Prims.Pure t_CredentialUpdateFacts
+      Prims.l_True
+      (ensures
+        fun facts ->
+          let facts:t_CredentialUpdateFacts = facts in
+          facts.f_assertion_valid =. obs.f_assertion_valid &&
+          facts.f_credential_matches_current =. obs.f_credential_matches_current &&
+          facts.f_needs_update =. obs.f_needs_update) =
+  {
+    f_assertion_valid = obs.f_assertion_valid;
+    f_credential_matches_current = obs.f_credential_matches_current;
+    f_needs_update = obs.f_needs_update
+  }
+  <:
+  t_CredentialUpdateFacts
 
 let credential_update_decision_matches_spec
       (facts: t_CredentialUpdateFacts)
       (decision: t_CredentialUpdateDecision)
     : bool =
-  decision =.
-  (if (~.facts.f_assertion_valid <: bool) || (~.facts.f_credential_matches_current <: bool)
-    then CredentialUpdateDecision_Reject <: t_CredentialUpdateDecision
+  if ~.facts.f_assertion_valid || ~.facts.f_credential_matches_current
+  then
+    match decision <: t_CredentialUpdateDecision with
+    | CredentialUpdateDecision_Reject  -> true
+    | _ -> false
+  else
+    if facts.f_needs_update
+    then
+      match decision <: t_CredentialUpdateDecision with
+      | CredentialUpdateDecision_Update  -> true
+      | _ -> false
     else
-      if facts.f_needs_update
-      then CredentialUpdateDecision_Update <: t_CredentialUpdateDecision
-      else CredentialUpdateDecision_Keep <: t_CredentialUpdateDecision)
+      match decision <: t_CredentialUpdateDecision with
+      | CredentialUpdateDecision_Keep  -> true
+      | _ -> false
 
 let plan_credential_update (facts: t_CredentialUpdateFacts)
     : Prims.Pure t_CredentialUpdateDecision
@@ -499,8 +816,988 @@ let plan_credential_update (facts: t_CredentialUpdateFacts)
     then CredentialUpdateDecision_Update <: t_CredentialUpdateDecision
     else CredentialUpdateDecision_Keep <: t_CredentialUpdateDecision
 
+/// Decoded grant facts observed by the non-consuming lookup.
+type t_EnrollmentGrantFacts = {
+  f_epoch:i64;
+  f_possession:bool
+}
+
+/// Live `users`-row facts. Constructed only after the grant lookup succeeded,
+/// so a failed grant lookup cannot disclose account state.
+type t_EnrollmentAccountFacts = {
+  f_stored_epoch:Core_models.Option.t_Option i64;
+  f_epoch_active:bool;
+  f_credential_id_matches:bool;
+  f_commitment_len:usize
+}
+
+/// Whether the account query ran. `NotQueried` is the deliberate privacy state
+/// for a missing grant and is never treated as an observed absence.
+type t_EnrollmentAccountObservation =
+  | EnrollmentAccountObservation_NotQueried : t_EnrollmentAccountObservation
+  | EnrollmentAccountObservation_Absent : t_EnrollmentAccountObservation
+  | EnrollmentAccountObservation_Present : t_EnrollmentAccountFacts
+    -> t_EnrollmentAccountObservation
+
+/// Raw observations available before the single-use grant is redeemed.
+type t_EnrollmentPreflightObservation = {
+  f_grant:Core_models.Option.t_Option t_EnrollmentGrantFacts;
+  f_account:t_EnrollmentAccountObservation
+}
+
+/// The first failed precondition, in the handler's historical status/message
+/// precedence order.
+type t_EnrollmentPreflightRejection =
+  | EnrollmentPreflightRejection_GrantUnavailable : t_EnrollmentPreflightRejection
+  | EnrollmentPreflightRejection_AccountUnavailable : t_EnrollmentPreflightRejection
+  | EnrollmentPreflightRejection_AccountAbsent : t_EnrollmentPreflightRejection
+  | EnrollmentPreflightRejection_EpochMismatch : t_EnrollmentPreflightRejection
+  | EnrollmentPreflightRejection_RotationPaused : t_EnrollmentPreflightRejection
+  | EnrollmentPreflightRejection_CredentialReplaced : t_EnrollmentPreflightRejection
+  | EnrollmentPreflightRejection_CommitmentMissing : t_EnrollmentPreflightRejection
+
+/// Permission to attempt the atomic single-use redemption. It says nothing
+/// about whether the grant was actually consumed or whether a device may be
+/// inserted; `plan_enrollment` decides the latter from the actual consumed
+/// grant and the final observations.
+type t_ReadyToConsume = {
+  f_epoch:i64;
+  f_possession:bool
+}
+
+let impl_ReadyToConsume__epoch (self: t_ReadyToConsume) : i64 = self.f_epoch
+
+let impl_ReadyToConsume__possession (self: t_ReadyToConsume) : bool = self.f_possession
+
+type t_EnrollmentPreflightDecision =
+  | EnrollmentPreflightDecision_Ready : t_ReadyToConsume -> t_EnrollmentPreflightDecision
+  | EnrollmentPreflightDecision_Reject : t_EnrollmentPreflightRejection
+    -> t_EnrollmentPreflightDecision
+
+/// WebAuthn grants need their exact credential; possession grants need their
+/// staged commitment. The grant value carries no commitment id or generation,
+/// so this is presence, not an exact binding.
+let enrollment_preflight_authority (account: t_EnrollmentAccountFacts) (possession: bool) : bool =
+  if possession then account.f_commitment_len >. mk_usize 0 else account.f_credential_id_matches
+
+/// The first rejection reason in status/message precedence order, or `None`
+/// when the redemption may be attempted.
+let enrollment_preflight_rejection (obs: t_EnrollmentPreflightObservation)
+    : Core_models.Option.t_Option t_EnrollmentPreflightRejection =
+  match obs.f_grant <: Core_models.Option.t_Option t_EnrollmentGrantFacts with
+  | Core_models.Option.Option_None  ->
+    Core_models.Option.Option_Some
+    (EnrollmentPreflightRejection_GrantUnavailable <: t_EnrollmentPreflightRejection)
+    <:
+    Core_models.Option.t_Option t_EnrollmentPreflightRejection
+  | Core_models.Option.Option_Some grant ->
+    match obs.f_account <: t_EnrollmentAccountObservation with
+    | EnrollmentAccountObservation_NotQueried  ->
+      Core_models.Option.Option_Some
+      (EnrollmentPreflightRejection_AccountUnavailable <: t_EnrollmentPreflightRejection)
+      <:
+      Core_models.Option.t_Option t_EnrollmentPreflightRejection
+    | EnrollmentAccountObservation_Absent  ->
+      Core_models.Option.Option_Some
+      (EnrollmentPreflightRejection_AccountAbsent <: t_EnrollmentPreflightRejection)
+      <:
+      Core_models.Option.t_Option t_EnrollmentPreflightRejection
+    | EnrollmentAccountObservation_Present account ->
+      if (observed_recovery_epoch account.f_stored_epoch <: i64) <>. grant.f_epoch
+      then
+        Core_models.Option.Option_Some
+        (EnrollmentPreflightRejection_EpochMismatch <: t_EnrollmentPreflightRejection)
+        <:
+        Core_models.Option.t_Option t_EnrollmentPreflightRejection
+      else
+        if ~.account.f_epoch_active
+        then
+          Core_models.Option.Option_Some
+          (EnrollmentPreflightRejection_RotationPaused <: t_EnrollmentPreflightRejection)
+          <:
+          Core_models.Option.t_Option t_EnrollmentPreflightRejection
+        else
+          if grant.f_possession && account.f_commitment_len =. mk_usize 0
+          then
+            Core_models.Option.Option_Some
+            (EnrollmentPreflightRejection_CommitmentMissing <: t_EnrollmentPreflightRejection)
+            <:
+            Core_models.Option.t_Option t_EnrollmentPreflightRejection
+          else
+            if ~.grant.f_possession && ~.account.f_credential_id_matches
+            then
+              Core_models.Option.Option_Some
+              (EnrollmentPreflightRejection_CredentialReplaced <: t_EnrollmentPreflightRejection)
+              <:
+              Core_models.Option.t_Option t_EnrollmentPreflightRejection
+            else
+              Core_models.Option.Option_None
+              <:
+              Core_models.Option.t_Option t_EnrollmentPreflightRejection
+
+/// Independently stated rejection guards. Each guard is a pure formula over
+/// the observation and is deliberately written without the nested conditionals
+/// used by `enrollment_preflight_rejection`. Later guards can overlap earlier
+/// ones (for example an inactive, epoch-mismatched account); the ranked table
+/// below resolves that by taking the earliest applicable rank. The
+/// commitment/credential pair is disjoint by possession polarity.
+type t_EnrollmentPreflightGuards = {
+  f_grant_unavailable:bool;
+  f_account_unavailable:bool;
+  f_account_absent:bool;
+  f_epoch_mismatch:bool;
+  f_rotation_paused:bool;
+  f_commitment_missing:bool;
+  f_credential_replaced:bool
+}
+
+let enrollment_preflight_guards (obs: t_EnrollmentPreflightObservation)
+    : t_EnrollmentPreflightGuards =
+  match obs.f_grant <: Core_models.Option.t_Option t_EnrollmentGrantFacts with
+  | Core_models.Option.Option_None  ->
+    {
+      f_grant_unavailable = true;
+      f_account_unavailable = false;
+      f_account_absent = false;
+      f_epoch_mismatch = false;
+      f_rotation_paused = false;
+      f_commitment_missing = false;
+      f_credential_replaced = false
+    }
+    <:
+    t_EnrollmentPreflightGuards
+  | Core_models.Option.Option_Some grant ->
+    match obs.f_account <: t_EnrollmentAccountObservation with
+    | EnrollmentAccountObservation_NotQueried  ->
+      {
+        f_grant_unavailable = false;
+        f_account_unavailable = true;
+        f_account_absent = false;
+        f_epoch_mismatch = false;
+        f_rotation_paused = false;
+        f_commitment_missing = false;
+        f_credential_replaced = false
+      }
+      <:
+      t_EnrollmentPreflightGuards
+    | EnrollmentAccountObservation_Absent  ->
+      {
+        f_grant_unavailable = false;
+        f_account_unavailable = false;
+        f_account_absent = true;
+        f_epoch_mismatch = false;
+        f_rotation_paused = false;
+        f_commitment_missing = false;
+        f_credential_replaced = false
+      }
+      <:
+      t_EnrollmentPreflightGuards
+    | EnrollmentAccountObservation_Present account ->
+      {
+        f_grant_unavailable = false;
+        f_account_unavailable = false;
+        f_account_absent = false;
+        f_epoch_mismatch = (observed_recovery_epoch account.f_stored_epoch <: i64) <>. grant.f_epoch;
+        f_rotation_paused = ~.account.f_epoch_active;
+        f_commitment_missing = grant.f_possession && account.f_commitment_len =. mk_usize 0;
+        f_credential_replaced = ~.grant.f_possession && ~.account.f_credential_id_matches
+      }
+      <:
+      t_EnrollmentPreflightGuards
+
+/// Positive readiness guards. These are the independent statement that a
+/// preflight observation is actually ready; `plan_enrollment_preflight`'s
+/// `Ready` permit must imply every one of them and the grant's fields, and
+/// their conjunction must imply the permit.
+type t_EnrollmentPreflightReadiness = {
+  f_grant_present:bool;
+  f_account_observed:bool;
+  f_epoch_matches:bool;
+  f_rotation_active:bool;
+  f_authority_present:bool
+}
+
+let enrollment_preflight_readiness (obs: t_EnrollmentPreflightObservation)
+    : t_EnrollmentPreflightReadiness =
+  match obs.f_grant <: Core_models.Option.t_Option t_EnrollmentGrantFacts with
+  | Core_models.Option.Option_None  ->
+    {
+      f_grant_present = false;
+      f_account_observed = false;
+      f_epoch_matches = false;
+      f_rotation_active = false;
+      f_authority_present = false
+    }
+    <:
+    t_EnrollmentPreflightReadiness
+  | Core_models.Option.Option_Some grant ->
+    match obs.f_account <: t_EnrollmentAccountObservation with
+    | EnrollmentAccountObservation_Present account ->
+      {
+        f_grant_present = true;
+        f_account_observed = true;
+        f_epoch_matches = (observed_recovery_epoch account.f_stored_epoch <: i64) =. grant.f_epoch;
+        f_rotation_active = account.f_epoch_active;
+        f_authority_present = enrollment_preflight_authority account grant.f_possession
+      }
+      <:
+      t_EnrollmentPreflightReadiness
+    | _ ->
+      {
+        f_grant_present = true;
+        f_account_observed = false;
+        f_epoch_matches = false;
+        f_rotation_active = false;
+        f_authority_present = false
+      }
+      <:
+      t_EnrollmentPreflightReadiness
+
+/// A ranked table of the rejection each guard would produce. The table and its
+/// fold are the independent ordering specification; the production predicate
+/// above is not built from them.
+type t_EnrollmentPreflightSpecTable = {
+  f_grant_unavailable:Core_models.Option.t_Option t_EnrollmentPreflightRejection;
+  f_account_unavailable:Core_models.Option.t_Option t_EnrollmentPreflightRejection;
+  f_account_absent:Core_models.Option.t_Option t_EnrollmentPreflightRejection;
+  f_epoch_mismatch:Core_models.Option.t_Option t_EnrollmentPreflightRejection;
+  f_rotation_paused:Core_models.Option.t_Option t_EnrollmentPreflightRejection;
+  f_commitment_missing:Core_models.Option.t_Option t_EnrollmentPreflightRejection;
+  f_credential_replaced:Core_models.Option.t_Option t_EnrollmentPreflightRejection
+}
+
+let enrollment_preflight_spec_table (obs: t_EnrollmentPreflightObservation)
+    : t_EnrollmentPreflightSpecTable =
+  let guards:t_EnrollmentPreflightGuards = enrollment_preflight_guards obs in
+  {
+    f_grant_unavailable
+    =
+    if guards.f_grant_unavailable
+    then
+      Core_models.Option.Option_Some
+      (EnrollmentPreflightRejection_GrantUnavailable <: t_EnrollmentPreflightRejection)
+      <:
+      Core_models.Option.t_Option t_EnrollmentPreflightRejection
+    else
+      Core_models.Option.Option_None <: Core_models.Option.t_Option t_EnrollmentPreflightRejection;
+    f_account_unavailable
+    =
+    if guards.f_account_unavailable
+    then
+      Core_models.Option.Option_Some
+      (EnrollmentPreflightRejection_AccountUnavailable <: t_EnrollmentPreflightRejection)
+      <:
+      Core_models.Option.t_Option t_EnrollmentPreflightRejection
+    else
+      Core_models.Option.Option_None <: Core_models.Option.t_Option t_EnrollmentPreflightRejection;
+    f_account_absent
+    =
+    if guards.f_account_absent
+    then
+      Core_models.Option.Option_Some
+      (EnrollmentPreflightRejection_AccountAbsent <: t_EnrollmentPreflightRejection)
+      <:
+      Core_models.Option.t_Option t_EnrollmentPreflightRejection
+    else
+      Core_models.Option.Option_None <: Core_models.Option.t_Option t_EnrollmentPreflightRejection;
+    f_epoch_mismatch
+    =
+    if guards.f_epoch_mismatch
+    then
+      Core_models.Option.Option_Some
+      (EnrollmentPreflightRejection_EpochMismatch <: t_EnrollmentPreflightRejection)
+      <:
+      Core_models.Option.t_Option t_EnrollmentPreflightRejection
+    else
+      Core_models.Option.Option_None <: Core_models.Option.t_Option t_EnrollmentPreflightRejection;
+    f_rotation_paused
+    =
+    if guards.f_rotation_paused
+    then
+      Core_models.Option.Option_Some
+      (EnrollmentPreflightRejection_RotationPaused <: t_EnrollmentPreflightRejection)
+      <:
+      Core_models.Option.t_Option t_EnrollmentPreflightRejection
+    else
+      Core_models.Option.Option_None <: Core_models.Option.t_Option t_EnrollmentPreflightRejection;
+    f_commitment_missing
+    =
+    if guards.f_commitment_missing
+    then
+      Core_models.Option.Option_Some
+      (EnrollmentPreflightRejection_CommitmentMissing <: t_EnrollmentPreflightRejection)
+      <:
+      Core_models.Option.t_Option t_EnrollmentPreflightRejection
+    else
+      Core_models.Option.Option_None <: Core_models.Option.t_Option t_EnrollmentPreflightRejection;
+    f_credential_replaced
+    =
+    if guards.f_credential_replaced
+    then
+      Core_models.Option.Option_Some
+      (EnrollmentPreflightRejection_CredentialReplaced <: t_EnrollmentPreflightRejection)
+      <:
+      Core_models.Option.t_Option t_EnrollmentPreflightRejection
+    else
+      Core_models.Option.Option_None <: Core_models.Option.t_Option t_EnrollmentPreflightRejection
+  }
+  <:
+  t_EnrollmentPreflightSpecTable
+
+/// First-true fold over the ranked table, from highest to lowest precedence.
+let enrollment_preflight_first_applicable (table: t_EnrollmentPreflightSpecTable)
+    : Core_models.Option.t_Option t_EnrollmentPreflightRejection =
+  match table.f_grant_unavailable <: Core_models.Option.t_Option t_EnrollmentPreflightRejection with
+  | Core_models.Option.Option_Some rejection ->
+    Core_models.Option.Option_Some rejection
+    <:
+    Core_models.Option.t_Option t_EnrollmentPreflightRejection
+  | Core_models.Option.Option_None  ->
+    match
+      table.f_account_unavailable <: Core_models.Option.t_Option t_EnrollmentPreflightRejection
+    with
+    | Core_models.Option.Option_Some rejection ->
+      Core_models.Option.Option_Some rejection
+      <:
+      Core_models.Option.t_Option t_EnrollmentPreflightRejection
+    | Core_models.Option.Option_None  ->
+      match
+        table.f_account_absent <: Core_models.Option.t_Option t_EnrollmentPreflightRejection
+      with
+      | Core_models.Option.Option_Some rejection ->
+        Core_models.Option.Option_Some rejection
+        <:
+        Core_models.Option.t_Option t_EnrollmentPreflightRejection
+      | Core_models.Option.Option_None  ->
+        match
+          table.f_epoch_mismatch <: Core_models.Option.t_Option t_EnrollmentPreflightRejection
+        with
+        | Core_models.Option.Option_Some rejection ->
+          Core_models.Option.Option_Some rejection
+          <:
+          Core_models.Option.t_Option t_EnrollmentPreflightRejection
+        | Core_models.Option.Option_None  ->
+          match
+            table.f_rotation_paused <: Core_models.Option.t_Option t_EnrollmentPreflightRejection
+          with
+          | Core_models.Option.Option_Some rejection ->
+            Core_models.Option.Option_Some rejection
+            <:
+            Core_models.Option.t_Option t_EnrollmentPreflightRejection
+          | Core_models.Option.Option_None  ->
+            match
+              table.f_commitment_missing
+              <:
+              Core_models.Option.t_Option t_EnrollmentPreflightRejection
+            with
+            | Core_models.Option.Option_Some rejection ->
+              Core_models.Option.Option_Some rejection
+              <:
+              Core_models.Option.t_Option t_EnrollmentPreflightRejection
+            | Core_models.Option.Option_None  -> table.f_credential_replaced
+
+let enrollment_preflight_spec_rejection (obs: t_EnrollmentPreflightObservation)
+    : Core_models.Option.t_Option t_EnrollmentPreflightRejection =
+  enrollment_preflight_first_applicable (enrollment_preflight_spec_table obs
+      <:
+      t_EnrollmentPreflightSpecTable)
+
+let enrollment_preflight_spec_decision (obs: t_EnrollmentPreflightObservation)
+    : t_EnrollmentPreflightDecision =
+  match
+    enrollment_preflight_spec_rejection obs
+    <:
+    Core_models.Option.t_Option t_EnrollmentPreflightRejection
+  with
+  | Core_models.Option.Option_Some reason ->
+    EnrollmentPreflightDecision_Reject reason <: t_EnrollmentPreflightDecision
+  | Core_models.Option.Option_None  ->
+    match obs.f_grant <: Core_models.Option.t_Option t_EnrollmentGrantFacts with
+    | Core_models.Option.Option_Some grant ->
+      EnrollmentPreflightDecision_Ready
+      ({ f_epoch = grant.f_epoch; f_possession = grant.f_possession } <: t_ReadyToConsume)
+      <:
+      t_EnrollmentPreflightDecision
+    | Core_models.Option.Option_None  ->
+      EnrollmentPreflightDecision_Reject
+      (EnrollmentPreflightRejection_GrantUnavailable <: t_EnrollmentPreflightRejection)
+      <:
+      t_EnrollmentPreflightDecision
+
+/// Structural reason equality, kept explicit so the extracted kernel does not
+/// depend on a derived `PartialEq` instance (hax would emit a trusted
+/// declaration for that instance).
+let enrollment_preflight_rejection_matches (actual expected: t_EnrollmentPreflightRejection) : bool =
+  match actual, expected <: (t_EnrollmentPreflightRejection & t_EnrollmentPreflightRejection) with
+  | EnrollmentPreflightRejection_GrantUnavailable , EnrollmentPreflightRejection_GrantUnavailable
+  | EnrollmentPreflightRejection_AccountUnavailable ,
+  EnrollmentPreflightRejection_AccountUnavailable
+  | EnrollmentPreflightRejection_AccountAbsent , EnrollmentPreflightRejection_AccountAbsent
+  | EnrollmentPreflightRejection_EpochMismatch , EnrollmentPreflightRejection_EpochMismatch
+  | EnrollmentPreflightRejection_RotationPaused , EnrollmentPreflightRejection_RotationPaused
+  | EnrollmentPreflightRejection_CredentialReplaced ,
+  EnrollmentPreflightRejection_CredentialReplaced
+  | EnrollmentPreflightRejection_CommitmentMissing , EnrollmentPreflightRejection_CommitmentMissing  ->
+    true
+  | _ -> false
+
+/// A preflight observation is ready exactly when no rejection reason applies.
+let enrollment_preflight_is_ready (obs: t_EnrollmentPreflightObservation) : bool =
+  match
+    enrollment_preflight_rejection obs <: Core_models.Option.t_Option t_EnrollmentPreflightRejection
+  with
+  | Core_models.Option.Option_None  -> true
+  | Core_models.Option.Option_Some _ -> false
+
+let enrollment_preflight_decisions_match (actual expected: t_EnrollmentPreflightDecision) : bool =
+  match actual, expected <: (t_EnrollmentPreflightDecision & t_EnrollmentPreflightDecision) with
+  | EnrollmentPreflightDecision_Ready actual, EnrollmentPreflightDecision_Ready expected ->
+    (impl_ReadyToConsume__epoch actual <: i64) =. (impl_ReadyToConsume__epoch expected <: i64) &&
+    (impl_ReadyToConsume__possession actual <: bool) =.
+    (impl_ReadyToConsume__possession expected <: bool)
+  | EnrollmentPreflightDecision_Reject actual, EnrollmentPreflightDecision_Reject expected ->
+    enrollment_preflight_rejection_matches actual expected
+  | _ -> false
+
+/// The production decision must agree with the independent table/fold
+/// specification, including the permit's epoch and possession fields. This is
+/// deliberately *not* stated in terms of the production rejection predicate.
+let enrollment_preflight_decision_matches_independent_spec
+      (obs: t_EnrollmentPreflightObservation)
+      (decision: t_EnrollmentPreflightDecision)
+    : bool =
+  enrollment_preflight_decisions_match decision
+    (enrollment_preflight_spec_decision obs <: t_EnrollmentPreflightDecision)
+
+/// Decide whether the handler may attempt to consume the grant, and why not
+/// otherwise. This function has no effect and cannot observe consumption.
+let plan_enrollment_preflight (obs: t_EnrollmentPreflightObservation)
+    : Prims.Pure t_EnrollmentPreflightDecision
+      Prims.l_True
+      (ensures
+        fun decision ->
+          let decision:t_EnrollmentPreflightDecision = decision in
+          enrollment_preflight_decision_matches_independent_spec obs decision) =
+  match
+    enrollment_preflight_rejection obs <: Core_models.Option.t_Option t_EnrollmentPreflightRejection
+  with
+  | Core_models.Option.Option_Some reason ->
+    EnrollmentPreflightDecision_Reject reason <: t_EnrollmentPreflightDecision
+  | Core_models.Option.Option_None  ->
+    match obs.f_grant <: Core_models.Option.t_Option t_EnrollmentGrantFacts with
+    | Core_models.Option.Option_Some grant ->
+      EnrollmentPreflightDecision_Ready
+      ({ f_epoch = grant.f_epoch; f_possession = grant.f_possession } <: t_ReadyToConsume)
+      <:
+      t_EnrollmentPreflightDecision
+    | Core_models.Option.Option_None  ->
+      EnrollmentPreflightDecision_Reject
+      (EnrollmentPreflightRejection_GrantUnavailable <: t_EnrollmentPreflightRejection)
+      <:
+      t_EnrollmentPreflightDecision
+
+let enrollment_preflight_rejection_is_first_applicable (obs: t_EnrollmentPreflightObservation)
+    : bool =
+  match
+    enrollment_preflight_rejection obs <: Core_models.Option.t_Option t_EnrollmentPreflightRejection
+  with
+  | Core_models.Option.Option_Some actual ->
+    (match
+        enrollment_preflight_spec_rejection obs
+        <:
+        Core_models.Option.t_Option t_EnrollmentPreflightRejection
+      with
+      | Core_models.Option.Option_Some expected ->
+        enrollment_preflight_rejection_matches actual expected
+      | Core_models.Option.Option_None  -> false)
+  | Core_models.Option.Option_None  ->
+    match
+      enrollment_preflight_spec_rejection obs
+      <:
+      Core_models.Option.t_Option t_EnrollmentPreflightRejection
+    with
+    | Core_models.Option.Option_None  -> true
+    | Core_models.Option.Option_Some _ -> false
+
+/// Universal checked lemma: for every observation, the production rejection is
+/// exactly the first applicable entry of the independent ranked table.
+let enrollment_preflight_ordering_is_checked (obs: t_EnrollmentPreflightObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. true) = enrollment_preflight_rejection_is_first_applicable obs
+
+let enrollment_preflight_ready_permit_matches_guards (obs: t_EnrollmentPreflightObservation) : bool =
+  match plan_enrollment_preflight obs <: t_EnrollmentPreflightDecision with
+  | EnrollmentPreflightDecision_Ready permit ->
+    (match obs.f_grant <: Core_models.Option.t_Option t_EnrollmentGrantFacts with
+      | Core_models.Option.Option_Some grant ->
+        let readiness:t_EnrollmentPreflightReadiness = enrollment_preflight_readiness obs in
+        readiness.f_grant_present && readiness.f_account_observed && readiness.f_epoch_matches &&
+        readiness.f_rotation_active &&
+        readiness.f_authority_present &&
+        (impl_ReadyToConsume__epoch permit <: i64) =. grant.f_epoch &&
+        (impl_ReadyToConsume__possession permit <: bool) =. grant.f_possession
+      | Core_models.Option.Option_None  -> false)
+  | EnrollmentPreflightDecision_Reject _ -> true
+
+/// Universal checked lemma: a `Ready` decision implies every positive
+/// readiness guard and the observed grant\'s epoch/possession fields.
+let ready_preflight_implies_guards_and_fields (obs: t_EnrollmentPreflightObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. true) = enrollment_preflight_ready_permit_matches_guards obs
+
+let enrollment_preflight_guards_imply_ready (obs: t_EnrollmentPreflightObservation) : bool =
+  let readiness:t_EnrollmentPreflightReadiness = enrollment_preflight_readiness obs in
+  if
+    readiness.f_grant_present && readiness.f_account_observed && readiness.f_epoch_matches &&
+    readiness.f_rotation_active &&
+    readiness.f_authority_present
+  then
+    match obs.f_grant <: Core_models.Option.t_Option t_EnrollmentGrantFacts with
+    | Core_models.Option.Option_Some grant ->
+      (match plan_enrollment_preflight obs <: t_EnrollmentPreflightDecision with
+        | EnrollmentPreflightDecision_Ready permit ->
+          (impl_ReadyToConsume__epoch permit <: i64) =. grant.f_epoch &&
+          (impl_ReadyToConsume__possession permit <: bool) =. grant.f_possession
+        | EnrollmentPreflightDecision_Reject _ -> false)
+    | Core_models.Option.Option_None  -> false
+  else true
+
+/// Universal checked converse: the conjunction of every positive readiness
+/// guard implies a `Ready` permit carrying the observed grant\'s fields.
+let all_applicable_guards_imply_ready (obs: t_EnrollmentPreflightObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. true) = enrollment_preflight_guards_imply_ready obs
+
+let enrollment_preflight_ready_matches_independent_readiness (obs: t_EnrollmentPreflightObservation)
+    : bool =
+  let readiness:t_EnrollmentPreflightReadiness = enrollment_preflight_readiness obs in
+  (enrollment_preflight_is_ready obs <: bool) =.
+  (readiness.f_grant_present && readiness.f_account_observed && readiness.f_epoch_matches &&
+  readiness.f_rotation_active &&
+  readiness.f_authority_present)
+
+/// Universal checked lemma connecting the production readiness predicate to
+/// the independent positive guards.
+let ready_preflight_matches_independent_readiness (obs: t_EnrollmentPreflightObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. true) = enrollment_preflight_ready_matches_independent_readiness obs
+
+let enrollment_preflight_present_observation
+      (grant: t_EnrollmentGrantFacts)
+      (account: t_EnrollmentAccountFacts)
+    : t_EnrollmentPreflightObservation =
+  {
+    f_grant
+    =
+    Core_models.Option.Option_Some grant <: Core_models.Option.t_Option t_EnrollmentGrantFacts;
+    f_account = EnrollmentAccountObservation_Present account <: t_EnrollmentAccountObservation
+  }
+  <:
+  t_EnrollmentPreflightObservation
+
+let enrollment_preflight_rejects_as
+      (obs: t_EnrollmentPreflightObservation)
+      (expected: t_EnrollmentPreflightRejection)
+    : bool =
+  match
+    enrollment_preflight_rejection obs <: Core_models.Option.t_Option t_EnrollmentPreflightRejection
+  with
+  | Core_models.Option.Option_Some actual -> enrollment_preflight_rejection_matches actual expected
+  | Core_models.Option.Option_None  -> false
+
+/// Parametric adjacent-precedence lemma: whenever the epoch guard and the
+/// rotation guard both apply, the production predicate reports `EpochMismatch`.
+let epoch_mismatch_precedes_rotation_paused
+      (grant: t_EnrollmentGrantFacts)
+      (account: t_EnrollmentAccountFacts)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. true) =
+  let obs:t_EnrollmentPreflightObservation =
+    enrollment_preflight_present_observation grant account
+  in
+  let guards:t_EnrollmentPreflightGuards = enrollment_preflight_guards obs in
+  if guards.f_epoch_mismatch && guards.f_rotation_paused
+  then
+    enrollment_preflight_rejects_as obs
+      (EnrollmentPreflightRejection_EpochMismatch <: t_EnrollmentPreflightRejection)
+  else true
+
+/// Parametric overlap lemma: an epoch mismatch outranks a missing commitment.
+let epoch_mismatch_precedes_commitment_missing
+      (grant: t_EnrollmentGrantFacts)
+      (account: t_EnrollmentAccountFacts)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. true) =
+  let obs:t_EnrollmentPreflightObservation =
+    enrollment_preflight_present_observation grant account
+  in
+  let guards:t_EnrollmentPreflightGuards = enrollment_preflight_guards obs in
+  if guards.f_epoch_mismatch && guards.f_commitment_missing
+  then
+    enrollment_preflight_rejects_as obs
+      (EnrollmentPreflightRejection_EpochMismatch <: t_EnrollmentPreflightRejection)
+  else true
+
+/// Parametric overlap lemma: an epoch mismatch outranks a replaced credential.
+let epoch_mismatch_precedes_credential_replaced
+      (grant: t_EnrollmentGrantFacts)
+      (account: t_EnrollmentAccountFacts)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. true) =
+  let obs:t_EnrollmentPreflightObservation =
+    enrollment_preflight_present_observation grant account
+  in
+  let guards:t_EnrollmentPreflightGuards = enrollment_preflight_guards obs in
+  if guards.f_epoch_mismatch && guards.f_credential_replaced
+  then
+    enrollment_preflight_rejects_as obs
+      (EnrollmentPreflightRejection_EpochMismatch <: t_EnrollmentPreflightRejection)
+  else true
+
+/// Parametric adjacent-precedence lemma: whenever the rotation guard and the
+/// commitment guard both apply and the earlier epoch guard does not, the
+/// production predicate reports `RotationPaused`.
+let rotation_paused_precedes_commitment_missing
+      (grant: t_EnrollmentGrantFacts)
+      (account: t_EnrollmentAccountFacts)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. true) =
+  let obs:t_EnrollmentPreflightObservation =
+    enrollment_preflight_present_observation grant account
+  in
+  let guards:t_EnrollmentPreflightGuards = enrollment_preflight_guards obs in
+  if guards.f_rotation_paused && guards.f_commitment_missing && ~.guards.f_epoch_mismatch
+  then
+    enrollment_preflight_rejects_as obs
+      (EnrollmentPreflightRejection_RotationPaused <: t_EnrollmentPreflightRejection)
+  else true
+
+/// Parametric adjacent-precedence lemma: whenever the rotation guard and the
+/// replaced-credential guard both apply and the earlier epoch guard does not,
+/// the production predicate reports `RotationPaused`.
+let rotation_paused_precedes_credential_replaced
+      (grant: t_EnrollmentGrantFacts)
+      (account: t_EnrollmentAccountFacts)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. true) =
+  let obs:t_EnrollmentPreflightObservation =
+    enrollment_preflight_present_observation grant account
+  in
+  let guards:t_EnrollmentPreflightGuards = enrollment_preflight_guards obs in
+  if guards.f_rotation_paused && guards.f_credential_replaced && ~.guards.f_epoch_mismatch
+  then
+    enrollment_preflight_rejects_as obs
+      (EnrollmentPreflightRejection_RotationPaused <: t_EnrollmentPreflightRejection)
+  else true
+
+/// Parametric disjointness lemma: a possession grant\'s commitment guard and a
+/// WebAuthn grant\'s credential guard can never both apply, so their adjacent
+/// order in the table is immaterial (the README records this explicitly).
+let commitment_missing_and_credential_replaced_are_disjoint
+      (grant: t_EnrollmentGrantFacts)
+      (account: t_EnrollmentAccountFacts)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. true) =
+  let obs:t_EnrollmentPreflightObservation =
+    enrollment_preflight_present_observation grant account
+  in
+  let guards:t_EnrollmentPreflightGuards = enrollment_preflight_guards obs in
+  ~.(guards.f_commitment_missing && guards.f_credential_replaced)
+
+/// Parametric privacy-precedence lemma: for every possible account observation,
+/// a missing grant is rejected as `GrantUnavailable` before any account state
+/// is considered.
+let missing_grant_precedes_account_rejection (account: t_EnrollmentAccountObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. true) =
+  let obs:t_EnrollmentPreflightObservation =
+    {
+      f_grant = Core_models.Option.Option_None <: Core_models.Option.t_Option t_EnrollmentGrantFacts;
+      f_account = account
+    }
+    <:
+    t_EnrollmentPreflightObservation
+  in
+  enrollment_preflight_rejects_as obs
+    (EnrollmentPreflightRejection_GrantUnavailable <: t_EnrollmentPreflightRejection)
+
+let missing_preflight_grant_can_be_ready (obs: t_EnrollmentPreflightObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_EnrollmentPreflightObservation =
+    {
+      obs with
+      f_grant = Core_models.Option.Option_None <: Core_models.Option.t_Option t_EnrollmentGrantFacts
+    }
+    <:
+    t_EnrollmentPreflightObservation
+  in
+  enrollment_preflight_is_ready obs
+
+/// A grant lookup that did not run the account query must never be treated as
+/// an observed absence, let alone as ready.
+let unqueried_preflight_account_can_be_ready (obs: t_EnrollmentPreflightObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_EnrollmentPreflightObservation =
+    {
+      obs with
+      f_account = EnrollmentAccountObservation_NotQueried <: t_EnrollmentAccountObservation
+    }
+    <:
+    t_EnrollmentPreflightObservation
+  in
+  enrollment_preflight_is_ready obs
+
+let absent_preflight_account_can_be_ready (obs: t_EnrollmentPreflightObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_EnrollmentPreflightObservation =
+    { obs with f_account = EnrollmentAccountObservation_Absent <: t_EnrollmentAccountObservation }
+    <:
+    t_EnrollmentPreflightObservation
+  in
+  enrollment_preflight_is_ready obs
+
+let epoch_mismatched_preflight_account_can_be_ready (obs: t_EnrollmentPreflightObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_EnrollmentPreflightObservation =
+    {
+      obs with
+      f_grant
+      =
+      Core_models.Option.Option_Some
+      ({ f_epoch = v_INITIAL_EPOCH; f_possession = false } <: t_EnrollmentGrantFacts)
+      <:
+      Core_models.Option.t_Option t_EnrollmentGrantFacts
+    }
+    <:
+    t_EnrollmentPreflightObservation
+  in
+  let obs:t_EnrollmentPreflightObservation =
+    {
+      obs with
+      f_account
+      =
+      EnrollmentAccountObservation_Present
+      ({
+          f_stored_epoch
+          =
+          Core_models.Option.Option_Some (v_INITIAL_EPOCH +! mk_i64 1)
+          <:
+          Core_models.Option.t_Option i64;
+          f_epoch_active = true;
+          f_credential_id_matches = true;
+          f_commitment_len = mk_usize 0
+        }
+        <:
+        t_EnrollmentAccountFacts)
+      <:
+      t_EnrollmentAccountObservation
+    }
+    <:
+    t_EnrollmentPreflightObservation
+  in
+  enrollment_preflight_is_ready obs
+
+let rekeying_preflight_account_can_be_ready (obs: t_EnrollmentPreflightObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_EnrollmentPreflightObservation =
+    {
+      obs with
+      f_grant
+      =
+      Core_models.Option.Option_Some
+      ({ f_epoch = v_INITIAL_EPOCH; f_possession = false } <: t_EnrollmentGrantFacts)
+      <:
+      Core_models.Option.t_Option t_EnrollmentGrantFacts
+    }
+    <:
+    t_EnrollmentPreflightObservation
+  in
+  let obs:t_EnrollmentPreflightObservation =
+    {
+      obs with
+      f_account
+      =
+      EnrollmentAccountObservation_Present
+      ({
+          f_stored_epoch
+          =
+          Core_models.Option.Option_Some v_INITIAL_EPOCH <: Core_models.Option.t_Option i64;
+          f_epoch_active = false;
+          f_credential_id_matches = true;
+          f_commitment_len = mk_usize 0
+        }
+        <:
+        t_EnrollmentAccountFacts)
+      <:
+      t_EnrollmentAccountObservation
+    }
+    <:
+    t_EnrollmentPreflightObservation
+  in
+  enrollment_preflight_is_ready obs
+
+let replaced_preflight_credential_can_be_ready (obs: t_EnrollmentPreflightObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_EnrollmentPreflightObservation =
+    {
+      obs with
+      f_grant
+      =
+      Core_models.Option.Option_Some
+      ({ f_epoch = v_INITIAL_EPOCH; f_possession = false } <: t_EnrollmentGrantFacts)
+      <:
+      Core_models.Option.t_Option t_EnrollmentGrantFacts
+    }
+    <:
+    t_EnrollmentPreflightObservation
+  in
+  let obs:t_EnrollmentPreflightObservation =
+    {
+      obs with
+      f_account
+      =
+      EnrollmentAccountObservation_Present
+      ({
+          f_stored_epoch
+          =
+          Core_models.Option.Option_Some v_INITIAL_EPOCH <: Core_models.Option.t_Option i64;
+          f_epoch_active = true;
+          f_credential_id_matches = false;
+          f_commitment_len = mk_usize 0
+        }
+        <:
+        t_EnrollmentAccountFacts)
+      <:
+      t_EnrollmentAccountObservation
+    }
+    <:
+    t_EnrollmentPreflightObservation
+  in
+  enrollment_preflight_is_ready obs
+
+/// A possession grant whose staged commitment is absent or empty must not be
+/// consumed. The check is presence-only; it does not bind an exact commitment.
+let commitmentless_preflight_possession_can_be_ready (obs: t_EnrollmentPreflightObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_EnrollmentPreflightObservation =
+    {
+      obs with
+      f_grant
+      =
+      Core_models.Option.Option_Some
+      ({ f_epoch = v_INITIAL_EPOCH; f_possession = true } <: t_EnrollmentGrantFacts)
+      <:
+      Core_models.Option.t_Option t_EnrollmentGrantFacts
+    }
+    <:
+    t_EnrollmentPreflightObservation
+  in
+  let obs:t_EnrollmentPreflightObservation =
+    {
+      obs with
+      f_account
+      =
+      EnrollmentAccountObservation_Present
+      ({
+          f_stored_epoch
+          =
+          Core_models.Option.Option_Some v_INITIAL_EPOCH <: Core_models.Option.t_Option i64;
+          f_epoch_active = true;
+          f_credential_id_matches = false;
+          f_commitment_len = mk_usize 0
+        }
+        <:
+        t_EnrollmentAccountFacts)
+      <:
+      t_EnrollmentAccountObservation
+    }
+    <:
+    t_EnrollmentPreflightObservation
+  in
+  enrollment_preflight_is_ready obs
+
 type t_EnrollmentFacts = {
   f_phase:t_RecoveryPhase;
+  f_account_present:bool;
   f_user_matches:bool;
   f_grant_live:bool;
   f_grant_consumed:bool;
@@ -511,6 +1808,23 @@ type t_EnrollmentFacts = {
   f_account_epoch_active:bool;
   f_grant_epoch:i64;
   f_account_epoch:i64
+}
+
+/// Raw observations from the enrollment grant store, the decoded grant and
+/// the live `users` row.
+type t_EnrollmentObservation = {
+  f_grant_present:bool;
+  f_grant_consumed:bool;
+  f_consumed_matches_observed:bool;
+  f_account_present:bool;
+  f_grant_possession:bool;
+  f_grant_epoch:i64;
+  f_stored_epoch:Core_models.Option.t_Option i64;
+  f_account_epoch_active:bool;
+  f_credential_id_matches:bool;
+  f_commitment_len:usize;
+  f_hybrid_ek_len:usize;
+  f_hybrid_vk_len:usize
 }
 
 type t_EnrollmentPermit = { f_epoch:i64 }
@@ -525,7 +1839,11 @@ let enrollment_is_authorized (facts: t_EnrollmentFacts) : bool =
     then facts.f_possession_hash_present
     else facts.f_credential_matches_current
   in
-  grant_authority_ok && facts.f_phase =. (RecoveryPhase_GrantIssued <: t_RecoveryPhase) &&
+  grant_authority_ok &&
+  (match facts.f_phase <: t_RecoveryPhase with
+    | RecoveryPhase_GrantIssued  -> true
+    | _ -> false) &&
+  facts.f_account_present &&
   facts.f_user_matches &&
   facts.f_grant_live &&
   facts.f_grant_consumed &&
@@ -554,6 +1872,70 @@ let plan_enrollment (facts: t_EnrollmentFacts)
     <:
     t_EnrollmentDecision
   else EnrollmentDecision_Reject <: t_EnrollmentDecision
+
+/// Turn the grant-store, decoded-grant and `users`-row observations into the
+/// enrollment facts. The phase distinguishes a consumed grant from a missing
+/// or race-replaced one; user binding, consumption, credential/commitment
+/// authority and the normalized grant/account epoch equality are exactly the
+/// observed values.
+let enrollment_facts (obs: t_EnrollmentObservation)
+    : Prims.Pure t_EnrollmentFacts
+      Prims.l_True
+      (ensures
+        fun facts ->
+          let facts:t_EnrollmentFacts = facts in
+          (match facts.f_phase <: t_RecoveryPhase with
+            | RecoveryPhase_GrantIssued  -> true
+            | _ -> false) =.
+          (obs.f_grant_present && obs.f_grant_consumed && obs.f_consumed_matches_observed) &&
+          (match facts.f_phase <: t_RecoveryPhase with
+            | RecoveryPhase_Expired  -> true
+            | _ -> false) =.
+          (~.obs.f_grant_present <: bool) &&
+          (match facts.f_phase <: t_RecoveryPhase with
+            | RecoveryPhase_Revoked  -> true
+            | _ -> false) =.
+          (obs.f_grant_present &&
+          (~.(obs.f_grant_consumed && obs.f_consumed_matches_observed) <: bool)) &&
+          facts.f_account_present =. obs.f_account_present &&
+          facts.f_user_matches =. obs.f_grant_present &&
+          facts.f_grant_live =. obs.f_grant_present &&
+          facts.f_grant_consumed =. (obs.f_grant_consumed && obs.f_consumed_matches_observed) &&
+          facts.f_credential_matches_current =. obs.f_credential_id_matches &&
+          facts.f_possession_grant =. obs.f_grant_possession &&
+          facts.f_possession_hash_present =. (obs.f_commitment_len >. mk_usize 0 <: bool) &&
+          facts.f_public_keys_valid =.
+          ((obs.f_hybrid_ek_len =. v_HYBRID_EK_LEN <: bool) &&
+          (obs.f_hybrid_vk_len =. v_HYBRID_VK_LEN <: bool)) &&
+          facts.f_account_epoch_active =. obs.f_account_epoch_active &&
+          facts.f_grant_epoch =. obs.f_grant_epoch &&
+          facts.f_account_epoch =. (observed_recovery_epoch obs.f_stored_epoch <: i64)) =
+  let consumed:bool = obs.f_grant_consumed && obs.f_consumed_matches_observed in
+  {
+    f_phase
+    =
+    if obs.f_grant_present && consumed
+    then RecoveryPhase_GrantIssued <: t_RecoveryPhase
+    else
+      if ~.obs.f_grant_present
+      then RecoveryPhase_Expired <: t_RecoveryPhase
+      else RecoveryPhase_Revoked <: t_RecoveryPhase;
+    f_account_present = obs.f_account_present;
+    f_user_matches = obs.f_grant_present;
+    f_grant_live = obs.f_grant_present;
+    f_grant_consumed = consumed;
+    f_credential_matches_current = obs.f_credential_id_matches;
+    f_possession_grant = obs.f_grant_possession;
+    f_possession_hash_present = obs.f_commitment_len >. mk_usize 0;
+    f_public_keys_valid
+    =
+    obs.f_hybrid_ek_len =. v_HYBRID_EK_LEN && obs.f_hybrid_vk_len =. v_HYBRID_VK_LEN;
+    f_account_epoch_active = obs.f_account_epoch_active;
+    f_grant_epoch = obs.f_grant_epoch;
+    f_account_epoch = observed_recovery_epoch obs.f_stored_epoch
+  }
+  <:
+  t_EnrollmentFacts
 
 let replaced_credential_can_recover (facts: t_RecoverFacts)
     : Prims.Pure bool
@@ -652,3 +2034,596 @@ let consumed_grant_can_enroll_again (facts: t_EnrollmentFacts)
     { facts with f_phase = RecoveryPhase_Completed <: t_RecoveryPhase } <: t_EnrollmentFacts
   in
   enrollment_is_authorized facts
+
+/// The initiation policy over the real observation is exactly the conjunction
+/// of the observed availability and freshness values.
+let initiate_facts_authorize (obs: t_InitiateObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =.
+          (obs.f_account_present && obs.f_share_present && obs.f_credential_present &&
+          obs.f_attempt_id_fresh &&
+          (obs.f_ttl_secs >. mk_u64 0 <: bool))) =
+  initiation_is_authorized (initiate_facts obs <: t_InitiateFacts)
+
+let missing_recovery_share_can_initiate (obs: t_InitiateObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_InitiateObservation = { obs with f_share_present = false } <: t_InitiateObservation in
+  initiation_is_authorized (initiate_facts obs <: t_InitiateFacts)
+
+let credentialless_account_can_initiate (obs: t_InitiateObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_InitiateObservation =
+    { obs with f_credential_present = false } <: t_InitiateObservation
+  in
+  initiation_is_authorized (initiate_facts obs <: t_InitiateFacts)
+
+/// A generated attempt id that already occupies stored state is not fresh.
+let colliding_attempt_id_can_initiate (obs: t_InitiateObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_InitiateObservation =
+    { obs with f_attempt_id_fresh = false } <: t_InitiateObservation
+  in
+  initiation_is_authorized (initiate_facts obs <: t_InitiateFacts)
+
+let expired_initiate_ttl_can_start (obs: t_InitiateObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_InitiateObservation = { obs with f_ttl_secs = mk_u64 0 } <: t_InitiateObservation in
+  initiation_is_authorized (initiate_facts obs <: t_InitiateFacts)
+
+let unverified_assertion_can_update_credential (obs: t_CredentialUpdateObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_CredentialUpdateObservation =
+    { obs with f_assertion_valid = false } <: t_CredentialUpdateObservation
+  in
+  match
+    plan_credential_update (credential_update_facts obs <: t_CredentialUpdateFacts)
+    <:
+    t_CredentialUpdateDecision
+  with
+  | CredentialUpdateDecision_Update  -> true
+  | _ -> false
+
+let stale_assertion_credential_can_update (obs: t_CredentialUpdateObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_CredentialUpdateObservation =
+    { obs with f_credential_matches_current = false } <: t_CredentialUpdateObservation
+  in
+  match
+    plan_credential_update (credential_update_facts obs <: t_CredentialUpdateFacts)
+    <:
+    t_CredentialUpdateDecision
+  with
+  | CredentialUpdateDecision_Update  -> true
+  | _ -> false
+
+/// Normalization can never produce an epoch below the initial epoch, so the
+/// epoch guard in `recovery_is_authorized` is implied for every observation.
+let observed_recovery_epoch_is_active (stored_epoch: Core_models.Option.t_Option i64)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. true) = (observed_recovery_epoch stored_epoch <: i64) >=. v_INITIAL_EPOCH
+
+/// Share release over the real observation is exactly the conjunction of the
+/// consumed exact attempt, the assertion and credential bindings, the row
+/// observations and an active normalized epoch.
+let recover_facts_authorize (obs: t_RecoverObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =.
+          ((match obs.f_attempt_source <: t_RecoveryAttemptSource with
+            | RecoveryAttemptSource_Consumed  -> true
+            | _ -> false) &&
+          obs.f_user_matches &&
+          obs.f_attempt_matches &&
+          obs.f_credential_matches_current &&
+          obs.f_assertion_valid &&
+          obs.f_user_verified &&
+          obs.f_share_present &&
+          obs.f_account_epoch_active &&
+          ((observed_recovery_epoch obs.f_stored_epoch <: i64) >=. v_INITIAL_EPOCH <: bool))) =
+  recovery_is_authorized (recover_facts obs <: t_RecoverFacts)
+
+let missing_attempt_can_release (obs: t_RecoverObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_RecoverObservation =
+    { obs with f_attempt_source = RecoveryAttemptSource_Missing <: t_RecoveryAttemptSource }
+    <:
+    t_RecoverObservation
+  in
+  recovery_is_authorized (recover_facts obs <: t_RecoverFacts)
+
+let cross_user_recover_observation_can_release (obs: t_RecoverObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_RecoverObservation = { obs with f_user_matches = false } <: t_RecoverObservation in
+  recovery_is_authorized (recover_facts obs <: t_RecoverFacts)
+
+let mismatched_attempt_observation_can_release (obs: t_RecoverObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_RecoverObservation = { obs with f_attempt_matches = false } <: t_RecoverObservation in
+  recovery_is_authorized (recover_facts obs <: t_RecoverFacts)
+
+let replaced_observed_credential_can_release (obs: t_RecoverObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_RecoverObservation =
+    { obs with f_credential_matches_current = false } <: t_RecoverObservation
+  in
+  recovery_is_authorized (recover_facts obs <: t_RecoverFacts)
+
+let unverified_observed_assertion_can_release (obs: t_RecoverObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_RecoverObservation = { obs with f_assertion_valid = false } <: t_RecoverObservation in
+  recovery_is_authorized (recover_facts obs <: t_RecoverFacts)
+
+let unverified_observation_user_can_release (obs: t_RecoverObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_RecoverObservation = { obs with f_user_verified = false } <: t_RecoverObservation in
+  recovery_is_authorized (recover_facts obs <: t_RecoverFacts)
+
+let missing_observed_share_can_release (obs: t_RecoverObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_RecoverObservation = { obs with f_share_present = false } <: t_RecoverObservation in
+  recovery_is_authorized (recover_facts obs <: t_RecoverFacts)
+
+let rekeying_observed_account_can_release (obs: t_RecoverObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_RecoverObservation =
+    { obs with f_account_epoch_active = false } <: t_RecoverObservation
+  in
+  recovery_is_authorized (recover_facts obs <: t_RecoverFacts)
+
+/// Possession initiation is authorized exactly when the account, share and a
+/// non-empty decoded commitment are observed on a non-rotating account, the
+/// generated attempt slot is free and the requested TTL is positive.
+let proof_initiate_facts_authorize (obs: t_ProofInitiateObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =.
+          (obs.f_account_present && obs.f_share_present &&
+          (obs.f_commitment_len >. mk_usize 0 <: bool) &&
+          (~.obs.f_rotation_active <: bool) &&
+          obs.f_attempt_id_fresh &&
+          (obs.f_ttl_secs >. mk_u64 0 <: bool))) =
+  proof_initiation_is_authorized (proof_initiate_facts obs <: t_ProofInitiateFacts)
+
+let absent_account_can_start_possession_proof (obs: t_ProofInitiateObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_ProofInitiateObservation =
+    { obs with f_account_present = false } <: t_ProofInitiateObservation
+  in
+  proof_initiation_is_authorized (proof_initiate_facts obs <: t_ProofInitiateFacts)
+
+let missing_share_can_start_possession_proof (obs: t_ProofInitiateObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_ProofInitiateObservation =
+    { obs with f_share_present = false } <: t_ProofInitiateObservation
+  in
+  proof_initiation_is_authorized (proof_initiate_facts obs <: t_ProofInitiateFacts)
+
+/// A row whose commitment is absent or empty can never verify a proof, so it
+/// must not yield a challenge.
+let commitmentless_account_can_start_possession_proof (obs: t_ProofInitiateObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_ProofInitiateObservation =
+    { obs with f_commitment_len = mk_usize 0 } <: t_ProofInitiateObservation
+  in
+  proof_initiation_is_authorized (proof_initiate_facts obs <: t_ProofInitiateFacts)
+
+/// Rotation retires the share and the commitment together, so no new
+/// possession challenge may start while `rekey_state` is set.
+let rotating_account_can_start_possession_proof (obs: t_ProofInitiateObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_ProofInitiateObservation =
+    { obs with f_rotation_active = true } <: t_ProofInitiateObservation
+  in
+  proof_initiation_is_authorized (proof_initiate_facts obs <: t_ProofInitiateFacts)
+
+let colliding_possession_attempt_id_can_start (obs: t_ProofInitiateObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_ProofInitiateObservation =
+    { obs with f_attempt_id_fresh = false } <: t_ProofInitiateObservation
+  in
+  proof_initiation_is_authorized (proof_initiate_facts obs <: t_ProofInitiateFacts)
+
+let expired_possession_initiate_ttl_can_start (obs: t_ProofInitiateObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_ProofInitiateObservation =
+    { obs with f_ttl_secs = mk_u64 0 } <: t_ProofInitiateObservation
+  in
+  proof_initiation_is_authorized (proof_initiate_facts obs <: t_ProofInitiateFacts)
+
+/// Possession grant issuance is authorized exactly when the exact attempt was
+/// consumed, the decoded identity bindings match, the proof verified, the
+/// account row is present and not rotating, a non-empty commitment is staged
+/// at the current normalized epoch.
+let possession_recover_facts_authorize (obs: t_PossessionRecoverObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =.
+          ((match obs.f_attempt_source <: t_RecoveryAttemptSource with
+            | RecoveryAttemptSource_Consumed  -> true
+            | _ -> false) &&
+          obs.f_account_present &&
+          obs.f_user_matches &&
+          obs.f_attempt_matches &&
+          obs.f_proof_verified &&
+          obs.f_account_epoch_active &&
+          (obs.f_commitment_len >. mk_usize 0 <: bool) &&
+          (obs.f_commitment_epoch =. (observed_recovery_epoch obs.f_stored_epoch <: i64) <: bool) &&
+          ((observed_recovery_epoch obs.f_stored_epoch <: i64) >=. v_INITIAL_EPOCH <: bool))) =
+  possession_recovery_is_authorized (possession_recover_facts obs <: t_PossessionRecoverFacts)
+
+let missing_possession_attempt_can_recover (obs: t_PossessionRecoverObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_PossessionRecoverObservation =
+    { obs with f_attempt_source = RecoveryAttemptSource_Missing <: t_RecoveryAttemptSource }
+    <:
+    t_PossessionRecoverObservation
+  in
+  possession_recovery_is_authorized (possession_recover_facts obs <: t_PossessionRecoverFacts)
+
+let absent_possession_account_can_recover (obs: t_PossessionRecoverObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_PossessionRecoverObservation =
+    { obs with f_account_present = false } <: t_PossessionRecoverObservation
+  in
+  possession_recovery_is_authorized (possession_recover_facts obs <: t_PossessionRecoverFacts)
+
+let cross_user_possession_observation_can_recover (obs: t_PossessionRecoverObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_PossessionRecoverObservation =
+    { obs with f_user_matches = false } <: t_PossessionRecoverObservation
+  in
+  possession_recovery_is_authorized (possession_recover_facts obs <: t_PossessionRecoverFacts)
+
+let mismatched_possession_attempt_observation_can_recover (obs: t_PossessionRecoverObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_PossessionRecoverObservation =
+    { obs with f_attempt_matches = false } <: t_PossessionRecoverObservation
+  in
+  possession_recovery_is_authorized (possession_recover_facts obs <: t_PossessionRecoverFacts)
+
+let unverified_possession_observation_can_recover (obs: t_PossessionRecoverObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_PossessionRecoverObservation =
+    { obs with f_proof_verified = false } <: t_PossessionRecoverObservation
+  in
+  possession_recovery_is_authorized (possession_recover_facts obs <: t_PossessionRecoverFacts)
+
+let rekeying_possession_observation_can_recover (obs: t_PossessionRecoverObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_PossessionRecoverObservation =
+    { obs with f_account_epoch_active = false } <: t_PossessionRecoverObservation
+  in
+  possession_recovery_is_authorized (possession_recover_facts obs <: t_PossessionRecoverFacts)
+
+/// Without a non-empty staged commitment there is nothing to verify a proof
+/// against, so a possession grant must not issue.
+let missing_possession_commitment_can_recover (obs: t_PossessionRecoverObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_PossessionRecoverObservation =
+    { obs with f_commitment_len = mk_usize 0 } <: t_PossessionRecoverObservation
+  in
+  possession_recovery_is_authorized (possession_recover_facts obs <: t_PossessionRecoverFacts)
+
+/// A commitment decoded at a different epoch than the live normalized one is
+/// stale, so its proof must not issue a grant.
+let rotated_commitment_observation_can_recover (obs: t_PossessionRecoverObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let epoch:i64 = observed_recovery_epoch obs.f_stored_epoch in
+  let obs:t_PossessionRecoverObservation =
+    {
+      obs with
+      f_commitment_epoch
+      =
+      if epoch =. Core_models.Num.impl_i64__MAX then v_INITIAL_EPOCH else epoch +! mk_i64 1
+    }
+    <:
+    t_PossessionRecoverObservation
+  in
+  possession_recovery_is_authorized (possession_recover_facts obs <: t_PossessionRecoverFacts)
+
+/// Enrollment is authorized exactly when a live grant was consumed without a
+/// concurrent replacement, the user row is present, the credential (or the
+/// staged possession commitment for M18 grants) still authorizes, the decoded
+/// keys are valid, the account is not rotating, and the decoded grant epoch
+/// equals the normalized live account epoch.
+let enrollment_facts_authorize (obs: t_EnrollmentObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =.
+          (obs.f_grant_present && obs.f_grant_consumed && obs.f_consumed_matches_observed &&
+          obs.f_account_present &&
+          (if obs.f_grant_possession
+            then obs.f_commitment_len >. mk_usize 0 <: bool
+            else obs.f_credential_id_matches) &&
+          (obs.f_hybrid_ek_len =. v_HYBRID_EK_LEN <: bool) &&
+          (obs.f_hybrid_vk_len =. v_HYBRID_VK_LEN <: bool) &&
+          obs.f_account_epoch_active &&
+          (obs.f_grant_epoch >=. v_INITIAL_EPOCH <: bool) &&
+          (obs.f_grant_epoch =. (observed_recovery_epoch obs.f_stored_epoch <: i64) <: bool))) =
+  enrollment_is_authorized (enrollment_facts obs <: t_EnrollmentFacts)
+
+let missing_enrollment_grant_observation_can_enroll (obs: t_EnrollmentObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_EnrollmentObservation =
+    { obs with f_grant_present = false } <: t_EnrollmentObservation
+  in
+  enrollment_is_authorized (enrollment_facts obs <: t_EnrollmentFacts)
+
+let unconsumed_enrollment_grant_observation_can_enroll (obs: t_EnrollmentObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_EnrollmentObservation =
+    { obs with f_grant_consumed = false } <: t_EnrollmentObservation
+  in
+  enrollment_is_authorized (enrollment_facts obs <: t_EnrollmentFacts)
+
+/// A concurrent request that replaced the grant between the non-consuming
+/// read and the single-use redemption must not enroll.
+let replaced_enrollment_grant_observation_can_enroll (obs: t_EnrollmentObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_EnrollmentObservation =
+    { obs with f_consumed_matches_observed = false } <: t_EnrollmentObservation
+  in
+  enrollment_is_authorized (enrollment_facts obs <: t_EnrollmentFacts)
+
+let absent_enrollment_account_can_enroll (obs: t_EnrollmentObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_EnrollmentObservation =
+    { obs with f_account_present = false } <: t_EnrollmentObservation
+  in
+  enrollment_is_authorized (enrollment_facts obs <: t_EnrollmentFacts)
+
+let rekeying_enrollment_observation_can_enroll (obs: t_EnrollmentObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_EnrollmentObservation =
+    { obs with f_account_epoch_active = false } <: t_EnrollmentObservation
+  in
+  enrollment_is_authorized (enrollment_facts obs <: t_EnrollmentFacts)
+
+let replaced_credential_observation_can_enroll (obs: t_EnrollmentObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_EnrollmentObservation =
+    { obs with f_credential_id_matches = false } <: t_EnrollmentObservation
+  in
+  let obs:t_EnrollmentObservation =
+    { obs with f_grant_possession = false } <: t_EnrollmentObservation
+  in
+  enrollment_is_authorized (enrollment_facts obs <: t_EnrollmentFacts)
+
+let commitmentless_possession_observation_can_enroll (obs: t_EnrollmentObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let obs:t_EnrollmentObservation =
+    { obs with f_grant_possession = true } <: t_EnrollmentObservation
+  in
+  let obs:t_EnrollmentObservation =
+    { obs with f_credential_id_matches = false } <: t_EnrollmentObservation
+  in
+  let obs:t_EnrollmentObservation =
+    { obs with f_commitment_len = mk_usize 0 } <: t_EnrollmentObservation
+  in
+  enrollment_is_authorized (enrollment_facts obs <: t_EnrollmentFacts)
+
+let rotated_enrollment_observation_can_enroll (obs: t_EnrollmentObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  let epoch:i64 = observed_recovery_epoch obs.f_stored_epoch in
+  let obs:t_EnrollmentObservation =
+    {
+      obs with
+      f_grant_epoch
+      =
+      if epoch =. Core_models.Num.impl_i64__MAX then v_INITIAL_EPOCH else epoch +! mk_i64 1
+    }
+    <:
+    t_EnrollmentObservation
+  in
+  enrollment_is_authorized (enrollment_facts obs <: t_EnrollmentFacts)
+
+let invalid_public_keys_observation_can_enroll (obs: t_EnrollmentObservation)
+    : Prims.Pure bool
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:bool = result in
+          result =. false) =
+  if obs.f_hybrid_ek_len =. v_HYBRID_EK_LEN && obs.f_hybrid_vk_len =. v_HYBRID_VK_LEN
+  then false
+  else enrollment_is_authorized (enrollment_facts obs <: t_EnrollmentFacts)

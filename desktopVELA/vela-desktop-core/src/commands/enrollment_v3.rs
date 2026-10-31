@@ -226,8 +226,10 @@ pub async fn poll_enrollment_claim(
         .decode(&claim.hybrid_vk)
         .map_err(|_| "Server returned an unreadable device key".to_string())?;
 
-    // Over the key itself, not over anything the joining device said about it.
-    let fingerprint = enrollment_fingerprint(&hybrid_vk);
+    // Over both keys themselves, not over anything the joining device said
+    // about them. The RMS is sealed to `hybrid_ek`, so it has to be covered
+    // too (fingerprint v4; m13b_enrollment_key_binding.spthy).
+    let fingerprint = enrollment_fingerprint(&hybrid_vk, &hybrid_ek);
     let choices = enrollment_fingerprint_choices(&fingerprint, FINGERPRINT_CHOICE_COUNT);
 
     let pending = PendingEnrollment {
@@ -465,7 +467,7 @@ pub async fn begin_enrollment_join(state: &AppState, code: &str) -> Result<JoinR
         .map_err(|e| format!("Thread join error: {e}"))?
         .map_err(|e| format!("Keypair generation failed: {e}"))?;
 
-    let fingerprint = enrollment_fingerprint(&identity.hybrid_vk);
+    let fingerprint = enrollment_fingerprint(&identity.hybrid_vk, &identity.hybrid_ek);
 
     let client = ApiClient::with_url(locator.u.clone());
     let device_name = crate::audit::get_device_name();
@@ -764,8 +766,8 @@ mod tests {
 
     #[test]
     fn a_pick_must_equal_the_answer() {
-        let a = enrollment_fingerprint(&[1u8; 2624]);
-        let b = enrollment_fingerprint(&[2u8; 2624]);
+        let a = enrollment_fingerprint(&[1u8; 2624], &[1u8; 1600]);
+        let b = enrollment_fingerprint(&[2u8; 2624], &[1u8; 1600]);
         assert!(fingerprints_match(&a, &a));
         assert!(fingerprints_match(&a, &format!("  {a}  ")));
         assert!(!fingerprints_match(&a, &b));
@@ -776,22 +778,26 @@ mod tests {
         assert!(!fingerprints_match(&a, &near));
     }
 
-    /// The fingerprint the joining device shows is over its own key.
+    /// The fingerprint the joining device shows is over its own keys.
     ///
     /// This is the invariant the whole layer rests on, so it is asserted
     /// directly rather than left to the reader of `begin_enrollment_join`.
     #[test]
     fn the_joining_fingerprint_is_over_the_devices_own_key() {
         let identity = crypto::generate_identity_keypair().expect("keypair");
-        let shown = enrollment_fingerprint(&identity.hybrid_vk);
+        let shown = enrollment_fingerprint(&identity.hybrid_vk, &identity.hybrid_ek);
 
         // A primary reading this device's claim computes the same value from the
-        // same public key, which is what makes the comparison mean something.
-        assert_eq!(shown, enrollment_fingerprint(&identity.hybrid_vk));
+        // same public keys, which is what makes the comparison mean something.
+        assert_eq!(shown, enrollment_fingerprint(&identity.hybrid_vk, &identity.hybrid_ek));
 
         // And it is specific to this device.
         let other = crypto::generate_identity_keypair().expect("keypair");
-        assert_ne!(shown, enrollment_fingerprint(&other.hybrid_vk));
+        assert_ne!(shown, enrollment_fingerprint(&other.hybrid_vk, &other.hybrid_ek));
+
+        // The v3 flaw (m13b): a claim with this device's signing key but a
+        // substituted KEM key must not show this device's fingerprint.
+        assert_ne!(shown, enrollment_fingerprint(&identity.hybrid_vk, &other.hybrid_ek));
     }
 
     /// A joining device must be able to open what a primary sealed to it.

@@ -1,0 +1,9 @@
+$ python3 security/assurance/check-proof-boundary.py
+14 checked module artifacts: 249 selected postconditions, 0 explicitly reviewed assume val declarations.
+Imported libraries, the defined String/Vec models, extraction, solvers and the OS remain trusted; this static gate is not a proof.
+
+$ python3 -m unittest discover -s security/formal/tests -p 'test_*.py'
+----------------------------------------------------------------------
+Ran 50 tests in 2.239s
+
+OK

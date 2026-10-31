@@ -38,6 +38,14 @@ char *vela_ffi_identity_rotate_share_key(const uint8_t *seal_key, size_t seal_ke
                                          const char *request_json);
 char *vela_ffi_identity_sign_json(const char *request_json);
 char *vela_ffi_identity_open_share_json(const char *request_json);
+/* Share envelope v2: signed, recipient-bound shared items.
+ * seal:  { handle, sender_user_id, sender_device_id, recipient_user_id,
+ *          recipient_share_ek_b64, lineage_id, revision, item_json } -> { capsule_b64 }
+ * admit: { handle, capsule_b64, recipient_user_id, attributed_sender_user_id,
+ *          pin?: { sender_user_id, sender_vk_b64, lineage_id, revision } }
+ *        -> { item_json, first_contact, pin, sender_fingerprint } or { error } */
+char *vela_ffi_identity_seal_signed_share_json(const char *request_json);
+char *vela_ffi_identity_admit_share_json(const char *request_json);
 /* Enrollment v3 (audit P-1). The fingerprint call takes only a handle: the
    value shown to the user must come from the key this device holds. */
 char *vela_ffi_identity_enrollment_fingerprint_json(const char *request_json);
@@ -56,6 +64,17 @@ char *vela_ffi_web_session_chunk_keys_json(const uint8_t *rms, size_t rms_len,
                                            const char *request_json);
 char *vela_ffi_decrypt_vault_chunk_json(const uint8_t *rms, size_t rms_len,
                                         const char *request_json);
+/* Production download admission (M23/F-5). Request:
+ * { chunk_id, ciphertext_b64, lamport_clock, key_epoch, local_key_epoch,
+ *   last_seen_lamport? } -> { vault_json, lamport_clock } or { error }.
+ * Requires a self-describing sealed blob (`VAE1`), decrypts/authenticates it
+ * first, then applies the checked rollback policy; plaintext is returned only
+ * when admitted. Legacy *unsealed* ciphertext is refused here — it binds
+ * neither chunk nor clock — and must use the explicit pre-C-2 migration path.
+ * `lamport_clock` in the response is the revision the policy admitted; callers
+ * must baseline that value. */
+char *vela_ffi_decrypt_admitted_vault_chunk_json(const uint8_t *rms, size_t rms_len,
+                                                 const char *request_json);
 char *vela_ffi_decrypt_rms_capsule_json(const char *request_json);
 char *vela_ffi_decrypt_enrollment_package_json(const char *request_json);
 char *vela_ffi_split_recovery_json(const uint8_t *rms, size_t rms_len,

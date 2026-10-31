@@ -1,0 +1,83 @@
+(* VELA hybrid KEM, combiner v2 — IND-CCA2 in a uniform prime-order
+   GDH model with the other KEM's secret key disclosed.
+
+   Code: libVELA/vela-crypto/src/kem.rs (encapsulate, decapsulate, combine_v2).
+
+     ss = H(ss_mlkem, ss_x25519, x25519_epk, x25519_pk, ct_mlkem, pk_mlkem)
+
+   Assumptions:
+   - X25519: Gap Diffie-Hellman in a prime-order group (DH_good_group + GDH).
+     The real curve has a cofactor; kem.rs rejects non-contributory results,
+     and the gap between X25519 and a prime-order group is not modelled here.
+   - HKDF-SHA256 over the concatenated transcript: a random oracle H.
+   - The code hashes ct_mlkem and pk_mlkem with SHA-256 before the KDF; the
+     model feeds them to H directly, i.e. SHA-256 is assumed collision
+     resistant on these inputs (the step is argued, not modelled).
+   - ML-KEM: correctness, but no secrecy assumption. Algorithms are public
+     functions with the correctness equation below; its secret key is leaked.
+
+   Game: one honest recipient key pair, one challenge encapsulation, Qd
+   decapsulation queries on any capsule other than the challenge, qH random
+   oracle queries. Goal: the challenge key is indistinguishable from random.
+
+   Expected: "All queries proved."
+*)
+
+param Qd.
+
+(* ── X25519 (prime-order abstraction) under GDH ── *)
+type Z [large,bounded].
+type G [large,bounded].
+proba pGDH.
+proba pDistRerandom.
+expand DH_good_group(G, Z, g, exp, exp', mult).
+expand GDH(G, Z, g, exp, exp', mult, pGDH, pDistRerandom).
+
+(* ── ML-KEM: arbitrary, adversary-controlled ── *)
+type mlsk [bounded].
+type mlpk [bounded].
+type mlseed [large,fixed].
+type mlct [bounded].
+type mlss [bounded].
+fun mlpkgen(mlsk): mlpk.
+fun mlencap_ct(mlpk, mlseed): mlct.
+fun mlencap_ss(mlpk, mlseed): mlss.
+fun mldecap(mlct, mlsk): mlss.
+
+(* Leaked-key decapsulation must recover the honest challenge secret too.
+   No confidentiality assumption is made about these ML-KEM functions. *)
+equation forall sk: mlsk, seed: mlseed;
+  mldecap(mlencap_ct(mlpkgen(sk), seed), sk) = mlencap_ss(mlpkgen(sk), seed).
+
+(* ── The combiner: HKDF-SHA256 as a random oracle ── *)
+type hashkey [fixed].
+type key [large,fixed].
+expand ROM_hash_6(hashkey, mlss, G, G, G, mlct, mlpk, key, H, Horacle, qH).
+
+query secret b [cv_bit].
+
+process
+  Ostart() :=
+    hk <-R hashkey;
+    b <-R bool;
+    skm <-R mlsk;
+    x <-R Z;
+    (* the ML-KEM secret key is handed to the adversary *)
+    return(skm, exp(g, x));
+    ((
+      Ochall() :=
+        s <-R mlseed;
+        y <-R Z;
+        pkm <- mlpkgen(skm);
+        ctm: mlct <- mlencap_ct(pkm, s);
+        ssm <- mlencap_ss(pkm, s);
+        epk: G <- exp(g, y);
+        k0 <- H(hk, ssm, exp(exp(g, x), y), epk, exp(g, x), ctm, pkm);
+        k1 <-R key;
+        return(ctm, epk, if b then k0 else k1)
+    ) | (
+      foreach id <= Qd do
+      Odecap(ctq: mlct, epkq: G) :=
+        find suchthat defined(ctm, epk) && ctq = ctm && epkq = epk then yield else
+        return(H(hk, mldecap(ctq, skm), exp(epkq, x), epkq, exp(g, x), ctq, mlpkgen(skm)))
+    ) | run Horacle(hk))

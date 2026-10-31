@@ -1,0 +1,11 @@
+--- serverVELA/vela-session-policy/proofs/fstar/extraction-websession-driver/Vela_session_policy.Websession_driver.fst	2026-10-28 10:51:43.398233033 +0100
++++ /tmp/vela-f2-websession-mut/grant/Vela_session_policy.Websession_driver.fst	2026-10-28 11:04:21.084684615 +0100
+@@ -573,7 +573,7 @@
+             driver with
+             f_stage = GrantStage_Update <: t_GrantStage;
+             f_session_loaded = true;
+-            f_plan_authorized = true;
++            f_plan_authorized = false;
+             f_permit_mode
+             =
+             Vela_session_policy.impl_GrantPermit__mode permit <: Vela_session_policy.t_SessionMode;

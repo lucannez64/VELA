@@ -4,7 +4,7 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use crate::{
     error::{AppError, Result},
     middleware::{maybe_append_new_token, DeviceSession},
-    sqldb::{Db as _, TursoValue},
+    sqldb::TursoValue,
     state::AppState,
 };
 
@@ -109,49 +109,104 @@ pub async fn get_capsule(
     ))
 }
 
+/// The I/O behind `POST /device/capsule/ack`.
+struct CapsuleAckIo<'a> {
+    state: &'a AppState,
+    device_id: String,
+    user_id: String,
+    epoch: i64,
+    error: Option<AppError>,
+}
+
+impl CapsuleAckIo<'_> {
+    async fn acknowledge(
+        &mut self,
+    ) -> vela_rekey_policy::vault_mutation_driver::AckObservation {
+        use vela_rekey_policy::executor::{classify_ack, plan_ack_capsule};
+        let plan = plan_ack_capsule(self.device_id.clone(), self.user_id.clone(), self.epoch);
+        let mut sql = crate::vault::sql::PoolSql(self.state);
+        let (outcomes, error) = crate::vault::sql::run_writes(&mut sql, &plan).await;
+        if let Some(error) = error {
+            self.error = Some(error.into_internal());
+        }
+        classify_ack(&outcomes)
+    }
+
+    async fn inspect_pending(
+        &mut self,
+    ) -> vela_rekey_policy::vault_mutation_driver::PendingObservation {
+        use vela_rekey_policy::executor::{
+            classify_pending, plan_pending_capsule, ReadOutcome,
+        };
+        let plan = plan_pending_capsule(self.device_id.clone(), self.user_id.clone());
+        let mut sql = crate::vault::sql::PoolSql(self.state);
+        let outcome = match crate::vault::sql::run_read(&mut sql, &plan).await {
+            Err(error) => {
+                self.error = Some(AppError::Internal(error.to_string()));
+                ReadOutcome::Failed
+            }
+            Ok(rows) => {
+                ReadOutcome::Rows(crate::vault::sql::pending_row_view(&rows))
+            }
+        };
+        classify_pending(&outcome)
+    }
+}
+
 pub async fn post_capsule_ack(
     State(state): State<AppState>,
     session: DeviceSession,
     Json(body): Json<CapsuleAck>,
 ) -> Result<(HeaderMap, axum::http::StatusCode)> {
-    let updated = state
-        .sqldb
-        .execute(
-            "UPDATE devices SET rms_capsule = NULL, rms_capsule_epoch = NULL
-             WHERE id = ? AND user_id = ? AND revoked = 0 AND rms_capsule_epoch = ?",
-            vec![
-                TursoValue::Text(session.device_id.to_string()),
-                TursoValue::Text(session.user_id.to_string()),
-                TursoValue::Integer(body.epoch),
-            ],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    if updated != 1 {
-        let rows = state
-            .sqldb
-            .query(
-                "SELECT rms_capsule_epoch FROM devices
-                 WHERE id = ? AND user_id = ? AND revoked = 0",
-                vec![
-                    TursoValue::Text(session.device_id.to_string()),
-                    TursoValue::Text(session.user_id.to_string()),
-                ],
-            )
-            .await
-            .map_err(|e| AppError::Internal(e.to_string()))?;
-        // A lost successful ACK response is safe to retry. A different pending
-        // epoch is not: clearing it would strand the device on its old RMS.
-        let row = rows.first().ok_or_else(|| {
-            AppError::Conflict("device is no longer eligible to acknowledge capsules".into())
-        })?;
-        if row.i64(0).is_some() {
-            return Err(AppError::Conflict(
-                "a different re-key capsule is awaiting acknowledgement".into(),
-            ));
+    use vela_rekey_policy::vault_mutation_driver::{
+        CapsuleAckEffect, CapsuleAckFailure, CapsuleAckRequest,
+    };
+    let mut io = CapsuleAckIo {
+        state: &state,
+        device_id: session.device_id.to_string(),
+        user_id: session.user_id.to_string(),
+        epoch: body.epoch,
+        error: None,
+    };
+    let transition = vela_rekey_policy::capsule_ack_interpreter!(
+        io,
+        CapsuleAckRequest {
+            authenticated: true,
+            device_scope: true,
+        },
+        await
+    );
+    match transition.effect {
+        CapsuleAckEffect::Complete => {
+            let mut headers = HeaderMap::new();
+            maybe_append_new_token(&mut headers, &session);
+            Ok((headers, axum::http::StatusCode::NO_CONTENT))
         }
+        CapsuleAckEffect::Fail(failure) => {
+            let recorded = io.error.take();
+            Err(recorded.unwrap_or_else(|| match failure {
+                CapsuleAckFailure::Unauthenticated => {
+                    AppError::Unauthorized("not authenticated".into())
+                }
+                CapsuleAckFailure::WebSessionForbidden => {
+                    AppError::Forbidden("a temporary web session cannot acknowledge capsules".into())
+                }
+                CapsuleAckFailure::AckStorage => {
+                    AppError::Internal("capsule acknowledgement failed".into())
+                }
+                CapsuleAckFailure::NoLongerEligible => AppError::Conflict(
+                    "device is no longer eligible to acknowledge capsules".into(),
+                ),
+                CapsuleAckFailure::DifferentPending => AppError::Conflict(
+                    "a different re-key capsule is awaiting acknowledgement".into(),
+                ),
+                CapsuleAckFailure::PendingStorage => {
+                    AppError::Internal("capsule pending-epoch lookup failed".into())
+                }
+            }))
+        }
+        _ => Err(AppError::Internal(
+            "capsule acknowledgement did not reach a terminal decision".into(),
+        )),
     }
-    let mut headers = HeaderMap::new();
-    maybe_append_new_token(&mut headers, &session);
-    Ok((headers, axum::http::StatusCode::NO_CONTENT))
 }

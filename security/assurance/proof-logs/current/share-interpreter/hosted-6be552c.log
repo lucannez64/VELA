@@ -1,0 +1,15 @@
+# security workflow 40538488807 on 6be552c (all 15 PR checks passed)
+test interpreter::tests::a_committed_revoke_cleans_up_exactly_once ... ok
+test interpreter::tests::a_missing_linked_row_performs_no_mutation ... ok
+test interpreter::tests::a_refused_send_performs_nothing ... ok
+test interpreter::tests::interpreter_performs_exactly_the_driver_effects_for_every_outcome ... ok
+test interpreter::tests::a_committed_revoke_cleans_up_exactly_once ... ok
+test interpreter::tests::a_missing_linked_row_performs_no_mutation ... ok
+test interpreter::tests::a_refused_send_performs_nothing ... ok
+test interpreter::tests::interpreter_performs_exactly_the_driver_effects_for_every_outcome ... ok
+Verified module: Vela_share_policy.Interpreter
+Verified module: Vela_share_policy_interpreter_lemmas
+share interpreter: the handler's loop calls only the executor method for the driver's current effect, stops at the verdict within 3 turns, and ends in the driver state the per-request sharing theorems cover
+fa2c6421ea4ece7ee55f8cbb8ef84f895a282cb4b5490601c1c16f556b7fc41c  proofs/fstar/extraction-interpreter/Vela_share_policy.Interpreter.fst
+ceea40327cfbb9cc427ea71a2e1a573fa460d1171d59316c5a19a25ebdf8ad84  proofs/fstar/interpreter-lemmas/Vela_share_policy_interpreter_lemmas.fst
+98ff19fe6bccb08c6fcbc0f04e2ca4a1cdfeb081a4850d29fcd4c3f63cdbd908  src/interpreter.rs

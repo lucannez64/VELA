@@ -1,0 +1,11 @@
+--- /tmp/vela-f2-cancel-mut2/share/pristine.fst
++++ vela-share-policy/proofs/fstar/extraction-send-driver/Vela_share_policy.Send_driver.fst
+@@ -458,7 +458,7 @@
+           (~.(send_state_is_sound d <: bool) || send_state_is_sound result.f_driver)) =
+   match observation <: t_ConsumeObservation with
+   | ConsumeObservation_Consumed  ->
+-    transition ({ d with f_stage = SendStage_Read <: t_SendStage; f_consumed = true }
++    transition ({ d with f_stage = SendStage_Read <: t_SendStage; f_consumed = true; f_delivered = true }
+         <:
+         t_SendDriver)
+       (SendEffect_ReadSend <: t_SendEffect)

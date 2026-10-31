@@ -5,6 +5,16 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
+use vela_enrollment_policy::pairing_driver::{
+    PackageStoreObservation, PackageTokenObservation, PairingEffect, PairingFailure,
+    RedeemObservation, StoreObservation,
+};
+
+use super::exec_io::ExecIo;
+use super::pairing_executor::PairingExecutor;
+use vela_enrollment_policy::executor::{
+    classify_redeem, classify_store, plan_redeem_package, plan_store_package,
+};
 
 use crate::{
     error::{AppError, Result},
@@ -12,7 +22,8 @@ use crate::{
     state::AppState,
 };
 
-const ENROLLMENT_PACKAGE_TTL_SECS: u64 = 15 * 60;
+const ENROLLMENT_PACKAGE_TTL_SECS: u64 =
+    vela_enrollment_policy::executor::PACKAGE_TTL_SECS;
 const MAX_ENROLLMENT_PACKAGE_BYTES: usize = 64 * 1024;
 
 #[derive(Deserialize)]
@@ -26,6 +37,58 @@ pub struct FetchEnrollmentPackageResponse {
     pub ciphertext: String,
 }
 
+/// The I/O behind the package-store ceremony. The driver decides whether the
+/// write may happen at all and how its outcome is classified; this executor
+/// performs only the one effect the proved loop hands it.
+pub(crate) struct StorePackageIo<'a> {
+    io: ExecIo<'a>,
+    token: String,
+    ciphertext: String,
+    error: Option<AppError>,
+}
+
+impl PairingExecutor for StorePackageIo<'_> {
+    async fn store_package(&mut self) -> StoreObservation {
+        let plan = plan_store_package(self.token.clone(), self.ciphertext.clone());
+        let (outcomes, error) = self.io.run_writes(&plan).await;
+        if let Some(error) = error {
+            if self.error.is_none() {
+                self.error = Some(error.into_app());
+            }
+        }
+        classify_store(&outcomes)
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn store_package_for_test<'a>(
+    state: &'a AppState,
+    fail_at: Option<usize>,
+    token: String,
+    ciphertext: String,
+) -> StorePackageIo<'a> {
+    StorePackageIo {
+        io: super::exec_io::ExecIo::faulty(state, fail_at),
+        token,
+        ciphertext,
+        error: None,
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn redeem_package_for_test<'a>(
+    state: &'a AppState,
+    fail_at: Option<usize>,
+    token: String,
+) -> RedeemPackageIo<'a> {
+    RedeemPackageIo {
+        io: super::exec_io::ExecIo::faulty(state, fail_at),
+        token,
+        removed: None,
+        error: None,
+    }
+}
+
 pub async fn post_enrollment_package(
     State(state): State<AppState>,
     addr: Option<ConnectInfo<SocketAddr>>,
@@ -34,23 +97,70 @@ pub async fn post_enrollment_package(
 ) -> Result<Json<serde_json::Value>> {
     let ip = net::client_ip(&headers, addr.map(|ConnectInfo(a)| a.ip()), &state.config);
     rate_limit::enrollment_package_store_by_ip(&state.store, &ip)?;
-    validate_token(&body.token)?;
-    if body.ciphertext.is_empty() || body.ciphertext.len() > MAX_ENROLLMENT_PACKAGE_BYTES {
-        return Err(AppError::BadRequest(
-            "ciphertext must be between 1 byte and 64 KiB".into(),
-        ));
+
+    // Every post-validation decision below belongs to the extracted driver:
+    // whether the request may write at all, and how the write outcome is
+    // classified. The handler only performs the returned effect.
+    let start = vela_enrollment_policy::pairing_interpreter::start_store_package(
+        PackageStoreObservation {
+            token_valid: validate_token(&body.token).is_ok(),
+            ciphertext_len_valid: !body.ciphertext.is_empty()
+                && body.ciphertext.len() <= MAX_ENROLLMENT_PACKAGE_BYTES,
+        },
+    );
+    let mut io = StorePackageIo {
+        io: ExecIo::new(&state),
+        token: body.token,
+        ciphertext: body.ciphertext,
+        error: None,
+    };
+    // The proved loop: only the effect the driver just emitted is performed,
+    // and nothing after its verdict.
+    let transition = vela_enrollment_policy::pairing_interpreter!(io, start, await);
+
+    match transition.effect {
+        PairingEffect::Complete => Ok(Json(serde_json::json!({
+            "stored": true,
+            "expires_in": ENROLLMENT_PACKAGE_TTL_SECS
+        }))),
+        PairingEffect::Fail(failure) => Err(io
+            .error
+            .take()
+            .unwrap_or_else(|| invitation_failure_error(failure))),
+        _ => Err(AppError::Internal(
+            "pairing driver produced an unexpected package-store effect".into(),
+        )),
     }
+}
 
-    state.store.set_ex(
-        &package_key(&body.token),
-        body.ciphertext.as_bytes(),
-        ENROLLMENT_PACKAGE_TTL_SECS,
-    )?;
+/// The I/O behind the package-fetch ceremony. The destructive read is the only
+/// way a package is handed out, and the driver authorizes it at most once per
+/// request.
+pub(crate) struct RedeemPackageIo<'a> {
+    io: ExecIo<'a>,
+    token: String,
+    removed: Option<Vec<u8>>,
+    error: Option<AppError>,
+}
 
-    Ok(Json(serde_json::json!({
-        "stored": true,
-        "expires_in": ENROLLMENT_PACKAGE_TTL_SECS
-    })))
+impl PairingExecutor for RedeemPackageIo<'_> {
+    async fn redeem_package(&mut self) -> RedeemObservation {
+        let plan = plan_redeem_package(self.token.clone());
+        let (outcome, value, error) = self.io.run_take(&plan).await;
+        if let Some(error) = error {
+            if self.error.is_none() {
+                self.error = Some(error.into_app());
+            }
+        }
+        let utf8_valid = value
+            .as_deref()
+            .map(|bytes| std::str::from_utf8(bytes).is_ok())
+            .unwrap_or(false);
+        if let Some(bytes) = value {
+            self.removed = Some(bytes);
+        }
+        classify_redeem(&outcome, utf8_valid)
+    }
 }
 
 pub async fn get_enrollment_package(
@@ -72,20 +182,37 @@ pub async fn get_enrollment_package(
         .map(str::to_string)
         .unwrap_or(path_token);
 
-    validate_token(&token)?;
-    let ciphertext = state
-        .store
-        .get_del(&package_key(&token))?
-        .ok_or_else(|| AppError::NotFound("enrollment package not found or expired".into()))?;
+    let start = vela_enrollment_policy::pairing_interpreter::start_redeem_package(
+        PackageTokenObservation {
+            token_valid: validate_token(&token).is_ok(),
+        },
+    );
+    let mut io = RedeemPackageIo {
+        io: ExecIo::new(&state),
+        token,
+        removed: None,
+        error: None,
+    };
+    let transition = vela_enrollment_policy::pairing_interpreter!(io, start, await);
 
-    let ciphertext = String::from_utf8(ciphertext)
-        .map_err(|_| AppError::Internal("stored enrollment package is not UTF-8".into()))?;
-
-    Ok(Json(FetchEnrollmentPackageResponse { ciphertext }))
-}
-
-fn package_key(token: &str) -> String {
-    format!("enrollment_package:{token}")
+    match transition.effect {
+        PairingEffect::Complete => {
+            // The driver completes only for a present, UTF-8 package.
+            let bytes = io.removed.take().ok_or_else(|| {
+                AppError::Internal("redemption driver completed without a package".into())
+            })?;
+            let ciphertext = String::from_utf8(bytes)
+                .map_err(|_| AppError::Internal("stored enrollment package is not UTF-8".into()))?;
+            Ok(Json(FetchEnrollmentPackageResponse { ciphertext }))
+        }
+        PairingEffect::Fail(failure) => Err(io
+            .error
+            .take()
+            .unwrap_or_else(|| invitation_failure_error(failure))),
+        _ => Err(AppError::Internal(
+            "pairing driver produced an unexpected package-redeem effect".into(),
+        )),
+    }
 }
 
 fn validate_token(token: &str) -> Result<()> {
@@ -99,4 +226,28 @@ fn validate_token(token: &str) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+/// Render the driver's failure with the handler's historical status/message.
+fn invitation_failure_error(failure: PairingFailure) -> AppError {
+    match failure {
+        PairingFailure::InvalidToken => {
+            AppError::BadRequest("invalid enrollment package token".into())
+        }
+        PairingFailure::InvalidCiphertext => {
+            AppError::BadRequest("ciphertext must be between 1 byte and 64 KiB".into())
+        }
+        PairingFailure::PackageUnavailable => {
+            AppError::NotFound("enrollment package not found or expired".into())
+        }
+        PairingFailure::PackageNotUtf8 => {
+            AppError::Internal("stored enrollment package is not UTF-8".into())
+        }
+        // The storage variant is rendered from the retained store error at the
+        // call site; keep a total fallback.
+        PairingFailure::PackageStorage => {
+            AppError::Internal("enrollment package store failed".into())
+        }
+        _ => AppError::Internal("pairing driver produced an unexpected failure".into()),
+    }
 }

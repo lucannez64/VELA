@@ -1,0 +1,41 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.08s
+     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-74511b52/target-own/debug/build/vela-enrollment-policy/4867041615cc08d8/out/vela_enrollment_policy-4867041615cc08d8)
+
+running 3 tests
+test enroll_interpreter::tests::a_rejected_challenge_performs_nothing_else ... ok
+test enroll_interpreter::tests::an_ambiguous_insert_error_is_terminal ... ok
+test enroll_interpreter::tests::interpreter_performs_exactly_the_driver_effects_for_every_outcome ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 23 filtered out; finished in 0.00s
+
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.10s
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-enroll-interpreter/Vela_enrollment_policy.Enroll_driver.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-enroll-interpreter/Vela_enrollment_policy.Enroll_interpreter.fst[0m
+Driver source policy: 2 extracted modules, 2 proof modules; no unreviewed escapes/options
+* Warning 271 at /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+Verified module: Vela_enrollment_policy.Enroll_interpreter
+Verified module: Vela_enrollment_policy_enroll_interpreter_lemmas
+All verification conditions discharged successfully
+enrollment interpreter: the handler's loop calls only the executor method for the driver's current effect, stops at the verdict within 5 turns, and ends in the driver state the per-request enrollment theorems cover
+bf31d7c58cebda8a67664b8a498205a81ddeb19806f7ea3da129bb871c3576bf  proofs/fstar/extraction-enroll-interpreter/Vela_enrollment_policy.Enroll_interpreter.fst
+f5ae4b954352e659bd3c08b06c58e60e188976b393c217f644b35acf650f9167  proofs/fstar/enroll-interpreter-lemmas/Vela_enrollment_policy_enroll_interpreter_lemmas.fst
+2eddb5ccf12d1357602677ec977256fc3db4dd79bc2e3f7640cd3c0e83d9fc7a  src/enroll_interpreter.rs

@@ -6,7 +6,7 @@ use uuid::Uuid;
 use crate::{
     error::{AppError, Result},
     middleware::{maybe_append_new_token, DeviceSession},
-    sqldb::{Db as _, TursoValue},
+    sqldb::Db as _,
     state::AppState,
 };
 
@@ -86,28 +86,77 @@ pub async fn list_devices(
 /// Record a device's positive capability attestation. The desktop calls this
 /// only after loading a non-empty `hybrid_dk`; old devices which discarded that
 /// key remain false and safely block account rotation.
+/// The I/O behind `POST /device/rekey-capable`.
+struct CapableIo<'a> {
+    state: &'a AppState,
+    device_id: String,
+    user_id: String,
+    error: Option<AppError>,
+}
+
+impl CapableIo<'_> {
+    async fn attest(
+        &mut self,
+    ) -> vela_rekey_policy::vault_mutation_driver::AttestObservation {
+        use vela_rekey_policy::executor::{classify_attest, plan_attest_capable};
+        let plan = plan_attest_capable(self.device_id.clone(), self.user_id.clone());
+        let mut sql = crate::vault::sql::PoolSql(self.state);
+        let (outcomes, error) = crate::vault::sql::run_writes(&mut sql, &plan).await;
+        if let Some(error) = error {
+            self.error = Some(error.into_internal());
+        }
+        classify_attest(&outcomes)
+    }
+}
+
 pub async fn post_rekey_capable(
     State(state): State<AppState>,
     session: DeviceSession,
 ) -> Result<(HeaderMap, axum::http::StatusCode)> {
-    let updated = state
-        .sqldb
-        .execute(
-            "UPDATE devices SET rekey_capable = 1
-             WHERE id = ? AND user_id = ? AND revoked = 0",
-            vec![
-                TursoValue::Text(session.device_id.to_string()),
-                TursoValue::Text(session.user_id.to_string()),
-            ],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    if updated != 1 {
-        return Err(AppError::NotFound("active device not found".into()));
+    use vela_rekey_policy::vault_mutation_driver::{
+        RekeyCapableEffect, RekeyCapableFailure, RekeyCapableRequest,
+    };
+    let mut io = CapableIo {
+        state: &state,
+        device_id: session.device_id.to_string(),
+        user_id: session.user_id.to_string(),
+        error: None,
+    };
+    let transition = vela_rekey_policy::rekey_capable_interpreter!(
+        io,
+        RekeyCapableRequest {
+            authenticated: true,
+            device_scope: true,
+        },
+        await
+    );
+    match transition.effect {
+        RekeyCapableEffect::Complete => {
+            let mut headers = HeaderMap::new();
+            maybe_append_new_token(&mut headers, &session);
+            Ok((headers, axum::http::StatusCode::NO_CONTENT))
+        }
+        RekeyCapableEffect::Fail(failure) => {
+            let recorded = io.error.take();
+            Err(recorded.unwrap_or_else(|| match failure {
+                RekeyCapableFailure::Unauthenticated => {
+                    AppError::Unauthorized("not authenticated".into())
+                }
+                RekeyCapableFailure::WebSessionForbidden => {
+                    AppError::Forbidden("a temporary web session cannot attest capability".into())
+                }
+                RekeyCapableFailure::NotFound => {
+                    AppError::NotFound("active device not found".into())
+                }
+                RekeyCapableFailure::Storage => {
+                    AppError::Internal("re-key capability update failed".into())
+                }
+            }))
+        }
+        _ => Err(AppError::Internal(
+            "capability attestation did not reach a terminal decision".into(),
+        )),
     }
-    let mut headers = HeaderMap::new();
-    maybe_append_new_token(&mut headers, &session);
-    Ok((headers, axum::http::StatusCode::NO_CONTENT))
 }
 
 #[cfg(test)]

@@ -115,6 +115,9 @@ object NativeVelaCore {
     /// verified for ciphertexts sealed with associated data and ignored for the
     /// older unbound ones, so this reads both while the fleet upgrades
     /// (audit C-2, rollout step 2).
+    ///
+    /// Low-level decrypt only: this makes **no** rollback/epoch admission
+    /// decision. Production sync must call [decryptAdmittedVaultChunkJson].
     fun decryptVaultChunkJson(
         rms: ByteArray,
         chunkId: String,
@@ -134,6 +137,54 @@ object NativeVelaCore {
             response.getString("vault_json")
         }
     }
+
+    /// Production sync download. Rust authenticates the chunk, verifies the
+    /// manifest epoch equals this device's authenticated epoch, and applies the
+    /// verified rollback policy against [lastSeenLamport] before returning any
+    /// plaintext. The request carries raw integers only — the AAD-binding fact
+    /// is derived from the actual AEAD open in Rust, never from Kotlin.
+    ///
+    /// Returns the revision the verified policy actually admitted. Callers must
+    /// record *that* clock, not the manifest entry they asked for: the two
+    /// differ only if a bug lets the request and the opened blob disagree, and
+    /// trusting the request would then baseline a revision nobody authenticated.
+    fun decryptAdmittedVaultChunkJson(
+        rms: ByteArray,
+        chunkId: String,
+        ciphertext: ByteArray,
+        lamportClock: Long,
+        keyEpoch: Long,
+        localKeyEpoch: Long,
+        lastSeenLamport: Long?,
+    ): AdmittedChunk? {
+        return try {
+            callNative {
+                val request = JSONObject()
+                    .put("chunk_id", chunkId)
+                    .put("ciphertext_b64", Base64.getEncoder().encodeToString(ciphertext))
+                    .put("lamport_clock", lamportClock)
+                    .put("key_epoch", keyEpoch)
+                    .put("local_key_epoch", localKeyEpoch)
+                    .apply { lastSeenLamport?.let { put("last_seen_lamport", it) } }
+                    .toString()
+                val response = JSONObject(nativeDecryptAdmittedVaultChunkJson(rms, request))
+                response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
+                AdmittedChunk(
+                    vaultJson = response.getString("vault_json"),
+                    lamportClock = response.getLong("lamport_clock"),
+                )
+            }
+        } catch (e: Throwable) {
+            // Surface the one legacy case with an actionable message. The Rust
+            // bridge still refuses it (the gate is not weakened); this only
+            // stops the production caller from reporting it as a generic
+            // unreadable/rollback chunk.
+            throw mapAdmittedChunkFailure(e)
+        }
+    }
+
+    /** A chunk the Rust admission gate accepted, with the revision it admitted. */
+    data class AdmittedChunk(val vaultJson: String, val lamportClock: Long)
 
     /// Short out-of-band verification code for an enrollment code string.
     /// Compute this right after scanning/pasting an enrollment code and show
@@ -317,6 +368,59 @@ object NativeVelaCore {
         val response = JSONObject(nativeIdentityOpenShareJson(request))
         response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
         response.getString("item_json")
+    }
+
+    /// Sign and seal a shared item for one recipient (share envelope v2).
+    /// The signing key stays native; the envelope names this device's key.
+    fun identitySealSignedShare(
+        handle: Long,
+        senderUserId: String,
+        senderDeviceId: String,
+        recipientUserId: String,
+        recipientShareEkB64: String,
+        lineageId: String,
+        revision: Long,
+        itemJson: String,
+    ): String? = callNative {
+        val request = JSONObject()
+            .put("handle", handle)
+            .put("sender_user_id", senderUserId)
+            .put("sender_device_id", senderDeviceId)
+            .put("recipient_user_id", recipientUserId)
+            .put("recipient_share_ek_b64", recipientShareEkB64)
+            .put("lineage_id", lineageId)
+            .put("revision", revision)
+            .put("item_json", itemJson)
+            .toString()
+        val response = JSONObject(nativeIdentitySealSignedShareJson(request))
+        response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
+        response.getString("capsule_b64")
+    }
+
+    /// Open a received share envelope, verify its signature and recipient
+    /// binding, and run the verified admission policy. Throws when the share
+    /// is rejected (unsigned, forged, misaddressed, or not newer than [pin]).
+    fun identityAdmitShare(
+        handle: Long,
+        capsuleB64: String,
+        recipientUserId: String,
+        attributedSenderUserId: String,
+        pin: SharePin? = null,
+    ): AdmittedShare? = callNative {
+        val request = JSONObject()
+            .put("handle", handle)
+            .put("capsule_b64", capsuleB64)
+            .put("recipient_user_id", recipientUserId)
+            .put("attributed_sender_user_id", attributedSenderUserId)
+        pin?.let { request.put("pin", it.toJson()) }
+        val response = JSONObject(nativeIdentityAdmitShareJson(request.toString()))
+        response.optString("error").takeIf { it.isNotBlank() }?.let { error(it) }
+        AdmittedShare(
+            itemJson = response.getString("item_json"),
+            firstContact = response.getBoolean("first_contact"),
+            pin = SharePin.fromJson(response.getJSONObject("pin")),
+            senderFingerprint = response.getString("sender_fingerprint"),
+        )
     }
 
     /// Replace the share keypair; returns the new public half and sealed blob.
@@ -534,6 +638,7 @@ object NativeVelaCore {
     private external fun nativeDecryptVaultJson(rms: ByteArray, requestJson: String): String
     private external fun nativeEncryptVaultChunkJson(rms: ByteArray, requestJson: String): String
     private external fun nativeDecryptVaultChunkJson(rms: ByteArray, requestJson: String): String
+    private external fun nativeDecryptAdmittedVaultChunkJson(rms: ByteArray, requestJson: String): String
     private external fun nativeDecryptRmsCapsuleJson(requestJson: String, rmsOut: ByteArray): String
     private external fun nativeDecryptEnrollmentPackageJson(requestJson: String): String
     private external fun nativeWebSessionChunkKeysJson(rms: ByteArray, requestJson: String): String
@@ -544,6 +649,8 @@ object NativeVelaCore {
     private external fun nativeIdentitySignJson(requestJson: String): String
     private external fun nativeIdentitySignShareEkJson(requestJson: String): String
     private external fun nativeIdentityOpenShareJson(requestJson: String): String
+    private external fun nativeIdentitySealSignedShareJson(requestJson: String): String
+    private external fun nativeIdentityAdmitShareJson(requestJson: String): String
     private external fun nativeIdentityEnrollmentFingerprintJson(requestJson: String): String
     private external fun nativeIdentitySignEnrollmentResultJson(requestJson: String): String
     private external fun nativeIdentityOpenEnrollmentCapsuleJson(requestJson: String): String
@@ -559,3 +666,63 @@ object NativeVelaCore {
     private external fun nativePasskeyAttestationObjectJson(requestJson: String): String
     private external fun nativePasskeySignJson(requestJson: String): String
 }
+
+/// What a recipient remembers about an accepted share (share envelope v2).
+data class SharePin(
+    val senderUserId: String,
+    val senderVkB64: String,
+    val lineageId: String,
+    val revision: Long,
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("sender_user_id", senderUserId)
+        .put("sender_vk_b64", senderVkB64)
+        .put("lineage_id", lineageId)
+        .put("revision", revision)
+
+    companion object {
+        fun fromJson(json: JSONObject) = SharePin(
+            senderUserId = json.getString("sender_user_id"),
+            senderVkB64 = json.getString("sender_vk_b64"),
+            lineageId = json.getString("lineage_id"),
+            revision = json.getLong("revision"),
+        )
+    }
+}
+
+data class AdmittedShare(
+    val itemJson: String,
+    val firstContact: Boolean,
+    val pin: SharePin,
+    val senderFingerprint: String,
+)
+
+/**
+ * The server supplied a pre-C-2 unsealed chunk. Admission is deliberately
+ * refused because that ciphertext binds neither the chunk id nor the clock, so
+ * no rollback decision about it would mean anything. This is distinct from a
+ * generic decrypt/rollback refusal: the user needs the explicit migration path
+ * (re-seal on a trusted client), not a "sync again" retry.
+ */
+class VaultChunkNeedsMigrationException(message: String) : IllegalStateException(message)
+
+/**
+ * Map the native bridge's generic failure into the actionable legacy-migration
+ * error when that is what Rust refused. Exact text match is intentional: the
+ * Rust bridge is the authority that made the decision and this code must not
+ * infer it from the ciphertext shape (and must not weaken the gate). Keep in
+ * sync with `open_admitted_fleet_chunk` in the Android bridge.
+ */
+internal fun mapAdmittedChunkFailure(cause: Throwable): Throwable {
+    val detail = cause.message.orEmpty()
+    if (!detail.contains(LEGACY_UNSEALED_REFUSAL_MARKER)) return cause
+    return VaultChunkNeedsMigrationException(
+        "The server returned a legacy unsealed vault chunk, which binds neither its chunk " +
+            "id nor its revision. VELA cannot apply rollback protection to it and refuses " +
+            "to admit it. Re-seal the vault through the explicit migration path on a " +
+            "trusted client before syncing."
+    )
+}
+
+private const val LEGACY_UNSEALED_REFUSAL_MARKER =
+    "legacy unsealed chunk ciphertext cannot be admitted"

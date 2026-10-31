@@ -1,0 +1,33 @@
+   Compiling vela-recovery-policy v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-700776df/serverVELA/vela-recovery-policy)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.74s
+     Running unittests src/lib.rs (target/debug/build/vela-recovery-policy/a0457367b9592201/out/vela_recovery_policy-a0457367b9592201)
+
+running 6 tests
+test tests::enrollment_requires_an_exact_live_epoch_grant ... ok
+test tests::observation_constructors_cover_decoded_possession_and_enrollment_state ... ok
+test tests::possession_initiation_requires_share_and_commitment ... ok
+test tests::possession_recovery_requires_a_verified_bound_proof ... ok
+test tests::publication_requires_exact_epoch_split_and_staged_share ... ok
+test tests::recovery_requires_the_current_credential_and_one_shot_challenge ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/fact_construction.rs (target/debug/build/vela-recovery-policy/6539ca1396ad42f7/out/fact_construction-6539ca1396ad42f7)
+
+running 7 tests
+test credential_update_facts_are_exactly_the_assertion_and_metadata_observations ... ok
+test enrollment_checks_each_decoded_key_length ... ok
+test enrollment_facts_are_exactly_the_grant_consumption_credential_commitment_and_epoch_observations ... ok
+test initiate_facts_are_exactly_the_account_share_credential_and_store_observations ... ok
+test possession_recover_facts_are_exactly_the_attempt_identity_commitment_and_epoch_observations ... ok
+test proof_initiate_facts_are_exactly_the_decoded_account_share_commitment_and_store_observations ... ok
+test recover_facts_are_exactly_the_attempt_assertion_and_row_observations ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests vela_recovery_policy
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

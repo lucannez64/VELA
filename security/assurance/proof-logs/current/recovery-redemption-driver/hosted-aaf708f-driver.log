@@ -1,0 +1,5 @@
+driver proof: 6 focused Rust contracts, 23 hand-written trace lemmas/witnesses checked
+1fe6d317eb20bba515092dc7d3181900968b5c64b65387195d58904db4fd1fe1  proofs/fstar/extraction-driver/Vela_recovery_policy.Driver.fst
+fe2380cc9ccb38178ccd064abc79c0a5e3e33d2df2ef3670b5a07813feaac545  proofs/fstar/extraction-driver/Vela_recovery_policy.fst
+074776c05b07a71af48c3fa39048f6e8220f8169ec3ab702b81a270a0aedb022  proofs/fstar/driver-lemmas/Vela_recovery_policy_driver_lemmas.fst
+42078d422125fb26e77098cc0cd7cd29c3e1c316727ef8786774777761babcfe  src/driver.rs

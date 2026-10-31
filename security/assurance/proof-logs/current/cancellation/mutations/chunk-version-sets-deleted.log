@@ -1,0 +1,7 @@
+$ fstar.exe <rekey interpreter gate args; mutated driver passed explicitly>
+* Error 19 at proofs/fstar/extraction-vault-mutation-driver/Vela_rekey_policy.Vault_mutation_driver.fst(352,2-369,84):
+  - Could not prove post-condition
+  - The SMT solver could not prove the query. Use --query_stats for more
+    details.
+1 error was reported (see above)
+exit=1

@@ -1,0 +1,17 @@
+--- proofs/fstar/extraction-webauthn-interpreter/Vela_recovery_policy.Webauthn_interpreter.fst	2026-10-27 17:13:39.525996169 +0100
++++ /tmp/vela-mut-webauthn/reg-b/Vela_recovery_policy.Webauthn_interpreter.fst	2026-10-27 17:15:28.600618137 +0100
+@@ -545,6 +545,14 @@
+               | Vela_recovery_policy.Webauthn_driver.RegistrationEffect_Complete
+               | Vela_recovery_policy.Webauthn_driver.RegistrationEffect_Fail _
+               | Vela_recovery_policy.Webauthn_driver.RegistrationEffect_Idle  ->
++                let
++                (tmp0: v_Io),
++                (out:
++                  Core_models.Option.t_Option
++                  Vela_recovery_policy.Webauthn_driver.t_CredentialPersistObservation) =
++                  f_registration_persist #v_Io #FStar.Tactics.Typeclasses.solve io
++                in
++                let io:v_Io = tmp0 in
+                 (aborted, io <: (bool & v_Io)), transition
+                 <:
+                 ((bool & v_Io) & Vela_recovery_policy.Webauthn_driver.t_RegistrationTransition)

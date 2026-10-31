@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -uo pipefail
+vela_repo=/home/hirew/.t3/worktrees/VELA/t3-700776df
+vela_tools=/home/hirew/.local/opt/vela-tools
+vela_out="$vela_repo/security/assurance/proof-logs/current/refinement-5g"
+mkdir -p "$vela_out"
+failed=0
+vela_backup=$(mktemp -d -t vela-fstar-before.XXXXXX)
+printf "Previous extraction backup: %s\n" "$vela_backup"
+for crate in libVELA/vela-client-share-policy serverVELA/vela-rekey-policy \
+  serverVELA/vela-session-policy serverVELA/vela-enrollment-policy \
+  serverVELA/vela-recovery-policy serverVELA/vela-share-policy \
+  libVELA/vela-client-recovery-policy libVELA/vela-sync-policy; do
+  name=$(basename "$crate")
+  printf 'Checking %s\n' "$name"
+  extraction="$vela_repo/$crate/proofs/fstar/extraction"
+  if [[ -d "$extraction" ]]; then mv "$extraction" "$vela_backup/$name"; fi
+  mkdir -p "$extraction"
+  VELA_MEMORY_MAX=5G VELA_STEP_TIMEOUT=900 "$vela_repo/security/assurance/bounded.sh" \
+    env CARGO_HOME=/tmp/vela-hax-cargo CARGO_PROFILE_DEV_CODEGEN_BACKEND=llvm \
+    OPAMROOT="$vela_tools/opam" \
+    PATH="$vela_tools/bin:$vela_tools/opam/vela-hax/bin:$vela_tools/opam/vela-fstar/bin:$PATH" \
+    bash -c 'vela_started=$EPOCHSECONDS; "$1"; vela_result=$?; vela_cgroup=; while IFS=: read -r vela_controller vela_names vela_path; do [[ "$vela_controller" == 0 ]] && vela_cgroup="$vela_path"; done < /proc/self/cgroup; printf "elapsed_seconds=%s\nmemory_peak_bytes=" "$((EPOCHSECONDS-vela_started))"; cat "/sys/fs/cgroup$vela_cgroup/memory.peak"; printf "exit_status=%s\n" "$vela_result"; exit "$vela_result"' _ \
+    "$vela_repo/$crate/verify-fstar.sh" > "$vela_out/$name.log" 2>&1
+  result=$?
+  printf '%s exit_status=%s\n' "$name" "$result"
+  if ((result != 0)); then
+    failed=1
+    tail -12 "$vela_out/$name.log"
+    mv "$extraction" "$vela_out/$name.failed-extraction"
+    if [[ -d "$vela_backup/$name" ]]; then mv "$vela_backup/$name" "$extraction"; else mkdir -p "$extraction"; fi
+  fi
+done
+exit "$failed"

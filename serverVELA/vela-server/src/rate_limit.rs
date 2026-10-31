@@ -214,24 +214,86 @@ pub fn recovery_enroll_by_user(store: &Store, user_id: &str) -> Result<()> {
 
 /// 120 share sends/hour per sender (anti inbox-flooding of a targeted recipient).
 pub fn share_send_by_sender(store: &Store, sender: &str) -> Result<()> {
-    check(store, &format!("rl:share:send:user:{sender}"), 120, HOUR_SECS)
+    check_plan(
+        store,
+        &vela_share_policy::store::plan_rate_limit(
+            format!("rl:share:send:user:{sender}"),
+            120,
+            HOUR_SECS,
+        ),
+    )
 }
 
 /// 60 one-off share-link creations/hour per user.
 pub fn send_create_by_user(store: &Store, user_id: &str) -> Result<()> {
-    check(store, &format!("rl:send:create:user:{user_id}"), 60, HOUR_SECS)
+    check_plan(
+        store,
+        &vela_share_policy::store::plan_rate_limit(
+            format!("rl:send:create:user:{user_id}"),
+            60,
+            HOUR_SECS,
+        ),
+    )
 }
 
 /// 60 share-link fetches/min per IP. The id is a random 128-bit UUID, so this
 /// only bounds grinding/enumeration against an endpoint that is unauthenticated
 /// by design (the recipient has no account).
 pub fn send_fetch_by_ip(store: &Store, ip: &str) -> Result<()> {
-    check(store, &format!("rl:send:fetch:ip:{ip}"), 60, WINDOW_SECS)
+    check_plan(
+        store,
+        &vela_share_policy::store::plan_rate_limit(
+            format!("rl:send:fetch:ip:{ip}"),
+            60,
+            WINDOW_SECS,
+        ),
+    )
 }
 
 /// 120 share-link list calls/min per user.
 pub fn send_list_by_user(store: &Store, user_id: &str) -> Result<()> {
-    check(store, &format!("rl:send:list:user:{user_id}"), 120, WINDOW_SECS)
+    check_plan(
+        store,
+        &vela_share_policy::store::plan_rate_limit(
+            format!("rl:send:list:user:{user_id}"),
+            120,
+            WINDOW_SECS,
+        ),
+    )
+}
+
+/// The same fixed-window counter as [`check`], through the verified plan: the
+/// statement carries the exact key, budget and window, `render_rate` fixes the
+/// store call, and `classify_rate_limit` decides from the counter's new value.
+/// The counter's window rollover is the store's scheduler choice.
+fn check_plan(store: &Store, stmt: &vela_share_policy::store::RateStmt) -> Result<()> {
+    use vela_share_policy::store::{classify_rate_limit, render_rate, RateOutcome, RateRendered};
+    let result = match render_rate(stmt) {
+        RateRendered::IncrFixedWindow {
+            key,
+            delta,
+            window_secs,
+        } => store.incr_fixed_window(&key, delta, window_secs),
+    };
+    let (outcome, error) = match result {
+        Ok(count) => (RateOutcome::Count(count), None),
+        Err(error) => (RateOutcome::Failed, Some(error)),
+    };
+    let observation = classify_rate_limit(&[outcome], stmt.limit);
+    if observation.failed {
+        return match error {
+            Some(error) => Err(error),
+            None => Err(AppError::Internal("rate limit store failure".into())),
+        };
+    }
+    if observation.allowed {
+        Ok(())
+    } else {
+        Err(AppError::RateLimited(format!(
+            "limit of {} per {}s exceeded",
+            stmt.limit, stmt.window_secs
+        )))
+    }
 }
 
 /// 30 ephemeral-web-session starts/hour per IP (the endpoint is unauthenticated).
@@ -365,17 +427,28 @@ pub fn check_backoff(store: &Store, scope: &str) -> Result<()> {
 /// fails this at most once (a stale challenge); anything grinding at it slows
 /// down geometrically.
 pub fn record_backoff_failure(store: &Store, scope: &str) -> Result<()> {
-    let backoff_key = format!("rl:backoff:{scope}");
-    let streak_key = format!("rl:streak:{scope}");
+    record_backoff_failure_keys(
+        store,
+        &format!("rl:streak:{scope}"),
+        &format!("rl:backoff:{scope}"),
+    )
+}
 
-    let streak = store.incr_expire(&streak_key, 1, 300)?;
+/// The same record, on keys the caller already built (an executor's typed
+/// statement carries the exact keys it proved).
+pub fn record_backoff_failure_keys(
+    store: &Store,
+    streak_key: &str,
+    backoff_key: &str,
+) -> Result<()> {
+    let streak = store.incr_expire(streak_key, 1, 300)?;
     let eff_streak = streak.min(10);
     if eff_streak >= 3 {
         let exp = (eff_streak - 3).min(8);
         let delay_secs: u64 = (1u64 << exp).min(300);
-        store.set_ex(&backoff_key, &[1u8], delay_secs)?;
+        store.set_ex(backoff_key, &[1u8], delay_secs)?;
         if streak < 12 {
-            tracing::warn!(scope, streak, delay_secs, "backoff applied");
+            tracing::warn!(scope = streak_key, streak, delay_secs, "backoff applied");
         }
     }
     Ok(())
@@ -383,8 +456,17 @@ pub fn record_backoff_failure(store: &Store, scope: &str) -> Result<()> {
 
 /// Clear a scope's streak after it succeeds.
 pub fn reset_backoff(store: &Store, scope: &str) -> Result<()> {
-    let _ = store.del(&format!("rl:streak:{scope}"))?;
-    let _ = store.del(&format!("rl:backoff:{scope}"))?;
+    reset_backoff_keys(
+        store,
+        &format!("rl:streak:{scope}"),
+        &format!("rl:backoff:{scope}"),
+    )
+}
+
+/// The same reset, on keys the caller already built.
+pub fn reset_backoff_keys(store: &Store, streak_key: &str, backoff_key: &str) -> Result<()> {
+    let _ = store.del(streak_key)?;
+    let _ = store.del(backoff_key)?;
     Ok(())
 }
 

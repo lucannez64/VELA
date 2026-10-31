@@ -1,0 +1,11 @@
+--- proofs/fstar/extraction-webauthn-interpreter/Vela_recovery_policy.Webauthn_interpreter.fst	2026-10-27 17:13:39.525996169 +0100
++++ /tmp/vela-mut-webauthn/as-a/Vela_recovery_policy.Webauthn_interpreter.fst	2026-10-27 17:15:28.600695333 +0100
+@@ -693,7 +693,7 @@
+                 (out:
+                   Core_models.Option.t_Option
+                   Vela_recovery_policy.Webauthn_driver.t_AuthStartObservation) =
+-                  f_auth_start_observe #v_Io #FStar.Tactics.Typeclasses.solve io
++                  f_auth_start_ceremony #v_Io #FStar.Tactics.Typeclasses.solve io
+                 in
+                 let io:v_Io = tmp0 in
+                 (match

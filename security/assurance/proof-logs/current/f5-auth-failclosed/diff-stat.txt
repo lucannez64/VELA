@@ -1,0 +1,24 @@
+ .../vela/android/security/EncryptedVaultStore.kt   |  12 +-
+ .../java/com/vela/android/security/RmsHolder.kt    |  51 ++++
+ .../vela/android/security/SecureVaultManager.kt    |  26 +-
+ .../com/vela/android/sync/AccountAuthenticator.kt  | 113 ++++++++
+ .../com/vela/android/sync/AndroidVelaApiClient.kt  |  22 +-
+ .../java/com/vela/android/sync/IdentityBinding.kt  |  47 ++++
+ .../vela/android/sync/RecoveryAccountBinding.kt    |  45 +++
+ .../com/vela/android/sync/ServerIdentityRecord.kt  |  86 ++++++
+ .../com/vela/android/sync/ServerIdentityStore.kt   |  94 +++----
+ .../com/vela/android/sync/SyncAuthController.kt    |  74 +++++
+ .../com/vela/android/sync/SyncSettingsStore.kt     |   4 +-
+ .../java/com/vela/android/sync/VaultEventStream.kt |  14 +-
+ .../java/com/vela/android/sync/VaultSyncManager.kt | 214 +++++++--------
+ .../com/vela/android/security/RmsHolderTest.kt     |  92 +++++++
+ .../vela/android/sync/IdentityFailClosedTest.kt    | 207 ++++++++++++++
+ .../android/sync/RecoveryAccountBindingTest.kt     | 144 ++++++++++
+ .../vela/android/sync/SyncAuthControllerTest.kt    | 303 +++++++++++++++++++++
+ .../android/sync/VaultEventStreamParserTest.kt     |   9 +
+ .../current/f5-auth-failclosed/README.md           | 202 ++++++++++++++
+ .../f5-auth-failclosed/android-kotlin-tests.log    |  35 +++
+ .../current/f5-auth-failclosed/commands.log        |  21 ++
+ .../current/f5-auth-failclosed/diff-stat.txt       |   8 +
+ .../current/f5-auth-failclosed/junit-counts.txt    |  26 ++
+ 23 files changed, 1667 insertions(+), 182 deletions(-)
