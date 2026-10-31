@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 
 use uuid::Uuid;
 use vela_share_policy::driver::{InboxDeletePermit, LinkUpdatePermit, SendInsertPermit};
-use vela_share_policy::store::{self, DeviceVerdicts, ShareStmt};
+use vela_share_policy::store::{self, DeviceVerdicts, HandlerOutcome, ShareStmt};
 use vela_share_policy::store_model::{
     self as model, Db as Model, DeviceRow, InboxRow, ItemRow, UserRow,
 };
@@ -28,8 +28,10 @@ use vela_share_policy::{
 };
 
 use super::executor::ShareExecutor;
-use super::sql::{PoolSql, ShareSql, TxSql};
-use super::{InboxDeleteIo, LinkRevokeIo, LinkUpdateIo, SendIo, ShareEkIo};
+use super::sql::{
+    cursor_row_view, ek_row_view, run_handler_read, run_handler_write, PoolSql, ShareSql, TxSql,
+};
+use super::{InboxDeleteIo, LinkRevokeIo, LinkUpdateIo, SendIo, ShareEkIo, LINKED_ITEMS_LIMIT};
 use crate::db;
 use crate::sqldb::{Db as _, TursoDb, TursoValue, VelaRow};
 
@@ -736,4 +738,285 @@ async fn share_key_executors_match_the_store_model() {
         "share executor conformance (share key): {} states, {} cases, {} with an injected failure",
         counts.states, counts.cases, counts.faulted
     );
+}
+
+// ── The handler I/O outside the executors (F-1 wave 2) ────────────────────
+//
+// The same comparison for `post_send`'s recipient probe and admission, the
+// inbox cursor and page, the linked-items listing and the inbox expiry sweep:
+// the real plan, rendered SQL, row decoding and classifier against the mirror.
+
+/// Runs the admission plan the way the handler does: the begin on the pool,
+/// the three reads on the transaction it opened, the first failure stopping.
+async fn run_admission(
+    db: &TursoDb,
+    recipient: &str,
+    sender: &str,
+    fault: Option<usize>,
+) -> Vec<HandlerOutcome> {
+    let plan = store::plan_send_admission(recipient.to_string(), sender.to_string());
+    let mut outcomes = Vec::new();
+    let mut tx: Option<Faulty<TxSql>> = None;
+    for (k, stmt) in plan.iter().enumerate() {
+        if matches!(stmt, store::HandlerStmt::Begin) {
+            if fault == Some(k) {
+                outcomes.push(HandlerOutcome::Failed);
+                break;
+            }
+            let guard = db.tx().await.unwrap();
+            // The wrapper counts from the first read, after the begin.
+            let read_fault = fault.and_then(|at| if at > k { Some(at - k - 1) } else { None });
+            tx = Some(Faulty::new(TxSql(Some(guard)), read_fault));
+            outcomes.push(HandlerOutcome::Ran);
+            continue;
+        }
+        let Some(sql) = tx.as_mut() else {
+            outcomes.push(HandlerOutcome::Failed);
+            break;
+        };
+        match run_handler_read(sql, stmt).await {
+            Ok(rows) => outcomes.push(HandlerOutcome::Number(
+                rows.first().and_then(|row| row.i64(0)),
+            )),
+            Err(_) => {
+                outcomes.push(HandlerOutcome::Failed);
+                break;
+            }
+        }
+    }
+    drop(tx);
+    settle(db).await;
+    outcomes
+}
+
+/// The ids of a listing's returned rows.
+fn listing_ids(rows: &[VelaRow]) -> Vec<String> {
+    rows.iter()
+        .map(|row| row.text(0).expect("id column").to_string())
+        .collect()
+}
+
+/// A returned page is a page of the store: every returned id matches, and every
+/// matching id is returned when one page could hold them all.
+fn assert_page_of(returned: &[String], matches: &[String], limit: usize, case: &str) {
+    for id in returned {
+        assert!(matches.contains(id), "{case}: {id} is not a matching row");
+    }
+    assert_eq!(
+        returned.len(),
+        matches.len().min(limit),
+        "{case}: the engine returned the wrong number of rows"
+    );
+    if matches.len() <= limit {
+        for id in matches {
+            assert!(returned.contains(id), "{case}: {id} was not returned");
+        }
+    }
+}
+
+#[tokio::test]
+async fn handler_reads_match_the_store_model() {
+    let db = temp_db().await;
+    let mut counts = Counts::default();
+
+    for pre in item_states() {
+        counts.states += 1;
+
+        // post_send's recipient gate, for every user shape.
+        for recipient in [user(0), user(1), user(2), user(9)] {
+            let plan = store::plan_recipient_probe(s(recipient));
+            for fault in faults(1) {
+                load(&db, &pre).await;
+                let observed = match run_handler_read(
+                    &mut Faulty::new(PoolSql(&db), fault),
+                    &plan,
+                )
+                .await
+                {
+                    Ok(rows) => vela_share_policy::store::classify_recipient_probe(
+                        &store::ReadOutcome::Row(ek_row_view(&rows)),
+                    ),
+                    Err(_) => vela_share_policy::store::classify_recipient_probe(
+                        &store::ReadOutcome::Failed,
+                    ),
+                };
+                let expected = store::classify_recipient_probe(&model::read_recipient_ek(
+                    &pre,
+                    &plan,
+                    fault.is_some(),
+                ));
+                let case = format!("probe {recipient} fault {fault:?} pre {pre:?}");
+                assert_eq!(observed, expected, "{case}");
+                assert_eq!(snapshot(&db).await, pre, "{case}");
+                counts.case(fault);
+            }
+        }
+
+        // post_send's admission: the begin and the three quota reads.
+        let plan = store::plan_send_admission(s(user(1)), s(user(0)));
+        for fault in faults(plan.len()) {
+            load(&db, &pre).await;
+            let observed = run_admission(&db, &s(user(1)), &s(user(0)), fault).await;
+            let expected = model::run_handler(&pre, &plan, fault);
+            let case = format!("admission fault {fault:?} pre {pre:?}");
+            assert_eq!(observed, expected, "{case}");
+            assert_eq!(
+                store::classify_send_admission(&observed),
+                store::classify_send_admission(&expected),
+                "{case}"
+            );
+            assert_eq!(snapshot(&db).await, pre, "{case}");
+            counts.case(fault);
+        }
+
+        // get_inbox's cursor, for the recipient and a stranger.
+        for recipient in [user(0), user(1)] {
+            for id in [item(0), item(1), item(2)] {
+                let plan = store::plan_inbox_cursor(s(id), s(recipient));
+                for fault in faults(1) {
+                    load(&db, &pre).await;
+                    let observed = match run_handler_read(
+                        &mut Faulty::new(PoolSql(&db), fault),
+                        &plan,
+                    )
+                    .await
+                    {
+                        Ok(rows) => store::classify_inbox_cursor(&store::ReadOutcome::Row(
+                            cursor_row_view(&rows),
+                        )),
+                        Err(_) => store::classify_inbox_cursor(&store::ReadOutcome::Failed),
+                    };
+                    let expected = store::classify_inbox_cursor(&model::read_inbox_cursor(
+                        &pre,
+                        &plan,
+                        fault.is_some(),
+                    ));
+                    let case = format!("cursor {id} for {recipient} fault {fault:?} pre {pre:?}");
+                    assert_eq!(observed, expected, "{case}");
+                    assert_eq!(snapshot(&db).await, pre, "{case}");
+                    counts.case(fault);
+                }
+            }
+        }
+
+        // get_inbox's page: with and without a cursor, two page sizes.
+        for before in [None, Some("2026-01-01T00:00:00+00:00".to_string())] {
+            for limit in [2usize, 50] {
+                // The handler asks for one row beyond the page, to tell a full
+                // page from a complete one.
+                let query_limit = limit + 1;
+                let plan = store::plan_inbox_page(s(user(1)), before.clone(), query_limit);
+                let matches = model::inbox_page_matches(&pre, &plan);
+                for fault in faults(1) {
+                    load(&db, &pre).await;
+                    let rows = run_handler_read(&mut Faulty::new(PoolSql(&db), fault), &plan).await;
+                    let case = format!("page {before:?} limit {limit} fault {fault:?} pre {pre:?}");
+                    if fault.is_some() {
+                        assert!(rows.is_err(), "{case}");
+                        continue;
+                    }
+                    let ids = listing_ids(&rows.unwrap());
+                    assert_page_of(&ids, &matches, query_limit, &case);
+                    assert_eq!(
+                        store::classify_listing(ids.len(), false, limit).has_more,
+                        matches.len() > limit,
+                        "{case}"
+                    );
+                    assert_eq!(snapshot(&db).await, pre, "{case}");
+                    counts.case(fault);
+                }
+            }
+        }
+
+        // get_linked_items for every caller.
+        for caller in [user(0), user(1), user(2)] {
+            let plan = store::plan_linked_items(s(caller), LINKED_ITEMS_LIMIT);
+            let matches = model::linked_item_matches(&pre, &plan);
+            for fault in faults(1) {
+                load(&db, &pre).await;
+                let rows = run_handler_read(&mut Faulty::new(PoolSql(&db), fault), &plan).await;
+                let case = format!("linked items for {caller} fault {fault:?} pre {pre:?}");
+                if fault.is_some() {
+                    assert!(rows.is_err(), "{case}");
+                    continue;
+                }
+                let ids = listing_ids(&rows.unwrap());
+                assert_page_of(&ids, &matches, LINKED_ITEMS_LIMIT, &case);
+                assert_eq!(snapshot(&db).await, pre, "{case}");
+                counts.case(fault);
+            }
+        }
+
+        // The inbox expiry sweep, at both boundaries.
+        for cutoff in [
+            "2025-12-31T23:59:59+00:00",
+            "2026-01-01T00:00:00+00:00",
+            "2026-01-02T00:00:00+00:00",
+        ] {
+            let plan = store::plan_expired_inbox_cleanup(cutoff.into());
+            for fault in faults(1) {
+                load(&db, &pre).await;
+                let outcome = match run_handler_write(
+                    &mut Faulty::new(PoolSql(&db), fault),
+                    &plan,
+                )
+                .await
+                {
+                    Ok(purged) => vec![HandlerOutcome::Written(purged)],
+                    Err(_) => vec![HandlerOutcome::Failed],
+                };
+                let (expected, expected_post) = model::run_sweep(&pre, &plan, fault);
+                let case = format!("inbox sweep {cutoff} fault {fault:?} pre {pre:?}");
+                assert_eq!(
+                    store::classify_sweep(&outcome),
+                    store::classify_sweep(&expected),
+                    "{case}"
+                );
+                assert_eq!(snapshot(&db).await, expected_post, "{case}");
+                counts.case(fault);
+            }
+        }
+    }
+
+    eprintln!(
+        "share handler-read conformance: {} states, {} cases, {} with an injected failure",
+        counts.states, counts.cases, counts.faulted
+    );
+}
+
+/// The share/send rate limiters count exactly one request per call against
+/// their own key and refuse the request that leaves the budget.
+#[test]
+fn rate_limiters_match_the_counter_model() {
+    use crate::store::Store;
+    use vela_share_policy::store::{
+        classify_rate_limit, plan_rate_limit, RateOutcome, RateStmt,
+    };
+
+    let store = Store::open_temp().expect("temp store");
+    let mut kv = std::collections::BTreeMap::new();
+    let stmt = plan_rate_limit("rl:conformance:counter".into(), 2, 3600);
+    for request in 1..=3 {
+        let count = store
+            .incr_fixed_window(&stmt.key, 1, stmt.window_secs)
+            .expect("counter");
+        let observation = classify_rate_limit(&[RateOutcome::Count(count)], stmt.limit);
+        let (expected_count, next) = model::exec_rate(&kv, &stmt).expect("model");
+        kv = next;
+        assert_eq!(count, expected_count, "request {request}");
+        assert_eq!(observation.count, expected_count, "request {request}");
+        assert_eq!(observation.allowed, request <= 2, "request {request}");
+    }
+
+    // The named helpers build their historical keys and budgets, and apply the
+    // same verdict: the second create is allowed, the third is not.
+    let other = Store::open_temp().expect("temp store");
+    assert!(crate::rate_limit::send_create_by_user(&other, "someone").is_ok());
+    assert!(crate::rate_limit::send_create_by_user(&other, "someone").is_ok());
+    let key = "rl:send:create:user:someone";
+    let count = other.incr_fixed_window(key, 0, 3600).expect("counter");
+    assert_eq!(count, 2);
+    let budget: RateStmt = plan_rate_limit(key.into(), 60, 3600);
+    assert_eq!(budget.limit, 60);
+    assert_eq!(budget.window_secs, 3600);
 }

@@ -30,7 +30,7 @@ use crate::{
     error::{AppError, Result},
     middleware::{maybe_append_new_token, DeviceSession},
     net, rate_limit,
-    sqldb::{Db as _, TursoDb, TursoValue},
+    sqldb::TursoDb,
     state::AppState,
 };
 use vela_share_policy::send_driver::SendFailure;
@@ -45,6 +45,8 @@ use sql::SendSql;
 /// A link carries one item (or note); generous for a large secure note, far
 /// below inbox-sized payloads.
 const MAX_SEND_BYTES: usize = 256 * 1024;
+/// The owner listing's page size, the number its SQL has always used.
+const OWN_SENDS_LIMIT: usize = 200;
 /// Same message for missing, expired, revoked and exhausted, so a `404` never
 /// confirms that a link id is (or was) live.
 const SEND_NOT_FOUND: &str = "send not found";
@@ -442,22 +444,18 @@ pub async fn list_share_links(
 ) -> Result<(HeaderMap, Json<serde_json::Value>)> {
     rate_limit::send_list_by_user(&state.store, &session.user_id.to_string())?;
 
-    let rows = state
-        .sqldb
-        .query(
-            "SELECT id, label, has_passphrase, view_once, max_views, view_count, created_at, expires_at
-             FROM sends
-             WHERE owner_user_id = ? AND revoked = 0 AND expires_at > ?
-             ORDER BY created_at DESC LIMIT 200",
-            vec![
-                TursoValue::Text(session.user_id.to_string()),
-                TursoValue::Text(Utc::now().to_rfc3339()),
-            ],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let stmt = store::plan_own_sends(
+        session.user_id.to_string(),
+        Utc::now().to_rfc3339(),
+        OWN_SENDS_LIMIT,
+    );
+    let rows = match sql::run_handler_read(&mut sql::PoolSql(&state.sqldb), &stmt).await {
+        Ok(rows) => rows,
+        Err(error) => return Err(AppError::Internal(error.to_string())),
+    };
+    let page = store::classify_listing(rows.len(), false, OWN_SENDS_LIMIT);
 
-    let items: Vec<SendMeta> = rows
+    let items: Vec<SendMeta> = rows[..page.keep]
         .iter()
         .filter_map(|row| {
             Some(SendMeta {
@@ -614,21 +612,17 @@ pub async fn cleanup_task(db: Arc<TursoDb>) {
     let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(10 * 60));
     loop {
         interval.tick().await;
-        match db
-            .execute(
-                "DELETE FROM sends WHERE expires_at < ?",
-                vec![TursoValue::Text(Utc::now().to_rfc3339())],
-            )
-            .await
-        {
-            Ok(n) => {
-                if n > 0 {
-                    tracing::info!(purged = n, "send-link cleanup");
-                }
-            }
+        let stmt = store::plan_expired_sends_cleanup(Utc::now().to_rfc3339());
+        let outcome = match sql::run_handler_write(&mut sql::PoolSql(&db), &stmt).await {
+            Ok(purged) => store::HandlerOutcome::Written(purged),
             Err(e) => {
                 tracing::error!(error = %e, "send cleanup task failed");
+                store::HandlerOutcome::Failed
             }
+        };
+        let sweep = store::classify_sweep(&[outcome]);
+        if !sweep.failed && sweep.purged > 0 {
+            tracing::info!(purged = sweep.purged, "send-link cleanup");
         }
     }
 }

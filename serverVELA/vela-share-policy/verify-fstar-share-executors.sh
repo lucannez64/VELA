@@ -55,6 +55,11 @@ items=(
   plan_send_create plan_send_consume plan_send_read plan_send_remove
   plan_send_delete classify_send_create classify_send_consume
   classify_send_remove classify_send_delete classify_send_read
+  plan_recipient_probe plan_send_admission classify_recipient_probe
+  classify_send_admission plan_recipient_ek classify_recipient_ek
+  plan_inbox_cursor classify_inbox_cursor plan_inbox_page plan_linked_items
+  plan_own_sends plan_expired_inbox_cleanup plan_expired_sends_cleanup
+  classify_listing classify_sweep plan_rate_limit classify_rate_limit
 )
 include='-**'
 for item in "${items[@]}"; do
@@ -77,13 +82,14 @@ driver=(proofs/fstar/extraction-driver/*.fst)
 send_driver=(proofs/fstar/extraction-send-driver/Vela_share_policy.Send_driver.fst)
 model=(proofs/fstar/store-lemmas/Vela_share_policy_store_model.fst)
 lemmas=(proofs/fstar/store-lemmas/Vela_share_policy_store_lemmas.fst)
-for f in "${generated[@]}" "${model[@]}" "${lemmas[@]}"; do
+handler_lemmas=(proofs/fstar/handler-lemmas/Vela_share_policy_handler_lemmas.fst)
+for f in "${generated[@]}" "${model[@]}" "${lemmas[@]}" "${handler_lemmas[@]}"; do
   [[ -f $f ]] || { echo "missing $f" >&2; exit 1; }
 done
 
 python3 "$proof_root/../../security/formal/check-driver-proof-sources.py" \
   --generated "${generated[@]}" "${driver[@]}" "${send_driver[@]}" \
-  --proof "${model[@]}" "${lemmas[@]}" \
+  --proof "${model[@]}" "${lemmas[@]}" "${handler_lemmas[@]}" \
   --include-dir "$proof_root"
 
 hax_lib_root=$(
@@ -109,10 +115,11 @@ fstar_args=(
   --include proofs/fstar/extraction-send-driver
   --include proofs/fstar/extraction-store
   --include proofs/fstar/store-lemmas
+  --include proofs/fstar/handler-lemmas
 )
 # One module at a time, each in its own process, so each stays within its
 # memory budget.
-for module in "${generated[@]}" "${model[@]}" "${lemmas[@]}"; do
+for module in "${generated[@]}" "${model[@]}" "${lemmas[@]}" "${handler_lemmas[@]}"; do
   echo "checking $module"
   if [[ -x /usr/bin/time ]]; then
     /usr/bin/time -f "$module: %M KB peak, %e s" fstar.exe "${fstar_args[@]}" "$module"
@@ -125,4 +132,4 @@ done
 "$proof_root/verify-fstar-share-executors-mutations.sh"
 
 echo "share executors: for every starting database and every failing statement, each sharing executor's observation reports exactly what its statements did to shared_items, share_inbox and users, and a failed run leaves the tables unchanged"
-sha256sum "${generated[@]}" "${model[@]}" "${lemmas[@]}" src/store.rs src/store_model.rs
+sha256sum "${generated[@]}" "${model[@]}" "${lemmas[@]}" "${handler_lemmas[@]}" src/store.rs src/store_model.rs

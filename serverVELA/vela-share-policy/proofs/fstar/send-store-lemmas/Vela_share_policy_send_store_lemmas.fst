@@ -330,6 +330,9 @@ let vector_send_db (clock: text -> text -> bool) : db =
     users = (fun _ -> None);
     devices = (fun _ -> None);
     sends = (fun (k: text) -> if k = s "l" then Some (vector_link <: send_row) else None);
+    item_ids = [];
+    inbox_ids = [];
+    send_ids = [s "l"];
     clock = clock;
   }
 

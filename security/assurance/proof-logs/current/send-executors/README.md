@@ -58,9 +58,40 @@ point:
 - **Vectors:** 11 `vector_send_link_*` lemmas, proved from the theorems above
   and mirrored by `store_model.rs::tests::send_link_vectors`.
 
-Every module is checked in its own process under 640 MB, `--z3rlimit 200`, no
-admits: `Store` 40 s, `store_model` 37 s, `store_lemmas` 50 s,
-`send_store_lemmas` 50 s.
+Every module is checked in its own process under 690 MB, `--z3rlimit 200`, no
+admits: `Store` 59 s, `store_model` 56 s, `store_lemmas` 82 s,
+`send_store_lemmas` 78 s.
+
+## Wave 2: `GET /sends` and the expiry sweep
+
+The two remaining `send.rs` statements that were not executor methods are now
+planned, rendered and classified the same way, in the same modules:
+
+- **`list_share_links`** — `plan_own_sends` (the rows of one `SELECT` with the
+  owner, the request instant and page size 200 as its typed fields),
+  `plan_own_sends`'s rendering pinned byte for byte, `classify_listing` for the
+  page verdict.
+- **`cleanup_task`** — `plan_expired_sends_cleanup` (`DELETE FROM sends WHERE
+  expires_at < ?`), `classify_sweep`.
+
+Theorems in `Vela_share_policy_handler_lemmas.fst`:
+
+- `own_sends_plan_facts` and `own_sends_are_the_store_truth`: the plan carries
+  the caller, the instant and the page size, the rows are exactly the caller's
+  live, unexpired links, and the classified page keeps at most the page size
+  and reports `has_more` exactly;
+- `own_send_spec_is_live`: a listed link is its owner's, unrevoked and not yet
+  expired;
+- `sends_sweep_is_honest` and `sends_sweep_deletes_only_expired`: exactly the
+  expired links are deleted, the exact count is reported, and a failure changes
+  nothing.
+
+Mutants `rate-allow`, `page-has-more`, ... live in the sharing executor mutation
+script above; the send-side additions are covered by it too (the plan and
+classifier are the same extracted module). Real-database conformance:
+`send/conformance.rs::owner_listing_and_expiry_sweep_match_the_store_model`,
+12 states, 120 cases, 60 with an injected failure, comparing the returned ids
+and the whole table with the mirror.
 
 ## Mutations
 

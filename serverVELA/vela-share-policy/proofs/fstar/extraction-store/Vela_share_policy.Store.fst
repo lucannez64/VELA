@@ -760,3 +760,498 @@ let classify_send_read (outcome: t_ReadOutcome t_SendRowView) : t_SendFetchObser
         (Core_models.Option.Option_Some (SendCell_Ciphertext <: t_SendCell)
           <:
           Core_models.Option.t_Option t_SendCell)
+
+/// One read or housekeeping statement a share/send handler runs outside an
+/// executor method. Field names follow the bound parameters; [`render_handler`]
+/// fixes their order.
+type t_HandlerStmt =
+  | HandlerStmt_SelectRecipientEk { f_user:Alloc.String.t_String }: t_HandlerStmt
+  | HandlerStmt_Begin : t_HandlerStmt
+  | HandlerStmt_CountInbox { f_recipient:Alloc.String.t_String }: t_HandlerStmt
+  | HandlerStmt_SumPairBytes {
+    f_recipient:Alloc.String.t_String;
+    f_sender:Alloc.String.t_String
+  }: t_HandlerStmt
+  | HandlerStmt_SumRecipientBytes { f_recipient:Alloc.String.t_String }: t_HandlerStmt
+  | HandlerStmt_SelectRecipientEkSince { f_user:Alloc.String.t_String }: t_HandlerStmt
+  | HandlerStmt_SelectInboxCursor {
+    f_id:Alloc.String.t_String;
+    f_recipient:Alloc.String.t_String
+  }: t_HandlerStmt
+  | HandlerStmt_SelectInboxPage {
+    f_recipient:Alloc.String.t_String;
+    f_before:Core_models.Option.t_Option Alloc.String.t_String;
+    f_limit:usize
+  }: t_HandlerStmt
+  | HandlerStmt_SelectSharedItems {
+    f_user:Alloc.String.t_String;
+    f_limit:usize
+  }: t_HandlerStmt
+  | HandlerStmt_SelectOwnedSends {
+    f_owner:Alloc.String.t_String;
+    f_now:Alloc.String.t_String;
+    f_limit:usize
+  }: t_HandlerStmt
+  | HandlerStmt_DeleteExpiredInbox { f_cutoff:Alloc.String.t_String }: t_HandlerStmt
+  | HandlerStmt_DeleteExpiredSends { f_cutoff:Alloc.String.t_String }: t_HandlerStmt
+
+/// What one handler statement returned.
+type t_HandlerOutcome =
+  | HandlerOutcome_Ran : t_HandlerOutcome
+  | HandlerOutcome_Number : Core_models.Option.t_Option i64 -> t_HandlerOutcome
+  | HandlerOutcome_Written : u64 -> t_HandlerOutcome
+  | HandlerOutcome_Failed : t_HandlerOutcome
+
+/// What one rate-limit statement returned: the counter's new value, or an
+/// error.
+type t_RateOutcome =
+  | RateOutcome_Count : u64 -> t_RateOutcome
+  | RateOutcome_Failed : t_RateOutcome
+
+/// One rate limiter: the exact counter key, its budget and its window.
+type t_RateStmt = {
+  f_key:Alloc.String.t_String;
+  f_limit:u64;
+  f_window_secs:i64
+}
+
+/// The cells of a `SelectRecipientEk`/`SelectRecipientEkSince` row.
+type t_EkRowView = {
+  f_share_ek:Core_models.Option.t_Option Alloc.String.t_String;
+  f_share_ek_since:Core_models.Option.t_Option Alloc.String.t_String
+}
+
+/// The cells of a `SelectInboxCursor` row.
+type t_CursorRowView = { f_created_at:Core_models.Option.t_Option Alloc.String.t_String }
+
+/// The recipient gate's verdict: whether anyone can receive a share there.
+type t_RecipientProbeObservation = {
+  f_can_receive:bool;
+  f_failed:bool
+}
+
+/// Where a send's admission stopped. `Ready` means the transaction is open
+/// and all three quota reads returned their values.
+type t_AdmissionStage =
+  | AdmissionStage_Begin : t_AdmissionStage
+  | AdmissionStage_Count : t_AdmissionStage
+  | AdmissionStage_Pair : t_AdmissionStage
+  | AdmissionStage_Total : t_AdmissionStage
+  | AdmissionStage_Ready : t_AdmissionStage
+
+/// The send admission: the open transaction's three quota facts, or the step
+/// that failed.
+type t_AdmissionObservation = {
+  f_stage:t_AdmissionStage;
+  f_inbox_count:i64;
+  f_pair_bytes:i64;
+  f_total_bytes:i64
+}
+
+/// `get_recipient_ek`'s observation: the share key to publish (absent when the
+/// stored cell is missing or empty) and its binding instant.
+type t_RecipientEkObservation = {
+  f_share_ek:Core_models.Option.t_Option Alloc.String.t_String;
+  f_signed_at:Core_models.Option.t_Option Alloc.String.t_String;
+  f_failed:bool
+}
+
+/// `get_inbox`'s cursor: the stored timestamp, or that the row is not the
+/// caller's, or that the read failed.
+type t_CursorObservation = {
+  f_created_at:Core_models.Option.t_Option Alloc.String.t_String;
+  f_absent:bool;
+  f_failed:bool
+}
+
+/// One page of a listing: how many of the returned rows to keep, whether more
+/// rows exist, or that the read failed.
+type t_PageObservation = {
+  f_keep:usize;
+  f_has_more:bool;
+  f_failed:bool
+}
+
+/// A sweep's observation: the rows it deleted, or that it failed.
+type t_SweepObservation = {
+  f_purged:u64;
+  f_failed:bool
+}
+
+/// A rate limiter's observation: the counter after this request, whether the
+/// request is within budget, or that the store failed.
+type t_RateLimitObservation = {
+  f_count:u64;
+  f_allowed:bool;
+  f_failed:bool
+}
+
+/// `post_send`'s recipient gate.
+let plan_recipient_probe (recipient: Alloc.String.t_String) : t_HandlerStmt =
+  HandlerStmt_SelectRecipientEk ({ f_user = recipient }) <: t_HandlerStmt
+
+/// `post_send`'s admission: the transaction begin and the three quota reads,
+/// in the order the handler has always run them.
+let plan_send_admission (recipient sender: Alloc.String.t_String)
+    : Alloc.Vec.t_Vec t_HandlerStmt Alloc.Alloc.t_Global =
+  Alloc.Slice.impl__into_vec #t_HandlerStmt
+    #Alloc.Alloc.t_Global
+    ((let list =
+          [
+            HandlerStmt_Begin <: t_HandlerStmt;
+            HandlerStmt_CountInbox
+            ({
+                f_recipient
+                =
+                Core_models.Clone.f_clone #Alloc.String.t_String
+                  #FStar.Tactics.Typeclasses.solve
+                  recipient
+              })
+            <:
+            t_HandlerStmt;
+            HandlerStmt_SumPairBytes
+            ({
+                f_recipient
+                =
+                Core_models.Clone.f_clone #Alloc.String.t_String
+                  #FStar.Tactics.Typeclasses.solve
+                  recipient;
+                f_sender = sender
+              })
+            <:
+            t_HandlerStmt;
+            HandlerStmt_SumRecipientBytes ({ f_recipient = recipient }) <: t_HandlerStmt
+          ]
+        in
+        FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 4);
+        Rust_primitives.Hax.array_of_list 4 list)
+      <:
+      t_Slice t_HandlerStmt)
+
+/// `get_recipient_ek`'s read.
+let plan_recipient_ek (user: Alloc.String.t_String) : t_HandlerStmt =
+  HandlerStmt_SelectRecipientEkSince ({ f_user = user }) <: t_HandlerStmt
+
+/// `get_inbox`'s cursor read.
+let plan_inbox_cursor (id recipient: Alloc.String.t_String) : t_HandlerStmt =
+  HandlerStmt_SelectInboxCursor ({ f_id = id; f_recipient = recipient }) <: t_HandlerStmt
+
+/// `get_inbox`'s page read.
+let plan_inbox_page
+      (recipient: Alloc.String.t_String)
+      (before: Core_models.Option.t_Option Alloc.String.t_String)
+      (limit: usize)
+    : t_HandlerStmt =
+  HandlerStmt_SelectInboxPage ({ f_recipient = recipient; f_before = before; f_limit = limit })
+  <:
+  t_HandlerStmt
+
+/// `get_linked_items`' read.
+let plan_linked_items (user: Alloc.String.t_String) (limit: usize) : t_HandlerStmt =
+  HandlerStmt_SelectSharedItems ({ f_user = user; f_limit = limit }) <: t_HandlerStmt
+
+/// `list_share_links`' read.
+let plan_own_sends (owner now: Alloc.String.t_String) (limit: usize) : t_HandlerStmt =
+  HandlerStmt_SelectOwnedSends ({ f_owner = owner; f_now = now; f_limit = limit }) <: t_HandlerStmt
+
+/// The inbox expiry sweep.
+let plan_expired_inbox_cleanup (cutoff: Alloc.String.t_String) : t_HandlerStmt =
+  HandlerStmt_DeleteExpiredInbox ({ f_cutoff = cutoff }) <: t_HandlerStmt
+
+/// The one-off-link expiry sweep.
+let plan_expired_sends_cleanup (cutoff: Alloc.String.t_String) : t_HandlerStmt =
+  HandlerStmt_DeleteExpiredSends ({ f_cutoff = cutoff }) <: t_HandlerStmt
+
+/// One rate limiter's counter increment.
+let plan_rate_limit (key: Alloc.String.t_String) (limit: u64) (window_secs: i64) : t_RateStmt =
+  { f_key = key; f_limit = limit; f_window_secs = window_secs } <: t_RateStmt
+
+/// A share key cell counts only when it is present and not empty — the
+/// historical `!share_ek.is_empty()` gate (red-team RT-3). Comparing with the
+/// empty `String` is the same predicate on the concrete `String` type, and it
+/// keeps the extracted check as built-in equality.
+let ek_cell_present (cell: Core_models.Option.t_Option Alloc.String.t_String) : bool =
+  match cell <: Core_models.Option.t_Option Alloc.String.t_String with
+  | Core_models.Option.Option_Some ek ->
+    ~.(ek =. (Alloc.String.impl_String__new () <: Alloc.String.t_String) <: bool)
+  | Core_models.Option.Option_None  -> false
+
+/// The recipient gate: someone can receive when their row holds a non-empty
+/// share key. A failed read cannot receive.
+let classify_recipient_probe (outcome: t_ReadOutcome t_EkRowView) : t_RecipientProbeObservation =
+  match outcome <: t_ReadOutcome t_EkRowView with
+  | ReadOutcome_Row (Core_models.Option.Option_Some row) ->
+    {
+      f_can_receive
+      =
+      ek_cell_present (Core_models.Clone.f_clone #(Core_models.Option.t_Option Alloc.String.t_String
+            )
+            #FStar.Tactics.Typeclasses.solve
+            row.f_share_ek
+          <:
+          Core_models.Option.t_Option Alloc.String.t_String);
+      f_failed = false
+    }
+    <:
+    t_RecipientProbeObservation
+  | ReadOutcome_Row (Core_models.Option.Option_None ) ->
+    { f_can_receive = false; f_failed = false } <: t_RecipientProbeObservation
+  | ReadOutcome_Failed  -> { f_can_receive = false; f_failed = true } <: t_RecipientProbeObservation
+
+/// A quota cell: a NULL counts as zero, as the handler's `unwrap_or(0)` did.
+let quota_cell (cell: Core_models.Option.t_Option i64) : i64 =
+  match cell <: Core_models.Option.t_Option i64 with
+  | Core_models.Option.Option_Some value -> value
+  | Core_models.Option.Option_None  -> mk_i64 0
+
+/// The send admission: the three quota values, or the first step that failed.
+/// A read that returns no cell counts as zero, as the handler's `unwrap_or(0)`
+/// always did.
+let classify_send_admission (outcomes: t_Slice t_HandlerOutcome) : t_AdmissionObservation =
+  let zero:t_AdmissionObservation =
+    {
+      f_stage = AdmissionStage_Begin <: t_AdmissionStage;
+      f_inbox_count = mk_i64 0;
+      f_pair_bytes = mk_i64 0;
+      f_total_bytes = mk_i64 0
+    }
+    <:
+    t_AdmissionObservation
+  in
+  if (Core_models.Slice.impl__len #t_HandlerOutcome outcomes <: usize) =. mk_usize 4
+  then
+    match
+      outcomes.[ mk_usize 0 ],
+      outcomes.[ mk_usize 1 ],
+      outcomes.[ mk_usize 2 ],
+      outcomes.[ mk_usize 3 ]
+      <:
+      (t_HandlerOutcome & t_HandlerOutcome & t_HandlerOutcome & t_HandlerOutcome)
+    with
+    | HandlerOutcome_Ran ,
+    HandlerOutcome_Number count,
+    HandlerOutcome_Number pair,
+    HandlerOutcome_Number v_total ->
+      {
+        f_stage = AdmissionStage_Ready <: t_AdmissionStage;
+        f_inbox_count = quota_cell count;
+        f_pair_bytes = quota_cell pair;
+        f_total_bytes = quota_cell v_total
+      }
+      <:
+      t_AdmissionObservation
+    | HandlerOutcome_Ran , HandlerOutcome_Number count, HandlerOutcome_Number pair, _ ->
+      {
+        f_stage = AdmissionStage_Total <: t_AdmissionStage;
+        f_inbox_count = quota_cell count;
+        f_pair_bytes = quota_cell pair;
+        f_total_bytes = mk_i64 0
+      }
+      <:
+      t_AdmissionObservation
+    | HandlerOutcome_Ran , HandlerOutcome_Number count, _, _ ->
+      {
+        f_stage = AdmissionStage_Pair <: t_AdmissionStage;
+        f_inbox_count = quota_cell count;
+        f_pair_bytes = mk_i64 0;
+        f_total_bytes = mk_i64 0
+      }
+      <:
+      t_AdmissionObservation
+    | HandlerOutcome_Ran , _, _, _ ->
+      {
+        f_stage = AdmissionStage_Count <: t_AdmissionStage;
+        f_inbox_count = mk_i64 0;
+        f_pair_bytes = mk_i64 0;
+        f_total_bytes = mk_i64 0
+      }
+      <:
+      t_AdmissionObservation
+    | _ -> zero
+  else
+    if (Core_models.Slice.impl__len #t_HandlerOutcome outcomes <: usize) =. mk_usize 3
+    then
+      match
+        outcomes.[ mk_usize 0 ], outcomes.[ mk_usize 1 ], outcomes.[ mk_usize 2 ]
+        <:
+        (t_HandlerOutcome & t_HandlerOutcome & t_HandlerOutcome)
+      with
+      | HandlerOutcome_Ran , HandlerOutcome_Number count, HandlerOutcome_Number pair ->
+        {
+          f_stage = AdmissionStage_Total <: t_AdmissionStage;
+          f_inbox_count = quota_cell count;
+          f_pair_bytes = quota_cell pair;
+          f_total_bytes = mk_i64 0
+        }
+        <:
+        t_AdmissionObservation
+      | HandlerOutcome_Ran , HandlerOutcome_Number count, _ ->
+        {
+          f_stage = AdmissionStage_Pair <: t_AdmissionStage;
+          f_inbox_count = quota_cell count;
+          f_pair_bytes = mk_i64 0;
+          f_total_bytes = mk_i64 0
+        }
+        <:
+        t_AdmissionObservation
+      | HandlerOutcome_Ran , _, _ ->
+        {
+          f_stage = AdmissionStage_Count <: t_AdmissionStage;
+          f_inbox_count = mk_i64 0;
+          f_pair_bytes = mk_i64 0;
+          f_total_bytes = mk_i64 0
+        }
+        <:
+        t_AdmissionObservation
+      | _ -> zero
+    else
+      if (Core_models.Slice.impl__len #t_HandlerOutcome outcomes <: usize) =. mk_usize 2
+      then
+        match
+          outcomes.[ mk_usize 0 ], outcomes.[ mk_usize 1 ] <: (t_HandlerOutcome & t_HandlerOutcome)
+        with
+        | HandlerOutcome_Ran , HandlerOutcome_Number count ->
+          {
+            f_stage = AdmissionStage_Pair <: t_AdmissionStage;
+            f_inbox_count = quota_cell count;
+            f_pair_bytes = mk_i64 0;
+            f_total_bytes = mk_i64 0
+          }
+          <:
+          t_AdmissionObservation
+        | HandlerOutcome_Ran , _ ->
+          {
+            f_stage = AdmissionStage_Count <: t_AdmissionStage;
+            f_inbox_count = mk_i64 0;
+            f_pair_bytes = mk_i64 0;
+            f_total_bytes = mk_i64 0
+          }
+          <:
+          t_AdmissionObservation
+        | _ -> zero
+      else zero
+
+/// `get_recipient_ek`: publish the stored key only when it is non-empty, and
+/// the binding instant beside it. A failed read reports no key.
+let classify_recipient_ek (outcome: t_ReadOutcome t_EkRowView) : t_RecipientEkObservation =
+  match outcome <: t_ReadOutcome t_EkRowView with
+  | ReadOutcome_Row (Core_models.Option.Option_Some row) ->
+    {
+      f_share_ek
+      =
+      (match
+          Core_models.Clone.f_clone #(Core_models.Option.t_Option Alloc.String.t_String)
+            #FStar.Tactics.Typeclasses.solve
+            row.f_share_ek
+          <:
+          Core_models.Option.t_Option Alloc.String.t_String
+        with
+        | Core_models.Option.Option_Some ek ->
+          if ek =. (Alloc.String.impl_String__new () <: Alloc.String.t_String)
+          then Core_models.Option.Option_None <: Core_models.Option.t_Option Alloc.String.t_String
+          else
+            Core_models.Option.Option_Some ek <: Core_models.Option.t_Option Alloc.String.t_String
+        | Core_models.Option.Option_None  ->
+          Core_models.Option.Option_None <: Core_models.Option.t_Option Alloc.String.t_String);
+      f_signed_at
+      =
+      Core_models.Clone.f_clone #(Core_models.Option.t_Option Alloc.String.t_String)
+        #FStar.Tactics.Typeclasses.solve
+        row.f_share_ek_since;
+      f_failed = false
+    }
+    <:
+    t_RecipientEkObservation
+  | ReadOutcome_Row (Core_models.Option.Option_None ) ->
+    {
+      f_share_ek
+      =
+      Core_models.Option.Option_None <: Core_models.Option.t_Option Alloc.String.t_String;
+      f_signed_at
+      =
+      Core_models.Option.Option_None <: Core_models.Option.t_Option Alloc.String.t_String;
+      f_failed = false
+    }
+    <:
+    t_RecipientEkObservation
+  | ReadOutcome_Failed  ->
+    {
+      f_share_ek
+      =
+      Core_models.Option.Option_None <: Core_models.Option.t_Option Alloc.String.t_String;
+      f_signed_at
+      =
+      Core_models.Option.Option_None <: Core_models.Option.t_Option Alloc.String.t_String;
+      f_failed = true
+    }
+    <:
+    t_RecipientEkObservation
+
+/// `get_inbox`'s cursor: the stored timestamp, or that the row does not exist
+/// for this recipient, or that the read failed.
+let classify_inbox_cursor (outcome: t_ReadOutcome t_CursorRowView) : t_CursorObservation =
+  match outcome <: t_ReadOutcome t_CursorRowView with
+  | ReadOutcome_Row (Core_models.Option.Option_Some row) ->
+    {
+      f_created_at
+      =
+      Core_models.Clone.f_clone #(Core_models.Option.t_Option Alloc.String.t_String)
+        #FStar.Tactics.Typeclasses.solve
+        row.f_created_at;
+      f_absent = false;
+      f_failed = false
+    }
+    <:
+    t_CursorObservation
+  | ReadOutcome_Row (Core_models.Option.Option_None ) ->
+    {
+      f_created_at
+      =
+      Core_models.Option.Option_None <: Core_models.Option.t_Option Alloc.String.t_String;
+      f_absent = true;
+      f_failed = false
+    }
+    <:
+    t_CursorObservation
+  | ReadOutcome_Failed  ->
+    {
+      f_created_at
+      =
+      Core_models.Option.Option_None <: Core_models.Option.t_Option Alloc.String.t_String;
+      f_absent = false;
+      f_failed = true
+    }
+    <:
+    t_CursorObservation
+
+/// One page of a listing: keep at most `limit` of the `returned` rows and
+/// report whether the read returned more. A failed read keeps nothing.
+let classify_listing (returned: usize) (failed: bool) (limit: usize) : t_PageObservation =
+  if failed
+  then { f_keep = mk_usize 0; f_has_more = false; f_failed = true } <: t_PageObservation
+  else
+    if returned >. limit
+    then { f_keep = limit; f_has_more = true; f_failed = false } <: t_PageObservation
+    else { f_keep = returned; f_has_more = false; f_failed = false } <: t_PageObservation
+
+/// A sweep: the rows it deleted, or that it failed.
+let classify_sweep (outcomes: t_Slice t_HandlerOutcome) : t_SweepObservation =
+  if (Core_models.Slice.impl__len #t_HandlerOutcome outcomes <: usize) =. mk_usize 1
+  then
+    match outcomes.[ mk_usize 0 ] <: t_HandlerOutcome with
+    | HandlerOutcome_Written purged -> { f_purged = purged; f_failed = false } <: t_SweepObservation
+    | HandlerOutcome_Failed  -> { f_purged = mk_u64 0; f_failed = true } <: t_SweepObservation
+    | _ -> { f_purged = mk_u64 0; f_failed = true } <: t_SweepObservation
+  else { f_purged = mk_u64 0; f_failed = true } <: t_SweepObservation
+
+/// A rate limiter: allowed exactly when the counter after this request is
+/// within the budget. A failed store operation allows nothing.
+let classify_rate_limit (outcomes: t_Slice t_RateOutcome) (limit: u64) : t_RateLimitObservation =
+  if (Core_models.Slice.impl__len #t_RateOutcome outcomes <: usize) =. mk_usize 1
+  then
+    match outcomes.[ mk_usize 0 ] <: t_RateOutcome with
+    | RateOutcome_Count count ->
+      { f_count = count; f_allowed = count <=. limit; f_failed = false } <: t_RateLimitObservation
+    | RateOutcome_Failed  ->
+      { f_count = mk_u64 0; f_allowed = false; f_failed = true } <: t_RateLimitObservation
+  else { f_count = mk_u64 0; f_allowed = false; f_failed = true } <: t_RateLimitObservation

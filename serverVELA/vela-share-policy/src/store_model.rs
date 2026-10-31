@@ -17,7 +17,8 @@
 use std::collections::BTreeMap;
 
 use crate::store::{
-    DeviceRowView, LinkRowView, ReadOutcome, SendRowView, SendStmt, ShareStmt, WriteOutcome,
+    CursorRowView, DeviceRowView, EkRowView, HandlerOutcome, HandlerStmt, LinkRowView, RateStmt,
+    ReadOutcome, SendRowView, SendStmt, ShareStmt, WriteOutcome,
 };
 
 /// A `shared_items` row.
@@ -395,6 +396,235 @@ pub fn read_device(db: &Db, stmt: &ShareStmt, failed: bool) -> ReadOutcome<Devic
     }
 }
 
+// ── Handler I/O outside executor methods ───────────────────────────────────
+//
+// `post_send`'s recipient gate, transaction begin and quota reads;
+// `get_recipient_ek`, `get_inbox`, `get_linked_items`, `list_share_links` and
+// the two expiry sweeps. F*: the `handler` section of
+// `Vela_share_policy_store_model`.
+
+/// The inbox's keys, as the model's finite key list.
+fn inbox_ids(db: &Db) -> Vec<String> {
+    db.inbox.keys().cloned().collect()
+}
+
+/// `COUNT(*)` over one recipient's pending inbox. F*: `inbox_count`.
+pub fn inbox_count(db: &Db, recipient: &str) -> i64 {
+    inbox_ids(db)
+        .into_iter()
+        .filter(|id| db.inbox[id].recipient == recipient)
+        .count() as i64
+}
+
+/// `COALESCE(SUM(LENGTH(capsule)), 0)` for one (sender, recipient) pair. F*:
+/// `inbox_pair_bytes`.
+pub fn inbox_pair_bytes(db: &Db, recipient: &str, sender: &str) -> i64 {
+    inbox_ids(db)
+        .into_iter()
+        .filter(|id| {
+            let row = &db.inbox[id];
+            row.recipient == recipient && row.sender == sender
+        })
+        .map(|id| db.inbox[&id].capsule.len() as i64)
+        .sum()
+}
+
+/// `COALESCE(SUM(LENGTH(capsule)), 0)` over one recipient's inbox. F*:
+/// `inbox_total_bytes`.
+pub fn inbox_total_bytes(db: &Db, recipient: &str) -> i64 {
+    inbox_ids(db)
+        .into_iter()
+        .filter(|id| db.inbox[id].recipient == recipient)
+        .map(|id| db.inbox[&id].capsule.len() as i64)
+        .sum()
+}
+
+/// One handler statement on a state: `Some((rows changed, new state))`, or
+/// `None` when the statement errors. Only the two sweeps are writes. F*:
+/// `exec_handler`.
+pub fn exec_handler(db: &Db, stmt: &HandlerStmt) -> Option<(u64, Db)> {
+    let mut next = db.clone();
+    match stmt {
+        HandlerStmt::DeleteExpiredInbox { cutoff } => {
+            let expired: Vec<String> = inbox_ids(db)
+                .into_iter()
+                .filter(|id| db.inbox[id].created_at.as_str() < cutoff.as_str())
+                .collect();
+            for id in &expired {
+                next.inbox.remove(id);
+            }
+            Some((expired.len() as u64, next))
+        }
+        HandlerStmt::DeleteExpiredSends { cutoff } => {
+            let expired: Vec<String> = db
+                .sends
+                .keys()
+                .filter(|id| db.sends[*id].expires_at.as_str() < cutoff.as_str())
+                .cloned()
+                .collect();
+            for id in &expired {
+                next.sends.remove(id);
+            }
+            Some((expired.len() as u64, next))
+        }
+        _ => None,
+    }
+}
+
+/// `SelectRecipientEk`/`SelectRecipientEkSince` on a state; `failed` injects a
+/// read error. F*: `read_recipient_ek`.
+pub fn read_recipient_ek(db: &Db, stmt: &HandlerStmt, failed: bool) -> ReadOutcome<EkRowView> {
+    if failed {
+        return ReadOutcome::Failed;
+    }
+    match stmt {
+        HandlerStmt::SelectRecipientEk { user }
+        | HandlerStmt::SelectRecipientEkSince { user } => {
+            ReadOutcome::Row(db.users.get(user).map(|row| EkRowView {
+                share_ek: row.share_ek.clone(),
+                share_ek_since: row.share_ek_since.clone(),
+            }))
+        }
+        _ => ReadOutcome::Failed,
+    }
+}
+
+/// `SelectInboxCursor` on a state. F*: `read_inbox_cursor`.
+pub fn read_inbox_cursor(db: &Db, stmt: &HandlerStmt, failed: bool) -> ReadOutcome<CursorRowView> {
+    if failed {
+        return ReadOutcome::Failed;
+    }
+    match stmt {
+        HandlerStmt::SelectInboxCursor { id, recipient } => {
+            ReadOutcome::Row(db.inbox.get(id).and_then(|row| {
+                if &row.recipient == recipient {
+                    Some(CursorRowView {
+                        created_at: Some(row.created_at.clone()),
+                    })
+                } else {
+                    None
+                }
+            }))
+        }
+        _ => ReadOutcome::Failed,
+    }
+}
+
+/// The ids of the rows `SelectInboxPage` selects: the recipient's inbox rows
+/// older than the cursor whose linked item is not revoked. F*:
+/// `inbox_page_matches`.
+pub fn inbox_page_matches(db: &Db, stmt: &HandlerStmt) -> Vec<String> {
+    match stmt {
+        HandlerStmt::SelectInboxPage {
+            recipient, before, ..
+        } => inbox_ids(db)
+            .into_iter()
+            .filter(|id| {
+                let row = &db.inbox[id];
+                row.recipient == *recipient
+                    && match before {
+                        Some(cursor) => row.created_at.as_str() < cursor.as_str(),
+                        None => true,
+                    }
+                    && match db.items.get(id) {
+                        Some(item) => item.revoked != 1,
+                        None => true,
+                    }
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// The ids of the rows `SelectSharedItems` selects: the caller's live linked
+/// items. F*: `linked_item_matches`.
+pub fn linked_item_matches(db: &Db, stmt: &HandlerStmt) -> Vec<String> {
+    match stmt {
+        HandlerStmt::SelectSharedItems { user, .. } => db
+            .items
+            .iter()
+            .filter(|(_, row)| row.revoked == 0 && (&row.sender == user || &row.recipient == user))
+            .map(|(id, _)| id.clone())
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// The ids of the rows `SelectOwnedSends` selects: the owner's live, unexpired
+/// links. F*: `own_send_matches`.
+pub fn own_send_matches(db: &Db, stmt: &HandlerStmt) -> Vec<String> {
+    match stmt {
+        HandlerStmt::SelectOwnedSends { owner, now, .. } => db
+            .sends
+            .iter()
+            .filter(|(_, row)| {
+                &row.owner == owner && row.revoked == 0 && row.expires_at.as_str() > now.as_str()
+            })
+            .map(|(id, _)| id.clone())
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// One rate-limit increment on a counter store. F*: `exec_rate`.
+pub fn exec_rate(
+    kv: &BTreeMap<String, u64>,
+    stmt: &RateStmt,
+) -> Option<(u64, BTreeMap<String, u64>)> {
+    let mut next = kv.clone();
+    let before = kv.get(&stmt.key).copied().unwrap_or(0);
+    let after = before.saturating_add(1);
+    next.insert(stmt.key.clone(), after);
+    Some((after, next))
+}
+
+// ── The handler plans' thin loops ──────────────────────────────────────────
+
+/// The mirrored `run_handler`: one outcome per statement, stopping at the first
+/// failure. `fault = Some(k)` makes the k-th statement fail. F*: `run_handler`.
+pub fn run_handler(db: &Db, plan: &[HandlerStmt], fault: Option<usize>) -> Vec<HandlerOutcome> {
+    let mut outcomes = Vec::new();
+    for (k, stmt) in plan.iter().enumerate() {
+        if fault == Some(k) {
+            outcomes.push(HandlerOutcome::Failed);
+            return outcomes;
+        }
+        match stmt {
+            HandlerStmt::Begin => outcomes.push(HandlerOutcome::Ran),
+            HandlerStmt::CountInbox { recipient } => outcomes.push(HandlerOutcome::Number(Some(
+                inbox_count(db, recipient),
+            ))),
+            HandlerStmt::SumPairBytes { recipient, sender } => outcomes.push(
+                HandlerOutcome::Number(Some(inbox_pair_bytes(db, recipient, sender))),
+            ),
+            HandlerStmt::SumRecipientBytes { recipient } => outcomes.push(
+                HandlerOutcome::Number(Some(inbox_total_bytes(db, recipient))),
+            ),
+            _ => {
+                outcomes.push(HandlerOutcome::Failed);
+                return outcomes;
+            }
+        }
+    }
+    outcomes
+}
+
+/// The mirrored `sweep`: the plan's one write, or the injected failure.
+/// F*: `sweep`.
+pub fn run_sweep(
+    db: &Db,
+    stmt: &HandlerStmt,
+    fault: Option<usize>,
+) -> (Vec<HandlerOutcome>, Db) {
+    if fault == Some(0) {
+        return (vec![HandlerOutcome::Failed], db.clone());
+    }
+    match exec_handler(db, stmt) {
+        Some((rows, next)) => (vec![HandlerOutcome::Written(rows)], next),
+        None => (vec![HandlerOutcome::Failed], db.clone()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -460,8 +690,7 @@ mod tests {
         assert_eq!(post, pre);
     }
 
-    /// The F* lemmas `vector_send_link_*` prove the same runs.
-    #[test]
+    /// The F* lemmas `vector_send_link_*` prove the same runs.    #[test]
     fn send_link_vectors() {
         use crate::store::{
             classify_send_consume, classify_send_create, classify_send_delete,
@@ -549,5 +778,119 @@ mod tests {
         let (outs, post) = run_send_autocommit(&owned, &plan_send_delete(s("l"), s("a")), None);
         assert_eq!(classify_send_delete(&outs).rows, 1);
         assert!(post.sends.is_empty());
+    }
+
+    /// The F* lemmas `vector_send_admission*`, `vector_recipient_probe`,
+    /// `vector_inbox_cursor`, `vector_inbox_sweep` and `vector_rate_limit`
+    /// prove the same runs.
+    #[test]
+    fn handler_vectors() {
+        use crate::store::{
+            classify_inbox_cursor, classify_listing, classify_rate_limit,
+            classify_recipient_probe, classify_send_admission, classify_sweep,
+            plan_expired_inbox_cleanup, plan_inbox_cursor, plan_rate_limit,
+            plan_recipient_probe, AdmissionStage, EkRowView, RateOutcome, ReadOutcome,
+        };
+        use crate::store::HandlerOutcome as H;
+
+        let mut pre = Db::default();
+        pre.items.insert(
+            s("i"),
+            ItemRow {
+                sender: s("a"),
+                recipient: s("b"),
+                capsule: s("c"),
+                created_at: s("t0"),
+                updated_at: s("t0"),
+                revoked: 0,
+            },
+        );
+        pre.inbox.insert(
+            s("m"),
+            InboxRow { sender: s("a"), recipient: s("b"), capsule: s("cc"), created_at: s("t0") },
+        );
+        pre.users.insert(
+            s("u"),
+            UserRow { share_ek: Some(s("ek")), share_ek_since: Some(s("t0")), share_ek_device_id: None },
+        );
+        pre.sends.insert(
+            s("l"),
+            SendRow {
+                owner: s("a"),
+                ciphertext: s("ct"),
+                has_passphrase: 0,
+                kdf_salt: None,
+                label: None,
+                view_once: 0,
+                max_views: None,
+                view_count: 0,
+                created_at: s("t0"),
+                expires_at: s("t9"),
+                revoked: 0,
+            },
+        );
+
+        // vector_send_admission: one item of two bytes, ready.
+        let plan = crate::store::plan_send_admission(s("b"), s("a"));
+        let outcomes = run_handler(&pre, &plan, None);
+        let admission = classify_send_admission(&outcomes);
+        assert_eq!(admission.stage, AdmissionStage::Ready);
+        assert_eq!(admission.inbox_count, 1);
+        assert_eq!(admission.pair_bytes, 2);
+        assert_eq!(admission.total_bytes, 2);
+        // vector_send_admission_begin_fault: a failed begin publishes nothing.
+        let failed = classify_send_admission(&run_handler(&pre, &plan, Some(0)));
+        assert_eq!(failed.stage, AdmissionStage::Begin);
+        assert_eq!(failed.total_bytes, 0);
+
+        // vector_recipient_probe.
+        let probe = |user: &str, fault| {
+            classify_recipient_probe(&read_recipient_ek(
+                &pre,
+                &plan_recipient_probe(s(user)),
+                fault,
+            ))
+        };
+        assert!(probe("u", false).can_receive);
+        assert!(!probe("w", false).can_receive);
+        assert!(probe("u", true).failed);
+
+        // vector_inbox_cursor.
+        let cursor = |recipient: &str| {
+            classify_inbox_cursor(&read_inbox_cursor(
+                &pre,
+                &plan_inbox_cursor(s("m"), s(recipient)),
+                false,
+            ))
+        };
+        assert_eq!(cursor("b").created_at, Some(s("t0")));
+        assert!(!cursor("b").absent);
+        assert!(cursor("a").absent);
+
+        // vector_inbox_sweep: nothing is older than the cutoff.
+        let (outcomes, post) = run_sweep(&pre, &plan_expired_inbox_cleanup(s("t0")), None);
+        assert_eq!(classify_sweep(&outcomes), crate::store::SweepObservation { purged: 0, failed: false });
+        assert_eq!(post, pre);
+
+        // vector_rate_limit: the first request is within budget.
+        let mut kv = BTreeMap::new();
+        let stmt = plan_rate_limit(s("rl"), 120, 3600);
+        let (count, next) = exec_rate(&kv, &stmt).unwrap();
+        kv = next;
+        let observation = classify_rate_limit(&[RateOutcome::Count(count)], stmt.limit);
+        assert!(observation.allowed);
+        assert_eq!(observation.count, 1);
+        assert_eq!(kv[&s("rl")], 1);
+
+        // The page classifier keeps the page size and reports overflow.
+        assert_eq!(classify_listing(51, false, 50).keep, 50);
+        assert!(classify_listing(51, false, 50).has_more);
+        assert!(!classify_listing(50, false, 50).has_more);
+        // The probe's failed read is the only rejecting fault.
+        assert_eq!(
+            classify_recipient_probe(&ReadOutcome::<EkRowView>::Failed).failed,
+            true
+        );
+        let _ = H::Ran;
     }
 }
