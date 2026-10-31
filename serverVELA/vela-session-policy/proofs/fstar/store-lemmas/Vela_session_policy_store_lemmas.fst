@@ -1047,17 +1047,19 @@ let lockout_key (sess: text) : text =
   stmt_key (first_stmt (stmts_of (plan_sentinel sess v_WEB_SESSION_MAX_TTL_SECS)))
 
 let plan_insert_pending_shape (sess approver hash epk vk nonce now: text)
-  : Lemma (plan_insert_pending sess approver hash epk vk nonce now ==
+  : Lemma (plan_insert_pending sess approver hash epk vk nonce now (mk_u64 0) ==
            SqlStmt_InsertPendingSession
              { f_session = sess; f_approver = approver; f_poll_secret_hash = hash;
-               f_ephemeral_pk = epk; f_web_vk = vk; f_link_nonce = nonce; f_now = now }) =
+               f_ephemeral_pk = epk; f_web_vk = vk; f_link_nonce = nonce; f_now = now;
+               f_now_secs = mk_u64 0 }) =
   ()
 
 let plan_grant_update_shape (sess usr dev mode capsule expires: text) (epoch: i64)
-  : Lemma (plan_grant_update sess usr dev mode capsule expires epoch ==
+  : Lemma (plan_grant_update sess usr dev mode capsule expires epoch (mk_u64 0) ==
            SqlStmt_GrantWebSession
              { f_session = sess; f_user = usr; f_device = dev; f_mode = mode;
-               f_capsule = capsule; f_expires_at = expires; f_epoch = epoch }) =
+               f_capsule = capsule; f_expires_at = expires; f_epoch = epoch;
+               f_expires_secs = mk_u64 0 }) =
   ()
 
 let plan_revoke_session_shape (sess: text)
@@ -1096,16 +1098,16 @@ let plan_token_sentinel_shape (sess: text)
 let insert_pending_is_honest
       (d: db) (sess approver hash epk vk nonce now: text) (f: option nat)
   : Lemma
-    ((fst (insert_pending d sess approver hash epk vk nonce now f) ==
+    ((fst (insert_pending d sess approver hash epk vk nonce now (mk_u64 0) f) ==
         Vela_session_policy.Websession_driver.StartInsertObservation_Inserted
         <==> (no_fault_in f 1 /\ lookup d.sessions sess == None)) /\
-     (fst (insert_pending d sess approver hash epk vk nonce now f) ==
+     (fst (insert_pending d sess approver hash epk vk nonce now (mk_u64 0) f) ==
         Vela_session_policy.Websession_driver.StartInsertObservation_Inserted ==>
-        snd (insert_pending d sess approver hash epk vk nonce now f) ==
-          st_insert_pending d sess approver) /\
-     (fst (insert_pending d sess approver hash epk vk nonce now f) =!=
+        snd (insert_pending d sess approver hash epk vk nonce now (mk_u64 0) f) ==
+          st_insert_pending d sess approver hash epk vk nonce now (mk_u64 0)) /\
+     (fst (insert_pending d sess approver hash epk vk nonce now (mk_u64 0) f) =!=
         Vela_session_policy.Websession_driver.StartInsertObservation_Inserted ==>
-        snd (insert_pending d sess approver hash epk vk nonce now f) == d)) =
+        snd (insert_pending d sess approver hash epk vk nonce now (mk_u64 0) f) == d)) =
   plan_insert_pending_shape sess approver hash epk vk nonce now
 
 /// `GrantIo::update_grant`: `Updated` exactly when the guard held and the one
@@ -1114,25 +1116,25 @@ let insert_pending_is_honest
 let grant_update_is_honest
       (d: db) (sess usr dev mode capsule expires: text) (epoch: i64) (f: option nat)
   : Lemma
-    ((fst (grant_update d sess usr dev mode capsule expires epoch f) ==
+    ((fst (grant_update d sess usr dev mode capsule expires epoch (mk_u64 0) f) ==
         Vela_session_policy.Websession_driver.GrantUpdateObservation_Updated
         <==> (no_fault_in f 1 /\ grant_guard d sess usr dev epoch)) /\
-     (fst (grant_update d sess usr dev mode capsule expires epoch f) ==
+     (fst (grant_update d sess usr dev mode capsule expires epoch (mk_u64 0) f) ==
         Vela_session_policy.Websession_driver.GrantUpdateObservation_Conflict
         <==> (no_fault_in f 1 /\ not (grant_guard d sess usr dev epoch))) /\
-     (fst (grant_update d sess usr dev mode capsule expires epoch f) ==
+     (fst (grant_update d sess usr dev mode capsule expires epoch (mk_u64 0) f) ==
         Vela_session_policy.Websession_driver.GrantUpdateObservation_Failed
         <==> faulted f 0) /\
-     (fst (grant_update d sess usr dev mode capsule expires epoch f) ==
+     (fst (grant_update d sess usr dev mode capsule expires epoch (mk_u64 0) f) ==
         Vela_session_policy.Websession_driver.GrantUpdateObservation_Updated ==>
-        snd (grant_update d sess usr dev mode capsule expires epoch f) ==
-          st_grant_session d sess usr dev mode capsule expires epoch) /\
-     (fst (grant_update d sess usr dev mode capsule expires epoch f) ==
+        snd (grant_update d sess usr dev mode capsule expires epoch (mk_u64 0) f) ==
+          st_grant_session d sess usr dev mode capsule expires epoch (mk_u64 0)) /\
+     (fst (grant_update d sess usr dev mode capsule expires epoch (mk_u64 0) f) ==
         Vela_session_policy.Websession_driver.GrantUpdateObservation_Conflict ==>
-        snd (grant_update d sess usr dev mode capsule expires epoch f) == d) /\
-     (fst (grant_update d sess usr dev mode capsule expires epoch f) ==
+        snd (grant_update d sess usr dev mode capsule expires epoch (mk_u64 0) f) == d) /\
+     (fst (grant_update d sess usr dev mode capsule expires epoch (mk_u64 0) f) ==
         Vela_session_policy.Websession_driver.GrantUpdateObservation_Failed ==>
-        snd (grant_update d sess usr dev mode capsule expires epoch f) == d)) =
+        snd (grant_update d sess usr dev mode capsule expires epoch (mk_u64 0) f) == d)) =
   plan_grant_update_shape sess usr dev mode capsule expires epoch
 
 /// The audit statement's observation: `Updated` exactly when the statement
@@ -1286,9 +1288,9 @@ let token_issue_is_honest (s: store) (sess jti: text) (paseto_ok: bool) (f: opti
 let inserted_pending_is_stored
       (d: db) (sess approver hash epk vk nonce now: text) (f: option nat)
   : Lemma
-    (fst (insert_pending d sess approver hash epk vk nonce now f) ==
+    (fst (insert_pending d sess approver hash epk vk nonce now (mk_u64 0) f) ==
        Vela_session_policy.Websession_driver.StartInsertObservation_Inserted ==>
-       (match lookup (snd (insert_pending d sess approver hash epk vk nonce now f)).sessions sess with
+       (match lookup (snd (insert_pending d sess approver hash epk vk nonce now (mk_u64 0) f)).sessions sess with
         | Some r -> r.ws_status == v_pending /\ r.ws_user == None /\
                     r.ws_approver == Some approver /\ r.ws_capsule == None
         | None -> False)) =
@@ -1298,7 +1300,7 @@ let inserted_pending_is_stored
 let grant_updated_only_pending_guarded
       (d: db) (sess usr dev mode capsule expires: text) (epoch: i64) (f: option nat)
   : Lemma
-    (fst (grant_update d sess usr dev mode capsule expires epoch f) ==
+    (fst (grant_update d sess usr dev mode capsule expires epoch (mk_u64 0) f) ==
        Vela_session_policy.Websession_driver.GrantUpdateObservation_Updated ==>
        grant_guard d sess usr dev epoch) =
   grant_update_is_honest d sess usr dev mode capsule expires epoch f
@@ -1308,15 +1310,15 @@ let grant_updated_only_pending_guarded
 let grant_updated_changes_only_sessions
       (d: db) (sess usr dev mode capsule expires: text) (epoch: i64) (f: option nat)
   : Lemma
-    (fst (grant_update d sess usr dev mode capsule expires epoch f) ==
+    (fst (grant_update d sess usr dev mode capsule expires epoch (mk_u64 0) f) ==
        Vela_session_policy.Websession_driver.GrantUpdateObservation_Updated ==>
-       (snd (grant_update d sess usr dev mode capsule expires epoch f)).users == d.users /\
-       (snd (grant_update d sess usr dev mode capsule expires epoch f)).devices == d.devices /\
-       (snd (grant_update d sess usr dev mode capsule expires epoch f)).inbox == d.inbox /\
-       (snd (grant_update d sess usr dev mode capsule expires epoch f)).items == d.items /\
-       (snd (grant_update d sess usr dev mode capsule expires epoch f)).sends == d.sends /\
-       (snd (grant_update d sess usr dev mode capsule expires epoch f)).chunks == d.chunks /\
-       (snd (grant_update d sess usr dev mode capsule expires epoch f)).buckets == d.buckets) =
+       (snd (grant_update d sess usr dev mode capsule expires epoch (mk_u64 0) f)).users == d.users /\
+       (snd (grant_update d sess usr dev mode capsule expires epoch (mk_u64 0) f)).devices == d.devices /\
+       (snd (grant_update d sess usr dev mode capsule expires epoch (mk_u64 0) f)).inbox == d.inbox /\
+       (snd (grant_update d sess usr dev mode capsule expires epoch (mk_u64 0) f)).items == d.items /\
+       (snd (grant_update d sess usr dev mode capsule expires epoch (mk_u64 0) f)).sends == d.sends /\
+       (snd (grant_update d sess usr dev mode capsule expires epoch (mk_u64 0) f)).chunks == d.chunks /\
+       (snd (grant_update d sess usr dev mode capsule expires epoch (mk_u64 0) f)).buckets == d.buckets) =
   grant_update_is_honest d sess usr dev mode capsule expires epoch f
 
 /// A `Claimed` token means the marker was absent before the write and present
@@ -1382,13 +1384,16 @@ let vector_web_db : db =
       [(s "s",
         ({ ws_user = None; ws_approver = Some (s "u"); ws_status = v_pending;
            ws_capsule = None; ws_approved_by = None; ws_mode = None;
-           ws_key_epoch = None; ws_expires_at = None } <: session_row))];
+           ws_key_epoch = None; ws_expires_at = None;
+           ws_poll_secret_hash = None; ws_ephemeral_pk = s "pk"; ws_web_vk = None;
+           ws_link_nonce = None; ws_created_at = s "t"; ws_expires_secs = None;
+           ws_created_secs = 0 } <: session_row))];
     inbox = []; items = []; sends = []; chunks = []; buckets = [] }
 
 let vector_insert_pending ()
   : Lemma (let (obs, post) =
              insert_pending vector_empty_db (s "fresh") (s "u") (s "h") (s "e") (s "v")
-               (s "n") (s "now") None in
+               (s "n") (s "now") (mk_u64 1) None in
            obs == Vela_session_policy.Websession_driver.StartInsertObservation_Inserted /\
            Some? (lookup post.sessions (s "fresh"))) =
   insert_pending_is_honest vector_empty_db (s "fresh") (s "u") (s "h") (s "e") (s "v")
@@ -1397,17 +1402,17 @@ let vector_insert_pending ()
 let vector_grant_update ()
   : Lemma (let (obs, post) =
              grant_update vector_web_db (s "s") (s "u") (s "d") (s "rw") (s "cap")
-               (s "exp") (mk_i64 3) None in
+               (s "exp") (mk_i64 3) (mk_u64 2) None in
            obs == Vela_session_policy.Websession_driver.GrantUpdateObservation_Updated /\
            post == st_grant_session vector_web_db (s "s") (s "u") (s "d") (s "rw")
-                     (s "cap") (s "exp") (mk_i64 3)) =
+                     (s "cap") (s "exp") (mk_i64 3) (mk_u64 2)) =
   grant_update_is_honest vector_web_db (s "s") (s "u") (s "d") (s "rw") (s "cap")
     (s "exp") (mk_i64 3) None
 
 let vector_grant_conflict ()
   : Lemma (let (obs, post) =
              grant_update vector_web_db (s "s") (s "u") (s "d") (s "rw") (s "cap")
-               (s "exp") (mk_i64 4) None in
+               (s "exp") (mk_i64 4) (mk_u64 2) None in
            obs == Vela_session_policy.Websession_driver.GrantUpdateObservation_Conflict /\
            post == vector_web_db) =
   grant_update_is_honest vector_web_db (s "s") (s "u") (s "d") (s "rw") (s "cap")
@@ -1448,3 +1453,290 @@ let vector_token_issue_locked_fails ()
            obs == Vela_session_policy.Websession_driver.TokenIssueObservation_Failed /\
            post == vector_token_issue_locked) =
   token_issue_is_honest vector_token_issue_locked (s "s") (s "jti") true None
+
+// ── Shared web-session reads, cleanup and pre-driver limiters (wave 2) ─────
+
+/// The key an `Incr` (limiter) statement touches.
+let incr_key (st: t_StoreStmt) : text =
+  match st with
+  | StoreStmt_Incr { f_key = k } -> k
+  | _ -> Alloc.String.String ""
+
+/// The key a `Ttl` (backoff precheck) statement reads.
+let ttl_key (st: t_StoreStmt) : text =
+  match st with
+  | StoreStmt_Ttl { f_key = k } -> k
+  | _ -> Alloc.String.String ""
+
+/// The third statement of a plan.
+let third_stmt (l: list t_StoreStmt) : t_StoreStmt =
+  match l with
+  | _ :: _ :: st :: _ -> st
+  | _ -> first_stmt l
+
+let plan_load_session_shape (sess: text)
+  : Lemma (plan_load_session sess == SqlStmt_SelectWebSessionById { f_session = sess }) =
+  ()
+
+let plan_sessions_list_shape (usr: text)
+  : Lemma (plan_sessions_list usr == SqlStmt_SelectGrantedSessionsByUser { f_user = usr }) =
+  ()
+
+let plan_capsule_clear_shape (sess: text)
+  : Lemma (plan_capsule_clear sess == SqlStmt_ClearSessionCapsule { f_session = sess }) =
+  ()
+
+let plan_session_keys_shape (sess usr: text)
+  : Lemma (plan_session_keys sess usr ==
+           SqlStmt_SelectSessionKeys { f_session = sess; f_user = usr }) =
+  ()
+
+/// The three cleanup plans are the deletes the loop runs.
+let plan_cleanup_revoked_shape ()
+  : Lemma (plan_cleanup_revoked () == SqlStmt_DeleteRevokedWebSessions) =
+  ()
+
+let plan_cleanup_expired_shape (now: text) (now_secs: u64)
+  : Lemma (plan_cleanup_expired now now_secs ==
+           SqlStmt_DeleteExpiredWebSessions { f_now = now; f_now_secs = now_secs }) =
+  ()
+
+let plan_cleanup_pending_shape (cut: text) (cut_secs: u64)
+  : Lemma (plan_cleanup_pending cut cut_secs ==
+           SqlStmt_DeleteStalePendingWebSessions { f_cutoff = cut; f_cutoff_secs = cut_secs }) =
+  ()
+
+/// `post_verify`: one 10/min per-IP counter, then the `(ip, device)` backoff
+/// read.
+let plan_login_limits_shape (ip dev: text)
+  : Lemma
+    (match stmts_of (plan_login_limits ip dev) with
+     | StoreStmt_Incr { f_key = _; f_limit = lim; f_ttl = ttl } ::
+       StoreStmt_Ttl { f_key = _ } :: [] ->
+       lim == mk_u64 10 /\ ttl == mk_u64 60
+     | _ -> False) =
+  ()
+
+/// `StartIo`: one 30/hour per-IP counter.
+let plan_start_limit_shape (ip: text)
+  : Lemma
+    (match stmts_of (plan_start_limit ip) with
+     | StoreStmt_Incr { f_key = _; f_limit = lim; f_ttl = ttl } :: [] ->
+       lim == mk_u64 30 /\ ttl == mk_u64 3600
+     | _ -> False) =
+  ()
+
+/// `TokenIo`: the 10/min per-(ip, session) budget, the 30/min per-session
+/// backstop, then the backoff read.
+let plan_token_limits_shape (ip sess: text)
+  : Lemma
+    (match stmts_of (plan_token_limits ip sess) with
+     | StoreStmt_Incr { f_key = _; f_limit = lim1; f_ttl = ttl1 } ::
+       StoreStmt_Incr { f_key = _; f_limit = lim2; f_ttl = ttl2 } ::
+       StoreStmt_Ttl { f_key = _ } :: [] ->
+       lim1 == mk_u64 10 /\ ttl1 == mk_u64 60 /\
+       lim2 == mk_u64 30 /\ ttl2 == mk_u64 60
+     | _ -> False) =
+  ()
+
+/// `get_session`: one 120/min per-IP counter.
+let plan_poll_limit_shape (ip: text)
+  : Lemma
+    (match stmts_of (plan_poll_limit ip) with
+     | StoreStmt_Incr { f_key = _; f_limit = lim; f_ttl = ttl } :: [] ->
+       lim == mk_u64 120 /\ ttl == mk_u64 60
+     | _ -> False) =
+  ()
+
+/// `get_keys`: one 60/min per-user counter.
+let plan_keys_limit_shape (usr: text)
+  : Lemma
+    (match stmts_of (plan_keys_limit usr) with
+     | StoreStmt_Incr { f_key = _; f_limit = lim; f_ttl = ttl } :: [] ->
+       lim == mk_u64 60 /\ ttl == mk_u64 60
+     | _ -> False) =
+  ()
+
+/// `load_session`: the observation is exactly the stored row (every column),
+/// or `Absent` when no row matched, and a failed read is `QueryFailed`.
+let session_lookup_is_honest (d: db) (sess: text) (failed: bool)
+  : Lemma
+    ((classify_session_lookup (read_session d sess false) ==
+        (match lookup d.sessions sess with
+         | Some r -> SessionLookup_Row (session_view r)
+         | None -> SessionLookup_Absent)) /\
+     (classify_session_lookup (read_session d sess true) ==
+        SessionLookup_QueryFailed)) =
+  ()
+
+/// `get_sessions_list`: the classifier carries exactly the query's rows, and a
+/// failed query is `QueryFailed`. `plan_sessions_list_shape` pins the account
+/// the extracted plan names; `session_list_truth` is the set the read returns.
+let session_list_is_honest (d: db) (usr: text)
+      (v: Alloc.Vec.t_Vec t_SessionListRowView Alloc.Alloc.t_Global) (failed: bool)
+  : Lemma
+    ((classify_sessions_list (read_sessions_list d usr v false) ==
+        SessionsList_Rows v) /\
+     (classify_sessions_list (read_sessions_list d usr v true) ==
+        SessionsList_QueryFailed)) =
+  ()
+
+#push-options "--fuel 4 --ifuel 2"
+/// `cleanup_task` with no fault: the three deletes run in order on the state
+/// each one leaves behind.
+let cleanup_runs_every_delete (d: db) (now: text) (now_secs: u64) (cut: text) (cut_secs: u64)
+  : Lemma
+    (snd (cleanup d now now_secs cut cut_secs None) ==
+       st_delete_stale_pending
+         (st_delete_expired (st_delete_revoked d) now_secs) cut_secs) =
+  plan_cleanup_revoked_shape ();
+  plan_cleanup_expired_shape now now_secs;
+  plan_cleanup_pending_shape cut cut_secs
+
+/// A fault in the revoked-session delete purges nothing for it and the other
+/// two still run.
+let cleanup_revoked_fault (d: db) (now: text) (now_secs: u64) (cut: text) (cut_secs: u64)
+  : Lemma
+    ((fst (cleanup d now now_secs cut cut_secs (Some 0))).f_revoked == u64_of_nat 0 /\
+     snd (cleanup d now now_secs cut cut_secs (Some 0)) ==
+       st_delete_stale_pending (st_delete_expired d now_secs) cut_secs) =
+  plan_cleanup_revoked_shape ();
+  plan_cleanup_expired_shape now now_secs;
+  plan_cleanup_pending_shape cut cut_secs
+
+/// A fault in the expired-session delete purges nothing for it.
+let cleanup_expired_fault (d: db) (now: text) (now_secs: u64) (cut: text) (cut_secs: u64)
+  : Lemma
+    ((fst (cleanup d now now_secs cut cut_secs (Some 1))).f_expired == u64_of_nat 0 /\
+     snd (cleanup d now now_secs cut cut_secs (Some 1)) ==
+       st_delete_stale_pending (st_delete_revoked d) cut_secs) =
+  plan_cleanup_revoked_shape ();
+  plan_cleanup_expired_shape now now_secs;
+  plan_cleanup_pending_shape cut cut_secs
+
+/// A fault in the stale-pending delete purges nothing for it.
+let cleanup_pending_fault (d: db) (now: text) (now_secs: u64) (cut: text) (cut_secs: u64)
+  : Lemma
+    ((fst (cleanup d now now_secs cut cut_secs (Some 2))).f_pending == u64_of_nat 0 /\
+     snd (cleanup d now now_secs cut cut_secs (Some 2)) ==
+       st_delete_expired (st_delete_revoked d) now_secs) =
+  plan_cleanup_revoked_shape ();
+  plan_cleanup_expired_shape now now_secs;
+  plan_cleanup_pending_shape cut cut_secs
+
+/// The cleanup report maps each statement's applied row count straight through
+/// (and reports zero for a failed statement).
+let cleanup_report_is_honest (a b c: t_WriteOutcome)
+  : Lemma
+    ((classify_cleanup a b c).f_revoked ==
+       (match a with
+        | WriteOutcome_Applied n -> n
+        | WriteOutcome_Failed -> u64_of_nat 0) /\
+     (classify_cleanup a b c).f_expired ==
+       (match b with
+        | WriteOutcome_Applied n -> n
+        | WriteOutcome_Failed -> u64_of_nat 0) /\
+     (classify_cleanup a b c).f_pending ==
+       (match c with
+        | WriteOutcome_Applied n -> n
+        | WriteOutcome_Failed -> u64_of_nat 0)) =
+  ()
+#pop-options
+
+/// `post_verify`: the request proceeds exactly when neither the per-IP counter
+/// nor the backoff read refused, and on success the counter grew and nothing
+/// else changed.
+let login_limits_is_honest (s: store) (ip dev: text) (f: option nat)
+  : Lemma
+    ((fst (login_limits s ip dev f) == LimitObservation_Allowed <==>
+       (no_fault_in f 2 /\
+        s.counters
+          (incr_key (first_stmt (stmts_of (plan_login_limits ip dev)))) + 1 <= v (mk_u64 10) /\
+        not (Some? (s.kv
+          (ttl_key (second_stmt (stmts_of (plan_login_limits ip dev)))))))) /\
+     (fst (login_limits s ip dev f) == LimitObservation_Allowed ==>
+        snd (login_limits s ip dev f) == apply_all s (stmts_of (plan_login_limits ip dev)))) =
+  plan_login_limits_shape ip dev
+
+/// `StartIo::check_rate_limit`.
+let start_limit_is_honest (s: store) (ip: text) (f: option nat)
+  : Lemma
+    ((fst (start_limit s ip f) == LimitObservation_Allowed <==>
+       (no_fault_in f 1 /\
+        s.counters (incr_key (first_stmt (stmts_of (plan_start_limit ip)))) + 1
+          <= v (mk_u64 30))) /\
+     (fst (start_limit s ip f) == LimitObservation_Allowed ==>
+        snd (start_limit s ip f) == apply_all s (stmts_of (plan_start_limit ip)))) =
+  plan_start_limit_shape ip
+
+/// `TokenIo::check_token_limits`: the request proceeds exactly when both
+/// budgets admitted it and no backoff window is live.
+let token_limits_is_honest (s: store) (ip sess: text) (f: option nat)
+  : Lemma
+    ((fst (token_limits s ip sess f) == LimitObservation_Allowed <==>
+       (no_fault_in f 3 /\
+        s.counters (incr_key (first_stmt (stmts_of (plan_token_limits ip sess)))) + 1
+          <= v (mk_u64 10) /\
+        s.counters (incr_key (second_stmt (stmts_of (plan_token_limits ip sess)))) + 1
+          <= v (mk_u64 30) /\
+        not (Some? (s.kv
+          (ttl_key (third_stmt (stmts_of (plan_token_limits ip sess)))))))) /\
+     (fst (token_limits s ip sess f) == LimitObservation_Allowed ==>
+        snd (token_limits s ip sess f) == apply_all s (stmts_of (plan_token_limits ip sess)))) =
+  plan_token_limits_shape ip sess
+
+/// `get_session`'s poll limiter.
+let poll_limit_is_honest (s: store) (ip: text) (f: option nat)
+  : Lemma
+    ((fst (poll_limit s ip f) == LimitObservation_Allowed <==>
+       (no_fault_in f 1 /\
+        s.counters (incr_key (first_stmt (stmts_of (plan_poll_limit ip)))) + 1
+          <= v (mk_u64 120))) /\
+     (fst (poll_limit s ip f) == LimitObservation_Allowed ==>
+        snd (poll_limit s ip f) == apply_all s (stmts_of (plan_poll_limit ip)))) =
+  plan_poll_limit_shape ip
+
+/// `get_keys`'s per-user limiter.
+let keys_limit_is_honest (s: store) (usr: text) (f: option nat)
+  : Lemma
+    ((fst (keys_limit s usr f) == LimitObservation_Allowed <==>
+       (no_fault_in f 1 /\
+        s.counters (incr_key (first_stmt (stmts_of (plan_keys_limit usr)))) + 1
+          <= v (mk_u64 60))) /\
+     (fst (keys_limit s usr f) == LimitObservation_Allowed ==>
+        snd (keys_limit s usr f) == apply_all s (stmts_of (plan_keys_limit usr)))) =
+  plan_keys_limit_shape usr
+
+/// `get_session`'s one-shot capsule clear: exactly the first caller retracts
+/// a live capsule; a fault retracts nothing and changes nothing.
+let capsule_clear_is_honest (d: db) (sess: text) (f: option nat)
+  : Lemma
+    ((not (faulted f 0) ==>
+        (fst (capsule_clear d sess f) == CapsuleClearObservation_Cleared <==>
+         (match lookup d.sessions sess with
+          | Some r -> Some? r.ws_capsule
+          | None -> false))) /\
+     (fst (capsule_clear d sess f) == CapsuleClearObservation_Cleared ==>
+        snd (capsule_clear d sess f) == st_clear_capsule d sess) /\
+     (fst (capsule_clear d sess f) == CapsuleClearObservation_AlreadyCollected ==>
+        snd (capsule_clear d sess f) == d) /\
+     (faulted f 0 ==>
+        fst (capsule_clear d sess f) == CapsuleClearObservation_StorageFailed /\
+        snd (capsule_clear d sess f) == d)) =
+  ()
+
+/// `get_keys`: the observation is exactly the stored row when the caller is
+/// the committed approver, `Absent` otherwise or when there is no row, and a
+/// failed read is `QueryFailed`.
+let session_keys_is_honest (d: db) (sess usr: text) (failed: bool)
+  : Lemma
+    ((classify_session_keys (read_session_keys d sess usr false) ==
+        (match lookup d.sessions sess with
+         | Some r ->
+           if r.ws_approver = Some usr
+           then SessionKeysLookup_Row (keys_view r)
+           else SessionKeysLookup_Absent
+         | None -> SessionKeysLookup_Absent)) /\
+     (classify_session_keys (read_session_keys d sess usr true) ==
+        SessionKeysLookup_QueryFailed)) =
+  ()

@@ -100,7 +100,23 @@ pub(crate) fn take_challenge(
     challenge_b64: &str,
     purpose: ChallengePurpose,
 ) -> Result<ChallengeConsumption> {
-    let consumed = state.store.get_del(&format!("challenge:{challenge_b64}"))?;
+    // The key comes from the proved take plan, so no handler builds a
+    // challenge key by hand. (The plan's key is pinned byte for byte by
+    // `store.rs`'s unit tests and by `plan_take_challenge_shape`.)
+    let plan = vela_session_policy::store::plan_take_challenge(challenge_b64.to_string());
+    let key = match plan.first().map(vela_session_policy::store::render_store) {
+        Some(vela_session_policy::store::RenderedStore {
+            op: vela_session_policy::store::StoreOp::Take,
+            key,
+            ..
+        }) => key,
+        _ => {
+            return Err(AppError::Internal(
+                "challenge take plan is not a take".into(),
+            ))
+        }
+    };
+    let consumed = state.store.get_del(&key)?;
     Ok(classify_taken_challenge(&consumed, purpose.policy()))
 }
 

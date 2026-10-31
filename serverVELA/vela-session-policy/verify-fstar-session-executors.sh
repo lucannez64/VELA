@@ -83,6 +83,15 @@ items=(
   plan_token_claim plan_token_sentinel
   classify_start_insert classify_grant_update classify_token_claim
   classify_token_issue classify_lockout_session classify_revoke_session
+  plan_load_session plan_sessions_list plan_cleanup_revoked
+  plan_cleanup_expired plan_cleanup_pending plan_login_limits
+  plan_start_limit plan_token_limits plan_poll_limit plan_keys_limit
+  plan_capsule_clear plan_session_keys plan_token_backoff_record
+  plan_token_backoff_reset
+  classify_session_lookup classify_sessions_list classify_cleanup
+  classify_start_limit classify_login_limits classify_token_limits
+  classify_poll_limit classify_keys_limit classify_capsule_clear
+  classify_session_keys classify_token_failure_record
 )
 include='-**'
 for item in "${items[@]}"; do

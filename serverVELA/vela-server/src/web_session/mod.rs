@@ -43,15 +43,15 @@ use vela_session_policy::{
 
 use crate::{
     auth::session_store::{
-        keep_error, run_exists, run_nonce, run_sql, run_store, DbSql, PasetoTokens, SessionSql,
-        SessionStore, SessionTokens, SledStore,
+        keep_error, run_exists, run_nonce, run_read, run_sql, run_store, DbSql, PasetoTokens,
+        SessionSql, SessionStore, SessionTokens, SledStore,
     },
     auth::token::TokenService,
     device::enroll::verify_auth_signature,
     error::{AppError, Result},
     middleware::{maybe_append_new_token, DeviceSession},
-    net, rate_limit,
-    sqldb::{Db as _, TursoDb, TursoValue},
+    net,
+    sqldb::TursoDb,
     state::AppState,
 };
 
@@ -140,21 +140,32 @@ pub struct StartResponse {
 /// when (through the shared `websession_start_interpreter!` loop, proved in F*
 /// as `run_start`); each method only performs its effect and reports the
 /// outcome.
-pub(crate) struct StartIo<'a, S: SessionSql = DbSql<'a>> {
+pub(crate) struct StartIo<
+    'a,
+    S: SessionSql = DbSql<'a>,
+    K: crate::auth::session_store::SessionStore = SledStore<'a>,
+> {
     pub state: &'a AppState,
     pub sql: S,
+    pub store: K,
     pub body: StartRequest,
     pub ip: String,
     pub session_id: Option<Uuid>,
     pub error: Option<AppError>,
 }
 
-impl<S: SessionSql> StartIo<'_, S> {
+impl<S: SessionSql, K: crate::auth::session_store::SessionStore> StartIo<'_, S, K> {
     async fn check_rate_limit(&mut self) -> StartLimitObservation {
-        match rate_limit::web_session_start_by_ip(&self.state.store, &self.ip) {
-            Ok(()) => StartLimitObservation::Allowed,
-            Err(error) => {
-                self.error = Some(error);
+        let plan = vela_session_policy::store::plan_start_limit(self.ip.clone());
+        let (outcomes, error) = run_store(&mut self.store, &plan);
+        if let Some(error) = error {
+            keep_error(&mut self.error, error);
+        }
+        match vela_session_policy::store::classify_start_limit(&outcomes) {
+            vela_session_policy::store::LimitObservation::Allowed => {
+                StartLimitObservation::Allowed
+            }
+            vela_session_policy::store::LimitObservation::Denied => {
                 StartLimitObservation::Limited
             }
         }
@@ -193,6 +204,7 @@ impl<S: SessionSql> StartIo<'_, S> {
     /// simply yields a session nobody can grant, which expires in 5 minutes.
     pub(crate) async fn insert_pending(&mut self) -> StartInsertObservation {
         let id = Uuid::new_v4();
+        let now = Utc::now();
         let plan = vela_session_policy::store::plan_insert_pending(
             id.to_string(),
             self.body.approver_user_id.to_string(),
@@ -200,7 +212,8 @@ impl<S: SessionSql> StartIo<'_, S> {
             self.body.ephemeral_pk.clone(),
             self.body.web_vk.as_deref().unwrap_or("").to_string(),
             self.body.link_nonce.clone(),
-            Utc::now().to_rfc3339(),
+            now.to_rfc3339(),
+            now.timestamp().max(0) as u64,
         );
         let (outcomes, error) = run_sql(&mut self.sql, std::slice::from_ref(&plan)).await;
         if let Some(error) = error {
@@ -218,7 +231,10 @@ impl<S: SessionSql> StartIo<'_, S> {
     }
 }
 
-fn start_failure_error<S: SessionSql>(failure: StartFailure, io: &mut StartIo<'_, S>) -> AppError {
+fn start_failure_error<S: SessionSql, K: crate::auth::session_store::SessionStore>(
+    failure: StartFailure,
+    io: &mut StartIo<'_, S, K>,
+) -> AppError {
     match failure {
         StartFailure::RateLimited | StartFailure::Validation | StartFailure::InsertStorage => io
             .error
@@ -240,6 +256,7 @@ pub async fn post_start(
             pool: state.sqldb.as_ref(),
             tx: None,
         },
+        store: SledStore(&state.store),
         body,
         ip,
         session_id: None,
@@ -295,48 +312,93 @@ struct SessionRow {
     key_epoch: Option<i64>,
 }
 
+impl SessionRow {
+    /// Rebuild the handler's row view from the typed lookup's cells, with
+    /// exactly the decoding the hand-written `load_session` did.
+    pub(crate) fn from_view(view: vela_session_policy::store::SessionRowView) -> Result<Self> {
+        let text = |cell: Option<String>| cell.filter(|s| !s.is_empty());
+        Ok(SessionRow {
+            user_id: view.user_id.and_then(|s| Uuid::parse_str(&s).ok()),
+            approver_user_id: view
+                .approver_user_id
+                .and_then(|s| Uuid::parse_str(&s).ok()),
+            poll_secret_hash: text(view.poll_secret_hash),
+            web_vk: text(view.web_vk),
+            link_nonce: text(view.link_nonce),
+            mode: view.mode,
+            status: view
+                .status
+                .ok_or_else(|| AppError::Internal("status missing".into()))?,
+            capsule: view.capsule,
+            expires_at: view
+                .expires_at
+                .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+                .map(|at| at.with_timezone(&Utc)),
+            key_epoch: view.key_epoch.filter(|epoch| *epoch >= 1),
+        })
+    }
+}
+
 async fn load_session(state: &AppState, id: Uuid) -> Result<SessionRow> {
-    let rows = state
-        .sqldb
-        .query(
-            "SELECT user_id, web_vk, link_nonce, mode, status, capsule, expires_at,
-                    approver_user_id, poll_secret_hash, key_epoch
-             FROM web_sessions WHERE id = ?",
-            vec![TursoValue::Text(id.to_string())],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    let row = rows
-        .first()
-        .ok_or_else(|| AppError::NotFound("web session not found".into()))?;
+    use vela_session_policy::store::{
+        classify_session_lookup, plan_load_session, SessionLookup,
+    };
+    let stmt = plan_load_session(id.to_string());
+    let mut sql = DbSql {
+        pool: state.sqldb.as_ref(),
+        tx: None,
+    };
+    let (rows, error) = run_read(&mut sql, stmt).await;
+    let outcome = match (rows, error) {
+        (Some(rows), None) => vela_session_policy::store::ReadOutcome::Row(
+            rows.first().map(session_row_view),
+        ),
+        (_, error) => {
+            let message = error
+                .map(|e| e.to_string())
+                .unwrap_or_else(|| "web session lookup returned no rows and no error".into());
+            return Err(AppError::Internal(message));
+        }
+    };
+    match classify_session_lookup(&outcome) {
+        SessionLookup::Row(view) => SessionRow::from_view(view),
+        SessionLookup::Absent => Err(AppError::NotFound("web session not found".into())),
+        SessionLookup::QueryFailed => Err(AppError::Internal(
+            "web session lookup failed".into(),
+        )),
+    }
+}
 
-    let text = |i: usize| row.text(i).filter(|s| !s.is_empty());
-    let user_id = row.uuid(0);
-    let web_vk = text(1).map(String::from);
-    let link_nonce = text(2).map(String::from);
-    let mode = row.text(3).map(String::from);
-    let status = row
-        .text(4)
-        .map(String::from)
-        .ok_or_else(|| AppError::Internal("status missing".into()))?;
-    let capsule = row.text(5).map(String::from);
-    let expires_at = row.timestamp(6);
-    let approver_user_id = row.uuid(7);
-    let poll_secret_hash = text(8).map(String::from);
-    let key_epoch = row.i64(9).filter(|epoch| *epoch >= 1);
+/// The stored cells of one `web_sessions` row, exactly as the shared lookup
+/// query returns them.
+pub(crate) fn session_row_view(row: &crate::sqldb::VelaRow) -> vela_session_policy::store::SessionRowView {
+    use vela_session_policy::store::SessionRowView;
+    SessionRowView {
+        user_id: row.text(0).map(String::from),
+        web_vk: row.text(1).map(String::from),
+        link_nonce: row.text(2).map(String::from),
+        mode: row.text(3).map(String::from),
+        status: row.text(4).map(String::from),
+        capsule: row.text(5).map(String::from),
+        expires_at: row.text(6).map(String::from),
+        approver_user_id: row.text(7).map(String::from),
+        poll_secret_hash: row.text(8).map(String::from),
+        key_epoch: row.i64(9),
+    }
+}
 
-    Ok(SessionRow {
-        user_id,
-        approver_user_id,
-        poll_secret_hash,
-        web_vk,
-        link_nonce,
-        mode,
-        status,
-        capsule,
-        expires_at,
-        key_epoch,
-    })
+/// The stored cells of one `GET /web-sessions` row.
+pub(crate) fn session_list_row_view(
+    row: &crate::sqldb::VelaRow,
+) -> vela_session_policy::store::SessionListRowView {
+    use vela_session_policy::store::SessionListRowView;
+    SessionListRowView {
+        id: row.text(0).map(String::from).unwrap_or_default(),
+        mode: row.text(1).map(String::from).unwrap_or_default(),
+        status: row.text(2).map(String::from).unwrap_or_default(),
+        created_at: row.text(3).map(String::from).unwrap_or_default(),
+        expires_at: row.text(4).map(String::from),
+    }
 }
 
 /// M25: the expiry decision lives in the verified policy layer; the
@@ -384,7 +446,19 @@ pub async fn get_session(
     headers: HeaderMap,
 ) -> Result<Json<PollResponse>> {
     let ip = net::client_ip(&headers, addr.map(|ConnectInfo(a)| a.ip()), &state.config);
-    rate_limit::web_session_poll_by_ip(&state.store, &ip)?;
+    let mut poll_store = SledStore(&state.store);
+    let poll_plan = vela_session_policy::store::plan_poll_limit(ip.clone());
+    let (poll_outcomes, poll_error) = run_store(&mut poll_store, &poll_plan);
+    if let Some(error) = poll_error {
+        let mut slot = None;
+        keep_error(&mut slot, error);
+        return Err(slot.expect("a poll limit error was just kept"));
+    }
+    if vela_session_policy::store::classify_poll_limit(&poll_outcomes)
+        != vela_session_policy::store::LimitObservation::Allowed
+    {
+        return Err(AppError::RateLimited("too many attempts".into()));
+    }
 
     // A missing session and a wrong secret must be indistinguishable, or the
     // 404 itself confirms that a `session_id` is live.
@@ -436,22 +510,28 @@ pub async fn get_session(
     let capsule = match session.capsule {
         None => None,
         Some(capsule) => {
-            let cleared = state
-                .sqldb
-                .execute(
-                    "UPDATE web_sessions SET capsule = NULL WHERE id = ? AND capsule IS NOT NULL",
-                    vec![TursoValue::Text(id.to_string())],
-                )
-                .await
-                .map_err(|e| AppError::Internal(format!("capsule clear failed: {e}")))?;
-            if cleared < 1 {
-                // Someone else took it in the meantime. Report the session as
-                // granted with nothing attached rather than serving a capsule
-                // we could not retract.
-                tracing::warn!(session_id = %id, "capsule already collected; not serving it twice");
-                None
-            } else {
-                Some(capsule)
+            let plan = vela_session_policy::store::plan_capsule_clear(id.to_string());
+            let mut sql = DbSql {
+                pool: state.sqldb.as_ref(),
+                tx: None,
+            };
+            let (outcomes, error) =
+                run_sql(&mut sql, std::slice::from_ref(&plan)).await;
+            if let Some(error) = error {
+                return Err(AppError::Internal(format!("capsule clear failed: {error}")));
+            }
+            let outcome = outcomes
+                .first()
+                .copied()
+                .unwrap_or(vela_session_policy::store::WriteOutcome::Failed);
+            match vela_session_policy::store::classify_capsule_clear(&outcome) {
+                vela_session_policy::store::CapsuleClearObservation::Cleared => Some(capsule),
+                // Another poll took it (or the clear failed and the handler
+                // returned above): never serve a capsule we could not retract.
+                _ => {
+                    tracing::warn!(session_id = %id, "capsule already collected; not serving it twice");
+                    None
+                }
             }
         }
     };
@@ -486,30 +566,57 @@ pub async fn get_keys(
     Path(id): Path<Uuid>,
     session: DeviceSession,
 ) -> Result<(HeaderMap, Json<KeysResponse>)> {
-    rate_limit::web_session_keys_by_user(&state.store, &session.user_id.to_string())?;
+    let mut keys_store = SledStore(&state.store);
+    let keys_plan = vela_session_policy::store::plan_keys_limit(session.user_id.to_string());
+    let (keys_outcomes, keys_error) = run_store(&mut keys_store, &keys_plan);
+    if let Some(error) = keys_error {
+        let mut slot = None;
+        keep_error(&mut slot, error);
+        return Err(slot.expect("a key-fetch limit error was just kept"));
+    }
+    if vela_session_policy::store::classify_keys_limit(&keys_outcomes)
+        != vela_session_policy::store::LimitObservation::Allowed
+    {
+        return Err(AppError::RateLimited("too many attempts".into()));
+    }
 
-    let rows = state
-        .sqldb
-        .query(
-            "SELECT ephemeral_pk, web_vk, status FROM web_sessions
-             WHERE id = ? AND approver_user_id = ?",
-            vec![
-                TursoValue::Text(id.to_string()),
-                TursoValue::Text(session.user_id.to_string()),
-            ],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    let row = rows
-        .first()
-        .ok_or_else(|| AppError::NotFound("web session not found".into()))?;
+    use vela_session_policy::store::{
+        classify_session_keys, plan_session_keys, ReadOutcome, SessionKeysLookup, SessionKeysView,
+    };
+    let stmt = plan_session_keys(id.to_string(), session.user_id.to_string());
+    let mut sql = DbSql {
+        pool: state.sqldb.as_ref(),
+        tx: None,
+    };
+    let (rows, error) = run_read(&mut sql, stmt).await;
+    let outcome = match (rows, error) {
+        (Some(rows), None) => ReadOutcome::Row(rows.first().map(|row| SessionKeysView {
+            ephemeral_pk: row.text(0).map(String::from),
+            web_vk: row.text(1).map(String::from),
+            status: row.text(2).map(String::from),
+        })),
+        (_, error) => {
+            let message = error
+                .map(|e| e.to_string())
+                .unwrap_or_else(|| "web session key lookup returned no rows and no error".into());
+            return Err(AppError::Internal(message));
+        }
+    };
+    let view = match classify_session_keys(&outcome) {
+        SessionKeysLookup::Row(view) => view,
+        SessionKeysLookup::Absent => {
+            return Err(AppError::NotFound("web session not found".into()))
+        }
+        SessionKeysLookup::QueryFailed => {
+            return Err(AppError::Internal("web session key lookup failed".into()))
+        }
+    };
 
-    let ephemeral_pk = row
-        .text(0)
-        .map(String::from)
+    let ephemeral_pk = view
+        .ephemeral_pk
         .ok_or_else(|| AppError::Internal("ephemeral_pk missing".into()))?;
-    let web_vk = row.text(1).unwrap_or_default().to_string();
-    let status = row.text(2).unwrap_or_default().to_string();
+    let web_vk = view.web_vk.unwrap_or_default();
+    let status = view.status.unwrap_or_default();
     if status != "pending" {
         return Err(AppError::Conflict(
             "web session is no longer pending".into(),
@@ -669,6 +776,7 @@ impl<S: SessionSql> GrantIo<'_, S> {
             self.body.capsule.clone(),
             expires_at.to_rfc3339(),
             update.epoch,
+            expires_at.timestamp().max(0) as u64,
         );
         let (outcomes, error) = run_sql(&mut self.sql, std::slice::from_ref(&plan)).await;
         if let Some(error) = error {
@@ -824,28 +932,19 @@ impl<K: SessionStore, T: SessionTokens> TokenIo<'_, K, T> {
         // onlooker's three bad proofs lock the real browser out for the
         // session's lifetime. The per-session cap stays behind it as a
         // distributed-grind backstop.
-        let result = rate_limit::web_session_token_by_ip_session(
-            &self.state.store,
-            &self.ip,
-            &self.id_str,
-        )
-        .and_then(|()| {
-            rate_limit::web_session_token_by_session(&self.state.store, &self.id_str)
-        })
-        .and_then(|()| {
-            // The flat rate limit let a guesser keep trying the ephemeral-key
-            // proof at a steady rate indefinitely. `/auth/verify` has had
-            // exponential backoff on consecutive failures since the spec asked
-            // for it; this proof is the same shape and now gets the same
-            // treatment — keyed the same way too, on (ip, id) rather than on
-            // id alone.
-            let backoff_scope = format!("websession:token:{}:{}", self.ip, self.id_str);
-            rate_limit::check_backoff(&self.state.store, &backoff_scope)
-        });
-        match result {
-            Ok(()) => TokenLimitObservation::Allowed,
-            Err(error) => {
-                self.error = Some(error);
+        let plan = vela_session_policy::store::plan_token_limits(
+            self.ip.clone(),
+            self.id_str.clone(),
+        );
+        let (outcomes, error) = run_store(&mut self.store, &plan);
+        if let Some(error) = error {
+            keep_error(&mut self.error, error);
+        }
+        match vela_session_policy::store::classify_token_limits(&outcomes) {
+            vela_session_policy::store::LimitObservation::Allowed => {
+                TokenLimitObservation::Allowed
+            }
+            vela_session_policy::store::LimitObservation::Denied => {
                 TokenLimitObservation::Limited
             }
         }
@@ -957,24 +1056,37 @@ impl<K: SessionStore, T: SessionTokens> TokenIo<'_, K, T> {
     }
 
     async fn record_token_failure(&mut self) -> TokenFailureRecordObservation {
-        let backoff_scope = format!("websession:token:{}:{}", self.ip, self.id_str);
-        match rate_limit::record_backoff_failure(&self.state.store, &backoff_scope) {
-            Ok(()) => TokenFailureRecordObservation::Recorded,
-            Err(error) => {
-                self.error = Some(error);
-                TokenFailureRecordObservation::StorageFailed
-            }
+        let plan = vela_session_policy::store::plan_token_backoff_record(
+            self.ip.clone(),
+            self.id_str.clone(),
+        );
+        let (outcomes, error) = run_store(&mut self.store, &plan);
+        if let Some(error) = error {
+            keep_error(&mut self.error, error);
         }
+        let outcome = outcomes
+            .first()
+            .copied()
+            .unwrap_or(vela_session_policy::store::StoreOutcome::Failed);
+        vela_session_policy::store::classify_token_failure_record(&outcome)
     }
 
     async fn reset_token_backoff(&mut self) -> TokenResetObservation {
-        let backoff_scope = format!("websession:token:{}:{}", self.ip, self.id_str);
-        match rate_limit::reset_backoff(&self.state.store, &backoff_scope) {
-            Ok(()) => TokenResetObservation::Reset {
-                now: Utc::now().timestamp(),
-            },
-            Err(error) => {
-                self.error = Some(error);
+        let plan = vela_session_policy::store::plan_token_backoff_reset(
+            self.ip.clone(),
+            self.id_str.clone(),
+        );
+        let (outcomes, error) = run_store(&mut self.store, &plan);
+        if let Some(error) = error {
+            keep_error(&mut self.error, error);
+        }
+        match outcomes.first().copied().unwrap_or(vela_session_policy::store::StoreOutcome::Failed) {
+            vela_session_policy::store::StoreOutcome::Applied => {
+                TokenResetObservation::Reset {
+                    now: Utc::now().timestamp(),
+                }
+            }
+            vela_session_policy::store::StoreOutcome::Failed => {
                 TokenResetObservation::StorageFailed
             }
         }
@@ -1347,27 +1459,41 @@ pub async fn get_sessions_list(
     State(state): State<AppState>,
     session: DeviceSession,
 ) -> Result<(HeaderMap, Json<SessionsListResponse>)> {
-    let rows = state
-        .sqldb
-        .query(
-            "SELECT id, mode, status, created_at, expires_at
-             FROM web_sessions
-             WHERE user_id = ? AND status = 'granted'
-             ORDER BY created_at DESC
-             LIMIT 1000",
-            vec![TursoValue::Text(session.user_id.to_string())],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+    use vela_session_policy::store::{
+        classify_sessions_list, plan_sessions_list, ReadOutcome, SessionsList,
+    };
+    let stmt = plan_sessions_list(session.user_id.to_string());
+    let mut sql = DbSql {
+        pool: state.sqldb.as_ref(),
+        tx: None,
+    };
+    let (rows, error) = run_read(&mut sql, stmt).await;
+    let outcome = match (rows, error) {
+        (Some(rows), None) => ReadOutcome::Row(Some(
+            rows.iter().map(session_list_row_view).collect(),
+        )),
+        (_, error) => {
+            let message = error
+                .map(|e| e.to_string())
+                .unwrap_or_else(|| "web session list returned no rows and no error".into());
+            return Err(AppError::Internal(message));
+        }
+    };
+    let rows = match classify_sessions_list(&outcome) {
+        SessionsList::Rows(rows) => rows,
+        SessionsList::QueryFailed => {
+            return Err(AppError::Internal("web session list query failed".into()))
+        }
+    };
 
     let now = Utc::now();
     let mut sessions = Vec::new();
-    for row in &rows {
-        let id = row.text(0).map(String::from).unwrap_or_default();
-        let mode = row.text(1).map(String::from).unwrap_or_default();
-        let status = row.text(2).map(String::from).unwrap_or_default();
-        let created_at = row.text(3).map(String::from).unwrap_or_default();
-        let expires_at = row.timestamp(4);
+    for row in rows {
+        let expires_at = row
+            .expires_at
+            .as_deref()
+            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+            .map(|at| at.with_timezone(&Utc));
 
         // Skip expired sessions (cleanup task handles deletion asynchronously).
         if expires_at.map(|e| now > e).unwrap_or(false) {
@@ -1375,10 +1501,10 @@ pub async fn get_sessions_list(
         }
 
         sessions.push(WebSessionInfo {
-            id,
-            mode,
-            status,
-            created_at,
+            id: row.id,
+            mode: row.mode,
+            status: row.status,
+            created_at: row.created_at,
             expires_at,
         });
     }
@@ -1397,29 +1523,42 @@ pub async fn cleanup_task(db: Arc<TursoDb>) {
     loop {
         interval.tick().await;
         let now = Utc::now();
-        let pending_cutoff = (now - chrono::Duration::seconds(PENDING_TTL_SECS)).to_rfc3339();
-        let now_str = now.to_rfc3339();
-
-        let revoked = db
-            .execute("DELETE FROM web_sessions WHERE status = 'revoked'", vec![])
-            .await;
-        let expired = db
-            .execute(
-                "DELETE FROM web_sessions WHERE expires_at IS NOT NULL AND expires_at < ?",
-                vec![TursoValue::Text(now_str)],
-            )
-            .await;
-        let stale_pending = db
-            .execute(
-                "DELETE FROM web_sessions WHERE status = 'pending' AND created_at < ?",
-                vec![TursoValue::Text(pending_cutoff)],
-            )
-            .await;
-
-        let n = [revoked, expired, stale_pending]
-            .into_iter()
-            .filter_map(|r| r.ok())
-            .sum::<u64>();
+        let pending_cutoff = now - chrono::Duration::seconds(PENDING_TTL_SECS);
+        let plan = vec![
+            vela_session_policy::store::plan_cleanup_revoked(),
+            vela_session_policy::store::plan_cleanup_expired(
+                now.to_rfc3339(),
+                now.timestamp().max(0) as u64,
+            ),
+            vela_session_policy::store::plan_cleanup_pending(
+                pending_cutoff.to_rfc3339(),
+                pending_cutoff.timestamp().max(0) as u64,
+            ),
+        ];
+        // Each delete runs on its own, exactly as the three independent
+        // `execute` calls did: a failure purges nothing and does not stop the
+        // next statement.
+        let mut outcomes = Vec::with_capacity(plan.len());
+        for stmt in &plan {
+            let mut sql = DbSql {
+                pool: db.as_ref(),
+                tx: None,
+            };
+            let (observed, _error) = run_sql(&mut sql, std::slice::from_ref(stmt)).await;
+            outcomes.extend(observed);
+        }
+        let report = vela_session_policy::store::classify_cleanup(
+            outcomes
+                .first()
+                .unwrap_or(&vela_session_policy::store::WriteOutcome::Failed),
+            outcomes
+                .get(1)
+                .unwrap_or(&vela_session_policy::store::WriteOutcome::Failed),
+            outcomes
+                .get(2)
+                .unwrap_or(&vela_session_policy::store::WriteOutcome::Failed),
+        );
+        let n = report.revoked + report.expired + report.pending;
         if n > 0 {
             tracing::info!(purged = n, "web session cleanup");
         }

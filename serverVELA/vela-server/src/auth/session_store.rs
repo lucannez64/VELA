@@ -114,6 +114,9 @@ pub(crate) trait SessionStore {
     fn set_ex_nx(&mut self, key: &str, value: &[u8], ttl: u64) -> anyhow::Result<bool>;
     /// `Store::exists`: whether the key is present.
     fn exists(&mut self, key: &str) -> anyhow::Result<bool>;
+    /// `Store::ttl`: the key's remaining lifetime in seconds (the historical
+    /// `check_backoff` read; `> 0` is a live backoff window).
+    fn ttl(&mut self, key: &str) -> anyhow::Result<i64>;
 }
 
 /// The token issuer behind an executor's `issue_token` method.
@@ -205,6 +208,10 @@ impl SessionStore for SledStore<'_> {
 
     fn exists(&mut self, key: &str) -> anyhow::Result<bool> {
         Ok(self.0.exists(key)?)
+    }
+
+    fn ttl(&mut self, key: &str) -> anyhow::Result<i64> {
+        Ok(self.0.ttl(key)?)
     }
 }
 
@@ -481,6 +488,20 @@ pub(crate) fn run_store<K: SessionStore>(
             RenderedStore {
                 op: StoreOp::Exists, ..
             } => Err(anyhow::anyhow!("a read statement in a write plan")),
+            RenderedStore {
+                op: StoreOp::Ttl,
+                key,
+                ..
+            } => match store.ttl(&key) {
+                // `check_backoff`: only a live window refuses; a missing key
+                // (`-2`) or one without a TTL (`-1`) allows.
+                Ok(ttl) if ttl > 0 => Err(AppError::RateLimited(format!(
+                    "exponential backoff active — retry after {ttl}s"
+                ))
+                .into()),
+                Ok(_) => Ok(()),
+                Err(error) => Err(error),
+            },
         };
         match result {
             Ok(()) => outcomes.push(StoreOutcome::Applied),
