@@ -168,6 +168,35 @@ type t_VaultStmt =
   }: t_VaultStmt
   | VaultStmt_SchemaFloorSet { f_key:Alloc.String.t_String }: t_VaultStmt
   | VaultStmt_Commit : t_VaultStmt
+  | VaultStmt_SelectKeyState { f_user:Alloc.String.t_String }: t_VaultStmt
+  | VaultStmt_SelectUsageChunks { f_user:Alloc.String.t_String }: t_VaultStmt
+  | VaultStmt_SelectUsageOram { f_user:Alloc.String.t_String }: t_VaultStmt
+  | VaultStmt_SelectRekeyProjection {
+    f_user:Alloc.String.t_String;
+    f_epoch:i64;
+    f_chunk_id:Alloc.String.t_String
+  }: t_VaultStmt
+  | VaultStmt_SelectOramRow {
+    f_user:Alloc.String.t_String;
+    f_tree_id:Alloc.String.t_String;
+    f_bucket_index:i64;
+    f_epoch:i64
+  }: t_VaultStmt
+  | VaultStmt_SelectSyncManifest {
+    f_user:Alloc.String.t_String;
+    f_epoch:i64
+  }: t_VaultStmt
+  | VaultStmt_SchemaFloorGet { f_key:Alloc.String.t_String }: t_VaultStmt
+  | VaultStmt_BeginTransaction : t_VaultStmt
+  | VaultStmt_SelectCapsule {
+    f_device:Alloc.String.t_String;
+    f_user:Alloc.String.t_String
+  }: t_VaultStmt
+  | VaultStmt_ClearEnrollmentCapsule {
+    f_device:Alloc.String.t_String;
+    f_user:Alloc.String.t_String
+  }: t_VaultStmt
+  | VaultStmt_SelectDeviceList { f_user:Alloc.String.t_String }: t_VaultStmt
 
 /// What one write statement (or the commit) returned.
 type t_WriteOutcome =
@@ -199,6 +228,115 @@ type t_InventoryRowView = {
 
 /// The `SelectPendingCapsule` row: its `rms_capsule_epoch` cell.
 type t_PendingRowView = { f_epoch:Core_models.Option.t_Option i64 }
+
+/// The seven rotation cells of a `users` row `load_key_state` reads.
+type t_KeyStateView = {
+  f_key_epoch:Core_models.Option.t_Option i64;
+  f_rekey_state:Core_models.Option.t_Option Alloc.String.t_String;
+  f_rekey_started_at:Core_models.Option.t_Option Alloc.String.t_String;
+  f_rekey_starter:Core_models.Option.t_Option Alloc.String.t_String;
+  f_rekey_id:Core_models.Option.t_Option Alloc.String.t_String;
+  f_last_rekey_id:Core_models.Option.t_Option Alloc.String.t_String;
+  f_last_rekey_epoch:Core_models.Option.t_Option i64
+}
+
+/// `load_key_state`: the account's live rotation row, no such account, or a
+/// failed read.
+type t_KeyStateObservation =
+  | KeyStateObservation_Loaded : t_KeyStateView -> t_KeyStateObservation
+  | KeyStateObservation_NotFound : t_KeyStateObservation
+  | KeyStateObservation_Storage : t_KeyStateObservation
+
+/// `current_usage_bytes`: the two stored byte totals, or a failed read.
+type t_UsageObservation =
+  | UsageObservation_Measured {
+    f_chunks:i64;
+    f_oram:i64
+  }: t_UsageObservation
+  | UsageObservation_Storage : t_UsageObservation
+
+/// `enforce_rekey_shadow_quota`: the projected stored bytes, or a failed read.
+type t_ProjectedUsageObservation =
+  | ProjectedUsageObservation_Measured : i64 -> t_ProjectedUsageObservation
+  | ProjectedUsageObservation_Storage : t_ProjectedUsageObservation
+
+/// The cells of a `SelectOramRow` row.
+type t_OramRowView = {
+  f_version:Core_models.Option.t_Option i64;
+  f_lamport_clock:Core_models.Option.t_Option i64;
+  f_last_writer:Core_models.Option.t_Option Alloc.String.t_String;
+  f_ciphertext:Core_models.Option.t_Option Alloc.String.t_String
+}
+
+/// `get_path`'s per-bucket observation: the stored bucket, no bucket at that
+/// key, or a failed read.
+type t_OramReadObservation =
+  | OramReadObservation_Found : t_OramRowView -> t_OramReadObservation
+  | OramReadObservation_Missing : t_OramReadObservation
+  | OramReadObservation_Storage : t_OramReadObservation
+
+/// One `SelectSyncManifest` row.
+type t_SyncRowView = {
+  f_chunk_id:Core_models.Option.t_Option Alloc.String.t_String;
+  f_version:Core_models.Option.t_Option i64;
+  f_lamport_clock:Core_models.Option.t_Option i64;
+  f_last_writer:Core_models.Option.t_Option Alloc.String.t_String
+}
+
+/// `get_sync`: the manifest rows the query returned, or a failed read.
+type t_SyncObservation =
+  | SyncObservation_Read : t_SyncObservation
+  | SyncObservation_Failed : t_SyncObservation
+
+/// `schema::minimum`: the value the store holds (absent, or the stored text),
+/// or a failed read. The floor interpretation is the handler's policy over
+/// this observation.
+type t_SchemaFloorObservation =
+  | SchemaFloorObservation_Stored : Core_models.Option.t_Option Alloc.String.t_String
+    -> t_SchemaFloorObservation
+  | SchemaFloorObservation_Storage : t_SchemaFloorObservation
+
+/// The three cells of a `SelectCapsule` row.
+type t_CapsuleView = {
+  f_capsule:Core_models.Option.t_Option Alloc.String.t_String;
+  f_capsule_epoch:Core_models.Option.t_Option i64;
+  f_rotation_id:Core_models.Option.t_Option Alloc.String.t_String
+}
+
+/// `get_capsule`: the pending capsule, no eligible row, or a failed read.
+type t_CapsuleReadObservation =
+  | CapsuleReadObservation_Found : t_CapsuleView -> t_CapsuleReadObservation
+  | CapsuleReadObservation_Missing : t_CapsuleReadObservation
+  | CapsuleReadObservation_Storage : t_CapsuleReadObservation
+
+/// `get_capsule`'s read-once clear.
+type t_CapsuleClearObservation =
+  | CapsuleClearObservation_Cleared : t_CapsuleClearObservation
+  | CapsuleClearObservation_Missed : t_CapsuleClearObservation
+  | CapsuleClearObservation_Storage : t_CapsuleClearObservation
+
+/// One `SelectDeviceList` row: the fourteen columns the listing selects.
+type t_DeviceListRowView = {
+  f_id:Core_models.Option.t_Option Alloc.String.t_String;
+  f_user_id:Core_models.Option.t_Option Alloc.String.t_String;
+  f_device_name:Core_models.Option.t_Option Alloc.String.t_String;
+  f_device_type:Core_models.Option.t_Option Alloc.String.t_String;
+  f_last_active:Core_models.Option.t_Option Alloc.String.t_String;
+  f_hybrid_ek:Core_models.Option.t_Option Alloc.String.t_String;
+  f_hybrid_vk:Core_models.Option.t_Option Alloc.String.t_String;
+  f_enrolled_by:Core_models.Option.t_Option Alloc.String.t_String;
+  f_rms_capsule:Core_models.Option.t_Option Alloc.String.t_String;
+  f_revoked:Core_models.Option.t_Option i64;
+  f_revoked_at:Core_models.Option.t_Option Alloc.String.t_String;
+  f_revoked_by:Core_models.Option.t_Option Alloc.String.t_String;
+  f_created_at:Core_models.Option.t_Option Alloc.String.t_String;
+  f_rekey_capable:Core_models.Option.t_Option i64
+}
+
+/// `list_devices`: the rows the query returned, or a failed read.
+type t_DeviceListObservation =
+  | DeviceListObservation_Read : t_DeviceListObservation
+  | DeviceListObservation_Failed : t_DeviceListObservation
 
 /// `DeleteChunkIo::delete_row`: one guarded delete (autocommit).
 let plan_delete_chunk (chunk_id user: Alloc.String.t_String) (epoch: i64)
@@ -680,6 +818,77 @@ let plan_oram_update
         Rust_primitives.Hax.array_of_list 1 list)
       <:
       t_Slice t_VaultStmt)
+
+/// `RekeyIo::begin_freeze_transaction` and `get_capsule`: open the pinned
+/// transaction.
+let plan_begin_transaction (_: Prims.unit) : Alloc.Vec.t_Vec t_VaultStmt Alloc.Alloc.t_Global =
+  Alloc.Slice.impl__into_vec #t_VaultStmt
+    #Alloc.Alloc.t_Global
+    ((let list = [VaultStmt_BeginTransaction <: t_VaultStmt] in
+        FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+        Rust_primitives.Hax.array_of_list 1 list)
+      <:
+      t_Slice t_VaultStmt)
+
+/// `rekey::load_key_state`.
+let plan_load_key_state (user: Alloc.String.t_String) : t_VaultStmt =
+  VaultStmt_SelectKeyState ({ f_user = user }) <: t_VaultStmt
+
+/// `current_usage_bytes`, chunk half.
+let plan_usage_chunks (user: Alloc.String.t_String) : t_VaultStmt =
+  VaultStmt_SelectUsageChunks ({ f_user = user }) <: t_VaultStmt
+
+/// `current_usage_bytes`, ORAM half.
+let plan_usage_oram (user: Alloc.String.t_String) : t_VaultStmt =
+  VaultStmt_SelectUsageOram ({ f_user = user }) <: t_VaultStmt
+
+/// `enforce_rekey_shadow_quota`: the projected stored bytes for a rotation
+/// replacing `chunk_id` at `epoch`.
+let plan_rekey_projection
+      (user: Alloc.String.t_String)
+      (epoch: i64)
+      (chunk_id: Alloc.String.t_String)
+    : t_VaultStmt =
+  VaultStmt_SelectRekeyProjection ({ f_user = user; f_epoch = epoch; f_chunk_id = chunk_id })
+  <:
+  t_VaultStmt
+
+/// `get_path`'s per-bucket read on `oram_buckets`.
+let plan_read_oram_bucket (user tree_id: Alloc.String.t_String) (bucket_index epoch: i64)
+    : t_VaultStmt =
+  VaultStmt_SelectOramRow
+  ({ f_user = user; f_tree_id = tree_id; f_bucket_index = bucket_index; f_epoch = epoch })
+  <:
+  t_VaultStmt
+
+/// `get_sync`'s manifest read.
+let plan_read_sync (user: Alloc.String.t_String) (epoch: i64) : t_VaultStmt =
+  VaultStmt_SelectSyncManifest ({ f_user = user; f_epoch = epoch }) <: t_VaultStmt
+
+/// `schema::minimum`'s store read: the key `vault-schema:{user}`.
+let plan_read_schema_floor (key: Alloc.String.t_String) : t_VaultStmt =
+  VaultStmt_SchemaFloorGet ({ f_key = key }) <: t_VaultStmt
+
+/// `get_capsule`'s device-and-account read.
+let plan_read_capsule (device user: Alloc.String.t_String) : t_VaultStmt =
+  VaultStmt_SelectCapsule ({ f_device = device; f_user = user }) <: t_VaultStmt
+
+/// `get_capsule`'s read-once clear of an enrollment capsule.
+let plan_clear_enrollment_capsule (device user: Alloc.String.t_String)
+    : Alloc.Vec.t_Vec t_VaultStmt Alloc.Alloc.t_Global =
+  Alloc.Slice.impl__into_vec #t_VaultStmt
+    #Alloc.Alloc.t_Global
+    ((let list =
+          [VaultStmt_ClearEnrollmentCapsule ({ f_device = device; f_user = user }) <: t_VaultStmt]
+        in
+        FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+        Rust_primitives.Hax.array_of_list 1 list)
+      <:
+      t_Slice t_VaultStmt)
+
+/// `list_devices`' listing.
+let plan_read_devices (user: Alloc.String.t_String) : t_VaultStmt =
+  VaultStmt_SelectDeviceList ({ f_user = user }) <: t_VaultStmt
 
 /// `read_version`/`reread_version`: the stored version, missing, or storage.
 let classify_version (outcome: t_ReadOutcome (Core_models.Option.t_Option i64))
@@ -1294,3 +1503,84 @@ let classify_oram_update (outcomes: t_Slice t_WriteOutcome)
     Vela_rekey_policy.Vault_mutation_driver.BucketObservation_Storage
     <:
     Vela_rekey_policy.Vault_mutation_driver.t_BucketObservation
+
+/// `load_key_state`: the stored row, no row, or a failed read. The handler
+/// normalizes the row (epoch floor, `freezing` test) after the read; that
+/// normalization is policy, not I/O.
+let classify_key_state (outcome: t_ReadOutcome (Core_models.Option.t_Option t_KeyStateView))
+    : t_KeyStateObservation =
+  match outcome <: t_ReadOutcome (Core_models.Option.t_Option t_KeyStateView) with
+  | ReadOutcome_Failed  -> KeyStateObservation_Storage <: t_KeyStateObservation
+  | ReadOutcome_Rows (Core_models.Option.Option_None ) ->
+    KeyStateObservation_NotFound <: t_KeyStateObservation
+  | ReadOutcome_Rows (Core_models.Option.Option_Some view) ->
+    KeyStateObservation_Loaded view <: t_KeyStateObservation
+
+/// `current_usage_bytes`: both reads must have returned their total.
+let classify_usage (chunks oram: t_ReadOutcome i64) : t_UsageObservation =
+  match chunks, oram <: (t_ReadOutcome i64 & t_ReadOutcome i64) with
+  | ReadOutcome_Rows chunks, ReadOutcome_Rows oram ->
+    UsageObservation_Measured ({ f_chunks = chunks; f_oram = oram }) <: t_UsageObservation
+  | _ -> UsageObservation_Storage <: t_UsageObservation
+
+/// `enforce_rekey_shadow_quota`: the projected stored bytes.
+let classify_projected_usage (outcome: t_ReadOutcome i64) : t_ProjectedUsageObservation =
+  match outcome <: t_ReadOutcome i64 with
+  | ReadOutcome_Rows projected ->
+    ProjectedUsageObservation_Measured projected <: t_ProjectedUsageObservation
+  | ReadOutcome_Failed  -> ProjectedUsageObservation_Storage <: t_ProjectedUsageObservation
+
+/// `get_path`'s per-bucket observation.
+let classify_oram_read (outcome: t_ReadOutcome (Core_models.Option.t_Option t_OramRowView))
+    : t_OramReadObservation =
+  match outcome <: t_ReadOutcome (Core_models.Option.t_Option t_OramRowView) with
+  | ReadOutcome_Failed  -> OramReadObservation_Storage <: t_OramReadObservation
+  | ReadOutcome_Rows (Core_models.Option.Option_None ) ->
+    OramReadObservation_Missing <: t_OramReadObservation
+  | ReadOutcome_Rows (Core_models.Option.Option_Some view) ->
+    OramReadObservation_Found view <: t_OramReadObservation
+
+/// `get_sync`: the manifest rows were read, or the query failed.
+let classify_sync (outcome: t_ReadOutcome (Alloc.Vec.t_Vec t_SyncRowView Alloc.Alloc.t_Global))
+    : t_SyncObservation =
+  match outcome <: t_ReadOutcome (Alloc.Vec.t_Vec t_SyncRowView Alloc.Alloc.t_Global) with
+  | ReadOutcome_Rows _ -> SyncObservation_Read <: t_SyncObservation
+  | ReadOutcome_Failed  -> SyncObservation_Failed <: t_SyncObservation
+
+/// `schema::minimum`: the stored value, computed from the store read.
+let classify_schema_floor
+      (outcome: t_ReadOutcome (Core_models.Option.t_Option Alloc.String.t_String))
+    : t_SchemaFloorObservation =
+  match outcome <: t_ReadOutcome (Core_models.Option.t_Option Alloc.String.t_String) with
+  | ReadOutcome_Failed  -> SchemaFloorObservation_Storage <: t_SchemaFloorObservation
+  | ReadOutcome_Rows value -> SchemaFloorObservation_Stored value <: t_SchemaFloorObservation
+
+/// `get_capsule`: the pending capsule, no eligible row, or a failed read.
+let classify_capsule_read (outcome: t_ReadOutcome (Core_models.Option.t_Option t_CapsuleView))
+    : t_CapsuleReadObservation =
+  match outcome <: t_ReadOutcome (Core_models.Option.t_Option t_CapsuleView) with
+  | ReadOutcome_Failed  -> CapsuleReadObservation_Storage <: t_CapsuleReadObservation
+  | ReadOutcome_Rows (Core_models.Option.Option_None ) ->
+    CapsuleReadObservation_Missing <: t_CapsuleReadObservation
+  | ReadOutcome_Rows (Core_models.Option.Option_Some view) ->
+    CapsuleReadObservation_Found view <: t_CapsuleReadObservation
+
+/// `get_capsule`'s read-once clear: a cleared row, no matching row, or a
+/// failed statement.
+let classify_capsule_clear (outcomes: t_Slice t_WriteOutcome) : t_CapsuleClearObservation =
+  if (Core_models.Slice.impl__len #t_WriteOutcome outcomes <: usize) =. mk_usize 1
+  then
+    match outcomes.[ mk_usize 0 ] <: t_WriteOutcome with
+    | WriteOutcome_Applied (Rust_primitives.Integers.MkInt 1) ->
+      CapsuleClearObservation_Cleared <: t_CapsuleClearObservation
+    | WriteOutcome_Applied _ -> CapsuleClearObservation_Missed <: t_CapsuleClearObservation
+    | WriteOutcome_Failed  -> CapsuleClearObservation_Storage <: t_CapsuleClearObservation
+  else CapsuleClearObservation_Storage <: t_CapsuleClearObservation
+
+/// `list_devices`: the listing rows were read, or the query failed.
+let classify_device_list
+      (outcome: t_ReadOutcome (Alloc.Vec.t_Vec t_DeviceListRowView Alloc.Alloc.t_Global))
+    : t_DeviceListObservation =
+  match outcome <: t_ReadOutcome (Alloc.Vec.t_Vec t_DeviceListRowView Alloc.Alloc.t_Global) with
+  | ReadOutcome_Rows _ -> DeviceListObservation_Read <: t_DeviceListObservation
+  | ReadOutcome_Failed  -> DeviceListObservation_Failed <: t_DeviceListObservation

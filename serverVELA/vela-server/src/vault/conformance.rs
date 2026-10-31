@@ -13,7 +13,9 @@
 //!
 //! A schema check pins the columns and types the model uses.
 
-use vela_rekey_policy::executor::{self as policy, ChunkRowView, ReadOutcome, WriteOutcome};
+use vela_rekey_policy::executor::{
+    self as policy, ChunkRowView, ReadOutcome, WriteOutcome,
+};
 use vela_rekey_policy::executor_model::{
     self as model, ChunkRow, Db as Model, DeviceRow, OramRow, UserRow,
 };
@@ -49,8 +51,16 @@ impl VaultSql for Pool<'_> {
         Err(anyhow::anyhow!("no open transaction to commit"))
     }
 
+    async fn begin(&mut self) -> anyhow::Result<TxGuard> {
+        self.db.tx().await
+    }
+
     fn kv_set(&mut self, key: &str, value: &[u8]) -> Result<(), crate::error::AppError> {
         self.store.set_durable(key, value)
+    }
+
+    fn kv_get(&mut self, key: &str) -> Result<Option<Vec<u8>>, crate::error::AppError> {
+        self.store.get(key)
     }
 }
 
@@ -81,7 +91,17 @@ impl VaultSql for Tx {
         }
     }
 
+    async fn begin(&mut self) -> anyhow::Result<TxGuard> {
+        Err(anyhow::anyhow!("a transaction is already open"))
+    }
+
     fn kv_set(&mut self, _key: &str, _value: &[u8]) -> Result<(), crate::error::AppError> {
+        Err(crate::error::AppError::Internal(
+            "no store inside a transaction".into(),
+        ))
+    }
+
+    fn kv_get(&mut self, _key: &str) -> Result<Option<Vec<u8>>, crate::error::AppError> {
         Err(crate::error::AppError::Internal(
             "no store inside a transaction".into(),
         ))
@@ -138,9 +158,21 @@ impl<S: VaultSql> VaultSql for Faulty<S> {
         self.inner.commit().await
     }
 
+    async fn begin(&mut self) -> anyhow::Result<TxGuard> {
+        self.hit()?;
+        self.inner.begin().await
+    }
+
     fn kv_set(&mut self, key: &str, value: &[u8]) -> Result<(), crate::error::AppError> {
         match self.hit() {
             Ok(()) => self.inner.kv_set(key, value),
+            Err(error) => Err(crate::error::AppError::Internal(error.to_string())),
+        }
+    }
+
+    fn kv_get(&mut self, key: &str) -> Result<Option<Vec<u8>>, crate::error::AppError> {
+        match self.hit() {
+            Ok(()) => self.inner.kv_get(key),
             Err(error) => Err(crate::error::AppError::Internal(error.to_string())),
         }
     }
@@ -228,15 +260,26 @@ async fn load(db: &TursoDb, store: &Store, state: &Model) {
     }
     for (id, row) in &state.devices {
         db.execute(
-            "INSERT INTO devices (id, user_id, hybrid_ek, hybrid_vk, revoked, rekey_capable, \
-             rms_capsule, rms_capsule_epoch, created_at) VALUES (?, ?, 'ek', 'vk', ?, ?, ?, ?, 't')",
+            "INSERT INTO devices (id, user_id, device_name, device_type, last_active, \
+             hybrid_ek, hybrid_vk, enrolled_by, rms_capsule, rms_capsule_epoch, \
+             rekey_capable, revoked, revoked_at, revoked_by, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             vec![
                 TursoValue::Text(id.clone()),
                 TursoValue::Text(row.user_id.clone()),
-                TursoValue::Integer(row.revoked),
-                TursoValue::Integer(row.rekey_capable),
+                TursoValue::Text(row.device_name.clone()),
+                TursoValue::Text(row.device_type.clone()),
+                opt(&row.last_active),
+                TursoValue::Text(row.hybrid_ek.clone()),
+                TursoValue::Text(row.hybrid_vk.clone()),
+                opt(&row.enrolled_by),
                 opt(&row.rms_capsule),
                 opt_i64(row.rms_capsule_epoch),
+                TursoValue::Integer(row.rekey_capable),
+                TursoValue::Integer(row.revoked),
+                opt(&row.revoked_at),
+                opt(&row.revoked_by),
+                TursoValue::Text(row.created_at.clone()),
             ],
         )
         .await
@@ -320,8 +363,9 @@ async fn snapshot(db: &TursoDb, store: &Store, keys: &[String]) -> Model {
     }
     for row in db
         .query(
-            "SELECT id, user_id, revoked, rekey_capable, rms_capsule, rms_capsule_epoch \
-             FROM devices",
+            "SELECT id, user_id, revoked, rekey_capable, rms_capsule, rms_capsule_epoch, \
+             device_name, device_type, last_active, hybrid_ek, hybrid_vk, enrolled_by, \
+             revoked_at, revoked_by, created_at FROM devices",
             vec![],
         )
         .await
@@ -335,6 +379,15 @@ async fn snapshot(db: &TursoDb, store: &Store, keys: &[String]) -> Model {
                 rekey_capable: row.i64(3).expect("rekey_capable is an integer"),
                 rms_capsule: row.text(4).map(String::from),
                 rms_capsule_epoch: row.i64(5),
+                device_name: text(&row, 6),
+                device_type: text(&row, 7),
+                last_active: row.text(8).map(String::from),
+                hybrid_ek: text(&row, 9),
+                hybrid_vk: text(&row, 10),
+                enrolled_by: row.text(11).map(String::from),
+                revoked_at: row.text(12).map(String::from),
+                revoked_by: row.text(13).map(String::from),
+                created_at: text(&row, 14),
             },
         );
     }
@@ -475,6 +528,17 @@ fn base_state(freezing: bool) -> Model {
                 rekey_capable: capable,
                 rms_capsule: capsule.map(s),
                 rms_capsule_epoch: capsule_epoch,
+                device_name: format!("device {n}"),
+                device_type: s("desktop"),
+                last_active: if n == 0 { Some(s(T0)) } else { None },
+                hybrid_ek: format!("ek-{n}"),
+                hybrid_vk: format!("vk-{n}"),
+                enrolled_by: if n == 0 { None } else { Some(device(0)) },
+                revoked_at: if revoked == 1 { Some(s(T0)) } else { None },
+                revoked_by: if revoked == 1 { Some(device(0)) } else { None },
+                // The listing orders by `created_at`; keep it in id order so
+                // the engine's order matches the model's table order.
+                created_at: format!("2026-01-0{}T00:00:00+00:00", n + 1),
             },
         );
     }
@@ -859,6 +923,313 @@ async fn chunk_executors_match_the_store_model() {
     }
     eprintln!(
         "vault executor conformance (chunks): {} states, {} cases, {} with an injected failure",
+        counts.states, counts.cases, counts.faulted
+    );
+}
+
+#[tokio::test]
+async fn handler_io_matches_the_store_model() {
+    let db = temp_db().await;
+    let store = Store::open_temp().unwrap();
+    let mut counts = Counts::default();
+    let states = [
+        base_state(false),
+        base_state(true),
+        {
+            // A second chunk at epoch 1 and a second ORAM bucket.
+            let mut state = base_state(false);
+            state.chunks.insert(
+                (user(0), item(1), 1),
+                ChunkRow {
+                    user_id: user(0),
+                    chunk_id: item(1),
+                    epoch: 1,
+                    version: 1,
+                    lamport_clock: 3,
+                    last_writer: None,
+                    ciphertext: s("longer-ct"),
+                    created_at: s(T0),
+                    updated_at: s(T0),
+                },
+            );
+            state.chunks.insert(
+                (user(0), item(2), 2),
+                ChunkRow {
+                    user_id: user(0),
+                    chunk_id: item(2),
+                    epoch: 2,
+                    version: 1,
+                    lamport_clock: 4,
+                    last_writer: Some(device(0)),
+                    ciphertext: s("shadow-ct"),
+                    created_at: s(T0),
+                    updated_at: s(T0),
+                },
+            );
+            state.oram.insert(
+                (user(0), tree(), 2, 1),
+                OramRow {
+                    user_id: user(0),
+                    tree_id: tree(),
+                    bucket_index: 2,
+                    epoch: 1,
+                    version: 3,
+                    lamport_clock: 7,
+                    last_writer: Some(device(0)),
+                    ciphertext: s("bucket-two"),
+                    created_at: s(T0),
+                    updated_at: s(T0),
+                },
+            );
+            state
+        },
+    ];
+
+    for pre in &states {
+        counts.states += 1;
+
+        // The key-state read.
+        for caller in [user(0), user(1), user(2)] {
+            for fault in faults(1) {
+                load(&db, &store, pre).await;
+                let plan = policy::plan_load_key_state(caller.clone());
+                let mut sql = Faulty::new(Pool { db: &db, store: &store }, fault);
+                let observed = match run_read(&mut sql, &plan).await {
+                    Err(_) => policy::classify_key_state(ReadOutcome::Failed),
+                    Ok(rows) => policy::classify_key_state(ReadOutcome::Rows(
+                        crate::vault::sql::key_state_view(&rows),
+                    )),
+                };
+                let expected = model::key_state(pre, &caller, fault);
+                assert_eq!(observed, expected, "key state {caller} {fault:?}");
+                assert_eq!(
+                    snapshot(&db, &store, &keys()).await,
+                    pre.clone(),
+                    "key state changed state"
+                );
+                counts.case(fault);
+            }
+        }
+
+        // The transaction begin.
+        for fault in faults(1) {
+            load(&db, &store, pre).await;
+            let mut sql = Faulty::new(Pool { db: &db, store: &store }, fault);
+            let (outcomes, _, guard) =
+                crate::vault::sql::run_begin(&mut sql, &policy::plan_begin_transaction()).await;
+            let observed = policy::classify_transaction(&outcomes);
+            let (expected, expected_post) = model::begin(pre, fault);
+            assert_eq!(observed, expected, "begin {fault:?}");
+            assert_eq!(
+                snapshot(&db, &store, &keys()).await,
+                expected_post,
+                "begin {fault:?}"
+            );
+            drop(guard);
+            settle(&db).await;
+            counts.case(fault);
+        }
+
+        // The two usage reads.
+        for fault in faults(2) {
+            load(&db, &store, pre).await;
+            for caller in [user(0), user(1), user(2)] {
+                let mut sql = Faulty::new(Pool { db: &db, store: &store }, fault);
+                let chunks = match run_read(&mut sql, &policy::plan_usage_chunks(caller.clone()))
+                    .await
+                {
+                    Err(_) => ReadOutcome::Failed,
+                    Ok(rows) => ReadOutcome::Rows(crate::vault::sql::scalar_view(&rows)),
+                };
+                let oram = if matches!(chunks, ReadOutcome::Failed) {
+                    ReadOutcome::Failed
+                } else {
+                    match run_read(&mut sql, &policy::plan_usage_oram(caller.clone())).await {
+                        Err(_) => ReadOutcome::Failed,
+                        Ok(rows) => ReadOutcome::Rows(crate::vault::sql::scalar_view(&rows)),
+                    }
+                };
+                let observed = policy::classify_usage(&chunks, &oram);
+                let expected = model::usage(pre, &caller, fault);
+                assert_eq!(observed, expected, "usage {caller} {fault:?}");
+                counts.case(fault);
+            }
+        }
+
+        // The projected-storage read.
+        for fault in faults(1) {
+            load(&db, &store, pre).await;
+            for caller in [user(0), user(1)] {
+                for (epoch, chunk) in [(1i64, item(0)), (1, item(1)), (2, item(2))] {
+                    let plan = policy::plan_rekey_projection(caller.clone(), epoch, chunk.clone());
+                    let mut sql = Faulty::new(Pool { db: &db, store: &store }, fault);
+                    let observed = match run_read(&mut sql, &plan).await {
+                        Err(_) => policy::classify_projected_usage(&ReadOutcome::Failed),
+                        Ok(rows) => policy::classify_projected_usage(&ReadOutcome::Rows(
+                            crate::vault::sql::scalar_view(&rows),
+                        )),
+                    };
+                    let expected = model::projection(pre, &caller, epoch, &chunk, fault);
+                    let case = format!("projection {caller} {epoch} {chunk} {fault:?}");
+                    assert_eq!(observed, expected, "{case}");
+                    counts.case(fault);
+                }
+            }
+        }
+
+        // The ORAM path bucket read.
+        for caller in [user(0), user(1)] {
+            for index in [1i64, 2, 3] {
+                for epoch in [1i64, 2] {
+                    for fault in faults(1) {
+                        load(&db, &store, pre).await;
+                        let plan = policy::plan_read_oram_bucket(
+                            caller.clone(),
+                            tree(),
+                            index,
+                            epoch,
+                        );
+                        let mut sql = Faulty::new(Pool { db: &db, store: &store }, fault);
+                        let observed = match run_read(&mut sql, &plan).await {
+                            Err(_) => policy::classify_oram_read(ReadOutcome::Failed),
+                            Ok(rows) => policy::classify_oram_read(ReadOutcome::Rows(
+                                crate::vault::sql::oram_row_view(&rows),
+                            )),
+                        };
+                        let expected =
+                            model::oram_read(pre, &caller, &tree(), index, epoch, fault);
+                        let case = format!("oram read {caller} {index} {epoch} {fault:?}");
+                        assert_eq!(observed, expected, "{case}");
+                        counts.case(fault);
+                    }
+                }
+            }
+        }
+
+        // The sync manifest: both the observation and the exact row set.
+        for caller in [user(0), user(1)] {
+            for epoch in [1i64, 2, 3] {
+                for fault in faults(1) {
+                    load(&db, &store, pre).await;
+                    let plan = policy::plan_read_sync(caller.clone(), epoch);
+                    let mut sql = Faulty::new(Pool { db: &db, store: &store }, fault);
+                    let (observed, observed_rows) = match run_read(&mut sql, &plan).await {
+                        Err(_) => (policy::classify_sync(&ReadOutcome::Failed), Vec::new()),
+                        Ok(rows) => {
+                            let view = crate::vault::sql::sync_rows_view(&rows);
+                            (policy::classify_sync(&ReadOutcome::Rows(view.clone())), view)
+                        }
+                    };
+                    let expected = model::sync(pre, &caller, epoch, fault);
+                    let case = format!("sync {caller} {epoch} {fault:?}");
+                    assert_eq!(observed, expected, "{case}");
+                    let expected_rows = if fault.is_some() {
+                        Vec::new()
+                    } else {
+                        model::sync_row_set(pre, &caller, epoch)
+                    };
+                    assert_eq!(observed_rows, expected_rows, "{case} rows");
+                    counts.case(fault);
+                }
+            }
+        }
+
+        // The device listing: both the observation and the exact row set.
+        for caller in [user(0), user(1), user(2)] {
+            for fault in faults(1) {
+                load(&db, &store, pre).await;
+                let plan = policy::plan_read_devices(caller.clone());
+                let mut sql = Faulty::new(Pool { db: &db, store: &store }, fault);
+                let (observed, observed_rows) = match run_read(&mut sql, &plan).await {
+                    Err(_) => (policy::classify_device_list(&ReadOutcome::Failed), Vec::new()),
+                    Ok(rows) => {
+                        let view = crate::vault::sql::device_list_rows_view(&rows);
+                        (
+                            policy::classify_device_list(&ReadOutcome::Rows(view.clone())),
+                            view,
+                        )
+                    }
+                };
+                let expected = model::device_list(pre, &caller, fault);
+                let case = format!("devices {caller} {fault:?}");
+                assert_eq!(observed, expected, "{case}");
+                let expected_rows = if fault.is_some() {
+                    Vec::new()
+                } else {
+                    model::device_list_row_set(pre, &caller)
+                };
+                assert_eq!(observed_rows, expected_rows, "{case} rows");
+                counts.case(fault);
+            }
+        }
+
+        // The capsule read and its read-once clear. A fresh store per case: the
+        // model's key set is exact and sled has no delete.
+        for caller in [user(0), user(1), user(2)] {
+            for device_id in [device(0), device(1), device(3), s("missing")] {
+                let store = Store::open_temp().unwrap();
+                for fault in faults(1) {
+                    load(&db, &store, pre).await;
+                    let plan =
+                        policy::plan_read_capsule(device_id.clone(), caller.clone());
+                    let mut sql = Faulty::new(Pool { db: &db, store: &store }, fault);
+                    let observed = match run_read(&mut sql, &plan).await {
+                        Err(_) => policy::classify_capsule_read(ReadOutcome::Failed),
+                        Ok(rows) => policy::classify_capsule_read(ReadOutcome::Rows(
+                            crate::vault::sql::capsule_view(&rows),
+                        )),
+                    };
+                    let expected = model::capsule_read(pre, &device_id, &caller, fault);
+                    let case = format!("capsule {device_id} {caller} {fault:?}");
+                    assert_eq!(observed, expected, "{case}");
+                    counts.case(fault);
+                }
+
+                let plan =
+                    policy::plan_clear_enrollment_capsule(device_id.clone(), caller.clone());
+                for fault in faults(plan.len()) {
+                    load(&db, &store, pre).await;
+                    let mut sql = Faulty::new(Pool { db: &db, store: &store }, fault);
+                    let outcomes =
+                        write_outcomes(plan.len(), run_writes(&mut sql, &plan).await);
+                    let observed = policy::classify_capsule_clear(&outcomes);
+                    let (expected, expected_post) =
+                        model::capsule_clear(pre, &device_id, &caller, fault);
+                    let case = format!("capsule clear {device_id} {caller} {fault:?}");
+                    assert_eq!(observed, expected, "{case}");
+                    assert_eq!(
+                        snapshot(&db, &store, &keys()).await,
+                        expected_post,
+                        "{case}"
+                    );
+                    counts.case(fault);
+                }
+            }
+        }
+
+        // The schema-floor store read.
+        for caller in [user(0), user(1), user(2)] {
+            let key = format!("vault-schema:{caller}");
+            let store = Store::open_temp().unwrap();
+            for fault in faults(1) {
+                load(&db, &store, pre).await;
+                let plan = policy::plan_read_schema_floor(key.clone());
+                let mut sql = Faulty::new(Pool { db: &db, store: &store }, fault);
+                let observed = match crate::vault::sql::kv_read(&mut sql, &plan) {
+                    Err(_) => policy::classify_schema_floor(ReadOutcome::Failed),
+                    Ok(value) => policy::classify_schema_floor(ReadOutcome::Rows(
+                        crate::vault::sql::kv_text(value),
+                    )),
+                };
+                let expected = model::schema_floor_read(pre, &key, fault);
+                let case = format!("schema floor {caller} {fault:?}");
+                assert_eq!(observed, expected, "{case}");
+                counts.case(fault);
+            }
+        }
+    }
+    eprintln!(
+        "vault executor conformance (handler I/O): {} states, {} cases, {} with an injected failure",
         counts.states, counts.cases, counts.faulted
     );
 }

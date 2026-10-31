@@ -79,13 +79,19 @@ if [[ $want == all ]]; then
     plan_probe_acknowledged plan_probe_chunk_shadows plan_probe_device_capsules
     plan_write_capsule plan_ack_capsule plan_pending_capsule plan_attest_capable
     plan_schema_floor plan_oram_exists plan_oram_insert plan_oram_update
+    plan_begin_transaction plan_load_key_state plan_usage_chunks plan_usage_oram
+    plan_rekey_projection plan_read_oram_bucket plan_read_sync plan_read_schema_floor
+    plan_read_capsule plan_clear_enrollment_capsule plan_read_devices
     classify_version classify_reread classify_delete classify_chunk_read
     classify_chunk_create classify_chunk_shadow classify_chunk_update
     classify_inventory classify_probe classify_freeze_cas classify_transaction
     classify_cleanup classify_sweep classify_rollback
     classify_shadow_activity classify_capsule_write classify_pending
     classify_ack classify_attest classify_schema_write classify_oram_create
-    classify_oram_update
+    classify_oram_update classify_key_state classify_usage
+    classify_projected_usage classify_oram_read classify_sync
+    classify_schema_floor classify_capsule_read classify_capsule_clear
+    classify_device_list
   )
   include='-**'
   for item in "${items[@]}"; do

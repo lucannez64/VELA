@@ -6,7 +6,6 @@ use uuid::Uuid;
 use crate::{
     error::{AppError, Result},
     middleware::{maybe_append_new_token, DeviceSession},
-    sqldb::Db as _,
     state::AppState,
 };
 
@@ -40,21 +39,30 @@ pub async fn list_devices(
     State(state): State<AppState>,
     session: DeviceSession,
 ) -> Result<(HeaderMap, Json<ListDevicesResponse>)> {
-    let rows = state
-        .sqldb
-        .query(
-            "SELECT id, user_id, device_name, device_type, last_active,
-                hybrid_ek, hybrid_vk,
-                enrolled_by, rms_capsule, revoked, revoked_at, revoked_by, created_at,
-                rekey_capable
-             FROM devices
-             WHERE user_id = ?
-             ORDER BY created_at ASC
-             LIMIT 1000",
-            vec![crate::sqldb::TursoValue::Text(session.user_id.to_string())],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+    use vela_rekey_policy::executor::{
+        classify_device_list, plan_read_devices, DeviceListObservation, ReadOutcome,
+    };
+    let plan = plan_read_devices(session.user_id.to_string());
+    let mut sql = crate::vault::sql::PoolSql(&state);
+    let mut read_error: Option<anyhow::Error> = None;
+    let rows = match crate::vault::sql::run_read(&mut sql, &plan).await {
+        Ok(rows) => rows,
+        Err(error) => {
+            read_error = Some(error);
+            Vec::new()
+        }
+    };
+    let outcome = if read_error.is_some() {
+        ReadOutcome::Failed
+    } else {
+        ReadOutcome::Rows(crate::vault::sql::device_list_rows_view(&rows))
+    };
+    if let DeviceListObservation::Failed = classify_device_list(&outcome) {
+        return Err(AppError::Internal(match read_error {
+            Some(error) => error.to_string(),
+            None => "device listing query failed".into(),
+        }));
+    }
 
     let devices: Vec<DeviceInfo> = rows
         .iter()
@@ -161,7 +169,7 @@ pub async fn post_rekey_capable(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::sqldb::Db as _;
     use crate::sqldb::{TursoDb, TursoValue};
 
     async fn temp_i64() -> i64 {

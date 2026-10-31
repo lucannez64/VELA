@@ -33,10 +33,35 @@ pub async fn lock(user: &str) -> tokio::sync::OwnedMutexGuard<()> {
 }
 
 pub fn minimum(state: &AppState, user: &str) -> Result<u32> {
-    match state.store.get(&format!("vault-schema:{user}"))? {
-        None => Ok(1),
-        Some(bytes) if bytes == b"2" => Ok(2),
-        _ => Err(AppError::Internal("Invalid vault schema floor".into())),
+    use vela_rekey_policy::executor::{
+        classify_schema_floor, plan_read_schema_floor, ReadOutcome, SchemaFloorObservation,
+    };
+    let plan = plan_read_schema_floor(format!("vault-schema:{user}"));
+    let mut sql = crate::vault::sql::PoolSql(state);
+    let mut read_error: Option<crate::vault::sql::RunError> = None;
+    let outcome = match crate::vault::sql::kv_read(&mut sql, &plan) {
+        Ok(value) => ReadOutcome::Rows(crate::vault::sql::kv_text(value)),
+        Err(error) => {
+            read_error = Some(error);
+            ReadOutcome::Failed
+        }
+    };
+    match classify_schema_floor(outcome) {
+        SchemaFloorObservation::Stored(None) => Ok(1),
+        SchemaFloorObservation::Stored(Some(value)) => {
+            if value == "2" {
+                Ok(2)
+            } else {
+                Err(AppError::Internal("Invalid vault schema floor".into()))
+            }
+        }
+        SchemaFloorObservation::Storage => Err(match read_error {
+            Some(crate::vault::sql::RunError::Store(error)) => error,
+            Some(crate::vault::sql::RunError::Sql(error)) => {
+                AppError::Internal(error.to_string())
+            }
+            None => AppError::Internal("vault schema floor lookup failed".into()),
+        }),
     }
 }
 

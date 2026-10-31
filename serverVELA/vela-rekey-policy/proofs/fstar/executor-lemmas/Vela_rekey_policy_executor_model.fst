@@ -70,13 +70,23 @@ noeq type user_row = {
   us_last_rekey_epoch: option i64;
 }
 
-/// The device columns the executors read or write.
+/// The device columns the executors read or write, plus the columns
+/// `list_devices` serves.
 noeq type device_row = {
   dv_user: text;
   dv_revoked: i64;
   dv_capable: i64;
   dv_capsule: option text;
   dv_capsule_epoch: option i64;
+  dv_name: text;
+  dv_type: text;
+  dv_last_active: option text;
+  dv_ek: text;
+  dv_vk: text;
+  dv_enrolled_by: option text;
+  dv_revoked_at: option text;
+  dv_revoked_by: option text;
+  dv_created_at: text;
 }
 
 /// An `oram_buckets` row; keyed by `(user_id, tree_id, bucket_index, epoch)`.
@@ -488,6 +498,16 @@ let exec (d: db) (s: t_VaultStmt) : option (u64 & db) =
      | None -> Some (mk_u64 0, d))
   | VaultStmt_SchemaFloorSet { f_key = key } ->
     Some (mk_u64 0, { d with kv = upd_kv d.kv key (Some (Alloc.String.String "2")) })
+  | VaultStmt_ClearEnrollmentCapsule { f_device = device; f_user = user } ->
+    (match find_device d.devices device with
+     | Some row ->
+       if row.dv_user = user
+       then
+         Some (mk_u64 1,
+               { d with devices = set_device d.devices device
+                   ({ row with dv_capsule = None; dv_capsule_epoch = None }) })
+       else Some (mk_u64 0, d)
+     | None -> Some (mk_u64 0, d))
   | _ -> None
 
 /// The k-th statement is the injected failure.
@@ -531,8 +551,21 @@ let rec run_tx (pre work: db) (stmts: list t_VaultStmt) (k: nat) (f: option nat)
           let r = run_tx pre w rest (k + 1) f in
           (WriteOutcome_Applied n :: fst r, snd r)
 
-/// A conditional transaction: run the first statement (the CAS) directly, and
-/// only when it changed a row run the rest of the plan inside the same
+/// The transaction begin: one statement that changes nothing. Only the begin
+/// plan is run this way, so any other statement is a failure.
+let rec run_begin (d: db) (stmts: list t_VaultStmt) (k: nat) (f: option nat)
+  : Tot (r: list t_WriteOutcome{L.length r <= L.length stmts}) (decreases stmts) =
+  match stmts with
+  | [] -> []
+  | s :: rest ->
+    match s with
+    | VaultStmt_BeginTransaction ->
+      if faulted f k
+      then [WriteOutcome_Failed]
+      else WriteOutcome_Applied (mk_u64 0) :: run_begin d rest (k + 1) f
+    | _ -> [WriteOutcome_Failed]
+
+/// A conditional transaction: run the first statement (the CAS) directly, and/// only when it changed a row run the rest of the plan inside the same
 /// transaction, publishing at the plan's own `Commit`. A skipped CAS drops the
 /// transaction; a failed statement or a plan without a `Commit` publishes
 /// nothing. Both rotation transactions have this shape
@@ -677,8 +710,302 @@ let read_inventory (d: db) (s: t_VaultStmt)
       else ReadOutcome_Failed
     | _ -> ReadOutcome_Failed
 
-// ── Outcome slices ─────────────────────────────────────────────────────────
+// ── Handler I/O outside executor methods (F-1 wave 2) ─────────────────────
+//
+// `load_key_state`; the two usage reads and the projected-storage read; the
+// ORAM path bucket read; the sync manifest; the schema-floor store read; the
+// capsule delivery's read and read-once clear; the device listing; and the
+// transaction begin. Each is the extracted plan, its SQL or store meaning
+// here, and the extracted classifier.
 
+/// The model's own option, as the extracted row views carry it.
+let to_opt (#a: Type) (o: option a) : Core_models.Option.t_Option a =
+  match o with
+  | Some x -> Core_models.Option.Option_Some x
+  | None -> Core_models.Option.Option_None
+
+/// `LENGTH(ciphertext)` over the base64 text the handlers store, which is
+/// ASCII, so its byte length is its string length.
+let text_len (t: text) : nat = FStar.String.length t._0
+
+/// A `nat` sum as the `i64` the query returns. Saturating under the machine
+/// maximum, where every conformance state is.
+let nat_i64 (n: nat) : i64 =
+  if n <= maxint I64 then mk_i64 n else mk_i64 (maxint I64)
+
+/// The seven rotation cells of a `users` row.
+let key_state_view_of (r: user_row) : t_KeyStateView = {
+  f_key_epoch = to_opt (Some r.us_key_epoch);
+  f_rekey_state = to_opt r.us_rekey_state;
+  f_rekey_started_at = to_opt r.us_started;
+  f_rekey_starter = to_opt r.us_starter;
+  f_rekey_id = to_opt r.us_rotation;
+  f_last_rekey_id = to_opt r.us_last_rekey_id;
+  f_last_rekey_epoch = to_opt r.us_last_rekey_epoch;
+}
+
+/// `SelectKeyState` on a state.
+let read_key_state (d: db) (s: t_VaultStmt) (failed: bool)
+  : t_ReadOutcome (Core_models.Option.t_Option t_KeyStateView) =
+  if failed
+  then ReadOutcome_Failed
+  else
+    match s with
+    | VaultStmt_SelectKeyState { f_user = user } ->
+      (match d.users user with
+       | Some r -> ReadOutcome_Rows (Core_models.Option.Option_Some (key_state_view_of r))
+       | None -> ReadOutcome_Rows Core_models.Option.Option_None)
+    | _ -> ReadOutcome_Failed
+
+/// `SUM(LENGTH(ciphertext))` over one account's chunk rows at one epoch.
+let rec sum_chunk_len_at (l: chunk_tbl) (user: text) (epoch: i64) : nat =
+  match l with
+  | [] -> 0
+  | r :: tl ->
+    (if r.ch_user = user && r.ch_epoch = epoch then text_len r.ch_ciphertext else 0) +
+    sum_chunk_len_at tl user epoch
+
+/// `SUM(LENGTH(ciphertext))` over one account's ORAM rows at one epoch.
+let rec sum_oram_len_at (l: oram_tbl) (user: text) (epoch: i64) : nat =
+  match l with
+  | [] -> 0
+  | r :: tl ->
+    (if r.or_user = user && r.or_epoch = epoch then text_len r.or_ciphertext else 0) +
+    sum_oram_len_at tl user epoch
+
+/// `SUM(LENGTH(ciphertext))` over every ORAM row of one account.
+let rec sum_oram_len_all (l: oram_tbl) (user: text) : nat =
+  match l with
+  | [] -> 0
+  | r :: tl ->
+    (if r.or_user = user then text_len r.or_ciphertext else 0) + sum_oram_len_all tl user
+
+/// `current_usage_bytes`' chunk total: the account's served epoch.
+let chunk_usage (d: db) (user: text) : nat =
+  match d.users user with
+  | Some u -> sum_chunk_len_at d.chunks user u.us_key_epoch
+  | None -> 0
+
+/// `current_usage_bytes`' ORAM total: the account's served epoch.
+let oram_usage (d: db) (user: text) : nat =
+  match d.users user with
+  | Some u -> sum_oram_len_at d.oram user u.us_key_epoch
+  | None -> 0
+
+/// `enforce_rekey_shadow_quota`'s chunk total: this epoch, minus the replaced
+/// chunk.
+let rec sum_chunk_len_projected
+      (l: chunk_tbl) (user: text) (epoch: i64) (chunk_id: text)
+  : nat =
+  match l with
+  | [] -> 0
+  | r :: tl ->
+    (if r.ch_user = user && r.ch_epoch = epoch && not (r.ch_id = chunk_id)
+     then text_len r.ch_ciphertext else 0) +
+    sum_chunk_len_projected tl user epoch chunk_id
+
+/// The projected stored bytes after a rotation replaces `chunk_id`.
+let projected_usage (d: db) (user: text) (epoch: i64) (chunk_id: text) : nat =
+  sum_chunk_len_projected d.chunks user epoch chunk_id + sum_oram_len_all d.oram user
+
+/// `SelectUsageChunks`: the query's total, accepted only when it is the
+/// model's sum over the state.
+let read_usage_chunks (d: db) (s: t_VaultStmt) (amount: i64) (failed: bool)
+  : t_ReadOutcome i64 =
+  if failed
+  then ReadOutcome_Failed
+  else
+    match s with
+    | VaultStmt_SelectUsageChunks { f_user = user } ->
+      if amount = nat_i64 (chunk_usage d user)
+      then ReadOutcome_Rows amount
+      else ReadOutcome_Failed
+    | _ -> ReadOutcome_Failed
+
+/// `SelectUsageOram`: the query's total, accepted only when it is the model's
+/// sum over the state.
+let read_usage_oram (d: db) (s: t_VaultStmt) (amount: i64) (failed: bool)
+  : t_ReadOutcome i64 =
+  if failed
+  then ReadOutcome_Failed
+  else
+    match s with
+    | VaultStmt_SelectUsageOram { f_user = user } ->
+      if amount = nat_i64 (oram_usage d user)
+      then ReadOutcome_Rows amount
+      else ReadOutcome_Failed
+    | _ -> ReadOutcome_Failed
+
+/// `SelectRekeyProjection`: the query's total, accepted only when it is the
+/// model's projected usage.
+let read_rekey_projection
+      (d: db) (s: t_VaultStmt) (amount: i64) (failed: bool)
+  : t_ReadOutcome i64 =
+  if failed
+  then ReadOutcome_Failed
+  else
+    match s with
+    | VaultStmt_SelectRekeyProjection { f_user = user; f_epoch = epoch;
+                                        f_chunk_id = chunk_id } ->
+      if amount = nat_i64 (projected_usage d user epoch chunk_id)
+      then ReadOutcome_Rows amount
+      else ReadOutcome_Failed
+    | _ -> ReadOutcome_Failed
+
+/// One `oram_buckets` row as `get_path` decodes it.
+let oram_view_of (r: oram_row) : t_OramRowView = {
+  f_version = to_opt (Some r.or_version);
+  f_lamport_clock = to_opt (Some r.or_lamport);
+  f_last_writer = to_opt r.or_last_writer;
+  f_ciphertext = to_opt (Some r.or_ciphertext);
+}
+
+/// `SelectOramRow` on a state.
+let read_oram_row (d: db) (s: t_VaultStmt) (failed: bool)
+  : t_ReadOutcome (Core_models.Option.t_Option t_OramRowView) =
+  if failed
+  then ReadOutcome_Failed
+  else
+    match s with
+    | VaultStmt_SelectOramRow { f_user = user; f_tree_id = tree;
+                                f_bucket_index = index; f_epoch = epoch } ->
+      (match find_oram d.oram (mk_okey user tree index epoch) with
+       | Some r -> ReadOutcome_Rows (Core_models.Option.Option_Some (oram_view_of r))
+       | None -> ReadOutcome_Rows Core_models.Option.Option_None)
+    | _ -> ReadOutcome_Failed
+
+/// One `SelectSyncManifest` row.
+let sync_view_of (r: chunk_row) : t_SyncRowView = {
+  f_chunk_id = Core_models.Option.Option_Some r.ch_id;
+  f_version = Core_models.Option.Option_Some r.ch_version;
+  f_lamport_clock = Core_models.Option.Option_Some r.ch_lamport;
+  f_last_writer = to_opt r.ch_last_writer;
+}
+
+/// The manifest rows of one account at one epoch.
+let rec sync_rows_in (l: chunk_tbl) (user: text) (epoch: i64)
+  : list t_SyncRowView =
+  match l with
+  | [] -> []
+  | r :: tl ->
+    if r.ch_user = user && r.ch_epoch = epoch
+    then sync_view_of r :: sync_rows_in tl user epoch
+    else sync_rows_in tl user epoch
+
+let sync_rows (d: db) (user: text) (epoch: i64) : list t_SyncRowView =
+  sync_rows_in d.chunks user epoch
+
+/// The manifest read accepts the rows the query returned only when they are
+/// exactly the account's rows at `epoch` computed from the state.
+let read_sync
+      (d: db) (s: t_VaultStmt)
+      (rows: Alloc.Vec.t_Vec t_SyncRowView Alloc.Alloc.t_Global) (failed: bool)
+  : t_ReadOutcome (Alloc.Vec.t_Vec t_SyncRowView Alloc.Alloc.t_Global) =
+  if failed
+  then ReadOutcome_Failed
+  else
+    match s with
+    | VaultStmt_SelectSyncManifest { f_user = user; f_epoch = epoch } ->
+      if Seq.seq_to_list rows._0 = sync_rows d user epoch
+      then ReadOutcome_Rows rows
+      else ReadOutcome_Failed
+    | _ -> ReadOutcome_Failed
+
+/// The schema-floor read: the stored value, computed from the model's store.
+let read_schema_floor (d: db) (s: t_VaultStmt) (failed: bool)
+  : t_ReadOutcome (Core_models.Option.t_Option text) =
+  if failed
+  then ReadOutcome_Failed
+  else
+    match s with
+    | VaultStmt_SchemaFloorGet { f_key = key } ->
+      ReadOutcome_Rows (to_opt (d.kv key))
+    | _ -> ReadOutcome_Failed
+
+/// The pending capsule a device holds, as `SelectCapsule` returns it.
+let capsule_view_of (d: db) (device: text) (user: text) : option t_CapsuleView =
+  match find_device d.devices device with
+  | Some row ->
+    if row.dv_user = user && row.dv_revoked = mk_i64 0
+    then
+      (match row.dv_capsule, d.users user with
+       | Some capsule, Some account ->
+         Some {
+           f_capsule = to_opt (Some capsule);
+           f_capsule_epoch = to_opt row.dv_capsule_epoch;
+           f_rotation_id =
+             to_opt
+               (match row.dv_capsule_epoch, account.us_last_rekey_epoch with
+                | Some recorded, Some committed ->
+                  if recorded = committed then account.us_last_rekey_id else None
+                | _ -> None)
+         }
+       | _ -> None)
+    else None
+  | None -> None
+
+/// `SelectCapsule` on a state.
+let read_capsule (d: db) (s: t_VaultStmt) (failed: bool)
+  : t_ReadOutcome (Core_models.Option.t_Option t_CapsuleView) =
+  if failed
+  then ReadOutcome_Failed
+  else
+    match s with
+    | VaultStmt_SelectCapsule { f_device = device; f_user = user } ->
+      ReadOutcome_Rows (to_opt (capsule_view_of d device user))
+    | _ -> ReadOutcome_Failed
+
+/// One `devices` row as `list_devices` serves it.
+let device_list_view_of (id: text) (r: device_row) : t_DeviceListRowView = {
+  f_id = Core_models.Option.Option_Some id;
+  f_user_id = Core_models.Option.Option_Some r.dv_user;
+  f_device_name = Core_models.Option.Option_Some r.dv_name;
+  f_device_type = Core_models.Option.Option_Some r.dv_type;
+  f_last_active = to_opt r.dv_last_active;
+  f_hybrid_ek = Core_models.Option.Option_Some r.dv_ek;
+  f_hybrid_vk = Core_models.Option.Option_Some r.dv_vk;
+  f_enrolled_by = to_opt r.dv_enrolled_by;
+  f_rms_capsule = to_opt r.dv_capsule;
+  f_revoked = Core_models.Option.Option_Some r.dv_revoked;
+  f_revoked_at = to_opt r.dv_revoked_at;
+  f_revoked_by = to_opt r.dv_revoked_by;
+  f_created_at = Core_models.Option.Option_Some r.dv_created_at;
+  f_rekey_capable = Core_models.Option.Option_Some r.dv_capable;
+}
+
+/// The account's devices in the listing's order, capped at `room`.
+let rec device_list_rows_in (l: device_tbl) (user: text) (room: nat)
+  : list t_DeviceListRowView =
+  match l with
+  | [] -> []
+  | (id, r) :: tl ->
+    if room = 0
+    then []
+    else if r.dv_user = user
+         then device_list_view_of id r :: device_list_rows_in tl user (room - 1)
+         else device_list_rows_in tl user room
+
+/// The rows `SelectDeviceList` selects (`LIMIT 1000`).
+let device_list_rows (d: db) (user: text) : list t_DeviceListRowView =
+  device_list_rows_in d.devices user 1000
+
+/// The listing read accepts the rows the query returned only when they are
+/// exactly the account's devices computed from the state.
+let read_device_list
+      (d: db) (s: t_VaultStmt)
+      (rows: Alloc.Vec.t_Vec t_DeviceListRowView Alloc.Alloc.t_Global) (failed: bool)
+  : t_ReadOutcome (Alloc.Vec.t_Vec t_DeviceListRowView Alloc.Alloc.t_Global) =
+  if failed
+  then ReadOutcome_Failed
+  else
+    match s with
+    | VaultStmt_SelectDeviceList { f_user = user } ->
+      if Seq.seq_to_list rows._0 = device_list_rows d user
+      then ReadOutcome_Rows rows
+      else ReadOutcome_Failed
+    | _ -> ReadOutcome_Failed
+
+// ── Outcome slices ─────────────────────────────────────────────────────────
 let stmts_of (p: Alloc.Vec.t_Vec t_VaultStmt Alloc.Alloc.t_Global) : list t_VaultStmt =
   Seq.seq_to_list p._0
 

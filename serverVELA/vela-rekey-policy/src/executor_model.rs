@@ -16,7 +16,11 @@
 use std::collections::BTreeMap;
 
 use crate::executor::{
-    ChunkRowView, InventoryRowView, PendingRowView, ReadOutcome, VaultStmt, WriteOutcome,
+    CapsuleClearObservation, CapsuleReadObservation, CapsuleView, ChunkRowView,
+    DeviceListObservation, DeviceListRowView, InventoryRowView, KeyStateObservation, KeyStateView,
+    OramReadObservation, OramRowView, PendingRowView, ProjectedUsageObservation, ReadOutcome,
+    SchemaFloorObservation, SyncObservation, SyncRowView, UsageObservation, VaultStmt,
+    WriteOutcome,
 };
 
 /// A `vault_chunks` row; keyed by `(user_id, chunk_id, epoch)`.
@@ -54,6 +58,16 @@ pub struct DeviceRow {
     pub rekey_capable: i64,
     pub rms_capsule: Option<String>,
     pub rms_capsule_epoch: Option<i64>,
+    /// The remaining listing columns (`list_devices` selects them all).
+    pub device_name: String,
+    pub device_type: String,
+    pub last_active: Option<String>,
+    pub hybrid_ek: String,
+    pub hybrid_vk: String,
+    pub enrolled_by: Option<String>,
+    pub revoked_at: Option<String>,
+    pub revoked_by: Option<String>,
+    pub created_at: String,
 }
 
 /// An `oram_buckets` row; keyed by `(user_id, tree_id, bucket_index, epoch)`.
@@ -561,6 +575,20 @@ pub fn exec(db: &Db, stmt: &VaultStmt) -> Option<(u64, Db)> {
             next.kv.insert(key.clone(), "2".into());
             Some((0, next))
         }
+        VaultStmt::ClearEnrollmentCapsule { device, user } => match db.devices.get(device) {
+            Some(row) if row.user_id == *user => {
+                next.devices.insert(
+                    device.clone(),
+                    DeviceRow {
+                        rms_capsule: None,
+                        rms_capsule_epoch: None,
+                        ..row.clone()
+                    },
+                );
+                Some((1, next))
+            }
+            _ => Some((0, next)),
+        },
         _ => None,
     }
 }
@@ -859,6 +887,342 @@ pub fn read_exists(db: &Db, stmt: &VaultStmt, failed: bool) -> ReadOutcome<bool>
         }
         _ => ReadOutcome::Failed,
     }
+}
+
+// ── Handler I/O outside executor methods (F-1 wave 2) ─────────────────────
+
+/// The stored rotation state of one account, as `SelectKeyState` returns it.
+pub fn key_state_view(db: &Db, user: &str) -> Option<KeyStateView> {
+    db.users.get(user).map(|row| KeyStateView {
+        key_epoch: Some(row.key_epoch),
+        rekey_state: row.rekey_state.clone(),
+        rekey_started_at: row.rekey_started_at.clone(),
+        rekey_starter: row.rekey_starter.clone(),
+        rekey_id: row.rekey_id.clone(),
+        last_rekey_id: row.last_rekey_id.clone(),
+        last_rekey_epoch: row.last_rekey_epoch,
+    })
+}
+
+/// `SelectKeyState` on a state; `failed` injects a read error.
+pub fn read_key_state(
+    db: &Db,
+    stmt: &VaultStmt,
+    failed: bool,
+) -> ReadOutcome<Option<KeyStateView>> {
+    match stmt {
+        VaultStmt::SelectKeyState { user } if !failed => {
+            ReadOutcome::Rows(key_state_view(db, user))
+        }
+        _ => ReadOutcome::Failed,
+    }
+}
+
+/// The `LENGTH` SQL returns for a stored ciphertext: it is base64 ASCII, so
+/// its character count is its byte count.
+fn text_len(text: &str) -> i64 {
+    text.chars().count() as i64
+}
+
+/// The account's served epoch, if the account exists.
+fn served_epoch(db: &Db, user: &str) -> Option<i64> {
+    db.users.get(user).map(|row| row.key_epoch)
+}
+
+/// `SUM(LENGTH(ciphertext))` over the account's current-epoch chunk rows.
+pub fn chunk_usage(db: &Db, user: &str) -> i64 {
+    let Some(epoch) = served_epoch(db, user) else {
+        return 0;
+    };
+    db.chunks
+        .values()
+        .filter(|row| row.user_id == user && row.epoch == epoch)
+        .map(|row| text_len(&row.ciphertext))
+        .sum()
+}
+
+/// `SUM(LENGTH(ciphertext))` over the account's current-epoch ORAM rows.
+pub fn oram_usage(db: &Db, user: &str) -> i64 {
+    let Some(epoch) = served_epoch(db, user) else {
+        return 0;
+    };
+    db.oram
+        .values()
+        .filter(|row| row.user_id == user && row.epoch == epoch)
+        .map(|row| text_len(&row.ciphertext))
+        .sum()
+}
+
+/// `SUM(LENGTH(ciphertext))` over every ORAM row of the account.
+pub fn oram_total(db: &Db, user: &str) -> i64 {
+    db.oram
+        .values()
+        .filter(|row| row.user_id == user)
+        .map(|row| text_len(&row.ciphertext))
+        .sum()
+}
+
+/// The projected stored bytes after a rotation replaces `chunk_id` at `epoch`.
+pub fn projected_usage(db: &Db, user: &str, epoch: i64, chunk_id: &str) -> i64 {
+    let chunks: i64 = db
+        .chunks
+        .values()
+        .filter(|row| row.user_id == user && row.epoch == epoch && row.chunk_id != chunk_id)
+        .map(|row| text_len(&row.ciphertext))
+        .sum();
+    chunks + oram_total(db, user)
+}
+
+/// `SelectUsageChunks`: the query's total, accepted only when it is the
+/// model's sum over the state.
+pub fn read_usage_chunks(
+    db: &Db,
+    stmt: &VaultStmt,
+    total: i64,
+    failed: bool,
+) -> ReadOutcome<i64> {
+    match stmt {
+        VaultStmt::SelectUsageChunks { user } if !failed => {
+            if total == chunk_usage(db, user) {
+                ReadOutcome::Rows(total)
+            } else {
+                ReadOutcome::Failed
+            }
+        }
+        _ => ReadOutcome::Failed,
+    }
+}
+
+/// `SelectUsageOram`: the query's total, accepted only when it is the model's
+/// sum over the state.
+pub fn read_usage_oram(
+    db: &Db,
+    stmt: &VaultStmt,
+    total: i64,
+    failed: bool,
+) -> ReadOutcome<i64> {
+    match stmt {
+        VaultStmt::SelectUsageOram { user } if !failed => {
+            if total == oram_usage(db, user) {
+                ReadOutcome::Rows(total)
+            } else {
+                ReadOutcome::Failed
+            }
+        }
+        _ => ReadOutcome::Failed,
+    }
+}
+
+/// `SelectRekeyProjection`: the query's total, accepted only when it is the
+/// model's projected usage.
+pub fn read_rekey_projection(
+    db: &Db,
+    stmt: &VaultStmt,
+    total: i64,
+    failed: bool,
+) -> ReadOutcome<i64> {
+    match stmt {
+        VaultStmt::SelectRekeyProjection {
+            user,
+            epoch,
+            chunk_id,
+        } if !failed => {
+            if total == projected_usage(db, user, *epoch, chunk_id) {
+                ReadOutcome::Rows(total)
+            } else {
+                ReadOutcome::Failed
+            }
+        }
+        _ => ReadOutcome::Failed,
+    }
+}
+
+/// `SelectOramRow` on a state; `failed` injects a read error.
+pub fn read_oram_row(
+    db: &Db,
+    stmt: &VaultStmt,
+    failed: bool,
+) -> ReadOutcome<Option<OramRowView>> {
+    match stmt {
+        VaultStmt::SelectOramRow {
+            user,
+            tree_id,
+            bucket_index,
+            epoch,
+        } if !failed => ReadOutcome::Rows(
+            db.oram
+                .get(&(user.clone(), tree_id.clone(), *bucket_index, *epoch))
+                .map(|row| OramRowView {
+                    version: Some(row.version),
+                    lamport_clock: Some(row.lamport_clock),
+                    last_writer: row.last_writer.clone(),
+                    ciphertext: Some(row.ciphertext.clone()),
+                }),
+        ),
+        _ => ReadOutcome::Failed,
+    }
+}
+
+/// One `SelectSyncManifest` row.
+pub fn sync_row(row: &ChunkRow) -> SyncRowView {
+    SyncRowView {
+        chunk_id: Some(row.chunk_id.clone()),
+        version: Some(row.version),
+        lamport_clock: Some(row.lamport_clock),
+        last_writer: row.last_writer.clone(),
+    }
+}
+
+/// The manifest rows of one account at one epoch, in the query's
+/// `ORDER BY chunk_id` order.
+pub fn sync_row_set(db: &Db, user: &str, epoch: i64) -> Vec<SyncRowView> {
+    db.chunks
+        .values()
+        .filter(|row| row.user_id == *user && row.epoch == epoch)
+        .map(sync_row)
+        .collect()
+}
+
+/// `SelectSyncManifest`: the rows the query returned are accepted only when
+/// they are exactly the account's rows at `epoch` computed from the state.
+pub fn read_sync(
+    db: &Db,
+    stmt: &VaultStmt,
+    rows: &[SyncRowView],
+    failed: bool,
+) -> ReadOutcome<Vec<SyncRowView>> {
+    match stmt {
+        VaultStmt::SelectSyncManifest { user, epoch } if !failed => {
+            if rows == sync_row_set(db, user, *epoch).as_slice() {
+                ReadOutcome::Rows(rows.to_vec())
+            } else {
+                ReadOutcome::Failed
+            }
+        }
+        _ => ReadOutcome::Failed,
+    }
+}
+
+/// `SchemaFloorGet`: the stored value, computed from the model's store.
+pub fn read_schema_floor(
+    db: &Db,
+    stmt: &VaultStmt,
+    failed: bool,
+) -> ReadOutcome<Option<String>> {
+    match stmt {
+        VaultStmt::SchemaFloorGet { key } if !failed => {
+            ReadOutcome::Rows(db.kv.get(key).cloned())
+        }
+        _ => ReadOutcome::Failed,
+    }
+}
+
+/// The pending capsule an account's device holds, as `SelectCapsule` returns
+/// it: only an unrevoked device of the account holding a capsule, with the
+/// recorded rotation id when the epoch matches the account's last commit.
+pub fn capsule_view(db: &Db, device: &str, user: &str) -> Option<CapsuleView> {
+    let row = db.devices.get(device)?;
+    if row.user_id != user || row.revoked != 0 {
+        return None;
+    }
+    let capsule = row.rms_capsule.clone()?;
+    let account = db.users.get(user)?;
+    // SQL compares the two cells: a NULL on either side is not a match.
+    let rotation_id = match (row.rms_capsule_epoch, account.last_rekey_epoch) {
+        (Some(capsule_epoch), Some(rekey_epoch)) if capsule_epoch == rekey_epoch => {
+            account.last_rekey_id.clone()
+        }
+        _ => None,
+    };
+    Some(CapsuleView {
+        capsule: Some(capsule),
+        capsule_epoch: row.rms_capsule_epoch,
+        rotation_id,
+    })
+}
+
+/// `SelectCapsule` on a state; `failed` injects a read error.
+pub fn read_capsule(
+    db: &Db,
+    stmt: &VaultStmt,
+    failed: bool,
+) -> ReadOutcome<Option<CapsuleView>> {
+    match stmt {
+        VaultStmt::SelectCapsule { device, user } if !failed => {
+            ReadOutcome::Rows(capsule_view(db, device, user))
+        }
+        _ => ReadOutcome::Failed,
+    }
+}
+
+/// One `SelectDeviceList` row.
+pub fn device_list_view(id: &str, row: &DeviceRow) -> DeviceListRowView {
+    DeviceListRowView {
+        id: Some(id.to_string()),
+        user_id: Some(row.user_id.clone()),
+        device_name: Some(row.device_name.clone()),
+        device_type: Some(row.device_type.clone()),
+        last_active: row.last_active.clone(),
+        hybrid_ek: Some(row.hybrid_ek.clone()),
+        hybrid_vk: Some(row.hybrid_vk.clone()),
+        enrolled_by: row.enrolled_by.clone(),
+        rms_capsule: row.rms_capsule.clone(),
+        revoked: Some(row.revoked),
+        revoked_at: row.revoked_at.clone(),
+        revoked_by: row.revoked_by.clone(),
+        created_at: Some(row.created_at.clone()),
+        rekey_capable: Some(row.rekey_capable),
+    }
+}
+
+/// The account's devices in the listing's order, capped at the query's
+/// `LIMIT 1000`.
+pub fn device_list_row_set(db: &Db, user: &str) -> Vec<DeviceListRowView> {
+    db.devices
+        .iter()
+        .filter(|(_, row)| row.user_id == user)
+        .take(1000)
+        .map(|(id, row)| device_list_view(id, row))
+        .collect()
+}
+
+/// `SelectDeviceList`: the rows the query returned are accepted only when they
+/// are exactly the account's devices computed from the state.
+pub fn read_device_list(
+    db: &Db,
+    stmt: &VaultStmt,
+    rows: &[DeviceListRowView],
+    failed: bool,
+) -> ReadOutcome<Vec<DeviceListRowView>> {
+    match stmt {
+        VaultStmt::SelectDeviceList { user } if !failed => {
+            if rows == device_list_row_set(db, user).as_slice() {
+                ReadOutcome::Rows(rows.to_vec())
+            } else {
+                ReadOutcome::Failed
+            }
+        }
+        _ => ReadOutcome::Failed,
+    }
+}
+
+/// The transaction begin: one statement, no state change; a failed begin
+/// changes nothing either.
+pub fn begin_transaction(db: &Db, plan: &[VaultStmt], fault: Option<usize>) -> (Vec<WriteOutcome>, Db) {
+    let mut outcomes = Vec::new();
+    for (k, stmt) in plan.iter().enumerate() {
+        if faulted(fault, k) {
+            outcomes.push(WriteOutcome::Failed);
+            return (outcomes, db.clone());
+        }
+        if matches!(stmt, VaultStmt::BeginTransaction) {
+            outcomes.push(WriteOutcome::Applied(0));
+        } else {
+            outcomes.push(WriteOutcome::Failed);
+            return (outcomes, db.clone());
+        }
+    }
+    (outcomes, db.clone())
 }
 
 // ── The executors: plan, run, classify ─────────────────────────────────────
@@ -1331,11 +1695,141 @@ pub fn oram_write(
     }
 }
 
+// ── The handler I/O: plan, run, classify (F-1 wave 2) ─────────────────────
+
+/// `rekey::load_key_state`.
+pub fn key_state(db: &Db, user: &str, fault: Option<usize>) -> KeyStateObservation {
+    let stmt = crate::executor::plan_load_key_state(user.to_string());
+    crate::executor::classify_key_state(read_key_state(db, &stmt, fault == Some(0)))
+}
+
+/// `vault::current_usage_bytes`: the chunk read is statement 0, the ORAM read
+/// statement 1.
+pub fn usage(db: &Db, user: &str, fault: Option<usize>) -> UsageObservation {
+    let chunks = read_usage_chunks(
+        db,
+        &crate::executor::plan_usage_chunks(user.to_string()),
+        chunk_usage(db, user),
+        fault == Some(0),
+    );
+    let oram = read_usage_oram(
+        db,
+        &crate::executor::plan_usage_oram(user.to_string()),
+        oram_usage(db, user),
+        fault == Some(1),
+    );
+    crate::executor::classify_usage(&chunks, &oram)
+}
+
+/// `vault::enforce_rekey_shadow_quota`.
+pub fn projection(
+    db: &Db,
+    user: &str,
+    epoch: i64,
+    chunk_id: &str,
+    fault: Option<usize>,
+) -> ProjectedUsageObservation {
+    let stmt = crate::executor::plan_rekey_projection(
+        user.to_string(),
+        epoch,
+        chunk_id.to_string(),
+    );
+    crate::executor::classify_projected_usage(&read_rekey_projection(
+        db,
+        &stmt,
+        projected_usage(db, user, epoch, chunk_id),
+        fault == Some(0),
+    ))
+}
+
+/// `oram::get_path`'s per-bucket read.
+pub fn oram_read(
+    db: &Db,
+    user: &str,
+    tree_id: &str,
+    bucket_index: i64,
+    epoch: i64,
+    fault: Option<usize>,
+) -> OramReadObservation {
+    let stmt = crate::executor::plan_read_oram_bucket(
+        user.to_string(),
+        tree_id.to_string(),
+        bucket_index,
+        epoch,
+    );
+    crate::executor::classify_oram_read(read_oram_row(db, &stmt, fault == Some(0)))
+}
+
+/// `sync::get_sync`.
+pub fn sync(
+    db: &Db,
+    user: &str,
+    epoch: i64,
+    fault: Option<usize>,
+) -> SyncObservation {
+    let stmt = crate::executor::plan_read_sync(user.to_string(), epoch);
+    let rows = sync_row_set(db, user, epoch);
+    crate::executor::classify_sync(&read_sync(db, &stmt, &rows, fault == Some(0)))
+}
+
+/// `schema::minimum`.
+pub fn schema_floor_read(db: &Db, key: &str, fault: Option<usize>) -> SchemaFloorObservation {
+    let stmt = crate::executor::plan_read_schema_floor(key.to_string());
+    crate::executor::classify_schema_floor(read_schema_floor(db, &stmt, fault == Some(0)))
+}
+
+/// `device::capsule::get_capsule`'s read.
+pub fn capsule_read(
+    db: &Db,
+    device: &str,
+    user: &str,
+    fault: Option<usize>,
+) -> CapsuleReadObservation {
+    let stmt = crate::executor::plan_read_capsule(device.to_string(), user.to_string());
+    crate::executor::classify_capsule_read(read_capsule(db, &stmt, fault == Some(0)))
+}
+
+/// `device::capsule::get_capsule`'s read-once clear.
+pub fn capsule_clear(
+    db: &Db,
+    device: &str,
+    user: &str,
+    fault: Option<usize>,
+) -> (CapsuleClearObservation, Db) {
+    let plan = crate::executor::plan_clear_enrollment_capsule(
+        device.to_string(),
+        user.to_string(),
+    );
+    let (outcomes, post) = run_autocommit(db, &plan, fault);
+    (crate::executor::classify_capsule_clear(&outcomes), post)
+}
+
+/// `device::list::list_devices`.
+pub fn device_list(db: &Db, user: &str, fault: Option<usize>) -> DeviceListObservation {
+    let stmt = crate::executor::plan_read_devices(user.to_string());
+    let rows = device_list_row_set(db, user);
+    crate::executor::classify_device_list(&read_device_list(db, &stmt, &rows, fault == Some(0)))
+}
+
+/// The transaction begin behind `POST /vault/rekey/start` and
+/// `GET /device/capsule`.
+pub fn begin(
+    db: &Db,
+    fault: Option<usize>,
+) -> (crate::rekey_driver::TransactionObservation, Db) {
+    let plan = crate::executor::plan_begin_transaction();
+    let (outcomes, post) = begin_transaction(db, &plan, fault);
+    (crate::executor::classify_transaction(&outcomes), post)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::executor::{
         plan_ack_capsule, plan_attest_capable, plan_delete_chunk, plan_schema_floor,
+        CapsuleClearObservation, CapsuleReadObservation, CapsuleView, DeviceListObservation,
+        KeyStateObservation, OramReadObservation, OramRowView, ProjectedUsageObservation,
+        SchemaFloorObservation, SyncObservation, UsageObservation,
     };
     use crate::rekey_driver::CasObservation;
     use crate::vault_mutation_driver::{
@@ -1367,6 +1861,15 @@ mod tests {
             rekey_capable: 1,
             rms_capsule: None,
             rms_capsule_epoch: None,
+            device_name: s("laptop"),
+            device_type: s("desktop"),
+            last_active: None,
+            hybrid_ek: s("ek"),
+            hybrid_vk: s("vk"),
+            enrolled_by: None,
+            revoked_at: None,
+            revoked_by: None,
+            created_at: s("t0"),
         }
     }
 
@@ -1506,6 +2009,128 @@ mod tests {
         assert_eq!(plan_ack_capsule(s("dev"), s("u"), 2).len(), 1);
         assert_eq!(plan_attest_capable(s("dev"), s("u")).len(), 1);
         assert_eq!(plan_schema_floor(s("vault-schema:u")).len(), 1);
+    }
+
+    /// The handler-I/O vectors the F* `vector_*` lemmas prove.
+    #[test]
+    fn handler_vectors() {
+        let pre = base();
+
+        assert_eq!(
+            key_state(&pre, "u", None),
+            KeyStateObservation::Loaded(KeyStateView {
+                key_epoch: Some(1),
+                rekey_state: None,
+                rekey_started_at: None,
+                rekey_starter: None,
+                rekey_id: None,
+                last_rekey_id: None,
+                last_rekey_epoch: None,
+            })
+        );
+        assert_eq!(key_state(&pre, "missing", None), KeyStateObservation::NotFound);
+        assert_eq!(key_state(&pre, "u", Some(0)), KeyStateObservation::Storage);
+
+        assert_eq!(
+            usage(&pre, "u", None),
+            UsageObservation::Measured {
+                chunks: 2,
+                oram: 0
+            }
+        );
+        assert_eq!(usage(&pre, "u", Some(1)), UsageObservation::Storage);
+
+        assert_eq!(
+            projection(&pre, "u", 1, "c", None),
+            ProjectedUsageObservation::Measured(0)
+        );
+
+        let mut with_bucket = pre.clone();
+        with_bucket.oram.insert(
+            (s("u"), s("t"), 1, 1),
+            OramRow {
+                user_id: s("u"),
+                tree_id: s("t"),
+                bucket_index: 1,
+                epoch: 1,
+                version: 1,
+                lamport_clock: 1,
+                last_writer: Some(s("dev")),
+                ciphertext: s("bucket"),
+                created_at: s("t0"),
+                updated_at: s("t0"),
+            },
+        );
+        assert_eq!(
+            usage(&with_bucket, "u", None),
+            UsageObservation::Measured {
+                chunks: 2,
+                oram: 6
+            }
+        );
+        assert_eq!(
+            projection(&with_bucket, "u", 1, "c", None),
+            ProjectedUsageObservation::Measured(6)
+        );
+        assert_eq!(
+            oram_read(&with_bucket, "u", "t", 1, 1, None),
+            OramReadObservation::Found(OramRowView {
+                version: Some(1),
+                lamport_clock: Some(1),
+                last_writer: Some(s("dev")),
+                ciphertext: Some(s("bucket")),
+            })
+        );
+        assert_eq!(
+            oram_read(&with_bucket, "u", "t", 2, 1, None),
+            OramReadObservation::Missing
+        );
+
+        assert_eq!(sync(&pre, "u", 1, None), SyncObservation::Read);
+        assert_eq!(sync(&pre, "u", 2, None), SyncObservation::Read);
+        assert_eq!(
+            schema_floor_read(&pre, "vault-schema:u", None),
+            SchemaFloorObservation::Stored(None)
+        );
+        let mut with_floor = pre.clone();
+        with_floor.kv.insert(s("vault-schema:u"), s("2"));
+        assert_eq!(
+            schema_floor_read(&with_floor, "vault-schema:u", None),
+            SchemaFloorObservation::Stored(Some(s("2")))
+        );
+
+        // The base device has no capsule.
+        assert_eq!(capsule_read(&pre, "dev", "u", None), CapsuleReadObservation::Missing);
+        let mut with_capsule = pre.clone();
+        with_capsule.devices.insert(
+            s("dev"),
+            DeviceRow {
+                rms_capsule: Some(s("cap")),
+                rms_capsule_epoch: Some(2),
+                ..device_row("u", 0)
+            },
+        );
+        assert_eq!(
+            capsule_read(&with_capsule, "dev", "u", None),
+            CapsuleReadObservation::Found(CapsuleView {
+                capsule: Some(s("cap")),
+                capsule_epoch: Some(2),
+                rotation_id: None,
+            })
+        );
+        let (obs, post) = capsule_clear(&with_capsule, "dev", "u", None);
+        assert_eq!(obs, CapsuleClearObservation::Cleared);
+        assert_eq!(post.devices[&s("dev")].rms_capsule, None);
+
+        assert_eq!(device_list(&pre, "u", None), DeviceListObservation::Read);
+        assert_eq!(device_list(&pre, "u", Some(0)), DeviceListObservation::Failed);
+
+        let (obs, post) = begin(&pre, None);
+        assert_eq!(obs, crate::rekey_driver::TransactionObservation::Committed);
+        assert_eq!(post, pre);
+        let (obs, post) = begin(&pre, Some(0));
+        assert_eq!(obs, crate::rekey_driver::TransactionObservation::Failed);
+        assert_eq!(post, pre);
     }
 }
 

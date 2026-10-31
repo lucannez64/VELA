@@ -42,7 +42,7 @@ use vela_rekey_policy::{
 use crate::{
     error::{AppError, Result},
     middleware::{maybe_append_new_token, AuthSession, DeviceSession},
-    sqldb::{Db as _, TursoValue},
+    sqldb::TursoValue,
     state::AppState,
 };
 
@@ -97,34 +97,38 @@ struct KeyState {
 }
 
 async fn load_key_state(state: &AppState, user_id: &str) -> Result<KeyState> {
-    let rows = state
-        .sqldb
-        .query(
-            "SELECT key_epoch, rekey_state, rekey_started_at, rekey_starter, rekey_id,
-                    last_rekey_id, last_rekey_epoch
-             FROM users WHERE id = ?",
-            vec![TursoValue::Text(user_id.to_string())],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    let row = rows
-        .first()
-        .ok_or_else(|| AppError::NotFound("account not found".into()))?;
-    let text = |col: usize| -> Option<String> {
-        match row.get(col) {
-            Some(TursoValue::Text(s)) => Some(s.clone()),
-            _ => None,
+    use vela_rekey_policy::executor::{
+        classify_key_state, plan_load_key_state, KeyStateObservation, ReadOutcome,
+    };
+    let plan = plan_load_key_state(user_id.to_string());
+    let mut sql = crate::vault::sql::PoolSql(state);
+    let mut read_error: Option<anyhow::Error> = None;
+    let outcome = match crate::vault::sql::run_read(&mut sql, &plan).await {
+        Ok(rows) => ReadOutcome::Rows(crate::vault::sql::key_state_view(&rows)),
+        Err(error) => {
+            read_error = Some(error);
+            ReadOutcome::Failed
         }
     };
-    Ok(KeyState {
-        epoch: row.i64(0).unwrap_or(1).max(1),
-        freezing: text(1).as_deref() == Some("freezing"),
-        started_at: text(2),
-        starter: text(3),
-        rotation_id: text(4),
-        last_rekey_id: text(5),
-        last_rekey_epoch: row.i64(6),
-    })
+    match classify_key_state(outcome) {
+        KeyStateObservation::Loaded(view) => {
+            let raw_epoch = view.key_epoch.unwrap_or(1);
+            Ok(KeyState {
+                epoch: if raw_epoch > 1 { raw_epoch } else { 1 },
+                freezing: view.rekey_state.as_deref() == Some("freezing"),
+                started_at: view.rekey_started_at,
+                starter: view.rekey_starter,
+                rotation_id: view.rekey_id,
+                last_rekey_id: view.last_rekey_id,
+                last_rekey_epoch: view.last_rekey_epoch,
+            })
+        }
+        KeyStateObservation::NotFound => Err(AppError::NotFound("account not found".into())),
+        KeyStateObservation::Storage => Err(AppError::Internal(match read_error {
+            Some(error) => error.to_string(),
+            None => "re-key state lookup failed".into(),
+        })),
+    }
 }
 
 /// Lazily roll back a `FREEZING` account whose initiator went silent past the
@@ -212,18 +216,22 @@ async fn rollback_rekey(
     rotation_id: &str,
 ) -> Result<bool> {
     use vela_rekey_policy::executor::{
-        classify_rollback, plan_commit_transaction, plan_rollback_cas, plan_rollback_cleanup,
-        WriteOutcome,
+        classify_rollback, plan_begin_transaction, plan_commit_transaction, plan_rollback_cas,
+        plan_rollback_cleanup, WriteOutcome,
     };
     use vela_rekey_policy::rekey_driver::RollbackObservation;
     // Keep the state transition and shadow cleanup on one pinned transaction.
     // Otherwise a new `start` can enter FREEZING after the UPDATE and have its
     // fresh N+1 shadows deleted by the previous abort's cleanup statement.
-    let tx = state
-        .sqldb
-        .tx()
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let mut pool = crate::vault::sql::PoolSql(state);
+    let (_begin, begin_error, guard) =
+        crate::vault::sql::run_begin(&mut pool, &plan_begin_transaction()).await;
+    if let Some(error) = begin_error {
+        return Err(error.into_internal());
+    }
+    let Some(tx) = guard else {
+        return Err(AppError::Internal("re-key transaction did not open".into()));
+    };
     let mut sql = crate::vault::sql::TxSql(Some(tx));
     let (cas, error) = crate::vault::sql::run_writes(
         &mut sql,
@@ -567,17 +575,17 @@ impl RekeyIo<'_> {
     async fn begin_freeze_transaction(
         &mut self,
     ) -> vela_rekey_policy::rekey_driver::TransactionObservation {
-        use vela_rekey_policy::rekey_driver::TransactionObservation as O;
-        match self.state.sqldb.tx().await {
-            Ok(tx) => {
-                self.tx = Some(tx);
-                O::Committed
-            }
-            Err(error) => {
-                self.error = Some(AppError::Internal(error.to_string()));
-                O::Failed
-            }
+        use vela_rekey_policy::executor::{classify_transaction, plan_begin_transaction};
+        let plan = plan_begin_transaction();
+        let mut sql = crate::vault::sql::PoolSql(self.state);
+        let (outcomes, error, guard) = crate::vault::sql::run_begin(&mut sql, &plan).await;
+        if let Some(error) = error {
+            self.error = Some(error.into_internal());
         }
+        if let Some(guard) = guard {
+            self.tx = Some(guard);
+        }
+        classify_transaction(&outcomes)
     }
 
     async fn read_inventory(
