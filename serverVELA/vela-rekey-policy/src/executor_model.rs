@@ -769,6 +769,21 @@ pub fn read_chunk_row(
     }
 }
 
+/// The inventory rows of one account at one epoch, as the query returns them.
+/// Mirrors `inventory_rows` in the F* model: the set of rows is a function of
+/// the state; the SQL `ORDER BY chunk_id` fixes the wire order.
+pub fn inventory_row_set(db: &Db, user: &str, epoch: i64) -> Vec<InventoryRowView> {
+    db.chunks
+        .values()
+        .filter(|row| row.user_id == *user && row.epoch == epoch)
+        .map(|row| InventoryRowView {
+            chunk_id: Some(row.chunk_id.clone()),
+            version: Some(row.version),
+            lamport_clock: Some(row.lamport_clock),
+        })
+        .collect()
+}
+
 /// `SelectInventory` on a state; `failed` injects a read error.
 pub fn read_inventory(
     db: &Db,
@@ -777,18 +792,7 @@ pub fn read_inventory(
 ) -> ReadOutcome<Vec<InventoryRowView>> {
     match stmt {
         VaultStmt::SelectInventory { user, epoch } if !failed => {
-            let mut rows: Vec<_> = db
-                .chunks
-                .values()
-                .filter(|row| row.user_id == *user && row.epoch == *epoch)
-                .map(|row| InventoryRowView {
-                    chunk_id: Some(row.chunk_id.clone()),
-                    version: Some(row.version),
-                    lamport_clock: Some(row.lamport_clock),
-                })
-                .collect();
-            rows.sort_by(|a, b| a.chunk_id.cmp(&b.chunk_id));
-            ReadOutcome::Rows(rows)
+            ReadOutcome::Rows(inventory_row_set(db, user, *epoch))
         }
         _ => ReadOutcome::Failed,
     }

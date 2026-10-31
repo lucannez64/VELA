@@ -37,7 +37,8 @@ hax_lib_root=$(
     jq -r '.packages[] | select(.name == "hax-lib") | .manifest_path | sub("/Cargo.toml$"; "")'
 )
 
-mutants=(classify-error classify-rows classify-ack plan-swap plan-drop guard-drop)
+mutants=(classify-error classify-rows classify-ack plan-swap plan-drop guard-drop
+         freeze-oram commit-shadows commit-devices)
 declare -A expect=(
   [classify-error]=delete_chunk_is_honest
   [classify-rows]=chunk_update_is_honest
@@ -45,6 +46,9 @@ declare -A expect=(
   [plan-swap]=write_capsule_is_honest
   [plan-drop]=freeze_transaction_is_honest
   [guard-drop]=delete_chunk_is_honest
+  [freeze-oram]=freeze_requires_a_clean_account
+  [commit-shadows]=commit_publishes_complete_chunks
+  [commit-devices]=commit_publishes_complete_devices
 )
 
 failures=0
@@ -121,18 +125,42 @@ elif name == 'plan-drop':
     body2 = body2.replace('array_of_list 1 list', 'array_of_list 0 list')
     text = text[:start] + body2 + text[end:]
 else:
-    # guard-drop mutates the hand-written model, not the store.
+    # The remaining mutants edit the hand-written model, not the store.
     mt = model_path.read_text()
-    old = '''    let key = mk_ckey user id epoch in
-    if Some? (d.chunks key) && active_at d user epoch
-    then Some (mk_u64 1, { d with chunks = upd_chunks d.chunks key None })
-    else Some (mk_u64 0, d)'''
-    if mt.count(old) != 1:
-        sys.exit(f'{name}: model delete shape changed')
-    mt = mt.replace(old, '''    let key = mk_ckey user id epoch in
-    if Some? (d.chunks key)
-    then Some (mk_u64 1, { d with chunks = upd_chunks d.chunks key None })
-    else Some (mk_u64 0, d)''')
+
+    def model_once(old, new):
+        global mt
+        if mt.count(old) != 1:
+            sys.exit(f'{name}: expected exactly one model match for {old!r}, found {mt.count(old)}')
+        mt = mt.replace(old, new)
+
+    if name == 'guard-drop':
+        model_once(
+            '''    if Some? (find_chunk d.chunks key) && active_at d user epoch
+    then Some (mk_u64 1, { d with chunks = remove_chunk d.chunks key })''',
+            '''    if Some? (find_chunk d.chunks key)
+    then Some (mk_u64 1, { d with chunks = remove_chunk d.chunks key })''')
+    elif name == 'freeze-oram':
+        model_once(
+            '''    r.us_key_epoch = from_epoch && r.us_rekey_state = None &&
+    not (any_oram d user) && not (any_incapable d user) &&
+    not (any_pending_capsule d user)''',
+            '''    r.us_key_epoch = from_epoch && r.us_rekey_state = None &&
+    not (any_incapable d user) &&
+    not (any_pending_capsule d user)''')
+    elif name == 'commit-shadows':
+        model_once(
+            '''    r.us_rotation = Some rotation && not (any_missing_shadow d user from_epoch to_epoch) &&
+    not (any_incomplete_device d user to_epoch)''',
+            '''    r.us_rotation = Some rotation &&
+    not (any_incomplete_device d user to_epoch)''')
+    elif name == 'commit-devices':
+        model_once(
+            '''    r.us_rotation = Some rotation && not (any_missing_shadow d user from_epoch to_epoch) &&
+    not (any_incomplete_device d user to_epoch)''',
+            '''    r.us_rotation = Some rotation && not (any_missing_shadow d user from_epoch to_epoch)''')
+    else:
+        sys.exit(f'{name}: unknown mutant')
     model_path.write_text(mt)
 
 store_path.write_text(text)
