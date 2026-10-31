@@ -1353,3 +1353,286 @@ let freeze_requires_a_clean_account
   freeze_cas_is_honest d user from_epoch now starter rotation f
 
 #pop-options
+
+// ── Handler I/O outside executor methods (F-1 wave 2) ──────────────────────
+
+#push-options "--fuel 4 --ifuel 2"
+
+/// `rekey::load_key_state`.
+let key_state_read (d: db) (user: text) (f: option nat) : t_KeyStateObservation =
+  classify_key_state (read_key_state d (plan_load_key_state user) (faulted f 0))
+
+/// The key-state read reports the stored rotation row cell for cell: `Loaded`
+/// carries exactly `users[user]`'s seven columns, `NotFound` is a missing
+/// account, and a failed read is `Storage`. The epoch floor and the `freezing`
+/// test are the handler's policy over these cells, not part of the read.
+let key_state_is_honest (d: db) (user: text) (f: option nat)
+  : Lemma
+    ((key_state_read d user f == KeyStateObservation_Storage <==> f = Some 0) /\
+     (key_state_read d user f == KeyStateObservation_NotFound <==>
+        (f <> Some 0 /\ None? (d.users user))) /\
+     (forall (view: t_KeyStateView).
+        key_state_read d user f == KeyStateObservation_Loaded view <==>
+        (f <> Some 0 /\
+         (match d.users user with
+          | Some r -> view == key_state_view_of r
+          | None -> False)))) =
+  let aux (view: t_KeyStateView)
+    : Lemma
+      (key_state_read d user f == KeyStateObservation_Loaded view <==>
+       (f <> Some 0 /\
+        (match d.users user with
+         | Some r -> view == key_state_view_of r
+         | None -> False))) =
+    ()
+  in
+  FStar.Classical.forall_intro aux
+
+/// The driver reads the live rotation row: every loaded cell is the stored
+/// `users` cell.
+let loaded_key_state_is_stored
+      (d: db) (user: text) (view: t_KeyStateView) (f: option nat)
+  : Lemma
+    (requires key_state_read d user f == KeyStateObservation_Loaded view)
+    (ensures
+      (match d.users user with
+       | Some r ->
+         view.f_key_epoch == to_opt (Some r.us_key_epoch) /\
+         view.f_rekey_state == to_opt r.us_rekey_state /\
+         view.f_rekey_started_at == to_opt r.us_started /\
+         view.f_rekey_starter == to_opt r.us_starter /\
+         view.f_rekey_id == to_opt r.us_rotation /\
+         view.f_last_rekey_id == to_opt r.us_last_rekey_id /\
+         view.f_last_rekey_epoch == to_opt r.us_last_rekey_epoch
+       | None -> False)) =
+  key_state_is_honest d user f
+
+/// `vault::current_usage_bytes`: the chunk read is statement 0, the ORAM read
+/// statement 1. The totals are the query's, accepted only when they are the
+/// state's sums.
+let usage_read
+      (d: db) (user: text) (chunks oram: i64) (f: option nat)
+  : t_UsageObservation =
+  classify_usage
+    (read_usage_chunks d (plan_usage_chunks user) chunks (faulted f 0))
+    (read_usage_oram d (plan_usage_oram user) oram (faulted f 1))
+
+/// The two usage reads report the account's stored current-epoch bytes: the
+/// observation is `Measured` with those sums exactly when both queries ran and
+/// returned them, and `Storage` on either failure or any other total.
+let usage_is_honest
+      (d: db) (user: text) (chunks oram: i64) (f: option nat)
+  : Lemma
+    (usage_read d user chunks oram f ==
+       (if no_fault_in f 2 && chunks =. nat_i64 (chunk_usage d user) &&
+           oram =. nat_i64 (oram_usage d user)
+        then UsageObservation_Measured { f_chunks = chunks; f_oram = oram }
+        else UsageObservation_Storage)) =
+  ()
+
+/// A `Measured` usage observation therefore carries exactly the stored sums and
+/// rules out a failed read.
+let usage_measured_is_stored
+      (d: db) (user: text) (chunks oram: i64) (f: option nat)
+  : Lemma
+    ((usage_read d user chunks oram f == UsageObservation_Storage <==>
+        (f = Some 0 \/ f = Some 1 \/
+         chunks <> nat_i64 (chunk_usage d user) \/
+         oram <> nat_i64 (oram_usage d user))) /\
+     (usage_read d user chunks oram f ==
+        UsageObservation_Measured { f_chunks = chunks; f_oram = oram } <==>
+        (no_fault_in f 2 /\
+         chunks = nat_i64 (chunk_usage d user) /\
+         oram = nat_i64 (oram_usage d user)))) =
+  usage_is_honest d user chunks oram f
+
+/// `vault::enforce_rekey_shadow_quota`: the projected stored bytes.
+let projection_read
+      (d: db) (user: text) (epoch: i64) (chunk_id: text) (amount: i64) (f: option nat)
+  : t_ProjectedUsageObservation =
+  classify_projected_usage
+    (read_rekey_projection d (plan_rekey_projection user epoch chunk_id) amount (faulted f 0))
+
+/// The projected-storage read reports the state's projected bytes exactly when
+/// it ran and returned them.
+let projection_is_honest
+      (d: db) (user: text) (epoch: i64) (chunk_id: text) (amount: i64) (f: option nat)
+  : Lemma
+    (projection_read d user epoch chunk_id amount f ==
+       (if f <> Some 0 && amount =. nat_i64 (projected_usage d user epoch chunk_id)
+        then ProjectedUsageObservation_Measured amount
+        else ProjectedUsageObservation_Storage)) =
+  ()
+
+/// `oram::get_path`'s per-bucket read.
+let oram_read_obs
+      (d: db) (user tree: text) (index epoch: i64) (f: option nat)
+  : t_OramReadObservation =
+  classify_oram_read
+    (read_oram_row d (plan_read_oram_bucket user tree index epoch) (faulted f 0))
+
+/// The served bucket is the stored one at the caller's account, tree, index
+/// and served epoch; a missing key is `Missing`, a failed read is `Storage`.
+let oram_read_is_honest
+      (d: db) (user tree: text) (index epoch: i64) (f: option nat)
+  : Lemma
+    ((oram_read_obs d user tree index epoch f == OramReadObservation_Storage <==>
+        f = Some 0) /\
+     (oram_read_obs d user tree index epoch f == OramReadObservation_Missing <==>
+        (f <> Some 0 /\
+         None? (find_oram d.oram (mk_okey user tree index epoch)))) /\
+     (forall (v: t_OramRowView).
+        oram_read_obs d user tree index epoch f == OramReadObservation_Found v <==>
+        (f <> Some 0 /\
+         (match find_oram d.oram (mk_okey user tree index epoch) with
+          | Some r -> v == oram_view_of r
+          | None -> False)))) =
+  let aux (v: t_OramRowView)
+    : Lemma
+      (oram_read_obs d user tree index epoch f == OramReadObservation_Found v <==>
+       (f <> Some 0 /\
+        (match find_oram d.oram (mk_okey user tree index epoch) with
+         | Some r -> v == oram_view_of r
+         | None -> False))) =
+    ()
+  in
+  FStar.Classical.forall_intro aux
+
+/// `sync::get_sync`: the chunk manifest at the served epoch.
+let sync_obs
+      (d: db) (user: text) (epoch: i64)
+      (rows: Alloc.Vec.t_Vec t_SyncRowView Alloc.Alloc.t_Global) (f: option nat)
+  : t_SyncObservation =
+  classify_sync (read_sync d (plan_read_sync user epoch) rows (faulted f 0))
+
+/// The manifest read reports `Read` only when its query ran and returned
+/// exactly the account's rows at that epoch computed from the state, so the row
+/// set is never a free input.
+let sync_is_honest
+      (d: db) (user: text) (epoch: i64)
+      (rows: Alloc.Vec.t_Vec t_SyncRowView Alloc.Alloc.t_Global) (f: option nat)
+  : Lemma
+    ((sync_obs d user epoch rows f == SyncObservation_Read <==>
+        (f <> Some 0 /\ Seq.seq_to_list rows._0 = sync_rows d user epoch)) /\
+     (sync_obs d user epoch rows f == SyncObservation_Failed <==>
+        (f = Some 0 \/ Seq.seq_to_list rows._0 <> sync_rows d user epoch))) =
+  ()
+
+/// `schema::minimum`'s store read.
+let schema_floor_obs (d: db) (key: text) (f: option nat) : t_SchemaFloorObservation =
+  classify_schema_floor (read_schema_floor d (plan_read_schema_floor key) (faulted f 0))
+
+/// The floor observation is the stored schema value, cell for cell: a failed
+/// read is `Storage`, and `Stored v` is exactly the key's value. A mutant which
+/// reports a failed read as a stored value breaks this.
+let schema_floor_read_is_honest (d: db) (key: text) (f: option nat)
+  : Lemma
+    ((schema_floor_obs d key f == SchemaFloorObservation_Storage <==> f = Some 0) /\
+     (forall (value: Core_models.Option.t_Option text).
+        schema_floor_obs d key f == SchemaFloorObservation_Stored value <==>
+        (f <> Some 0 /\ value == to_opt (d.kv key)))) =
+  let aux (value: Core_models.Option.t_Option text)
+    : Lemma
+      (schema_floor_obs d key f == SchemaFloorObservation_Stored value <==>
+       (f <> Some 0 /\ value == to_opt (d.kv key))) =
+    ()
+  in
+  FStar.Classical.forall_intro aux
+
+/// `device::capsule::get_capsule`'s read.
+let capsule_read_obs (d: db) (device user: text) (f: option nat)
+  : t_CapsuleReadObservation =
+  classify_capsule_read (read_capsule d (plan_read_capsule device user) (faulted f 0))
+
+/// The delivered capsule is the stored one for the caller's own unrevoked
+/// device, with the recorded rotation id only when the epoch equals the
+/// account's last committed one; a missing row is `Missing` and a failed read
+/// is `Storage`.
+let capsule_read_is_honest (d: db) (device user: text) (f: option nat)
+  : Lemma
+    ((capsule_read_obs d device user f == CapsuleReadObservation_Storage <==>
+        f = Some 0) /\
+     (capsule_read_obs d device user f == CapsuleReadObservation_Missing <==>
+        (f <> Some 0 /\ None? (capsule_view_of d device user))) /\
+     (forall (v: t_CapsuleView).
+        capsule_read_obs d device user f == CapsuleReadObservation_Found v <==>
+        (f <> Some 0 /\ capsule_view_of d device user = Some v))) =
+  let aux (v: t_CapsuleView)
+    : Lemma
+      (capsule_read_obs d device user f == CapsuleReadObservation_Found v <==>
+       (f <> Some 0 /\ capsule_view_of d device user = Some v)) =
+    ()
+  in
+  FStar.Classical.forall_intro aux
+
+/// `get_capsule`'s read-once clear.
+let capsule_clear (d: db) (device user: text) (f: option nat)
+  : (t_CapsuleClearObservation & db) =
+  let r = run_auto d (stmts_of (plan_clear_enrollment_capsule device user)) 0 f in
+  (classify_capsule_clear (slice_of (fst r)), snd r)
+
+/// The clear changes exactly the caller's own device row, and only when it
+/// ran; a foreign or missing row changes nothing.
+let capsule_clear_is_honest (d: db) (device user: text) (f: option nat)
+  : Lemma
+    (let (obs, post) = capsule_clear d device user f in
+     let owned : bool =
+       (match find_device d.devices device with
+        | Some r -> r.dv_user = user
+        | None -> false) in
+     (obs == CapsuleClearObservation_Cleared <==> (owned /\ no_fault_in f 1)) /\
+     (obs == CapsuleClearObservation_Missed <==> (not owned /\ f <> Some 0)) /\
+     (obs == CapsuleClearObservation_Storage <==> f = Some 0) /\
+     (obs == CapsuleClearObservation_Cleared ==>
+        (unchanged_except_devices d post /\
+         (match find_device d.devices device with
+          | Some r -> post.devices == set_device d.devices device (clear_capsule r)
+          | None -> False))) /\
+     (obs =!= CapsuleClearObservation_Cleared ==> post == d)) =
+  let r = run_auto d (stmts_of (plan_clear_enrollment_capsule device user)) 0 f in
+  seq_of_list_facts (fst r)
+
+/// `device::list::list_devices`.
+let device_list_obs
+      (d: db) (user: text)
+      (rows: Alloc.Vec.t_Vec t_DeviceListRowView Alloc.Alloc.t_Global) (f: option nat)
+  : t_DeviceListObservation =
+  classify_device_list (read_device_list d (plan_read_devices user) rows (faulted f 0))
+
+/// The listing reports `Read` only when its query ran and returned exactly the
+/// account's device rows computed from the state. A revoked device is a row
+/// like any other; another account's device is not.
+let device_list_is_honest
+      (d: db) (user: text)
+      (rows: Alloc.Vec.t_Vec t_DeviceListRowView Alloc.Alloc.t_Global) (f: option nat)
+  : Lemma
+    ((device_list_obs d user rows f == DeviceListObservation_Read <==>
+        (f <> Some 0 /\ Seq.seq_to_list rows._0 = device_list_rows d user)) /\
+     (device_list_obs d user rows f == DeviceListObservation_Failed <==>
+        (f = Some 0 \/ Seq.seq_to_list rows._0 <> device_list_rows d user))) =
+  ()
+
+/// The transaction begin is one statement and changes nothing.
+let begin_plan_is_one_statement ()
+  : Lemma (stmts_of (plan_begin_transaction ()) == [VaultStmt_BeginTransaction]) = ()
+
+/// Either begin/commit path.
+let begin_run (d: db) (f: option nat) : (list t_WriteOutcome & db) =
+  (run_begin d (stmts_of (plan_begin_transaction ())) 0 f, d)
+
+let begin_obs (d: db) (f: option nat) : RD.t_TransactionObservation =
+  classify_transaction (slice_of (fst (begin_run d f)))
+
+/// The transaction begin reports `Committed` exactly when it ran, and it
+/// publishes nothing either way.
+let begin_transaction_is_honest (d: db) (f: option nat)
+  : Lemma
+    (let obs = begin_obs d f in
+     let post = snd (begin_run d f) in
+     (obs == RD.TransactionObservation_Committed <==> no_fault_in f 1) /\
+     (obs == RD.TransactionObservation_Failed <==> f = Some 0) /\
+     post == d) =
+  begin_plan_is_one_statement ()
+
+#pop-options
+

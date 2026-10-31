@@ -38,7 +38,11 @@ hax_lib_root=$(
 )
 
 mutants=(classify-error classify-rows classify-ack plan-swap plan-drop guard-drop
-         freeze-oram commit-shadows commit-devices)
+         freeze-oram commit-shadows commit-devices
+         key-state-failed key-state-missing usage-error usage-swap projection-error
+         oram-error oram-plan sync-error sync-plan schema-error schema-plan
+         capsule-error capsule-clear-error devices-error devices-plan
+         begin-drop begin-fault)
 declare -A expect=(
   [classify-error]=delete_chunk_is_honest
   [classify-rows]=chunk_update_is_honest
@@ -49,6 +53,23 @@ declare -A expect=(
   [freeze-oram]=freeze_requires_a_clean_account
   [commit-shadows]=commit_publishes_complete_chunks
   [commit-devices]=commit_publishes_complete_devices
+  [key-state-failed]=key_state_is_honest
+  [key-state-missing]=key_state_is_honest
+  [usage-error]=usage_is_honest
+  [usage-swap]=usage_is_honest
+  [projection-error]=projection_is_honest
+  [oram-error]=oram_read_is_honest
+  [oram-plan]=oram_read_is_honest
+  [sync-error]=sync_is_honest
+  [sync-plan]=sync_is_honest
+  [schema-error]=schema_floor_read_is_honest
+  [schema-plan]=schema_floor_read_is_honest
+  [capsule-error]=capsule_read_is_honest
+  [capsule-clear-error]=capsule_clear_is_honest
+  [devices-error]=device_list_is_honest
+  [devices-plan]=device_list_is_honest
+  [begin-drop]=begin_plan_is_one_statement
+  [begin-fault]=begin_transaction_is_honest
 )
 
 failures=0
@@ -124,6 +145,57 @@ elif name == 'plan-drop':
     body2 = body2.replace('(List.Tot.length list) 1', '(List.Tot.length list) 0')
     body2 = body2.replace('array_of_list 1 list', 'array_of_list 0 list')
     text = text[:start] + body2 + text[end:]
+elif name == 'key-state-failed':
+    once('| ReadOutcome_Failed  -> KeyStateObservation_Storage <: t_KeyStateObservation',
+         '| ReadOutcome_Failed  -> KeyStateObservation_NotFound <: t_KeyStateObservation')
+elif name == 'key-state-missing':
+    once('''    KeyStateObservation_NotFound <: t_KeyStateObservation''',
+         '''    KeyStateObservation_Storage <: t_KeyStateObservation''')
+elif name == 'usage-error':
+    once('| _ -> UsageObservation_Storage <: t_UsageObservation',
+         '| _ -> UsageObservation_Measured ({ f_chunks = mk_i64 0; f_oram = mk_i64 0 }) <: t_UsageObservation')
+elif name == 'usage-swap':
+    once('VaultStmt_SelectUsageChunks ({ f_user = user })',
+         'VaultStmt_SelectUsageOram ({ f_user = user })')
+elif name == 'projection-error':
+    once('| ReadOutcome_Failed  -> ProjectedUsageObservation_Storage <: t_ProjectedUsageObservation',
+         '| ReadOutcome_Failed  -> ProjectedUsageObservation_Measured (mk_i64 0) <: t_ProjectedUsageObservation')
+elif name == 'oram-error':
+    once('| ReadOutcome_Failed  -> OramReadObservation_Storage <: t_OramReadObservation',
+         '| ReadOutcome_Failed  -> OramReadObservation_Missing <: t_OramReadObservation')
+elif name == 'oram-plan':
+    once('VaultStmt_SelectOramRow\n  ({ f_user = user; f_tree_id = tree_id; f_bucket_index = bucket_index; f_epoch = epoch })',
+         'VaultStmt_SelectOramRow\n  ({ f_user = user; f_tree_id = tree_id; f_bucket_index = bucket_index; f_epoch = epoch +. mk_i64 1 })')
+elif name == 'sync-error':
+    once('| ReadOutcome_Failed  -> SyncObservation_Failed <: t_SyncObservation',
+         '| ReadOutcome_Failed  -> SyncObservation_Read <: t_SyncObservation')
+elif name == 'sync-plan':
+    once('VaultStmt_SelectSyncManifest ({ f_user = user; f_epoch = epoch })',
+         'VaultStmt_SelectSyncManifest ({ f_user = user; f_epoch = epoch +. mk_i64 1 })')
+elif name == 'schema-error':
+    once('| ReadOutcome_Failed  -> SchemaFloorObservation_Storage <: t_SchemaFloorObservation',
+         '| ReadOutcome_Failed  -> SchemaFloorObservation_Stored Core_models.Option.Option_None <: t_SchemaFloorObservation')
+elif name == 'schema-plan':
+    once('VaultStmt_SchemaFloorGet ({ f_key = key })',
+         'VaultStmt_SchemaFloorGet ({ f_key = Alloc.String.impl_String__new () })')
+elif name == 'capsule-error':
+    once('| ReadOutcome_Failed  -> CapsuleReadObservation_Storage <: t_CapsuleReadObservation',
+         '| ReadOutcome_Failed  -> CapsuleReadObservation_Missing <: t_CapsuleReadObservation')
+elif name == 'capsule-clear-error':
+    once('| WriteOutcome_Failed  -> CapsuleClearObservation_Storage <: t_CapsuleClearObservation',
+         '| WriteOutcome_Failed  -> CapsuleClearObservation_Cleared <: t_CapsuleClearObservation')
+elif name == 'devices-error':
+    once('| ReadOutcome_Failed  -> DeviceListObservation_Failed <: t_DeviceListObservation',
+         '| ReadOutcome_Failed  -> DeviceListObservation_Read <: t_DeviceListObservation')
+elif name == 'devices-plan':
+    once('VaultStmt_SelectDeviceList ({ f_user = user })',
+         'VaultStmt_SelectDeviceList ({ f_user = Alloc.String.impl_String__new () })')
+elif name == 'begin-drop':
+    start, end, body = section('let plan_begin_transaction', 'let plan_load_key_state')
+    body2 = body.replace('[VaultStmt_BeginTransaction <: t_VaultStmt]', '[]')
+    body2 = body2.replace('(List.Tot.length list) 1', '(List.Tot.length list) 0')
+    body2 = body2.replace('array_of_list 1 list', 'array_of_list 0 list')
+    text = text[:start] + body2 + text[end:]
 else:
     # The remaining mutants edit the hand-written model, not the store.
     mt = model_path.read_text()
@@ -159,6 +231,12 @@ else:
             '''    r.us_rotation = Some rotation && not (any_missing_shadow d user from_epoch to_epoch) &&
     not (any_incomplete_device d user to_epoch)''',
             '''    r.us_rotation = Some rotation && not (any_missing_shadow d user from_epoch to_epoch)''')
+    elif name == 'begin-fault':
+        model_once(
+            """      if faulted f k
+      then [WriteOutcome_Failed]
+      else WriteOutcome_Applied (mk_u64 0) :: run_begin d rest (k + 1) f""",
+            """      WriteOutcome_Applied (mk_u64 0) :: run_begin d rest (k + 1) f""")
     else:
         sys.exit(f'{name}: unknown mutant')
     model_path.write_text(mt)

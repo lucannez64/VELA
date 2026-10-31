@@ -11,7 +11,6 @@ use uuid::Uuid;
 use crate::{
     error::{AppError, Result},
     middleware::{maybe_append_new_token, AuthSession},
-    sqldb::{Db as _, TursoValue},
     state::AppState,
 };
 
@@ -82,49 +81,60 @@ pub async fn get_path(
     let read_epoch = crate::vault::rekey::read_epoch(&state, &session.user_id.to_string()).await?;
 
     for bucket_index in indices {
-        let rows = state
-            .sqldb
-            .query(
-                "SELECT version, lamport_clock, last_writer, ciphertext
-             FROM oram_buckets
-             WHERE user_id = ? AND tree_id = ? AND bucket_index = ? AND epoch = ?",
-                vec![
-                    TursoValue::Text(session.user_id.to_string()),
-                    TursoValue::Text(tree_id.clone()),
-                    TursoValue::Integer(bucket_index as i64),
-                    TursoValue::Integer(read_epoch),
-                ],
-            )
-            .await
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+        use vela_rekey_policy::executor::{
+            classify_oram_read, plan_read_oram_bucket, OramReadObservation, ReadOutcome,
+        };
+        let plan = plan_read_oram_bucket(
+            session.user_id.to_string(),
+            tree_id.clone(),
+            bucket_index as i64,
+            read_epoch,
+        );
+        let mut sql = crate::vault::sql::PoolSql(&state);
+        let mut read_error: Option<anyhow::Error> = None;
+        let outcome = match crate::vault::sql::run_read(&mut sql, &plan).await {
+            Ok(rows) => ReadOutcome::Rows(crate::vault::sql::oram_row_view(&rows)),
+            Err(error) => {
+                read_error = Some(error);
+                ReadOutcome::Failed
+            }
+        };
 
-        if let Some(row) = rows.first() {
-            let version = row
-                .i64(0)
-                .ok_or_else(|| AppError::Internal("expected integer".into()))?;
-            let lamport_clock = row
-                .i64(1)
-                .ok_or_else(|| AppError::Internal("expected integer".into()))?;
-            let last_writer = row.uuid(2);
-            let ciphertext = row
-                .text(3)
-                .map(String::from)
-                .ok_or_else(|| AppError::Internal("expected ciphertext".into()))?;
-            buckets.push(OramBucket {
-                bucket_index,
-                version,
-                lamport_clock,
-                last_writer,
-                ciphertext: Some(ciphertext),
-            });
-        } else {
-            buckets.push(OramBucket {
-                bucket_index,
-                version: 0,
-                lamport_clock: 0,
-                last_writer: None,
-                ciphertext: None,
-            });
+        match classify_oram_read(outcome) {
+            OramReadObservation::Found(view) => {
+                let version = view
+                    .version
+                    .ok_or_else(|| AppError::Internal("expected integer".into()))?;
+                let lamport_clock = view
+                    .lamport_clock
+                    .ok_or_else(|| AppError::Internal("expected integer".into()))?;
+                let last_writer = view.last_writer.as_deref().and_then(|text| Uuid::parse_str(text).ok());
+                let ciphertext = view
+                    .ciphertext
+                    .ok_or_else(|| AppError::Internal("expected ciphertext".into()))?;
+                buckets.push(OramBucket {
+                    bucket_index,
+                    version,
+                    lamport_clock,
+                    last_writer,
+                    ciphertext: Some(ciphertext),
+                });
+            }
+            OramReadObservation::Missing => {
+                buckets.push(OramBucket {
+                    bucket_index,
+                    version: 0,
+                    lamport_clock: 0,
+                    last_writer: None,
+                    ciphertext: None,
+                });
+            }
+            OramReadObservation::Storage => {
+                return Err(AppError::Internal(match read_error {
+                    Some(error) => error.to_string(),
+                    None => "ORAM bucket lookup failed".into(),
+                }));
+            }
         }
     }
 

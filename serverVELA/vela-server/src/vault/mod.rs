@@ -10,7 +10,6 @@ pub mod sql;
 
 use crate::{
     error::{AppError, Result},
-    sqldb::{Db as _, TursoValue},
     state::AppState,
 };
 
@@ -33,28 +32,44 @@ pub fn max_user_storage_bytes() -> u64 {
 /// Current on-disk payload usage for `user_id` across vault chunks and ORAM
 /// buckets (base64-encoded ciphertext length, as stored).
 async fn current_usage_bytes(state: &AppState, user_id: &str) -> Result<u64> {
-    let mut total: u64 = 0;
+    use vela_rekey_policy::executor::{
+        classify_usage, plan_usage_chunks, plan_usage_oram, ReadOutcome, UsageObservation,
+    };
     // Only rows at the account's served epoch are reachable by readers.
     // Superseded rows left behind by a failed commit sweep and future shadow
     // rows must not count against the user.
-    for table in ["vault_chunks", "oram_buckets"] {
-        let rows = state
-            .sqldb
-            .query(
-                &format!(
-                    "SELECT COALESCE(SUM(LENGTH(t.ciphertext)), 0) FROM {table} t
-                     JOIN users u ON u.id = t.user_id
-                     WHERE t.user_id = ? AND t.epoch = u.key_epoch"
-                ),
-                vec![TursoValue::Text(user_id.to_string())],
-            )
-            .await
-            .map_err(|e| AppError::Internal(e.to_string()))?;
-        if let Some(row) = rows.first() {
-            total = total.saturating_add(row.i64(0).unwrap_or(0).max(0) as u64);
+    let user = user_id.to_string();
+    let mut read_error: Option<anyhow::Error> = None;
+    let mut sql = crate::vault::sql::PoolSql(state);
+    let chunks = match crate::vault::sql::run_read(&mut sql, &plan_usage_chunks(user.clone())).await
+    {
+        Ok(rows) => ReadOutcome::Rows(crate::vault::sql::scalar_view(&rows)),
+        Err(error) => {
+            read_error = Some(error);
+            ReadOutcome::Failed
         }
+    };
+    // The historical query loop stopped at the first failure.
+    let oram = if matches!(chunks, ReadOutcome::Failed) {
+        ReadOutcome::Failed
+    } else {
+        match crate::vault::sql::run_read(&mut sql, &plan_usage_oram(user)).await {
+            Ok(rows) => ReadOutcome::Rows(crate::vault::sql::scalar_view(&rows)),
+            Err(error) => {
+                read_error = Some(error);
+                ReadOutcome::Failed
+            }
+        }
+    };
+    match classify_usage(&chunks, &oram) {
+        UsageObservation::Measured { chunks, oram } => {
+            Ok((chunks as u64).saturating_add(oram as u64))
+        }
+        UsageObservation::Storage => Err(AppError::Internal(match read_error {
+            Some(error) => error.to_string(),
+            None => "storage quota query failed".into(),
+        })),
     }
-    Ok(total)
 }
 
 /// Reject with 413 when `incoming` additional bytes would push the user past
@@ -80,25 +95,32 @@ pub(crate) async fn enforce_rekey_shadow_quota(
     chunk_id: &str,
     incoming_stored: u64,
 ) -> Result<()> {
-    let rows = state
-        .sqldb
-        .query(
-            "SELECT
-                (SELECT COALESCE(SUM(LENGTH(ciphertext)), 0)
-                   FROM vault_chunks
-                  WHERE user_id = ? AND epoch = ? AND chunk_id != ?) +
-                (SELECT COALESCE(SUM(LENGTH(ciphertext)), 0)
-                   FROM oram_buckets WHERE user_id = ?)",
-            vec![
-                TursoValue::Text(user_id.to_string()),
-                TursoValue::Integer(shadow_epoch),
-                TursoValue::Text(chunk_id.to_string()),
-                TursoValue::Text(user_id.to_string()),
-            ],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    let projected = rows.first().and_then(|row| row.i64(0)).unwrap_or(0).max(0) as u64;
+    use vela_rekey_policy::executor::{
+        classify_projected_usage, plan_rekey_projection, ProjectedUsageObservation, ReadOutcome,
+    };
+    let plan = plan_rekey_projection(
+        user_id.to_string(),
+        shadow_epoch,
+        chunk_id.to_string(),
+    );
+    let mut sql = crate::vault::sql::PoolSql(state);
+    let mut read_error: Option<anyhow::Error> = None;
+    let outcome = match crate::vault::sql::run_read(&mut sql, &plan).await {
+        Ok(rows) => ReadOutcome::Rows(crate::vault::sql::scalar_view(&rows)),
+        Err(error) => {
+            read_error = Some(error);
+            ReadOutcome::Failed
+        }
+    };
+    let projected = match classify_projected_usage(&outcome) {
+        ProjectedUsageObservation::Measured(projected) => projected as u64,
+        ProjectedUsageObservation::Storage => {
+            return Err(AppError::Internal(match read_error {
+                Some(error) => error.to_string(),
+                None => "storage quota query failed".into(),
+            }));
+        }
+    };
     let quota = max_user_storage_bytes();
     if projected.saturating_add(incoming_stored) > quota {
         return Err(AppError::PayloadTooLarge(format!(

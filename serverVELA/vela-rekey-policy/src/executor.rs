@@ -177,6 +177,43 @@ pub enum VaultStmt {
     SchemaFloorSet { key: String },
     /// Commit the open transaction.
     Commit,
+    /// F-1 wave 2: the key-state row `load_key_state` reads. It backs
+    /// `load_state`, `maybe_rollback`, `resolve_write_epoch`, `read_epoch`,
+    /// `shadow_authority`, and through them the upload and ORAM rechecks.
+    SelectKeyState { user: String },
+    /// `current_usage_bytes`: the stored chunk ciphertext bytes at the
+    /// account's served epoch.
+    SelectUsageChunks { user: String },
+    /// `current_usage_bytes`: the stored ORAM ciphertext bytes at the
+    /// account's served epoch.
+    SelectUsageOram { user: String },
+    /// `enforce_rekey_shadow_quota`: the projected stored bytes after a
+    /// rotation replaces `chunk_id` at `epoch`.
+    SelectRekeyProjection {
+        user: String,
+        epoch: i64,
+        chunk_id: String,
+    },
+    /// `get_path`'s per-bucket read.
+    SelectOramRow {
+        user: String,
+        tree_id: String,
+        bucket_index: i64,
+        epoch: i64,
+    },
+    /// `get_sync`'s chunk manifest at the served epoch.
+    SelectSyncManifest { user: String, epoch: i64 },
+    /// `schema::minimum`'s store read of the account's compatibility floor.
+    SchemaFloorGet { key: String },
+    /// Open the pinned transaction (`POST /vault/rekey/start` and
+    /// `GET /device/capsule`).
+    BeginTransaction,
+    /// `get_capsule`'s device-and-account read of a pending RMS capsule.
+    SelectCapsule { device: String, user: String },
+    /// `get_capsule`'s read-once clear of an enrollment capsule.
+    ClearEnrollmentCapsule { device: String, user: String },
+    /// `list_devices`' device listing.
+    SelectDeviceList { user: String },
 }
 
 /// What one write statement (or the commit) returned.
@@ -226,6 +263,134 @@ pub struct PendingRowView {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ExistsView {
     pub found: bool,
+}
+
+/// The seven rotation cells of a `users` row `load_key_state` reads.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct KeyStateView {
+    pub key_epoch: Option<i64>,
+    pub rekey_state: Option<String>,
+    pub rekey_started_at: Option<String>,
+    pub rekey_starter: Option<String>,
+    pub rekey_id: Option<String>,
+    pub last_rekey_id: Option<String>,
+    pub last_rekey_epoch: Option<i64>,
+}
+
+/// `load_key_state`: the account's live rotation row, no such account, or a
+/// failed read.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum KeyStateObservation {
+    Loaded(KeyStateView),
+    NotFound,
+    Storage,
+}
+
+/// `current_usage_bytes`: the two stored byte totals, or a failed read.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UsageObservation {
+    Measured { chunks: i64, oram: i64 },
+    Storage,
+}
+
+/// `enforce_rekey_shadow_quota`: the projected stored bytes, or a failed read.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProjectedUsageObservation {
+    Measured(i64),
+    Storage,
+}
+
+/// The cells of a `SelectOramRow` row.
+#[derive(Debug, Eq, PartialEq)]
+pub struct OramRowView {
+    pub version: Option<i64>,
+    pub lamport_clock: Option<i64>,
+    pub last_writer: Option<String>,
+    pub ciphertext: Option<String>,
+}
+
+/// `get_path`'s per-bucket observation: the stored bucket, no bucket at that
+/// key, or a failed read.
+#[derive(Debug, Eq, PartialEq)]
+pub enum OramReadObservation {
+    Found(OramRowView),
+    Missing,
+    Storage,
+}
+
+/// One `SelectSyncManifest` row.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SyncRowView {
+    pub chunk_id: Option<String>,
+    pub version: Option<i64>,
+    pub lamport_clock: Option<i64>,
+    pub last_writer: Option<String>,
+}
+
+/// `get_sync`: the manifest rows the query returned, or a failed read.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SyncObservation {
+    Read,
+    Failed,
+}
+
+/// `schema::minimum`: the value the store holds (absent, or the stored text),
+/// or a failed read. The floor interpretation is the handler's policy over
+/// this observation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SchemaFloorObservation {
+    Stored(Option<String>),
+    Storage,
+}
+
+/// The three cells of a `SelectCapsule` row.
+#[derive(Debug, Eq, PartialEq)]
+pub struct CapsuleView {
+    pub capsule: Option<String>,
+    pub capsule_epoch: Option<i64>,
+    pub rotation_id: Option<String>,
+}
+
+/// `get_capsule`: the pending capsule, no eligible row, or a failed read.
+#[derive(Debug, Eq, PartialEq)]
+pub enum CapsuleReadObservation {
+    Found(CapsuleView),
+    Missing,
+    Storage,
+}
+
+/// `get_capsule`'s read-once clear.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CapsuleClearObservation {
+    Cleared,
+    Missed,
+    Storage,
+}
+
+/// One `SelectDeviceList` row: the fourteen columns the listing selects.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeviceListRowView {
+    pub id: Option<String>,
+    pub user_id: Option<String>,
+    pub device_name: Option<String>,
+    pub device_type: Option<String>,
+    pub last_active: Option<String>,
+    pub hybrid_ek: Option<String>,
+    pub hybrid_vk: Option<String>,
+    pub enrolled_by: Option<String>,
+    pub rms_capsule: Option<String>,
+    pub revoked: Option<i64>,
+    pub revoked_at: Option<String>,
+    pub revoked_by: Option<String>,
+    pub created_at: Option<String>,
+    pub rekey_capable: Option<i64>,
+}
+
+/// `list_devices`: the rows the query returned, or a failed read.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DeviceListObservation {
+    Read,
+    Failed,
 }
 
 // ── Plans ──────────────────────────────────────────────────────────────────
@@ -572,6 +737,85 @@ pub fn plan_oram_update(
     }]
 }
 
+/// `RekeyIo::begin_freeze_transaction` and `get_capsule`: open the pinned
+/// transaction.
+pub fn plan_begin_transaction() -> Vec<VaultStmt> {
+    vec![VaultStmt::BeginTransaction]
+}
+
+// ── Handler I/O outside executor methods (F-1 wave 2) ──────────────────────
+//
+// `load_key_state`; the two usage reads and the projected-storage read; the
+// ORAM path bucket read; the sync manifest; the schema-floor store read; the
+// capsule delivery's begin, read and read-once clear; and the device listing.
+// Same shape as the executor methods: an extracted plan, the pinned rendering
+// and an extracted classifier.
+
+/// `rekey::load_key_state`.
+pub fn plan_load_key_state(user: String) -> VaultStmt {
+    VaultStmt::SelectKeyState { user }
+}
+
+/// `current_usage_bytes`, chunk half.
+pub fn plan_usage_chunks(user: String) -> VaultStmt {
+    VaultStmt::SelectUsageChunks { user }
+}
+
+/// `current_usage_bytes`, ORAM half.
+pub fn plan_usage_oram(user: String) -> VaultStmt {
+    VaultStmt::SelectUsageOram { user }
+}
+
+/// `enforce_rekey_shadow_quota`: the projected stored bytes for a rotation
+/// replacing `chunk_id` at `epoch`.
+pub fn plan_rekey_projection(user: String, epoch: i64, chunk_id: String) -> VaultStmt {
+    VaultStmt::SelectRekeyProjection {
+        user,
+        epoch,
+        chunk_id,
+    }
+}
+
+/// `get_path`'s per-bucket read on `oram_buckets`.
+pub fn plan_read_oram_bucket(
+    user: String,
+    tree_id: String,
+    bucket_index: i64,
+    epoch: i64,
+) -> VaultStmt {
+    VaultStmt::SelectOramRow {
+        user,
+        tree_id,
+        bucket_index,
+        epoch,
+    }
+}
+
+/// `get_sync`'s manifest read.
+pub fn plan_read_sync(user: String, epoch: i64) -> VaultStmt {
+    VaultStmt::SelectSyncManifest { user, epoch }
+}
+
+/// `schema::minimum`'s store read: the key `vault-schema:{user}`.
+pub fn plan_read_schema_floor(key: String) -> VaultStmt {
+    VaultStmt::SchemaFloorGet { key }
+}
+
+/// `get_capsule`'s device-and-account read.
+pub fn plan_read_capsule(device: String, user: String) -> VaultStmt {
+    VaultStmt::SelectCapsule { device, user }
+}
+
+/// `get_capsule`'s read-once clear of an enrollment capsule.
+pub fn plan_clear_enrollment_capsule(device: String, user: String) -> Vec<VaultStmt> {
+    vec![VaultStmt::ClearEnrollmentCapsule { device, user }]
+}
+
+/// `list_devices`' listing.
+pub fn plan_read_devices(user: String) -> VaultStmt {
+    VaultStmt::SelectDeviceList { user }
+}
+
 // ── Classification ─────────────────────────────────────────────────────────
 
 /// `read_version`/`reread_version`: the stored version, missing, or storage.
@@ -891,6 +1135,101 @@ pub fn classify_oram_update(outcomes: &[WriteOutcome]) -> BucketObservation {
     }
 }
 
+// ── Handler I/O classifiers (F-1 wave 2) ──────────────────────────────────
+
+/// `load_key_state`: the stored row, no row, or a failed read. The handler
+/// normalizes the row (epoch floor, `freezing` test) after the read; that
+/// normalization is policy, not I/O.
+pub fn classify_key_state(outcome: ReadOutcome<Option<KeyStateView>>) -> KeyStateObservation {
+    match outcome {
+        ReadOutcome::Failed => KeyStateObservation::Storage,
+        ReadOutcome::Rows(None) => KeyStateObservation::NotFound,
+        ReadOutcome::Rows(Some(view)) => KeyStateObservation::Loaded(view),
+    }
+}
+
+/// `current_usage_bytes`: both reads must have returned their total.
+pub fn classify_usage(
+    chunks: &ReadOutcome<i64>,
+    oram: &ReadOutcome<i64>,
+) -> UsageObservation {
+    match (chunks, oram) {
+        (ReadOutcome::Rows(chunks), ReadOutcome::Rows(oram)) => UsageObservation::Measured {
+            chunks: *chunks,
+            oram: *oram,
+        },
+        _ => UsageObservation::Storage,
+    }
+}
+
+/// `enforce_rekey_shadow_quota`: the projected stored bytes.
+pub fn classify_projected_usage(outcome: &ReadOutcome<i64>) -> ProjectedUsageObservation {
+    match outcome {
+        ReadOutcome::Rows(projected) => ProjectedUsageObservation::Measured(*projected),
+        ReadOutcome::Failed => ProjectedUsageObservation::Storage,
+    }
+}
+
+/// `get_path`'s per-bucket observation.
+pub fn classify_oram_read(outcome: ReadOutcome<Option<OramRowView>>) -> OramReadObservation {
+    match outcome {
+        ReadOutcome::Failed => OramReadObservation::Storage,
+        ReadOutcome::Rows(None) => OramReadObservation::Missing,
+        ReadOutcome::Rows(Some(view)) => OramReadObservation::Found(view),
+    }
+}
+
+/// `get_sync`: the manifest rows were read, or the query failed.
+pub fn classify_sync(outcome: &ReadOutcome<Vec<SyncRowView>>) -> SyncObservation {
+    match outcome {
+        ReadOutcome::Rows(_) => SyncObservation::Read,
+        ReadOutcome::Failed => SyncObservation::Failed,
+    }
+}
+
+/// `schema::minimum`: the stored value, computed from the store read.
+pub fn classify_schema_floor(outcome: ReadOutcome<Option<String>>) -> SchemaFloorObservation {
+    match outcome {
+        ReadOutcome::Failed => SchemaFloorObservation::Storage,
+        ReadOutcome::Rows(value) => SchemaFloorObservation::Stored(value),
+    }
+}
+
+/// `get_capsule`: the pending capsule, no eligible row, or a failed read.
+pub fn classify_capsule_read(
+    outcome: ReadOutcome<Option<CapsuleView>>,
+) -> CapsuleReadObservation {
+    match outcome {
+        ReadOutcome::Failed => CapsuleReadObservation::Storage,
+        ReadOutcome::Rows(None) => CapsuleReadObservation::Missing,
+        ReadOutcome::Rows(Some(view)) => CapsuleReadObservation::Found(view),
+    }
+}
+
+/// `get_capsule`'s read-once clear: a cleared row, no matching row, or a
+/// failed statement.
+pub fn classify_capsule_clear(outcomes: &[WriteOutcome]) -> CapsuleClearObservation {
+    if outcomes.len() == 1 {
+        match outcomes[0] {
+            WriteOutcome::Applied(1) => CapsuleClearObservation::Cleared,
+            WriteOutcome::Applied(_) => CapsuleClearObservation::Missed,
+            WriteOutcome::Failed => CapsuleClearObservation::Storage,
+        }
+    } else {
+        CapsuleClearObservation::Storage
+    }
+}
+
+/// `list_devices`: the listing rows were read, or the query failed.
+pub fn classify_device_list(
+    outcome: &ReadOutcome<Vec<DeviceListRowView>>,
+) -> DeviceListObservation {
+    match outcome {
+        ReadOutcome::Rows(_) => DeviceListObservation::Read,
+        ReadOutcome::Failed => DeviceListObservation::Failed,
+    }
+}
+
 // ── Rendering (not extracted; pinned by the tests below) ───────────────────
 
 /// A bound parameter, with its SQL type.
@@ -920,8 +1259,12 @@ pub enum Rendered {
         key: String,
         value: &'static [u8],
     },
+    /// A durable key-value read in the sled store.
+    KvGet { key: String },
     /// `COMMIT` on the open transaction.
     Commit,
+    /// Open a pinned transaction.
+    Begin,
 }
 
 /// The exact SQL text and parameters each statement has always used.
@@ -1380,6 +1723,92 @@ pub fn render(stmt: &VaultStmt) -> Rendered {
             value: b"2",
         },
         VaultStmt::Commit => Rendered::Commit,
+        VaultStmt::SelectKeyState { user } => Rendered::Query {
+            sql: "SELECT key_epoch, rekey_state, rekey_started_at, rekey_starter, rekey_id,
+                    last_rekey_id, last_rekey_epoch
+             FROM users WHERE id = ?",
+            params: vec![Text(user.clone())],
+        },
+        VaultStmt::SelectUsageChunks { user } => Rendered::Query {
+            sql: "SELECT COALESCE(SUM(LENGTH(t.ciphertext)), 0) FROM vault_chunks t
+                     JOIN users u ON u.id = t.user_id
+                     WHERE t.user_id = ? AND t.epoch = u.key_epoch",
+            params: vec![Text(user.clone())],
+        },
+        VaultStmt::SelectUsageOram { user } => Rendered::Query {
+            sql: "SELECT COALESCE(SUM(LENGTH(t.ciphertext)), 0) FROM oram_buckets t
+                     JOIN users u ON u.id = t.user_id
+                     WHERE t.user_id = ? AND t.epoch = u.key_epoch",
+            params: vec![Text(user.clone())],
+        },
+        VaultStmt::SelectRekeyProjection {
+            user,
+            epoch,
+            chunk_id,
+        } => Rendered::Query {
+            sql: "SELECT
+                (SELECT COALESCE(SUM(LENGTH(ciphertext)), 0)
+                   FROM vault_chunks
+                  WHERE user_id = ? AND epoch = ? AND chunk_id != ?) +
+                (SELECT COALESCE(SUM(LENGTH(ciphertext)), 0)
+                   FROM oram_buckets WHERE user_id = ?)",
+            params: vec![
+                Text(user.clone()),
+                Int(*epoch),
+                Text(chunk_id.clone()),
+                Text(user.clone()),
+            ],
+        },
+        VaultStmt::SelectOramRow {
+            user,
+            tree_id,
+            bucket_index,
+            epoch,
+        } => Rendered::Query {
+            sql: "SELECT version, lamport_clock, last_writer, ciphertext
+             FROM oram_buckets
+             WHERE user_id = ? AND tree_id = ? AND bucket_index = ? AND epoch = ?",
+            params: vec![
+                Text(user.clone()),
+                Text(tree_id.clone()),
+                Int(*bucket_index),
+                Int(*epoch),
+            ],
+        },
+        VaultStmt::SelectSyncManifest { user, epoch } => Rendered::Query {
+            sql: "SELECT chunk_id, version, lamport_clock, last_writer
+         FROM vault_chunks
+         WHERE user_id = ? AND epoch = ?
+         ORDER BY chunk_id",
+            params: vec![Text(user.clone()), Int(*epoch)],
+        },
+        VaultStmt::SchemaFloorGet { key } => Rendered::KvGet { key: key.clone() },
+        VaultStmt::BeginTransaction => Rendered::Begin,
+        VaultStmt::SelectCapsule { device, user } => Rendered::Query {
+            sql: "SELECT devices.rms_capsule, devices.rms_capsule_epoch,
+                    CASE WHEN devices.rms_capsule_epoch = users.last_rekey_epoch
+                         THEN users.last_rekey_id ELSE NULL END
+             FROM devices JOIN users ON users.id = devices.user_id
+             WHERE devices.id = ? AND devices.user_id = ?
+               AND devices.revoked = 0 AND devices.rms_capsule IS NOT NULL",
+            params: vec![Text(device.clone()), Text(user.clone())],
+        },
+        VaultStmt::ClearEnrollmentCapsule { device, user } => Rendered::Execute {
+            sql: "UPDATE devices SET rms_capsule = NULL, rms_capsule_epoch = NULL
+             WHERE id = ? AND user_id = ?",
+            params: vec![Text(device.clone()), Text(user.clone())],
+        },
+        VaultStmt::SelectDeviceList { user } => Rendered::Query {
+            sql: "SELECT id, user_id, device_name, device_type, last_active,
+                hybrid_ek, hybrid_vk,
+                enrolled_by, rms_capsule, revoked, revoked_at, revoked_by, created_at,
+                rekey_capable
+             FROM devices
+             WHERE user_id = ?
+             ORDER BY created_at ASC
+             LIMIT 1000",
+            params: vec![Text(user.clone())],
+        },
     }
 }
 
@@ -1778,5 +2207,223 @@ mod tests {
             classify_shadow_activity(&[Applied(0)]),
             ActivityObservation::Ended
         );
+    }
+
+    #[test]
+    fn handler_io_plans_render_the_historical_statements() {
+        assert_eq!(
+            query(&plan_load_key_state(s("u"))),
+            (
+                "SELECT key_epoch, rekey_state, rekey_started_at, rekey_starter, rekey_id,\n                    last_rekey_id, last_rekey_epoch\n             FROM users WHERE id = ?",
+                vec![t("u")]
+            )
+        );
+        assert_eq!(
+            query(&plan_usage_chunks(s("u"))),
+            (
+                "SELECT COALESCE(SUM(LENGTH(t.ciphertext)), 0) FROM vault_chunks t\n                     JOIN users u ON u.id = t.user_id\n                     WHERE t.user_id = ? AND t.epoch = u.key_epoch",
+                vec![t("u")]
+            )
+        );
+        assert_eq!(
+            query(&plan_usage_oram(s("u"))),
+            (
+                "SELECT COALESCE(SUM(LENGTH(t.ciphertext)), 0) FROM oram_buckets t\n                     JOIN users u ON u.id = t.user_id\n                     WHERE t.user_id = ? AND t.epoch = u.key_epoch",
+                vec![t("u")]
+            )
+        );
+        assert_eq!(
+            query(&plan_rekey_projection(s("u"), 4, s("c"))),
+            (
+                "SELECT\n                (SELECT COALESCE(SUM(LENGTH(ciphertext)), 0)\n                   FROM vault_chunks\n                  WHERE user_id = ? AND epoch = ? AND chunk_id != ?) +\n                (SELECT COALESCE(SUM(LENGTH(ciphertext)), 0)\n                   FROM oram_buckets WHERE user_id = ?)",
+                vec![t("u"), SqlParam::Int(4), t("c"), t("u")]
+            )
+        );
+        assert_eq!(
+            query(&plan_read_oram_bucket(s("u"), s("tr"), 5, 4)),
+            (
+                "SELECT version, lamport_clock, last_writer, ciphertext\n             FROM oram_buckets\n             WHERE user_id = ? AND tree_id = ? AND bucket_index = ? AND epoch = ?",
+                vec![t("u"), t("tr"), SqlParam::Int(5), SqlParam::Int(4)]
+            )
+        );
+        assert_eq!(
+            query(&plan_read_sync(s("u"), 4)),
+            (
+                "SELECT chunk_id, version, lamport_clock, last_writer\n         FROM vault_chunks\n         WHERE user_id = ? AND epoch = ?\n         ORDER BY chunk_id",
+                vec![t("u"), SqlParam::Int(4)]
+            )
+        );
+        assert_eq!(
+            render(&plan_read_schema_floor(s("vault-schema:u"))),
+            Rendered::KvGet {
+                key: s("vault-schema:u")
+            }
+        );
+        assert_eq!(render(&plan_begin_transaction()[0]), Rendered::Begin);
+        assert_eq!(
+            query(&plan_read_capsule(s("d"), s("u"))),
+            (
+                "SELECT devices.rms_capsule, devices.rms_capsule_epoch,\n                    CASE WHEN devices.rms_capsule_epoch = users.last_rekey_epoch\n                         THEN users.last_rekey_id ELSE NULL END\n             FROM devices JOIN users ON users.id = devices.user_id\n             WHERE devices.id = ? AND devices.user_id = ?\n               AND devices.revoked = 0 AND devices.rms_capsule IS NOT NULL",
+                vec![t("d"), t("u")]
+            )
+        );
+        let clear = plan_clear_enrollment_capsule(s("d"), s("u"));
+        assert_eq!(clear.len(), 1);
+        assert_eq!(
+            exec(&clear[0]),
+            (
+                "UPDATE devices SET rms_capsule = NULL, rms_capsule_epoch = NULL\n             WHERE id = ? AND user_id = ?",
+                vec![t("d"), t("u")]
+            )
+        );
+        assert_eq!(
+            query(&plan_read_devices(s("u"))),
+            (
+                "SELECT id, user_id, device_name, device_type, last_active,\n                hybrid_ek, hybrid_vk,\n                enrolled_by, rms_capsule, revoked, revoked_at, revoked_by, created_at,\n                rekey_capable\n             FROM devices\n             WHERE user_id = ?\n             ORDER BY created_at ASC\n             LIMIT 1000",
+                vec![t("u")]
+            )
+        );
+    }
+
+    #[test]
+    fn handler_io_classifiers_keep_the_historical_observations() {
+        use WriteOutcome::{Applied, Failed};
+        // The epoch floor: a stored zero or absent epoch reads as one.
+        let view = KeyStateView {
+            key_epoch: Some(0),
+            rekey_state: Some(s("freezing")),
+            rekey_started_at: Some(s("t")),
+            rekey_starter: Some(s("d")),
+            rekey_id: Some(s("r")),
+            last_rekey_id: Some(s("lr")),
+            last_rekey_epoch: Some(3),
+        };
+        assert_eq!(
+            classify_key_state(ReadOutcome::Rows(Some(view))),
+            KeyStateObservation::Loaded(KeyStateView {
+                key_epoch: Some(0),
+                rekey_state: Some(s("freezing")),
+                rekey_started_at: Some(s("t")),
+                rekey_starter: Some(s("d")),
+                rekey_id: Some(s("r")),
+                last_rekey_id: Some(s("lr")),
+                last_rekey_epoch: Some(3),
+            })
+        );
+        assert_eq!(
+            classify_key_state(ReadOutcome::Rows(None)),
+            KeyStateObservation::NotFound
+        );
+        assert_eq!(
+            classify_key_state(ReadOutcome::Failed),
+            KeyStateObservation::Storage
+        );
+        assert_eq!(
+            classify_usage(&ReadOutcome::Rows(7), &ReadOutcome::Rows(9)),
+            UsageObservation::Measured {
+                chunks: 7,
+                oram: 9
+            }
+        );
+        assert_eq!(
+            classify_usage(&ReadOutcome::Rows(7), &ReadOutcome::Failed),
+            UsageObservation::Storage
+        );
+        assert_eq!(
+            classify_projected_usage(&ReadOutcome::Rows(11)),
+            ProjectedUsageObservation::Measured(11)
+        );
+        assert_eq!(
+            classify_projected_usage(&ReadOutcome::Failed),
+            ProjectedUsageObservation::Storage
+        );
+        let row = OramRowView {
+            version: Some(2),
+            lamport_clock: Some(5),
+            last_writer: Some(s("d")),
+            ciphertext: Some(s("ct")),
+        };
+        assert_eq!(
+            classify_oram_read(ReadOutcome::Rows(Some(OramRowView {
+                version: Some(2),
+                lamport_clock: Some(5),
+                last_writer: Some(s("d")),
+                ciphertext: Some(s("ct")),
+            }))),
+            OramReadObservation::Found(row)
+        );
+        assert_eq!(
+            classify_oram_read(ReadOutcome::Rows(None)),
+            OramReadObservation::Missing
+        );
+        assert_eq!(
+            classify_oram_read(ReadOutcome::Failed),
+            OramReadObservation::Storage
+        );
+        assert_eq!(
+            classify_sync(&ReadOutcome::Rows(Vec::new())),
+            SyncObservation::Read
+        );
+        assert_eq!(classify_sync(&ReadOutcome::Failed), SyncObservation::Failed);
+        assert_eq!(
+            classify_schema_floor(ReadOutcome::Rows(None)),
+            SchemaFloorObservation::Stored(None)
+        );
+        assert_eq!(
+            classify_schema_floor(ReadOutcome::Rows(Some(s("2")))),
+            SchemaFloorObservation::Stored(Some(s("2")))
+        );
+        assert_eq!(
+            classify_schema_floor(ReadOutcome::Failed),
+            SchemaFloorObservation::Storage
+        );
+        let capsule = CapsuleView {
+            capsule: Some(s("cap")),
+            capsule_epoch: Some(2),
+            rotation_id: Some(s("r")),
+        };
+        assert_eq!(
+            classify_capsule_read(ReadOutcome::Rows(Some(CapsuleView {
+                capsule: Some(s("cap")),
+                capsule_epoch: Some(2),
+                rotation_id: Some(s("r")),
+            }))),
+            CapsuleReadObservation::Found(capsule)
+        );
+        assert_eq!(
+            classify_capsule_read(ReadOutcome::Rows(None)),
+            CapsuleReadObservation::Missing
+        );
+        assert_eq!(
+            classify_capsule_read(ReadOutcome::Failed),
+            CapsuleReadObservation::Storage
+        );
+        assert_eq!(
+            classify_capsule_clear(&[Applied(1)]),
+            CapsuleClearObservation::Cleared
+        );
+        assert_eq!(
+            classify_capsule_clear(&[Applied(0)]),
+            CapsuleClearObservation::Missed
+        );
+        assert_eq!(
+            classify_capsule_clear(&[Failed]),
+            CapsuleClearObservation::Storage
+        );
+        assert_eq!(
+            classify_device_list(&ReadOutcome::Rows(Vec::new())),
+            DeviceListObservation::Read
+        );
+        assert_eq!(
+            classify_device_list(&ReadOutcome::Failed),
+            DeviceListObservation::Failed
+        );
+        // The transaction begin is classified by the existing transaction
+        // observation: one applied statement is a commit.
+        assert_eq!(
+            classify_transaction(&[Applied(0)]),
+            TransactionObservation::Committed
+        );
+        assert_eq!(classify_transaction(&[]), TransactionObservation::Failed);
     }
 }
