@@ -3,6 +3,20 @@ module Vela_enrollment_policy.Executor
 open FStar.Mul
 open Core_models
 
+/// One decoded grant record: the user and opener device it binds.
+type t_GrantRecordView = {
+  f_user_id:Alloc.String.t_String;
+  f_device_id:Alloc.String.t_String
+}
+
+/// One decoded claim record: exactly the fields the claim write stores.
+type t_ClaimRecordView = {
+  f_hybrid_ek:Alloc.String.t_String;
+  f_hybrid_vk:Alloc.String.t_String;
+  f_device_name:Core_models.Option.t_Option Alloc.String.t_String;
+  f_device_type:Core_models.Option.t_Option Alloc.String.t_String
+}
+
 /// One statement an executor may run. Field names follow the bound parameters
 /// (SQL) or the stored record (store); [`render`] fixes their order and text.
 type t_PairingStmt =
@@ -67,6 +81,19 @@ type t_PairingStmt =
     f_guard_epoch:i64
   }: t_PairingStmt
   | PairingStmt_TakeChallenge { f_challenge:Alloc.String.t_String }: t_PairingStmt
+  | PairingStmt_ReadGrant { f_grant_id:Alloc.String.t_String }: t_PairingStmt
+  | PairingStmt_GrantExists { f_grant_id:Alloc.String.t_String }: t_PairingStmt
+  | PairingStmt_RestoreCeremony {
+    f_grant_id:Alloc.String.t_String;
+    f_grant_bytes:Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global;
+    f_claim_bytes:Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global;
+    f_grant:t_GrantRecordView;
+    f_claim:t_ClaimRecordView
+  }: t_PairingStmt
+  | PairingStmt_RateLimitIncr {
+    f_key:Alloc.String.t_String;
+    f_window_secs:u64
+  }: t_PairingStmt
 
 /// What one write statement returned.
 type t_WriteOutcome =
@@ -82,6 +109,18 @@ type t_TakeOutcome =
   | TakeOutcome_Missing : t_TakeOutcome
   | TakeOutcome_Present : t_TakeOutcome
 
+/// What one fixed-window counter increment returned.
+type t_RateOutcome =
+  | RateOutcome_Failed : t_RateOutcome
+  | RateOutcome_Count : u64 -> t_RateOutcome
+
+/// The rate limiter's verdict: admitted exactly while the new count is within
+/// the endpoint's limit.
+type t_RateObservation =
+  | RateObservation_Admitted : t_RateObservation
+  | RateObservation_Limited : t_RateObservation
+  | RateObservation_StorageFailed : t_RateObservation
+
 /// The cells of a `claim` record after JSON decoding. Decoding itself is
 /// trusted (serde, checked by the unit tests and the conformance test).
 type t_ClaimRowView = {
@@ -90,6 +129,15 @@ type t_ClaimRowView = {
   f_device_name:Core_models.Option.t_Option Alloc.String.t_String;
   f_device_type:Core_models.Option.t_Option Alloc.String.t_String
 }
+
+/// The claim payload `get_claim` reads after the grant binding admitted it.
+type t_ClaimInspection = {
+  f_claim_present:bool;
+  f_claim:Core_models.Option.t_Option t_ClaimRowView
+}
+
+let impl_44: Core_models.Clone.t_Clone t_ClaimRowView =
+  { f_clone = (fun x -> x); f_clone_pre = (fun _ -> True); f_clone_post = (fun _ _ -> True) }
 
 /// The cells of an `EnrollmentResult` record after JSON decoding.
 type t_ResultRowView = {
@@ -126,6 +174,8 @@ type t_ReadOutcome =
   | ReadOutcome_ClaimExists : bool -> t_ReadOutcome
   | ReadOutcome_Claim : Core_models.Option.t_Option t_ClaimRowView -> t_ReadOutcome
   | ReadOutcome_Result : Core_models.Option.t_Option t_ResultRowView -> t_ReadOutcome
+  | ReadOutcome_Grant : Core_models.Option.t_Option t_GrantRecordView -> t_ReadOutcome
+  | ReadOutcome_GrantExists : bool -> t_ReadOutcome
 
 /// Verdicts the handler computes from a request and a stored row (base64 and
 /// JSON decoding, the hybrid signature checks, the rekey policy). They are
@@ -413,6 +463,74 @@ let plan_challenge_take (challenge: Alloc.String.t_String)
   Alloc.Slice.impl__into_vec #t_PairingStmt
     #Alloc.Alloc.t_Global
     ((let list = [PairingStmt_TakeChallenge ({ f_challenge = challenge }) <: t_PairingStmt] in
+        FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+        Rust_primitives.Hax.array_of_list 1 list)
+      <:
+      t_Slice t_PairingStmt)
+
+/// `post_complete`'s pre-driver read and `get_claim`'s `authorize_grant`: the
+/// non-consuming grant read.
+let plan_grant_read (grant_id: Alloc.String.t_String)
+    : Alloc.Vec.t_Vec t_PairingStmt Alloc.Alloc.t_Global =
+  Alloc.Slice.impl__into_vec #t_PairingStmt
+    #Alloc.Alloc.t_Global
+    ((let list = [PairingStmt_ReadGrant ({ f_grant_id = grant_id }) <: t_PairingStmt] in
+        FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+        Rust_primitives.Hax.array_of_list 1 list)
+      <:
+      t_Slice t_PairingStmt)
+
+/// `post_claim`'s pre-driver liveness check: the grant key's presence.
+let plan_grant_exists (grant_id: Alloc.String.t_String)
+    : Alloc.Vec.t_Vec t_PairingStmt Alloc.Alloc.t_Global =
+  Alloc.Slice.impl__into_vec #t_PairingStmt
+    #Alloc.Alloc.t_Global
+    ((let list = [PairingStmt_GrantExists ({ f_grant_id = grant_id }) <: t_PairingStmt] in
+        FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+        Rust_primitives.Hax.array_of_list 1 list)
+      <:
+      t_Slice t_PairingStmt)
+
+/// The completion's atomic restore of the ceremony it consumed.
+let plan_ceremony_restore
+      (grant_id: Alloc.String.t_String)
+      (grant_bytes claim_bytes: Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global)
+      (grant: t_GrantRecordView)
+      (claim: t_ClaimRecordView)
+    : Alloc.Vec.t_Vec t_PairingStmt Alloc.Alloc.t_Global =
+  Alloc.Slice.impl__into_vec #t_PairingStmt
+    #Alloc.Alloc.t_Global
+    ((let list =
+          [
+            PairingStmt_RestoreCeremony
+            ({
+                f_grant_id = grant_id;
+                f_grant_bytes = grant_bytes;
+                f_claim_bytes = claim_bytes;
+                f_grant = grant;
+                f_claim = claim
+              })
+            <:
+            t_PairingStmt
+          ]
+        in
+        FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+        Rust_primitives.Hax.array_of_list 1 list)
+      <:
+      t_Slice t_PairingStmt)
+
+/// One fixed-window counter increment at the exact key and window.
+let plan_rate_limit (key: Alloc.String.t_String) (window_secs: u64)
+    : Alloc.Vec.t_Vec t_PairingStmt Alloc.Alloc.t_Global =
+  Alloc.Slice.impl__into_vec #t_PairingStmt
+    #Alloc.Alloc.t_Global
+    ((let list =
+          [
+            PairingStmt_RateLimitIncr ({ f_key = key; f_window_secs = window_secs })
+            <:
+            t_PairingStmt
+          ]
+        in
         FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
         Rust_primitives.Hax.array_of_list 1 list)
       <:
@@ -917,3 +1035,114 @@ let classify_device_check (outcomes: t_Slice t_ReadOutcome) (verdict: t_EnrollAu
     Vela_enrollment_policy.Enroll_driver.DeviceObservation_Error
     <:
     Vela_enrollment_policy.Enroll_driver.t_DeviceObservation
+
+/// The pre-driver grant read behind `post_complete` and `get_claim`: the
+/// record's presence and its two bindings against the caller's session. A
+/// failed or undecodable read is `Error` (the handler returns the retained
+/// error); an absent key is `Absent`; a present record reports whether the
+/// session user and opener device are the ones it binds.
+let classify_grant_read
+      (outcomes: t_Slice t_ReadOutcome)
+      (session_user session_device: Alloc.String.t_String)
+    : Vela_enrollment_policy.Pairing_driver.t_GrantObservation =
+  if (Core_models.Slice.impl__len #t_ReadOutcome outcomes <: usize) =. mk_usize 1
+  then
+    match outcomes.[ mk_usize 0 ] <: t_ReadOutcome with
+    | ReadOutcome_Grant (Core_models.Option.Option_Some row) ->
+      Vela_enrollment_policy.Pairing_driver.GrantObservation_Present
+      ({
+          Vela_enrollment_policy.Pairing_driver.f_user_matches = row.f_user_id =. session_user;
+          Vela_enrollment_policy.Pairing_driver.f_opener_matches = row.f_device_id =. session_device
+        })
+      <:
+      Vela_enrollment_policy.Pairing_driver.t_GrantObservation
+    | ReadOutcome_Grant (Core_models.Option.Option_None ) ->
+      Vela_enrollment_policy.Pairing_driver.GrantObservation_Absent
+      <:
+      Vela_enrollment_policy.Pairing_driver.t_GrantObservation
+    | _ ->
+      Vela_enrollment_policy.Pairing_driver.GrantObservation_Error
+      <:
+      Vela_enrollment_policy.Pairing_driver.t_GrantObservation
+  else
+    Vela_enrollment_policy.Pairing_driver.GrantObservation_Error
+    <:
+    Vela_enrollment_policy.Pairing_driver.t_GrantObservation
+
+/// `post_claim`'s pre-driver liveness bit: `grant_live` is exactly the key's
+/// presence. A failed read reports false (the driver then rejects).
+let classify_grant_exists (outcomes: t_Slice t_ReadOutcome) : bool =
+  (Core_models.Slice.impl__len #t_ReadOutcome outcomes <: usize) =. mk_usize 1 &&
+  (match outcomes.[ mk_usize 0 ] <: t_ReadOutcome with
+    | ReadOutcome_GrantExists true -> true
+    | _ -> false)
+
+/// `get_claim`'s payload read: the stored claim, present exactly when the key
+/// held a decodable record.
+let classify_claim_inspection (outcomes: t_Slice t_ReadOutcome) : t_ClaimInspection =
+  if (Core_models.Slice.impl__len #t_ReadOutcome outcomes <: usize) =. mk_usize 1
+  then
+    match outcomes.[ mk_usize 0 ] <: t_ReadOutcome with
+    | ReadOutcome_Claim (Core_models.Option.Option_Some row) ->
+      {
+        f_claim_present = true;
+        f_claim
+        =
+        Core_models.Option.Option_Some
+        (Core_models.Clone.f_clone #t_ClaimRowView #FStar.Tactics.Typeclasses.solve row)
+        <:
+        Core_models.Option.t_Option t_ClaimRowView
+      }
+      <:
+      t_ClaimInspection
+    | _ ->
+      {
+        f_claim_present = false;
+        f_claim = Core_models.Option.Option_None <: Core_models.Option.t_Option t_ClaimRowView
+      }
+      <:
+      t_ClaimInspection
+  else
+    {
+      f_claim_present = false;
+      f_claim = Core_models.Option.Option_None <: Core_models.Option.t_Option t_ClaimRowView
+    }
+    <:
+    t_ClaimInspection
+
+/// The completion's ceremony restore: `Stored` exactly when the atomic pair
+/// write ran.
+let classify_ceremony_restore (outcomes: t_Slice t_WriteOutcome)
+    : Vela_enrollment_policy.Pairing_driver.t_StoreObservation =
+  if (Core_models.Slice.impl__len #t_WriteOutcome outcomes <: usize) =. mk_usize 1
+  then
+    match outcomes.[ mk_usize 0 ] <: t_WriteOutcome with
+    | WriteOutcome_Applied _ ->
+      Vela_enrollment_policy.Pairing_driver.StoreObservation_Stored
+      <:
+      Vela_enrollment_policy.Pairing_driver.t_StoreObservation
+    | _ ->
+      Vela_enrollment_policy.Pairing_driver.StoreObservation_Failed
+      <:
+      Vela_enrollment_policy.Pairing_driver.t_StoreObservation
+  else
+    Vela_enrollment_policy.Pairing_driver.StoreObservation_Failed
+    <:
+    Vela_enrollment_policy.Pairing_driver.t_StoreObservation
+
+/// Whether a counter value is within an endpoint's limit.
+let under_limit (count limit: u64) : bool = count <=. limit
+
+/// The fixed-window limiter: `Admitted` exactly while the counter's new value
+/// is within the endpoint's limit, `Limited` past it, `StorageFailed` when the
+/// counter write did not run.
+let classify_rate_limit (outcomes: t_Slice t_RateOutcome) (limit: u64) : t_RateObservation =
+  if (Core_models.Slice.impl__len #t_RateOutcome outcomes <: usize) =. mk_usize 1
+  then
+    match outcomes.[ mk_usize 0 ] <: t_RateOutcome with
+    | RateOutcome_Count count ->
+      if under_limit count limit
+      then RateObservation_Admitted <: t_RateObservation
+      else RateObservation_Limited <: t_RateObservation
+    | RateOutcome_Failed  -> RateObservation_StorageFailed <: t_RateObservation
+  else RateObservation_StorageFailed <: t_RateObservation

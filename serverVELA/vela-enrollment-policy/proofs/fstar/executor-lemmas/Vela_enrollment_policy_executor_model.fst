@@ -109,7 +109,18 @@ noeq type db = {
   devices: tbl device_row;
   /// `devices.enrollment_grant_id`, indexed: grant id -> device id.
   grant_index: tbl text;
+  /// The fixed-window rate-limit counters: key -> count.
+  counters: tbl u64;
 }
+
+/// The live count under a key (a missing counter is zero), and the saturating
+/// increment `Store::incr_fixed_window` performs.
+let counter (d: db) (key: text) : u64 =
+  match d.counters key with
+  | Some n -> n
+  | None -> mk_u64 0
+
+let bump (n: u64) : u64 = Rust_primitives.Integers.add_sat #U64 n (mk_u64 1)
 
 // ── Statement semantics ────────────────────────────────────────────────────
 
@@ -196,6 +207,15 @@ let exec_write (d: db) (s: t_PairingStmt) : option (t_WriteOutcome & db) =
     else
       let row = written_device new_id user name ty ek vk enrolled_by rms now None (mk_i64 0) in
       Some (WriteOutcome_Applied (mk_u64 1), { d with devices = upd d.devices new_id (Some row) })
+  | PairingStmt_RestoreCeremony
+    { f_grant_id = id; f_grant = g; f_claim = c } ->
+    let g_row : grant_row = { g_user = g.f_user_id; g_device = g.f_device_id } in
+    let c_row : claim_row =
+      { c_ek = c.f_hybrid_ek; c_vk = c.f_hybrid_vk;
+        c_name = of_core c.f_device_name; c_type_ = of_core c.f_device_type } in
+    Some (WriteOutcome_Applied (mk_u64 1),
+          { d with grants = upd d.grants id (Some g_row);
+                   claims = upd d.claims id (Some c_row) })
   | _ -> None
 
 /// A plan inside a request: writes in order, stopping at the first failure.
@@ -286,6 +306,16 @@ let read_step (d: db) (s: t_PairingStmt) : option t_ReadOutcome =
             (match d.results id with
              | Some row -> Core_models.Option.Option_Some (view_result row)
              | None -> Core_models.Option.Option_None))
+  | PairingStmt_ReadGrant { f_grant_id = id } ->
+    Some (ReadOutcome_Grant
+            (match d.grants id with
+             | Some row ->
+               Core_models.Option.Option_Some
+                 ({ f_user_id = row.g_user; f_device_id = row.g_device }
+                  <: t_GrantRecordView)
+             | None -> Core_models.Option.Option_None))
+  | PairingStmt_GrantExists { f_grant_id = id } ->
+    Some (ReadOutcome_GrantExists (Some? (d.grants id)))
   | _ -> None
 
 /// A plan inside a request: reads in order, stopping at the first failure.
@@ -361,6 +391,23 @@ let run_take_pair
       | Some r -> r
 
 // ── The executables: plan, run, classify ───────────────────────────────────
+
+/// A fixed-window plan: one counter increment, or the injected failure. The
+/// counter saturates at the type's maximum, as the store's increment does.
+let run_rate
+      (d: db) (stmts: list t_PairingStmt) (k: nat) (f: option nat)
+  : Tot (t_RateOutcome & db) (decreases stmts) =
+  match stmts with
+  | [] -> (RateOutcome_Failed, d)
+  | s :: rest ->
+    if faulted f k
+    then (RateOutcome_Failed, d)
+    else
+      match s with
+      | PairingStmt_RateLimitIncr { f_key = key } ->
+        let n = bump (counter d key) in
+        (RateOutcome_Count n, { d with counters = upd d.counters key (Some n) })
+      | _ -> (RateOutcome_Failed, d)
 
 let stmts_of (p: Alloc.Vec.t_Vec t_PairingStmt Alloc.Alloc.t_Global) : list t_PairingStmt =
   Seq.seq_to_list p._0
@@ -484,3 +531,38 @@ let challenge_take d (challenge: text) (purpose_matches: bool) (f: option nat)
   : (bool & db) =
   let r = run_take d (stmts_of (plan_challenge_take challenge)) 0 f in
   (classify_challenge_take (fst r) purpose_matches, snd r)
+
+// ── The pre-driver reads, the restore and the rate limiter ─────────────────
+
+/// The non-consuming grant read behind `post_complete` and `get_claim`.
+let grant_read d (grant_id user device: text) (f: option nat)
+  : (Vela_enrollment_policy.Pairing_driver.t_GrantObservation & db) =
+  let r = run_reads d (stmts_of (plan_grant_read grant_id)) 0 f in
+  (classify_grant_read (slice_of r) user device, d)
+
+/// `post_claim`'s pre-driver liveness check.
+let grant_exists d (grant_id: text) (f: option nat) : (bool & db) =
+  let r = run_reads d (stmts_of (plan_grant_exists grant_id)) 0 f in
+  (classify_grant_exists (slice_of r), d)
+
+/// `get_claim`'s payload read.
+let claim_inspection d (grant_id: text) (f: option nat) : (t_ClaimInspection & db) =
+  let r = run_reads d (stmts_of (plan_claim_read grant_id)) 0 f in
+  (classify_claim_inspection (slice_of r), d)
+
+/// The completion's atomic restore of the ceremony it consumed.
+let ceremony_restore
+      d (grant_id: text)
+      (grant_bytes claim_bytes: Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global)
+      (g: t_GrantRecordView) (c: t_ClaimRecordView) (f: option nat)
+  : (Vela_enrollment_policy.Pairing_driver.t_StoreObservation & db) =
+  let r =
+    run_writes d
+      (stmts_of (plan_ceremony_restore grant_id grant_bytes claim_bytes g c)) 0 f in
+  (classify_ceremony_restore (slice_of (fst r)), snd r)
+
+/// One fixed-window limiter check.
+let rate_limit d (key: text) (window_secs limit: u64) (f: option nat)
+  : (t_RateObservation & db) =
+  let r = run_rate d (stmts_of (plan_rate_limit key window_secs)) 0 f in
+  (classify_rate_limit (slice_of [fst r]) limit, snd r)

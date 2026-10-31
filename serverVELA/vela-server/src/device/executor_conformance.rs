@@ -20,8 +20,10 @@ use vela_enrollment_policy::executor_model::{
     self as model, ClaimRow, Db as Model, DeviceRow, GrantRow, ResultRow, UserRow,
 };
 use vela_enrollment_policy::executor::{
-    package_key, claim_key, grant_key, result_key, challenge_key, CollectorVerdicts,
-    CompletionVerdicts, EnrollAuthVerdict, PairingStmt,
+    package_key, claim_key, grant_key, result_key, challenge_key, plan_rate_claim_by_ip,
+    plan_rate_enroll_by_ip, plan_rate_grant_by_user, plan_rate_package_fetch,
+    plan_rate_package_store, plan_rate_result_by_ip, render, ClaimRecordView, CollectorVerdicts,
+    CompletionVerdicts, EnrollAuthVerdict, GrantRecordView, PairingStmt, Rendered,
 };
 use vela_enrollment_policy::pairing_driver::{
     ClaimReadObservation, DeviceInsertObservation, RedeemObservation, ResultReadObservation,
@@ -32,8 +34,8 @@ use super::enroll::{enroll_io_for_test, EnrollRequest, NewDevicePayload};
 use super::invitation::{redeem_package_for_test, store_package_for_test};
 use super::pairing_executor::PairingExecutor;
 use super::rendezvous::{
-    claim_io_for_test, complete_io_for_test, open_grant_io_for_test, result_io_for_test,
-    ClaimRequest, CompleteRequest,
+    claim_inspection_for_test, claim_io_for_test, complete_io_for_test, grant_exists_for_test,
+    grant_read_for_test, open_grant_io_for_test, result_io_for_test, ClaimRequest, CompleteRequest,
 };
 use crate::config;
 use crate::sqldb::{Db as _, TursoDb, TursoValue, VelaRow};
@@ -94,10 +96,14 @@ fn claim_bytes(row: &ClaimRow) -> Vec<u8> {
         r#"{{"hybrid_ek":{},"hybrid_vk":{},"device_name":{},"device_type":{}}}"#,
         json(&row.hybrid_ek),
         json(&row.hybrid_vk),
-        json(&row.device_name.clone().unwrap_or_default()),
-        json(&row.device_type.clone().unwrap_or_default()),
+        json_opt(&row.device_name),
+        json_opt(&row.device_type),
     )
     .into_bytes()
+}
+
+fn json_opt(value: &Option<String>) -> String {
+    serde_json::to_string(value).expect("an option serializes")
 }
 
 fn result_bytes(row: &ResultRow) -> Vec<u8> {
@@ -1112,6 +1118,206 @@ async fn enroll_executors_match_the_model() {
     }
     eprintln!(
         "enrollment executor conformance (enroll): {} states, {} cases, {} with an injected failure",
+        counts.states, counts.cases, counts.faulted
+    );
+}
+
+#[tokio::test]
+async fn pre_driver_and_rate_executors_match_the_model() {
+    let state = temp_state().await;
+    let mut counts = Counts::default();
+    for pre in kv_states() {
+        counts.states += 1;
+
+        // post_claim's grant liveness check.
+        for fault in faults(1) {
+            load(&state, &pre).await;
+            let (live, errored) = grant_exists_for_test(&state, fault, GRANT).await;
+            let (expected, expected_post) = model::grant_exists(&pre, GRANT.into(), fault);
+            let case = format!("grant exists fault {fault:?} pre {pre:?}");
+            assert_eq!(live, expected, "{case}");
+            assert_eq!(errored, fault.is_some(), "{case}");
+            assert_eq!(
+                normalize(snapshot(&state).await),
+                normalize(expected_post),
+                "{case}"
+            );
+            counts.case(fault);
+        }
+
+        // post_complete's and get_claim's non-consuming grant read.
+        for (reader, opener) in [(user(0), device(0)), (user(0), device(1)), (user(9), device(9))] {
+            for fault in faults(1) {
+                load(&state, &pre).await;
+                let read = grant_read_for_test(&state, fault, GRANT, &reader, &opener).await;
+                let (expected, expected_post) = model::grant_read(
+                    &pre,
+                    GRANT.into(),
+                    reader.clone(),
+                    opener.clone(),
+                    fault,
+                );
+                let case = format!(
+                    "grant read {reader}/{opener} fault {fault:?} pre {pre:?}"
+                );
+                assert_eq!(read.observation, expected, "{case}");
+                assert_eq!(read.error.is_some(), fault.is_some(), "{case}");
+                if fault.is_none() && pre.grants.contains_key(GRANT) {
+                    assert!(read.grant.is_some(), "{case}");
+                    assert!(read.bytes.is_some(), "{case}");
+                }
+                assert_eq!(
+                    normalize(snapshot(&state).await),
+                    normalize(expected_post),
+                    "{case}"
+                );
+                counts.case(fault);
+            }
+        }
+
+        // get_claim's payload read.
+        for fault in faults(1) {
+            load(&state, &pre).await;
+            let (inspection, errored) = claim_inspection_for_test(&state, fault, GRANT).await;
+            let (expected, expected_post) = model::claim_inspection(&pre, GRANT.into(), fault);
+            let case = format!("claim inspection fault {fault:?} pre {pre:?}");
+            assert_eq!(inspection, expected, "{case}");
+            assert_eq!(errored, fault.is_some(), "{case}");
+            assert_eq!(
+                normalize(snapshot(&state).await),
+                normalize(expected_post),
+                "{case}"
+            );
+            counts.case(fault);
+        }
+    }
+
+    // The completion's atomic restore, from an empty store and over a state
+    // that already holds a different ceremony.
+    let grant_row = GrantRow {
+        user_id: user(0),
+        device_id: device(0),
+    };
+    let claim_row = ClaimRow {
+        hybrid_ek: "ZWs=".into(),
+        hybrid_vk: "dms=".into(),
+        device_name: Some("Phone".into()),
+        device_type: Some("android".into()),
+    };
+    let grant_record = GrantRecordView {
+        user_id: user(0),
+        device_id: device(0),
+    };
+    let claim_record = ClaimRecordView {
+        hybrid_ek: "ZWs=".into(),
+        hybrid_vk: "dms=".into(),
+        device_name: Some("Phone".into()),
+        device_type: Some("android".into()),
+    };
+    let bytes = (grant_bytes(&grant_row), claim_bytes(&claim_row));
+    for pre in kv_states() {
+        counts.states += 1;
+        for fault in faults(1) {
+            load(&state, &pre).await;
+            let mut io = complete_io_for_test(
+                &state,
+                fault,
+                GRANT.into(),
+                user(0),
+                device(0),
+                Vec::new(),
+                None,
+                CompleteRequest {
+                    rms_capsule: "Y2Fw".into(),
+                    signature: String::new(),
+                    key_epoch: 3,
+                },
+            );
+            io.set_taken_pair_for_test(Some(bytes.clone()));
+            io.set_claim_record_for_test(claim_record.clone());
+            let observed = io.restore_ceremony().await;
+            let (expected, expected_post) = model::ceremony_restore(
+                &pre,
+                GRANT.into(),
+                bytes.0.clone(),
+                bytes.1.clone(),
+                grant_record.clone(),
+                claim_record.clone(),
+                fault,
+            );
+            let case = format!("ceremony restore fault {fault:?} pre {pre:?}");
+            assert_eq!(
+                observed.is_ok(),
+                matches!(
+                    expected,
+                    vela_enrollment_policy::pairing_driver::StoreObservation::Stored
+                ),
+                "{case}"
+            );
+            assert_eq!(
+                normalize(snapshot(&state).await),
+                normalize(expected_post),
+                "{case}"
+            );
+            counts.case(fault);
+        }
+    }
+
+    // Every enrollment and recovery fixed-window counter, at the limit edge.
+    const IP: &str = "203.0.113.1";
+    let endpoints: [(&str, Vec<PairingStmt>, u64, u64); 6] = [
+        ("enroll", plan_rate_enroll_by_ip(IP), 10, 60),
+        ("package store", plan_rate_package_store(IP), 20, 3600),
+        ("package fetch", plan_rate_package_fetch(IP), 60, 3600),
+        ("grant", plan_rate_grant_by_user("user-1"), 10, 3600),
+        ("claim", plan_rate_claim_by_ip(IP), 20, 3600),
+        ("result", plan_rate_result_by_ip(IP), 120, 60),
+    ];
+    for (name, plan, limit, window) in endpoints {
+        let key = match render(&plan[0]) {
+            Rendered::KvIncr { key, .. } => key,
+            other => panic!("{name}: expected a counter, got {other:?}"),
+        };
+        for preseed in [0u64, limit - 1, limit] {
+            for fault in faults(1) {
+                let _ = state.store.del(&key);
+                for _ in 0..preseed {
+                    state.store.incr_fixed_window(&key, 1, window as i64).unwrap();
+                }
+                let mut model_db = Model::default();
+                if preseed > 0 {
+                    model_db.counters.insert(key.clone(), preseed);
+                }
+                let (observed, error) = crate::rate_limit::enrollment_window(
+                    |k, delta, w| {
+                        if fault.is_some() {
+                            return Err(crate::error::AppError::Internal(
+                                "injected rate-limit failure".into(),
+                            ));
+                        }
+                        state.store.incr_fixed_window(k, delta, w)
+                    },
+                    &plan,
+                    limit,
+                );
+                let (expected, expected_post) =
+                    model::rate_limit(&model_db, key.clone(), window, limit, fault);
+                let case = format!("rate {name} preseed {preseed} fault {fault:?}");
+                assert_eq!(observed, expected, "{case}");
+                assert_eq!(error.is_some(), fault.is_some(), "{case}");
+                let count = state.store.incr_fixed_window(&key, 0, window as i64).unwrap();
+                assert_eq!(
+                    count,
+                    expected_post.counters.get(&key).copied().unwrap_or(0),
+                    "{case}"
+                );
+                counts.case(fault);
+            }
+        }
+        let _ = state.store.del(&key);
+    }
+    eprintln!(
+        "enrollment executor conformance (pre-driver/rate): {} states, {} cases, {} with an injected failure",
         counts.states, counts.cases, counts.faulted
     );
 }

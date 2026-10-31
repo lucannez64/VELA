@@ -13,12 +13,13 @@ use vela_recovery_policy::webauthn_driver::{
     GrantStoreObservation, ShareDecodeObservation,
 };
 use vela_recovery_policy::webauthn_store::{self, CredentialGrantView};
+use vela_recovery_policy::redemption_store::{self, GrantPeekObservation, GrantView};
 use webauthn_rs::prelude::PublicKeyCredential;
 
 use std::net::SocketAddr;
 
 use super::sql::{
-    credential_row, finish_account_row_view, run_webauthn_read, run_webauthn_write,
+    credential_row, finish_account_row_view, peek_grant, run_webauthn_read, run_webauthn_write,
     store_credential_grant, take_auth_state, webauthn_share_row_view, PoolSql, RecoveryKv,
     RecoverySql, StoreKv,
 };
@@ -660,8 +661,31 @@ pub(crate) fn observe_enroll_grant(
     user_id: Uuid,
     grant: Uuid,
 ) -> Result<Option<RecoveryEnrollGrant>> {
-    let Some(value) = state.store.get(&enroll_grant_key(user_id, grant))? else {
-        return Ok(None);
+    observe_enroll_grant_with(&mut StoreKv(&state.store), user_id, grant)
+}
+
+/// The same read through any store, so conformance can inject its failure.
+pub(super) fn observe_enroll_grant_with<K: RecoveryKv>(
+    kv: &mut K,
+    user_id: Uuid,
+    grant: Uuid,
+) -> Result<Option<RecoveryEnrollGrant>> {
+    let stmt = redemption_store::plan_peek_grant(enroll_grant_key(user_id, grant));
+    let value = peek_grant(kv, &stmt)?;
+    let decoded = match value {
+        None => None,
+        Some(value) => Some(decode_enroll_grant(&value)?),
     };
-    decode_enroll_grant(&value).map(Some)
+    if decoded.is_none() {
+        return Ok(None);
+    }
+    let view = decoded.as_ref().map(|grant| GrantView {
+        key_epoch: grant.key_epoch,
+        credential_id: grant.credential_id.clone(),
+        possession: grant.possession,
+    });
+    match redemption_store::classify_peek_grant(view.as_ref()) {
+        GrantPeekObservation::Absent => Ok(None),
+        GrantPeekObservation::Present(_) => Ok(decoded),
+    }
 }

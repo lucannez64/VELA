@@ -23,7 +23,7 @@ use crate::{
     error::{AppError, Result},
     middleware::{maybe_append_new_token, DeviceSession},
     rate_limit,
-    sqldb::{Db as _, TursoDb, TursoValue},
+    sqldb::TursoDb,
     state::AppState,
 };
 
@@ -78,46 +78,48 @@ pub struct RegisterFinishResponse {
 /// passkeys. Cheap after the first run since the WHERE clause then matches
 /// nothing.
 pub(crate) async fn backfill_webauthn_cred_ids(db: &TursoDb) -> anyhow::Result<()> {
-    let rows = db
-        .query(
-            "SELECT id, recovery_webauthn_credential FROM users
-             WHERE recovery_webauthn_credential IS NOT NULL AND recovery_webauthn_cred_id IS NULL",
-            vec![],
-        )
-        .await?;
+    let mut sql = PoolSql(db);
+    backfill_with(&mut sql).await
+}
 
-    for row in &rows {
-        let Some(id) = row.text(0) else {
-            continue;
-        };
-        let Some(passkey_json) = row.text(1) else {
-            continue;
-        };
-        let id = id.to_string();
-        let passkey: Passkey = match serde_json::from_str(passkey_json) {
+/// The startup backfill's plan: the legacy-row scan, then one credential-id
+/// write per scanned row, each through a fault-injectable SQL runner.
+pub(crate) async fn backfill_with<S: RecoverySql>(sql: &mut S) -> anyhow::Result<()> {
+    let scan = webauthn_store::plan_backfill_scan();
+    let rows = run_webauthn_read(sql, &scan).await?;
+    let scanned = super::sql::legacy_credential_rows(&rows);
+    let scan_view = webauthn_store::classify_backfill_scan(&scanned);
+    let mut writes = Vec::new();
+    for row in &scan_view.rows {
+        let passkey: Passkey = match serde_json::from_str(&row.credential) {
             Ok(pk) => pk,
             Err(e) => {
                 tracing::warn!(
-                    user_id = %id,
+                    user_id = %row.user,
                     error = %e,
                     "skipping unparseable legacy WebAuthn credential during backfill"
                 );
                 continue;
             }
         };
-        let cred_id = cred_id_b64(&passkey);
-        if let Err(e) = db
-            .execute(
-                "UPDATE users SET recovery_webauthn_cred_id = ? WHERE id = ?",
-                vec![TursoValue::Text(cred_id), TursoValue::Text(id.clone())],
-            )
-            .await
-        {
-            tracing::warn!(
-                user_id = %id,
-                error = %e,
-                "failed to backfill recovery_webauthn_cred_id"
-            );
+        writes.push(webauthn_store::BackfillWrite {
+            user: row.user.clone(),
+            credential_id: cred_id_b64(&passkey),
+        });
+    }
+    for write in writes {
+        let user_id = write.user.clone();
+        let plan = webauthn_store::plan_backfill_write(write.user, write.credential_id);
+        let (outcomes, error) = run_webauthn_writes(sql, &plan).await;
+        match webauthn_store::classify_backfill_write(&outcomes) {
+            webauthn_store::BackfillWriteObservation::Stored => {}
+            webauthn_store::BackfillWriteObservation::Failed => {
+                tracing::warn!(
+                    user_id = %user_id,
+                    error = %error.expect("a failed write carried its error"),
+                    "failed to backfill recovery_webauthn_cred_id"
+                );
+            }
         }
     }
     Ok(())

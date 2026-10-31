@@ -55,6 +55,11 @@ type t_WebAuthnStmt =
     f_grant:t_CredentialGrantView;
     f_ttl_secs:u64
   }: t_WebAuthnStmt
+  | WebAuthnStmt_SelectLegacyCredentials : t_WebAuthnStmt
+  | WebAuthnStmt_BackfillCredentialId {
+    f_user:Alloc.String.t_String;
+    f_credential_id:Alloc.String.t_String
+  }: t_WebAuthnStmt
 
 /// The `recovery_share` read: whether the account exists and whether the
 /// column is non-null.
@@ -109,6 +114,24 @@ type t_CredentialHolderView =
   | CredentialHolderView_OtherAccount : t_CredentialHolderView
   | CredentialHolderView_OnlyCaller : t_CredentialHolderView
   | CredentialHolderView_Unreadable : t_CredentialHolderView
+
+/// One candidate row of the startup backfill's scan: the account id and its
+/// stored credential JSON.
+type t_LegacyCredentialRowView = {
+  f_user:Alloc.String.t_String;
+  f_credential:Alloc.String.t_String
+}
+
+let impl_61: Core_models.Clone.t_Clone t_LegacyCredentialRowView =
+  { f_clone = (fun x -> x); f_clone_pre = (fun _ -> True); f_clone_post = (fun _ _ -> True) }
+
+/// The backfill scan's observation: exactly the candidate rows it returned.
+type t_BackfillScan = { f_rows:Alloc.Vec.t_Vec t_LegacyCredentialRowView Alloc.Alloc.t_Global }
+
+/// One backfill write's verdict.
+type t_BackfillWriteObservation =
+  | BackfillWriteObservation_Stored : t_BackfillWriteObservation
+  | BackfillWriteObservation_Failed : t_BackfillWriteObservation
 
 /// `InitiateIo::auth_start_observe` / `RecoverIo::auth_finish_context`: read
 /// the account's `recovery_share` cell.
@@ -192,6 +215,27 @@ let plan_store_credential_grant
   ({ f_key = key; f_value = value; f_grant = grant; f_ttl_secs = ttl_secs })
   <:
   t_WebAuthnStmt
+
+/// The startup backfill's scan statement.
+let plan_backfill_scan (_: Prims.unit) : t_WebAuthnStmt =
+  WebAuthnStmt_SelectLegacyCredentials <: t_WebAuthnStmt
+
+/// One backfill write's plan: exactly the statement the loop runs for one row.
+let plan_backfill_write (user credential_id: Alloc.String.t_String)
+    : Alloc.Vec.t_Vec t_WebAuthnStmt Alloc.Alloc.t_Global =
+  Alloc.Slice.impl__into_vec #t_WebAuthnStmt
+    #Alloc.Alloc.t_Global
+    ((let list =
+          [
+            WebAuthnStmt_BackfillCredentialId ({ f_user = user; f_credential_id = credential_id })
+            <:
+            t_WebAuthnStmt
+          ]
+        in
+        FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+        Rust_primitives.Hax.array_of_list 1 list)
+      <:
+      t_Slice t_WebAuthnStmt)
 
 /// `InitiateIo::auth_start_observe`: every field is the truth about the live
 /// row, and the attempt slot is reported fresh exactly when it was empty.
@@ -473,3 +517,21 @@ let classify_persist_credential
       Vela_recovery_policy.Webauthn_driver.CredentialPersistObservation_StorageFailed
       <:
       Vela_recovery_policy.Webauthn_driver.t_CredentialPersistObservation
+
+/// The startup backfill's scan: exactly the rows the query returned.
+let classify_backfill_scan (rows: t_Slice t_LegacyCredentialRowView) : t_BackfillScan =
+  { f_rows = Alloc.Slice.impl__to_vec #t_LegacyCredentialRowView rows } <: t_BackfillScan
+
+/// One backfill write: `Stored` exactly when the update ran.
+let classify_backfill_write (outcomes: t_Slice Vela_recovery_policy.Redemption_store.t_WriteOutcome)
+    : t_BackfillWriteObservation =
+  if
+    (Core_models.Slice.impl__len #Vela_recovery_policy.Redemption_store.t_WriteOutcome outcomes
+      <:
+      usize) =.
+    mk_usize 1 &&
+    (match outcomes.[ mk_usize 0 ] <: Vela_recovery_policy.Redemption_store.t_WriteOutcome with
+      | Vela_recovery_policy.Redemption_store.WriteOutcome_Applied _ -> true
+      | _ -> false)
+  then BackfillWriteObservation_Stored <: t_BackfillWriteObservation
+  else BackfillWriteObservation_Failed <: t_BackfillWriteObservation

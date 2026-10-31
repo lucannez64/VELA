@@ -48,8 +48,10 @@ done
 cargo test --lib
 
 items=(
-  plan_take_grant plan_insert_device plan_authority_read plan_restore_grant
-  classify_take classify_insert classify_authority
+  plan_take_grant plan_peek_grant plan_insert_device plan_authority_read
+  plan_enrollment_account plan_restore_grant
+  classify_take classify_peek_grant classify_insert classify_authority
+  observed_epoch classify_enrollment_account
 )
 share_items=(
   plan_stage_share plan_promote_staged_split plan_delete_share
@@ -69,12 +71,17 @@ webauthn_items=(
   plan_update_credential_if_current plan_credential_holders
   plan_persist_credential plan_store_registration_state
   plan_take_registration_state plan_store_credential_grant
+  plan_backfill_scan plan_backfill_write classify_backfill_scan
+  classify_backfill_write
   classify_auth_start classify_finish_context classify_store_auth_state
   classify_store_registration_state classify_take_auth_state
   classify_credential_update classify_finish_account finish_account_split
   classify_share_release classify_grant_store
   classify_registration_start classify_registration_state
   classify_uniqueness classify_persist_credential
+)
+rate_items=(
+  plan_rate_limit under_limit classify_rate_limit
 )
 include='-**'
 for item in "${items[@]}"; do
@@ -92,8 +99,12 @@ webauthn_include='-**'
 for item in "${webauthn_items[@]}"; do
   webauthn_include+=" +vela_recovery_policy::webauthn_store::$item"
 done
+rate_include='-**'
+for item in "${rate_items[@]}"; do
+  rate_include+=" +vela_recovery_policy::rate_store::$item"
+done
 
-rm -rf proofs/fstar/extraction-redemption proofs/fstar/extraction-share proofs/fstar/extraction-possession proofs/fstar/extraction-webauthn
+rm -rf proofs/fstar/extraction-redemption proofs/fstar/extraction-share proofs/fstar/extraction-possession proofs/fstar/extraction-webauthn proofs/fstar/extraction-rate
 cargo hax into \
   --output-dir proofs/fstar/extraction-redemption \
   -i "$include" \
@@ -110,6 +121,10 @@ cargo hax into \
   --output-dir proofs/fstar/extraction-webauthn \
   -i "$webauthn_include" \
   fstar --z3rlimit 500
+cargo hax into \
+  --output-dir proofs/fstar/extraction-rate \
+  -i "$rate_include" \
+  fstar --z3rlimit 500
 # The partial driver and root modules hax writes alongside are superseded by
 # the full driver extractions.
 rm -f proofs/fstar/extraction-redemption/Vela_recovery_policy.Driver.fst
@@ -121,6 +136,8 @@ rm -f proofs/fstar/extraction-possession/Vela_recovery_policy.Possession_driver.
 rm -f proofs/fstar/extraction-possession/Vela_recovery_policy.fst
 rm -f proofs/fstar/extraction-webauthn/Vela_recovery_policy.Webauthn_driver.fst
 rm -f proofs/fstar/extraction-webauthn/Vela_recovery_policy.fst
+rm -f proofs/fstar/extraction-rate/Vela_recovery_policy.fst
+rm -f proofs/fstar/extraction-rate/Vela_recovery_policy.Redemption_store.fst
 
 generated=(
   proofs/fstar/extraction-redemption/Vela_recovery_policy.Redemption_store.fst
@@ -129,6 +146,7 @@ generated=(
   proofs/fstar/extraction-possession/Vela_recovery_policy.Possession_store.fst
   proofs/fstar/extraction-webauthn/Vela_recovery_policy.Webauthn_store.fst
   proofs/fstar/extraction-webauthn/Vela_recovery_policy.Redemption_store.fst
+  proofs/fstar/extraction-rate/Vela_recovery_policy.Rate_store.fst
 )
 driver=(proofs/fstar/extraction-driver/*.fst proofs/fstar/extraction-recovery-share-driver/*.fst proofs/fstar/extraction-possession-driver/*.fst)
 model=(
@@ -136,12 +154,14 @@ model=(
   proofs/fstar/share-lemmas/Vela_recovery_policy_share_model.fst
   proofs/fstar/possession-lemmas/Vela_recovery_policy_possession_model.fst
   proofs/fstar/webauthn-lemmas/Vela_recovery_policy_webauthn_model.fst
+  proofs/fstar/rate-lemmas/Vela_recovery_policy_rate_model.fst
 )
 lemmas=(
   proofs/fstar/redemption-lemmas/Vela_recovery_policy_redemption_lemmas.fst
   proofs/fstar/share-lemmas/Vela_recovery_policy_share_lemmas.fst
   proofs/fstar/possession-lemmas/Vela_recovery_policy_possession_lemmas.fst
   proofs/fstar/webauthn-lemmas/Vela_recovery_policy_webauthn_lemmas.fst
+  proofs/fstar/rate-lemmas/Vela_recovery_policy_rate_lemmas.fst
 )
 for f in "${generated[@]}" "${model[@]}" "${lemmas[@]}"; do
   [[ -f $f ]] || { echo "missing $f" >&2; exit 1; }
@@ -190,6 +210,10 @@ check_group() {
                    --include proofs/fstar/extraction-webauthn
                    --include proofs/fstar/webauthn-lemmas)
       ;;
+    *Rate_store*)
+      fstar_args+=(--include proofs/fstar/extraction-rate
+                   --include proofs/fstar/rate-lemmas)
+      ;;
     *)
       fstar_args+=(--include proofs/fstar/extraction-driver
                    --include proofs/fstar/extraction-redemption
@@ -213,9 +237,10 @@ check_group "${generated[0]}" "${model[0]}" "${lemmas[0]}"
 check_group "${generated[1]}" "${generated[2]}" "${model[1]}" "${lemmas[1]}"
 check_group "${generated[3]}" "${model[2]}" "${lemmas[2]}"
 check_group "${generated[4]}" "${model[3]}" "${lemmas[3]}"
+check_group "${generated[6]}" "${model[4]}" "${lemmas[4]}"
 
 # Each mutant of the plans and classifiers must break the proof.
 "$proof_root/verify-fstar-recovery-executors-mutations.sh"
 
 echo "recovery executors: for every starting database, every starting grant, every starting attempt slot, every starting users row, every stored credential, every WebAuthn slot and every failing statement, each enrollment, recovery-share, possession and WebAuthn executor's observation reports exactly what its statements did, and a failed run changes nothing"
-sha256sum "${generated[@]}" "${model[@]}" "${lemmas[@]}" src/redemption_store.rs src/share_store.rs src/possession_store.rs src/webauthn_store.rs src/redemption_model.rs
+sha256sum "${generated[@]}" "${model[@]}" "${lemmas[@]}" src/redemption_store.rs src/share_store.rs src/possession_store.rs src/webauthn_store.rs src/rate_store.rs src/redemption_model.rs

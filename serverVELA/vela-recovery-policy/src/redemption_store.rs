@@ -59,6 +59,9 @@ pub enum GrantTake {
 pub enum RedemptionStmt {
     /// Atomic read-and-delete of the exact enrollment-grant key.
     TakeGrant { key: String },
+    /// The non-consuming read of the exact enrollment-grant key, used by the
+    /// enrollment preflight and by the possession path.
+    PeekGrant { key: String },
     /// The guarded recovered-device insert:
     /// `INSERT ... SELECT ... WHERE EXISTS (SELECT 1 FROM users ...)`.
     InsertDevice {
@@ -74,6 +77,8 @@ pub enum RedemptionStmt {
     },
     /// The live authority recheck.
     SelectAuthority { user: String },
+    /// `post_enroll_device`'s preflight account read.
+    SelectEnrollmentAccount { user: String },
     /// Restore the exact consumed grant, overwriting any current value.
     PutGrant {
         key: String,
@@ -105,6 +110,29 @@ pub enum ReadOutcome<R> {
 pub struct AuthorityRowView {
     pub credential_id: Option<String>,
     pub auth_hash: Option<String>,
+}
+
+/// The cells of a `SelectEnrollmentAccount` row: `key_epoch`,
+/// `rekey_state`, `recovery_webauthn_cred_id` and the decoded length of the
+/// staged possession commitment.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EnrollmentAccountRowView {
+    pub stored_epoch: Option<i64>,
+    pub rotation_active: bool,
+    pub credential_id: Option<String>,
+    /// The decoded byte length of `recovery_auth_hash`; the handler only
+    /// decodes it once the epoch and rotation guards pass, so a closed guard
+    /// reports zero (and never lets a corrupt cell fail the request).
+    pub commitment_len: usize,
+}
+
+/// The non-consuming grant read's observation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum GrantPeekObservation {
+    /// The key is absent; the caller must reject.
+    Absent,
+    /// The key held exactly this decoded grant.
+    Present(GrantView),
 }
 
 // ── Plans ──────────────────────────────────────────────────────────────────
@@ -149,6 +177,17 @@ pub fn plan_insert_device(
 /// `recheck_authority`: read the live credential and commitment columns.
 pub fn plan_authority_read(user: String) -> RedemptionStmt {
     RedemptionStmt::SelectAuthority { user }
+}
+
+/// The non-consuming grant read (`observe_enroll_grant`).
+pub fn plan_peek_grant(key: String) -> RedemptionStmt {
+    RedemptionStmt::PeekGrant { key }
+}
+
+/// `post_enroll_device`'s preflight account read: the live epoch, rotation
+/// flag, credential id and staged commitment.
+pub fn plan_enrollment_account(user: String) -> RedemptionStmt {
+    RedemptionStmt::SelectEnrollmentAccount { user }
 }
 
 /// `restore_grant`: overwrite the exact grant key with the consumed grant.
@@ -229,6 +268,61 @@ pub fn classify_authority(
 
 // ── Rendering (not extracted; pinned by the tests below) ───────────────────
 
+/// The non-consuming grant read's classification: the stored grant, or absence.
+pub fn classify_peek_grant(stored: Option<&GrantView>) -> GrantPeekObservation {
+    match stored {
+        Some(grant) => GrantPeekObservation::Present(grant.clone()),
+        None => GrantPeekObservation::Absent,
+    }
+}
+
+/// The preflight account view: the live row's facts as the classifier decides
+/// them. `None` is an absent row.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EnrollmentAccountView {
+    pub stored_epoch: Option<i64>,
+    pub epoch_active: bool,
+    pub credential_id_matches: bool,
+    pub commitment_len: usize,
+}
+
+/// The epoch the preflight compares with the grant's: `observed_recovery_epoch`
+/// with a missing or non-positive stored epoch normalized to the first epoch.
+/// Pinned against the policy function by the unit tests below.
+pub fn observed_epoch(stored: Option<i64>) -> i64 {
+    match stored {
+        None => 1,
+        Some(value) => {
+            if value < 1 {
+                1
+            } else {
+                value
+            }
+        }
+    }
+}
+
+/// The preflight account observation, in the handler's historical precedence.
+/// The commitment's decoded length is reported only when the historical
+/// preflight would have decoded it: the normalized epoch matches the grant's
+/// and the account is not rotating.
+pub fn classify_enrollment_account(
+    row: Option<&EnrollmentAccountRowView>,
+    grant_epoch: i64,
+    grant_credential_id: &String,
+) -> Option<EnrollmentAccountView> {
+    row.map(|row| {
+        let epoch_active = !row.rotation_active;
+        let gate_open = observed_epoch(row.stored_epoch) == grant_epoch && epoch_active;
+        EnrollmentAccountView {
+            stored_epoch: row.stored_epoch,
+            epoch_active,
+            credential_id_matches: row.credential_id.as_ref() == Some(grant_credential_id),
+            commitment_len: if gate_open { row.commitment_len } else { 0 },
+        }
+    })
+}
+
 /// One SQL parameter, in the wire type the handler binds.
 #[cfg(not(hax))]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -247,6 +341,8 @@ pub enum Rendered {
     Execute { sql: &'static str, params: Vec<Param> },
     /// The atomic read-and-delete of a key.
     KvTake { key: String },
+    /// Read a key's value without removing it.
+    KvGet { key: String },
     /// Set a key with its serialized value.
     KvPut { key: String, value: Vec<u8> },
     /// Whether a key is currently present.
@@ -255,6 +351,8 @@ pub enum Rendered {
     KvSetNx { key: String, value: Vec<u8>, ttl_secs: u64 },
     /// Set a key with its serialized value, overwriting any current value.
     KvSetEx { key: String, value: Vec<u8>, ttl_secs: u64 },
+    /// One fixed-window counter increment at this key and window.
+    KvIncr { key: String, window_secs: u64 },
 }
 
 /// The exact SQL text and parameters each statement has always used.
@@ -317,6 +415,12 @@ pub fn render(stmt: &RedemptionStmt) -> Rendered {
         }
         RedemptionStmt::SelectAuthority { user } => Rendered::Query {
             sql: "SELECT recovery_webauthn_cred_id, recovery_auth_hash FROM users WHERE id = ?",
+            params: vec![Param::Text(user.clone())],
+        },
+        RedemptionStmt::PeekGrant { key } => Rendered::KvGet { key: key.clone() },
+        RedemptionStmt::SelectEnrollmentAccount { user } => Rendered::Query {
+            sql: "SELECT key_epoch, rekey_state, recovery_webauthn_cred_id, recovery_auth_hash
+                     FROM users WHERE id = ?",
             params: vec![Param::Text(user.clone())],
         },
         RedemptionStmt::PutGrant { key, value, .. } => Rendered::KvPut {
@@ -454,6 +558,17 @@ mod tests {
             render(&restore[0]),
             Rendered::KvPut { key: s("k"), value: b"{\"key_epoch\":7}".to_vec() }
         );
+    }
+
+    #[test]
+    fn the_local_epoch_normalization_is_the_policy_function() {
+        for stored in [None, Some(-5), Some(0), Some(1), Some(2), Some(7), Some(i64::MAX)] {
+            assert_eq!(
+                observed_epoch(stored),
+                crate::observed_recovery_epoch(stored),
+                "stored {stored:?}"
+            );
+        }
     }
 
     #[test]

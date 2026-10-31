@@ -149,6 +149,21 @@ impl<'a> ExecIo<'a> {
             .map_err(ExecError::Store)
     }
 
+    fn set_ex_pair(
+        &mut self,
+        first: &str,
+        first_value: &[u8],
+        second: &str,
+        second_value: &[u8],
+        ttl: u64,
+    ) -> Result<(), ExecError> {
+        self.hit()?;
+        self.state
+            .store
+            .set_ex_pair(first, first_value, second, second_value, ttl)
+            .map_err(ExecError::Store)
+    }
+
     /// Runs a write plan in order, stopping at the first failure.
     pub(crate) async fn run_writes(
         &mut self,
@@ -185,6 +200,15 @@ impl<'a> ExecIo<'a> {
                     Ok(GuardedSetOutcome::KeyExists) => Ok(WriteOutcome::KeyExists),
                     Err(error) => Err(error),
                 },
+                Rendered::StoreSetPair {
+                    first,
+                    first_value,
+                    second,
+                    second_value,
+                    ttl,
+                } => self
+                    .set_ex_pair(&first, &first_value, &second, &second_value, ttl)
+                    .map(|()| WriteOutcome::Applied(1)),
                 _ => Err(ExecError::Sql(anyhow::anyhow!(
                     "a read statement in a write plan"
                 ))),
@@ -295,6 +319,7 @@ impl<'a> ExecIo<'a> {
             ),
         }
     }
+
 }
 
 fn text_params(values: Vec<String>) -> Vec<TursoValue> {
