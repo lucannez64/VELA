@@ -18,6 +18,9 @@ set -euo pipefail
 #                    the target device id
 #   plan-drop        plan_commit_transaction drops the transaction commit
 #   guard-drop       the model's chunk delete ignores the account-epoch guard
+#   rate-classify    the re-key limiter refuses at exactly the budget (off by one)
+#   rate-plan-key    the counter is incremented at the empty key
+#   rate-failure     the limiter counts through an injected store failure
 
 proof_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cd "$proof_root"
@@ -42,7 +45,7 @@ mutants=(classify-error classify-rows classify-ack plan-swap plan-drop guard-dro
          key-state-failed key-state-missing usage-error usage-swap projection-error
          oram-error oram-plan sync-error sync-plan schema-error schema-plan
          capsule-error capsule-clear-error devices-error devices-plan
-         begin-drop begin-fault)
+         begin-drop begin-fault rate-classify rate-plan-key rate-failure)
 declare -A expect=(
   [classify-error]=delete_chunk_is_honest
   [classify-rows]=chunk_update_is_honest
@@ -70,6 +73,9 @@ declare -A expect=(
   [devices-plan]=device_list_is_honest
   [begin-drop]=begin_plan_is_one_statement
   [begin-fault]=begin_transaction_is_honest
+  [rate-classify]=rekey_rate_limit_is_honest
+  [rate-plan-key]=rekey_rate_limit_is_honest
+  [rate-failure]=rekey_rate_limit_is_honest
 )
 
 # One mutant: prints its verdict, returns non-zero when the check fails.
@@ -197,6 +203,13 @@ elif name == 'begin-drop':
     body2 = body2.replace('(List.Tot.length list) 1', '(List.Tot.length list) 0')
     body2 = body2.replace('array_of_list 1 list', 'array_of_list 0 list')
     text = text[:start] + body2 + text[end:]
+elif name == 'rate-classify':
+    start = text.index('let classify_rekey_rate_limit')
+    body = text[start:]
+    old = 'match count <=. limit <: bool with'
+    if body.count(old) != 1:
+        sys.exit(f'{name}: rekey rate classifier shape changed')
+    text = text[:start] + body.replace(old, 'match count <. limit <: bool with')
 else:
     # The remaining mutants edit the hand-written model, not the store.
     mt = model_path.read_text()
@@ -238,6 +251,14 @@ else:
       then [WriteOutcome_Failed]
       else WriteOutcome_Applied (mk_u64 0) :: run_begin d rest (k + 1) f""",
             """      WriteOutcome_Applied (mk_u64 0) :: run_begin d rest (k + 1) f""")
+    elif name == 'rate-plan-key':
+        model_once(
+            """    Some (n, { d with counters = upd_counter d.counters key n })""",
+            """    Some (n, { d with counters = upd_counter d.counters (Alloc.String.String "") n })""")
+    elif name == 'rate-failure':
+        model_once(
+            """  let r = run_auto d (stmts_of (plan_rate_limit key limit window_secs)) 0 f in""",
+            """  let r = run_auto d (stmts_of (plan_rate_limit key limit window_secs)) 0 None in""")
     else:
         sys.exit(f'{name}: unknown mutant')
     model_path.write_text(mt)

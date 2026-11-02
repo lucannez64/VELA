@@ -57,27 +57,32 @@ let rows_changed (n: u64) : bool = n <> mk_u64 0
 /// Everything but `vault_chunks` is untouched.
 let unchanged_except_chunks (d post: db) : prop =
   post.users == d.users /\ post.devices == d.devices /\ post.oram == d.oram /\
-  post.kv == d.kv
+  post.kv == d.kv /\ post.counters == d.counters
 
 /// Everything but `users` is untouched.
 let unchanged_except_users (d post: db) : prop =
   post.chunks == d.chunks /\ post.devices == d.devices /\ post.oram == d.oram /\
-  post.kv == d.kv
+  post.kv == d.kv /\ post.counters == d.counters
 
 /// Everything but `devices` is untouched.
 let unchanged_except_devices (d post: db) : prop =
   post.chunks == d.chunks /\ post.users == d.users /\ post.oram == d.oram /\
-  post.kv == d.kv
+  post.kv == d.kv /\ post.counters == d.counters
 
 /// Everything but `oram_buckets` is untouched.
 let unchanged_except_oram (d post: db) : prop =
   post.chunks == d.chunks /\ post.users == d.users /\ post.devices == d.devices /\
-  post.kv == d.kv
+  post.kv == d.kv /\ post.counters == d.counters
 
 /// Everything but the schema key is untouched.
 let unchanged_except_kv (d post: db) : prop =
   post.chunks == d.chunks /\ post.users == d.users /\ post.devices == d.devices /\
-  post.oram == d.oram
+  post.oram == d.oram /\ post.counters == d.counters
+
+/// Everything but the rate-limit counters is untouched.
+let unchanged_except_counters (d post: db) : prop =
+  post.chunks == d.chunks /\ post.users == d.users /\ post.devices == d.devices /\
+  post.oram == d.oram /\ post.kv == d.kv
 
 // ── Finite-association facts ───────────────────────────────────────────────
 
@@ -1633,6 +1638,67 @@ let begin_transaction_is_honest (d: db) (f: option nat)
      (obs == RD.TransactionObservation_Failed <==> f = Some 0) /\
      post == d) =
   begin_plan_is_one_statement ()
+
+// ── The per-account re-key pacing limiter ─────────────────────────────────
+
+/// The plan is exactly one counter increment at the key, budget and window it
+/// was handed; the key format (`rl:rekey:{user}`) is pinned by the Rust test.
+let plan_rate_limit_shape (key: text) (limit: u64) (window_secs: i64)
+  : Lemma (stmts_of (plan_rate_limit key limit window_secs) ==
+           [VaultStmt_RateLimitIncr { f_key = key; f_limit = limit;
+                                      f_window_secs = window_secs }]) = ()
+
+/// The request is allowed exactly when the counter's new value is within the
+/// budget; on a successful call exactly one more is recorded at this key and
+/// nothing else changes; a failed store call leaves the whole state unchanged.
+/// The counter's window is the store's scheduler choice, not modelled.
+let rekey_rate_limit_is_honest
+      (d: db) (key: text) (window_secs: i64) (limit: u64) (f: option nat)
+  : Lemma
+    (let (obs, post) = rekey_rate_limit d key window_secs limit f in
+     let before = d.counters key in
+     let after = Rust_primitives.Integers.add_sat #U64 before (mk_u64 1) in
+     (obs == RD.RateLimitObservation_Allowed <==>
+        (f <> Some 0 /\ after <=. limit)) /\
+     (obs == RD.RateLimitObservation_Limited <==>
+        (f = Some 0 \/ not (after <=. limit))) /\
+     (f <> Some 0 ==>
+        (post.counters key == after /\
+         post.counters == upd_counter d.counters key after /\
+         unchanged_except_counters d post)) /\
+     (f = Some 0 ==> post == d)) =
+  plan_rate_limit_shape key limit window_secs;
+  seq_of_list_facts (fst (run_auto d (stmts_of (plan_rate_limit key limit window_secs)) 0 f))
+
+/// An allowed request records exactly one more against this key, and nothing
+/// else in the state changes.
+let rekey_rate_limit_allows_one
+      (d: db) (key: text) (window_secs: i64) (limit: u64)
+  : Lemma
+    (let (obs, post) = rekey_rate_limit d key window_secs limit None in
+     obs == RD.RateLimitObservation_Allowed ==>
+       (post.counters key ==
+          Rust_primitives.Integers.add_sat #U64 (d.counters key) (mk_u64 1) /\
+        unchanged_except_counters d post)) =
+  rekey_rate_limit_is_honest d key window_secs limit None
+
+/// A failed counter call reports a refusal and leaves every counter unchanged.
+let rekey_rate_limit_failure_keeps_counter
+      (d: db) (key: text) (window_secs: i64) (limit: u64)
+  : Lemma
+    (let (obs, post) = rekey_rate_limit d key window_secs limit (Some 0) in
+     obs == RD.RateLimitObservation_Limited /\ post == d) =
+  rekey_rate_limit_is_honest d key window_secs limit (Some 0)
+
+/// The increment touches only the plan's key; every other counter keeps its
+/// value, so one account's pacing never throttles another's.
+let rekey_rate_limit_only_counts_this_key
+      (d: db) (key other: text) (window_secs: i64) (limit: u64)
+  : Lemma
+    (key <> other ==>
+       (let (_, post) = rekey_rate_limit d key window_secs limit None in
+        post.counters other == d.counters other)) =
+  rekey_rate_limit_is_honest d key window_secs limit None
 
 #pop-options
 

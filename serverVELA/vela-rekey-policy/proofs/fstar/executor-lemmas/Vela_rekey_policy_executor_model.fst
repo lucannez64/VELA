@@ -114,12 +114,18 @@ type oram_tbl = list oram_row
 type user_tbl = text -> option user_row
 type kv_tbl = text -> option text
 
+/// The fixed-window pacing counters: key -> count. A missing key is zero,
+/// exactly as the sled counter reads it. TTL expiry is the store's scheduler
+/// choice and is not modelled.
+type counter_tbl = text -> u64
+
 noeq type db = {
   chunks: chunk_tbl;
   users: user_tbl;
   devices: device_tbl;
   oram: oram_tbl;
   kv: kv_tbl;
+  counters: counter_tbl;
 }
 
 let mk_ckey (user id: text) (epoch: i64) : ckey = { ck_user = user; ck_id = id; ck_epoch = epoch }
@@ -177,6 +183,10 @@ let upd_users (t: user_tbl) (k: text) (x: option user_row) : user_tbl =
   fun k' -> if k' = k then x else t k'
 let upd_kv (t: kv_tbl) (k: text) (x: option text) : kv_tbl =
   fun k' -> if k' = k then x else t k'
+
+/// The counter map after one increment at `k` reports `n`.
+let upd_counter (t: counter_tbl) (k: text) (n: u64) : counter_tbl =
+  fun k' -> if k' = k then n else t k'
 
 // ── Guards ─────────────────────────────────────────────────────────────────
 
@@ -498,6 +508,10 @@ let exec (d: db) (s: t_VaultStmt) : option (u64 & db) =
      | None -> Some (mk_u64 0, d))
   | VaultStmt_SchemaFloorSet { f_key = key } ->
     Some (mk_u64 0, { d with kv = upd_kv d.kv key (Some (Alloc.String.String "2")) })
+  | VaultStmt_RateLimitIncr
+    { f_key = key; f_limit = _; f_window_secs = _ } ->
+    let n = Rust_primitives.Integers.add_sat #U64 (d.counters key) (mk_u64 1) in
+    Some (n, { d with counters = upd_counter d.counters key n })
   | VaultStmt_ClearEnrollmentCapsule { f_device = device; f_user = user } ->
     (match find_device d.devices device with
      | Some row ->
@@ -1012,3 +1026,11 @@ let stmts_of (p: Alloc.Vec.t_Vec t_VaultStmt Alloc.Alloc.t_Global) : list t_Vaul
 let slice_of (l: list t_WriteOutcome{L.length l <= Rust_primitives.Integers.max_usize})
   : t_Slice t_WriteOutcome =
   Seq.seq_of_list l
+
+/// One limiter check: the extracted plan, run on the state, then the extracted
+/// classifier. A fault at `f = Some 0` is the one statement failing.
+let rekey_rate_limit
+      (d: db) (key: text) (window_secs: i64) (limit: u64) (f: option nat)
+  : (Vela_rekey_policy.Rekey_driver.t_RateLimitObservation & db) =
+  let r = run_auto d (stmts_of (plan_rate_limit key limit window_secs)) 0 f in
+  (classify_rekey_rate_limit (slice_of (fst r)) limit, snd r)

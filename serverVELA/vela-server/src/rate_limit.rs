@@ -56,7 +56,7 @@ pub const TOKEN_MAX_LIFETIME_SECS: u64 = 15 * 60;
 const SESSION_HARD_CAP_SECS: i64 = 8 * 60 * 60;
 
 /// The refusal message [`check`] has always produced.
-fn rate_limited(limit: u64, window_secs: i64) -> AppError {
+pub(crate) fn rate_limited(limit: u64, window_secs: i64) -> AppError {
     AppError::RateLimited(format!("limit of {limit} per {window_secs}s exceeded"))
 }
 
@@ -735,6 +735,25 @@ pub fn revoke_all_device_jtis(store: &Store, device_id: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The re-key limiter now runs through a plan, but its refusal must stay
+    // byte for byte the historical one: the same message and a 429.
+    #[test]
+    fn rekey_refusal_keeps_the_historical_text_and_status() {
+        use axum::http::StatusCode;
+        use axum::response::IntoResponse;
+
+        let error = rate_limited(30, 3600);
+        assert!(matches!(
+            &error,
+            AppError::RateLimited(message)
+                if message == "limit of 30 per 3600s exceeded"
+        ));
+        assert_eq!(
+            error.into_response().status(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
+    }
 
     // Regression test: `record_verify_failure` and `verify_fail_by_device` are
     // called back-to-back on every failed /auth/verify attempt (see

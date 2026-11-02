@@ -196,6 +196,11 @@ type t_VaultStmt =
     f_device:Alloc.String.t_String;
     f_user:Alloc.String.t_String
   }: t_VaultStmt
+  | VaultStmt_RateLimitIncr {
+    f_key:Alloc.String.t_String;
+    f_limit:u64;
+    f_window_secs:i64
+  }: t_VaultStmt
   | VaultStmt_SelectDeviceList { f_user:Alloc.String.t_String }: t_VaultStmt
 
 /// What one write statement (or the commit) returned.
@@ -889,6 +894,24 @@ let plan_clear_enrollment_capsule (device user: Alloc.String.t_String)
 /// `list_devices`' listing.
 let plan_read_devices (user: Alloc.String.t_String) : t_VaultStmt =
   VaultStmt_SelectDeviceList ({ f_user = user }) <: t_VaultStmt
+
+/// One fixed-window counter increment at the exact key, budget and window.
+/// Extracted, so the proof speaks about the key it is handed.
+let plan_rate_limit (key: Alloc.String.t_String) (limit: u64) (window_secs: i64)
+    : Alloc.Vec.t_Vec t_VaultStmt Alloc.Alloc.t_Global =
+  Alloc.Slice.impl__into_vec #t_VaultStmt
+    #Alloc.Alloc.t_Global
+    ((let list =
+          [
+            VaultStmt_RateLimitIncr ({ f_key = key; f_limit = limit; f_window_secs = window_secs })
+            <:
+            t_VaultStmt
+          ]
+        in
+        FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+        Rust_primitives.Hax.array_of_list 1 list)
+      <:
+      t_Slice t_VaultStmt)
 
 /// `read_version`/`reread_version`: the stored version, missing, or storage.
 let classify_version (outcome: t_ReadOutcome (Core_models.Option.t_Option i64))
@@ -1584,3 +1607,44 @@ let classify_device_list
   match outcome <: t_ReadOutcome (Alloc.Vec.t_Vec t_DeviceListRowView Alloc.Alloc.t_Global) with
   | ReadOutcome_Rows _ -> DeviceListObservation_Read <: t_DeviceListObservation
   | ReadOutcome_Failed  -> DeviceListObservation_Failed <: t_DeviceListObservation
+
+/// The per-account re-key pacing limiter: `Allowed` exactly when its one
+/// counter statement ran and the counter's new value is within the budget.
+/// An over-limit count is `Limited` (it still grew before refusing), and a
+/// failed store call is `Limited` too — the handler records the error and
+/// refuses, exactly as `rate_limit::check` always did.
+let classify_rekey_rate_limit (outcomes: t_Slice t_WriteOutcome) (limit: u64)
+    : Vela_rekey_policy.Rekey_driver.t_RateLimitObservation =
+  if (Core_models.Slice.impl__len #t_WriteOutcome outcomes <: usize) =. mk_usize 1
+  then
+    match
+      (match outcomes.[ mk_usize 0 ] <: t_WriteOutcome with
+        | WriteOutcome_Applied count ->
+          (match count <=. limit <: bool with
+            | true ->
+              Core_models.Option.Option_Some
+              (Vela_rekey_policy.Rekey_driver.RateLimitObservation_Allowed
+                <:
+                Vela_rekey_policy.Rekey_driver.t_RateLimitObservation)
+              <:
+              Core_models.Option.t_Option Vela_rekey_policy.Rekey_driver.t_RateLimitObservation
+            | _ ->
+              Core_models.Option.Option_None
+              <:
+              Core_models.Option.t_Option Vela_rekey_policy.Rekey_driver.t_RateLimitObservation)
+        | _ ->
+          Core_models.Option.Option_None
+          <:
+          Core_models.Option.t_Option Vela_rekey_policy.Rekey_driver.t_RateLimitObservation)
+      <:
+      Core_models.Option.t_Option Vela_rekey_policy.Rekey_driver.t_RateLimitObservation
+    with
+    | Core_models.Option.Option_Some x -> x
+    | Core_models.Option.Option_None  ->
+      Vela_rekey_policy.Rekey_driver.RateLimitObservation_Limited
+      <:
+      Vela_rekey_policy.Rekey_driver.t_RateLimitObservation
+  else
+    Vela_rekey_policy.Rekey_driver.RateLimitObservation_Limited
+    <:
+    Vela_rekey_policy.Rekey_driver.t_RateLimitObservation
