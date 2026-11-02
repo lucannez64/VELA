@@ -69,9 +69,10 @@ declare -A expect=(
   [rate-plan-key]=rate_limit_is_honest
 )
 
-failures=0
-for name in "${mutants[@]}"; do
-  [[ $want == all || $want == "$name" ]] || continue
+# One mutant: prints its verdict, returns non-zero when the check fails.
+run_mutant() {
+  local name=$1
+  [[ $want == all || $want == "$name" ]] || return 0
   d=$mut/$name
   mkdir -p "$d/executor" "$d/lemmas"
   cp "$executor" "$d/executor/"
@@ -240,8 +241,7 @@ PY
   set -e
   if (( status == 0 )); then
     echo "mutant $name: VERIFIED (the proof does not depend on it)" >&2
-    failures=$((failures + 1))
-    continue
+    return 1
   fi
   # Every theorem with an error; the expected one must be among them.
   rejected=$(grep -oE 'Vela_enrollment_policy_executor_lemmas\.fst\(([0-9]+),' <<<"$out" | grep -oE '[0-9]+' | sort -un |
@@ -250,16 +250,33 @@ PY
     # No lemma error: F* was killed or failed elsewhere. Say so instead of exiting silently.
     echo "mutant $name: F* exited $status without an error in the lemma module; last output:" >&2
     tail -n 20 <<<"$out" >&2
-    failures=$((failures + 1))
-    continue
+    return 1
   fi
   if [[ " $rejected " != *" ${expect[$name]} "* ]]; then
     echo "mutant $name: rejected at [${rejected% }], expected ${expect[$name]}:" >&2
     grep -m5 -E 'Error' <<<"$out" >&2 || true
-    failures=$((failures + 1))
-    continue
+    return 1
   fi
   echo "mutant $name: rejected at ${rejected% }"
+}
+
+# Mutants are independent, so VELA_MUTANT_JOBS (default 4) run at once; each
+# report is printed in the listed order once all have finished.
+jobs_max=${VELA_MUTANT_JOBS:-4}
+for name in "${mutants[@]}"; do
+  ( set +e; (set -e; run_mutant "$name") >"$mut/$name.report" 2>&1; echo $? >"$mut/$name.status" ) &
+  while (( $(jobs -rp | wc -l) >= jobs_max )); do wait -n || true; done
+done
+wait
+failures=0
+for name in "${mutants[@]}"; do
+  [[ -f $mut/$name.status ]] || { echo "mutant $name: no result" >&2; failures=$((failures + 1)); continue; }
+  if [[ $(<"$mut/$name.status") == 0 ]]; then
+    cat "$mut/$name.report"
+  else
+    cat "$mut/$name.report" >&2
+    failures=$((failures + 1))
+  fi
 done
 (( failures == 0 )) || { echo "$failures mutation check(s) failed" >&2; exit 1; }
 echo "enrollment executor mutations: every mutant rejected at its theorem"

@@ -249,3 +249,24 @@ checked extractions, adds `reused.txt` to the logs, and the boundary job audits
 them as usual. `security/formal/tests/test_proof_inputs.py` fails if a script
 reads an outside path or local crate that the key does not cover. To force a
 full rerun, change the `proof-verdict-v1` prefix in the workflow.
+
+## Local checked-module cache
+
+Local proof runs on the build box can reuse F★ results through
+[`fstar-cache/fstar.exe`](fstar-cache/fstar.exe), a wrapper placed first on
+`PATH` that takes effect only when `VELA_FSTAR_CACHE` names a store and the
+call passes `--cache_off`. It keys each module on the F★ and z3 builds, the
+non-path flags, the module's bytes and its dependencies' keys, restores
+matching `.checked` files into a fresh per-call directory and stores what F★
+checked. F★ still rejects any `.checked` file whose recorded source or
+dependency hashes do not match. Modules named on the command line are restored
+only from results F★ verified under the same key; other modules are loaded
+with their obligations assumed, as in an uncached run. Solver hints are shared
+by module name; they only guide z3 and cannot make a query pass.
+
+F★ trusts a `.checked` file without re-verifying it, so the cache adds the
+store's integrity to the trusted base of a cached run. It is a development
+aid: CI jobs and published proof logs do not use it. On the vault executors
+gate (extraction, proofs and 27 mutants) a run with an unchanged tree took
+1074 s uncached and 209 s with the cache and four parallel mutants
+(`VELA_MUTANT_JOBS`, default 4, in each executor mutation script).

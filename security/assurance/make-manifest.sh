@@ -17,7 +17,7 @@ patterns = [
     'security/formal/tests/*.py', 'security/formal/tests/*.sh', 'security/formal/tests/*.spthy',
     'security/formal/network-boundary-correspondence.md',
     'security/assurance/*.patch', 'security/assurance/*.md', 'security/assurance/*.sh',
-    'security/assurance/*.py', 'security/assurance/*.json',
+    'security/assurance/*.py', 'security/assurance/*.json', 'security/assurance/fstar-cache/*',
     'security/assurance/proof-logs/**/*.txt', 'security/assurance/proof-logs/**/*.out', 'security/assurance/proof-logs/**/*.log',
     'security/assurance/proof-logs/**/*.json', 'security/assurance/proof-logs/**/*.md', 'security/assurance/proof-logs/**/*.fst',
     'security/assurance/proof-logs/**/*.fsti', 'security/assurance/proof-logs/**/*.ocv',
