@@ -412,8 +412,12 @@ impl PutChunkIo<'_> {
                 self.error = Some(error);
                 vault_upload_driver::RecheckObservation::Changed
             }
+            // Keep the handler's own error (404 for a deleted account, ...),
+            // as the pre-driver handler returned it unchanged.
             Err(error) => {
-                self.fail(error);
+                if self.error.is_none() {
+                    self.error = Some(error);
+                }
                 vault_upload_driver::RecheckObservation::Failed
             }
         }

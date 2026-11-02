@@ -218,8 +218,15 @@ pub async fn post_enroll_device(
         {
             Err(io.insert_error.take().expect("checked above"))
         }
+        // A failed authority recheck reports the database error it hit.
         RedemptionEffect::Fail(failure) | RedemptionEffect::RestoreAndFail(failure) => {
-            Err(redemption_failure_error(failure))
+            Err(match failure {
+                RedemptionFailure::RecheckStorage => io
+                    .error
+                    .take()
+                    .unwrap_or_else(|| redemption_failure_error(failure)),
+                _ => redemption_failure_error(failure),
+            })
         }
         _ => Err(AppError::Internal(
             "redemption driver reached no verdict".into(),
