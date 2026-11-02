@@ -265,8 +265,13 @@ with their obligations assumed, as in an uncached run. Solver hints are shared
 by module name; they only guide z3 and cannot make a query pass.
 
 F★ trusts a `.checked` file without re-verifying it, so the cache adds the
-store's integrity to the trusted base of a cached run. It is a development
-aid: CI jobs and published proof logs do not use it. On the vault executors
+store's integrity to the trusted base of a cached run. The store lives on the
+build box and is written only by the owner's runs: local `vela-heavy` runs and
+CI proof jobs on the box, which only run for the owner's own branches. Pull
+request and manual CI runs on the box use it; pushes to `main`, hosted runners
+and manual runs with `cold` check everything from source, and their verdicts
+are keyed apart (`proof-verdict-v1-cold-…`) so a cached verdict never stands in
+for a cold one. Published proof logs come from cold runs. On the vault executors
 gate (extraction, proofs and 27 mutants) a run with an unchanged tree took
 1074 s uncached and 209 s with the cache and four parallel mutants
 (`VELA_MUTANT_JOBS`, default 4, in each executor mutation script).

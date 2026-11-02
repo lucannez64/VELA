@@ -50,6 +50,11 @@ on:
       - "**/Cargo.lock"
       - ".github/workflows/security.yml"
   workflow_dispatch:
+    inputs:
+      cold:
+        description: "Check every proof without the shared F* cache"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -343,6 +348,8 @@ jobs:
       CARGO_BUILD_JOBS: 1
       OPAMJOBS: 1
       MAKEFLAGS: -j1
+      # Two parallel mutants stay within the job's 3 GiB memory cap.
+      VELA_MUTANT_JOBS: 2
     steps:
       - uses: actions/checkout@v4
       # A proof whose inputs are byte-identical to a run that already passed is
@@ -352,23 +359,29 @@ jobs:
       # run's logs and checked extractions for the boundary job.
       # test_proof_inputs.py fails if a script reads an outside path the key
       # does not cover.
+      # Pull requests and manual runs on the build box reuse checked F* modules
+      # from its shared store (security/assurance/fstar-cache). Pushes to main,
+      # hosted runners and manual runs with `cold` check everything from source;
+      # their verdicts are kept apart from cached ones.
       - name: Compute proof input key
         id: inputs
         env:
           CRATE_DIR: ${{ matrix.dir }}
           DEPS: ${{ matrix.deps }}
           NAME: ${{ matrix.name }}
+          MODE: ${{ (runner.environment == 'self-hosted' && github.event_name != 'push' && !inputs.cold) && 'cached' || 'cold' }}
         run: |
           set -euo pipefail
           root=${CRATE_DIR%%/*}
           # shellcheck disable=SC2206 # DEPS is a space-separated path list
           paths=("$CRATE_DIR" $DEPS security/formal/check-driver-proof-sources.py security/formal/check-sync-chunk-proof.py \
                  security/assurance/bounded.sh security/assurance/install-hax.sh \
-                 security/assurance/check-proof-boundary.py .github/workflows/security.yml)
+                 security/assurance/check-proof-boundary.py security/assurance/fstar-cache .github/workflows/security.yml)
           for f in "$root/Cargo.toml" "$root/Cargo.lock"; do [[ -e $f ]] && paths+=("$f"); done
           key=$(for p in "${paths[@]}"; do printf '%s %s\n' "$p" "$(git rev-parse --verify "HEAD:$p")"; done | sha256sum | cut -c1-40)
-          echo "key=proof-verdict-v1-$NAME-$key" >> "$GITHUB_OUTPUT"
-          echo "proof input key for $NAME: $key"
+          echo "key=proof-verdict-v1-$MODE-$NAME-$key" >> "$GITHUB_OUTPUT"
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "proof input key for $NAME ($MODE): $key"
       - name: Reuse a passing proof with the same inputs
         id: verdict
         uses: actions/cache/restore@v4
@@ -443,6 +456,12 @@ jobs:
           shared-key: refinement-rust-v2-${{ matrix.name }}
           key: ${{ hashFiles('security/assurance/install-hax.sh') }}
           cache-bin: false
+      - name: Use the shared F* cache
+        if: steps.verdict.outputs.cache-hit != 'true' && steps.inputs.outputs.mode == 'cached'
+        run: |
+          echo "$GITHUB_WORKSPACE/security/assurance/fstar-cache" >> "$GITHUB_PATH"
+          echo "VELA_FSTAR_CACHE=$HOME/.cache/vela-fstar" >> "$GITHUB_ENV"
+          echo "F* cache: $HOME/.cache/vela-fstar" | tee -a "$RUNNER_TEMP/refinement-logs/toolchain-activation-${{ matrix.name }}.log"
       - name: Extract and check ${{ matrix.name }}
         if: steps.verdict.outputs.cache-hit != 'true'
         env:
