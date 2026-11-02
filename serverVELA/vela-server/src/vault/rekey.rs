@@ -485,7 +485,7 @@ impl RekeyIo<'_> {
 
     async fn rate_limit(&mut self) -> vela_rekey_policy::rekey_driver::RateLimitObservation {
         use vela_rekey_policy::rekey_driver::RateLimitObservation as O;
-        match rate_limit(self.state, &self.user_id()) {
+        match rate_limit(self.state, &self.user_id()).await {
             Ok(()) => O::Allowed,
             Err(error) => {
                 self.error = Some(error);
@@ -1141,8 +1141,30 @@ pub async fn post_abort(
 /// Modest per-account pacing for the rotation endpoints themselves. The heavy
 /// traffic (chunk re-uploads) is already bounded by the ordinary chunk-write
 /// limits; these calls are cheap but must not be free to spam.
-fn rate_limit(state: &AppState, user_id: &str) -> Result<()> {
-    crate::rate_limit::check(&state.store, &format!("rl:rekey:{user_id}"), 30, 3600)
+///
+/// The plan carries the exact key, budget and window; the crate's executor loop
+/// runs its one counter statement and the extracted classifier decides. The
+/// window rollover stays the store's scheduler choice.
+async fn rate_limit(state: &AppState, user_id: &str) -> Result<()> {
+    use vela_rekey_policy::executor::{
+        classify_rekey_rate_limit, plan_rekey_rate_limit, REKEY_RATE_LIMIT,
+        REKEY_RATE_WINDOW_SECS,
+    };
+    use vela_rekey_policy::rekey_driver::RateLimitObservation;
+
+    let plan = plan_rekey_rate_limit(user_id);
+    let mut sql = crate::vault::sql::PoolSql(state);
+    let (outcomes, error) = crate::vault::sql::run_writes(&mut sql, &plan).await;
+    match classify_rekey_rate_limit(&outcomes, REKEY_RATE_LIMIT) {
+        RateLimitObservation::Allowed => Ok(()),
+        RateLimitObservation::Limited => match error {
+            Some(error) => Err(error.into_internal()),
+            None => Err(crate::rate_limit::rate_limited(
+                REKEY_RATE_LIMIT,
+                REKEY_RATE_WINDOW_SECS,
+            )),
+        },
+    }
 }
 
 fn no_content(session: &AuthSession) -> (HeaderMap, StatusCode) {

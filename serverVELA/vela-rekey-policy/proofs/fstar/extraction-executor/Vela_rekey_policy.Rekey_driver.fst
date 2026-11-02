@@ -3,6 +3,11 @@ module Vela_rekey_policy.Rekey_driver
 open FStar.Mul
 open Core_models
 
+/// Outcome of the per-account rotation pacing check.
+type t_RateLimitObservation =
+  | RateLimitObservation_Allowed : t_RateLimitObservation
+  | RateLimitObservation_Limited : t_RateLimitObservation
+
 /// Outcome of one readiness/completeness `SELECT 1 ... LIMIT 1` probe.
 type t_ProbeObservation =
   | ProbeObservation_Empty : t_ProbeObservation

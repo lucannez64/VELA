@@ -95,6 +95,9 @@ pub struct Db {
     /// `(user_id, tree_id, bucket_index, epoch)`
     pub oram: BTreeMap<(String, String, i64, i64), OramRow>,
     pub kv: BTreeMap<String, String>,
+    /// The fixed-window pacing counters (`rl:rekey:{user}`): key -> count.
+    /// A missing key is zero, exactly as the sled counter reads it.
+    pub counters: BTreeMap<String, u64>,
 }
 
 fn is_freezing(user: Option<&UserRow>) -> bool {
@@ -574,6 +577,22 @@ pub fn exec(db: &Db, stmt: &VaultStmt) -> Option<(u64, Db)> {
         VaultStmt::SchemaFloorSet { key } => {
             next.kv.insert(key.clone(), "2".into());
             Some((0, next))
+        }
+        VaultStmt::RateLimitIncr {
+            key,
+            limit: _,
+            window_secs: _,
+        } => {
+            let count = db
+                .counters
+                .get(key)
+                .copied()
+                .unwrap_or(0)
+                .saturating_add(1);
+            next.counters.insert(key.clone(), count);
+            // The applied value of a counter statement is its new count, not a
+            // row count; the classifier reads it against the budget.
+            Some((count, next))
         }
         VaultStmt::ClearEnrollmentCapsule { device, user } => match db.devices.get(device) {
             Some(row) if row.user_id == *user => {
@@ -1811,6 +1830,27 @@ pub fn device_list(db: &Db, user: &str, fault: Option<usize>) -> DeviceListObser
     crate::executor::classify_device_list(&read_device_list(db, &stmt, &rows, fault == Some(0)))
 }
 
+/// The per-account re-key pacing limiter (`rate_limit::check` on
+/// `rl:rekey:{user}`): the plan's one counter increment runs, then the
+/// extracted classifier decides from its new value. F*: `rekey_rate_limit`.
+pub fn rekey_rate_limit(
+    db: &Db,
+    key: &str,
+    window_secs: i64,
+    limit: u64,
+    fault: Option<usize>,
+) -> (
+    crate::rekey_driver::RateLimitObservation,
+    Db,
+) {
+    let plan = crate::executor::plan_rate_limit(key.to_string(), limit, window_secs);
+    let (outcomes, post) = run_autocommit(db, &plan, fault);
+    (
+        crate::executor::classify_rekey_rate_limit(&outcomes, limit),
+        post,
+    )
+}
+
 /// The transaction begin behind `POST /vault/rekey/start` and
 /// `GET /device/capsule`.
 pub fn begin(
@@ -2131,6 +2171,45 @@ mod tests {
         let (obs, post) = begin(&pre, Some(0));
         assert_eq!(obs, crate::rekey_driver::TransactionObservation::Failed);
         assert_eq!(post, pre);
+    }
+
+    /// The re-key limiter vectors the F* `vector_rekey_rate_*` lemmas prove.
+    #[test]
+    fn rate_limit_vectors() {
+        use crate::rekey_driver::RateLimitObservation;
+        use crate::executor::{REKEY_RATE_LIMIT, REKEY_RATE_WINDOW_SECS};
+
+        let pre = base();
+        let key = "rl:rekey:u";
+
+        // The last allowed request: 29 -> 30.
+        let mut at_budget = pre.clone();
+        at_budget.counters.insert(s(key), 29);
+        let (obs, post) =
+            rekey_rate_limit(&at_budget, key, REKEY_RATE_WINDOW_SECS, REKEY_RATE_LIMIT, None);
+        assert_eq!(obs, RateLimitObservation::Allowed);
+        assert_eq!(post.counters.get(key).copied(), Some(30));
+        assert_eq!(post.users, pre.users);
+        assert_eq!(post.kv, pre.kv);
+
+        // The first refused request: 30 -> 31, still counted.
+        let mut exhausted = pre.clone();
+        exhausted.counters.insert(s(key), 30);
+        let (obs, post) =
+            rekey_rate_limit(&exhausted, key, REKEY_RATE_WINDOW_SECS, REKEY_RATE_LIMIT, None);
+        assert_eq!(obs, RateLimitObservation::Limited);
+        assert_eq!(post.counters.get(key).copied(), Some(31));
+
+        // A failed store call records nothing and reports a refusal.
+        let (obs, post) = rekey_rate_limit(
+            &exhausted,
+            key,
+            REKEY_RATE_WINDOW_SECS,
+            REKEY_RATE_LIMIT,
+            Some(0),
+        );
+        assert_eq!(obs, RateLimitObservation::Limited);
+        assert_eq!(post, exhausted);
     }
 }
 

@@ -28,6 +28,8 @@ pub(crate) trait VaultSql {
     fn kv_set(&mut self, key: &str, value: &[u8]) -> Result<(), AppError>;
     /// The one durable store read (`GET /vault/schema`, the capsule writer).
     fn kv_get(&mut self, key: &str) -> Result<Option<Vec<u8>>, AppError>;
+    /// One fixed-window counter increment (`rate_limit::check`).
+    fn kv_incr(&mut self, key: &str, delta: u64, window_secs: i64) -> Result<u64, AppError>;
 }
 
 /// The connection pool: each statement commits on its own.
@@ -56,6 +58,10 @@ impl VaultSql for PoolSql<'_> {
 
     fn kv_get(&mut self, key: &str) -> Result<Option<Vec<u8>>, AppError> {
         self.0.store.get(key)
+    }
+
+    fn kv_incr(&mut self, key: &str, delta: u64, window_secs: i64) -> Result<u64, AppError> {
+        self.0.store.incr_fixed_window(key, delta, window_secs)
     }
 }
 
@@ -95,6 +101,10 @@ impl VaultSql for TxSql {
     }
 
     fn kv_get(&mut self, _key: &str) -> Result<Option<Vec<u8>>, AppError> {
+        Err(AppError::Internal("no store inside a transaction".into()))
+    }
+
+    fn kv_incr(&mut self, _key: &str, _delta: u64, _window_secs: i64) -> Result<u64, AppError> {
         Err(AppError::Internal("no store inside a transaction".into()))
     }
 }
@@ -144,6 +154,13 @@ pub(crate) async fn run_writes<S: VaultSql>(
             Rendered::KvSet { key, value } => {
                 sql.kv_set(&key, value).map(|()| 0).map_err(RunError::Store)
             }
+            Rendered::KvIncr {
+                key,
+                delta,
+                window_secs,
+            } => sql
+                .kv_incr(&key, delta, window_secs)
+                .map_err(RunError::Store),
             Rendered::Query { .. } => Err(RunError::Sql(anyhow::anyhow!(
                 "a read statement in a write plan"
             ))),

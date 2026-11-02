@@ -14,7 +14,7 @@
 //! A schema check pins the columns and types the model uses.
 
 use vela_rekey_policy::executor::{
-    self as policy, ChunkRowView, ReadOutcome, WriteOutcome,
+    self as policy, ChunkRowView, ReadOutcome, WriteOutcome, REKEY_RATE_WINDOW_SECS,
 };
 use vela_rekey_policy::executor_model::{
     self as model, ChunkRow, Db as Model, DeviceRow, OramRow, UserRow,
@@ -62,6 +62,15 @@ impl VaultSql for Pool<'_> {
     fn kv_get(&mut self, key: &str) -> Result<Option<Vec<u8>>, crate::error::AppError> {
         self.store.get(key)
     }
+
+    fn kv_incr(
+        &mut self,
+        key: &str,
+        delta: u64,
+        window_secs: i64,
+    ) -> Result<u64, crate::error::AppError> {
+        self.store.incr_fixed_window(key, delta, window_secs)
+    }
 }
 
 /// One pinned transaction.
@@ -102,6 +111,17 @@ impl VaultSql for Tx {
     }
 
     fn kv_get(&mut self, _key: &str) -> Result<Option<Vec<u8>>, crate::error::AppError> {
+        Err(crate::error::AppError::Internal(
+            "no store inside a transaction".into(),
+        ))
+    }
+
+    fn kv_incr(
+        &mut self,
+        _key: &str,
+        _delta: u64,
+        _window_secs: i64,
+    ) -> Result<u64, crate::error::AppError> {
         Err(crate::error::AppError::Internal(
             "no store inside a transaction".into(),
         ))
@@ -173,6 +193,18 @@ impl<S: VaultSql> VaultSql for Faulty<S> {
     fn kv_get(&mut self, key: &str) -> Result<Option<Vec<u8>>, crate::error::AppError> {
         match self.hit() {
             Ok(()) => self.inner.kv_get(key),
+            Err(error) => Err(crate::error::AppError::Internal(error.to_string())),
+        }
+    }
+
+    fn kv_incr(
+        &mut self,
+        key: &str,
+        delta: u64,
+        window_secs: i64,
+    ) -> Result<u64, crate::error::AppError> {
+        match self.hit() {
+            Ok(()) => self.inner.kv_incr(key, delta, window_secs),
             Err(error) => Err(crate::error::AppError::Internal(error.to_string())),
         }
     }
@@ -325,6 +357,18 @@ async fn load(db: &TursoDb, store: &Store, state: &Model) {
         .await
         .unwrap();
     }
+    // The limiter keys are sled TTL counters, not the schema's durable keys.
+    // Reset them, then seed the counter state the model starts from.
+    for user in RATE_USERS {
+        let _ = store.del(&rate_key(user));
+    }
+    for (key, count) in &state.counters {
+        for _ in 0..*count {
+            store
+                .incr_fixed_window(key, 1, REKEY_RATE_WINDOW_SECS)
+                .unwrap();
+        }
+    }
     for (key, value) in &state.kv {
         store.set_durable(key, value.as_bytes()).unwrap();
     }
@@ -449,9 +493,21 @@ async fn snapshot(db: &TursoDb, store: &Store, keys: &[String]) -> Model {
     }
     for key in keys {
         if let Some(bytes) = store.get(key).unwrap() {
-            state
-                .kv
-                .insert(key.clone(), String::from_utf8(bytes).unwrap());
+            if key.starts_with("rl:") {
+                // A fixed-window counter stores its 8-byte value after the
+                // 8-byte expiry prefix that `Store::get` strips.
+                if bytes.len() >= 8 {
+                    let mut count = [0u8; 8];
+                    count.copy_from_slice(&bytes[..8]);
+                    state
+                        .counters
+                        .insert(key.clone(), u64::from_le_bytes(count));
+                }
+            } else {
+                state
+                    .kv
+                    .insert(key.clone(), String::from_utf8(bytes).unwrap());
+            }
         }
     }
     state
@@ -596,8 +652,17 @@ const KEYS: [&str; 4] = [
     "vault-schema:user-8",
 ];
 
+/// The accounts whose re-key pacing counter the conformance cases exercise.
+const RATE_USERS: [&str; 4] = ["user-0", "user-1", "user-2", "user-8"];
+
+fn rate_key(user: &str) -> String {
+    format!("rl:rekey:{user}")
+}
+
 fn keys() -> Vec<String> {
-    KEYS.iter().map(|key| s(key)).collect()
+    let mut keys: Vec<String> = KEYS.iter().map(|key| s(key)).collect();
+    keys.extend(RATE_USERS.iter().map(|user| rate_key(user)));
+    keys
 }
 
 #[tokio::test]
@@ -1230,6 +1295,54 @@ async fn handler_io_matches_the_store_model() {
     }
     eprintln!(
         "vault executor conformance (handler I/O): {} states, {} cases, {} with an injected failure",
+        counts.states, counts.cases, counts.faulted
+    );
+}
+
+/// The per-account re-key pacing limiter: the real plan, the real sled counter
+/// and the extracted classifier, at the budget edge and with a store fault.
+#[tokio::test]
+async fn rekey_rate_limit_matches_the_store_model() {
+    let db = temp_db().await;
+    let store = Store::open_temp().unwrap();
+    let mut counts = Counts::default();
+    let pre = base_state(false);
+    counts.states += 1;
+
+    for user_id in RATE_USERS.map(s) {
+        let key = rate_key(&user_id);
+        for preseed in [0u64, 29, 30] {
+            for fault in faults(1) {
+                let mut expected_pre = pre.clone();
+                if preseed > 0 {
+                    expected_pre.counters.insert(key.clone(), preseed);
+                }
+                load(&db, &store, &expected_pre).await;
+                let plan = policy::plan_rekey_rate_limit(&user_id);
+                let mut sql = Faulty::new(Pool { db: &db, store: &store }, fault);
+                let (outcomes, _) = run_writes(&mut sql, &plan).await;
+                let observed =
+                    policy::classify_rekey_rate_limit(&outcomes, policy::REKEY_RATE_LIMIT);
+                let (expected, expected_post) = model::rekey_rate_limit(
+                    &expected_pre,
+                    &key,
+                    REKEY_RATE_WINDOW_SECS,
+                    policy::REKEY_RATE_LIMIT,
+                    fault,
+                );
+                let case = format!("rate {user_id} preseed {preseed} {fault:?}");
+                assert_eq!(observed, expected, "{case}");
+                assert_eq!(
+                    snapshot(&db, &store, &keys()).await,
+                    expected_post,
+                    "{case}"
+                );
+                counts.case(fault);
+            }
+        }
+    }
+    eprintln!(
+        "vault executor conformance (rekey rate): {} states, {} cases, {} with an injected failure",
         counts.states, counts.cases, counts.faulted
     );
 }

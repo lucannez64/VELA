@@ -22,6 +22,14 @@ in `vela-rekey-policy/src/executor.rs`. hax extracts the plans and
 classifiers. All SQL and store text moved there verbatim and is pinned byte
 for byte by unit tests. `vela-server/src/vault/sql.rs` runs the loop.
 
+The per-account re-key pacing limiter (`rate_limit::check` on
+`rl:rekey:{user}`, 30 requests per hour) is now the same shape: a typed
+`RateLimitIncr` statement, a pinned key/budget/window rendering, and the
+extracted `classify_rekey_rate_limit`. `vault/rekey.rs` runs it through the
+same `vault::sql::run_writes` loop; a store failure is still reported as a
+refusal with the recorded error, and an over-budget call is refused with the
+historical `AppError::RateLimited` text.
+
 ### Wave 2: the I/O outside the executor methods
 
 The same plan → render → run → classify shape now covers, with the same
@@ -45,11 +53,11 @@ The same plan → render → run → classify shape now covers, with the same
 
 ## Model
 
-`Vela_rekey_policy_executor_model.fst` has 41 statement kinds (`VaultStmt`) —
+`Vela_rekey_policy_executor_model.fst` has 42 statement kinds (`VaultStmt`) —
 the 30 wave-1 kinds plus the wave-2 `SelectKeyState`, `SelectUsageChunks`,
 `SelectUsageOram`, `SelectRekeyProjection`, `SelectOramRow`,
 `SelectSyncManifest`, `SchemaFloorGet`, `BeginTransaction`, `SelectCapsule`,
-`ClearEnrollmentCapsule` and `SelectDeviceList`:
+`ClearEnrollmentCapsule`, `SelectDeviceList` and `RateLimitIncr`:
 
 - chunk reads, create, shadow upsert, version compare-and-swap update and
   delete, and the epoch sweeps;
@@ -61,7 +69,8 @@ the 30 wave-1 kinds plus the wave-2 `SelectKeyState`, `SelectUsageChunks`,
 - the completeness probes, inventory and `Commit`;
 - the wave-2 reads: the account's rotation row, the two usage sums, the
   projected usage, an ORAM path bucket, the sync manifest, a pending capsule,
-  the device listing, and the transaction begin.
+  the device listing, and the transaction begin;
+- the fixed-window re-key pacing counter (`RateLimitIncr`).
 
 Its semantics:
 
@@ -73,7 +82,11 @@ Its semantics:
 - `cas_tx` runs the rest of the plan only if the compare-and-swap changed the
   row;
 - a failure can be injected at any statement, including the commit and the
-  begin.
+  begin;
+- the counter store is a map from key to count (a missing key reads as zero);
+  `RateLimitIncr` grows it by one, saturating, and reports the new count as its
+  applied value. The counter's window is a scheduler choice and is not
+  modelled.
 
 The wave-2 sums are the model's own: `LENGTH(ciphertext)` is
 `FStar.String.length` over the stored base64 text (ASCII, so bytes are
@@ -120,6 +133,20 @@ point:
   - `begin_transaction_is_honest` and `begin_plan_is_one_statement`: the
     begin is one statement, `Committed` exactly when it ran, and it changes
     nothing.
+- **The re-key pacing limiter:**
+  - `plan_rate_limit_shape`: the plan is exactly one `RateLimitIncr` at the
+    key, budget and window it was handed (the `rl:rekey:{user}` key format is
+    pinned by the Rust unit test);
+  - `rekey_rate_limit_is_honest`: `Allowed` exactly when the statement ran and
+    its new count is within the budget; an over-budget count is `Limited` (it
+    still grew), a store failure is `Limited`, and a failure leaves the whole
+    state unchanged;
+  - `rekey_rate_limit_allows_one`: an allowed request records exactly one more
+    against this key and nothing else changes;
+  - `rekey_rate_limit_failure_keeps_counter`: a failed store call leaves every
+    counter unchanged;
+  - `rekey_rate_limit_only_counts_this_key`: every other account's counter is
+    unchanged, so one account's pacing cannot throttle another's.
 - **Facts the drivers rely on:**
   - `chunk_create_needs_active_account` and
     `chunk_delete_needs_active_account`;
@@ -167,6 +194,9 @@ theorem:
 | `devices-plan`: the listing asks an empty account | `device_list_is_honest` |
 | `begin-drop`: the begin plan drops its statement | `begin_plan_is_one_statement` |
 | `begin-fault`: the model's begin ignores the injected failure | `begin_transaction_is_honest` |
+| `rate-classify`: the limiter refuses at exactly the budget (off by one) | `rekey_rate_limit_is_honest` |
+| `rate-plan-key`: the counter is incremented at the empty key | `rekey_rate_limit_is_honest` |
+| `rate-failure`: the limiter counts through an injected store failure | `rekey_rate_limit_is_honest` |
 
 ## Real-store conformance
 
@@ -174,7 +204,9 @@ theorem:
 on turso and sled. A failure is injected at every query, execute, commit,
 begin and store read/write. Each case compares every touched table and store
 key with the Rust mirror, and for the manifest and listing it also compares
-the exact row set (`model::sync_row_set`, `model::device_list_row_set`).
+the exact row set (`model::sync_row_set`, `model::device_list_row_set`). The
+re-key pacing cases seed the sled counter at 0, 29 and 30 and compare its value
+and the classification at each, with and without a store failure.
 
 | Family | Cases | With a failure |
 |---|---|---|
@@ -182,7 +214,8 @@ the exact row set (`model::sync_row_set`, `model::device_list_row_set`).
 | Rotation | 696 | 492 |
 | Devices, ORAM and schema | 540 | 306 |
 | Handler I/O (wave 2) | 375 | 192 |
-| **Total** | **3,339** | **1,926** |
+| Re-key pacing (wave 2) | 24 | 12 |
+| **Total** | **3,363** | **1,938** |
 
 The schema check pins the modelled columns of `vault_chunks`, `users`,
 `devices` and `oram_buckets`, and shows a duplicate chunk key is rejected.
@@ -220,11 +253,12 @@ The schema check pins the modelled columns of `vault_chunks`, `users`,
 - The floor interpretation (absent → 1, `"2"` → 2, else invalid) and the
   key-state normalization (epoch floor, `freezing` test) are two-line handler
   policy over the proved read observation, pinned by unit tests.
-- **Still outside a plan:** the per-account re-key pacing limiter
-  (`rate_limit::check`, `rl:rekey:{user}`) — a shared fixed-window sled
-  counter with a TTL, outside the scope list for this part of wave 2. Its
-  window is abstracted as a scheduler choice. Path index arithmetic
-  (`oram::path_bucket_indices`) and header parsing are pure, not I/O.
+- The re-key counter's fixed window and TTL expiry are a scheduler choice, not
+  modelled; the theorem covers the counter's value and the admission verdict.
+  Path index arithmetic (`oram::path_bucket_indices`) and header parsing are
+  pure, not I/O.
+- Every SQL and store operation in the vault handlers is now inside a proved
+  plan; no vault handler I/O remains outside one.
 
 ## Reproduction
 

@@ -21,7 +21,8 @@
 
 use crate::rekey_driver::{
     CapsuleObservation, CasObservation, CleanupObservation, InventoryObservation,
-    ProbeObservation, RollbackObservation, SweepObservation, TransactionObservation,
+    ProbeObservation, RateLimitObservation, RollbackObservation, SweepObservation,
+    TransactionObservation,
 };
 use crate::vault_mutation_driver::{
     AckObservation, AttestObservation, BucketObservation, DeleteObservation,
@@ -212,6 +213,15 @@ pub enum VaultStmt {
     SelectCapsule { device: String, user: String },
     /// `get_capsule`'s read-once clear of an enrollment capsule.
     ClearEnrollmentCapsule { device: String, user: String },
+    /// F-1 wave 2: one fixed-window counter increment for the per-account
+    /// re-key pacing limiter (`rate_limit::check`): the store grows the count
+    /// at `key` by one and the request is refused once the new count exceeds
+    /// `limit`. The window is the store's scheduler choice.
+    RateLimitIncr {
+        key: String,
+        limit: u64,
+        window_secs: i64,
+    },
     /// `list_devices`' device listing.
     SelectDeviceList { user: String },
 }
@@ -342,6 +352,11 @@ pub enum SchemaFloorObservation {
     Stored(Option<String>),
     Storage,
 }
+
+/// 30 rotation requests per hour per account (`rate_limit::check`).
+pub const REKEY_RATE_LIMIT: u64 = 30;
+/// The re-key limiter's fixed window, in seconds.
+pub const REKEY_RATE_WINDOW_SECS: i64 = 3600;
 
 /// The three cells of a `SelectCapsule` row.
 #[derive(Debug, Eq, PartialEq)]
@@ -816,6 +831,28 @@ pub fn plan_read_devices(user: String) -> VaultStmt {
     VaultStmt::SelectDeviceList { user }
 }
 
+/// One fixed-window counter increment at the exact key, budget and window.
+/// Extracted, so the proof speaks about the key it is handed.
+pub fn plan_rate_limit(key: String, limit: u64, window_secs: i64) -> Vec<VaultStmt> {
+    vec![VaultStmt::RateLimitIncr {
+        key,
+        limit,
+        window_secs,
+    }]
+}
+
+/// The per-account re-key pacing limiter that `rekey.rs` has always applied:
+/// `rl:rekey:{user}`, 30 requests per hour. The key format is pinned by the
+/// unit test below; the generic plan above is the extracted statement.
+#[cfg(not(hax))]
+pub fn plan_rekey_rate_limit(user: &str) -> Vec<VaultStmt> {
+    plan_rate_limit(
+        format!("rl:rekey:{user}"),
+        REKEY_RATE_LIMIT,
+        REKEY_RATE_WINDOW_SECS,
+    )
+}
+
 // ── Classification ─────────────────────────────────────────────────────────
 
 /// `read_version`/`reread_version`: the stored version, missing, or storage.
@@ -1230,6 +1267,25 @@ pub fn classify_device_list(
     }
 }
 
+/// The per-account re-key pacing limiter: `Allowed` exactly when its one
+/// counter statement ran and the counter's new value is within the budget.
+/// An over-limit count is `Limited` (it still grew before refusing), and a
+/// failed store call is `Limited` too — the handler records the error and
+/// refuses, exactly as `rate_limit::check` always did.
+pub fn classify_rekey_rate_limit(
+    outcomes: &[WriteOutcome],
+    limit: u64,
+) -> RateLimitObservation {
+    if outcomes.len() == 1 {
+        match outcomes[0] {
+            WriteOutcome::Applied(count) if count <= limit => RateLimitObservation::Allowed,
+            _ => RateLimitObservation::Limited,
+        }
+    } else {
+        RateLimitObservation::Limited
+    }
+}
+
 // ── Rendering (not extracted; pinned by the tests below) ───────────────────
 
 /// A bound parameter, with its SQL type.
@@ -1261,6 +1317,12 @@ pub enum Rendered {
     },
     /// A durable key-value read in the sled store.
     KvGet { key: String },
+    /// A fixed-window counter increment in the sled store.
+    KvIncr {
+        key: String,
+        delta: u64,
+        window_secs: i64,
+    },
     /// `COMMIT` on the open transaction.
     Commit,
     /// Open a pinned transaction.
@@ -1783,6 +1845,15 @@ pub fn render(stmt: &VaultStmt) -> Rendered {
             params: vec![Text(user.clone()), Int(*epoch)],
         },
         VaultStmt::SchemaFloorGet { key } => Rendered::KvGet { key: key.clone() },
+        VaultStmt::RateLimitIncr {
+            key,
+            limit: _,
+            window_secs,
+        } => Rendered::KvIncr {
+            key: key.clone(),
+            delta: 1,
+            window_secs: *window_secs,
+        },
         VaultStmt::BeginTransaction => Rendered::Begin,
         VaultStmt::SelectCapsule { device, user } => Rendered::Query {
             sql: "SELECT devices.rms_capsule, devices.rms_capsule_epoch,
@@ -2425,5 +2496,51 @@ mod tests {
             TransactionObservation::Committed
         );
         assert_eq!(classify_transaction(&[]), TransactionObservation::Failed);
+    }
+
+    #[test]
+    fn rekey_rate_limit_renders_and_classifies_the_historical_limiter() {
+        // The historical call was
+        // `rate_limit::check(&state.store, &format!("rl:rekey:{user_id}"), 30, 3600)`.
+        let plan = plan_rekey_rate_limit("user-1");
+        assert_eq!(plan.len(), 1);
+        match &plan[0] {
+            VaultStmt::RateLimitIncr {
+                key,
+                limit,
+                window_secs,
+            } => {
+                assert_eq!(key, "rl:rekey:user-1");
+                assert_eq!(*limit, 30);
+                assert_eq!(*window_secs, 3600);
+            }
+            other => panic!("expected a rate-limit increment, got {other:?}"),
+        }
+        assert_eq!(
+            render(&plan[0]),
+            Rendered::KvIncr {
+                key: s("rl:rekey:user-1"),
+                delta: 1,
+                window_secs: 3600,
+            }
+        );
+        // The 30th request in the window is allowed, the 31st is refused.
+        assert_eq!(
+            classify_rekey_rate_limit(&[WriteOutcome::Applied(30)], REKEY_RATE_LIMIT),
+            RateLimitObservation::Allowed
+        );
+        assert_eq!(
+            classify_rekey_rate_limit(&[WriteOutcome::Applied(31)], REKEY_RATE_LIMIT),
+            RateLimitObservation::Limited
+        );
+        // A store failure is a refusal, and the handler keeps the error.
+        assert_eq!(
+            classify_rekey_rate_limit(&[WriteOutcome::Failed], REKEY_RATE_LIMIT),
+            RateLimitObservation::Limited
+        );
+        assert_eq!(
+            classify_rekey_rate_limit(&[], REKEY_RATE_LIMIT),
+            RateLimitObservation::Limited
+        );
     }
 }
