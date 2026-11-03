@@ -709,6 +709,14 @@ type t_TokenClaimObservation =
 type t_TokenIssueObservation =
   | TokenIssueObservation_Issued : t_TokenIssueObservation
   | TokenIssueObservation_Failed : t_TokenIssueObservation
+  | TokenIssueObservation_Revoked : t_TokenIssueObservation
+
+/// Outcome of releasing the one claim after a failed issuance. A failed
+/// release leaves the claim in place: the exchange fails closed and every
+/// retry keeps getting `AlreadyIssued`.
+type t_TokenReleaseObservation =
+  | TokenReleaseObservation_Released : t_TokenReleaseObservation
+  | TokenReleaseObservation_StorageFailed : t_TokenReleaseObservation
 
 /// Where an exchange is in its decision sequence.
 type t_TokenStage =
@@ -720,6 +728,7 @@ type t_TokenStage =
   | TokenStage_Reset : t_TokenStage
   | TokenStage_Claim : t_TokenStage
   | TokenStage_Issue : t_TokenStage
+  | TokenStage_Release : t_TokenStage
   | TokenStage_Done : t_TokenStage
 
 /// One token driver event.
@@ -732,6 +741,7 @@ type t_TokenEvent =
   | TokenEvent_ResetObserved : t_TokenResetObservation -> t_TokenEvent
   | TokenEvent_ClaimObserved : t_TokenClaimObservation -> t_TokenEvent
   | TokenEvent_Issued : t_TokenIssueObservation -> t_TokenEvent
+  | TokenEvent_Released : t_TokenReleaseObservation -> t_TokenEvent
 
 /// Failure categories, preserving the handler's historical status/message
 /// precedence.
@@ -757,6 +767,7 @@ type t_TokenFailure =
   | TokenFailure_AlreadyIssued : t_TokenFailure
   | TokenFailure_ClaimStorage : t_TokenFailure
   | TokenFailure_IssueFailed : t_TokenFailure
+  | TokenFailure_ReleaseFailed : t_TokenFailure
   | TokenFailure_InconsistentFacts : t_TokenFailure
 
 /// The effect the handler must perform next.
@@ -769,6 +780,7 @@ type t_TokenEffect =
   | TokenEffect_ResetTokenBackoff : t_TokenEffect
   | TokenEffect_ClaimToken : t_TokenEffect
   | TokenEffect_IssueToken : Vela_session_policy.t_TokenPlan -> t_TokenEffect
+  | TokenEffect_ReleaseToken : t_TokenEffect
   | TokenEffect_Complete : t_TokenEffect
   | TokenEffect_Fail : t_TokenFailure -> t_TokenEffect
   | TokenEffect_Idle : t_TokenEffect
@@ -892,6 +904,16 @@ let token_state_is_sound (d: t_TokenDriver) : bool =
     ~.d.f_responded &&
     ~.d.f_failed
   in
+  let release:bool =
+    d.f_limits_allowed && d.f_session_loaded && d.f_session_eligible && d.f_challenge_consumed &&
+    d.f_signature_valid &&
+    d.f_backoff_reset &&
+    d.f_token_claimed &&
+    d.f_plan_authorized &&
+    ~.d.f_token_issued &&
+    ~.d.f_responded &&
+    ~.d.f_failed
+  in
   let done:bool =
     (d.f_responded || d.f_failed) && ~.(d.f_responded && d.f_failed) &&
     (~.d.f_responded ||
@@ -934,6 +956,10 @@ let token_state_is_sound (d: t_TokenDriver) : bool =
     | TokenStage_Issue  -> true
     | _ -> false) ||
   issue) &&
+  (~.(match d.f_stage <: t_TokenStage with
+    | TokenStage_Release  -> true
+    | _ -> false) ||
+  release) &&
   (~.(match d.f_stage <: t_TokenStage with
     | TokenStage_Done  -> true
     | _ -> false) ||
@@ -1035,6 +1061,21 @@ let token_effect_is_sound (d: t_TokenDriver) (v_effect: t_TokenEffect) : bool =
   | TokenEffect_IssueToken e_plan ->
     (match d.f_stage <: t_TokenStage with
       | TokenStage_Issue  -> true
+      | _ -> false) &&
+    d.f_session_eligible &&
+    d.f_granted_by_same_account &&
+    d.f_nonce_present &&
+    d.f_challenge_consumed &&
+    d.f_signature_valid &&
+    d.f_backoff_reset &&
+    d.f_token_claimed &&
+    d.f_plan_authorized &&
+    ~.d.f_token_issued &&
+    ~.d.f_responded &&
+    ~.d.f_failed
+  | TokenEffect_ReleaseToken  ->
+    (match d.f_stage <: t_TokenStage with
+      | TokenStage_Release  -> true
       | _ -> false) &&
     d.f_session_eligible &&
     d.f_granted_by_same_account &&
@@ -1406,8 +1447,19 @@ let on_token_issued (driver: t_TokenDriver) (observation: t_TokenIssueObservatio
         <:
         t_TokenDriver)
       (TokenEffect_Complete <: t_TokenEffect)
-  | TokenIssueObservation_Failed  ->
+  | TokenIssueObservation_Revoked  ->
     token_terminal driver (TokenFailure_IssueFailed <: t_TokenFailure)
+  | TokenIssueObservation_Failed  ->
+    token_transition ({ driver with f_stage = TokenStage_Release <: t_TokenStage } <: t_TokenDriver)
+      (TokenEffect_ReleaseToken <: t_TokenEffect)
+
+let on_token_released (driver: t_TokenDriver) (observation: t_TokenReleaseObservation)
+    : t_TokenTransition =
+  match observation <: t_TokenReleaseObservation with
+  | TokenReleaseObservation_Released  ->
+    token_terminal driver (TokenFailure_IssueFailed <: t_TokenFailure)
+  | TokenReleaseObservation_StorageFailed  ->
+    token_terminal driver (TokenFailure_ReleaseFailed <: t_TokenFailure)
 
 /// The total token-exchange transition relation. The checked plan is built by
 /// [`crate::plan_observed_web_token`] from an observation where every grant,
@@ -1476,6 +1528,13 @@ let token_step (driver: t_TokenDriver) (event: t_TokenEvent)
       | TokenStage_Issue  -> true
       | _ -> false
     then on_token_issued driver observation
+    else token_idle driver
+  | TokenEvent_Released observation ->
+    if
+      match driver.f_stage <: t_TokenStage with
+      | TokenStage_Release  -> true
+      | _ -> false
+    then on_token_released driver observation
     else token_idle driver
 
 /// Actor facts established by the authenticated `DeviceSession` extractor.

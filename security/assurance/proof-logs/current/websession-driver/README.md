@@ -19,7 +19,9 @@ The checked per-request facts are:
   reported `Accepted` (the take is atomic and purpose-bound), the verifier
   reported valid, and a first-writer-wins claim succeeded. The plan is the one
   returned by `plan_observed_web_token`; each request emits at most one issue
-  effect.
+  effect. When issuance fails before a token is handed to the caller, the
+  driver emits `ReleaseToken` (a delete of exactly the claim key) so a retry
+  can claim again; a revoked-session sentinel is terminal and keeps the claim.
 - `delete_session` emits `LockoutSession` and `RecordRevocation` only for the
   authenticated account that owns (granted) or is committed to (pending) the
   session, and the SQL record follows the sentinel.
@@ -40,10 +42,14 @@ one behavioural hardening is the token claim:
   `web_session:token_issued:<session_id>` with `set_ex_nx` before signing. A
   second valid proof (with a fresh `web_token` challenge) therefore returns
   `409 Conflict` instead of minting a second token for the same grant.
-- Regression test:
-  `web_session_issues_at_most_one_token_per_grant` in
-  `serverVELA/vela-server/tests/integration.rs`, and the bounded challenge
-  model now knows the per-session claim.
+- If anything after the claim fails before a token is handed to the caller
+  (issuer error, sentinel read error, JTI track error), the handler deletes
+  exactly that claim so the retry can claim again. A failed delete keeps the
+  claim and fails closed; a revoked-session sentinel also keeps it.
+- Regression tests: `web_session_issues_at_most_one_token_per_grant` in
+  `serverVELA/vela-server/tests/integration.rs`, the bounded challenge model,
+  and `token_claim_release_lets_a_retry_succeed_and_a_success_still_blocks` in
+  `serverVELA/vela-server/src/auth/session_conformance.rs`.
 
 ## Mutations
 
@@ -66,11 +72,11 @@ Logs are in this directory (`mutation-*.log`, `gate.log`).
   hybrid verification, PASETO signing and the clock are outside the model.
 - The grant driver observes the middleware's active-device fact and the SQL CAS
   re-checks `revoked = 0`; the driver does not itself observe the database.
-- The token driver treats `clave consumed` and `signature valid` as
+- The token driver treats `challenge consumed` and `signature valid` as
   observations; the handler computes them from the real take and verifier.
 - Concurrent composition over the shared session/challenge store, including the
-  revocation cascade, is **not** included in this increment. The per-request
-  and interpreter proofs are complete; composition remains open.
+  revocation cascade and the claim release, is covered by
+  `security/assurance/proof-logs/current/websession-composition/`.
 
 ## Reproduction
 

@@ -35,7 +35,8 @@ use crate::store::{
     classify_poll_limit, classify_record, classify_revoke_session, classify_scan,
     classify_session_keys, classify_start_insert,
     classify_start_limit, classify_table_delete, classify_token_claim, classify_token_issue,
-    classify_token_limits, classify_track_jti, classify_transaction, classify_users_delete,
+    classify_token_limits, classify_token_release, classify_track_jti, classify_transaction,
+    classify_users_delete,
     CapsuleClearObservation, CleanupReport, CountOutcome, DeviceReadOutcome, ExistsOutcome,
     IdsOutcome, LimitObservation, NxOutcome, ReadOutcome, SessionKeysLookup, SessionKeysView,
     SessionListRowView, SessionRowView, SqlStmt, StoreOutcome, StoreStmt, TakeOutcome,
@@ -44,6 +45,7 @@ use crate::store::{
 use crate::websession_driver::{
     DeleteRecordObservation, DeleteSentinelObservation, GrantUpdateObservation,
     StartInsertObservation, TokenClaimObservation, TokenIssueObservation,
+    TokenReleaseObservation,
 };
 
 /// A `String` from a literal, for the model's own plan construction.
@@ -770,6 +772,10 @@ pub fn exec_store(store: &Store, stmt: &StoreStmt) -> (StoreOutcome, Store) {
             next.kv
                 .entry(key.clone())
                 .or_insert_with(|| value.to_string());
+            (StoreOutcome::Applied, next)
+        }
+        StoreStmt::Delete { key } => {
+            next.kv.remove(key);
             (StoreOutcome::Applied, next)
         }
         StoreStmt::Exists { .. } => (StoreOutcome::Applied, next),
@@ -1593,6 +1599,27 @@ pub fn token_sentinel(
     }
 }
 
+/// F*: `release_key`. The claim key the release deletes.
+pub fn release_key(session: &str) -> String {
+    match crate::store::plan_token_release(s(session)).first() {
+        Some(StoreStmt::Delete { key }) => key.clone(),
+        _ => String::new(),
+    }
+}
+
+/// F*: `token_release`. One delete of exactly the claim key; a failure leaves
+/// the claim in place (fails closed).
+pub fn token_release(
+    store: &Store,
+    session: &str,
+    fault: Option<usize>,
+) -> (TokenReleaseObservation, Store) {
+    let plan = crate::store::plan_token_release(s(session));
+    let (outcomes, post) = run_store(store, &plan, fault);
+    let outcome = outcomes.first().copied().unwrap_or(StoreOutcome::Failed);
+    (classify_token_release(&outcome), post)
+}
+
 /// F*: `token_issue`. Issuance is an input; the executor's own claim is that
 /// `Issued` means the sentinel was absent and the JTI landed in the set.
 pub fn token_issue(
@@ -2148,6 +2175,18 @@ mod tests {
         assert_eq!(obs, TokenClaimObservation::AlreadyClaimed);
         assert!(post.kv.contains_key(&claim_key("s")));
 
+        // A successful release removes exactly the claim, so a retry claims.
+        let (obs, freed) = token_release(&post, "s", None);
+        assert_eq!(obs, TokenReleaseObservation::Released);
+        assert!(!freed.kv.contains_key(&claim_key("s")));
+        assert_eq!(token_claim(&freed, "s", None).0, TokenClaimObservation::Claimed);
+
+        // A failed release leaves the claim in place (fails closed).
+        let (obs, kept) = token_release(&post, "s", Some(0));
+        assert_eq!(obs, TokenReleaseObservation::StorageFailed);
+        assert_eq!(kept, post);
+        assert_eq!(token_claim(&kept, "s", None).0, TokenClaimObservation::AlreadyClaimed);
+
         let (obs, _) = token_issue(&store, "s", "jti", true, None);
         assert_eq!(obs, TokenIssueObservation::Issued);
         let _ = token_claim(&store, "s", Some(0));
@@ -2164,11 +2203,12 @@ mod tests {
             .map(|set| set.contains("jti"))
             .unwrap_or(false));
 
-        // A live lockout sentinel makes issuance fail and changes nothing.
+        // A live lockout sentinel makes issuance fail closed as revoked and
+        // changes nothing.
         let mut locked = Store::default();
         locked.kv.insert(s("device:revoked:s"), s("1"));
         let (obs, post) = token_issue(&locked, "s", "jti", true, None);
-        assert_eq!(obs, TokenIssueObservation::Failed);
+        assert_eq!(obs, TokenIssueObservation::Revoked);
         assert_eq!(post, locked);
 
         // A failed issuance is a failure and changes nothing.

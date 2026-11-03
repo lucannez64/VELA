@@ -577,6 +577,8 @@ let exec_store (s: store) (st: t_StoreStmt) : store =
     { s with kv = (if Some? (s.kv k) then s.kv else kv_set s.kv k (Some v)) }
   | StoreStmt_SetExNxByte { f_key = k; f_value = _; f_ttl = _ } ->
     { s with kv = (if Some? (s.kv k) then s.kv else kv_set s.kv k (Some v_one)) }
+  | StoreStmt_Delete { f_key = k } ->
+    { s with kv = kv_set s.kv k None }
   | StoreStmt_Exists { f_key = _ } -> s
   | StoreStmt_Ttl { f_key = _ } -> s
 
@@ -1049,6 +1051,19 @@ let sentinel_key (sess: text) : text =
   match stmts_of (plan_token_sentinel sess) with
   | StoreStmt_Exists { f_key = k } :: _ -> k
   | _ -> Alloc.String.String ""
+
+/// The claim key the release deletes.
+let release_key (sess: text) : text =
+  match stmts_of (plan_token_release sess) with
+  | StoreStmt_Delete { f_key = k } :: _ -> k
+  | _ -> Alloc.String.String ""
+
+/// `TokenIo::release_token`: one delete of exactly the claim key. A failed
+/// delete leaves the claim in place (the exchange fails closed).
+let token_release (s: store) (sess: text) (f: option nat)
+  : (Vela_session_policy.Websession_driver.t_TokenReleaseObservation & store) =
+  let r = run_store s (stmts_of (plan_token_release sess)) 0 f in
+  (classify_token_release (first_out (fst r)), snd r)
 
 /// What `Store::exists` sees.
 let sentinel_truth (s: store) (sess: text) : t_ExistsOutcome =

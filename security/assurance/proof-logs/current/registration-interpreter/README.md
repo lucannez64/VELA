@@ -12,7 +12,7 @@ behaviour), the extracted `run_registration`:
 2. receives observations that each answer the effect they were returned for,
    and ends in `run_from_observation observation evs` for that list
    (`run_ev_follows_the_driver`);
-3. reaches a verdict (`Complete`, `Fail`) within its eight-turn budget
+3. reaches a verdict (`Complete`, `Fail`) within its nine-turn budget
    (`run_ev_reaches_a_verdict`);
 4. therefore ends in a state where every per-request registration theorem holds:
    a response implies an account and first device inserted, a commit, an issued
@@ -38,7 +38,7 @@ behaviour), the extracted `run_registration`:
 
 ## Mutation
 
-`mutation-1.diff` changes the extracted loop budget from eight turns to seven;
+`mutation-1.diff` changes the extracted loop budget from nine turns to eight;
 `run_registration_is_run_ev` cannot match the extracted `run_registration` and
 fails. `mutation-1.log` records the rejected run. The mutant is a copy under
 `/tmp/vela-f2-account-a-mut/`, never committed.

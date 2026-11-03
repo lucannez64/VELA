@@ -80,9 +80,9 @@ items=(
   classify_registration_commit classify_account_count classify_insert
   classify_registration_track
   plan_insert_pending plan_grant_update plan_revoke_session
-  plan_token_claim plan_token_sentinel
+  plan_token_claim plan_token_sentinel plan_token_release
   classify_start_insert classify_grant_update classify_token_claim
-  classify_token_issue classify_lockout_session classify_revoke_session
+  classify_token_issue classify_token_release classify_lockout_session classify_revoke_session
   plan_load_session plan_sessions_list plan_cleanup_revoked
   plan_cleanup_expired plan_cleanup_pending plan_login_limits
   plan_start_limit plan_token_limits plan_poll_limit plan_keys_limit

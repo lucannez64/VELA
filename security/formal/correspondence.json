@@ -174,7 +174,7 @@
         "serverVELA/vela-session-policy/README.md": "8baf43669c2475b5281f145476ce4b47d3610939570413674f9e5a0fd4832fd3",
         "serverVELA/vela-session-policy/verify-fstar.sh": "785a3dd44a2beacd8ae715e46d672b642d1505a6e14053c690dfd763d6711272",
         "serverVELA/vela-session-policy/proofs/fstar/extraction/Vela_session_policy.fst": "f558711ac3d165952846d03d1d7b2b91186fa3ff1925a0780b35fdf824f2dd1d",
-        "serverVELA/vela-server/src/web_session/mod.rs": "0f2c5dbee92aa92aae73a3a73fac0c7bfda1aa9af9dc911af8b773f04f67d23c",
+        "serverVELA/vela-server/src/web_session/mod.rs": "7ed2a3abb4d1c2477216aafb0e0e10711d7134c58fde967528d8a83a313cfb33",
         "security/assurance/14-session-observation-refinement.md": "f910e98ded01e1641eaacb534ab9a1668628eabd0e60836342803068c21239d4"
       }
     },
@@ -303,7 +303,7 @@
         "serverVELA/vela-server/src/auth/challenge.rs": "9cae8f6f2f18cd96f296cde7714eded9c0b9085b6b4d74103cc6c2e79327badb",
         "serverVELA/vela-server/src/auth/verify.rs": "14921369ed53bafaa5b2408439f68a1e2822ab6b4ca53e14555b0c7f3d19197b",
         "serverVELA/vela-server/src/device/enroll.rs": "383e66aef1d5291d8483853fa9f8dc5d235d59140701917be8beef0764c95b7d",
-        "serverVELA/vela-server/src/web_session/mod.rs": "0f2c5dbee92aa92aae73a3a73fac0c7bfda1aa9af9dc911af8b773f04f67d23c"
+        "serverVELA/vela-server/src/web_session/mod.rs": "7ed2a3abb4d1c2477216aafb0e0e10711d7134c58fde967528d8a83a313cfb33"
       }
     },
     {
@@ -606,12 +606,12 @@
       }
     },
     {
-      "boundary": "registration driver (POST /account/register): a response only after the account insert, the device insert, the commit, token issue and token tracking, in that order; a device insert names an already-inserted account and a commit needs both inserts; a failure never responds and rolls the transaction back (U-21); SQL transaction semantics and handler effect fidelity remain open",
+      "boundary": "registration driver (POST /account/register): a response only after the account insert, the device insert, the commit, token issue and token tracking, in that order; a device insert names an already-inserted account and a commit needs both inserts; a failure never responds and rolls the transaction back (U-21); the expensive key decode and share-key binding verification is an effect emitted only after the per-IP limiter and the account budget allow the request, so a rejected limiter or budget performs no key verification; SQL transaction semantics and handler effect fidelity remain open",
       "artifacts": {
-        "serverVELA/vela-session-policy/src/registration_driver.rs": "8d44e5e613c689c458a2da0868aaa218280ebd0b74379fa8065c1d635ce54885",
+        "serverVELA/vela-session-policy/src/registration_driver.rs": "c846897a813ee2594a985dbf7ea395d19bcc335f59a78ad073b5d4b8fa591158",
         "serverVELA/vela-session-policy/verify-fstar-registration-driver.sh": "9e08b3b8d3ebaccc9e4d055a774172da45128f40d1a727571aa35ce8d8cee582",
-        "serverVELA/vela-session-policy/proofs/fstar/extraction-registration-driver/Vela_session_policy.Registration_driver.fst": "4cd2ebfb88ebd5e6f7f71eb5402257b25e9fdd29aac1d38ccfe59969ff969ce7",
-        "serverVELA/vela-session-policy/proofs/fstar/registration-driver-lemmas/Vela_session_policy_registration_driver_lemmas.fst": "03d438594af41f0f085c3e3320d66fdf784def9961c9f0a3c40b128a4f1e178a"
+        "serverVELA/vela-session-policy/proofs/fstar/extraction-registration-driver/Vela_session_policy.Registration_driver.fst": "39a3f531b745adda683fd285ab039f11c8e5328612c34e572199e46f5a4af6d8",
+        "serverVELA/vela-session-policy/proofs/fstar/registration-driver-lemmas/Vela_session_policy_registration_driver_lemmas.fst": "ec33f1cfd8dd078023cfa747281d4f2b35a329e30fd495a3d80da65fc0105273"
       }
     },
     {
@@ -626,17 +626,17 @@
       }
     },
     {
-      "boundary": "registration and challenge-issue handler-to-driver interpreters: account/mod.rs and auth/challenge.rs expand registration_interpreter!/challenge_issue_interpreter!, whose synchronous expansions are proved for every executor to call exactly the method for the driver's current effect, stop at the verdict within 8/3 turns and end in a state the per-request theorems cover; executor method I/O, the await-only macro difference, request parsing and response rendering remain open",
+      "boundary": "registration and challenge-issue handler-to-driver interpreters: account/mod.rs and auth/challenge.rs expand registration_interpreter!/challenge_issue_interpreter!, whose synchronous expansions are proved for every executor to call exactly the method for the driver's current effect, stop at the verdict within 9/3 turns and end in a state the per-request theorems cover (the key-validation effect is one of the turns); executor method I/O, the await-only macro difference, request parsing and response rendering remain open",
       "artifacts": {
-        "serverVELA/vela-session-policy/src/registration_interpreter.rs": "1f1673076736a2c6b2ae5a9d3207dcdaa065d01c529a88c23ea8cbbb7617edc7",
+        "serverVELA/vela-session-policy/src/registration_interpreter.rs": "518c7e76dbf2ac8ba19f953466a46bc37af512e3ab83901fda7464d11192458c",
         "serverVELA/vela-session-policy/src/challenge_issue_interpreter.rs": "9da38f8b7be61bcb1279ff02306bc80e24cba826c883b4f4935202cc1ca701c4",
-        "serverVELA/vela-session-policy/verify-fstar-registration-interpreter.sh": "58a681778b84274a5363557d4cca21625bc13e25746e60c4c9e35a491c9e5cf0",
+        "serverVELA/vela-session-policy/verify-fstar-registration-interpreter.sh": "b6c95e930c73aeace0a1fcc5cef23932430c6d5b17e77b1bb846d081daae37f3",
         "serverVELA/vela-session-policy/verify-fstar-challenge-issue-interpreter.sh": "7092a029a98e009a58d54e8cccf95a7919023f2d3bef6f28f933e6ed09355a25",
-        "serverVELA/vela-session-policy/proofs/fstar/extraction-registration-interpreter/Vela_session_policy.Registration_interpreter.fst": "9e13907b7129e44f03d15a5feaaabe16b7aee4c6aa85e94f12cd2024364e052f",
+        "serverVELA/vela-session-policy/proofs/fstar/extraction-registration-interpreter/Vela_session_policy.Registration_interpreter.fst": "d0ded40011be1e033ff9634e5b27b9678b8bfd25398a7cf3b3267e7366e5c027",
         "serverVELA/vela-session-policy/proofs/fstar/extraction-challenge-issue-interpreter/Vela_session_policy.Challenge_issue_interpreter.fst": "88aafd7ab275bbd655f4b2b188e6a6f970f67a1e388b0844e3ec2b07ea3699c5",
-        "serverVELA/vela-session-policy/proofs/fstar/registration-interpreter-lemmas/Vela_session_policy_registration_interpreter_lemmas.fst": "97fc3d928734e9fff84c52de6621eee6b1759cff36eb596ba50b3e356ea95dcc",
+        "serverVELA/vela-session-policy/proofs/fstar/registration-interpreter-lemmas/Vela_session_policy_registration_interpreter_lemmas.fst": "1ab564d13a56669d9633115230ef009c46ec08ad5bc942c4dd8a0756f39bc62f",
         "serverVELA/vela-session-policy/proofs/fstar/challenge-issue-interpreter-lemmas/Vela_session_policy_challenge_issue_interpreter_lemmas.fst": "e020378f300b920df4acf28421f7bba5baa7137a4a2058d79586b4dd4cf610b9",
-        "serverVELA/vela-server/src/account/mod.rs": "6ab1f2307ebc4976bedd679ab6e1acbb70150f32613ee76be1c9123e79f10a8a",
+        "serverVELA/vela-server/src/account/mod.rs": "facfa8ea6881f7d2ab2ed0f70d40a78f40116e6256ba1c47d6762ae1dea915ac",
         "serverVELA/vela-server/src/auth/challenge.rs": "9cae8f6f2f18cd96f296cde7714eded9c0b9085b6b4d74103cc6c2e79327badb"
       }
     },
@@ -650,31 +650,31 @@
       }
     },
     {
-      "boundary": "web-session drivers (POST /web-session/start, grant, token, DELETE /web-session/:id): start only inserts a pending row with no authority; a grant only from the extracted grant plan with an authenticated active approver of the owning account, a pending session and a matching 32-byte nonce, carrying the plan's mode, epoch and clamped TTL; a token only for a live granted session after an accepted web_token take, a valid verifier, a backoff reset and a first-writer token claim, at most once per request and once per grant (U-25); lockout and revocation only for the owning account; the concurrent composition is not yet proved; store/SQL atomicity and handler effect fidelity remain open",
+      "boundary": "web-session drivers (POST /web-session/start, grant, token, DELETE /web-session/:id): start only inserts a pending row with no authority; a grant only from the extracted grant plan with an authenticated active approver of the owning account, a pending session and a matching 32-byte nonce, carrying the plan's mode, epoch and clamped TTL; a token only for a live granted session after an accepted web_token take, a valid verifier, a backoff reset and a first-writer token claim; a failed issuance before a token is released deletes exactly that claim and a retry may claim again, while a successful release keeps the claim, so at most one token is released per grant (U-25); a revoked-session sentinel keeps the claim and is never released; lockout and revocation only for the owning account; the concurrent composition is not yet proved; store/SQL atomicity and handler effect fidelity remain open",
       "artifacts": {
-        "serverVELA/vela-session-policy/src/websession_driver.rs": "956ed074c9f39b99bd7a876846e888b30bcff3dc7ae52046117a5438fd634ef0",
+        "serverVELA/vela-session-policy/src/websession_driver.rs": "2f8150c508a5b22fb368fd03560ef216f61b9d6dffa00d100c26c44c522d6765",
         "serverVELA/vela-session-policy/verify-fstar-websession-driver.sh": "1e436717d4d692de3918e2f8ffa8e7ade287a9a3ffc4fdf72acff22fefd55e97",
-        "serverVELA/vela-session-policy/proofs/fstar/extraction-websession-driver/Vela_session_policy.Websession_driver.fst": "ad6dd733adc164a7ecaef1d6477ac2b0c9420114f6a4c83d9fbb76165c125b90",
-        "serverVELA/vela-session-policy/proofs/fstar/websession-driver-lemmas/Vela_session_policy_websession_driver_lemmas.fst": "c658513a30e0db32fd41e2138e02a7388a62fac1834b2bdfd7759a11e60136df"
+        "serverVELA/vela-session-policy/proofs/fstar/extraction-websession-driver/Vela_session_policy.Websession_driver.fst": "7449eb5c9de943627a6f939a4e766e07ebcadf6064e65e44ed678bc2f1ff9608",
+        "serverVELA/vela-session-policy/proofs/fstar/websession-driver-lemmas/Vela_session_policy_websession_driver_lemmas.fst": "2eba1a0286fa239038fa502b67371a5b5ec3abe8f652a38b907a41dd81dd5962"
       }
     },
     {
-      "boundary": "web-session handler-to-driver interpreters: web_session/mod.rs expands websession_{start,grant,token,delete}_interpreter!, whose synchronous expansions are proved for every executor to call exactly the method for the driver's current effect with its argument, stop at the verdict within 3/3/7/3 turns and end in a state the per-request theorems cover; executor method I/O, the await-only macro difference, the read-only GET handlers and response rendering remain open",
+      "boundary": "web-session handler-to-driver interpreters: web_session/mod.rs expands websession_{start,grant,token,delete}_interpreter!, whose synchronous expansions are proved for every executor to call exactly the method for the driver's current effect with its argument, stop at the verdict within 3/3/8/3 turns and end in a state the per-request theorems cover; executor method I/O, the await-only macro difference, the read-only GET handlers and response rendering remain open",
       "artifacts": {
-        "serverVELA/vela-session-policy/src/websession_interpreter.rs": "aae9af75fc24bf234629e9f420a0147d19cf6a44671f1fe4073562547119d454",
+        "serverVELA/vela-session-policy/src/websession_interpreter.rs": "4c7712b58bb04f7d432620c3517f78bc214d99d00372ae31733018a9527bfff0",
         "serverVELA/vela-session-policy/verify-fstar-websession-interpreter.sh": "2fa921447ac5db0e862233dbcd56573c6c675f373ab698f37682eb2e717eeb0e",
-        "serverVELA/vela-server/src/web_session/mod.rs": "0f2c5dbee92aa92aae73a3a73fac0c7bfda1aa9af9dc911af8b773f04f67d23c",
+        "serverVELA/vela-server/src/web_session/mod.rs": "7ed2a3abb4d1c2477216aafb0e0e10711d7134c58fde967528d8a83a313cfb33",
         "serverVELA/vela-session-policy/proofs/fstar/websession-interpreter-lemmas/Vela_session_policy_websession_delete_interpreter_lemmas.fst": "5757827f4094a5a48d3246e324171f2005dddfab6f84934bd378d1e56f31f77c",
         "serverVELA/vela-session-policy/proofs/fstar/websession-interpreter-lemmas/Vela_session_policy_websession_grant_interpreter_lemmas.fst": "8ec24ae9357e51315ff38e4fee59bccb2765936bb3958bb96d444303763a2e24",
         "serverVELA/vela-session-policy/proofs/fstar/websession-interpreter-lemmas/Vela_session_policy_websession_start_interpreter_lemmas.fst": "33ac34515c4c10aa3d1670c436cd4e8274cc8ff30a9bf67ca1e0d6b91b4f2115",
-        "serverVELA/vela-session-policy/proofs/fstar/websession-interpreter-lemmas/Vela_session_policy_websession_token_interpreter_lemmas.fst": "bfdcb37e19c52b217f4fb62f95f97078b2f54ac4f121b0682ccc1204ad516525",
-        "serverVELA/vela-session-policy/proofs/fstar/extraction-websession-interpreter/Vela_session_policy.Websession_interpreter.fst": "9d881eb51b4fa5ce8499289facc798890eb6e2a9f40d45b75c87fde9e8440992"
+        "serverVELA/vela-session-policy/proofs/fstar/websession-interpreter-lemmas/Vela_session_policy_websession_token_interpreter_lemmas.fst": "94ba0cb0f08c2fc0dfec1f2281b621635ac2c4278ad5792b9644a1792cbcf7ba",
+        "serverVELA/vela-session-policy/proofs/fstar/extraction-websession-interpreter/Vela_session_policy.Websession_interpreter.fst": "69d6410bf0bec50011165a98a1dd937ea97e9a62b2cd90cac05d4dbee4453143"
       }
     },
     {
-      "boundary": "web-session concurrent composition: for any schedule of start, grant, token, delete and approver-device revocation requests over shared session rows, the web_token challenge store, the per-session token claim and the lockout sentinels, at most one token issue decision per session, no token after the session's delete or its approver's revocation, no grant from another account, an inactive device or for a non-pending session, no token from a pending session, no cross-account delete and no authority from start, counted on the extracted drivers' decisions (found U-26); SQL/CAS and store set-if-absent/take atomicity, honest executor outcomes, PASETO, TTLs and multi-node visibility remain assumptions",
+      "boundary": "web-session concurrent composition: for any schedule of start, grant, token, delete and approver-device revocation requests over shared session rows, the web_token challenge store, the per-session token claim and the lockout sentinels, at most one token released per session (a failed issuance releases the claim and may retry; a successful release keeps it), no token after the session's delete or its approver's revocation, no grant from another account, an inactive device or for a non-pending session, no token from a pending session, no cross-account delete and no authority from start, counted on the tokens the extracted token driver actually releases (found U-26); SQL/CAS and store set-if-absent/take atomicity, honest executor outcomes, PASETO, TTLs and multi-node visibility remain assumptions",
       "artifacts": {
-        "serverVELA/vela-session-policy/proofs/fstar/websession-composition/Vela_session_policy_websession_composition.fst": "4dfff44c6dbbfb4f0936e3768ea6e405298c96aaf05970b146900f24c8fb013b",
+        "serverVELA/vela-session-policy/proofs/fstar/websession-composition/Vela_session_policy_websession_composition.fst": "80fa51e271cdb6d6e83fd8255a236ee3fcb52de32b1646795eab10677293d6af",
         "serverVELA/vela-session-policy/verify-fstar-websession-composition.sh": "dcdf708b4ccd2fd01f332c87aefc8d037e22362319c5e949f10a6c11a70a0530",
         "serverVELA/vela-session-policy/proofs/fstar/extraction-websession-revocation/Vela_session_policy.Revocation_driver.fst": "a821ec8c038897686631bc7aef0dff8316861edd0c0bfa185de9b73f42945f52"
       }
@@ -729,14 +729,14 @@
     {
       "boundary": "web-session handler-to-driver interpreters: web_session/mod.rs expands websession_{start,grant,token,delete}_interpreter!, whose synchronous expansions are proved for every executor to call exactly the method for the driver's current effect with its argument, stop at the verdict within 3/3/7/3 turns and end in a state the per-request theorems cover; the executor methods' SQL/store I/O is proved separately by the F-1 session-executor gate (auth/session_conformance.rs), the await-only macro difference, the read-only GET handlers and response rendering remain open",
       "artifacts": {
-        "serverVELA/vela-session-policy/src/websession_interpreter.rs": "aae9af75fc24bf234629e9f420a0147d19cf6a44671f1fe4073562547119d454",
+        "serverVELA/vela-session-policy/src/websession_interpreter.rs": "4c7712b58bb04f7d432620c3517f78bc214d99d00372ae31733018a9527bfff0",
         "serverVELA/vela-session-policy/verify-fstar-websession-interpreter.sh": "2fa921447ac5db0e862233dbcd56573c6c675f373ab698f37682eb2e717eeb0e",
-        "serverVELA/vela-server/src/web_session/mod.rs": "0f2c5dbee92aa92aae73a3a73fac0c7bfda1aa9af9dc911af8b773f04f67d23c",
+        "serverVELA/vela-server/src/web_session/mod.rs": "7ed2a3abb4d1c2477216aafb0e0e10711d7134c58fde967528d8a83a313cfb33",
         "serverVELA/vela-session-policy/proofs/fstar/websession-interpreter-lemmas/Vela_session_policy_websession_delete_interpreter_lemmas.fst": "5757827f4094a5a48d3246e324171f2005dddfab6f84934bd378d1e56f31f77c",
         "serverVELA/vela-session-policy/proofs/fstar/websession-interpreter-lemmas/Vela_session_policy_websession_grant_interpreter_lemmas.fst": "8ec24ae9357e51315ff38e4fee59bccb2765936bb3958bb96d444303763a2e24",
         "serverVELA/vela-session-policy/proofs/fstar/websession-interpreter-lemmas/Vela_session_policy_websession_start_interpreter_lemmas.fst": "33ac34515c4c10aa3d1670c436cd4e8274cc8ff30a9bf67ca1e0d6b91b4f2115",
-        "serverVELA/vela-session-policy/proofs/fstar/websession-interpreter-lemmas/Vela_session_policy_websession_token_interpreter_lemmas.fst": "bfdcb37e19c52b217f4fb62f95f97078b2f54ac4f121b0682ccc1204ad516525",
-        "serverVELA/vela-session-policy/proofs/fstar/extraction-websession-interpreter/Vela_session_policy.Websession_interpreter.fst": "9d881eb51b4fa5ce8499289facc798890eb6e2a9f40d45b75c87fde9e8440992"
+        "serverVELA/vela-session-policy/proofs/fstar/websession-interpreter-lemmas/Vela_session_policy_websession_token_interpreter_lemmas.fst": "94ba0cb0f08c2fc0dfec1f2281b621635ac2c4278ad5792b9644a1792cbcf7ba",
+        "serverVELA/vela-session-policy/proofs/fstar/extraction-websession-interpreter/Vela_session_policy.Websession_interpreter.fst": "69d6410bf0bec50011165a98a1dd937ea97e9a62b2cd90cac05d4dbee4453143"
       }
     },
     {
@@ -772,28 +772,28 @@
       }
     },
     {
-      "boundary": "logout, device-revocation, account-deletion, login, registration, challenge-issue and web-session start/grant/token/delete executor honesty (F-1), plus the wave-2 shared web-session I/O: each method of LogoutJtiIo, RevokeDeviceIo, DeleteAccountIo, VerifyIo, RegisterIo, ChallengeIssueIo, StartIo, GrantIo, TokenIo and DeleteSessionIo is an extracted typed SQL/store statement plan, a pinned rendering and an extracted classifier, proved against a store model of the eight account tables (including the UNIQUE-id INSERTs, the account-count read, the pending-session insert, the full web-session row lookup, the granted-session list, the one-shot capsule clear and the approver-scoped key lookup), the jti markers, the deletion and registration transactions, the challenge take and first-writer-wins issue, the login failure counters and backoff/streak keys, the device last-active stamp, the web-session grant CAS (epoch, approver and users/devices EXISTS guards evaluated on the modelled tables), the one-byte first-writer-wins token marker, the issue-time device:revoked: exists re-check, the JTI track and the delete lockout/audit statements, the pre-driver limiters and backoff prechecks (login per-IP, web-session start, token per-IP and per-session plus backoff, poll and key-fetch), and the three cleanup deletes, with a failure at any statement, and matched on real turso and sled with fault injection; the deletion transaction and revocation cascade are proved per statement (no single fold theorem), revoke_all_device_jtis and the backoff helpers are one atomic logical statement each (partial marker writes on failure are not modelled), store TTLs are abstracted, the granted-session list's ORDER BY/LIMIT is presentation (the conformance test compares the set), cleanup's numeric cutoff is the instant the stored RFC3339 text denotes (conformance pins the pairing), PASETO issuance is an input, and the start insert draws its random id inside the executor (the duplicate id is proved in the model and pinned by the schema)",
+      "boundary": "logout, device-revocation, account-deletion, login, registration, challenge-issue and web-session start/grant/token/delete executor honesty (F-1), plus the wave-2 shared web-session I/O: each method of LogoutJtiIo, RevokeDeviceIo, DeleteAccountIo, VerifyIo, RegisterIo, ChallengeIssueIo, StartIo, GrantIo, TokenIo and DeleteSessionIo is an extracted typed SQL/store statement plan, a pinned rendering and an extracted classifier, proved against a store model of the eight account tables (including the UNIQUE-id INSERTs, the account-count read, the pending-session insert, the full web-session row lookup, the granted-session list, the one-shot capsule clear and the approver-scoped key lookup), the jti markers, the deletion and registration transactions, the challenge take and first-writer-wins issue, the login failure counters and backoff/streak keys, the device last-active stamp, the web-session grant CAS (epoch, approver and users/devices EXISTS guards evaluated on the modelled tables), the one-byte first-writer-wins token marker, the claim release delete after a failed issuance, the issue-time device:revoked: exists re-check, the JTI track and the delete lockout/audit statements, the pre-driver limiters and backoff prechecks (login per-IP, web-session start, token per-IP and per-session plus backoff, poll and key-fetch), and the three cleanup deletes, with a failure at any statement, and matched on real turso and sled with fault injection; the deletion transaction and revocation cascade are proved per statement (no single fold theorem), revoke_all_device_jtis and the backoff helpers are one atomic logical statement each (partial marker writes on failure are not modelled), store TTLs are abstracted, the granted-session list's ORDER BY/LIMIT is presentation (the conformance test compares the set), cleanup's numeric cutoff is the instant the stored RFC3339 text denotes (conformance pins the pairing), PASETO issuance is an input, and the start insert draws its random id inside the executor (the duplicate id is proved in the model and pinned by the schema)",
       "artifacts": {
         "serverVELA/vela-server/src/account/delete.rs": "3676236ade8d780739d77e6e067be4b0b5c9c3dc967805ef67aad357dd2c516e",
-        "serverVELA/vela-server/src/account/mod.rs": "6ab1f2307ebc4976bedd679ab6e1acbb70150f32613ee76be1c9123e79f10a8a",
+        "serverVELA/vela-server/src/account/mod.rs": "facfa8ea6881f7d2ab2ed0f70d40a78f40116e6256ba1c47d6762ae1dea915ac",
         "serverVELA/vela-server/src/auth/challenge.rs": "9cae8f6f2f18cd96f296cde7714eded9c0b9085b6b4d74103cc6c2e79327badb",
         "serverVELA/vela-server/src/auth/logout.rs": "dd1a67af0df08111c82e18ecf53fee8b896bd8352efca22ee422a1d617ccf916",
-        "serverVELA/vela-server/src/auth/session_conformance.rs": "f8ea16994c4e4b63d5a19fcb62a69d275211090b5cbeb5525f141f9aed685e8c",
-        "serverVELA/vela-server/src/auth/session_store.rs": "441945a22c7cb95eddac1a66ae728027f71e0396398fba2803a02aa373b11831",
+        "serverVELA/vela-server/src/auth/session_conformance.rs": "c81260f098a3960f71fea8e282c118a8667b4184574a57b49b766d46d79c9f4c",
+        "serverVELA/vela-server/src/auth/session_store.rs": "f59ccb479e636c237ddf1a564f4fb659d01f846716b952aea33c12fa07dd68b2",
         "serverVELA/vela-server/src/auth/verify.rs": "14921369ed53bafaa5b2408439f68a1e2822ab6b4ca53e14555b0c7f3d19197b",
         "serverVELA/vela-server/src/device/revoke.rs": "efcbadf0aa9097308430b7f56328ce15791f7969fabde9a9f0b6a1a5112116e9",
         "serverVELA/vela-server/src/rate_limit.rs": "0277af0458c1309b6d21c28a1a6e81a174e84b631d041e6e58f8fb3029b0e0b8",
-        "serverVELA/vela-server/src/web_session/mod.rs": "0f2c5dbee92aa92aae73a3a73fac0c7bfda1aa9af9dc911af8b773f04f67d23c",
+        "serverVELA/vela-server/src/web_session/mod.rs": "7ed2a3abb4d1c2477216aafb0e0e10711d7134c58fde967528d8a83a313cfb33",
         "serverVELA/vela-session-policy/proofs/fstar/extraction-challenge-issue-driver/Vela_session_policy.Challenge.fst": "1b96acdadd51dca6cdbdafe1608baa7f2173b51b3ca4bcf0f3374710a3513ea5",
         "serverVELA/vela-session-policy/proofs/fstar/extraction-challenge-issue-driver/Vela_session_policy.Challenge_issue_driver.fst": "319b188c77c083d275913455077e0cd260efa005eff9ccc44ef52ff7eed891ce",
-        "serverVELA/vela-session-policy/proofs/fstar/extraction-registration-driver/Vela_session_policy.Registration_driver.fst": "4cd2ebfb88ebd5e6f7f71eb5402257b25e9fdd29aac1d38ccfe59969ff969ce7",
-        "serverVELA/vela-session-policy/proofs/fstar/extraction-store/Vela_session_policy.Store.fst": "33c097fc19d71f8780bc6e15dc80772c7cc0db0ee486919bf6bc6c0ef0afaec3",
-        "serverVELA/vela-session-policy/proofs/fstar/store-lemmas/Vela_session_policy_store_lemmas.fst": "d1f6022178eff6b71bf46b493dbf822cc9cc63bd8bbb2072218e3f642888819a",
-        "serverVELA/vela-session-policy/proofs/fstar/store-lemmas/Vela_session_policy_store_model.fst": "a12411eacecee10b03140bd6b8e02f639bd13f6c9caefdfe36d6f817246f4c91",
-        "serverVELA/vela-session-policy/src/store.rs": "3cfbd7e27d0316ce10df6a015ddcaad9c134007896649585f39139f15c715bed",
-        "serverVELA/vela-session-policy/src/store_model.rs": "ad521e2cdf5a3e3a51848ee04d094b13a3cc2be073d73a137692e42f48ab58f3",
-        "serverVELA/vela-session-policy/verify-fstar-session-executors-mutations.sh": "12a38f5789712e4b5d2cad5dddb528d77dbc3db8d7cd36969c4646f73732208d",
-        "serverVELA/vela-session-policy/verify-fstar-session-executors.sh": "225b8a610ac79cab9510e9baaa32af10467ddb1bdf69e1fb1b9bc89a0edb1c84",
+        "serverVELA/vela-session-policy/proofs/fstar/extraction-registration-driver/Vela_session_policy.Registration_driver.fst": "39a3f531b745adda683fd285ab039f11c8e5328612c34e572199e46f5a4af6d8",
+        "serverVELA/vela-session-policy/proofs/fstar/extraction-store/Vela_session_policy.Store.fst": "3e8951a27d2f4f11c66c728b8363ed1181e339428eefe2b9087f63aa8ee245cd",
+        "serverVELA/vela-session-policy/proofs/fstar/store-lemmas/Vela_session_policy_store_lemmas.fst": "bfe89f51230cd2f0bb8b1489e3f32af409408e9e0b9956031cd25c19927d793a",
+        "serverVELA/vela-session-policy/proofs/fstar/store-lemmas/Vela_session_policy_store_model.fst": "b9ef2100fe8c23753b67e922279372e2bbd73fd75c0ac01f776fcb6dedd15aa9",
+        "serverVELA/vela-session-policy/src/store.rs": "3fa1abac0a1c872681b6c92f8401c123c56e3cbac211f2a1549d8d2e3aad7e8c",
+        "serverVELA/vela-session-policy/src/store_model.rs": "9c7bf7156ff4de1567190bb9b5b74e948aae35eee6de44113e88d160816c16df",
+        "serverVELA/vela-session-policy/verify-fstar-session-executors-mutations.sh": "d4f4b916c299f60de1b6dbdb2268f197edeed32856c9e2e7b8a4d84335e70758",
+        "serverVELA/vela-session-policy/verify-fstar-session-executors.sh": "fa459701a5cd55d4a17e5ec83b8d10debf876f51b2c6714783bc9f8e6839507f",
         "serverVELA/vela-share-policy/src/store.rs": "2aa076763148d9d7fb15f682b93dd67a81450b0410c907f06b5c5d05beed0e59",
         "serverVELA/vela-share-policy/src/store_model.rs": "8d6c02f5c6a19ed9cdcbeebbb6cbb9a083b490f88ed8e2fda6b0a4e802337fa0",
         "serverVELA/vela-share-policy/verify-fstar-share-executors.sh": "3d40b495071736b25eb06e4dacfde26d0c5677c986c44ff14a5d8ee0de70e5db",

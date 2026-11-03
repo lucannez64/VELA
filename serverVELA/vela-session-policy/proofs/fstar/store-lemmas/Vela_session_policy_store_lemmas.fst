@@ -1091,6 +1091,13 @@ let plan_token_sentinel_shape (sess: text)
             | _ -> False)) =
   ()
 
+let plan_token_release_shape (sess: text)
+  : Lemma (L.length (stmts_of (plan_token_release sess)) == 1 /\
+           (match first_stmt (stmts_of (plan_token_release sess)) with
+            | StoreStmt_Delete { f_key = k } -> k == claim_marker_key sess
+            | _ -> False)) =
+  ()
+
 #push-options "--fuel 4 --ifuel 2"
 /// `StartIo::insert_pending`: `Inserted` exactly when the id was fresh and the
 /// one statement ran; then exactly that pending row is added; otherwise the
@@ -1255,6 +1262,30 @@ let token_sentinel_is_honest (s: store) (sess: text) (f: option nat)
      (fst (token_sentinel s sess f) == ExistsOutcome_Failed <==> faulted f 0) /\
      snd (token_sentinel s sess f) == s) =
   plan_token_sentinel_shape sess
+
+/// `TokenIo::release_token`: `Released` exactly when the one delete ran; on
+/// success exactly the claim key is removed; a failed delete changes nothing,
+/// so the claim stays and the exchange fails closed.
+let token_release_is_honest (s: store) (sess: text) (f: option nat)
+  : Lemma
+    ((fst (token_release s sess f) ==
+        Vela_session_policy.Websession_driver.TokenReleaseObservation_Released
+        <==> no_fault_in f 1) /\
+     (fst (token_release s sess f) ==
+        Vela_session_policy.Websession_driver.TokenReleaseObservation_StorageFailed
+        <==> faulted f 0) /\
+     (fst (token_release s sess f) ==
+        Vela_session_policy.Websession_driver.TokenReleaseObservation_Released ==>
+        (snd (token_release s sess f)).kv (claim_marker_key sess) == None /\
+        (forall (k: text). k <> claim_marker_key sess ==>
+           (snd (token_release s sess f)).kv k == s.kv k) /\
+        (snd (token_release s sess f)).sets == s.sets /\
+        (snd (token_release s sess f)).revoked == s.revoked /\
+        (snd (token_release s sess f)).counters == s.counters) /\
+     (fst (token_release s sess f) =!=
+        Vela_session_policy.Websession_driver.TokenReleaseObservation_Released ==>
+        snd (token_release s sess f) == s)) =
+  plan_token_release_shape sess
 #pop-options
 
 #push-options "--fuel 4 --ifuel 2"
@@ -1330,6 +1361,31 @@ let token_claim_is_first_writer_wins (s: store) (sess: text) (f: option nat)
        (s.kv (claim_marker_key sess) == None /\
         (snd (token_claim s sess f)).kv (claim_marker_key sess) == Some v_one)) =
   token_claim_is_honest s sess f
+
+/// A successful release removes exactly the one claim key, so the next
+/// `set_ex_nx` can claim again.
+let token_release_frees_the_claim (s: store) (sess: text) (f: option nat)
+  : Lemma
+    (fst (token_release s sess f) ==
+       Vela_session_policy.Websession_driver.TokenReleaseObservation_Released ==>
+       ((snd (token_release s sess f)).kv (claim_marker_key sess) == None /\
+        (fst (token_claim (snd (token_release s sess f)) sess None) ==
+           Vela_session_policy.Websession_driver.TokenClaimObservation_Claimed))) =
+  token_release_is_honest s sess f;
+  token_claim_is_honest (snd (token_release s sess f)) sess None
+
+/// A failed release leaves the claim in place: the exchange fails closed and
+/// retries keep seeing `AlreadyClaimed`.
+let token_release_failure_keeps_the_claim (s: store) (sess: text) (f: option nat)
+  : Lemma
+    (fst (token_release s sess f) ==
+       Vela_session_policy.Websession_driver.TokenReleaseObservation_StorageFailed ==>
+       ((snd (token_release s sess f)) == s /\
+        (Some? (s.kv (claim_marker_key sess)) ==>
+         fst (token_claim s sess None) ==
+           Vela_session_policy.Websession_driver.TokenClaimObservation_AlreadyClaimed))) =
+  token_release_is_honest s sess f;
+  token_claim_is_honest s sess None
 
 /// An issued token is only released while no lockout sentinel is stored.
 let issued_token_is_not_locked_out (s: store) (sess jti: text) (paseto_ok: bool)
@@ -1450,7 +1506,7 @@ let vector_token_issue_locked : store =
 
 let vector_token_issue_locked_fails ()
   : Lemma (let (obs, post) = token_issue vector_token_issue_locked (s "s") (s "jti") true None in
-           obs == Vela_session_policy.Websession_driver.TokenIssueObservation_Failed /\
+           obs == Vela_session_policy.Websession_driver.TokenIssueObservation_Revoked /\
            post == vector_token_issue_locked) =
   token_issue_is_honest vector_token_issue_locked (s "s") (s "jti") true None
 

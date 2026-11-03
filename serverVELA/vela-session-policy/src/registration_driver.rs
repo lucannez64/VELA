@@ -12,7 +12,10 @@
 //!    "unlimited");
 //! 3. the presented identity and share keys must have decoded at the exact
 //!    lengths the handler requires, including the share-key binding signature
-//!    (the handler keeps the first exact error text in its `error` slot);
+//!    (the handler keeps the first exact error text in its `error` slot). This
+//!    is an effect emitted only after the limiter and the budget allowed the
+//!    request, so an unauthenticated request cannot force key decoding or a
+//!    post-quantum signature verification;
 //! 4. one transaction is opened, exactly one account row and exactly one first
 //!    device row are inserted, and the transaction commits only after the
 //!    device row was observed inserted;
@@ -31,22 +34,27 @@
 //! induction in `proofs/fstar/registration-driver-lemmas` quantifies over every
 //! event list, not only the handler's intended order.
 
-/// Request-side observations established before any effect. Key validity is a
-/// pure decode/length/binding-signature fact computed by the handler.
+/// Request-side observations established before any effect. The keys are
+/// deliberately *not* here: decoding them and verifying the share-key binding
+/// signature is expensive, so it is a driver effect emitted only after the
+/// per-IP limiter and the account budget pass.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RegistrationRequestObservation {
     pub has_account_limit: bool,
     /// `MAX_ACCOUNTS` as a signed limit (saturated at `i64::MAX`). Ignored
     /// when `has_account_limit` is false.
     pub account_limit: i64,
-    /// `hybrid_ek` decoded at exactly 1600 bytes.
-    pub identity_ek_valid: bool,
-    /// `hybrid_vk` decoded at exactly 2624 bytes.
-    pub identity_vk_valid: bool,
-    /// `share_ek` is absent, or it decoded at exactly 1600 bytes, carried the
-    /// required canonical timestamp and its binding signature verified under
-    /// the presented identity key.
-    pub share_ek_valid: bool,
+}
+
+/// Outcome of the key decode and share-key binding verification effect.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum KeyObservation {
+    /// `hybrid_ek` decoded at exactly 1600 bytes, `hybrid_vk` at exactly 2624
+    /// bytes, and the optional `share_ek` (with its canonical timestamp and
+    /// binding signature under the presented identity key) is valid.
+    Valid,
+    /// Any of those checks failed. The handler keeps the exact first message.
+    Invalid,
 }
 
 /// Outcome of the per-IP registration limiter.
@@ -103,6 +111,8 @@ pub enum TrackObservation {
 pub enum RegistrationStage {
     RateLimit,
     AccountBudget,
+    /// Decode the keys and verify the share-key binding signature.
+    ValidateKeys,
     BeginTransaction,
     InsertAccount,
     InsertDevice,
@@ -118,6 +128,7 @@ pub enum RegistrationStage {
 pub enum RegistrationEvent {
     RateLimitObserved(RateLimitObservation),
     BudgetObserved(BudgetObservation),
+    KeysObserved(KeyObservation),
     TransactionObserved(TransactionObservation),
     AccountInserted(InsertObservation),
     DeviceInserted(InsertObservation),
@@ -161,6 +172,9 @@ pub enum RegistrationEffect {
     CheckRateLimit,
     /// `SELECT COUNT(*) FROM users` (only when a ceiling is configured).
     CheckAccountBudget,
+    /// Decode the keys and verify the share-key binding signature. Emitted
+    /// only after the limiter and budget allowed this request.
+    ValidateKeys,
     /// Open the one SQL transaction.
     BeginTransaction,
     /// `INSERT INTO users ...`.
@@ -188,9 +202,10 @@ pub struct RegistrationDriver {
     pub stage: RegistrationStage,
     pub has_account_limit: bool,
     pub account_limit: i64,
-    pub identity_ek_valid: bool,
-    pub identity_vk_valid: bool,
-    pub share_ek_valid: bool,
+    /// The key effect ran and reported valid keys.
+    pub keys_valid: bool,
+    /// The key effect ran (valid or invalid).
+    pub keys_validated: bool,
     /// The limiter allowed this request.
     pub rate_allowed: bool,
     /// The budget question (query or configured-skip) was resolved within the
@@ -234,9 +249,16 @@ pub fn registration_state_is_sound(d: RegistrationDriver) -> bool {
         && d.has_account_limit
         && !d.budget_checked
         && pre;
+    let validate_keys = matches!(d.stage, RegistrationStage::ValidateKeys)
+        && d.rate_allowed
+        && d.budget_checked
+        && !d.keys_validated
+        && pre;
     let begin_transaction = matches!(d.stage, RegistrationStage::BeginTransaction)
         && d.rate_allowed
         && d.budget_checked
+        && d.keys_validated
+        && d.keys_valid
         && !d.transaction_open
         && !d.transaction_started
         && !d.account_inserted
@@ -314,6 +336,7 @@ pub fn registration_state_is_sound(d: RegistrationDriver) -> bool {
     (match d.stage {
         RegistrationStage::RateLimit => rate_limit,
         RegistrationStage::AccountBudget => account_budget,
+        RegistrationStage::ValidateKeys => validate_keys,
         RegistrationStage::BeginTransaction => begin_transaction,
         RegistrationStage::InsertAccount => insert_account,
         RegistrationStage::InsertDevice => insert_device,
@@ -323,7 +346,9 @@ pub fn registration_state_is_sound(d: RegistrationDriver) -> bool {
         RegistrationStage::Done => done,
     })
         && (!d.budget_checked || d.rate_allowed)
-        && (!d.transaction_open || d.budget_checked)
+        && (!d.keys_validated || d.budget_checked)
+        && (!d.keys_valid || d.keys_validated)
+        && (!d.transaction_open || d.keys_validated)
         && (!d.transaction_started || d.transaction_open)
         && (!d.account_inserted || d.transaction_started)
         && (!d.device_inserted || d.account_inserted)
@@ -335,7 +360,6 @@ pub fn registration_state_is_sound(d: RegistrationDriver) -> bool {
 
 /// Every effect the driver emits agrees with the state it produces.
 pub fn registration_effect_is_sound(d: RegistrationDriver, effect: RegistrationEffect) -> bool {
-    let valid_keys = d.identity_ek_valid && d.identity_vk_valid && d.share_ek_valid;
     let pre = !d.transaction_open
         && !d.transaction_started
         && !d.account_inserted
@@ -356,11 +380,19 @@ pub fn registration_effect_is_sound(d: RegistrationDriver, effect: RegistrationE
                 && !d.budget_checked
                 && pre
         }
+        RegistrationEffect::ValidateKeys => {
+            matches!(d.stage, RegistrationStage::ValidateKeys)
+                && d.rate_allowed
+                && d.budget_checked
+                && !d.keys_validated
+                && pre
+        }
         RegistrationEffect::BeginTransaction => {
             matches!(d.stage, RegistrationStage::BeginTransaction)
                 && d.rate_allowed
                 && d.budget_checked
-                && valid_keys
+                && d.keys_validated
+                && d.keys_valid
                 && !d.transaction_open
                 && pre
         }
@@ -460,9 +492,8 @@ fn request_state(observation: RegistrationRequestObservation) -> RegistrationDri
         stage: RegistrationStage::RateLimit,
         has_account_limit: observation.has_account_limit,
         account_limit: observation.account_limit,
-        identity_ek_valid: observation.identity_ek_valid,
-        identity_vk_valid: observation.identity_vk_valid,
-        share_ek_valid: observation.share_ek_valid,
+        keys_valid: false,
+        keys_validated: false,
         rate_allowed: false,
         budget_checked: false,
         transaction_open: false,
@@ -477,13 +508,10 @@ fn request_state(observation: RegistrationRequestObservation) -> RegistrationDri
     }
 }
 
-fn keys_valid(driver: RegistrationDriver) -> bool {
-    driver.identity_ek_valid && driver.identity_vk_valid && driver.share_ek_valid
-}
-
-/// Start a per-request registration. The request-side key observations are
-/// checked only after the limiter and the account budget, preserving the
-/// historical error precedence (rate limit, then budget, then key decode).
+/// Start a per-request registration. The expensive key decode and share-key
+/// binding verification are a driver effect emitted only after the limiter and
+/// the account budget, preserving the historical error precedence (rate limit,
+/// then budget, then key decode).
 #[cfg_attr(hax, hax_lib::ensures(|result| {
     registration_state_is_sound(result.driver)
         && registration_effect_is_sound(result.driver, result.effect)
@@ -537,6 +565,7 @@ fn on_rate_limit(
                 )
             } else {
                 begin_after_budget(RegistrationDriver {
+                    stage: RegistrationStage::ValidateKeys,
                     budget_checked: true,
                     ..allowed
                 })
@@ -545,11 +574,13 @@ fn on_rate_limit(
     }
 }
 
-/// The budget question is resolved (or not configured): decode the keys and
-/// either open the transaction or refuse the request with no SQL effect.
+/// The budget question is resolved (or not configured): decode the keys next.
+/// No SQL effect happens before the keys are valid.
 #[cfg_attr(hax, hax_lib::requires(
-    driver.rate_allowed
+    registration_state_is_sound(driver)
+        && driver.rate_allowed
         && driver.budget_checked
+        && !driver.keys_validated
         && !driver.transaction_open
         && !driver.transaction_started
         && !driver.account_inserted
@@ -565,17 +596,51 @@ fn on_rate_limit(
         && registration_state_is_sound(result.driver)
 }))]
 fn begin_after_budget(driver: RegistrationDriver) -> RegistrationTransition {
-    if keys_valid(driver) {
-        transition(
+    transition(
+        RegistrationDriver {
+            stage: RegistrationStage::ValidateKeys,
+            ..driver
+        },
+        RegistrationEffect::ValidateKeys,
+    )
+}
+
+#[cfg_attr(hax, hax_lib::requires(
+    registration_state_is_sound(driver)
+        && matches!(driver.stage, RegistrationStage::ValidateKeys)
+        && driver.rate_allowed
+        && driver.budget_checked
+        && !driver.keys_validated
+        && !driver.transaction_open
+        && !driver.transaction_started
+        && !driver.account_inserted
+        && !driver.device_inserted
+        && !driver.committed
+        && !driver.token_issued
+        && !driver.token_tracked
+        && !driver.responded
+        && !driver.failed
+))]
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    registration_effect_is_sound(result.driver, result.effect)
+        && (!registration_state_is_sound(driver)
+            || registration_state_is_sound(result.driver))
+}))]
+fn on_keys(driver: RegistrationDriver, observation: KeyObservation) -> RegistrationTransition {
+    match observation {
+        KeyObservation::Invalid => {
+            // The handler's `error` slot supplies the exact field message.
+            terminal(driver, RegistrationFailure::InvalidRequest)
+        }
+        KeyObservation::Valid => transition(
             RegistrationDriver {
                 stage: RegistrationStage::BeginTransaction,
+                keys_valid: true,
+                keys_validated: true,
                 ..driver
             },
             RegistrationEffect::BeginTransaction,
-        )
-    } else {
-        // The handler's `error` slot supplies the exact field message.
-        terminal(driver, RegistrationFailure::InvalidRequest)
+        ),
     }
 }
 
@@ -610,6 +675,7 @@ fn on_budget(driver: RegistrationDriver, observation: BudgetObservation) -> Regi
             // negative count cannot come from `COUNT(*)` and fails closed.
             if count >= 0 && count < driver.account_limit {
                 begin_after_budget(RegistrationDriver {
+                    stage: RegistrationStage::ValidateKeys,
                     budget_checked: true,
                     ..driver
                 })
@@ -802,6 +868,13 @@ pub fn step(driver: RegistrationDriver, event: RegistrationEvent) -> Registratio
                 idle(driver)
             }
         }
+        RegistrationEvent::KeysObserved(observation) => {
+            if matches!(driver.stage, RegistrationStage::ValidateKeys) {
+                on_keys(driver, observation)
+            } else {
+                idle(driver)
+            }
+        }
         RegistrationEvent::TransactionObserved(observation) => {
             if matches!(driver.stage, RegistrationStage::BeginTransaction) {
                 on_transaction(driver, observation)
@@ -871,6 +944,19 @@ pub fn on_budget_event(
     observation: BudgetObservation,
 ) -> RegistrationTransition {
     step(driver, RegistrationEvent::BudgetObserved(observation))
+}
+
+#[cfg_attr(hax, hax_lib::requires(registration_state_is_sound(driver)))]
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    registration_effect_is_sound(result.driver, result.effect)
+        && (!registration_state_is_sound(driver)
+            || registration_state_is_sound(result.driver))
+}))]
+pub fn on_keys_event(
+    driver: RegistrationDriver,
+    observation: KeyObservation,
+) -> RegistrationTransition {
+    step(driver, RegistrationEvent::KeysObserved(observation))
 }
 
 #[cfg_attr(hax, hax_lib::requires(registration_state_is_sound(driver)))]
@@ -959,9 +1045,6 @@ mod tests {
         RegistrationRequestObservation {
             has_account_limit: false,
             account_limit: 0,
-            identity_ek_valid: true,
-            identity_vk_valid: true,
-            share_ek_valid: true,
         }
     }
 
@@ -977,6 +1060,9 @@ mod tests {
             BudgetObservation::QueryFailed,
         ] {
             out.push(RegistrationEvent::BudgetObserved(o));
+        }
+        for o in [KeyObservation::Valid, KeyObservation::Invalid] {
+            out.push(RegistrationEvent::KeysObserved(o));
         }
         for o in [TransactionObservation::Begun, TransactionObservation::Failed] {
             out.push(RegistrationEvent::TransactionObserved(o));
@@ -1008,6 +1094,7 @@ mod tests {
                 RegistrationStage::AccountBudget => {
                     on_budget(driver, BudgetObservation::Counted { count: 0 })
                 }
+                RegistrationStage::ValidateKeys => on_keys(driver, KeyObservation::Valid),
                 RegistrationStage::BeginTransaction => {
                     on_transaction(driver, TransactionObservation::Begun)
                 }
@@ -1038,14 +1125,11 @@ mod tests {
                 account_limit: 3,
                 ..valid_request()
             },
-            RegistrationRequestObservation {
-                identity_ek_valid: false,
-                ..valid_request()
-            },
         ];
         let stages = [
             RegistrationStage::RateLimit,
             RegistrationStage::AccountBudget,
+            RegistrationStage::ValidateKeys,
             RegistrationStage::BeginTransaction,
             RegistrationStage::InsertAccount,
             RegistrationStage::InsertDevice,
@@ -1057,13 +1141,6 @@ mod tests {
         for request in requests {
             for stage in stages {
                 if stage == RegistrationStage::AccountBudget && !request.has_account_limit {
-                    continue;
-                }
-                if stage != RegistrationStage::RateLimit
-                    && stage != RegistrationStage::AccountBudget
-                    && stage != RegistrationStage::Done
-                    && !keys_valid(request_state(request))
-                {
                     continue;
                 }
                 let driver = driver_at(stage, request);
@@ -1085,7 +1162,11 @@ mod tests {
         let mut driver = begin_registration(valid_request()).driver;
         assert_eq!(driver.stage, RegistrationStage::RateLimit);
         let t = on_rate_limit(driver, RateLimitObservation::Allowed);
-        // No configured ceiling: the budget query is skipped, not invented.
+        // No configured ceiling: the budget query is skipped, not invented,
+        // and the keys are validated before any SQL.
+        assert_eq!(t.effect, RegistrationEffect::ValidateKeys);
+        driver = t.driver;
+        let t = on_keys(driver, KeyObservation::Valid);
         assert_eq!(t.effect, RegistrationEffect::BeginTransaction);
         driver = t.driver;
         let t = on_transaction(driver, TransactionObservation::Begun);
@@ -1124,11 +1205,9 @@ mod tests {
 
     #[test]
     fn invalid_keys_are_refused_after_the_budget_without_sql() {
-        let request = RegistrationRequestObservation {
-            identity_vk_valid: false,
-            ..valid_request()
-        };
-        let t = on_rate_limit(begin_registration(request).driver, RateLimitObservation::Allowed);
+        let t = on_rate_limit(begin_registration(valid_request()).driver, RateLimitObservation::Allowed);
+        assert_eq!(t.effect, RegistrationEffect::ValidateKeys);
+        let t = on_keys(t.driver, KeyObservation::Invalid);
         assert_eq!(
             t.effect,
             RegistrationEffect::Fail(RegistrationFailure::InvalidRequest)
@@ -1172,7 +1251,7 @@ mod tests {
             assert!(!t.driver.transaction_open);
         }
         let t = on_budget(driver, BudgetObservation::Counted { count: 2 });
-        assert_eq!(t.effect, RegistrationEffect::BeginTransaction);
+        assert_eq!(t.effect, RegistrationEffect::ValidateKeys);
     }
 
     #[test]

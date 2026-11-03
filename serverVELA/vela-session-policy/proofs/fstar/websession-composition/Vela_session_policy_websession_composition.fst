@@ -18,9 +18,11 @@ module Vela_session_policy_websession_composition
 ///
 /// Theorem (`composition_theorem`) for every schedule:
 ///
-/// 1. at most one token per web session, counted on the extracted token
-///    driver's `IssueToken` decision (`s_issue_decisions <= 1`), never on the
-///    claim store;
+/// 1. at most one token per web session, counted on the tokens actually
+///    released to a caller (`s_released <= 1`), never on the claim store. A
+///    failed issuance before a token is released deletes the claim and a retry
+///    may claim again; a successful release keeps the claim, so no second
+///    token can be released for that grant;
 /// 2. no token is issued for a session after its delete committed the lockout
 ///    sentinel and SQL revocation (`w_token_after_delete = 0`), and none after
 ///    the session's approver-revocation cascade committed
@@ -39,7 +41,9 @@ module Vela_session_policy_websession_composition
 /// effect the driver returns, in the same step as its observation; the token
 /// issue effect re-checks the `device:revoked:<session_id>` sentinel before it
 /// releases a token (the handler's `issue_token` does; regression test
-/// `web_session_token_is_not_issued_after_its_lockout`); the approver
+/// `web_session_token_is_not_issued_after_its_lockout`); a failed issuance
+/// before a token is released deletes exactly the claim key (the handler's
+/// `release_token` does; store theorem `token_release_is_honest`); the approver
 /// revocation commit for a web session is its cascade (sentinel + row
 /// revocation), which follows the device row update in the same request.
 /// Hybrid verification, PASETO signing, the clock, TTL expiry, rate limits and
@@ -102,7 +106,9 @@ type session_phase =
 /// shares. `s_owner` is `user_id` (granted account), `s_approver_user` is
 /// `approver_user_id` (the account the browser committed to at start),
 /// `s_approver_dev` is `approved_by` (set at grant). `s_sentinel` is
-/// `device:revoked:<id>`; `s_claimed` is `web_session:token_issued:<id>`.
+/// `device:revoked:<id>`; `s_claimed` is `web_session:token_issued:<id>`, and
+/// `s_active_claim` records that a request currently holds it between claim
+/// and verdict. `s_released` counts tokens actually handed to a caller.
 type session = {
   s_id: nat;
   s_phase: session_phase;
@@ -121,8 +127,10 @@ type session = {
   /// The delete request's SQL revocation committed for this row.
   s_revoked_by_delete: bool;
   s_claimed: bool;
-  /// The extracted token driver's `IssueToken` decisions for this session.
-  s_issue_decisions: nat;
+  /// A token request holds the claim and has not reached its verdict.
+  s_active_claim: bool;
+  /// Tokens actually released to a caller for this session.
+  s_released: nat;
 }
 
 /// One `devices` row. `d_revoked` is the durable `revoked = 1` flag; the
@@ -232,7 +240,8 @@ let empty_session : session =
     s_lockout_cascade = false;
     s_revoked_by_delete = false;
     s_claimed = false;
-    s_issue_decisions = 0 }
+    s_active_claim = false;
+    s_released = 0 }
 
 let session_at (w: world) (i: nat) : session =
   if i < FStar.List.Tot.length w.w_sessions
@@ -298,8 +307,9 @@ let policy_to_mode (m: t_SessionMode) : bool =
 
 /// The live row and its per-session store keys stay mutually consistent.
 let session_ok (s: session) : bool =
-  s.s_issue_decisions <= 1 &&
-  (not (s.s_issue_decisions > 0) || s.s_claimed) &&
+  s.s_released <= 1 &&
+  (not (s.s_released > 0) || s.s_claimed) &&
+  (not s.s_active_claim || (s.s_released = 0 && s.s_claimed)) &&
   (not s.s_lockout_delete || s.s_sentinel) &&
   (not s.s_lockout_cascade || s.s_sentinel) &&
   (not s.s_revoked_by_delete || s.s_sentinel) &&
@@ -437,7 +447,8 @@ let new_pending (ctx: start_ctx) (id: nat) : session =
     s_lockout_cascade = false;
     s_revoked_by_delete = false;
     s_claimed = false;
-    s_issue_decisions = 0 }
+    s_active_claim = false;
+    s_released = 0 }
 
 let no_authority (s: session) : bool =
   (match s.s_phase <: session_phase with
@@ -445,7 +456,7 @@ let no_authority (s: session) : bool =
    | _ -> false) &&
   s.s_owner = None &&
   s.s_approver_dev = None &&
-  s.s_issue_decisions = 0
+  s.s_released = 0
 
 let new_pending_ok (ctx: start_ctx) (id: nat)
   : Lemma (session_ok (new_pending ctx id)) = ()
@@ -912,15 +923,12 @@ let apply_token_claim
     then w
     else { w with
            w_sessions =
-             update w.w_sessions sid ({ s with s_claimed = true }) } in
+             update w.w_sessions sid
+               ({ s with s_claimed = true; s_active_claim = true }) } in
   let w2 = set_req w1 i (TokenReq t.f_driver sid ch eligible) in
   match t.f_effect <: t_TokenEffect with
   | TokenEffect_IssueToken _ ->
-      let s2 =
-        { s with s_claimed = true;
-                 s_issue_decisions = s.s_issue_decisions + 1 } in
       { w2 with
-        w_sessions = update w.w_sessions sid s2;
         w_token_from_pending =
           w2.w_token_from_pending + b2n (not eligible) }
   | _ -> w2
@@ -949,7 +957,7 @@ let deliver_token_claim (w: world) (i: nat) : world =
     | _ -> w
   else w
 
-let deliver_token_issued (w: world) (i: nat) : world =
+let deliver_token_issued (w: world) (i: nat) (issued_ok: bool) : world =
   if i < FStar.List.Tot.length w.w_reqs
   then
     match FStar.List.Tot.index w.w_reqs i with
@@ -959,17 +967,27 @@ let deliver_token_issued (w: world) (i: nat) : world =
           match d.f_stage <: t_TokenStage with
           | TokenStage_Issue ->
               let s = session_at w sid in
-              let allowed = not s.s_sentinel in
+              if s.s_active_claim then begin
+              // `issued_ok` is the issuer/tracking success input. A false
+              // input is a transient failure *before* a token is released;
+              // a present sentinel is the dead-session case.
               let obs =
-                if allowed then TokenIssueObservation_Issued
-                else TokenIssueObservation_Failed in
+                if not issued_ok then TokenIssueObservation_Failed
+                else if s.s_sentinel then TokenIssueObservation_Revoked
+                else TokenIssueObservation_Issued in
               let t = token_step d (TokenEvent_Issued obs) in
               let w1 = set_req w i (TokenReq t.f_driver sid ch eligible) in
-              if allowed
+              if obs = TokenIssueObservation_Issued
               then
                 let after_delete = s.s_revoked_by_delete in
                 let after_approver = s.s_lockout_cascade in
                 { w1 with
+                  w_sessions =
+                    (if sid < FStar.List.Tot.length w.w_sessions
+                     then update w.w_sessions sid
+                            ({ s with s_released = s.s_released + 1;
+                                     s_active_claim = false })
+                     else w.w_sessions);
                   w_tokens =
                     snoc w1.w_tokens
                       ({ t_sid = sid;
@@ -980,10 +998,55 @@ let deliver_token_issued (w: world) (i: nat) : world =
                     w1.w_token_after_delete + b2n after_delete;
                   w_token_after_approver =
                     w1.w_token_after_approver + b2n after_approver }
+              else if obs = TokenIssueObservation_Revoked
+              then
+                { w1 with
+                  w_sessions =
+                    (if sid < FStar.List.Tot.length w.w_sessions
+                     then update w.w_sessions sid
+                            ({ s with s_active_claim = false })
+                     else w.w_sessions) }
               else w1
+              end else w
           | _ ->
               let t = token_step d
                 (TokenEvent_Issued TokenIssueObservation_Failed) in
+              set_req w i (TokenReq t.f_driver sid ch eligible)
+        else w
+    | _ -> w
+  else w
+
+/// The release after a failed issuance: only a request at the release stage
+/// can release, and a successful release clears the session's claim. A failed
+/// release leaves the claim in place (fails closed).
+let deliver_token_release (w: world) (i: nat) (applied: bool) : world =
+  if i < FStar.List.Tot.length w.w_reqs
+  then
+    match FStar.List.Tot.index w.w_reqs i with
+    | TokenReq d sid ch eligible ->
+        if token_state_is_sound d
+        then
+          match d.f_stage <: t_TokenStage with
+          | TokenStage_Release ->
+              let s = session_at w sid in
+              if s.s_active_claim then begin
+              let t = token_step d
+                (TokenEvent_Released
+                   (if applied then TokenReleaseObservation_Released
+                    else TokenReleaseObservation_StorageFailed)) in
+              let w1 = set_req w i (TokenReq t.f_driver sid ch eligible) in
+              if sid < FStar.List.Tot.length w.w_sessions
+              then { w1 with
+                     w_sessions =
+                       update w.w_sessions sid
+                         ({ s with
+                            s_claimed = (not applied && s.s_claimed);
+                            s_active_claim = false }) }
+              else w1
+              end else w
+          | _ ->
+              let t = token_step d
+                (TokenEvent_Released TokenReleaseObservation_StorageFailed) in
               set_req w i (TokenReq t.f_driver sid ch eligible)
         else w
     | _ -> w
@@ -1269,7 +1332,8 @@ noeq type action =
   | TokenFailure : nat -> t_TokenFailureRecordObservation -> action
   | TokenReset : nat -> bool -> action
   | TokenClaim : nat -> action
-  | TokenIssued : nat -> action
+  | TokenIssued : nat -> bool -> action
+  | TokenRelease : nat -> bool -> action
   | SpawnDelete : small -> nat -> action
   | DeleteSession : nat -> action
   | DeleteSentinel : nat -> bool -> action
@@ -1318,7 +1382,8 @@ let world_step (w: world) (a: action) : world =
            (if ok then TokenResetObservation_Reset { f_now = mk_i64 0 }
             else TokenResetObservation_StorageFailed))
   | TokenClaim i -> deliver_token_claim w i
-  | TokenIssued i -> deliver_token_issued w i
+  | TokenIssued i issued_ok -> deliver_token_issued w i issued_ok
+  | TokenRelease i applied -> deliver_token_release w i applied
   | SpawnDelete user sid -> spawn_delete w user sid
   | DeleteSession i -> deliver_delete_session w i
   | DeleteSentinel i applied -> deliver_delete_sentinel w i applied
@@ -1368,9 +1433,9 @@ let session_ok_claim (s: session)
 
 let session_ok_claim_issue (s: session)
   : Lemma
-    (requires (session_ok s /\ s.s_issue_decisions = 0))
+    (requires (session_ok s /\ s.s_released = 0))
     (ensures (session_ok ({ s with s_claimed = true;
-                                    s_issue_decisions = 1 }))) = ()
+                                    s_active_claim = true }))) = ()
 
 let session_ok_record (s: session) (locked: bool)
   : Lemma
@@ -1718,7 +1783,8 @@ let apply_token_claim_issue_inv
       inv w /\
       request_ok (TokenReq t.f_driver sid ch eligible) /\
       already = false /\ eligible = true /\
-      session_ok s /\ s = session_at w sid /\ s.s_issue_decisions = 0 /\
+      session_ok s /\ s = session_at w sid /\ s.s_claimed = false /\
+      s.s_released = 0 /\
       (match t.f_effect <: t_TokenEffect with
        | TokenEffect_IssueToken _ -> True
        | _ -> False)))
@@ -1728,12 +1794,10 @@ let apply_token_claim_issue_inv
     then w
     else { w with
            w_sessions =
-             update w.w_sessions sid ({ s with s_claimed = true }) } in
+             update w.w_sessions sid
+               ({ s with s_claimed = true; s_active_claim = true }) } in
   let w2 = set_req w1 i (TokenReq t.f_driver sid ch eligible) in
-  let r =
-    { s with s_claimed = true;
-             s_issue_decisions = s.s_issue_decisions + 1 } in
-  assert (s.s_issue_decisions + 1 = 1);
+  let r = { s with s_claimed = true; s_active_claim = true } in
   session_ok_claim_issue s;
   assert (session_ok r);
   if sid < FStar.List.Tot.length w.w_sessions
@@ -1759,6 +1823,7 @@ let apply_token_claim_other_inv
     (requires (
       inv w /\
       request_ok (TokenReq t.f_driver sid ch eligible) /\
+      already = s.s_claimed /\
       session_ok s /\
       (match t.f_effect <: t_TokenEffect with
        | TokenEffect_IssueToken _ -> False
@@ -1769,14 +1834,18 @@ let apply_token_claim_other_inv
     then w
     else { w with
            w_sessions =
-             update w.w_sessions sid ({ s with s_claimed = true }) } in
+             update w.w_sessions sid
+               ({ s with s_claimed = true; s_active_claim = true }) } in
   let w2 = set_req w1 i (TokenReq t.f_driver sid ch eligible) in
   all_reqs_ok_update w1.w_reqs i (TokenReq t.f_driver sid ch eligible);
   if not already && sid < FStar.List.Tot.length w.w_sessions
   then begin
     all_sessions_ok_index w.w_sessions sid;
-    session_ok_claim s;
-    all_sessions_ok_update w.w_sessions sid ({ s with s_claimed = true })
+    assert (s.s_claimed = false);
+    assert (s.s_released = 0);
+    session_ok_claim_issue s;
+    all_sessions_ok_update w.w_sessions sid
+      ({ s with s_claimed = true; s_active_claim = true })
   end
   else ();
   assert ((apply_token_claim w i sid ch eligible t s already).w_sessions =
@@ -1813,7 +1882,7 @@ let token_claim_inv (w: world) (i: nat)
                         then all_sessions_ok_index w.w_sessions sid
                         else ();
                         assert (session_ok s);
-                        assert (s.s_issue_decisions = 0);
+                        assert (s.s_released = 0);
                         apply_token_claim_issue_inv w i sid ch eligible t s already
                     | true ->
                         token_already_claimed_terminal d;
@@ -1837,8 +1906,8 @@ let token_claim_inv (w: world) (i: nat)
 
 #pop-options
 
-let token_issued_inv (w: world) (i: nat)
-  : Lemma (requires (inv w)) (ensures (inv (deliver_token_issued w i))) =
+let token_issued_inv (w: world) (i: nat) (issued_ok: bool)
+  : Lemma (requires (inv w)) (ensures (inv (deliver_token_issued w i issued_ok))) =
   if i < FStar.List.Tot.length w.w_reqs
   then
     match FStar.List.Tot.index w.w_reqs i with
@@ -1849,31 +1918,95 @@ let token_issued_inv (w: world) (i: nat)
           | TokenStage_Issue ->
               all_reqs_ok_index w.w_reqs i;
               let s = session_at w sid in
-              let allowed = not s.s_sentinel in
-              let obs =
-                if allowed then TokenIssueObservation_Issued
-                else TokenIssueObservation_Failed in
-              let t = token_step d (TokenEvent_Issued obs) in
-              let w1 = set_req w i (TokenReq t.f_driver sid ch eligible) in
-              assert (request_ok (TokenReq t.f_driver sid ch eligible));
-              all_reqs_ok_update w.w_reqs i (TokenReq t.f_driver sid ch eligible);
-              if allowed
+              if s.s_active_claim
               then begin
+                let obs =
+                  if not issued_ok then TokenIssueObservation_Failed
+                  else if s.s_sentinel then TokenIssueObservation_Revoked
+                  else TokenIssueObservation_Issued in
+                let t = token_step d (TokenEvent_Issued obs) in
+                let w1 = set_req w i (TokenReq t.f_driver sid ch eligible) in
+                assert (request_ok (TokenReq t.f_driver sid ch eligible));
+                all_reqs_ok_update w.w_reqs i (TokenReq t.f_driver sid ch eligible);
                 if sid < FStar.List.Tot.length w.w_sessions
                 then begin
                   all_sessions_ok_index w.w_sessions sid;
-                  assert (not s.s_revoked_by_delete);
-                  assert (not s.s_lockout_cascade)
+                  assert (session_ok s);
+                  assert (s.s_released = 0);
+                  if obs = TokenIssueObservation_Issued
+                  then begin
+                    assert (not s.s_sentinel);
+                    assert (not s.s_revoked_by_delete);
+                    assert (not s.s_lockout_cascade);
+                    assert (session_ok ({ s with s_released = 1;
+                                                s_active_claim = false }));
+                    all_sessions_ok_update w.w_sessions sid
+                      ({ s with s_released = 1; s_active_claim = false })
+                  end
+                  else if obs = TokenIssueObservation_Revoked
+                  then begin
+                    assert (session_ok ({ s with s_active_claim = false }));
+                    all_sessions_ok_update w.w_sessions sid
+                      ({ s with s_active_claim = false })
+                  end
+                  else ()
                 end
                 else ();
-                assert (w1.w_token_after_delete + b2n s.s_revoked_by_delete = 0);
-                assert (w1.w_token_after_approver + b2n s.s_lockout_cascade = 0)
+                assert (w1.w_token_after_delete = w.w_token_after_delete);
+                assert (w1.w_token_after_approver = w.w_token_after_approver)
               end
               else ()
           | _ ->
               all_reqs_ok_index w.w_reqs i;
               let t = token_step d
                 (TokenEvent_Issued TokenIssueObservation_Failed) in
+              let nr = TokenReq t.f_driver sid ch eligible in
+              assert (request_ok nr);
+              all_reqs_ok_update w.w_reqs i nr
+        else ()
+    | _ -> ()
+  else ()
+
+let token_release_inv (w: world) (i: nat) (applied: bool)
+  : Lemma (requires (inv w)) (ensures (inv (deliver_token_release w i applied))) =
+  if i < FStar.List.Tot.length w.w_reqs
+  then
+    match FStar.List.Tot.index w.w_reqs i with
+    | TokenReq d sid ch eligible ->
+        if token_state_is_sound d
+        then
+          match d.f_stage <: t_TokenStage with
+          | TokenStage_Release ->
+              all_reqs_ok_index w.w_reqs i;
+              let s = session_at w sid in
+              if s.s_active_claim
+              then begin
+                let t = token_step d
+                  (TokenEvent_Released
+                     (if applied then TokenReleaseObservation_Released
+                      else TokenReleaseObservation_StorageFailed)) in
+                let w1 = set_req w i (TokenReq t.f_driver sid ch eligible) in
+                assert (request_ok (TokenReq t.f_driver sid ch eligible));
+                all_reqs_ok_update w.w_reqs i (TokenReq t.f_driver sid ch eligible);
+                if sid < FStar.List.Tot.length w.w_sessions
+                then begin
+                  all_sessions_ok_index w.w_sessions sid;
+                  assert (session_ok s);
+                  assert (s.s_released = 0);
+                  assert (session_ok ({ s with
+                                        s_claimed = (not applied && s.s_claimed);
+                                        s_active_claim = false }));
+                  all_sessions_ok_update w.w_sessions sid
+                    ({ s with s_claimed = (not applied && s.s_claimed);
+                             s_active_claim = false })
+                end
+                else ()
+              end
+              else ()
+          | _ ->
+              all_reqs_ok_index w.w_reqs i;
+              let t = token_step d
+                (TokenEvent_Released TokenReleaseObservation_StorageFailed) in
               let nr = TokenReq t.f_driver sid ch eligible in
               assert (request_ok nr);
               all_reqs_ok_update w.w_reqs i nr
@@ -2244,7 +2377,8 @@ let world_step_inv (w: world) (a: action)
            (if ok then TokenResetObservation_Reset { f_now = mk_i64 0 }
             else TokenResetObservation_StorageFailed))
   | TokenClaim i -> token_claim_inv w i
-  | TokenIssued i -> token_issued_inv w i
+  | TokenIssued i issued_ok -> token_issued_inv w i issued_ok
+  | TokenRelease i applied -> token_release_inv w i applied
   | SpawnDelete user sid -> spawn_delete_inv w user sid
   | DeleteSession i -> delete_session_inv w i
   | DeleteSentinel i applied -> delete_sentinel_inv w i applied
@@ -2359,7 +2493,8 @@ let witness_session : session =
     s_lockout_cascade = false;
     s_revoked_by_delete = false;
     s_claimed = false;
-    s_issue_decisions = 0 }
+    s_active_claim = false;
+    s_released = 0 }
 
 let witness_world : world =
   { w_accounts = [ { a_present = true; a_active = true; a_epoch = mk_i64 1 } ];
@@ -2367,6 +2502,7 @@ let witness_world : world =
                     d_sentinel = false } ];
     w_sessions = [ witness_session ];
     w_challenges = [ { c_web_token = true; c_present = true };
+                     { c_web_token = true; c_present = true };
                      { c_web_token = true; c_present = true } ];
     w_tokens = [];
     w_reqs = [];
@@ -2394,20 +2530,20 @@ let v5 = world_step v4
   (TokenSignature 0 TokenSignatureObservation_Valid)
 let v6 = world_step v5 (TokenReset 0 true)
 let v7 = world_step v6 (TokenClaim 0)
-let v8 = world_step v7 (TokenIssued 0)
+let v8 = world_step v7 (TokenIssued 0 true)
 
 /// Witness 1: exactly one token is issued and the session carries exactly one
-/// `IssueToken` decision.
+/// released token.
 let one_token_is_reachable ()
   : Lemma (
       v8.w_tokens_issued = 1 /\
       FStar.List.Tot.length v8.w_tokens = 1 /\
-      (session_at v8 0).s_issue_decisions = 1 /\
+      (session_at v8 0).s_released = 1 /\
       (session_at v8 0).s_claimed = true) =
   assert_norm (
     v8.w_tokens_issued = 1 /\
     FStar.List.Tot.length v8.w_tokens = 1 /\
-    (session_at v8 0).s_issue_decisions = 1 /\
+    (session_at v8 0).s_released = 1 /\
     (session_at v8 0).s_claimed = true)
 
 /// A second, independently fresh challenge and proof cannot mint a second
@@ -2427,7 +2563,7 @@ let second_token_attempt_is_refused ()
   : Lemma (
       v15.w_tokens_issued = 1 /\
       FStar.List.Tot.length v15.w_tokens = 1 /\
-      (session_at v15 0).s_issue_decisions = 1 /\
+      (session_at v15 0).s_released = 1 /\
       (match FStar.List.Tot.index v15.w_reqs 0 with
        | TokenReq d _ _ _ ->
            d.f_failed = true /\
@@ -2438,8 +2574,79 @@ let second_token_attempt_is_refused ()
   assert_norm (
     v15.w_tokens_issued = 1 /\
     FStar.List.Tot.length v15.w_tokens = 1 /\
-    (session_at v15 0).s_issue_decisions = 1 /\
+    (session_at v15 0).s_released = 1 /\
     (match FStar.List.Tot.index v15.w_reqs 0 with
+     | TokenReq d _ _ _ ->
+         d.f_failed = true /\
+         (match d.f_stage <: t_TokenStage with
+          | TokenStage_Done -> true
+          | _ -> false)
+     | _ -> False))
+
+/// A transient failure after the claim releases it, so a fresh proof can
+/// succeed; exactly one token is released in total.
+let f1 = world_step witness_world (SpawnToken 0 0)
+let f2 = world_step f1 (TokenLimits 0 true)
+let f3 = world_step f2 (TokenSession 0)
+let f4 = world_step f3 (TokenChallenge 0)
+let f5 = world_step f4 (TokenSignature 0 TokenSignatureObservation_Valid)
+let f6 = world_step f5 (TokenReset 0 true)
+let f7 = world_step f6 (TokenClaim 0)
+let f8 = world_step f7 (TokenIssued 0 false)
+let f9 = world_step f8 (TokenRelease 0 true)
+let f10 = world_step f9 (SpawnToken 0 1)
+let f11 = world_step f10 (TokenLimits 0 true)
+let f12 = world_step f11 (TokenSession 0)
+let f13 = world_step f12 (TokenChallenge 0)
+let f14 = world_step f13 (TokenSignature 0 TokenSignatureObservation_Valid)
+let f15 = world_step f14 (TokenReset 0 true)
+let f16 = world_step f15 (TokenClaim 0)
+let f17 = world_step f16 (TokenIssued 0 true)
+
+let transient_failure_releases_and_retry_succeeds ()
+  : Lemma (
+      f8.w_tokens_issued = 0 /\
+      (session_at f8 0).s_released = 0 /\
+      (session_at f9 0).s_claimed = false /\
+      f17.w_tokens_issued = 1 /\
+      FStar.List.Tot.length f17.w_tokens = 1 /\
+      (session_at f17 0).s_released = 1 /\
+      (session_at f17 0).s_claimed = true) =
+  assert_norm (
+    f8.w_tokens_issued = 0 /\
+    (session_at f8 0).s_released = 0 /\
+    (session_at f9 0).s_claimed = false /\
+    f17.w_tokens_issued = 1 /\
+    FStar.List.Tot.length f17.w_tokens = 1 /\
+    (session_at f17 0).s_released = 1 /\
+    (session_at f17 0).s_claimed = true)
+
+/// A failed release keeps the claim: the exchange fails closed and a retry is
+/// refused with `AlreadyClaimed`, so still no token is released.
+let r9 = world_step f8 (TokenRelease 0 false)
+let r10 = world_step r9 (SpawnToken 0 2)
+let r11 = world_step r10 (TokenLimits 0 true)
+let r12 = world_step r11 (TokenSession 0)
+let r13 = world_step r12 (TokenChallenge 0)
+let r14 = world_step r13 (TokenSignature 0 TokenSignatureObservation_Valid)
+let r15 = world_step r14 (TokenReset 0 true)
+let r16 = world_step r15 (TokenClaim 0)
+
+let failed_release_fails_closed ()
+  : Lemma (
+      (session_at r9 0).s_claimed = true /\
+      r16.w_tokens_issued = 0 /\
+      (match FStar.List.Tot.index r16.w_reqs 0 with
+       | TokenReq d _ _ _ ->
+           d.f_failed = true /\
+           (match d.f_stage <: t_TokenStage with
+            | TokenStage_Done -> true
+            | _ -> false)
+       | _ -> False)) =
+  assert_norm (
+    (session_at r9 0).s_claimed = true /\
+    r16.w_tokens_issued = 0 /\
+    (match FStar.List.Tot.index r16.w_reqs 0 with
      | TokenReq d _ _ _ ->
          d.f_failed = true /\
          (match d.f_stage <: t_TokenStage with
@@ -2499,7 +2706,7 @@ let start_creates_a_pending_row_only ()
             | _ -> false) /\
            s.s_owner = None /\
            s.s_approver_dev = None /\
-           s.s_issue_decisions = 0)) =
+           s.s_released = 0)) =
   assert_norm (
     st4.w_start_authority = 0 /\
     FStar.List.Tot.length st4.w_sessions = 2 /\
@@ -2510,6 +2717,6 @@ let start_creates_a_pending_row_only ()
           | _ -> false) /\
          s.s_owner = None /\
          s.s_approver_dev = None /\
-         s.s_issue_decisions = 0))
+         s.s_released = 0))
 
 #pop-options

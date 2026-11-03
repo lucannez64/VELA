@@ -12,7 +12,7 @@ one shared world:
   account/device, mode, epoch);
 - the `web_token` challenge store (atomic `take`, wrong purpose spends);
 - the per-session first-writer-wins claim `web_session:token_issued:<id>`
-  (atomic `set_ex_nx`);
+  (atomic `set_ex_nx`) and its release delete after a failed issuance;
 - the `device:revoked:<session_id>` lockout sentinel, SQL row revocation and
   the approved-session cascade;
 - devices and accounts, and the issued tokens.
@@ -21,8 +21,8 @@ A schedule is any finite interleaving of actions. Each request owns its own
 extracted driver value; every observation about shared state is computed from
 the live world at the step the handler reads it; the effect is applied in that
 same step. The claim action performs the atomic `set_ex_nx` and feeds the
-resulting `Claimed`/`AlreadyClaimed`; the challenge action performs the atomic
-take.
+resulting `Claimed`/`AlreadyClaimed`; the release action performs the atomic
+delete after a failed issuance; the challenge action performs the atomic take.
 
 ## Exact theorem
 
@@ -42,18 +42,22 @@ let composition_theorem (schedule : list action) : Lemma (
 ```
 
 `inv w` is `all_sessions_ok w.w_sessions /\ all_reqs_ok w.w_reqs /\
-counters_ok w`. `all_sessions_ok` says every row has `s_issue_decisions <= 1`,
-a session with an `IssueToken` decision has the claim key set, a delete lockout
-or cascade implies the sentinel, a revoked row has the sentinel, and a pending
-row has no owner/approver device. The five named consequences are also exposed
-as separate lemmas (`no_double_token`, `no_token_after_revocation`,
+counters_ok w`. `all_sessions_ok` says every row has `s_released <= 1`, a
+session with a released token has the claim key set, a session with an active
+claim has released no token and holds the claim, a delete lockout or cascade
+implies the sentinel, a revoked row has the sentinel, and a pending row has no
+owner/approver device. The five named consequences are also exposed as separate
+lemmas (`no_double_token`, `no_token_after_revocation`,
 `grants_only_from_the_owner`, `start_creates_no_authority`,
 `no_cross_account_delete`).
 
-1. **At most one token per session.** `w_sessions[*].s_issue_decisions <= 1`,
-   incremented only on the extracted token driver's `IssueToken` effect, never
-   on the claim store. The claim key can be won once; `AlreadyClaimed` is a
-   terminal refusal in the driver.
+1. **At most one token released per session.** `w_sessions[*].s_released <= 1`,
+   incremented only when the extracted token driver releases a token to the
+   caller, never on the claim store. A failed issuance before a token is
+   released deletes the claim and a retry may claim again; a successful release
+   keeps the claim and `AlreadyClaimed` is a terminal refusal, so no second
+   token can be released for that grant. A revoked-session sentinel is terminal
+   and never releases the claim.
 2. **No token after revocation.** `w_token_after_delete = 0` and
    `w_token_after_approver = 0`; the issue effect is guarded by the live
    `device:revoked:<session_id>` sentinel, which both the delete lockout and
@@ -77,7 +81,8 @@ as separate lemmas (`no_double_token`, `no_token_after_revocation`,
 
 | Counter | Keyed on | Must be |
 |---|---|---|
-| `s_issue_decisions` | extracted `IssueToken` effect (not the claim store) | `<= 1` each |
+| `s_released` | a token actually released to a caller (not the claim store) | `<= 1` each |
+| `s_active_claim` | a request between claim and verdict | implies `s_released = 0` and `s_claimed` |
 | `w_token_after_delete` | an issued token whose session had the delete lockout/revocation | `0` |
 | `w_token_after_approver` | an issued token whose session had the approver cascade | `0` |
 | `w_cross_account_grant` | `UpdateGrant` with approver ≠ authenticated account | `0` |
@@ -94,10 +99,15 @@ The theorem is not vacuous; all witnesses are checked in the module:
 
 - `one_token_is_reachable` — a granted session with a `web_token` challenge
   runs the full exchange and ends with `w_tokens_issued = 1`,
-  `length w_tokens = 1`, `s_issue_decisions = 1`, `s_claimed = true`.
+  `length w_tokens = 1`, `s_released = 1`, `s_claimed = true`.
 - `second_token_attempt_is_refused` — a second fresh challenge/proof reaches
   `AlreadyClaimed`; the driver is `Done`/failed and the world still has exactly
-  one token and one issue decision.
+  one token and one released token.
+- `transient_failure_releases_and_retry_succeeds` — a transient issue failure
+  after the claim releases it (`s_claimed = false`, no token), then a fresh
+  proof claims and succeeds; the world has exactly one token.
+- `failed_release_fails_closed` — a failed release keeps the claim; the retry
+  reaches `AlreadyClaimed` and no token is released.
 - `token_after_delete_is_refused` — delete reaches sentinel + SQL revocation
   (`s_phase = Revoked`, `s_sentinel = true`, `s_revoked_by_delete = true`),
   then a token request fails at its session observation (`f_failed = true`,
@@ -113,6 +123,9 @@ Proved nowhere in this module:
   atomic; sled `get_del` (challenge take) and `set_ex_nx` (claim) are atomic.
 - The handler performs exactly the effect the driver returns, in the same step
   as its observation; each executor reports its storage outcome honestly.
+- A failed issuance before a token is released deletes exactly the claim key
+  (the handler's `release_token`, store theorem `token_release_is_honest`); a
+  failed release leaves the claim in place and fails closed.
 - The token **issue** effect re-checks the `device:revoked:<session_id>`
   sentinel before releasing a token. This was a real in-flight gap (a request
   that observed a granted row before a delete/cascade could release a token

@@ -42,6 +42,8 @@ set -euo pipefail
 #   classify-claim-error             a failed token claim reports Claimed
 #   plan-claim-ttl                   the token claim outlives its session ceiling
 #   classify-issue-track             a failed JTI track still issues
+#   classify-release-error           a failed claim release reports Released
+#   plan-release-read                the release reads the claim instead of deleting it
 #   classify-lockout-session-error   a failed session lockout reports Applied
 #   plan-revoke-session-key          the audit update targets another session
 #   classify-revoke-session-error    a failed audit update reports Updated
@@ -75,6 +77,7 @@ mutants=(
   classify-start-insert-error plan-insert-pending-swap
   classify-grant-conflict classify-grant-error plan-grant-swap
   classify-claim-error plan-claim-ttl classify-issue-track
+  classify-release-error plan-release-read
   classify-lockout-session-error plan-revoke-session-key
   classify-revoke-session-error
   plan-load-session-key plan-sessions-list-user plan-capsule-clear-key
@@ -118,6 +121,8 @@ declare -A expect=(
   [classify-claim-error]=token_claim_is_honest
   [plan-claim-ttl]=plan_token_claim_shape
   [classify-issue-track]=token_issue_is_honest
+  [classify-release-error]=token_release_is_honest
+  [plan-release-read]=plan_token_release_shape
   [classify-lockout-session-error]=lockout_session_is_honest
   [plan-revoke-session-key]=plan_revoke_session_shape
   [classify-revoke-session-error]=revoke_session_observes_its_run
@@ -303,6 +308,15 @@ elif name == 'classify-issue-track':
       | StoreOutcome_Applied  -> true
       | _ -> false)''',
          '''    true''')
+elif name == 'classify-release-error':
+    once('''  | StoreOutcome_Failed  ->
+    Vela_session_policy.Websession_driver.TokenReleaseObservation_StorageFailed''',
+         '''  | StoreOutcome_Failed  ->
+    Vela_session_policy.Websession_driver.TokenReleaseObservation_Released''')
+elif name == 'plan-release-read':
+    in_body('let plan_token_release', 'let classify_logout',
+            'StoreStmt_Delete',
+            'StoreStmt_Exists')
 elif name == 'classify-lockout-session-error':
     once('''  | StoreOutcome_Failed  ->
     Vela_session_policy.Websession_driver.DeleteSentinelObservation_StorageFailed''',

@@ -42,6 +42,11 @@ let is_budget (d: t_RegistrationDriver) : bool =
   | RegistrationStage_AccountBudget -> true
   | _ -> false
 
+let is_validate_keys (d: t_RegistrationDriver) : bool =
+  match d.f_stage <: t_RegistrationStage with
+  | RegistrationStage_ValidateKeys -> true
+  | _ -> false
+
 let is_begin_transaction (d: t_RegistrationDriver) : bool =
   match d.f_stage <: t_RegistrationStage with
   | RegistrationStage_BeginTransaction -> true
@@ -100,10 +105,19 @@ let trace_sound (d: t_RegistrationDriver) : bool =
     not d.f_budget_checked &&
     pre
   in
+  let validate_keys:bool =
+    is_validate_keys d &&
+    d.f_rate_allowed &&
+    d.f_budget_checked &&
+    not d.f_keys_validated &&
+    pre
+  in
   let begin_transaction:bool =
     is_begin_transaction d &&
     d.f_rate_allowed &&
     d.f_budget_checked &&
+    d.f_keys_validated &&
+    d.f_keys_valid &&
     not d.f_transaction_open &&
     not d.f_transaction_started &&
     not d.f_account_inserted &&
@@ -188,6 +202,7 @@ let trace_sound (d: t_RegistrationDriver) : bool =
   (match d.f_stage <: t_RegistrationStage with
    | RegistrationStage_RateLimit -> rate_limit
    | RegistrationStage_AccountBudget -> account_budget
+   | RegistrationStage_ValidateKeys -> validate_keys
    | RegistrationStage_BeginTransaction -> begin_transaction
    | RegistrationStage_InsertAccount -> insert_account
    | RegistrationStage_InsertDevice -> insert_device
@@ -196,7 +211,9 @@ let trace_sound (d: t_RegistrationDriver) : bool =
    | RegistrationStage_TrackToken -> track_token
    | RegistrationStage_Done -> done) &&
   (not d.f_budget_checked || d.f_rate_allowed) &&
-  (not d.f_transaction_open || d.f_budget_checked) &&
+  (not d.f_keys_validated || d.f_budget_checked) &&
+  (not d.f_keys_valid || d.f_keys_validated) &&
+  (not d.f_transaction_open || d.f_keys_validated) &&
   (not d.f_transaction_started || d.f_transaction_open) &&
   (not d.f_account_inserted || d.f_transaction_started) &&
   (not d.f_device_inserted || d.f_account_inserted) &&
@@ -210,6 +227,7 @@ let trace_sound_matches_rust (d: t_RegistrationDriver)
   match d.f_stage <: t_RegistrationStage with
   | RegistrationStage_RateLimit -> ()
   | RegistrationStage_AccountBudget -> ()
+  | RegistrationStage_ValidateKeys -> ()
   | RegistrationStage_BeginTransaction -> ()
   | RegistrationStage_InsertAccount -> ()
   | RegistrationStage_InsertDevice -> ()
@@ -248,6 +266,7 @@ let step_after_done (d: t_RegistrationDriver) (e: t_RegistrationEvent)
       (match e <: t_RegistrationEvent with
        | RegistrationEvent_RateLimitObserved _ -> ()
        | RegistrationEvent_BudgetObserved _ -> ()
+       | RegistrationEvent_KeysObserved _ -> ()
        | RegistrationEvent_TransactionObserved _ -> ()
        | RegistrationEvent_AccountInserted _ -> ()
        | RegistrationEvent_DeviceInserted _ -> ()
@@ -467,24 +486,11 @@ let registration_trace_theorem
 
 let valid_request : t_RegistrationRequestObservation =
   { f_has_account_limit = false;
-    f_account_limit = mk_i64 0;
-    f_identity_ek_valid = true;
-    f_identity_vk_valid = true;
-    f_share_ek_valid = true }
+    f_account_limit = mk_i64 0 }
 
 let limited_request : t_RegistrationRequestObservation =
   { f_has_account_limit = true;
-    f_account_limit = mk_i64 3;
-    f_identity_ek_valid = true;
-    f_identity_vk_valid = true;
-    f_share_ek_valid = true }
-
-let invalid_key_request : t_RegistrationRequestObservation =
-  { f_has_account_limit = false;
-    f_account_limit = mk_i64 0;
-    f_identity_ek_valid = false;
-    f_identity_vk_valid = true;
-    f_share_ek_valid = true }
+    f_account_limit = mk_i64 3 }
 
 let rate_allowed : t_RegistrationEvent =
   RegistrationEvent_RateLimitObserved RateLimitObservation_Allowed
@@ -494,6 +500,12 @@ let rate_denied : t_RegistrationEvent =
 
 let budget_counted (count: i64) : t_RegistrationEvent =
   RegistrationEvent_BudgetObserved (BudgetObservation_Counted { f_count = count })
+
+let keys_valid : t_RegistrationEvent =
+  RegistrationEvent_KeysObserved KeyObservation_Valid
+
+let keys_invalid : t_RegistrationEvent =
+  RegistrationEvent_KeysObserved KeyObservation_Invalid
 
 let transaction_begun : t_RegistrationEvent =
   RegistrationEvent_TransactionObserved TransactionObservation_Begun
@@ -514,7 +526,7 @@ let track_ok : t_RegistrationEvent =
   RegistrationEvent_TrackObserved TrackObservation_Tracked
 
 let success_events : list t_RegistrationEvent =
-  [rate_allowed; transaction_begun; account_inserted; device_inserted;
+  [rate_allowed; keys_valid; transaction_begun; account_inserted; device_inserted;
    commit_ok; token_issued; track_ok]
 
 /// The complete success path is reachable, emits exactly one `Complete`, and
@@ -531,7 +543,17 @@ let success_path_is_reachable ()
       d.f_token_tracked = true /\
       count_complete (begin_registration valid_request).f_driver success_events = 1 /\
       count_fail (begin_registration valid_request).f_driver success_events = 0) =
-  ()
+  assert_norm (
+      let d = run_from_observation valid_request success_events in
+      d.f_responded = true /\
+      d.f_failed = false /\
+      d.f_account_inserted = true /\
+      d.f_device_inserted = true /\
+      d.f_committed = true /\
+      d.f_token_issued = true /\
+      d.f_token_tracked = true /\
+      count_complete (begin_registration valid_request).f_driver success_events = 1 /\
+      count_fail (begin_registration valid_request).f_driver success_events = 0)
 
 /// The account ceiling is enforced: a counted budget at the configured limit
 /// fails before any transaction, and a failed count fails closed.
@@ -556,10 +578,41 @@ let rate_limit_is_reachable ()
 /// transaction.
 let invalid_keys_are_refused ()
   : Lemma (
-      let d = run_from_observation invalid_key_request [rate_allowed] in
+      let d = run_from_observation valid_request [rate_allowed; keys_invalid] in
       d.f_failed = true /\ not d.f_transaction_open /\
-      count_complete (begin_registration invalid_key_request).f_driver
-        [rate_allowed] = 0) =
+      count_complete (begin_registration valid_request).f_driver
+        [rate_allowed; keys_invalid] = 0) =
+  ()
+
+/// How many times the driver emitted the key-validation effect.
+let is_validate_effect (e: t_RegistrationEffect) : bool =
+  match e <: t_RegistrationEffect with
+  | RegistrationEffect_ValidateKeys -> true
+  | _ -> false
+
+let rec count_validate (d: t_RegistrationDriver) (events: list t_RegistrationEvent)
+  : Pure nat (requires (trace_sound d)) (ensures (fun _ -> True)) (decreases events) =
+  match events with
+  | [] -> 0
+  | e :: rest ->
+      trace_sound_matches_rust d;
+      step_sound d e;
+      b2n (is_validate_effect (step d e).f_effect) +
+      count_validate (step d e).f_driver rest
+
+/// A denied per-IP limiter emits no key-validation effect: no key is decoded
+/// and no post-quantum signature is verified for an unauthenticated request.
+let rate_denied_no_key_verification ()
+  : Lemma (
+      count_validate (begin_registration valid_request).f_driver [rate_denied] = 0) =
+  ()
+
+/// A rejected account budget emits no key-validation effect either.
+let budget_rejected_no_key_verification (count: i64)
+  : Lemma (
+      (count <. mk_i64 0 \/ count >=. mk_i64 3) ==>
+      count_validate (begin_registration limited_request).f_driver
+        [rate_allowed; budget_counted count] = 0) =
   ()
 
 /// A device insert failure is terminal, never commits and never responds, so
@@ -567,30 +620,47 @@ let invalid_keys_are_refused ()
 let device_insert_failure_rolls_back ()
   : Lemma (
       let events =
-        [rate_allowed; transaction_begun; account_inserted;
+        [rate_allowed; keys_valid; transaction_begun; account_inserted;
          RegistrationEvent_DeviceInserted InsertObservation_Failed] in
       let d = run_from_observation valid_request events in
       d.f_failed = true /\ not d.f_committed /\ not d.f_responded /\
       count_complete (begin_registration valid_request).f_driver events = 0) =
-  ()
+  assert_norm (
+      let events =
+        [rate_allowed; keys_valid; transaction_begun; account_inserted;
+         RegistrationEvent_DeviceInserted InsertObservation_Failed] in
+      let d = run_from_observation valid_request events in
+      d.f_failed = true /\ not d.f_committed /\ not d.f_responded /\
+      count_complete (begin_registration valid_request).f_driver events = 0)
 
 /// A commit failure is not reported as success.
 let commit_failure_is_reachable ()
   : Lemma (
       let events =
-        [rate_allowed; transaction_begun; account_inserted; device_inserted;
+        [rate_allowed; keys_valid; transaction_begun; account_inserted; device_inserted;
          RegistrationEvent_CommitObserved CommitObservation_Failed] in
       let d = run_from_observation valid_request events in
       d.f_failed = true /\ not d.f_committed /\ not d.f_responded) =
-  ()
+  assert_norm (
+      let events =
+        [rate_allowed; keys_valid; transaction_begun; account_inserted; device_inserted;
+         RegistrationEvent_CommitObserved CommitObservation_Failed] in
+      let d = run_from_observation valid_request events in
+      d.f_failed = true /\ not d.f_committed /\ not d.f_responded)
 
 /// An untracked token is never returned.
 let tracking_failure_never_responds ()
   : Lemma (
       let events =
-        [rate_allowed; transaction_begun; account_inserted; device_inserted;
+        [rate_allowed; keys_valid; transaction_begun; account_inserted; device_inserted;
          commit_ok; token_issued;
          RegistrationEvent_TrackObserved TrackObservation_Failed] in
       let d = run_from_observation valid_request events in
       d.f_token_issued = true /\ d.f_failed = true /\ not d.f_responded) =
-  ()
+  assert_norm (
+      let events =
+        [rate_allowed; keys_valid; transaction_begun; account_inserted; device_inserted;
+         commit_ok; token_issued;
+         RegistrationEvent_TrackObserved TrackObservation_Failed] in
+      let d = run_from_observation valid_request events in
+      d.f_token_issued = true /\ d.f_failed = true /\ not d.f_responded)

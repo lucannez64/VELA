@@ -300,7 +300,7 @@ let run_grant
   io, hax_temp_output <: (v_Io & Vela_session_policy.Websession_driver.t_GrantTransition)
 
 /// The eight effects an exchange can perform before its verdict.
-let v_TOKEN_MAX_EFFECTS: usize = mk_usize 7
+let v_TOKEN_MAX_EFFECTS: usize = mk_usize 8
 
 let token_effect_is_terminal (v_effect: Vela_session_policy.Websession_driver.t_TokenEffect) : bool =
   match v_effect <: Vela_session_policy.Websession_driver.t_TokenEffect with
@@ -384,7 +384,16 @@ class t_TokenIo (v_Self: Type0) = {
   f_issue_token:x0: v_Self -> x1: Vela_session_policy.t_TokenPlan
     -> Prims.Pure (v_Self & Vela_session_policy.Websession_driver.t_TokenIssueObservation)
         (f_issue_token_pre x0 x1)
-        (fun result -> f_issue_token_post x0 x1 result)
+        (fun result -> f_issue_token_post x0 x1 result);
+  f_release_token_pre:self_: v_Self -> pred: Type0{true ==> pred};
+  f_release_token_post:
+      v_Self ->
+      (v_Self & Vela_session_policy.Websession_driver.t_TokenReleaseObservation)
+    -> Type0;
+  f_release_token:x0: v_Self
+    -> Prims.Pure (v_Self & Vela_session_policy.Websession_driver.t_TokenReleaseObservation)
+        (f_release_token_pre x0)
+        (fun result -> f_release_token_post x0 result)
 }
 
 /// The synchronous expansion of [`websession_token_interpreter!`].
@@ -415,7 +424,7 @@ let run_token
             temp_0_
           in
           let _:usize = temp_1_ in
-          let (io: v_Io), (hoist36: Vela_session_policy.Websession_driver.t_TokenTransition) =
+          let (io: v_Io), (hoist38: Vela_session_policy.Websession_driver.t_TokenTransition) =
             match
               token_effect_of transition <: Vela_session_policy.Websession_driver.t_TokenEffect
             with
@@ -542,12 +551,27 @@ let run_token
                   Vela_session_policy.Websession_driver.t_TokenEvent)
               <:
               (v_Io & Vela_session_policy.Websession_driver.t_TokenTransition)
+            | Vela_session_policy.Websession_driver.TokenEffect_ReleaseToken  ->
+              let
+              (tmp0: v_Io), (out: Vela_session_policy.Websession_driver.t_TokenReleaseObservation) =
+                f_release_token #v_Io #FStar.Tactics.Typeclasses.solve io
+              in
+              let io:v_Io = tmp0 in
+              io,
+              Vela_session_policy.Websession_driver.token_step (token_driver_of transition
+                  <:
+                  Vela_session_policy.Websession_driver.t_TokenDriver)
+                (Vela_session_policy.Websession_driver.TokenEvent_Released out
+                  <:
+                  Vela_session_policy.Websession_driver.t_TokenEvent)
+              <:
+              (v_Io & Vela_session_policy.Websession_driver.t_TokenTransition)
             | Vela_session_policy.Websession_driver.TokenEffect_Complete
             | Vela_session_policy.Websession_driver.TokenEffect_Fail _
             | Vela_session_policy.Websession_driver.TokenEffect_Idle  ->
               io, transition <: (v_Io & Vela_session_policy.Websession_driver.t_TokenTransition)
           in
-          let transition:Vela_session_policy.Websession_driver.t_TokenTransition = hoist36 in
+          let transition:Vela_session_policy.Websession_driver.t_TokenTransition = hoist38 in
           io, transition <: (v_Io & Vela_session_policy.Websession_driver.t_TokenTransition))
   in
   let hax_temp_output:Vela_session_policy.Websession_driver.t_TokenTransition = transition in
@@ -624,7 +648,7 @@ let run_delete
             temp_0_
           in
           let _:usize = temp_1_ in
-          let (io: v_Io), (hoist43: Vela_session_policy.Websession_driver.t_DeleteTransition) =
+          let (io: v_Io), (hoist45: Vela_session_policy.Websession_driver.t_DeleteTransition) =
             match
               delete_effect_of transition <: Vela_session_policy.Websession_driver.t_DeleteEffect
             with
@@ -679,7 +703,7 @@ let run_delete
             | Vela_session_policy.Websession_driver.DeleteEffect_Idle  ->
               io, transition <: (v_Io & Vela_session_policy.Websession_driver.t_DeleteTransition)
           in
-          let transition:Vela_session_policy.Websession_driver.t_DeleteTransition = hoist43 in
+          let transition:Vela_session_policy.Websession_driver.t_DeleteTransition = hoist45 in
           io, transition <: (v_Io & Vela_session_policy.Websession_driver.t_DeleteTransition))
   in
   let hax_temp_output:Vela_session_policy.Websession_driver.t_DeleteTransition = transition in

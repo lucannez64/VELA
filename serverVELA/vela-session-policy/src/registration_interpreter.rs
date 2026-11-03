@@ -19,14 +19,14 @@
 //! its name describes and reports the outcome honestly.
 
 use crate::registration_driver::{
-    BudgetObservation, CommitObservation, InsertObservation, RateLimitObservation,
-    RegistrationEffect, RegistrationRequestObservation, RegistrationTransition, TokenObservation,
-    TrackObservation, TransactionObservation,
+    BudgetObservation, CommitObservation, InsertObservation, KeyObservation,
+    RateLimitObservation, RegistrationEffect, RegistrationRequestObservation, RegistrationTransition,
+    TokenObservation, TrackObservation, TransactionObservation,
 };
 
-/// Most effects one request performs: limiter, optional budget, transaction
-/// begin, two inserts, commit, token issue and JTI tracking.
-pub const REGISTRATION_MAX_EFFECTS: usize = 8;
+/// Most effects one request performs: limiter, optional budget, key validation,
+/// transaction begin, two inserts, commit, token issue and JTI tracking.
+pub const REGISTRATION_MAX_EFFECTS: usize = 9;
 
 /// The driver has decided: nothing more may be performed.
 pub fn registration_effect_is_terminal(effect: RegistrationEffect) -> bool {
@@ -44,6 +44,7 @@ executor_trait! {
     pub trait RegistrationIo {
         fn check_rate_limit(&mut self) -> RateLimitObservation;
         fn check_account_budget(&mut self) -> BudgetObservation;
+        fn validate_keys(&mut self) -> KeyObservation;
         fn begin_transaction(&mut self) -> TransactionObservation;
         fn insert_account(&mut self) -> InsertObservation;
         fn insert_device(&mut self) -> InsertObservation;
@@ -76,6 +77,10 @@ macro_rules! registration_interpreter {
                 __E::CheckAccountBudget => __step(
                     transition.driver,
                     __V::BudgetObserved($io.check_account_budget()$(.$aw)?),
+                ),
+                __E::ValidateKeys => __step(
+                    transition.driver,
+                    __V::KeysObserved($io.validate_keys()$(.$aw)?),
                 ),
                 __E::BeginTransaction => __step(
                     transition.driver,
@@ -152,6 +157,12 @@ mod tests {
             self.events.push(RegistrationEvent::BudgetObserved(o));
             o
         }
+        fn validate_keys(&mut self) -> KeyObservation {
+            let o = [KeyObservation::Valid, KeyObservation::Invalid]
+                [(self.record(RegistrationEffect::ValidateKeys) % 2) as usize];
+            self.events.push(RegistrationEvent::KeysObserved(o));
+            o
+        }
         fn begin_transaction(&mut self) -> TransactionObservation {
             let o = [TransactionObservation::Begun, TransactionObservation::Failed]
                 [(self.record(RegistrationEffect::BeginTransaction) % 2) as usize];
@@ -194,9 +205,6 @@ mod tests {
         RegistrationRequestObservation {
             has_account_limit: with_limit,
             account_limit: 10,
-            identity_ek_valid: true,
-            identity_vk_valid: true,
-            share_ek_valid: true,
         }
     }
 
@@ -217,8 +225,8 @@ mod tests {
 
     #[test]
     fn interpreter_performs_exactly_the_driver_effects() {
-        assert_eq!(check(request(false), vec![0; 8]), RegistrationEffect::Complete);
-        assert_eq!(check(request(true), vec![0; 8]), RegistrationEffect::Complete);
+        assert_eq!(check(request(false), vec![0; 9]), RegistrationEffect::Complete);
+        assert_eq!(check(request(true), vec![0; 9]), RegistrationEffect::Complete);
         for position in 0..REGISTRATION_MAX_EFFECTS {
             for kind in 1..=2u8 {
                 let mut script = vec![0u8; REGISTRATION_MAX_EFFECTS];
@@ -234,9 +242,10 @@ mod tests {
 
     #[test]
     fn a_device_insert_failure_stops_before_commit_and_token() {
-        // Calls: limiter (0), budget (1), begin (2), account (3), device (4).
-        let mut script = vec![0u8; 8];
-        script[4] = 1;
+        // Calls: limiter (0), budget (1), keys (2), begin (3), account (4),
+        // device (5).
+        let mut script = vec![0u8; 9];
+        script[5] = 1;
         assert_eq!(
             check(request(true), script),
             RegistrationEffect::Fail(RegistrationFailure::DeviceInsertStorage)
@@ -245,16 +254,41 @@ mod tests {
 
     #[test]
     fn invalid_keys_never_open_a_transaction() {
-        let observation = RegistrationRequestObservation {
-            identity_ek_valid: false,
-            ..request(false)
-        };
-        let mut io = Scripted { script: vec![], calls: vec![], events: vec![] };
-        let result = run_registration(&mut io, observation);
+        let mut io = Scripted { script: vec![0, 1], calls: vec![], events: vec![] };
+        let result = run_registration(&mut io, request(false));
         assert_eq!(
             result.effect,
             RegistrationEffect::Fail(RegistrationFailure::InvalidRequest)
         );
+        assert_eq!(
+            io.calls,
+            vec![RegistrationEffect::CheckRateLimit, RegistrationEffect::ValidateKeys]
+        );
+    }
+
+    #[test]
+    fn a_denied_limiter_never_reaches_key_validation() {
+        let mut io = Scripted { script: vec![1], calls: vec![], events: vec![] };
+        let result = run_registration(&mut io, request(true));
+        assert_eq!(
+            result.effect,
+            RegistrationEffect::Fail(RegistrationFailure::RateLimited)
+        );
         assert_eq!(io.calls, vec![RegistrationEffect::CheckRateLimit]);
+    }
+
+    #[test]
+    fn a_rejected_budget_never_reaches_key_validation() {
+        // limiter allowed (0), budget query failed (1).
+        let mut io = Scripted { script: vec![0, 1], calls: vec![], events: vec![] };
+        let result = run_registration(&mut io, request(true));
+        assert_eq!(
+            result.effect,
+            RegistrationEffect::Fail(RegistrationFailure::AccountCountStorage)
+        );
+        assert_eq!(
+            io.calls,
+            vec![RegistrationEffect::CheckRateLimit, RegistrationEffect::CheckAccountBudget]
+        );
     }
 }

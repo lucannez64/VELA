@@ -4,8 +4,10 @@
 
 The pure `vela_session_policy::registration_driver` owns every decision the
 registration handler makes between effects: the per-IP limiter, the optional
-`MAX_ACCOUNTS` count, the request-side key validity, the transaction begin, the
-account and first-device inserts, the commit, PASETO issuance and JTI tracking.
+`MAX_ACCOUNTS` count, the key-validation effect (decode + share-key binding
+verification, emitted only after the limiter and budget allow the request), the
+transaction begin, the account and first-device inserts, the commit, PASETO
+issuance and JTI tracking.
 The extracted `step` is total; every mismatched or out-of-order event is inert.
 `registration_trace_theorem` quantifies over every request observation and every
 event list:
@@ -30,15 +32,25 @@ one-account/one-device chain on the *result* driver of the extracted step.
 `fail_effect_is_terminal` states that a failure never responds. Reachability
 witnesses cover the full success path, the account ceiling, a denied limiter,
 invalid keys, a device-insert failure (rollback), a commit failure and an
-untracked token.
+untracked token. `rate_denied_no_key_verification` and
+`budget_rejected_no_key_verification` prove that a rejected limiter or account
+budget emits no key-validation effect, so an unauthenticated or over-budget
+request never forces a post-quantum verification.
 
-## The one handler change
+## The two handler changes
 
 `post_register` previously inserted the `users` row and the `devices` row with
 two independent `execute` calls. A device-insert failure left an account with
 no device. The handler now opens one `TursoDb::tx()` and performs both inserts
-inside it; a failure drops the guard, which rolls the account row back. Statuses,
-messages, SQL text, store keys and effect order are otherwise unchanged. The
+inside it; a failure drops the guard, which rolls the account row back.
+
+The key decode and share-key binding verification used to run before the
+per-IP limiter and the `MAX_ACCOUNTS` budget. They are now the driver's
+`ValidateKeys` effect, emitted only after both pass. An over-limit or
+over-budget request therefore returns the same rate-limit / "not accepting new
+accounts" response as `origin/main` without decoding a key or running the
+hybrid ML-DSA+Ed25519 verifier. Statuses, messages, SQL text, store keys and the
+remaining effect order are unchanged. The
 new integration test `failed_registration_rolls_back_the_account` drops the
 `devices` table, registers, observes `500`, and asserts zero `users` rows.
 

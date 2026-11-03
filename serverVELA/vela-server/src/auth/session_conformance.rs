@@ -22,7 +22,7 @@ use vela_session_policy::store_model::{
 };
 use vela_session_policy::websession_driver::{
     DeleteRecordObservation, DeleteSentinelObservation, GrantUpdateObservation,
-    TokenClaimObservation, TokenIssueObservation,
+    TokenClaimObservation, TokenIssueObservation, TokenReleaseObservation,
 };
 
 use super::challenge::ChallengeIssueIo;
@@ -140,6 +140,11 @@ impl<T: SessionStore> SessionStore for Faulty<T> {
     fn set_ex_nx(&mut self, key: &str, value: &[u8], ttl: u64) -> anyhow::Result<bool> {
         self.hit()?;
         self.inner.set_ex_nx(key, value, ttl)
+    }
+
+    fn delete(&mut self, key: &str) -> anyhow::Result<()> {
+        self.hit()?;
+        self.inner.delete(key)
     }
 
     fn exists(&mut self, key: &str) -> anyhow::Result<bool> {
@@ -2343,6 +2348,57 @@ async fn web_session_executors_match_the_store_model() {
         }
     }
 
+    // TokenIo::release_token: an absent and a present claim marker, each fault
+    // point. A successful delete frees the claim; a failed delete keeps it.
+    for seed in [false, true] {
+        counts.states += 1;
+        for fault in faults(1) {
+            let store = Store::open_temp().unwrap();
+            let mut ms = ModelStore::default();
+            if seed {
+                store
+                    .set_ex_nx(&format!("web_session:token_issued:{}", session_id(4)), &[1], 86_400)
+                    .unwrap();
+                ms.kv.insert(model::claim_key(&session_id(4)), s("1"));
+            }
+            let mut io = TokenIo {
+                state: &state,
+                store: Faulty::new(SledStore(&store), fault),
+                tokens: FakeWebTokens { ok: true },
+                id: uuid::Uuid::parse_str(&session_id(4)).unwrap(),
+                id_str: session_id(4),
+                ip: s("203.0.113.9"),
+                body: TokenRequest {
+                    challenge: s("challenge"),
+                    signature: s("signature"),
+                },
+                user_id: Some(uuid::Uuid::parse_str(&user(0)).unwrap()),
+                web_vk: None,
+                session_expires_at: None,
+                token: None,
+                jti: None,
+                error: None,
+            };
+            let observed = io.release_token().await;
+            let (expected, want) = model::token_release(&ms, &session_id(4), fault);
+            let case = format!("release seed {seed} fault {fault:?}");
+            assert_eq!(observed, expected, "{case}");
+            assert_eq!(
+                io.error.is_some(),
+                observed == TokenReleaseObservation::StorageFailed,
+                "{case}"
+            );
+            assert_eq!(
+                store
+                    .exists(&format!("web_session:token_issued:{}", session_id(4)))
+                    .unwrap(),
+                want.kv.contains_key(&model::claim_key(&session_id(4))),
+                "{case}"
+            );
+            counts.case(fault);
+        }
+    }
+
     // TokenIo::issue_token: the issue-time sentinel and the JTI track.
     let plan = web_token_plan();
     for (seed, paseto_ok) in [(false, true), (true, true), (false, false)] {
@@ -2379,7 +2435,10 @@ async fn web_session_executors_match_the_store_model() {
             assert_eq!(observed, expected, "{case}");
             assert_eq!(
                 io.error.is_some(),
-                observed == TokenIssueObservation::Failed,
+                matches!(
+                    observed,
+                    TokenIssueObservation::Failed | TokenIssueObservation::Revoked
+                ),
                 "{case}"
             );
             assert_eq!(io.token.is_some(), observed == TokenIssueObservation::Issued, "{case}");
@@ -2806,4 +2865,85 @@ async fn web_session_reads_cleanup_and_limits_match_the_store_model() {
         "session executor conformance (wave 2 reads/cleanup/limits): {} states, {} cases, {} with an injected failure",
         counts.states, counts.cases, counts.faulted
     );
+}
+
+/// Regression for the F-1 token-claim refactor: a transient failure after the
+/// claim releases it, so a retry succeeds; a success keeps the claim, so a
+/// second proof is refused with `AlreadyClaimed` (the handler maps that to
+/// HTTP 409). This is the executor sequence `post_token` drives.
+#[tokio::test]
+async fn token_claim_release_lets_a_retry_succeed_and_a_success_still_blocks() {
+    let state = web_state().await;
+    let store = Store::open_temp().unwrap();
+    let plan = web_token_plan();
+    let claim_key = format!("web_session:token_issued:{}", session_id(4));
+
+    let mut io = TokenIo {
+        state: &state,
+        store: SledStore(&store),
+        tokens: FakeWebTokens { ok: false },
+        id: uuid::Uuid::parse_str(&session_id(4)).unwrap(),
+        id_str: session_id(4),
+        ip: s("203.0.113.9"),
+        body: TokenRequest {
+            challenge: s("challenge"),
+            signature: s("signature"),
+        },
+        user_id: Some(uuid::Uuid::parse_str(&user(0)).unwrap()),
+        web_vk: None,
+        session_expires_at: None,
+        token: None,
+        jti: None,
+        error: None,
+    };
+
+    assert_eq!(io.claim_token().await, TokenClaimObservation::Claimed);
+    assert!(store.exists(&claim_key).unwrap());
+    assert_eq!(io.issue_token(plan).await, TokenIssueObservation::Failed);
+    assert_eq!(io.release_token().await, TokenReleaseObservation::Released);
+    assert!(!store.exists(&claim_key).unwrap());
+
+    // The retry claims again and succeeds.
+    let mut retry = TokenIo {
+        state: &state,
+        store: SledStore(&store),
+        tokens: FakeWebTokens { ok: true },
+        id: uuid::Uuid::parse_str(&session_id(4)).unwrap(),
+        id_str: session_id(4),
+        ip: s("203.0.113.9"),
+        body: TokenRequest {
+            challenge: s("challenge"),
+            signature: s("signature"),
+        },
+        user_id: Some(uuid::Uuid::parse_str(&user(0)).unwrap()),
+        web_vk: None,
+        session_expires_at: None,
+        token: None,
+        jti: None,
+        error: None,
+    };
+    assert_eq!(retry.claim_token().await, TokenClaimObservation::Claimed);
+    assert_eq!(retry.issue_token(plan).await, TokenIssueObservation::Issued);
+    assert!(store.exists(&claim_key).unwrap());
+
+    // A second proof for the same grant is refused: the claim stays.
+    let mut second = TokenIo {
+        state: &state,
+        store: SledStore(&store),
+        tokens: FakeWebTokens { ok: true },
+        id: uuid::Uuid::parse_str(&session_id(4)).unwrap(),
+        id_str: session_id(4),
+        ip: s("203.0.113.9"),
+        body: TokenRequest {
+            challenge: s("challenge"),
+            signature: s("signature"),
+        },
+        user_id: Some(uuid::Uuid::parse_str(&user(0)).unwrap()),
+        web_vk: None,
+        session_expires_at: None,
+        token: None,
+        jti: None,
+        error: None,
+    };
+    assert_eq!(second.claim_token().await, TokenClaimObservation::AlreadyClaimed);
 }
