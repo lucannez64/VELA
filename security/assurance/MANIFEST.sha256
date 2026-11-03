@@ -506,6 +506,8 @@ c7dcb0fbc939cbe08f2dcc87288440acefce21e6de04ff9f2a9981bea7400ba5  security/assur
 0b3b139907208c5a107494d5c8dd56dbac528c010015a41f1012563f838df242  security/assurance/proof-logs/current/full-run/tamarin-sync-admission.log
 8ca259cf258fe290f036d86109a21c81e343b66a0aecee15982d54e692c01b9d  security/assurance/proof-logs/current/full-run/tamarin-web-session-pass-through.log
 bd33ec82d6ca7b9318b86a8b1f9d0d96e1e91a7eac2e182647dae387cb1310f3  security/assurance/proof-logs/current/full-run/versions.txt
+2db84d2e59725ca7f64b7b1e291d06ad54d8996e22d459146866855c04f02e92  security/assurance/proof-logs/current/handler-inventory/README.md
+d9c45f5af689d10aadfe230a252ff21506040e7df095a3a0f186f7d30cb8ac18  security/assurance/proof-logs/current/handler-inventory/handler-inventory.json
 0afa04cb401fbdabae3ee2b92e53df91ffee1057a57ecea5b5c1a751d55593ef  security/assurance/proof-logs/current/hax-bytecode-capped.log
 0668fa56d2f96eaa04e4b95370b2a6405ffae3b8a9ed01b4c209c25af7cb84df  security/assurance/proof-logs/current/hax-engine-gc-capped.log
 8b803c3b3e3610dac1c83f439bfbafcf65584f8837d29d12056cbfdc547ac98e  security/assurance/proof-logs/current/hax-engine-install-capped.log
