@@ -20,8 +20,10 @@ RUN apt-get update \
  && rustup target add wasm32-unknown-unknown
 ENV PATH="/root/.bun/bin:${PATH}"
 WORKDIR /src
-# vela-wasm-bridge depends on vela-crypto + vela-core.
+# vela-wasm-bridge depends on vela-crypto, vela-core and vela-sync-policy
+# (the verified download admission, U-27).
 COPY libVELA/vela-crypto/ libVELA/vela-crypto/
+COPY libVELA/vela-sync-policy/ libVELA/vela-sync-policy/
 COPY libVELA/vela-client-recovery-policy/ libVELA/vela-client-recovery-policy/
 COPY libVELA/vela-client-share-policy/ libVELA/vela-client-share-policy/
 COPY libVELA/vela-core/ libVELA/vela-core/

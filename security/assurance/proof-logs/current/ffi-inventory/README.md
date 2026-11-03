@@ -178,6 +178,7 @@ take a different path (F1-F3).
 | `open_link_json` | wasm_bindgen | libVELA/vela-wasm-bridge/src/lib.rs:336 | vela_crypto::link::open_link | decodes URL-safe link key, optional salt/passphrase; treats empty passphrase as absent | webVELA/src/vela.ts:61 -> webVELA/src/send.ts:182 |
 | `encrypt_vault_chunk_json` | wasm_bindgen | libVELA/vela-wasm-bridge/src/lib.rs:343 | vela_crypto::rekey::seal_fleet_chunk | per-chunk key (no RMS in this bridge by design); epoch Option -> 1 | webVELA/src/vela.ts:119 -> webVELA/src/main.ts:574 (save) |
 | `decrypt_vault_chunk_json` | wasm_bindgen | libVELA/vela-wasm-bridge/src/lib.rs:350 | vela_crypto::rekey::open_fleet_chunk | **no admission policy at all**: no epoch-match call, no rollback baseline, no sealed-header gate, no admitted-clock return | webVELA/src/vela.ts:91 -> webVELA/src/main.ts:478 (pullRemoteVault) |
+| `decrypt_admitted_vault_chunk_json` (replaces the row above since N0c, 2026-11-03) | wasm_bindgen | libVELA/vela-wasm-bridge/src/lib.rs:499 | `plan_sync_epoch_match` + `rekey::open_fleet_chunk` + `plan_chunk_download` | refuses unsealed blobs; tab-local epoch pin and per-chunk rollback baseline ([evidence](../web-download-admission/README.md)) | webVELA/src/main.ts (pullRemoteVault) |
 | `password_strength_json` | wasm_bindgen | libVELA/vela-wasm-bridge/src/lib.rs:356 | vela_core::calculate_password_strength | JSON in/out | none — not imported by webVELA/src/vela.ts |
 ## Caller tables
 
