@@ -24,7 +24,7 @@ use vela_share_policy::driver::{
     LinkUpdatePermit, LinkUpdateStartObservation, RowsObservation, SendInsertPermit,
     SendRequestObservation, SendResultObservation, ShareEffect, ShareFailure,
 };
-use vela_share_policy::{EkRegistrationPermit, LinkMutationObservation, SendObservation};
+use vela_share_policy::{EkRegistrationPermit, LinkMutationObservation};
 
 use crate::{
     db,
@@ -130,23 +130,99 @@ fn share_failure_error(failure: ShareFailure) -> AppError {
     }
 }
 
-/// The I/O behind one capsule send. The quota reads and the transaction begin
-/// happen before the driver starts (they are its admission observations); the
-/// driver owns the admission order and the one guarded transaction.
-struct SendIo<S = TxSql> {
+/// The I/O behind one capsule send: the recipient probe, the short-circuited
+/// admission reads (the driver asks for them only after the request-side
+/// capsule check) and the one guarded transaction. The driver owns the order;
+/// a rejected capsule never reaches this executor.
+struct SendIo<'a, S = TxSql> {
+    sqldb: &'a TursoDb,
     recipient_user_id: Uuid,
     sender_user_id: Uuid,
     capsule_bytes: Vec<u8>,
     inbox_id: Uuid,
     now: String,
+    decode_failed: bool,
     tx: Option<S>,
+    /// The transaction the admission step opened, adopted by the insert.
+    pending_tx: Option<TxSql>,
+    admission_error: Option<String>,
     insert_error: Option<String>,
     commit_error: Option<String>,
 }
 
-impl<S: ShareSql> ShareExecutor for SendIo<S> {
+impl<'a, S: ShareSql> ShareExecutor for SendIo<'a, S> {
+    async fn admit_send(&mut self) -> vela_share_policy::driver::SendAdmissionObservation {
+        use vela_share_policy::driver::SendAdmissionObservation;
+
+        let probe_stmt = store::plan_recipient_probe(self.recipient_user_id.to_string());
+        let probe = match run_handler_read(&mut PoolSql(self.sqldb), &probe_stmt).await {
+            Ok(rows) => store::classify_recipient_probe(&ReadOutcome::Row(ek_row_view(&rows))),
+            Err(error) => {
+                self.admission_error = Some(error.to_string());
+                return SendAdmissionObservation {
+                    failed: true,
+                    recipient_can_receive: false,
+                    inbox_count: 0,
+                    pair_bytes: 0,
+                    total_bytes: 0,
+                    quota_read: false,
+                };
+            }
+        };
+        if probe.failed {
+            self.admission_error = Some("share recipient probe failed".into());
+            return SendAdmissionObservation {
+                failed: true,
+                recipient_can_receive: false,
+                inbox_count: 0,
+                pair_bytes: 0,
+                total_bytes: 0,
+                quota_read: false,
+            };
+        }
+        // The historical handler decided recipient availability before it
+        // decoded the body; keep that precedence even though the size gate
+        // now runs first for a well-formed body.
+        if !probe.can_receive || self.decode_failed {
+            return SendAdmissionObservation {
+                failed: false,
+                recipient_can_receive: probe.can_receive,
+                inbox_count: 0,
+                pair_bytes: 0,
+                total_bytes: 0,
+                quota_read: false,
+            };
+        }
+        let (admission, opened, error) =
+            run_send_admission(self.sqldb, self.recipient_user_id, self.sender_user_id).await;
+        self.pending_tx = opened;
+        if let Some(error) = error {
+            self.admission_error = Some(error);
+            return SendAdmissionObservation {
+                failed: true,
+                recipient_can_receive: true,
+                inbox_count: admission.inbox_count,
+                pair_bytes: admission.pair_bytes,
+                total_bytes: admission.total_bytes,
+                quota_read: false,
+            };
+        }
+        SendAdmissionObservation {
+            failed: false,
+            recipient_can_receive: true,
+            inbox_count: admission.inbox_count,
+            pair_bytes: admission.pair_bytes,
+            total_bytes: admission.total_bytes,
+            quota_read: admission.stage == AdmissionStage::Ready,
+        }
+    }
+
     async fn insert_capsule(&mut self, _permit: SendInsertPermit) -> SendResultObservation {
-        let Some(mut tx) = self.tx.take() else {
+        let Some(mut tx) = self
+            .tx
+            .take()
+            .or_else(|| self.pending_tx.take().and_then(S::adopt_tx))
+        else {
             self.insert_error = Some("share send driver authorized without a transaction".into());
             return SendResultObservation::StorageFailed;
         };
@@ -171,55 +247,92 @@ impl<S: ShareSql> ShareExecutor for SendIo<S> {
     }
 }
 
-/// Runs the send admission plan — the transaction begin and the three quota
-/// reads — on the transaction it opens, and classifies the per-statement
-/// outcomes. The caller keeps the open transaction for the inserts.
+/// Test-only instrumentation for the regression tests: how many send
+/// admissions opened a transaction and how many byte sums ran.
+#[cfg(test)]
+static SEND_ADMISSION_BEGINS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+#[cfg(test)]
+static SEND_ADMISSION_BYTE_READS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// Runs the send admission plan — the transaction begin, the item count and,
+/// only when the item quota passed, the two byte sums — on the transaction it
+/// opens, and classifies the per-statement outcomes. The caller keeps the open
+/// transaction for the inserts on `Ready`; an item-limit stop drops it.
 async fn run_send_admission(
-    state: &AppState,
+    db: &TursoDb,
     recipient: Uuid,
     sender: Uuid,
-) -> Result<(store::AdmissionObservation, Option<TxSql>)> {
+) -> (
+    store::AdmissionObservation,
+    Option<TxSql>,
+    Option<String>,
+) {
     let mut outcomes = Vec::new();
     let mut tx: Option<TxSql> = None;
-    let mut error: Option<anyhow::Error> = None;
+    let mut error: Option<String> = None;
     for stmt in &store::plan_send_admission(recipient.to_string(), sender.to_string()) {
         if let store::HandlerStmt::Begin = stmt {
-            match state.sqldb.tx().await {
+            match db.tx().await {
                 Ok(guard) => {
+                    #[cfg(test)]
+                    SEND_ADMISSION_BEGINS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     tx = Some(TxSql(Some(guard)));
                     outcomes.push(HandlerOutcome::Ran);
                 }
                 Err(e) => {
                     outcomes.push(HandlerOutcome::Failed);
-                    error = Some(e.into());
+                    error = Some(e.to_string());
                     break;
                 }
             }
             continue;
+        }
+        if matches!(
+            stmt,
+            store::HandlerStmt::SumPairBytes { .. } | store::HandlerStmt::SumRecipientBytes { .. }
+        ) {
+            #[cfg(test)]
+            SEND_ADMISSION_BYTE_READS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
         let read = match tx.as_mut() {
             Some(sql) => run_handler_read(sql, stmt).await,
             None => Err(anyhow::anyhow!("quota read without an open transaction")),
         };
         match read {
-            Ok(rows) => outcomes.push(HandlerOutcome::Number(
-                rows.first().and_then(|row| row.i64(0)),
-            )),
+            Ok(rows) => {
+                let number = rows.first().and_then(|row| row.i64(0));
+                outcomes.push(HandlerOutcome::Number(number));
+                // The item quota is the first decision: when it already
+                // fails, the two byte sums are not run.
+                if matches!(stmt, store::HandlerStmt::CountInbox { .. })
+                    && number.unwrap_or(0) >= MAX_INBOX_ITEMS_PER_USER
+                {
+                    break;
+                }
+            }
             Err(e) => {
                 outcomes.push(HandlerOutcome::Failed);
-                error = Some(e);
+                error = Some(e.to_string());
                 break;
             }
         }
     }
     let admission = store::classify_send_admission(&outcomes);
-    if admission.stage != AdmissionStage::Ready {
-        return Err(AppError::Internal(match error {
-            Some(error) => error.to_string(),
-            None => "share send storage failure".into(),
-        }));
+    match admission.stage {
+        AdmissionStage::Ready => (admission, tx, None),
+        AdmissionStage::ItemLimit => {
+            // Roll the count-only transaction back; nothing is published.
+            drop(tx);
+            (admission, None, None)
+        }
+        _ => (
+            admission,
+            None,
+            Some(error.unwrap_or_else(|| "share send storage failure".into())),
+        ),
     }
-    Ok((admission, tx))
 }
 
 pub async fn post_send(
@@ -229,73 +342,40 @@ pub async fn post_send(
 ) -> Result<(HeaderMap, Json<SendResponse>)> {
     crate::rate_limit::share_send_by_sender(&state.store, &session.user_id.to_string())?;
 
-    // Gate on the share key, not on mere existence (red-team RT-3). The plan
-    // pins the SQL; the classifier decides whether the stored cell admits a
-    // recipient.
-    let probe_stmt = store::plan_recipient_probe(body.recipient_user_id.to_string());
-    let probe = match run_handler_read(&mut PoolSql(&state.sqldb), &probe_stmt).await {
-        Ok(rows) => store::classify_recipient_probe(&ReadOutcome::Row(ek_row_view(&rows))),
-        Err(error) => return Err(AppError::Internal(error.to_string())),
-    };
-    let recipient_can_receive = probe.can_receive;
-
-    // Preserve the historical precedence: recipient availability is decided
-    // before the body is decoded. The verified driver renders every one of
-    // these admission failures with the existing status/message.
-    let decoded = if recipient_can_receive {
-        B64.decode(&body.capsule).ok()
-    } else {
-        None
-    };
-    let decode_failed = recipient_can_receive && decoded.is_none();
+    // Decode the body first: the driver's request-side gate needs its length.
+    // The empty/oversized check then runs before the recipient probe, the
+    // transaction begin and the quota reads, exactly as the historical handler
+    // did. A malformed body keeps its historical precedence: the driver carries
+    // the decode failure past the recipient gate.
+    let decoded = B64.decode(&body.capsule).ok();
+    let decode_failed = decoded.is_none();
     let capsule_bytes = decoded.unwrap_or_default();
     let capsule_len = capsule_bytes.len();
 
     let inbox_id = Uuid::new_v4();
     let now = Utc::now().to_rfc3339();
 
-    // Quota checks and the two inserts (shared_items + share_inbox, which must
-    // share the same id) run inside one transaction so a crash/error between
-    // them can never leave an orphaned row in one table without the other.
-    // The begin and the three quota reads are one admitted plan: a failure at
-    // any step is a storage failure and nothing is published.
-    let mut tx: Option<TxSql> = None;
-    let (inbox_count, pair_bytes, total_bytes) = if recipient_can_receive && !decode_failed {
-        let (admission, opened) =
-            run_send_admission(&state, body.recipient_user_id, session.user_id).await?;
-        tx = opened;
-        (
-            admission.inbox_count,
-            admission.pair_bytes,
-            admission.total_bytes,
-        )
-    } else {
-        (0, 0, 0)
-    };
-
-    // Verified send gate (M19). Every fact comes from the real session,
-    // recipient row, decoded capsule and inbox quota observations; the
-    // constructor states those equalities to F*. The driver owns the whole
+    // Verified send gate (M19). The request observation decides the capsule
+    // size first; only an admitted body asks the handler for the recipient
+    // probe and the short-circuited admission reads. The driver owns the whole
     // post-validation admission order and calls the real `send_facts` /
     // `plan_send` policy.
     let start = vela_share_policy::interpreter::start_send(SendRequestObservation {
-        policy: SendObservation {
-            session_user_id_present: !session.user_id.is_nil(),
-            recipient_has_share_ek: recipient_can_receive,
-            capsule_len: capsule_bytes.len() as i64,
-            existing_inbox_bytes: total_bytes,
-        },
+        session_user_id_present: !session.user_id.is_nil(),
         decode_failed,
-        inbox_count,
-        pair_bytes,
+        capsule_len: capsule_len as i64,
     });
-    let mut io = SendIo {
+    let mut io: SendIo<'_, TxSql> = SendIo {
+        sqldb: &state.sqldb,
         recipient_user_id: body.recipient_user_id,
         sender_user_id: session.user_id,
         capsule_bytes,
         inbox_id,
         now,
-        tx,
+        decode_failed,
+        tx: None,
+        pending_tx: None,
+        admission_error: None,
         insert_error: None,
         commit_error: None,
     };
@@ -305,8 +385,9 @@ pub async fn post_send(
         ShareEffect::Complete => {}
         ShareEffect::Fail(ShareFailure::SendStorage) => {
             return Err(AppError::Internal(
-                io.insert_error
+                io.admission_error
                     .take()
+                    .or_else(|| io.insert_error.take())
                     .unwrap_or_else(|| "share send storage failure".into()),
             ));
         }
@@ -1049,5 +1130,186 @@ pub async fn inbox_cleanup_task(db: Arc<TursoDb>) {
                 "inbox cleanup: expired share items removed"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod handler_regression_tests {
+    //! Regressions for `post_send`'s restored check order: the capsule size is
+    //! decided before any store effect, and a full inbox stops before the byte
+    //! sums.
+
+    use super::*;
+    use crate::auth::token::TokenScope;
+    use crate::sqldb::{Db as _, TursoValue};
+    use crate::state::AppStateInner;
+    use std::sync::atomic::Ordering;
+    use std::sync::{Arc, Mutex, MutexGuard};
+
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn lock() -> MutexGuard<'static, ()> {
+        TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    async fn test_state() -> AppState {
+        use std::sync::atomic::AtomicU64;
+        static N: AtomicU64 = AtomicU64::new(0);
+        let path = format!(
+            "{}/vela-share-send-regression-{}-{}.db",
+            std::env::temp_dir().display(),
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        );
+        let _ = std::fs::remove_file(&path);
+        let turso = Arc::new(TursoDb::open(&path, 1).await.unwrap());
+        let store = crate::store::Store::open_temp().unwrap();
+        let cfg = crate::config::Config::from_env().expect("default config");
+        Arc::new(AppStateInner::new(turso, store, cfg).await.unwrap())
+    }
+
+    fn session(user_id: Uuid) -> AuthSession {
+        AuthSession {
+            user_id,
+            device_id: Uuid::new_v4(),
+            jti: "share-send-regression".into(),
+            key_epoch: None,
+            new_token: None,
+            scope: TokenScope::Device,
+        }
+    }
+
+    async fn seed_user(state: &AppState, user_id: Uuid, share_ek: Option<&str>) {
+        state
+            .sqldb
+            .execute(
+                "INSERT INTO users (id, created_at, share_ek) VALUES (?, ?, ?)",
+                vec![
+                    TursoValue::Text(user_id.to_string()),
+                    TursoValue::Text(Utc::now().to_rfc3339()),
+                    share_ek.map(|ek| TursoValue::Text(ek.into())).unwrap_or(TursoValue::Null),
+                ],
+            )
+            .await
+            .unwrap();
+    }
+
+    async fn send(state: AppState, sender: Uuid, recipient: Uuid, capsule: String) -> AppError {
+        match post_send(
+            State(state),
+            session(sender),
+            Json(SendRequest {
+                recipient_user_id: recipient,
+                capsule,
+            }),
+        )
+        .await
+        {
+            Err(error) => error,
+            Ok(_) => panic!("the send must be rejected"),
+        }
+    }
+
+    async fn message(error: AppError) -> (StatusCode, String) {
+        use axum::response::IntoResponse;
+        let response = error.into_response();
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), 4096).await.unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        (status, value["message"].as_str().unwrap().to_string())
+    }
+
+    #[tokio::test]
+    async fn oversized_and_empty_capsules_are_rejected_before_any_store_effect() {
+        let _guard = lock();
+        let state = test_state().await;
+        let sender = Uuid::new_v4();
+        let recipient = Uuid::new_v4();
+        seed_user(&state, sender, None).await;
+        seed_user(&state, recipient, Some("share-ek")).await;
+
+        for (capsule, expected) in [
+            (
+                B64.encode(vec![0u8; MAX_CAPSULE_BYTES as usize + 1]),
+                format!("capsule exceeds maximum size of {MAX_CAPSULE_BYTES} bytes"),
+            ),
+            (
+                String::new(),
+                "verified sharing policy rejected the capsule delivery".to_string(),
+            ),
+        ] {
+            let begins = SEND_ADMISSION_BEGINS.load(Ordering::Relaxed);
+            let byte_reads = SEND_ADMISSION_BYTE_READS.load(Ordering::Relaxed);
+            let error = send(state.clone(), sender, recipient, capsule).await;
+            let (status, message) = message(error).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+            assert_eq!(message, expected);
+            assert_eq!(
+                SEND_ADMISSION_BEGINS.load(Ordering::Relaxed),
+                begins,
+                "a rejected capsule opened a transaction"
+            );
+            assert_eq!(
+                SEND_ADMISSION_BYTE_READS.load(Ordering::Relaxed),
+                byte_reads,
+                "a rejected capsule ran a quota aggregate"
+            );
+        }
+
+        let inbox: i64 = state
+            .sqldb
+            .query("SELECT COUNT(*) FROM share_inbox", vec![])
+            .await
+            .unwrap()
+            .first()
+            .and_then(|row| row.i64(0))
+            .unwrap_or(0);
+        assert_eq!(inbox, 0);
+    }
+
+    #[tokio::test]
+    async fn a_full_inbox_returns_the_item_limit_before_the_byte_sums() {
+        let _guard = lock();
+        let state = test_state().await;
+        let sender = Uuid::new_v4();
+        let recipient = Uuid::new_v4();
+        seed_user(&state, sender, None).await;
+        seed_user(&state, recipient, Some("share-ek")).await;
+        for n in 0..MAX_INBOX_ITEMS_PER_USER {
+            state
+                .sqldb
+                .execute(
+                    "INSERT INTO share_inbox (id, sender_user_id, recipient_user_id, capsule, created_at) VALUES (?, ?, ?, ?, ?)",
+                    vec![
+                        TursoValue::Text(format!("full-{n}")),
+                        TursoValue::Text(sender.to_string()),
+                        TursoValue::Text(recipient.to_string()),
+                        TursoValue::Text(B64.encode(b"cc")),
+                        TursoValue::Text(Utc::now().to_rfc3339()),
+                    ],
+                )
+                .await
+                .unwrap();
+        }
+
+        let begins = SEND_ADMISSION_BEGINS.load(Ordering::Relaxed);
+        let byte_reads = SEND_ADMISSION_BYTE_READS.load(Ordering::Relaxed);
+        let error = send(state.clone(), sender, recipient, B64.encode(b"new")).await;
+        let (status, message) = message(error).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(
+            message,
+            format!("recipient inbox is full ({MAX_INBOX_ITEMS_PER_USER} items)")
+        );
+        assert_eq!(
+            SEND_ADMISSION_BEGINS.load(Ordering::Relaxed),
+            begins + 1,
+            "the count must run inside one transaction"
+        );
+        assert_eq!(
+            SEND_ADMISSION_BYTE_READS.load(Ordering::Relaxed),
+            byte_reads,
+            "the byte sums must not run after the item quota failed"
+        );
     }
 }

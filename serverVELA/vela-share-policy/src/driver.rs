@@ -51,6 +51,9 @@ pub enum ShareRequestKind {
 /// Where the request is in its decision sequence.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ShareStage {
+    /// The request-side capsule checks passed; the handler must probe the
+    /// recipient and run the admission reads before the send can be decided.
+    SendAdmit,
     /// A send is authorized; the guarded `shared_items` + `share_inbox`
     /// transaction may run exactly once.
     SendInsert,
@@ -78,19 +81,39 @@ pub enum ShareStage {
     Done,
 }
 
-/// Request-side observations for a capsule send. `decode_failed` records a
-/// base64 failure; the decoded lengths/quota counters are otherwise the values
-/// the handler read before opening the insert transaction.
+/// Request-side observations for a capsule send, available before any store
+/// read. The handler decodes the body and hands the driver the session and
+/// size facts; the driver decides the empty/oversized capsule first, so a
+/// rejected body performs no recipient probe, no transaction and no quota
+/// aggregate.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SendRequestObservation {
-    /// The raw policy observation the real `send_facts` consumes.
-    pub policy: SendObservation,
+    /// The authenticated session carries a non-nil user id.
+    pub session_user_id_present: bool,
     /// The capsule body was not valid base64.
     pub decode_failed: bool,
-    /// Pending inbox items for the recipient before this send.
+    /// Decoded capsule length (zero when decoding failed).
+    pub capsule_len: i64,
+}
+
+/// The observation the handler returns after the recipient probe and the
+/// short-circuited admission reads. `quota_read` records that both byte sums
+/// ran; a count-only stop (the item quota failed) leaves it false.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SendAdmissionObservation {
+    /// The probe (or an admission read) failed. The handler keeps the original
+    /// error text for the 500 response.
+    pub failed: bool,
+    /// The recipient's stored share key admits a share.
+    pub recipient_can_receive: bool,
+    /// Pending inbox items for the recipient.
     pub inbox_count: i64,
-    /// Pending bytes from this sender to this recipient before this send.
+    /// Pending bytes from this sender to this recipient.
     pub pair_bytes: i64,
+    /// Pending bytes in the recipient's inbox.
+    pub total_bytes: i64,
+    /// Both `SUM(LENGTH(capsule))` reads ran.
+    pub quota_read: bool,
 }
 
 /// Request-side observations for a linked-item update.
@@ -160,6 +183,8 @@ pub enum ShareEvent {
     /// The signing-device row and signature verdict were read for an EK
     /// registration.
     EkObserved(EkDeviceObservation),
+    /// The recipient probe and the short-circuited admission reads finished.
+    SendAdmitted(SendAdmissionObservation),
     /// The send transaction finished.
     SendResult(SendResultObservation),
     /// A guarded update/delete returned its affected-row count.
@@ -225,6 +250,10 @@ pub enum ShareEffect {
     ObserveLink,
     /// Read the signing-device row and feed `ShareEvent::EkObserved`.
     ObserveDevice,
+    /// Probe the recipient and run the send admission reads, then feed
+    /// `ShareEvent::SendAdmitted`. The item-count read runs first; the two
+    /// byte sums run only when the item quota passed.
+    AdmitSend,
     /// Perform exactly one guarded send transaction.
     InsertCapsule(SendInsertPermit),
     /// Perform exactly one guarded linked-item update.
@@ -273,6 +302,21 @@ pub struct ShareDriver {
     pub stage: ShareStage,
     /// Decoded capsule length for send/update (zero elsewhere).
     pub capsule_len: i64,
+    /// The send body was not valid base64 (checked after recipient
+    /// availability, as the historical handler did).
+    pub decode_failed: bool,
+    /// The send admission effect was emitted.
+    pub admit_issued: bool,
+    /// The recipient probe found a stored, non-empty share key.
+    pub recipient_can_receive: bool,
+    /// Pending inbox items observed by the admission (zero before it runs).
+    pub inbox_count: i64,
+    /// Pending pair bytes observed by the admission.
+    pub pair_bytes: i64,
+    /// Pending recipient bytes observed by the admission.
+    pub total_bytes: i64,
+    /// Both byte sums ran (false when the item quota stopped the admission).
+    pub quota_read: bool,
     /// A send observed an authenticated session.
     pub sender_authenticated: bool,
     /// A link observation found the caller equal to the row's sender.
@@ -320,7 +364,16 @@ pub fn share_state_is_sound(driver: ShareDriver) -> bool {
         && driver.revoked
         && driver.cleanup_issued;
     let inbox_clean = driver.recipient_scoped && !driver.committed;
-    (!matches!(driver.stage, ShareStage::SendInsert)
+    (!matches!(driver.stage, ShareStage::SendAdmit)
+        || (matches!(driver.kind, ShareRequestKind::SendCapsule)
+            && driver.admit_issued
+            && !driver.authorized
+            && !driver.effect_issued
+            && !driver.committed
+            && !driver.revoked
+            && !driver.cleanup_issued
+            && !driver.observe_issued))
+        && (!matches!(driver.stage, ShareStage::SendInsert)
         || (matches!(driver.kind, ShareRequestKind::SendCapsule)
             && driver.authorized
             && driver.sender_authenticated
@@ -405,9 +458,18 @@ pub fn share_effect_is_sound(driver: ShareDriver, effect: ShareEffect) -> bool {
                 && !driver.effect_issued
                 && matches!(driver.stage, ShareStage::EkObserve)
         }
+        ShareEffect::AdmitSend => {
+            matches!(driver.kind, ShareRequestKind::SendCapsule)
+                && matches!(driver.stage, ShareStage::SendAdmit)
+                && driver.admit_issued
+                && !driver.authorized
+                && !driver.effect_issued
+                && !driver.committed
+        }
         ShareEffect::InsertCapsule(permit) => {
             matches!(driver.kind, ShareRequestKind::SendCapsule)
                 && matches!(driver.stage, ShareStage::SendInsert)
+                && driver.admit_issued
                 && driver.authorized
                 && driver.sender_authenticated
                 && driver.effect_issued
@@ -492,6 +554,13 @@ fn base(kind: ShareRequestKind, capsule_len: i64, sender_authenticated: bool) ->
         kind,
         stage: ShareStage::Done,
         capsule_len,
+        decode_failed: false,
+        admit_issued: false,
+        recipient_can_receive: false,
+        inbox_count: 0,
+        pair_bytes: 0,
+        total_bytes: 0,
+        quota_read: false,
         sender_authenticated,
         caller_is_sender: false,
         link_live: false,
@@ -515,38 +584,87 @@ fn sender_pair_has_capacity(pair_bytes: i64, capsule_len: i64) -> bool {
         && pair_bytes <= MAX_SENDER_TO_RECIPIENT_BYTES - capsule_len
 }
 
-/// Start a send. The decision order is the handler's historical order:
-/// recipient availability, base64 decoding, global capsule cap, inbox item
-/// cap, per-pair byte cap, recipient byte cap (`send_facts`), then the real
-/// `plan_send` authorization.
+/// Start a send from the request observation alone. The empty and oversized
+/// capsule checks run here, before the handler probes the recipient, begins a
+/// transaction or runs any quota aggregate. A malformed body is carried to
+/// the admission event so the recipient gate keeps its historical precedence.
+/// A well-formed body asks the handler for the recipient probe and the
+/// short-circuited admission reads.
 #[cfg_attr(hax, hax_lib::ensures(|result| {
     share_state_is_sound(result.driver)
         && share_effect_is_sound(result.driver, result.effect)
-        && (matches!(result.driver.stage, ShareStage::SendInsert)
+        && (matches!(result.driver.stage, ShareStage::SendAdmit)
             || matches!(result.effect, ShareEffect::Fail(_)))
 }))]
 pub fn begin_send(obs: SendRequestObservation) -> ShareTransition {
     let driver = base(
         ShareRequestKind::SendCapsule,
-        obs.policy.capsule_len,
-        obs.policy.session_user_id_present,
+        obs.capsule_len,
+        obs.session_user_id_present,
     );
-    if !obs.policy.recipient_has_share_ek {
+    let driver = ShareDriver {
+        decode_failed: obs.decode_failed,
+        ..driver
+    };
+    if !obs.decode_failed {
+        if obs.capsule_len <= 0 {
+            return fail(driver, ShareFailure::CapsulePolicyRejected);
+        }
+        if obs.capsule_len > MAX_CAPSULE_BYTES {
+            return fail(driver, ShareFailure::CapsuleTooLarge);
+        }
+    }
+    transition(
+        ShareDriver {
+            stage: ShareStage::SendAdmit,
+            admit_issued: true,
+            ..driver
+        },
+        ShareEffect::AdmitSend,
+    )
+}
+
+/// The admission event: recipient availability first (as the historical
+/// handler did), then the decode failure, the item quota, the two byte caps
+/// and finally the real `plan_send` authorization. A count-only admission
+/// (`quota_read = false`) can only be the item-limit stop; any other
+/// count-only observation fails closed as a storage failure.
+fn on_send_admitted(
+    driver: ShareDriver,
+    observation: SendAdmissionObservation,
+) -> ShareTransition {
+    let driver = ShareDriver {
+        recipient_can_receive: observation.recipient_can_receive,
+        inbox_count: observation.inbox_count,
+        pair_bytes: observation.pair_bytes,
+        total_bytes: observation.total_bytes,
+        quota_read: observation.quota_read,
+        ..driver
+    };
+    if observation.failed {
+        return fail(driver, ShareFailure::SendStorage);
+    }
+    if !observation.recipient_can_receive {
         return fail(driver, ShareFailure::RecipientUnavailable);
     }
-    if obs.decode_failed {
+    if driver.decode_failed {
         return fail(driver, ShareFailure::MalformedCapsule);
     }
-    if obs.policy.capsule_len > MAX_CAPSULE_BYTES {
-        return fail(driver, ShareFailure::CapsuleTooLarge);
-    }
-    if obs.inbox_count >= MAX_INBOX_ITEMS_PER_USER {
+    if observation.inbox_count >= MAX_INBOX_ITEMS_PER_USER {
         return fail(driver, ShareFailure::InboxItemLimit);
     }
-    if !sender_pair_has_capacity(obs.pair_bytes, obs.policy.capsule_len) {
+    if !observation.quota_read {
+        return fail(driver, ShareFailure::SendStorage);
+    }
+    if !sender_pair_has_capacity(observation.pair_bytes, driver.capsule_len) {
         return fail(driver, ShareFailure::SenderQuotaExceeded);
     }
-    let facts = send_facts(obs.policy);
+    let facts = send_facts(SendObservation {
+        session_user_id_present: driver.sender_authenticated,
+        recipient_has_share_ek: true,
+        capsule_len: driver.capsule_len,
+        existing_inbox_bytes: observation.total_bytes,
+    });
     if !facts.inbox_has_capacity {
         return fail(driver, ShareFailure::RecipientQuotaExceeded);
     }
@@ -559,7 +677,7 @@ pub fn begin_send(obs: SendRequestObservation) -> ShareTransition {
                 ..driver
             },
             ShareEffect::InsertCapsule(SendInsertPermit {
-                capsule_len: obs.policy.capsule_len,
+                capsule_len: driver.capsule_len,
             }),
         ),
         SendDecision::Reject => fail(driver, ShareFailure::CapsulePolicyRejected),
@@ -625,6 +743,13 @@ pub fn begin_inbox_delete() -> ShareTransition {
         kind: ShareRequestKind::DeleteInboxItem,
         stage: ShareStage::InboxDelete,
         capsule_len: 0,
+        decode_failed: false,
+        admit_issued: false,
+        recipient_can_receive: false,
+        inbox_count: 0,
+        pair_bytes: 0,
+        total_bytes: 0,
+        quota_read: false,
         sender_authenticated: false,
         caller_is_sender: false,
         link_live: false,
@@ -855,6 +980,13 @@ pub fn step(driver: ShareDriver, event: ShareEvent) -> ShareTransition {
         ShareEvent::EkObserved(observation) => {
             if matches!(driver.stage, ShareStage::EkObserve) {
                 on_ek_observed(driver, observation)
+            } else {
+                idle(driver)
+            }
+        }
+        ShareEvent::SendAdmitted(observation) => {
+            if matches!(driver.stage, ShareStage::SendAdmit) {
+                on_send_admitted(driver, observation)
             } else {
                 idle(driver)
             }

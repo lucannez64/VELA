@@ -701,11 +701,13 @@ pub struct RecipientProbeObservation {
 }
 
 /// Where a send's admission stopped. `Ready` means the transaction is open
-/// and all three quota reads returned their values.
+/// and all three quota reads returned their values; `ItemLimit` means the
+/// item count already failed, so the two byte sums did not run.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AdmissionStage {
     Begin,
     Count,
+    ItemLimit,
     Pair,
     Total,
     Ready,
@@ -880,7 +882,7 @@ fn quota_cell(cell: Option<i64>) -> i64 {
 /// A read that returns no cell counts as zero, as the handler's `unwrap_or(0)`
 /// always did.
 pub fn classify_send_admission(outcomes: &[HandlerOutcome]) -> AdmissionObservation {
-    use AdmissionStage::{Begin, Count, Pair, Ready, Total};
+    use AdmissionStage::{Begin, Count, ItemLimit, Pair, Ready, Total};
     let zero = AdmissionObservation {
         stage: Begin,
         inbox_count: 0,
@@ -953,8 +955,10 @@ pub fn classify_send_admission(outcomes: &[HandlerOutcome]) -> AdmissionObservat
         }
     } else if outcomes.len() == 2 {
         match (outcomes[0], outcomes[1]) {
+            // The handler stops after the count when the item quota already
+            // failed; the two byte sums never ran.
             (HandlerOutcome::Ran, HandlerOutcome::Number(count)) => AdmissionObservation {
-                stage: Pair,
+                stage: ItemLimit,
                 inbox_count: quota_cell(count),
                 pair_bytes: 0,
                 total_bytes: 0,
@@ -2023,10 +2027,11 @@ mod tests {
             classify_send_admission(&[Ran, Number(Some(1)), Number(Some(2))]).stage,
             AdmissionStage::Total
         );
-        assert_eq!(
-            classify_send_admission(&[Ran, Number(Some(1))]).stage,
-            AdmissionStage::Pair
-        );
+        let item_limit = classify_send_admission(&[Ran, Number(Some(500))]);
+        assert_eq!(item_limit.stage, AdmissionStage::ItemLimit);
+        assert_eq!(item_limit.inbox_count, 500);
+        assert_eq!(item_limit.pair_bytes, 0);
+        assert_eq!(item_limit.total_bytes, 0);
         assert_eq!(classify_send_admission(&[Ran]).stage, AdmissionStage::Begin);
 
         // The recipient key read.

@@ -6,13 +6,14 @@
 use vela_share_policy::driver::{
     begin_ek_registration, begin_inbox_delete, begin_link_revoke, begin_link_update, begin_send,
     on_cleanup_completed, on_ek_observation, on_link_observation, on_rows_observed,
-    on_send_completed, share_effect_is_sound, share_state_is_sound, CleanupObservation,
+    on_send_completed, share_effect_is_sound, share_state_is_sound, step, CleanupObservation,
     EkDeviceObservation, EkRegistrationStartObservation, LinkUpdateStartObservation,
-    RowsObservation, SendRequestObservation, SendResultObservation, ShareDriver, ShareEffect,
-    ShareEvent, ShareFailure, ShareRequestKind, ShareStage, ShareTransition,
+    RowsObservation, SendAdmissionObservation, SendRequestObservation, SendResultObservation,
+    ShareDriver, ShareEffect, ShareEvent, ShareFailure, ShareRequestKind, ShareStage,
+    ShareTransition,
 };
 use vela_share_policy::{
-    EkRegistrationObservation, LinkMutationObservation, SendObservation, MAX_CAPSULE_BYTES,
+    EkRegistrationObservation, LinkMutationObservation, MAX_CAPSULE_BYTES,
     MAX_RECIPIENT_INBOX_BYTES, SHARE_EK_LEN,
 };
 
@@ -20,15 +21,20 @@ const VALID_LEN: i64 = 128;
 
 fn send_observation() -> SendRequestObservation {
     SendRequestObservation {
-        policy: SendObservation {
-            session_user_id_present: true,
-            recipient_has_share_ek: true,
-            capsule_len: VALID_LEN,
-            existing_inbox_bytes: 0,
-        },
+        session_user_id_present: true,
         decode_failed: false,
+        capsule_len: VALID_LEN,
+    }
+}
+
+fn send_admission() -> SendAdmissionObservation {
+    SendAdmissionObservation {
+        failed: false,
+        recipient_can_receive: true,
         inbox_count: 0,
         pair_bytes: 0,
+        total_bytes: 0,
+        quota_read: true,
     }
 }
 
@@ -70,6 +76,7 @@ fn apply(driver: ShareDriver, event: ShareEvent) -> ShareTransition {
     let transition = match event {
         ShareEvent::LinkObserved(observation) => on_link_observation(driver, observation),
         ShareEvent::EkObserved(observation) => on_ek_observation(driver, observation),
+        ShareEvent::SendAdmitted(observation) => step(driver, ShareEvent::SendAdmitted(observation)),
         ShareEvent::SendResult(observation) => on_send_completed(driver, observation),
         ShareEvent::Mutated(observation) => on_rows_observed(driver, observation),
         ShareEvent::Cleaned(observation) => on_cleanup_completed(driver, observation),
@@ -97,8 +104,13 @@ fn advance(mut driver: ShareDriver, events: &[ShareEvent]) -> (ShareDriver, Shar
 
 fn begin_valid_send() -> ShareDriver {
     let transition = begin_send(send_observation());
-    assert!(matches!(transition.effect, ShareEffect::InsertCapsule(_)));
-    transition.driver
+    assert!(matches!(transition.effect, ShareEffect::AdmitSend));
+    let (driver, effect) = advance(
+        transition.driver,
+        &[ShareEvent::SendAdmitted(send_admission())],
+    );
+    assert!(matches!(effect, ShareEffect::InsertCapsule(_)));
+    driver
 }
 
 fn begin_valid_link_update() -> ShareDriver {
@@ -157,6 +169,7 @@ fn to_ek_register() -> ShareDriver {
 
 fn reachable_stages() -> Vec<ShareDriver> {
     vec![
+        begin_send(send_observation()).driver,
         begin_valid_send(),
         begin_valid_link_update(),
         to_update_apply(),
@@ -233,6 +246,22 @@ fn all_events() -> Vec<ShareEvent> {
     ] {
         events.push(ShareEvent::EkObserved(registration));
     }
+    events.push(ShareEvent::SendAdmitted(send_admission()));
+    events.push(ShareEvent::SendAdmitted(SendAdmissionObservation {
+        recipient_can_receive: false,
+        quota_read: false,
+        ..send_admission()
+    }));
+    events.push(ShareEvent::SendAdmitted(SendAdmissionObservation {
+        failed: true,
+        quota_read: false,
+        ..send_admission()
+    }));
+    events.push(ShareEvent::SendAdmitted(SendAdmissionObservation {
+        inbox_count: 500,
+        quota_read: false,
+        ..send_admission()
+    }));
     events.push(ShareEvent::SendResult(SendResultObservation::Committed));
     events.push(ShareEvent::SendResult(SendResultObservation::StorageFailed));
     events.push(ShareEvent::SendResult(
@@ -256,6 +285,7 @@ fn event_is_in_stage(event: &ShareEvent, stage: ShareStage) -> bool {
             ShareStage::LinkUpdateObserve | ShareStage::LinkRevokeObserve,
         ) => true,
         (ShareEvent::EkObserved(_), ShareStage::EkObserve) => true,
+        (ShareEvent::SendAdmitted(_), ShareStage::SendAdmit) => true,
         (ShareEvent::SendResult(_), ShareStage::SendInsert) => true,
         (
             ShareEvent::Mutated(_),
@@ -379,74 +409,55 @@ fn summary_ek_authorized(
 
 #[test]
 fn send_requires_an_authenticated_session_and_the_real_plan() {
-    // The recipient gate wins first.
-    let mut observation = send_observation();
-    observation.policy.recipient_has_share_ek = false;
-    assert_eq!(
-        begin_send(observation).effect,
-        ShareEffect::Fail(ShareFailure::RecipientUnavailable)
+    // The recipient gate runs in the admission event, after the size gate.
+    let start = begin_send(send_observation());
+    assert!(matches!(start.effect, ShareEffect::AdmitSend));
+    let (_, effect) = advance(
+        start.driver,
+        &[ShareEvent::SendAdmitted(SendAdmissionObservation {
+            recipient_can_receive: false,
+            quota_read: false,
+            ..send_admission()
+        })],
     );
+    assert_eq!(effect, ShareEffect::Fail(ShareFailure::RecipientUnavailable));
 
     // An unauthenticated session reaches `plan_send` and is rejected there.
-    let mut observation = send_observation();
-    observation.policy.session_user_id_present = false;
-    assert_eq!(
-        begin_send(observation).effect,
-        ShareEffect::Fail(ShareFailure::CapsulePolicyRejected)
+    let start = begin_send(SendRequestObservation {
+        session_user_id_present: false,
+        ..send_observation()
+    });
+    let (_, effect) = advance(
+        start.driver,
+        &[ShareEvent::SendAdmitted(send_admission())],
     );
+    assert_eq!(effect, ShareEffect::Fail(ShareFailure::CapsulePolicyRejected));
 
     // A registered recipient with a valid capsule is admitted exactly once.
-    let transition = begin_send(send_observation());
-    assert!(matches!(transition.effect, ShareEffect::InsertCapsule(_)));
-    assert!(transition.driver.sender_authenticated && transition.driver.authorized);
+    let driver = begin_valid_send();
+    assert!(driver.sender_authenticated && driver.authorized);
 }
 
 #[test]
 fn send_quota_checks_keep_the_handlers_historical_order() {
-    let cases = [
+    // The size gate is the request observation: an oversized or empty capsule
+    // is rejected before any admission effect.
+    for (observation, failure) in [
         (
             SendRequestObservation {
-                decode_failed: true,
-                ..send_observation()
-            },
-            ShareFailure::MalformedCapsule,
-        ),
-        (
-            SendRequestObservation {
-                policy: SendObservation {
-                    capsule_len: MAX_CAPSULE_BYTES + 1,
-                    ..send_observation().policy
-                },
+                capsule_len: MAX_CAPSULE_BYTES + 1,
                 ..send_observation()
             },
             ShareFailure::CapsuleTooLarge,
         ),
         (
             SendRequestObservation {
-                inbox_count: 500,
+                capsule_len: 0,
                 ..send_observation()
             },
-            ShareFailure::InboxItemLimit,
+            ShareFailure::CapsulePolicyRejected,
         ),
-        (
-            SendRequestObservation {
-                pair_bytes: 8 * 1024 * 1024 - VALID_LEN + 1,
-                ..send_observation()
-            },
-            ShareFailure::SenderQuotaExceeded,
-        ),
-        (
-            SendRequestObservation {
-                policy: SendObservation {
-                    existing_inbox_bytes: MAX_RECIPIENT_INBOX_BYTES,
-                    ..send_observation().policy
-                },
-                ..send_observation()
-            },
-            ShareFailure::RecipientQuotaExceeded,
-        ),
-    ];
-    for (observation, failure) in cases {
+    ] {
         assert_eq!(
             begin_send(observation).effect,
             ShareEffect::Fail(failure),
@@ -454,19 +465,51 @@ fn send_quota_checks_keep_the_handlers_historical_order() {
         );
     }
 
-    // A well-formed empty capsule is not a size error; the real plan rejects
-    // it, exactly as the handler did.
-    let empty = SendRequestObservation {
-        policy: SendObservation {
-            capsule_len: 0,
-            ..send_observation().policy
-        },
+    // A malformed body keeps the historical precedence: the recipient gate is
+    // decided first, then the decode failure.
+    let start = begin_send(SendRequestObservation {
+        decode_failed: true,
         ..send_observation()
-    };
-    assert_eq!(
-        begin_send(empty).effect,
-        ShareEffect::Fail(ShareFailure::CapsulePolicyRejected)
+    });
+    assert!(matches!(start.effect, ShareEffect::AdmitSend));
+    let (_, effect) = advance(
+        start.driver,
+        &[ShareEvent::SendAdmitted(send_admission())],
     );
+    assert_eq!(effect, ShareEffect::Fail(ShareFailure::MalformedCapsule));
+
+    // The quota order is count, pair, total, then the real plan.
+    let cases = [
+        (
+            SendAdmissionObservation {
+                inbox_count: 500,
+                quota_read: false,
+                ..send_admission()
+            },
+            ShareFailure::InboxItemLimit,
+        ),
+        (
+            SendAdmissionObservation {
+                pair_bytes: 8 * 1024 * 1024 - VALID_LEN + 1,
+                ..send_admission()
+            },
+            ShareFailure::SenderQuotaExceeded,
+        ),
+        (
+            SendAdmissionObservation {
+                total_bytes: MAX_RECIPIENT_INBOX_BYTES,
+                ..send_admission()
+            },
+            ShareFailure::RecipientQuotaExceeded,
+        ),
+    ];
+    for (admission, failure) in cases {
+        let (_, effect) = advance(
+            begin_send(send_observation()).driver,
+            &[ShareEvent::SendAdmitted(admission)],
+        );
+        assert_eq!(effect, ShareEffect::Fail(failure), "{admission:?}");
+    }
 }
 
 #[test]
@@ -786,7 +829,7 @@ fn a_done_driver_is_inert_for_every_event() {
         )
         .0,
         begin_send(SendRequestObservation {
-            decode_failed: true,
+            capsule_len: 0,
             ..send_observation()
         })
         .driver,

@@ -519,12 +519,16 @@ async fn link_and_inbox_executors_match_the_store_model() {
                     load(&db, &pre).await;
                     let guard = db.tx().await.unwrap();
                     let mut io = SendIo {
+                        sqldb: &db,
                         recipient_user_id: recipient,
                         sender_user_id: sender,
                         capsule_bytes: bytes.clone(),
                         inbox_id: id,
                         now: NOW.into(),
+                        decode_failed: false,
                         tx: Some(Faulty::new(TxSql(Some(guard)), fault)),
+                        pending_tx: None,
+                        admission_error: None,
                         insert_error: None,
                         commit_error: None,
                     };
@@ -775,9 +779,16 @@ async fn run_admission(
             break;
         };
         match run_handler_read(sql, stmt).await {
-            Ok(rows) => outcomes.push(HandlerOutcome::Number(
-                rows.first().and_then(|row| row.i64(0)),
-            )),
+            Ok(rows) => {
+                let number = rows.first().and_then(|row| row.i64(0));
+                outcomes.push(HandlerOutcome::Number(number));
+                if matches!(stmt, store::HandlerStmt::CountInbox { .. })
+                    && number.unwrap_or(0)
+                        >= vela_share_policy::driver::MAX_INBOX_ITEMS_PER_USER
+                {
+                    break;
+                }
+            }
             Err(_) => {
                 outcomes.push(HandlerOutcome::Failed);
                 break;
@@ -857,7 +868,7 @@ async fn handler_reads_match_the_store_model() {
         for fault in faults(plan.len()) {
             load(&db, &pre).await;
             let observed = run_admission(&db, &s(user(1)), &s(user(0)), fault).await;
-            let expected = model::run_handler(&pre, &plan, fault);
+            let expected = model::run_send_admission(&pre, &s(user(1)), &s(user(0)), fault);
             let case = format!("admission fault {fault:?} pre {pre:?}");
             assert_eq!(observed, expected, "{case}");
             assert_eq!(
@@ -981,6 +992,57 @@ async fn handler_reads_match_the_store_model() {
     eprintln!(
         "share handler-read conformance: {} states, {} cases, {} with an injected failure",
         counts.states, counts.cases, counts.faulted
+    );
+}
+
+/// The short-circuited admission: a full inbox stops after `COUNT(*)`, so the
+/// two byte sums are never planned, while every fault point still matches the
+/// model.
+#[tokio::test]
+async fn send_admission_stops_after_the_item_count() {
+    let db = temp_db().await;
+    let mut counts = Counts::default();
+    let mut pre = Model { users: base_users(), ..Model::default() };
+    for n in 0..vela_share_policy::driver::MAX_INBOX_ITEMS_PER_USER {
+        pre.inbox.insert(
+            format!("full-{n}"),
+            InboxRow {
+                sender: s(user(0)),
+                recipient: s(user(1)),
+                capsule: "cc".into(),
+                created_at: NOW.into(),
+            },
+        );
+    }
+    load(&db, &pre).await;
+
+    let plan = store::plan_send_admission(s(user(1)), s(user(0)));
+    for fault in faults(plan.len()) {
+        load(&db, &pre).await;
+        let observed = run_admission(&db, &s(user(1)), &s(user(0)), fault).await;
+        let expected = model::run_send_admission(&pre, &s(user(1)), &s(user(0)), fault);
+        let case = format!("item-limit admission fault {fault:?}");
+        assert_eq!(observed, expected, "{case}");
+        assert_eq!(
+            store::classify_send_admission(&observed),
+            store::classify_send_admission(&expected),
+            "{case}"
+        );
+        if fault.is_none() {
+            assert_eq!(observed.len(), 2, "{case}: the byte sums ran");
+            assert_eq!(
+                store::classify_send_admission(&observed).stage,
+                store::AdmissionStage::ItemLimit,
+                "{case}"
+            );
+        }
+        assert_eq!(snapshot(&db).await, pre, "{case}");
+        counts.case(fault);
+    }
+
+    eprintln!(
+        "share item-limit admission: 1 state, {} cases, {} with an injected failure",
+        counts.cases, counts.faulted
     );
 }
 

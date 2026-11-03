@@ -40,6 +40,7 @@ let responds_to (e: t_ShareEffect) (ev: t_ShareEvent) : bool =
   match e, ev with
   | ShareEffect_ObserveLink, ShareEvent_LinkObserved _
   | ShareEffect_ObserveDevice, ShareEvent_EkObserved _
+  | ShareEffect_AdmitSend, ShareEvent_SendAdmitted _
   | ShareEffect_InsertCapsule _, ShareEvent_SendResult _
   | ShareEffect_UpdateLinkedItem _, ShareEvent_Mutated _
   | ShareEffect_RevokeLinkedItem, ShareEvent_Mutated _
@@ -66,6 +67,10 @@ let turn_ev (#io_t: Type0) {| i: t_ShareIo io_t |} (s: io_t) (t: t_ShareTransiti
   | ShareEffect_ObserveDevice ->
       let (s', o) = f_observe_device #io_t #i s in
       let ev = ShareEvent_EkObserved o in
+      (s', step t.f_driver ev, Some ev)
+  | ShareEffect_AdmitSend ->
+      let (s', o) = f_admit_send #io_t #i s in
+      let ev = ShareEvent_SendAdmitted o in
       (s', step t.f_driver ev, Some ev)
   | ShareEffect_InsertCapsule permit ->
       let (s', o) = f_insert_capsule #io_t #i s permit in
@@ -228,6 +233,7 @@ let remaining (e: t_ShareEffect) : nat =
   match e with
   | ShareEffect_ObserveLink -> 3
   | ShareEffect_ObserveDevice -> 2
+  | ShareEffect_AdmitSend -> 2
   | ShareEffect_InsertCapsule _ -> 1
   | ShareEffect_UpdateLinkedItem _ -> 1
   | ShareEffect_RevokeLinkedItem -> 2
@@ -243,6 +249,7 @@ let step_decreases (t: t_ShareTransition) (ev: t_ShareEvent)
   match t.f_effect, ev with
   | ShareEffect_ObserveLink, ShareEvent_LinkObserved _ -> ()
   | ShareEffect_ObserveDevice, ShareEvent_EkObserved _ -> ()
+  | ShareEffect_AdmitSend, ShareEvent_SendAdmitted _ -> ()
   | ShareEffect_InsertCapsule _, ShareEvent_SendResult _ -> ()
   | ShareEffect_UpdateLinkedItem _, ShareEvent_Mutated _ -> ()
   | ShareEffect_RevokeLinkedItem, ShareEvent_Mutated _ -> ()

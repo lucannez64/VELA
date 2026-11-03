@@ -199,39 +199,47 @@ let admission_plan (recipient sender: text)
   = ()
 
 #push-options "--fuel 4 --ifuel 2"
-/// What the admission plan returns for each fault: the begin and the three
-/// reads run in order, and the first failure stops the run.
+/// What the admission run returns for each fault: the begin and the count run
+/// first; the two byte sums run only when the count passed the item quota, and
+/// the first failure stops the run.
 let admission_outcomes (d: db) (recipient sender: text) (f: option nat)
   : Lemma
-    (run_handler d (stmts_of_handler (plan_send_admission recipient sender)) 0 f ==
-     (match f with
-      | None ->
-        [HandlerOutcome_Ran;
-         HandlerOutcome_Number (Core_models.Option.Option_Some (nat_i64 (inbox_count d recipient)));
-         HandlerOutcome_Number (Core_models.Option.Option_Some (nat_i64 (inbox_pair_bytes d recipient sender)));
-         HandlerOutcome_Number (Core_models.Option.Option_Some (nat_i64 (inbox_total_bytes d recipient)))]
-      | Some 0 -> [HandlerOutcome_Failed]
-      | Some 1 -> [HandlerOutcome_Ran; HandlerOutcome_Failed]
-      | Some 2 ->
-        [HandlerOutcome_Ran;
-         HandlerOutcome_Number (Core_models.Option.Option_Some (nat_i64 (inbox_count d recipient)));
-         HandlerOutcome_Failed]
-      | Some 3 ->
-        [HandlerOutcome_Ran;
-         HandlerOutcome_Number (Core_models.Option.Option_Some (nat_i64 (inbox_count d recipient)));
-         HandlerOutcome_Number (Core_models.Option.Option_Some (nat_i64 (inbox_pair_bytes d recipient sender)));
-         HandlerOutcome_Failed]
-      | Some _ ->
-        [HandlerOutcome_Ran;
-         HandlerOutcome_Number (Core_models.Option.Option_Some (nat_i64 (inbox_count d recipient)));
-         HandlerOutcome_Number (Core_models.Option.Option_Some (nat_i64 (inbox_pair_bytes d recipient sender)));
-         HandlerOutcome_Number (Core_models.Option.Option_Some (nat_i64 (inbox_total_bytes d recipient)))]))
+    (let count = inbox_count d recipient in
+     send_admission_outcomes d recipient sender f ==
+     (if count >= send_item_limit
+      then
+        (match f with
+         | Some 0 -> [HandlerOutcome_Failed]
+         | Some 1 -> [HandlerOutcome_Ran; HandlerOutcome_Failed]
+         | _ ->
+           [HandlerOutcome_Ran;
+            HandlerOutcome_Number (Core_models.Option.Option_Some (nat_i64 count))])
+      else
+        (match f with
+         | Some 0 -> [HandlerOutcome_Failed]
+         | Some 1 -> [HandlerOutcome_Ran; HandlerOutcome_Failed]
+         | Some 2 ->
+           [HandlerOutcome_Ran;
+            HandlerOutcome_Number (Core_models.Option.Option_Some (nat_i64 count));
+            HandlerOutcome_Failed]
+         | Some 3 ->
+           [HandlerOutcome_Ran;
+            HandlerOutcome_Number (Core_models.Option.Option_Some (nat_i64 count));
+            HandlerOutcome_Number (Core_models.Option.Option_Some (nat_i64 (inbox_pair_bytes d recipient sender)));
+            HandlerOutcome_Failed]
+         | _ ->
+           [HandlerOutcome_Ran;
+            HandlerOutcome_Number (Core_models.Option.Option_Some (nat_i64 count));
+            HandlerOutcome_Number (Core_models.Option.Option_Some (nat_i64 (inbox_pair_bytes d recipient sender)));
+            HandlerOutcome_Number (Core_models.Option.Option_Some (nat_i64 (inbox_total_bytes d recipient)))])))
   = admission_plan recipient sender
 #pop-options
 
 #push-options "--fuel 4 --ifuel 2"
-/// The admission's three quota facts are the inbox's truth, and the observation
-/// names the step that failed; none of the four statements publishes anything.
+/// The admission's quota facts are the inbox's truth, and the observation
+/// names the step that failed. `Ready` carries all three true values; an
+/// `ItemLimit` rejection carries the true count when only the count ran; none
+/// of the statements publishes anything.
 let send_admission_is_honest
       (d: db) (recipient sender: text) (f: option nat)
   : Lemma
@@ -241,17 +249,28 @@ let send_admission_is_honest
       inbox_total_bytes d recipient <= maxint I64)
     (ensures
       (let o = send_admission d recipient sender f in
-       (o.f_stage = AdmissionStage_Ready <==> no_fault_in f 4) /\
+       (o.f_stage = AdmissionStage_Ready ==>
+          (inbox_count d recipient < send_item_limit /\ no_fault_in f 4)) /\
+       ((inbox_count d recipient < send_item_limit /\ no_fault_in f 4) ==>
+          o.f_stage = AdmissionStage_Ready) /\
+       (o.f_stage = AdmissionStage_ItemLimit ==>
+          (inbox_count d recipient >= send_item_limit /\ no_fault_in f 2)) /\
+       ((inbox_count d recipient >= send_item_limit /\ no_fault_in f 2) ==>
+          o.f_stage = AdmissionStage_ItemLimit) /\
        (o.f_stage = AdmissionStage_Ready ==>
           o.f_inbox_count == mk_i64 (inbox_count d recipient) /\
           o.f_pair_bytes == mk_i64 (inbox_pair_bytes d recipient sender) /\
           o.f_total_bytes == mk_i64 (inbox_total_bytes d recipient)) /\
+       (o.f_stage = AdmissionStage_ItemLimit ==>
+          o.f_inbox_count == mk_i64 (inbox_count d recipient) /\
+          o.f_pair_bytes == mk_i64 0 /\
+          o.f_total_bytes == mk_i64 0) /\
        (faulted f 0 ==> o.f_stage = AdmissionStage_Begin) /\
        (faulted f 1 ==> o.f_stage = AdmissionStage_Count) /\
-       (faulted f 2 ==>
+       (faulted f 2 /\ inbox_count d recipient < send_item_limit ==>
           o.f_stage = AdmissionStage_Pair /\
           o.f_inbox_count == mk_i64 (inbox_count d recipient)) /\
-       (faulted f 3 ==>
+       (faulted f 3 /\ inbox_count d recipient < send_item_limit ==>
           o.f_stage = AdmissionStage_Total /\
           o.f_inbox_count == mk_i64 (inbox_count d recipient) /\
           o.f_pair_bytes == mk_i64 (inbox_pair_bytes d recipient sender))))

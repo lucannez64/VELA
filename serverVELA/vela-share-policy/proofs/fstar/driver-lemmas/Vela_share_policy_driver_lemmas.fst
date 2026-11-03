@@ -25,6 +25,11 @@ let is_send (d: t_ShareDriver) : bool =
   | ShareStage_SendInsert -> true
   | _ -> false
 
+let is_send_admit (d: t_ShareDriver) : bool =
+  match d.f_stage <: t_ShareStage with
+  | ShareStage_SendAdmit -> true
+  | _ -> false
+
 let is_update_observe (d: t_ShareDriver) : bool =
   match d.f_stage <: t_ShareStage with
   | ShareStage_LinkUpdateObserve -> true
@@ -101,6 +106,10 @@ let is_ek_kind (d: t_ShareDriver) : bool =
 /// row, a committed revoke is terminal for the link, and a cleanup never
 /// precedes a revoke.
 let trace_sound (d: t_ShareDriver) : bool =
+  (not (is_send_admit d) ||
+    (is_send_kind d && d.f_admit_issued && not d.f_authorized &&
+     not d.f_effect_issued && not d.f_committed && not d.f_revoked &&
+     not d.f_cleanup_issued && not d.f_observe_issued)) &&
   (not (is_send d) ||
     (is_send_kind d && d.f_authorized && d.f_sender_authenticated &&
      d.f_effect_issued && not d.f_observe_issued && not d.f_committed &&
@@ -150,6 +159,7 @@ let trace_sound (d: t_ShareDriver) : bool =
 let trace_sound_matches_rust (d: t_ShareDriver)
   : Lemma (trace_sound d = share_state_is_sound d) =
   match d.f_stage <: t_ShareStage with
+  | ShareStage_SendAdmit -> ()
   | ShareStage_SendInsert -> ()
   | ShareStage_LinkUpdateObserve -> ()
   | ShareStage_LinkUpdateApply -> ()
@@ -202,6 +212,7 @@ let step_kind (d: t_ShareDriver) (e: t_ShareEvent)
   match e <: t_ShareEvent with
   | ShareEvent_LinkObserved _ -> ()
   | ShareEvent_EkObserved _ -> ()
+  | ShareEvent_SendAdmitted _ -> ()
   | ShareEvent_SendResult _ -> ()
   | ShareEvent_Mutated _ -> ()
   | ShareEvent_Cleaned _ -> ()
@@ -223,6 +234,7 @@ let step_after_done (d: t_ShareDriver) (e: t_ShareEvent)
   match e <: t_ShareEvent with
   | ShareEvent_LinkObserved _ -> ()
   | ShareEvent_EkObserved _ -> ()
+  | ShareEvent_SendAdmitted _ -> ()
   | ShareEvent_SendResult _ -> ()
   | ShareEvent_Mutated _ -> ()
   | ShareEvent_Cleaned _ -> ()
@@ -391,29 +403,78 @@ let last_effect_from_ek (obs: t_EkRegistrationStartObservation) (events: list t_
 
 // ── Trace properties ────────────────────────────────────────────────────────
 
-/// (1) A send effect can only be produced by the extracted `begin_send` when
-/// the authenticated-session observation is true and the real `plan_send`
-/// decision is `Deliver`; the permit carries the observed capsule length.
-let send_effect_requires_authentication_and_plan (obs: t_SendRequestObservation)
-  : Lemma (
-      match (begin_send obs).f_effect <: t_ShareEffect with
+/// (1) A send insert effect can only be produced by the extracted `step` for
+/// an admitted send when the authenticated-session fact is true and the real
+/// `plan_send` decision is `Deliver`; the permit carries the request's capsule
+/// length. The request-side gate itself emits only `AdmitSend` or a failure.
+let send_effect_requires_authentication_and_plan
+      (d: t_ShareDriver) (obs: t_SendAdmissionObservation)
+  : Lemma
+    (requires (trace_sound d /\ d.f_stage = ShareStage_SendAdmit))
+    (ensures (
+      match (step d (ShareEvent_SendAdmitted obs)).f_effect <: t_ShareEffect with
       | ShareEffect_InsertCapsule permit ->
-          (begin_send obs).f_driver.f_sender_authenticated /\
-          (begin_send obs).f_driver.f_authorized /\
-          (begin_send obs).f_driver.f_stage = ShareStage_SendInsert /\
-          permit.f_capsule_len = obs.f_policy.Vela_share_policy.f_capsule_len /\
-          Vela_share_policy.plan_send (Vela_share_policy.send_facts obs.f_policy) =
+          (step d (ShareEvent_SendAdmitted obs)).f_driver.f_sender_authenticated /\
+          (step d (ShareEvent_SendAdmitted obs)).f_driver.f_authorized /\
+          (step d (ShareEvent_SendAdmitted obs)).f_driver.f_stage = ShareStage_SendInsert /\
+          permit.f_capsule_len = d.f_capsule_len /\
+          Vela_share_policy.plan_send
+            (Vela_share_policy.send_facts
+              { Vela_share_policy.f_session_user_id_present = d.f_sender_authenticated;
+                Vela_share_policy.f_recipient_has_share_ek = true;
+                Vela_share_policy.f_capsule_len = d.f_capsule_len;
+                Vela_share_policy.f_existing_inbox_bytes = obs.f_total_bytes }) =
             Vela_share_policy.SendDecision_Deliver
-      | _ -> True) = ()
+      | _ -> True)) = ()
 
-/// The plan provenance implies the authenticated session observation itself.
-let send_effect_implies_session_observed (obs: t_SendRequestObservation)
-  : Lemma (
-      (match (begin_send obs).f_effect <: t_ShareEffect with
+/// The plan provenance implies the authenticated session fact itself.
+let send_effect_implies_session_observed
+      (d: t_ShareDriver) (obs: t_SendAdmissionObservation)
+  : Lemma
+    (requires (trace_sound d /\ d.f_stage = ShareStage_SendAdmit))
+    (ensures (
+      (match (step d (ShareEvent_SendAdmitted obs)).f_effect <: t_ShareEffect with
        | ShareEffect_InsertCapsule _ ->
-           obs.f_policy.Vela_share_policy.f_session_user_id_present = true
-       | _ -> True)) =
-  send_effect_requires_authentication_and_plan obs
+           (step d (ShareEvent_SendAdmitted obs)).f_driver.f_sender_authenticated = true
+       | _ -> True))) =
+  send_effect_requires_authentication_and_plan d obs
+
+/// An empty or oversized capsule is rejected by the request-side gate before
+/// any admission effect: no probe, transaction begin or quota aggregate can
+/// follow, and every later event is inert.
+let empty_or_oversized_capsule_performs_no_store_effect (obs: t_SendRequestObservation)
+  : Lemma
+    (requires
+      (not obs.f_decode_failed /\
+       (obs.f_capsule_len <=. mk_i64 0 \/
+        obs.f_capsule_len >. Vela_share_policy.v_MAX_CAPSULE_BYTES)))
+    (ensures (
+      let t = begin_send obs in
+      (match t.f_effect <: t_ShareEffect with
+       | ShareEffect_Fail _ -> True
+       | _ -> False) /\
+      t.f_driver.f_admit_issued = false /\
+      t.f_driver.f_stage = ShareStage_Done /\
+      (forall (events: list t_ShareEvent).
+         (run t.f_driver events).f_committed = false /\
+         (run t.f_driver events).f_admit_issued = false))) =
+  let t = begin_send obs in
+  begin_send_sound obs;
+  let d = t.f_driver in
+  if obs.f_capsule_len <=. mk_i64 0
+  then begin
+    assert (t.f_effect = ShareEffect_Fail ShareFailure_CapsulePolicyRejected);
+    assert (share_effect_is_sound d t.f_effect);
+    assert (d.f_stage = ShareStage_Done)
+  end else begin
+    assert (obs.f_capsule_len >. Vela_share_policy.v_MAX_CAPSULE_BYTES);
+    assert (t.f_effect = ShareEffect_Fail ShareFailure_CapsuleTooLarge);
+    assert (share_effect_is_sound d t.f_effect);
+    assert (d.f_stage = ShareStage_Done)
+  end;
+  assert (is_done d);
+  FStar.Classical.forall_intro
+    (FStar.Classical.move_requires (done_suffix_inert d))
 
 /// (2) A linked-item mutation effect can only be produced by a step whose
 /// observed row went through the real `plan_link_mutation` and returned
@@ -561,21 +622,30 @@ let share_trace_revoke_theorem (u: unit) (events: list t_ShareEvent)
 
 let valid_send_observation : t_SendRequestObservation =
   {
-    f_policy = {
-      Vela_share_policy.f_session_user_id_present = true;
-      Vela_share_policy.f_recipient_has_share_ek = true;
-      Vela_share_policy.f_capsule_len = mk_i64 16;
-      Vela_share_policy.f_existing_inbox_bytes = mk_i64 0;
-    };
+    f_session_user_id_present = true;
     f_decode_failed = false;
+    f_capsule_len = mk_i64 16;
+  }
+
+let valid_send_admission : t_SendAdmissionObservation =
+  {
+    f_failed = false;
+    f_recipient_can_receive = true;
     f_inbox_count = mk_i64 0;
     f_pair_bytes = mk_i64 0;
+    f_total_bytes = mk_i64 0;
+    f_quota_read = true;
   }
 
 let unauthenticated_send_observation : t_SendRequestObservation =
+  { valid_send_observation with f_session_user_id_present = false }
+
+let oversized_send_observation : t_SendRequestObservation =
   { valid_send_observation with
-    f_policy = { valid_send_observation.f_policy with
-                 Vela_share_policy.f_session_user_id_present = false } }
+    f_capsule_len = Vela_share_policy.v_MAX_CAPSULE_BYTES +! mk_i64 1 }
+
+let empty_send_observation : t_SendRequestObservation =
+  { valid_send_observation with f_capsule_len = mk_i64 0 }
 
 let live_link_observation : t_LinkMutationObservation =
   {
@@ -624,7 +694,8 @@ let rows_missing : t_RowsObservation = { f_rows = mk_u64 0 }
 let cleanup_ok : t_CleanupObservation = { f_storage_failed = false }
 
 let send_success_events : list t_ShareEvent =
-  [ ShareEvent_SendResult SendResultObservation_Committed ]
+  [ ShareEvent_SendAdmitted valid_send_admission;
+    ShareEvent_SendResult SendResultObservation_Committed ]
 
 let update_success_events : list t_ShareEvent =
   [ ShareEvent_LinkObserved live_link_observation;
@@ -653,9 +724,23 @@ let send_success_is_reachable ()
 /// An unauthenticated session still reaches `plan_send`, which rejects it.
 let unauthenticated_send_is_rejected ()
   : Lemma (
-      (begin_send unauthenticated_send_observation).f_effect =
+      (step (begin_send unauthenticated_send_observation).f_driver
+              (ShareEvent_SendAdmitted valid_send_admission)).f_effect =
         ShareEffect_Fail ShareFailure_CapsulePolicyRejected) =
   ()
+
+/// The request-side gate rejects an empty or oversized capsule before any
+/// admission effect.
+let empty_and_oversized_capsules_are_rejected_before_admission ()
+  : Lemma (
+      (begin_send empty_send_observation).f_effect =
+        ShareEffect_Fail ShareFailure_CapsulePolicyRejected /\
+      (begin_send oversized_send_observation).f_effect =
+        ShareEffect_Fail ShareFailure_CapsuleTooLarge /\
+      (begin_send empty_send_observation).f_driver.f_admit_issued = false /\
+      (begin_send oversized_send_observation).f_driver.f_admit_issued = false) =
+  empty_or_oversized_capsule_performs_no_store_effect empty_send_observation;
+  empty_or_oversized_capsule_performs_no_store_effect oversized_send_observation
 
 /// A sender-owned live link update reaches `Complete`.
 let update_success_is_reachable ()
@@ -710,7 +795,10 @@ let ek_registration_success_is_reachable ()
 /// The send effect itself carries the observed capsule length.
 let send_effect_carries_length ()
   : Lemma (
-      match (begin_send valid_send_observation).f_effect <: t_ShareEffect with
+      let t = step (begin_send valid_send_observation).f_driver
+                   (ShareEvent_SendAdmitted valid_send_admission) in
+      match t.f_effect <: t_ShareEffect with
       | ShareEffect_InsertCapsule permit -> permit.f_capsule_len = mk_i64 16
       | _ -> False) =
-  send_effect_requires_authentication_and_plan valid_send_observation
+  send_effect_requires_authentication_and_plan
+    (begin_send valid_send_observation).f_driver valid_send_admission

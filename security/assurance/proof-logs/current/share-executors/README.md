@@ -90,6 +90,8 @@ theorem:
 | `linked-limit`: the linked-items page is planned with size 0 | `linked_items_plan_facts` |
 | `rate-allow`: a counter at the budget is refused (off by one) | `rate_limit_is_honest` |
 | `rate-fail`: a failed store operation is reported as allowed | `rate_limit_is_honest` |
+| `admission-runs-sums`: a count-only item-limit stop is classified as ready | `send_admission_is_honest` |
+| `size-after-admit`: the request gate admits an empty/oversized capsule | `empty_or_oversized_capsule_performs_no_store_effect` |
 
 ## Real-database conformance
 
@@ -116,11 +118,15 @@ I/O is now planned, rendered and classified the same way, in
 `vela-share-policy/src/store.rs` (`HandlerStmt`, `HandlerOutcome`, `RateStmt`)
 with ordinary `vela-server` loops:
 
-- **`post_send`'s admission** — `plan_recipient_probe` (the recipient's
-  `share_ek` cell) and `plan_send_admission` (the transaction `Begin`, then
-  `SELECT COUNT(*)`, the pair's `SUM(LENGTH(capsule))` and the recipient's
-  `SUM(LENGTH(capsule))`), classified by `classify_recipient_probe` and
-  `classify_send_admission`.
+- **`post_send`'s admission** — the request-side gate (`begin_send` from the
+  decoded capsule length: empty and oversized bodies are rejected before any
+  store read), then `plan_recipient_probe` (the recipient's `share_ek` cell)
+  and `plan_send_admission` (the transaction `Begin`, then `SELECT COUNT(*)`,
+  and — only when the item quota passed — the pair's `SUM(LENGTH(capsule))`
+  and the recipient's `SUM(LENGTH(capsule))`), classified by
+  `classify_recipient_probe` and `classify_send_admission`. An empty or
+  oversized capsule therefore performs no probe, no begin and no aggregate;
+  a full inbox stops after the count and never runs the two byte sums.
 - **`get_recipient_ek`** — `plan_recipient_ek` (`share_ek`,
   `share_ek_since`), `classify_recipient_ek`.
 - **`get_inbox`** — `plan_inbox_cursor` (the caller's inbox row's
@@ -145,9 +151,15 @@ one statement; `read_recipient_ek`, `read_inbox_cursor`, `inbox_page_spec`,
 Exact theorems in `Vela_share_policy_handler_lemmas.fst`, for every starting
 database and every fault point:
 
-- `send_admission_is_honest` — `Ready` exactly when nothing failed, and then
-  the three quota values are the inbox's true count and byte sums; each
+- `send_admission_is_honest` — `Ready` exactly when the count passed and all
+  three reads ran, and then the three quota values are the inbox's true count
+  and byte sums; `ItemLimit` exactly when the count reached the quota, and
+  then it carries the inbox's true count with both byte sums zero; each
   failure names the step, and none of the four statements publishes anything;
+- `empty_or_oversized_capsule_performs_no_store_effect` — an empty or
+  oversized capsule makes `begin_send` emit only a failure, with
+  `admit_issued = false`; every later event is inert, so no probe, begin or
+  aggregate can follow;
 - `admission_reports_the_true_inbox_bytes` — the driver's quota decision sees
   the recipient's true pending bytes;
 - `recipient_probe_is_honest`, `probe_admits_only_a_nonempty_share_ek` — the
@@ -173,10 +185,11 @@ database and every fault point:
 Ten wave-2 mutants (two per family, plus the platform ones) each break a named
 theorem; see the table below.
 
-Real-database conformance: 1,900 share cases (850 with an injected failure) over
+Real-database conformance: 1,905 share cases (854 with an injected failure) over
 50 states, covering the probe, the admission (each of the four statements),
 the cursor, the page with and without a cursor at two page sizes, the
 linked-items listing for every caller, and the inbox sweep at three cutoffs;
+plus 5 cases (4 faulted) in one full-inbox state that pin the count-only stop;
 plus the counter test for the rate limiters against a real sled store. The send
 side covers `list_share_links` and the link sweep (120 cases, 60 faulted).
 
