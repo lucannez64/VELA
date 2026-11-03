@@ -234,16 +234,7 @@ fn tree() -> String {
 }
 
 async fn temp_db() -> TursoDb {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static N: AtomicU64 = AtomicU64::new(0);
-    let path = format!(
-        "{}/vela-vault-conformance-{}-{}.db",
-        std::env::temp_dir().display(),
-        std::process::id(),
-        N.fetch_add(1, Ordering::Relaxed)
-    );
-    let _ = std::fs::remove_file(&path);
-    TursoDb::open(&path, 1).await.unwrap()
+    TursoDb::open_temp(1).await.unwrap()
 }
 
 /// Waits until any rollback spawned by a dropped transaction has finished.

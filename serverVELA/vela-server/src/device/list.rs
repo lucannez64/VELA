@@ -172,16 +172,8 @@ mod tests {
     use crate::sqldb::Db as _;
     use crate::sqldb::{TursoDb, TursoValue};
 
-    async fn temp_i64() -> i64 {
-        use std::sync::atomic::{AtomicI64, Ordering};
-        static N: AtomicI64 = AtomicI64::new(0);
-        N.fetch_add(1, Ordering::Relaxed)
-    }
-
     async fn temp_db() -> TursoDb {
-        let path = format!("{}/vela-list-test-{}.db", std::env::temp_dir().display(), temp_i64().await);
-        let _ = std::fs::remove_file(&path);
-        TursoDb::open(&path, 1).await.unwrap()
+        TursoDb::open_temp(1).await.unwrap()
     }
 
     async fn insert_device(db: &TursoDb, id: &str, user: &str, name: &str, typ: &str, approved: bool) {

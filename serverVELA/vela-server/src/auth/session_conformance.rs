@@ -165,16 +165,7 @@ fn s(x: &str) -> String {
 }
 
 async fn temp_db() -> TursoDb {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static N: AtomicU64 = AtomicU64::new(0);
-    let path = format!(
-        "{}/vela-session-conformance-{}-{}.db",
-        std::env::temp_dir().display(),
-        std::process::id(),
-        N.fetch_add(1, Ordering::Relaxed)
-    );
-    let _ = std::fs::remove_file(&path);
-    TursoDb::open(&path, 1).await.unwrap()
+    TursoDb::open_temp(1).await.unwrap()
 }
 
 /// Waits until any rollback spawned by a dropped transaction has finished.
@@ -1228,16 +1219,7 @@ impl SessionTokens for FakeWebTokens {
 /// A state for the executors that are given one; only their own handles
 /// (sql, store, tokens) are exercised.
 async fn web_state() -> AppState {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static N: AtomicU64 = AtomicU64::new(0);
-    let path = format!(
-        "{}/vela-websession-conformance-{}-{}.db",
-        std::env::temp_dir().display(),
-        std::process::id(),
-        N.fetch_add(1, Ordering::Relaxed)
-    );
-    let _ = std::fs::remove_file(&path);
-    let turso = std::sync::Arc::new(TursoDb::open(&path, 1).await.unwrap());
+    let turso = std::sync::Arc::new(TursoDb::open_temp(1).await.unwrap());
     let store = Store::open_temp().unwrap();
     let cfg = crate::config::Config::from_env().expect("default config");
     std::sync::Arc::new(AppStateInner::new(turso, store, cfg).await.unwrap())

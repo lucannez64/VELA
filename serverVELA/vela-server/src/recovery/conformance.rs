@@ -167,16 +167,7 @@ fn opt(value: &Option<String>) -> TursoValue {
 }
 
 async fn temp_db() -> TursoDb {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static N: AtomicU64 = AtomicU64::new(0);
-    let path = format!(
-        "{}/vela-recovery-conformance-{}-{}.db",
-        std::env::temp_dir().display(),
-        std::process::id(),
-        N.fetch_add(1, Ordering::Relaxed)
-    );
-    let _ = std::fs::remove_file(&path);
-    TursoDb::open(&path, 1).await.unwrap()
+    TursoDb::open_temp(1).await.unwrap()
 }
 
 fn temp_store() -> crate::store::Store {
@@ -1595,16 +1586,7 @@ fn stored_registration_state(app: &AppState) -> PasskeyRegistration {
 /// A standalone `AppState` for the handlers' ceremony and limiter fields; the
 /// conformance test always injects its own faulted SQL and store handles.
 async fn temp_app_state() -> AppState {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static N: AtomicU64 = AtomicU64::new(0);
-    let path = format!(
-        "{}/vela-recovery-webauthn-{}-{}.db",
-        std::env::temp_dir().display(),
-        std::process::id(),
-        N.fetch_add(1, Ordering::Relaxed)
-    );
-    let _ = std::fs::remove_file(&path);
-    let turso = std::sync::Arc::new(TursoDb::open(&path, 1).await.unwrap());
+    let turso = std::sync::Arc::new(TursoDb::open_temp(1).await.unwrap());
     let store = crate::store::Store::open_temp().unwrap();
     let cfg = crate::config::Config::from_env().expect("default config");
     std::sync::Arc::new(crate::state::AppStateInner::new(turso, store, cfg).await.unwrap())

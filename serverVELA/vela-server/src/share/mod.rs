@@ -1153,16 +1153,7 @@ mod handler_regression_tests {
     }
 
     async fn test_state() -> AppState {
-        use std::sync::atomic::AtomicU64;
-        static N: AtomicU64 = AtomicU64::new(0);
-        let path = format!(
-            "{}/vela-share-send-regression-{}-{}.db",
-            std::env::temp_dir().display(),
-            std::process::id(),
-            N.fetch_add(1, Ordering::Relaxed)
-        );
-        let _ = std::fs::remove_file(&path);
-        let turso = Arc::new(TursoDb::open(&path, 1).await.unwrap());
+        let turso = Arc::new(TursoDb::open_temp(1).await.unwrap());
         let store = crate::store::Store::open_temp().unwrap();
         let cfg = crate::config::Config::from_env().expect("default config");
         Arc::new(AppStateInner::new(turso, store, cfg).await.unwrap())

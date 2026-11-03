@@ -299,7 +299,7 @@
     {
       "boundary": "bounded single-use challenge conformance across verify/enroll/web-token plus concurrent race test (each nonce bound to one purpose; signature security, multi-node stores, crash and real TTL not covered)",
       "artifacts": {
-        "serverVELA/vela-server/tests/challenge_single_use_model.rs": "d5c5eacca0e81b6cb122aeb51f4a2c890ba13246229629bc87b3a5ec9dbf0f50",
+        "serverVELA/vela-server/tests/challenge_single_use_model.rs": "5ae4494330f11200a28ab59ea65af1a8b4e41be7dc3b270382d92663b713c981",
         "serverVELA/vela-server/src/auth/challenge.rs": "9cae8f6f2f18cd96f296cde7714eded9c0b9085b6b4d74103cc6c2e79327badb",
         "serverVELA/vela-server/src/auth/verify.rs": "14921369ed53bafaa5b2408439f68a1e2822ab6b4ca53e14555b0c7f3d19197b",
         "serverVELA/vela-server/src/device/enroll.rs": "383e66aef1d5291d8483853fa9f8dc5d235d59140701917be8beef0764c95b7d",
@@ -311,7 +311,7 @@
       "artifacts": {
         "serverVELA/vela-server/tests/account_deletion_model.rs": "905f16454863187fc7edb537ccca5311c0f0a82eaf21796750fa4ebbf2099d8e",
         "serverVELA/vela-server/src/account/delete.rs": "3676236ade8d780739d77e6e067be4b0b5c9c3dc967805ef67aad357dd2c516e",
-        "serverVELA/vela-server/src/db.rs": "029918b8c6184d7782c1e2ec7d3bf03430d9c57a4ee054160e3011acf963f1fe"
+        "serverVELA/vela-server/src/db.rs": "9aa31f0637bf56e1a623baad669df6edb69c5c1b576ccbfe23c6aaa709b87704"
       }
     },
     {
@@ -715,7 +715,7 @@
         "serverVELA/vela-share-policy/proofs/fstar/send-store-lemmas/Vela_share_policy_send_store_lemmas.fst": "cdf44650ef368530d37ede5693cd5a93ac31bb1e45360ee1b5d84c979f033587",
         "serverVELA/vela-server/src/send.rs": "3e88283f5a2e7fc5be58dbb87d336bb7bda413c0ae456d796862a03636421197",
         "serverVELA/vela-server/src/send/sql.rs": "2746392c8c3e679356a5f9249861b055b30150cd71246dbcb885bb744c36f7be",
-        "serverVELA/vela-server/src/send/conformance.rs": "6a0586b206439c22e949e7a9e01240f774fd71fc06ec310f2a67ffb79e887a97",
+        "serverVELA/vela-server/src/send/conformance.rs": "28725616976d85b0f0988dcb53d1c204a29fcb03fef2ce313cc58aeb743e2401",
         "serverVELA/vela-share-policy/proofs/fstar/handler-lemmas/Vela_share_policy_handler_lemmas.fst": "02a3760f59f4771e9099ab38140aa2d0aa1a76dc642a694d635a2a7603fd2961"
       }
     },
@@ -726,7 +726,7 @@
         "serverVELA/vela-server/src/account/mod.rs": "facfa8ea6881f7d2ab2ed0f70d40a78f40116e6256ba1c47d6762ae1dea915ac",
         "serverVELA/vela-server/src/auth/challenge.rs": "9cae8f6f2f18cd96f296cde7714eded9c0b9085b6b4d74103cc6c2e79327badb",
         "serverVELA/vela-server/src/auth/logout.rs": "dd1a67af0df08111c82e18ecf53fee8b896bd8352efca22ee422a1d617ccf916",
-        "serverVELA/vela-server/src/auth/session_conformance.rs": "c81260f098a3960f71fea8e282c118a8667b4184574a57b49b766d46d79c9f4c",
+        "serverVELA/vela-server/src/auth/session_conformance.rs": "49dccb44560d619d1abc5300969e34a2f7993ceeba978aebf596bb3bf1e075af",
         "serverVELA/vela-server/src/auth/session_store.rs": "f59ccb479e636c237ddf1a564f4fb659d01f846716b952aea33c12fa07dd68b2",
         "serverVELA/vela-server/src/auth/verify.rs": "14921369ed53bafaa5b2408439f68a1e2822ab6b4ca53e14555b0c7f3d19197b",
         "serverVELA/vela-server/src/device/revoke.rs": "efcbadf0aa9097308430b7f56328ce15791f7969fabde9a9f0b6a1a5112116e9",
@@ -750,8 +750,8 @@
         "serverVELA/vela-share-policy/proofs/fstar/store-lemmas/Vela_share_policy_store_model.fst": "35900eec881a3e4163d1af66d28895a0c2b48a65ac1ba194af5e0d5ae56582ca",
         "serverVELA/vela-share-policy/proofs/fstar/store-lemmas/Vela_share_policy_store_lemmas.fst": "4a7522f0575be169246d7470f07f2d62d28a33c856e7b7ec50cb0b7a7dd7396a",
         "serverVELA/vela-server/src/share/sql.rs": "a4cd3efc6dd7ea61a16e639738c8e6c9cf0781a2735bd83ddb313c9d2efad837",
-        "serverVELA/vela-server/src/share/conformance.rs": "9dafef8355e1716441944b028dca4ea586280c478c9ba74f2a994d958ddb16fb",
-        "serverVELA/vela-server/src/share/mod.rs": "4e0c0bd36b1e23aadb14e45ab822effcb6dbd97ee5ebdeb964de6e28bdf84c66"
+        "serverVELA/vela-server/src/share/conformance.rs": "3966ebbabb548a1270c0255d56086df35e9667f9b3f1d231ddce82c8536bb130",
+        "serverVELA/vela-server/src/share/mod.rs": "3848d3cc2f235e376d8863c925ca59e2ef0d7d0f1fa313643b47d9c039c40fdf"
       }
     },
     {
@@ -766,7 +766,7 @@
         "serverVELA/vela-enrollment-policy/verify-fstar-enrollment-executors.sh": "5c8e895a66f7182d9bb74f25a0066c6c3d2e73b3b0310143aafea30c48efc26d",
         "serverVELA/vela-server/src/device/enroll.rs": "383e66aef1d5291d8483853fa9f8dc5d235d59140701917be8beef0764c95b7d",
         "serverVELA/vela-server/src/device/exec_io.rs": "51e8914a29e20dd6ca5ee875aeb341fa8efcd88995fe3ef3c0b6025c1a37cc89",
-        "serverVELA/vela-server/src/device/executor_conformance.rs": "a241625c758cffe61d922d184bfcf6c3ac2c3e92a8cba8ea57421cb48f98701d",
+        "serverVELA/vela-server/src/device/executor_conformance.rs": "151731ebff14fdfdcd4949ba44922d81e0489284b46ddffaa25f335f826ffd13",
         "serverVELA/vela-server/src/device/invitation.rs": "9ed0bb6cbc1e7de613ff2ae4df2bb93e3fbae7b5d91bcfd7398b6b995f4086b0",
         "serverVELA/vela-server/src/device/rendezvous.rs": "ae55f6fa78bd44ecf713ac21a51834ff4f1bbd8f34c7c49c90425c89961e83de"
       }
@@ -783,7 +783,7 @@
         "serverVELA/vela-recovery-policy/proofs/fstar/redemption-lemmas/Vela_recovery_policy_redemption_lemmas.fst": "eb2b898e81447b1c56dda620d462d6eab52c88c402d62b917093aad3275b5771",
         "serverVELA/vela-server/src/recovery/enroll_device.rs": "ca0a1db0e0808bf5560353b0c65407078c39ee0a282b4e9f9c706bca458a4b15",
         "serverVELA/vela-server/src/recovery/sql.rs": "1d5fc8e9b51c2424b68408a8a9b4f46e883100f51231fe07225ccf735bedaea1",
-        "serverVELA/vela-server/src/recovery/conformance.rs": "46f5baf471e9ee53867438e9ef8d558738d1d4e9e3997bc4b82bd71815f65f52",
+        "serverVELA/vela-server/src/recovery/conformance.rs": "39cb8ff3cebe09e3a125fe190034b007ffaf91714d9d055d89750c85101d8f59",
         "serverVELA/vela-recovery-policy/src/share_store.rs": "c7d54b9c957ba8eb01216cafd503d7c4f36b1529671f7bb8a4cc5bb811b2deaa",
         "serverVELA/vela-recovery-policy/proofs/fstar/extraction-share/Vela_recovery_policy.Share_store.fst": "f37c5f86cecad38eaf59ec93aec6ebfade46d87bd66a491735552999f2e48543",
         "serverVELA/vela-recovery-policy/proofs/fstar/extraction-share/Vela_recovery_policy.Redemption_store.fst": "6fd51764568dbeabadb7c7d8470d6fb5c06c319021eb866b95dcff1efbfa7b58",
@@ -822,9 +822,9 @@
         "serverVELA/vela-rekey-policy/verify-fstar-vault-executors.sh": "00f0ece51bab4a12eb647c7b1f6cd944b728a5bc4e1964ee8da35920a64f66f8",
         "serverVELA/vela-server/src/rate_limit.rs": "0277af0458c1309b6d21c28a1a6e81a174e84b631d041e6e58f8fb3029b0e0b8",
         "serverVELA/vela-server/src/device/capsule.rs": "91e6c398db2c0e2a0c311c965083a69e93532c0000ca0d35a8b44718ec3445e0",
-        "serverVELA/vela-server/src/device/list.rs": "bc44f49171d7a71482dd40c1e882a304d1c2f5530fc84b79b3c6d325dc258b50",
+        "serverVELA/vela-server/src/device/list.rs": "3b4828079efe7e2e96cf9812760d2ab6644862626c49e6f44e0fd69f6634c63c",
         "serverVELA/vela-server/src/vault/chunk.rs": "e7ff662eb69528c434cf2170756ccc00c053f4bff63a372cb0b77df5191027de",
-        "serverVELA/vela-server/src/vault/conformance.rs": "cfcca8a1498a61fa875064332ac766563cf32f42da572898cf188fb8c4dc1203",
+        "serverVELA/vela-server/src/vault/conformance.rs": "2c809597a27e90e429988172067cd92664000d56ca8a9adaa6f9ad4b40545b3f",
         "serverVELA/vela-server/src/vault/oram.rs": "c009c1f7bf0a43297c65cc26b055d1c64d32f2b2050131a976d9d048b6b1848d",
         "serverVELA/vela-server/src/vault/rekey.rs": "0b19e9dbaad027ca31ef34aad342e525c4d3dd5d0cd925ef84dbee9ff2355c2f",
         "serverVELA/vela-server/src/vault/schema.rs": "9608828e8411dad4e275a3f0d80fa4940a7ba8f0b031a448d5dae9bfb0d0401c",
@@ -841,7 +841,7 @@
         "serverVELA/vela-share-policy/proofs/fstar/extraction-driver/Vela_share_policy.Driver.fst": "2e72a55f59f44c221bad03ab877ded895bd9a5e4a21d07d262a9e147fae5e115",
         "serverVELA/vela-share-policy/proofs/fstar/driver-lemmas/Vela_share_policy_driver_lemmas.fst": "491cde2a9c20c389aa0d1bb0a3d0e334b8f78a9ff87297c79c11e4c6b6571070",
         "serverVELA/vela-share-policy/proofs/fstar/driver-composition/Vela_share_policy_driver_composition.fst": "7255c1ab66057f83aa50cd65162640750814be77f2279629333dd474d1426efc",
-        "serverVELA/vela-server/src/share/mod.rs": "4e0c0bd36b1e23aadb14e45ab822effcb6dbd97ee5ebdeb964de6e28bdf84c66"
+        "serverVELA/vela-server/src/share/mod.rs": "3848d3cc2f235e376d8863c925ca59e2ef0d7d0f1fa313643b47d9c039c40fdf"
       }
     },
     {
@@ -851,7 +851,7 @@
         "serverVELA/vela-share-policy/verify-fstar-share-interpreter.sh": "7cdad02aeca6ffb87d33ed591d1926fe842a24a73638aaeb174b91109877be8d",
         "serverVELA/vela-share-policy/proofs/fstar/extraction-interpreter/Vela_share_policy.Interpreter.fst": "2f3cb2f5878be0ae1dfa09c7c9d9931c6b40fd3d933816600e630c98cf63291b",
         "serverVELA/vela-share-policy/proofs/fstar/interpreter-lemmas/Vela_share_policy_interpreter_lemmas.fst": "500160ca62f57e0488364e7fd7277007f080f40c12b9d833c715775e876b1515",
-        "serverVELA/vela-server/src/share/mod.rs": "4e0c0bd36b1e23aadb14e45ab822effcb6dbd97ee5ebdeb964de6e28bdf84c66",
+        "serverVELA/vela-server/src/share/mod.rs": "3848d3cc2f235e376d8863c925ca59e2ef0d7d0f1fa313643b47d9c039c40fdf",
         "serverVELA/vela-server/src/share/executor.rs": "be0440e6fad58da46bc081c82571de976963161ed32ef614d426357caa1fdd06"
       }
     },
@@ -865,9 +865,9 @@
         "serverVELA/vela-share-policy/proofs/fstar/store-lemmas/Vela_share_policy_store_lemmas.fst": "4a7522f0575be169246d7470f07f2d62d28a33c856e7b7ec50cb0b7a7dd7396a",
         "serverVELA/vela-share-policy/proofs/fstar/store-lemmas/Vela_share_policy_store_model.fst": "35900eec881a3e4163d1af66d28895a0c2b48a65ac1ba194af5e0d5ae56582ca",
         "serverVELA/vela-share-policy/proofs/fstar/extraction-store/Vela_share_policy.Store.fst": "f895f79a68c421c8a149869b549c624ecc11f1b4787a52dac88a6e4e838a07ae",
-        "serverVELA/vela-server/src/share/mod.rs": "4e0c0bd36b1e23aadb14e45ab822effcb6dbd97ee5ebdeb964de6e28bdf84c66",
+        "serverVELA/vela-server/src/share/mod.rs": "3848d3cc2f235e376d8863c925ca59e2ef0d7d0f1fa313643b47d9c039c40fdf",
         "serverVELA/vela-server/src/share/sql.rs": "a4cd3efc6dd7ea61a16e639738c8e6c9cf0781a2735bd83ddb313c9d2efad837",
-        "serverVELA/vela-server/src/share/conformance.rs": "9dafef8355e1716441944b028dca4ea586280c478c9ba74f2a994d958ddb16fb",
+        "serverVELA/vela-server/src/share/conformance.rs": "3966ebbabb548a1270c0255d56086df35e9667f9b3f1d231ddce82c8536bb130",
         "serverVELA/vela-share-policy/proofs/fstar/handler-lemmas/Vela_share_policy_handler_lemmas.fst": "02a3760f59f4771e9099ab38140aa2d0aa1a76dc642a694d635a2a7603fd2961"
       }
     }

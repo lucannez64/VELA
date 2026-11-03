@@ -1140,15 +1140,10 @@ async fn one_challenge_yields_exactly_one_success_under_concurrency() {
     // right for the sequential traces but makes genuinely concurrent session
     // lookups fail on a shared connection. Give this test one connection per
     // racing request so a 500 cannot masquerade as a refusal.
-    let turso_path = format!(
-        "{}/vela-challenge-concurrency-{}.db",
-        std::env::temp_dir().display(),
-        Uuid::new_v4()
-    );
     let state: vela_server::state::AppState = Arc::new(
         AppStateInner::new(
             Arc::new(
-                TursoDb::open(&turso_path, CONCURRENCY)
+                TursoDb::open_temp(CONCURRENCY)
                     .await
                     .expect("open concurrent turso"),
             ),

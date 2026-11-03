@@ -1046,13 +1046,7 @@ mod tests {
             )
             .unwrap();
 
-        let path = format!(
-            "{}/vela-bootstrap-test-{}.db",
-            std::env::temp_dir().display(),
-            Uuid::new_v4()
-        );
-        let _ = std::fs::remove_file(&path);
-        let turso = TursoDb::open(&path, 2).await.unwrap();
+        let turso = TursoDb::open_temp(2).await.unwrap();
 
         // First run copies.
         let copied = bootstrap_stoolap_into_turso(&stoolap, &turso)
@@ -1123,8 +1117,6 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(copied_again, 0, "bootstrap must be idempotent");
-
-        let _ = std::fs::remove_file(&path);
     }
     #[test]
     fn webauthn_cred_id_unique_index_rejects_cross_account_duplicates() {

@@ -69,16 +69,7 @@ fn opt(value: &Option<String>) -> TursoValue {
 }
 
 async fn temp_state() -> AppState {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static N: AtomicU64 = AtomicU64::new(0);
-    let path = format!(
-        "{}/vela-enroll-conformance-{}-{}.db",
-        std::env::temp_dir().display(),
-        std::process::id(),
-        N.fetch_add(1, Ordering::Relaxed)
-    );
-    let _ = std::fs::remove_file(&path);
-    let turso = std::sync::Arc::new(TursoDb::open(&path, 1).await.unwrap());
+    let turso = std::sync::Arc::new(TursoDb::open_temp(1).await.unwrap());
     let store = Store::open_temp().unwrap();
     let cfg = config::Config::from_env().expect("default config");
     std::sync::Arc::new(AppStateInner::new(turso, store, cfg).await.unwrap())
