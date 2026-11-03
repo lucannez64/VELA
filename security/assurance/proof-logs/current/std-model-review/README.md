@@ -41,3 +41,31 @@ subset (no interior mutability behind `as_ref`), and every `Clone` used in
 extracted code stays derived. T7's differential tests should cover
 `is_some`/`is_none`/`unwrap_or`/`map_or` and `fold_range` on empty and
 non-empty ranges.
+
+## T5: integers and overflow
+
+Reviewed 2026-11-03. Source: `rust_primitives/Rust_primitives.Integers.fsti`
+and `Rust_primitives.Notations.fsti`. `serverVELA` builds release with the
+default `overflow-checks = false`, so plain `+` wraps in release and panics in
+debug.
+
+| Model (uses) | Definition | Rust | Verdict |
+|---|---|---|---|
+| Types `i64`, `u8`, `u64`, `u128`, `usize`, `i128`, `isize`; `mk_*`, `v`, `MkInt` (~4,800) | `int_t t` holds an F* integer refined to `[minint t, maxint t]` | Fixed-width integers | Faithful |
+| `usize`/`isize` width | Abstract `size_bits`, either 32 or 64 | Target-dependent | Faithful: proofs hold for both widths |
+| `+!`, `-!`, `*!` (166) | `add`/`sub`/`mul` with a precondition that the exact result is in range | `+`, `-`, `*` | Faithful. hax emits these for plain arithmetic, so every proof discharges "no overflow"; release wrapping and debug panics then cannot differ from the model |
+| `+.` (9, in hand-written models only) | `add_mod`, wrapping | `wrapping_add` | Faithful to `wrapping_add`. **Gap:** the send-store model uses it for `view_count + 1`, but the real statement is SQL `UPDATE sends SET view_count = view_count + 1`. SQLite does not wrap at `i64::MAX`. That needs 2^63 views of a link with no `max_views`, so it can't happen in practice. Fix in O3b: model the SQL increment as bounded (precondition) instead of wrapping |
+| `/!`, `%!` (4, `Vela_crypto.Wire`, on `u64`) | F* integer `/` and `%` with nonzero divisor | `/`, `%` | Faithful for unsigned. F* rounds signed division differently from Rust (Rust truncates toward zero), but no signed use exists; T7 should add a guard test |
+| `add_sat` (5) | Clamp to `[minint, maxint]` | `saturating_add` | Faithful |
+| `cast` | `mk_int (v x)` with a precondition that `x` fits the target | `as` | Faithful: proofs must show the value fits, where `as` is the identity. `cast_mod` (truncating) is unused |
+| `=.`, `<>.` (1,134) | F* `=` and `<>` | `==`, `!=` | Faithful |
+| `<.`, `<=.`, `>.`, `>=.` (380) | Compare `v a` and `v b` | `<`, `<=`, `>`, `>=` | Faithful |
+| `ne` | `v b <> v b`, **always false** (a hax 0.3.7 library bug) | `!=` | Not used: the 5 matches are a local variable named `ne`. T7 or the escape check should reject any future use |
+| `mul_overflow` | Overflow flag tests `< maxint` instead of `< minint` (library bug) | `overflowing_mul` | Not used |
+| `~.` (2,830) | Typeclass: `not` on `bool`, abstract `lognot` on integers | `!` | Faithful on `bool`, which is every use found |
+| `&.`, `<<!` (1 each, vault-mutation driver `oram_bucket_is_create`) | Abstract `logand` and `shift_left`, specified only by trusted lemmas; the shift amount must be in `[0, bits)` | `&`, `1u64 << index` | Faithful. The Rust guard `index >= 0 && index < 64` matches the shift precondition, and the lemmas used (`logand_lemma`, `logor_lemma`, `lognot_lemma`, `shift_left_positive_lemma`) are true for two's-complement bit operations |
+
+**Result: one modeling gap (send view-count increment, unreachable in
+practice) and two hax library bugs (`ne`, `mul_overflow`) the corpus does not
+use.** The trusted bit lemmas are the only unproved integer facts the proofs
+can rely on. They are true statements, but they stay in the trusted base.
