@@ -65,7 +65,8 @@ pub struct UserRow {
     pub auth_hash: Option<String>,
 }
 
-/// The columns a recovered-device insert writes.
+/// The columns a recovered-device insert writes. `grant` is the
+/// `recovery_grant_id` column (U-24): the grant that authorized the insert.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DeviceRow {
     pub user: String,
@@ -74,14 +75,18 @@ pub struct DeviceRow {
     pub hybrid_ek: String,
     pub hybrid_vk: String,
     pub created_at: String,
+    pub grant: Option<String>,
 }
 
 /// The modelled state: `users`, `devices` and the enrollment-grant store.
+/// `grant_index` is the UNIQUE index on `devices.recovery_grant_id`; it names
+/// at most one device per grant and is maintained by the insert.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Db {
     pub users: BTreeMap<String, UserRow>,
     pub devices: BTreeMap<String, DeviceRow>,
     pub grants: BTreeMap<String, GrantView>,
+    pub grant_index: BTreeMap<String, String>,
 }
 
 /// The SQL guard of the recovered-device insert: the user row exists, its
@@ -122,8 +127,14 @@ pub fn exec(db: &Db, stmt: &RedemptionStmt) -> Option<(u64, Db)> {
             created_at,
             epoch,
             guard,
+            grant,
         } => {
             if db.devices.contains_key(device_id) {
+                return None;
+            }
+            // The UNIQUE index on `recovery_grant_id`: a second device may not
+            // carry a grant that already named one.
+            if db.grant_index.contains_key(grant) {
                 return None;
             }
             if insert_guard(db, user, *epoch, guard) {
@@ -136,8 +147,10 @@ pub fn exec(db: &Db, stmt: &RedemptionStmt) -> Option<(u64, Db)> {
                         hybrid_ek: hybrid_ek.clone(),
                         hybrid_vk: hybrid_vk.clone(),
                         created_at: created_at.clone(),
+                        grant: Some(grant.clone()),
                     },
                 );
+                next.grant_index.insert(grant.clone(), device_id.clone());
                 Some((1, next))
             } else {
                 Some((0, next))
@@ -146,7 +159,8 @@ pub fn exec(db: &Db, stmt: &RedemptionStmt) -> Option<(u64, Db)> {
         RedemptionStmt::TakeGrant { .. }
         | RedemptionStmt::SelectAuthority { .. }
         | RedemptionStmt::PeekGrant { .. }
-        | RedemptionStmt::SelectEnrollmentAccount { .. } => None,
+        | RedemptionStmt::SelectEnrollmentAccount { .. }
+        | RedemptionStmt::SelectEnrolledDevice { .. } => None,
     }
 }
 
@@ -243,6 +257,7 @@ pub fn insert_device(
     created_at: &str,
     epoch: i64,
     guard: &GrantGuard,
+    grant: &str,
     fault: Option<usize>,
 ) -> (InsertObservation, Db) {
     let plan = redemption_store::plan_insert_device(
@@ -255,9 +270,36 @@ pub fn insert_device(
         created_at.to_string(),
         epoch,
         guard.clone(),
+        grant.to_string(),
     );
     let (outcomes, post) = run_autocommit(db, &plan, fault);
     (redemption_store::classify_insert(&outcomes), post)
+}
+
+/// `EnrollDeviceIo::replay_enrolled_device` (U-24). F*: `enrolled_device`.
+/// The lookup reads the unique grant index and answers only with the row it
+/// names for this user; the request's key material decides `key_matches`.
+pub fn enrolled_device(
+    db: &Db,
+    user: &str,
+    grant: &str,
+    hybrid_ek: &String,
+    hybrid_vk: &String,
+) -> crate::driver::ReplayObservation {
+    let row = db.grant_index.get(grant).and_then(|device_id| {
+        db.devices.get(device_id).and_then(|row| {
+            if row.user == user {
+                Some(redemption_store::EnrolledDeviceRowView {
+                    device_id: device_id.clone(),
+                    hybrid_ek: row.hybrid_ek.clone(),
+                    hybrid_vk: row.hybrid_vk.clone(),
+                })
+            } else {
+                None
+            }
+        })
+    });
+    redemption_store::classify_replay(row.as_ref(), hybrid_ek, hybrid_vk)
 }
 
 /// `EnrollDeviceIo::recheck_authority`. F*: `recheck_authority`.
@@ -1463,10 +1505,45 @@ mod tests {
             "t",
             7,
             &GrantGuard::Credential { credential_id: s("c") },
+            "g",
             None,
         );
         assert_eq!(obs, InsertObservation::Inserted);
         assert_eq!(post.devices.len(), 1);
+        // vector_replay_enrolled: the replay lookup finds exactly that device.
+        assert_eq!(
+            enrolled_device(&post, "u", "g", &s("ek"), &s("vk")),
+            crate::driver::ReplayObservation::Enrolled { key_matches: true }
+        );
+        assert_eq!(
+            enrolled_device(&post, "u", "g", &s("ek"), &s("other")),
+            crate::driver::ReplayObservation::Enrolled { key_matches: false }
+        );
+        assert_eq!(
+            enrolled_device(&post, "other", "g", &s("ek"), &s("vk")),
+            crate::driver::ReplayObservation::Absent
+        );
+        assert_eq!(
+            enrolled_device(&pre, "u", "g", &s("ek"), &s("vk")),
+            crate::driver::ReplayObservation::Absent
+        );
+        // A second insert with the same grant is refused by the unique index.
+        let (obs, again) = insert_device(
+            &post,
+            "d2",
+            "u",
+            "name",
+            "kind",
+            "ek",
+            "vk",
+            "t",
+            7,
+            &GrantGuard::Credential { credential_id: s("c") },
+            "g",
+            None,
+        );
+        assert_eq!(obs, InsertObservation::Failed);
+        assert_eq!(again, post);
         // vector_insert_stale_epoch: a stale epoch skips the insert.
         let (obs, post) = insert_device(
             &pre,
@@ -1479,6 +1556,7 @@ mod tests {
             "t",
             8,
             &GrantGuard::Credential { credential_id: s("c") },
+            "g",
             None,
         );
         assert_eq!(obs, InsertObservation::Skipped);

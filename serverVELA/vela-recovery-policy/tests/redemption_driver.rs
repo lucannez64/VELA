@@ -4,11 +4,12 @@
 //! Handler integration remains in `vela-server/tests`.
 
 use vela_recovery_policy::driver::{
-    begin_redemption, on_authority_rechecked, on_final_policy_observed, on_grant_consumed,
-    on_insert_completed, redemption_effect_is_sound, redemption_state_is_sound,
-    AuthorityRecheckObservation, ConsumedGrantObservation, ConsumptionObservation,
-    FinalPolicyObservation, InsertObservation, RedemptionDriver, RedemptionEffect, RedemptionEvent,
-    RedemptionFailure, RedemptionStage, RekeyObservation,
+    begin_redemption, begin_redemption_from, begin_redemption_replay, on_authority_rechecked,
+    on_final_policy_observed, on_grant_consumed, on_insert_completed, on_replay_completed,
+    redemption_effect_is_sound, redemption_state_is_sound, AuthorityRecheckObservation,
+    ConsumedGrantObservation, ConsumptionObservation, FinalPolicyObservation, InsertObservation,
+    RedemptionDriver, RedemptionEffect, RedemptionEvent, RedemptionFailure, RedemptionStage,
+    RedemptionStart, RekeyObservation, ReplayObservation,
 };
 use vela_recovery_policy::{
     plan_enrollment_preflight, EnrollmentAccountFacts, EnrollmentAccountObservation,
@@ -97,6 +98,7 @@ fn advance(
             }
             RedemptionEvent::Insert(observation) => on_insert_completed(driver, *observation),
             RedemptionEvent::Recheck(observation) => on_authority_rechecked(driver, *observation),
+            RedemptionEvent::Replayed(observation) => on_replay_completed(driver, *observation),
         };
         assert!(
             redemption_effect_is_sound(transition.driver, transition.effect),
@@ -309,6 +311,7 @@ fn insert_success_is_terminal_and_no_later_event_restores_or_succeeds_again() {
             }
             RedemptionEvent::Insert(observation) => on_insert_completed(driver, *observation),
             RedemptionEvent::Recheck(observation) => on_authority_rechecked(driver, *observation),
+            RedemptionEvent::Replayed(observation) => on_replay_completed(driver, *observation),
         };
         assert_eq!(transition.effect, RedemptionEffect::Idle, "{event:?}");
         assert_eq!(transition.driver, driver, "{event:?}");
@@ -421,6 +424,7 @@ fn every_stage_ignores_every_out_of_order_event() {
                 (RedemptionEvent::FinalPolicy(_), RedemptionStage::FinalPolicy) => true,
                 (RedemptionEvent::Insert(_), RedemptionStage::Insert) => true,
                 (RedemptionEvent::Recheck(_), RedemptionStage::Recheck) => true,
+                (RedemptionEvent::Replayed(_), RedemptionStage::Replay) => true,
                 _ => false,
             };
             let transition = match &event {
@@ -431,6 +435,9 @@ fn every_stage_ignores_every_out_of_order_event() {
                 RedemptionEvent::Insert(observation) => on_insert_completed(driver, *observation),
                 RedemptionEvent::Recheck(observation) => {
                     on_authority_rechecked(driver, *observation)
+                }
+                RedemptionEvent::Replayed(observation) => {
+                    on_replay_completed(driver, *observation)
                 }
             };
             if !in_stage {
@@ -478,6 +485,9 @@ fn no_reachable_transition_authorizes_an_insert_without_both_permits() {
                     RedemptionEvent::Recheck(observation) => {
                         on_authority_rechecked(*driver, *observation)
                     }
+                    RedemptionEvent::Replayed(observation) => {
+                        on_replay_completed(*driver, *observation)
+                    }
                 };
                 if let RedemptionEffect::Insert(permit) = transition.effect {
                     assert!(
@@ -491,10 +501,14 @@ fn no_reachable_transition_authorizes_an_insert_without_both_permits() {
                 }
                 if let RedemptionEffect::Complete = transition.effect {
                     assert!(
-                        transition.driver.consumed_matched
-                            && transition.driver.permit_issued
-                            && transition.driver.stage == RedemptionStage::Done
-                            && transition.driver.insert_succeeded,
+                        transition.driver.stage == RedemptionStage::Done
+                            && ((!transition.driver.replay
+                                && transition.driver.consumed_matched
+                                && transition.driver.permit_issued
+                                && transition.driver.insert_succeeded)
+                                || (transition.driver.replay
+                                    && transition.driver.replay_succeeded
+                                    && !transition.driver.insert_succeeded)),
                         "success emitted without both authority facts: {driver:?}"
                     );
                 }
@@ -540,5 +554,144 @@ fn all_events() -> Vec<RedemptionEvent> {
         RedemptionEvent::Recheck(AuthorityRecheckObservation::CommitmentRevoked),
         RedemptionEvent::Recheck(AuthorityRecheckObservation::CredentialReplaced),
         RedemptionEvent::Recheck(AuthorityRecheckObservation::StillRotating),
+        RedemptionEvent::Replayed(ReplayObservation::Enrolled { key_matches: true }),
+        RedemptionEvent::Replayed(ReplayObservation::Enrolled { key_matches: false }),
+        RedemptionEvent::Replayed(ReplayObservation::Absent),
     ]
+}
+
+#[test]
+fn the_replay_start_asks_only_for_the_device_lookup() {
+    let transition = begin_redemption_replay();
+    assert_eq!(transition.effect, RedemptionEffect::Replay);
+    assert_eq!(transition.driver.stage, RedemptionStage::Replay);
+    assert!(transition.driver.replay);
+    assert!(transition.driver.replay_attempted);
+    assert!(!transition.driver.replay_succeeded);
+    assert!(!transition.driver.consumed_matched);
+    assert!(!transition.driver.insert_attempted);
+    assert!(!transition.driver.insert_succeeded);
+    assert!(!transition.driver.restored);
+    assert!(redemption_state_is_sound(transition.driver));
+    assert!(redemption_effect_is_sound(
+        transition.driver,
+        transition.effect
+    ));
+
+    // The generic entry point is the same transitions for both starts.
+    assert_eq!(
+        begin_redemption_from(RedemptionStart::Replay),
+        transition
+    );
+    assert_eq!(
+        begin_redemption_from(RedemptionStart::Redeem(credential_ready())),
+        begin_redemption(credential_ready())
+    );
+}
+
+#[test]
+fn only_a_matching_row_completes_the_replay() {
+    for (observation, expected) in [
+        (
+            ReplayObservation::Enrolled { key_matches: true },
+            RedemptionEffect::Complete,
+        ),
+        (
+            ReplayObservation::Enrolled { key_matches: false },
+            RedemptionEffect::Fail(RedemptionFailure::GrantUnavailable),
+        ),
+        (
+            ReplayObservation::Absent,
+            RedemptionEffect::Fail(RedemptionFailure::GrantUnavailable),
+        ),
+    ] {
+        let (driver, effect) = advance(
+            begin_redemption_replay().driver,
+            &[RedemptionEvent::Replayed(observation)],
+        );
+        assert_eq!(effect, expected, "{observation:?}");
+        assert_eq!(
+            driver.replay_succeeded,
+            observation == (ReplayObservation::Enrolled { key_matches: true }),
+            "{observation:?}"
+        );
+        assert!(!driver.insert_succeeded, "{observation:?}");
+        assert!(!driver.insert_attempted, "{observation:?}");
+        assert!(!driver.restored, "{observation:?}");
+        assert_eq!(driver.stage, RedemptionStage::Done, "{observation:?}");
+    }
+}
+
+#[test]
+fn a_replay_never_consumes_inserts_or_restores_and_never_repeats_its_lookup() {
+    let (mut driver, effect) = advance(
+        begin_redemption_replay().driver,
+        &[RedemptionEvent::Replayed(ReplayObservation::Enrolled {
+            key_matches: true,
+        })],
+    );
+    assert_eq!(effect, RedemptionEffect::Complete);
+    // A replay success is inert for every later event, like any verdict.
+    for event in all_events() {
+        let (after, effect) = advance(driver, &[event]);
+        assert_eq!(effect, RedemptionEffect::Idle, "{event:?}");
+        assert_eq!(after, driver, "{event:?}");
+    }
+
+    // Even before the lookup answers, only the lookup is reachable: every
+    // redemption event is ignored and the driver stays a replay.
+    driver = begin_redemption_replay().driver;
+    for event in all_events() {
+        if matches!(event, RedemptionEvent::Replayed(_)) {
+            continue;
+        }
+        let (after, effect) = advance(driver, &[event]);
+        assert_eq!(effect, RedemptionEffect::Idle, "{event:?}");
+        assert_eq!(after, driver, "{event:?}");
+    }
+    let (_, effect) = advance(
+        driver,
+        &[RedemptionEvent::Replayed(ReplayObservation::Absent)],
+    );
+    assert_eq!(
+        effect,
+        RedemptionEffect::Fail(RedemptionFailure::GrantUnavailable)
+    );
+}
+
+#[test]
+fn the_redeem_start_never_reaches_the_replay_stage() {
+    let mut frontier = vec![begin_redemption(credential_ready()).driver];
+    let events = all_events();
+    for _ in 0..8 {
+        let mut next = Vec::new();
+        for driver in &frontier {
+            assert_ne!(driver.stage, RedemptionStage::Replay);
+            for event in &events {
+                let transition = match event {
+                    RedemptionEvent::Consumed(observation) => {
+                        on_grant_consumed(*driver, *observation)
+                    }
+                    RedemptionEvent::FinalPolicy(observation) => {
+                        on_final_policy_observed(*driver, *observation)
+                    }
+                    RedemptionEvent::Insert(observation) => {
+                        on_insert_completed(*driver, *observation)
+                    }
+                    RedemptionEvent::Recheck(observation) => {
+                        on_authority_rechecked(*driver, *observation)
+                    }
+                    RedemptionEvent::Replayed(observation) => {
+                        on_replay_completed(*driver, *observation)
+                    }
+                };
+                assert_ne!(transition.effect, RedemptionEffect::Replay);
+                assert!(!transition.driver.replay);
+                if !next.contains(&transition.driver) {
+                    next.push(transition.driver);
+                }
+            }
+        }
+        frontier = next;
+    }
 }

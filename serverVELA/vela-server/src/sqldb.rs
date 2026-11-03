@@ -155,6 +155,10 @@ impl TursoDb {
             // U-20: a committed enrollment row records the grant that created
             // it, so a lost result record can still be recovered.
             "ALTER TABLE devices ADD COLUMN enrollment_grant_id TEXT",
+            // U-24: a device enrolled from a recovery grant records that
+            // grant, so a retry after a lost reply can find the device it
+            // created instead of failing on the consumed grant.
+            "ALTER TABLE devices ADD COLUMN recovery_grant_id TEXT",
             "ALTER TABLE web_sessions ADD COLUMN key_epoch INTEGER",
         ];
         for sql in ALTERS {
@@ -320,6 +324,7 @@ CREATE TABLE IF NOT EXISTS devices (
     device_name TEXT NOT NULL DEFAULT 'Desktop Device', device_type TEXT NOT NULL DEFAULT 'desktop',
     last_active TEXT, hybrid_ek TEXT NOT NULL, hybrid_vk TEXT NOT NULL, enrolled_by TEXT,
     enrollment_grant_id TEXT,
+    recovery_grant_id TEXT,
     rms_capsule TEXT, rms_capsule_epoch INTEGER, rekey_capable INTEGER NOT NULL DEFAULT 0,
     revoked INTEGER NOT NULL DEFAULT 0, revoked_at TEXT, revoked_by TEXT,
     created_at TEXT NOT NULL);
@@ -375,6 +380,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_oram_buckets_user_tree_bucket_epoch
     ON oram_buckets(user_id, tree_id, bucket_index, epoch);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_enrollment_grant_id
     ON devices(enrollment_grant_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_recovery_grant_id
+    ON devices(recovery_grant_id);
 ";
 
 #[cfg(test)]

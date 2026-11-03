@@ -13,9 +13,13 @@
 //!   any later effect, and the handler renders the recorded error unchanged;
 //! - the loop stops at the first terminal effect and performs nothing after it
 //!   (a `RestoreAndFail` performs its one restoration, then stops);
-//! - the final driver is `run_from_ready ready events` for the observations the
+//! - the final driver is `run_from_start start events` for the observations the
 //!   executor actually returned, so every per-request redemption theorem holds
 //!   for the real handler.
+//!
+//! The loop covers both starts: `Redeem`, which consumes a live grant, and the
+//! U-24 `Replay`, which only looks up the device row an already-consumed grant
+//! created.
 //!
 //! The server's expansion differs only by `.await` after each executor call.
 //! What stays outside the proof is each executor method: that it runs the I/O
@@ -23,9 +27,9 @@
 
 use crate::driver::{
     AuthorityRecheckObservation, ConsumptionObservation, FinalPolicyObservation,
-    InsertObservation, RedemptionEffect, RedemptionInsertPermit, RedemptionTransition,
+    InsertObservation, RedemptionEffect, RedemptionInsertPermit, RedemptionStart,
+    RedemptionTransition, ReplayObservation,
 };
-use crate::ReadyToConsume;
 
 use crate::interpreter_support::executor_trait;
 
@@ -61,21 +65,23 @@ executor_trait! {
         fn final_policy(&mut self) -> Option<FinalPolicyObservation>;
         fn insert_device(&mut self, permit: RedemptionInsertPermit) -> Option<InsertObservation>;
         fn recheck_authority(&mut self) -> Option<AuthorityRecheckObservation>;
+        fn replay_enrolled_device(&mut self) -> Option<ReplayObservation>;
         fn restore_grant(&mut self) -> Option<()>;
     }
 }
 
 /// The interpreter body, shared verbatim by [`run_redemption`] and the async
-/// handler. `$io` names a mutable executor; pass `await` as the last argument
-/// to await each executor call.
+/// handler. `$io` names a mutable executor; `$start` is the request's
+/// [`RedemptionStart`]; pass `await` as the last argument to await each
+/// executor call.
 #[macro_export]
 macro_rules! redemption_interpreter {
-    ($io:ident, $ready:expr $(, $aw:ident)?) => {{
+    ($io:ident, $start:expr $(, $aw:ident)?) => {{
         use $crate::driver::{
-            begin_redemption as __begin, step as __step, RedemptionEffect as __E,
+            begin_redemption_from as __begin, step as __step, RedemptionEffect as __E,
             RedemptionEvent as __V,
         };
-        let mut transition = __begin($ready);
+        let mut transition = __begin($start);
         let mut restore_done = false;
         let mut aborted = false;
         for _ in 0..$crate::redemption_interpreter::REDEMPTION_MAX_EFFECTS {
@@ -113,6 +119,13 @@ macro_rules! redemption_interpreter {
                             transition
                         }
                     },
+                    __E::Replay => match $io.replay_enrolled_device()$(.$aw)? {
+                        Some(observation) => __step(transition.driver, __V::Replayed(observation)),
+                        None => {
+                            aborted = true;
+                            transition
+                        }
+                    },
                     __E::RestoreAndFail(_) => {
                         match $io.restore_grant()$(.$aw)? {
                             Some(_) => restore_done = true,
@@ -133,17 +146,18 @@ macro_rules! redemption_interpreter {
 /// extracts and F* checks.
 pub fn run_redemption<Io: RedemptionIo>(
     io: &mut Io,
-    ready: ReadyToConsume,
+    start: RedemptionStart,
 ) -> Option<RedemptionTransition> {
-    crate::redemption_interpreter!(io, ready)
+    crate::redemption_interpreter!(io, start)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::driver::{
-        begin_redemption, step, ConsumedGrantObservation, RedemptionEvent, RedemptionFailure,
+        begin_redemption_from, step, ConsumedGrantObservation, RedemptionEvent, RedemptionFailure,
     };
+    use crate::ReadyToConsume;
 
     fn matching_consumed_grant(epoch: i64, possession: bool) -> ConsumedGrantObservation {
         ConsumedGrantObservation {
@@ -167,6 +181,8 @@ mod tests {
         restore_fails: bool,
         /// Whether the ordinary calls abort instead of returning an observation.
         abort_at: Option<usize>,
+        /// Whether the replay lookup aborts with a storage error.
+        replay_aborts: bool,
     }
 
     impl Scripted {
@@ -275,6 +291,19 @@ mod tests {
             Some(observation)
         }
 
+        fn replay_enrolled_device(&mut self) -> Option<ReplayObservation> {
+            if self.replay_aborts {
+                return None;
+            }
+            let observation = match self.record(RedemptionEffect::Replay)? % 3 {
+                0 => ReplayObservation::Enrolled { key_matches: true },
+                1 => ReplayObservation::Enrolled { key_matches: false },
+                _ => ReplayObservation::Absent,
+            };
+            self.events.push(RedemptionEvent::Replayed(observation));
+            Some(observation)
+        }
+
         fn restore_grant(&mut self) -> Option<()> {
             self.calls.push(RedemptionEffect::RestoreAndFail(
                 RedemptionFailure::GrantChanged,
@@ -291,17 +320,26 @@ mod tests {
     /// interpreter called exactly the emitted effects, in order, performed the
     /// restoration at most once, and stopped at the verdict.
     fn check(script: Vec<u8>, abort_at: Option<usize>, restore_fails: bool) -> Option<RedemptionEffect> {
-        check_with(ready(7, false), script, abort_at, restore_fails)
+        check_from(
+            RedemptionStart::Redeem(ready(7, false)),
+            script,
+            abort_at,
+            restore_fails,
+            None,
+        )
     }
 
-    fn check_with(
-        permit: ReadyToConsume,
+    fn check_from(
+        start: RedemptionStart,
         script: Vec<u8>,
         abort_at: Option<usize>,
         restore_fails: bool,
+        replay_aborts: Option<bool>,
     ) -> Option<RedemptionEffect> {
-        let epoch = permit.epoch();
-        let possession = permit.possession();
+        let (epoch, possession) = match start {
+            RedemptionStart::Redeem(permit) => (permit.epoch(), permit.possession()),
+            RedemptionStart::Replay => (crate::INITIAL_EPOCH, false),
+        };
         let mut io = Scripted {
             script,
             calls: vec![],
@@ -310,9 +348,10 @@ mod tests {
             possession,
             restore_fails,
             abort_at,
+            replay_aborts: replay_aborts.unwrap_or(false),
         };
-        let result = run_redemption(&mut io, permit);
-        let mut t = begin_redemption(permit);
+        let result = run_redemption(&mut io, start);
+        let mut t = begin_redemption_from(start);
         let mut event_index = 0;
         let mut restored = false;
         for (index, call) in io.calls.iter().enumerate() {
@@ -339,7 +378,7 @@ mod tests {
         }
         assert_eq!(event_index, io.events.len());
         assert!(io.calls.len() <= REDEMPTION_MAX_EFFECTS);
-        if abort_at.is_some() || (restore_fails && restored) {
+        if abort_at.is_some() || (restore_fails && restored) || replay_aborts.unwrap_or(false) {
             assert!(result.is_none(), "an aborted effect must not produce a verdict");
         } else {
             let result = result.expect("no abort, so a verdict must be reached");
@@ -367,8 +406,10 @@ mod tests {
                 possession,
                 restore_fails: false,
                 abort_at: None,
+                replay_aborts: false,
             };
-            let result = run_redemption(&mut io, permit).expect("inserted grant completes");
+            let result = run_redemption(&mut io, RedemptionStart::Redeem(permit))
+                .expect("inserted grant completes");
             assert_eq!(result.effect, RedemptionEffect::Complete);
             assert_eq!(io.calls.len(), 3);
         }
@@ -397,8 +438,10 @@ mod tests {
             possession: true,
             restore_fails: false,
             abort_at: None,
+            replay_aborts: false,
         };
-        let result = run_redemption(&mut io, ready(7, true)).expect("recheck reaches a verdict");
+        let result = run_redemption(&mut io, RedemptionStart::Redeem(ready(7, true)))
+            .expect("recheck reaches a verdict");
         assert_eq!(io.calls.len(), 4);
         assert_eq!(io.calls[3], RedemptionEffect::Recheck);
         assert!(redemption_effect_is_terminal(result.effect));
@@ -427,12 +470,73 @@ mod tests {
             possession: false,
             restore_fails: false,
             abort_at: None,
+            replay_aborts: false,
         };
-        let result = run_redemption(&mut io, ready(7, false)).unwrap();
+        let result = run_redemption(&mut io, RedemptionStart::Redeem(ready(7, false))).unwrap();
         assert!(matches!(
             result.effect,
             RedemptionEffect::Fail(RedemptionFailure::GrantUnavailable)
         ));
         assert_eq!(io.calls, vec![RedemptionEffect::Consume]);
+    }
+
+    /// U-24: the replay start performs exactly one lookup and no consumption,
+    /// insert or restoration, whatever the lookup observed.
+    #[test]
+    fn the_replay_start_performs_only_the_device_lookup() {
+        for (kind, expected) in [
+            (0u8, RedemptionEffect::Complete),
+            (
+                1,
+                RedemptionEffect::Fail(RedemptionFailure::GrantUnavailable),
+            ),
+            (
+                2,
+                RedemptionEffect::Fail(RedemptionFailure::GrantUnavailable),
+            ),
+        ] {
+            let effect = check_from(
+                RedemptionStart::Replay,
+                vec![kind; REDEMPTION_MAX_EFFECTS],
+                None,
+                false,
+                None,
+            );
+            assert_eq!(effect, Some(expected), "kind {kind}");
+        }
+
+        // The one call is the lookup; a storage failure aborts the request and
+        // leaves no verdict, exactly like every other unobserved effect.
+        for kind in 0..3u8 {
+            assert_eq!(
+                check_from(
+                    RedemptionStart::Replay,
+                    vec![kind; REDEMPTION_MAX_EFFECTS],
+                    None,
+                    false,
+                    Some(true),
+                ),
+                None
+            );
+        }
+
+        // The replay driver never reaches the consume/insert stages, so the
+        // loop calls the lookup exactly once and then stops at the verdict.
+        let mut io = Scripted {
+            script: vec![0; REDEMPTION_MAX_EFFECTS],
+            calls: vec![],
+            events: vec![],
+            epoch: crate::INITIAL_EPOCH,
+            possession: false,
+            restore_fails: false,
+            abort_at: None,
+            replay_aborts: false,
+        };
+        let result = run_redemption(&mut io, RedemptionStart::Replay).unwrap();
+        assert_eq!(io.calls, vec![RedemptionEffect::Replay]);
+        assert_eq!(result.effect, RedemptionEffect::Complete);
+        assert!(result.driver.replay_succeeded);
+        assert!(!result.driver.insert_succeeded);
+        assert!(!result.driver.insert_attempted);
     }
 }

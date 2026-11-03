@@ -9,7 +9,9 @@ module Vela_recovery_policy_redemption_model
 ///   non-empty" (both the insert guard and the authority recheck treat `''`
 ///   as no commitment).
 /// - `devices` is keyed by its `UNIQUE` id; the guarded insert adds one row
-///   when the user guard holds and errors on a duplicate id.
+///   when the user guard holds and errors on a duplicate id. The model keeps
+///   the UNIQUE `recovery_grant_id` index as `grant_index`, so a grant names at
+///   most one device and the U-24 replay lookup is a single index read.
 /// - the enrollment-grant store maps the exact grant key to a typed grant.
 ///   `get_del` is read-and-delete; `set_ex` overwrites.
 /// - `f = Some k` makes the k-th statement (from 0) fail: any statement may
@@ -47,7 +49,8 @@ type user_row = {
   us_auth: option text;
 }
 
-/// The columns a recovered-device insert writes.
+/// The columns a recovered-device insert writes. `dv_grant` is the
+/// `recovery_grant_id` column (U-24).
 type device_row = {
   dv_user: text;
   dv_name: text;
@@ -55,6 +58,7 @@ type device_row = {
   dv_ek: text;
   dv_vk: text;
   dv_created: text;
+  dv_grant: option text;
 }
 
 type tbl (a: Type) = text -> option a
@@ -66,6 +70,9 @@ noeq type db = {
   users: tbl user_row;
   devices: tbl device_row;
   grants: tbl grant;
+  /// The UNIQUE index on `devices.recovery_grant_id`: a grant names at most
+  /// one device id. Maintained by the insert.
+  grant_index: tbl text;
 }
 
 /// The SQL guard: the user row exists, its epoch matches, no rotation is
@@ -94,11 +101,14 @@ let exec (d: db) (s: t_RedemptionStmt) : option (u64 & db) =
   | RedemptionStmt_InsertDevice
     { f_device_id = id; f_user = user; f_device_name = name; f_device_type = kind;
       f_hybrid_ek = ek; f_hybrid_vk = vk; f_created_at = created;
-      f_epoch = epoch; f_guard = guard } ->
+      f_epoch = epoch; f_guard = guard; f_grant = grant } ->
     (match d.devices id with
      | Some _ -> None
      | None ->
-       if insert_guard d user epoch guard
+       // The UNIQUE recovery_grant_id index refuses a second device per grant.
+       if Some? (d.grant_index grant)
+       then None
+       else if insert_guard d user epoch guard
        then
          let row : device_row = {
            dv_user = user;
@@ -107,8 +117,11 @@ let exec (d: db) (s: t_RedemptionStmt) : option (u64 & db) =
            dv_ek = ek;
            dv_vk = vk;
            dv_created = created;
+           dv_grant = Some grant;
          } in
-         Some (mk_u64 1, { d with devices = upd d.devices id (Some row) })
+         Some (mk_u64 1,
+               { d with devices = upd d.devices id (Some row);
+                        grant_index = upd d.grant_index grant (Some id) })
        else Some (mk_u64 0, d))
   | _ -> None
 
@@ -200,10 +213,10 @@ let take_grant (d: db) (key: text) (preflight: grant) (f: option nat)
 /// `EnrollDeviceIo::insert_device`.
 let insert_device
       (d: db)
-      (device_id user name kind ek vk created: text)
+      (device_id user name kind ek vk created grant: text)
       (epoch: i64) (guard: t_GrantGuard) (f: option nat)
   : (Vela_recovery_policy.Driver.t_InsertObservation & db) =
-  let r = run_autocommit d (stmts_of (plan_insert_device device_id user name kind ek vk created epoch guard)) 0 f in
+  let r = run_autocommit d (stmts_of (plan_insert_device device_id user name kind ek vk created epoch guard grant)) 0 f in
   (classify_insert (slice_of (fst r)), snd r)
 
 /// `EnrollDeviceIo::recheck_authority`.
@@ -221,6 +234,34 @@ let restore_grant (d: db) (key value: text) (g: grant) (f: option nat) : option 
   match fst r with
   | [WriteOutcome_Applied _] -> Some (snd r)
   | _ -> None
+
+/// `EnrollDeviceIo::replay_enrolled_device` (U-24): read the unique grant
+/// index and report the row it names for this user, if any. Nothing changes.
+let enrolled_device_row (d: db) (user grant: text)
+  : option t_EnrolledDeviceRowView =
+  match d.grant_index grant with
+  | None -> None
+  | Some id ->
+    (match d.devices id with
+     | None -> None
+     | Some row ->
+       if row.dv_user = user
+       then Some ({ f_device_id = id;
+                    f_hybrid_ek = row.dv_ek;
+                    f_hybrid_vk = row.dv_vk } <: t_EnrolledDeviceRowView)
+       else None)
+
+/// The extracted replay classifier applied to that row and the request's
+/// (re-encoded) key material.
+let core_enrolled_device_row (o: option t_EnrolledDeviceRowView)
+  : Core_models.Option.t_Option t_EnrolledDeviceRowView =
+  match o with
+  | Some row -> Core_models.Option.Option_Some row
+  | None -> Core_models.Option.Option_None
+
+let enrolled_device (d: db) (user grant ek vk: text)
+  : Vela_recovery_policy.Driver.t_ReplayObservation =
+  classify_replay (core_enrolled_device_row (enrolled_device_row d user grant)) ek vk
 
 // ── The pre-driver grant read and the enrollment preflight account read ────
 

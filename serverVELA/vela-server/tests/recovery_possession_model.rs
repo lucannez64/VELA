@@ -109,6 +109,9 @@ struct Attempt {
 struct Grant {
     epoch: i64,
     alive: bool,
+    /// U-24: a consumed grant whose device row committed still answers a retry
+    /// with the same key material from the row it created.
+    enrolled: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -150,14 +153,29 @@ impl Model {
                 } else if !self.committed || !honest || attempt.epoch != self.epoch {
                     StatusCode::UNAUTHORIZED
                 } else {
-                    self.grants.push(Grant { epoch: self.epoch, alive: true });
+                    self.grants.push(Grant {
+                        epoch: self.epoch,
+                        alive: true,
+                        enrolled: false,
+                    });
                     StatusCode::OK
                 }
             }
             Command::Enroll { slot } => {
-                let Some(grant) = self.grants.get_mut(slot).filter(|g| g.alive) else {
+                let Some(grant) = self.grants.get_mut(slot) else {
                     return Some(StatusCode::UNAUTHORIZED);
                 };
+                if !grant.alive {
+                    // U-24: the grant was already consumed. A retry with the
+                    // same key material recovers the device the first request
+                    // created instead of failing, and writes no second row.
+                    // This test presents the same keys on every Enroll.
+                    return Some(if grant.enrolled {
+                        StatusCode::OK
+                    } else {
+                        StatusCode::UNAUTHORIZED
+                    });
+                }
                 // Preflight order: epoch mismatch, rotation paused, commitment
                 // missing. None of them spends the grant.
                 if grant.epoch != self.epoch {
@@ -168,6 +186,7 @@ impl Model {
                     StatusCode::UNAUTHORIZED
                 } else {
                     grant.alive = false;
+                    grant.enrolled = true;
                     self.devices += 1;
                     StatusCode::OK
                 }

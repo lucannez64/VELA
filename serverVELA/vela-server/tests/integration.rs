@@ -1079,26 +1079,53 @@ async fn enroll_device_redeems_grant_exactly_once() {
         app.clone().oneshot(request(enroll_body.clone())),
         app.clone().oneshot(request(enroll_body.clone())),
     );
-    let statuses = [first_resp.unwrap().status(), second_resp.unwrap().status()];
-    assert_eq!(
-        statuses
-            .iter()
-            .filter(|status| **status == StatusCode::OK)
-            .count(),
-        1,
-        "exactly one racing redemption must enroll"
+    let first_resp = first_resp.unwrap();
+    let second_resp = second_resp.unwrap();
+    let statuses = [first_resp.status(), second_resp.status()];
+    let ok_count = statuses
+        .iter()
+        .filter(|status| **status == StatusCode::OK)
+        .count();
+    // U-24: one request redeems the grant and the other either loses the take
+    // (401) or arrives after the row committed and replays it (200, same
+    // device). Exactly one device row is created either way.
+    assert!(
+        ok_count >= 1 && ok_count <= 2,
+        "unexpected statuses: {statuses:?}"
     );
-    assert_eq!(
-        statuses
-            .iter()
-            .filter(|status| **status == StatusCode::UNAUTHORIZED)
-            .count(),
-        1,
-        "the racing loser must observe the consumed grant"
+    for status in statuses.iter().filter(|status| **status != StatusCode::OK) {
+        assert_eq!(*status, StatusCode::UNAUTHORIZED);
+    }
+    let mut device_ids = Vec::new();
+    for response in [first_resp, second_resp] {
+        if response.status() == StatusCode::OK {
+            let body: serde_json::Value = serde_json::from_slice(
+                &axum::body::to_bytes(response.into_body(), 1024)
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
+            device_ids.push(body["device_id"].as_str().unwrap().to_string());
+        }
+    }
+    assert!(
+        device_ids.windows(2).all(|pair| pair[0] == pair[1]),
+        "every successful answer names the one recovered device: {device_ids:?}"
     );
+    let winner_device_id = device_ids[0].clone();
 
+    // U-24: a sequential retry after the winner's reply is lost must recover
+    // the same device id from the committed row, not fail on the consumed
+    // grant.
     let replay = app.oneshot(request(enroll_body)).await.unwrap();
-    assert_eq!(replay.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(replay.status(), StatusCode::OK);
+    let replay_body: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(replay.into_body(), 1024)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(replay_body["device_id"], winner_device_id);
     let devices = state
         .sqldb
         .query(
@@ -1112,6 +1139,166 @@ async fn enroll_device_redeems_grant_exactly_once() {
         2,
         "original plus exactly one recovered device"
     );
+}
+
+/// U-24 regression: a lost reply from `POST /recovery/enroll-device` must not
+/// strand the new device. The grant is consumed and the device row committed
+/// before the response is written; dropping that response is exactly what a
+/// client disconnect does. A retry with the same grant and the same key
+/// material must return the first request's `device_id`, and a retry with a
+/// different key must still be refused with the historical 401.
+#[tokio::test]
+async fn enroll_device_recovers_the_device_after_a_lost_reply() {
+    use vela_server::sqldb::{Db as _, TursoValue};
+
+    let state = helpers::test_state().await;
+    let user_id = Uuid::new_v4();
+    let grant = Uuid::new_v4();
+    insert_user(&state, user_id).await;
+    state
+        .sqldb
+        .execute(
+            "UPDATE users SET recovery_webauthn_cred_id = 'test-recovery-credential'
+             WHERE id = ?",
+            vec![TursoValue::Text(user_id.to_string())],
+        )
+        .await
+        .unwrap();
+    state
+        .store
+        .set_ex(
+            &format!("recovery:enroll_grant:{user_id}:{grant}"),
+            &serde_json::to_vec(&json!({
+                "key_epoch": 1,
+                "credential_id": "test-recovery-credential",
+            }))
+            .unwrap(),
+            600,
+        )
+        .unwrap();
+
+    let ek = B64.encode(vec![1u8; 1600]);
+    let vk = B64.encode(vec![1u8; 2624]);
+    let body = serde_json::to_string(&json!({
+        "user_id": user_id,
+        "recovery_grant": grant,
+        "hybrid_ek": ek,
+        "hybrid_vk": vk,
+        "device_name": "Recovered Laptop",
+    }))
+    .unwrap();
+
+    let app = vela_server::routes::build(state.clone());
+    let first = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/recovery/enroll-device")
+                .header("content-type", "application/json")
+                .body(Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.status(), StatusCode::OK);
+    let first_body: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(first.into_body(), 1024)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    let device_id = first_body["device_id"].as_str().unwrap().to_string();
+
+    // The reply is lost: the client never sees `device_id`, the grant is gone
+    // and the row is committed with the grant recorded on it.
+    let rows = state
+        .sqldb
+        .query(
+            "SELECT id, recovery_grant_id FROM devices WHERE user_id = ?",
+            vec![TursoValue::Text(user_id.to_string())],
+        )
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1, "the first request committed one device");
+    assert_eq!(
+        rows[0].text(1).map(String::from),
+        Some(grant.to_string()),
+        "the row records the recovery grant it came from"
+    );
+
+    // The retry with the same grant and key recovers the same device.
+    let retry = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/recovery/enroll-device")
+                .header("content-type", "application/json")
+                .body(Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(retry.status(), StatusCode::OK, "U-24 replay must recover");
+    let retry_body: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(retry.into_body(), 1024)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(retry_body["device_id"], device_id);
+    let rows = state
+        .sqldb
+        .query(
+            "SELECT id FROM devices WHERE user_id = ?",
+            vec![TursoValue::Text(user_id.to_string())],
+        )
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1, "a replay never enrolls a second device");
+
+    // A different key cannot collect another key's device, and no second row
+    // lands. The refusal keeps the historical status and message.
+    let wrong_key = serde_json::to_string(&json!({
+        "user_id": user_id,
+        "recovery_grant": grant,
+        "hybrid_ek": B64.encode(vec![2u8; 1600]),
+        "hybrid_vk": B64.encode(vec![3u8; 2624]),
+        "device_name": "Recovered Laptop",
+    }))
+    .unwrap();
+    let refused = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/recovery/enroll-device")
+                .header("content-type", "application/json")
+                .body(Body::from(wrong_key))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), StatusCode::UNAUTHORIZED);
+    let refused_body: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(refused.into_body(), 1024)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        refused_body["message"],
+        "recovery grant expired or already used"
+    );
+    let rows = state
+        .sqldb
+        .query(
+            "SELECT id FROM devices WHERE user_id = ?",
+            vec![TursoValue::Text(user_id.to_string())],
+        )
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1, "a different key enrolls nothing");
 }
 
 #[tokio::test]

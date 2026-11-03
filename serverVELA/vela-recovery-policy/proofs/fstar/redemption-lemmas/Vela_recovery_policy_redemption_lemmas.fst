@@ -30,9 +30,10 @@ let seq_of_list_facts (l: list t_WriteOutcome)
 
 // ── Frames ─────────────────────────────────────────────────────────────────
 
-/// Only `devices[id]` may differ.
-let devices_frame (d post: db) (id: text) : prop =
+/// Only `devices[id]` and `grant_index[grant]` may differ.
+let devices_frame (d post: db) (id grant: text) : prop =
   (forall (k: text). k <> id ==> post.devices k == d.devices k) /\
+  (forall (k: text). k <> grant ==> post.grant_index k == d.grant_index k) /\
   post.users == d.users /\
   post.grants == d.grants
 
@@ -40,12 +41,13 @@ let devices_frame (d post: db) (id: text) : prop =
 let grants_frame (d post: db) (key: text) : prop =
   (forall (k: text). k <> key ==> post.grants k == d.grants k) /\
   post.users == d.users /\
-  post.devices == d.devices
+  post.devices == d.devices /\
+  post.grant_index == d.grant_index
 
 /// The exact device row the insert writes.
-let inserted_row (user name kind ek vk created: text) : device_row =
+let inserted_row (user name kind ek vk created grant: text) : device_row =
   { dv_user = user; dv_name = name; dv_kind = kind;
-    dv_ek = ek; dv_vk = vk; dv_created = created }
+    dv_ek = ek; dv_vk = vk; dv_created = created; dv_grant = Some grant }
 
 #push-options "--fuel 4 --ifuel 2"
 
@@ -80,31 +82,33 @@ let take_grant_is_honest (d: db) (key: text) (preflight: grant) (f: option nat)
 // ── Guarded device insert ──────────────────────────────────────────────────
 
 /// `insert_device`: `Inserted` holds exactly when the SQL guard held, the id
-/// was fresh and no statement failed; then exactly the intended device row
-/// was added. `Skipped` holds exactly when the guard refused a fresh id; a
-/// fault or a duplicate id is `Failed`. Only a successful insert changes the
-/// state.
+/// was fresh, no other row carried the grant and no statement failed; then
+/// exactly the intended device row was added and the grant index names it.
+/// `Skipped` holds exactly when the guard refused a fresh id under an unused
+/// grant; a fault, a duplicate device id or a used grant is `Failed`. Only a
+/// successful insert changes the state, so a grant can never name two rows.
 let insert_device_is_honest
-      (d: db) (device_id user name kind ek vk created: text) (epoch: i64)
+      (d: db) (device_id user name kind ek vk created grant: text) (epoch: i64)
       (guard: t_GrantGuard) (f: option nat)
   : Lemma
     (let (obs, post) =
-       insert_device d device_id user name kind ek vk created epoch guard f in
+       insert_device d device_id user name kind ek vk created grant epoch guard f in
      (obs == D.InsertObservation_Inserted <==>
         (insert_guard d user epoch guard /\ no_fault_in f 1 /\
-         None? (d.devices device_id))) /\
+         None? (d.devices device_id) /\ None? (d.grant_index grant))) /\
      (obs == D.InsertObservation_Skipped <==>
         (not (insert_guard d user epoch guard) /\ no_fault_in f 1 /\
-         None? (d.devices device_id))) /\
+         None? (d.devices device_id) /\ None? (d.grant_index grant))) /\
      (obs == D.InsertObservation_Failed <==>
-        (faulted f 0 \/ Some? (d.devices device_id))) /\
+        (faulted f 0 \/ Some? (d.devices device_id) \/ Some? (d.grant_index grant))) /\
      (obs == D.InsertObservation_Inserted ==>
-        (post.devices device_id == Some (inserted_row user name kind ek vk created) /\
-         devices_frame d post device_id)) /\
+        (post.devices device_id == Some (inserted_row user name kind ek vk created grant) /\
+         post.grant_index grant == Some device_id /\
+         devices_frame d post device_id grant)) /\
      (obs =!= D.InsertObservation_Inserted ==> post == d)) =
   let r =
     run_autocommit d
-      (stmts_of (plan_insert_device device_id user name kind ek vk created epoch guard))
+      (stmts_of (plan_insert_device device_id user name kind ek vk created epoch guard grant))
       0 f
   in
   seq_of_list_facts (fst r)
@@ -182,19 +186,81 @@ let take_is_single_use
   | None -> ()
 
 /// An inserted device belongs to the request's user with exactly the request's
-/// identity key, and only lands after every guard held.
+/// identity key and the grant that authorized it, and only lands after every
+/// guard held.
 let inserted_device_is_owned_and_guarded
-      (d: db) (device_id user name kind ek vk created: text) (epoch: i64)
+      (d: db) (device_id user name kind ek vk created grant: text) (epoch: i64)
       (guard: t_GrantGuard) (f: option nat)
   : Lemma
     (let (obs, post) =
-       insert_device d device_id user name kind ek vk created epoch guard f in
+       insert_device d device_id user name kind ek vk created grant epoch guard f in
      obs == D.InsertObservation_Inserted ==>
        (insert_guard d user epoch guard /\
         (match post.devices device_id with
-         | Some row -> row.dv_user == user /\ row.dv_ek == ek /\ row.dv_vk == vk
-         | None -> False))) =
-  insert_device_is_honest d device_id user name kind ek vk created epoch guard f
+         | Some row -> row.dv_user == user /\ row.dv_ek == ek /\ row.dv_vk == vk /\
+                       row.dv_grant == Some grant
+         | None -> False) /\
+        post.grant_index grant == Some device_id)) =
+  insert_device_is_honest d device_id user name kind ek vk created grant epoch guard f
+
+/// U-24: the replay lookup returns exactly the device the first request
+/// created. For every starting database, every guard and every fault point: if
+/// the insert reported `Inserted`, the row it wrote is the row the lookup
+/// names, with the same device id, the same user and the request's own key
+/// material. The lookup changes nothing.
+let replay_finds_the_inserted_device
+      (d: db) (device_id user name kind ek vk created grant: text) (epoch: i64)
+      (guard: t_GrantGuard) (f: option nat)
+  : Lemma
+    (let (obs, post) =
+       insert_device d device_id user name kind ek vk created grant epoch guard f in
+     obs == D.InsertObservation_Inserted ==>
+       (enrolled_device_row post user grant ==
+          Some ({ f_device_id = device_id;
+                  f_hybrid_ek = ek;
+                  f_hybrid_vk = vk } <: t_EnrolledDeviceRowView) /\
+        enrolled_device post user grant ek vk ==
+          D.ReplayObservation_Enrolled { f_key_matches = true })) =
+  insert_device_is_honest d device_id user name kind ek vk created grant epoch guard f
+
+/// U-24: a replay that presents different key material never matches the row
+/// this grant created. It is rejected by the same classifier that guards the
+/// matching case, so a different key cannot collect another key's device.
+let replay_rejects_a_different_key
+      (d: db) (device_id user name kind ek vk created grant: text) (epoch: i64)
+      (guard: t_GrantGuard) (f: option nat) (ek' vk': text)
+  : Lemma
+    (let (obs, post) =
+       insert_device d device_id user name kind ek vk created grant epoch guard f in
+     obs == D.InsertObservation_Inserted ==>
+       ((ek' <> ek \/ vk' <> vk) ==>
+        enrolled_device post user grant ek' vk' ==
+          D.ReplayObservation_Enrolled { f_key_matches = false })) =
+  insert_device_is_honest d device_id user name kind ek vk created grant epoch guard f
+
+/// U-24: the grant index is a second wall behind the single-use take. Once a
+/// device carries a grant, another insert for that grant is refused, so the
+/// grant can name at most one device even if two guarded inserts race.
+let insert_with_used_grant_is_refused
+      (d: db) (first second: text) (user name kind ek vk created grant: text)
+      (epoch: i64) (guard: t_GrantGuard) (f f': option nat)
+  : Lemma
+    (let (obs, post) =
+       insert_device d first user name kind ek vk created grant epoch guard f in
+     obs == D.InsertObservation_Inserted ==>
+       (let (obs', _) =
+          insert_device post second user name kind ek vk created grant epoch guard f' in
+        obs' == D.InsertObservation_Failed)) =
+  insert_device_is_honest d first user name kind ek vk created grant epoch guard f
+
+/// U-24: with no device row for the grant, the replay lookup is absent and the
+/// classifier refuses it.
+let replay_without_a_row_is_absent
+      (d: db) (user grant ek vk: text)
+  : Lemma
+    (requires (None? (d.grant_index grant)))
+    (ensures (enrolled_device d user grant ek vk == D.ReplayObservation_Absent)) =
+  ()
 
 /// A restored grant is live at its key, so the retry path leaves the user
 /// with the grant the driver just consumed.
@@ -301,7 +367,8 @@ let vector_db : db =
   {
     users = (fun k -> if k = s "u" then Some vector_user else None);
     devices = (fun _ -> None);
-    grants = (fun k -> if k = s "k" then Some vector_grant else None)
+    grants = (fun k -> if k = s "k" then Some vector_grant else None);
+    grant_index = (fun _ -> None)
   }
 
 let vector_take_present ()
@@ -326,22 +393,43 @@ let vector_insert_credential ()
   : Lemma
     (let (obs, post) =
        insert_device vector_db (s "d") (s "u") (s "name") (s "kind")
-         (s "ek") (s "vk") (s "t") (mk_i64 7)
+         (s "ek") (s "vk") (s "t") (s "g") (mk_i64 7)
          (GrantGuard_Credential { f_credential_id = s "c" }) None in
-     obs == D.InsertObservation_Inserted /\ Some? (post.devices (s "d"))) =
+     obs == D.InsertObservation_Inserted /\ Some? (post.devices (s "d")) /\
+     post.grant_index (s "g") == Some (s "d")) =
   insert_device_is_honest vector_db (s "d") (s "u") (s "name") (s "kind")
-    (s "ek") (s "vk") (s "t") (mk_i64 7)
+    (s "ek") (s "vk") (s "t") (s "g") (mk_i64 7)
+    (GrantGuard_Credential { f_credential_id = s "c" }) None
+
+/// The same run as `vector_insert_credential`, then the U-24 replay.
+let vector_replay_enrolled ()
+  : Lemma
+    (let (obs, post) =
+       insert_device vector_db (s "d") (s "u") (s "name") (s "kind")
+         (s "ek") (s "vk") (s "t") (s "g") (mk_i64 7)
+         (GrantGuard_Credential { f_credential_id = s "c" }) None in
+     obs == D.InsertObservation_Inserted ==>
+       (enrolled_device post (s "u") (s "g") (s "ek") (s "vk") ==
+          D.ReplayObservation_Enrolled { f_key_matches = true } /\
+        enrolled_device post (s "u") (s "g") (s "ek") (s "other") ==
+          D.ReplayObservation_Enrolled { f_key_matches = false } /\
+        enrolled_device post (s "other") (s "g") (s "ek") (s "vk") ==
+          D.ReplayObservation_Absent /\
+        enrolled_device vector_db (s "u") (s "g") (s "ek") (s "vk") ==
+          D.ReplayObservation_Absent)) =
+  insert_device_is_honest vector_db (s "d") (s "u") (s "name") (s "kind")
+    (s "ek") (s "vk") (s "t") (s "g") (mk_i64 7)
     (GrantGuard_Credential { f_credential_id = s "c" }) None
 
 let vector_insert_stale_epoch ()
   : Lemma
     (let (obs, post) =
        insert_device vector_db (s "d") (s "u") (s "name") (s "kind")
-         (s "ek") (s "vk") (s "t") (mk_i64 8)
+         (s "ek") (s "vk") (s "t") (s "g") (mk_i64 8)
          (GrantGuard_Credential { f_credential_id = s "c" }) None in
      obs == D.InsertObservation_Skipped /\ post == vector_db) =
   insert_device_is_honest vector_db (s "d") (s "u") (s "name") (s "kind")
-    (s "ek") (s "vk") (s "t") (mk_i64 8)
+    (s "ek") (s "vk") (s "t") (s "g") (mk_i64 8)
     (GrantGuard_Credential { f_credential_id = s "c" }) None
 
 let vector_authority_rotating ()
@@ -358,12 +446,13 @@ let vector_restore_grant ()
   : Lemma
     (match restore_grant
              { users = (fun _ -> None); devices = (fun _ -> None);
-               grants = (fun _ -> None) }
+               grants = (fun _ -> None); grant_index = (fun _ -> None) }
              (s "k") (s "v") vector_grant None with
      | Some post -> post.grants (s "k") == Some vector_grant
      | None -> False) =
   restore_grant_is_honest
-    { users = (fun _ -> None); devices = (fun _ -> None); grants = (fun _ -> None) }
+    { users = (fun _ -> None); devices = (fun _ -> None);
+      grants = (fun _ -> None); grant_index = (fun _ -> None) }
     (s "k") (s "v") vector_grant None
 
 let vector_peek_grant ()

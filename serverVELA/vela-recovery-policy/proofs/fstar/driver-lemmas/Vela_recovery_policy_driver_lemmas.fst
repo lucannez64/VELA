@@ -41,6 +41,11 @@ let is_recheck (d: t_RedemptionDriver) : bool =
   | RedemptionStage_Recheck -> true
   | _ -> false
 
+let is_replay (d: t_RedemptionDriver) : bool =
+  match d.f_stage <: t_RedemptionStage with
+  | RedemptionStage_Replay -> true
+  | _ -> false
+
 let is_done (d: t_RedemptionDriver) : bool =
   match d.f_stage <: t_RedemptionStage with
   | RedemptionStage_Done -> true
@@ -48,26 +53,41 @@ let is_done (d: t_RedemptionDriver) : bool =
 
 /// Strengthened trace invariant. It encodes the stage/flag discipline of the
 /// driver: an insert attempt has a matched consumption and both permits, a
-/// success is terminal and never restored, and a restoration never follows a
-/// success.
+/// success is terminal and never restored, a restoration never follows a
+/// success, and a replay never consumes, inserts or restores anything.
 let trace_sound (d: t_RedemptionDriver) : bool =
   (not (is_consume d) ||
     (not d.f_consumed_matched && not d.f_permit_issued &&
-     not d.f_insert_attempted && not d.f_insert_succeeded && not d.f_restored)) &&
+     not d.f_insert_attempted && not d.f_insert_succeeded && not d.f_restored &&
+     not d.f_replay)) &&
   (not (is_policy d) ||
     (d.f_consumed_matched && not d.f_permit_issued &&
-     not d.f_insert_attempted && not d.f_insert_succeeded && not d.f_restored)) &&
+     not d.f_insert_attempted && not d.f_insert_succeeded && not d.f_restored &&
+     not d.f_replay)) &&
   (not (is_insert d) ||
     (d.f_consumed_matched && d.f_permit_issued &&
-     d.f_insert_attempted && not d.f_insert_succeeded && not d.f_restored)) &&
+     d.f_insert_attempted && not d.f_insert_succeeded && not d.f_restored &&
+     not d.f_replay)) &&
   (not (is_recheck d) ||
     (d.f_consumed_matched && d.f_permit_issued &&
-     d.f_insert_attempted && not d.f_insert_succeeded && not d.f_restored)) &&
+     d.f_insert_attempted && not d.f_insert_succeeded && not d.f_restored &&
+     not d.f_replay)) &&
+  (not (is_replay d) ||
+    (d.f_replay && d.f_replay_attempted && not d.f_replay_succeeded &&
+     not d.f_consumed_matched && not d.f_permit_issued &&
+     not d.f_insert_attempted && not d.f_insert_succeeded && not d.f_restored)) &&
   (not d.f_insert_attempted || (d.f_consumed_matched && d.f_permit_issued)) &&
   (not d.f_insert_succeeded ||
     (d.f_insert_attempted && d.f_consumed_matched && d.f_permit_issued &&
-     is_done d && not d.f_restored)) &&
-  (not d.f_restored || (is_done d && not d.f_insert_succeeded))
+     is_done d && not d.f_restored && not d.f_replay)) &&
+  (not d.f_restored || (is_done d && not d.f_insert_succeeded && not d.f_replay)) &&
+  (not d.f_replay ||
+    (not d.f_consumed_matched && not d.f_permit_issued &&
+     not d.f_insert_attempted && not d.f_insert_succeeded && not d.f_restored)) &&
+  (not d.f_replay_attempted || d.f_replay) &&
+  (not d.f_replay_succeeded ||
+    (d.f_replay && d.f_replay_attempted && is_done d &&
+     not d.f_insert_succeeded && not d.f_restored))
 
 /// The independently written invariant is exactly the Rust postcondition's
 /// predicate. Proved by exhaustive stage case analysis, not by aliasing the
@@ -79,6 +99,7 @@ let trace_sound_matches_rust (d: t_RedemptionDriver)
   | RedemptionStage_FinalPolicy -> ()
   | RedemptionStage_Insert -> ()
   | RedemptionStage_Recheck -> ()
+  | RedemptionStage_Replay -> ()
   | RedemptionStage_Done -> ()
 
 // ── The driver transition relation ──────────────────────────────────────────
@@ -86,6 +107,18 @@ let trace_sound_matches_rust (d: t_RedemptionDriver)
 let begin_sound (ready: t_ReadyToConsume)
   : Lemma (trace_sound (begin_redemption ready).f_driver) =
   trace_sound_matches_rust (begin_redemption ready).f_driver
+
+/// The U-24 replay start is sound: no consumption, insert or restoration fact
+/// can be set, and the only legal effect is the device-row lookup.
+let begin_replay_sound ()
+  : Lemma (trace_sound (begin_redemption_replay ()).f_driver) =
+  trace_sound_matches_rust (begin_redemption_replay ()).f_driver
+
+let begin_from_sound (start: t_RedemptionStart)
+  : Lemma (trace_sound (begin_redemption_from start).f_driver) =
+  match start <: t_RedemptionStart with
+  | RedemptionStart_Redeem ready -> begin_sound ready
+  | RedemptionStart_Replay -> begin_replay_sound ()
 
 /// Every extracted step preserves the independent invariant.
 let step_sound (d: t_RedemptionDriver) (e: t_RedemptionEvent)
@@ -110,6 +143,39 @@ let step_after_success (d: t_RedemptionDriver) (e: t_RedemptionEvent)
   | RedemptionEvent_FinalPolicy _ -> ()
   | RedemptionEvent_Insert _ -> ()
   | RedemptionEvent_Recheck _ -> ()
+  | RedemptionEvent_Replayed _ -> ()
+
+/// A finished driver is inert for every event.
+let step_after_done (d: t_RedemptionDriver) (e: t_RedemptionEvent)
+  : Lemma
+    (requires (trace_sound d /\ is_done d))
+    (ensures (
+      (step d e).f_driver = d /\
+      (step d e).f_effect = RedemptionEffect_Idle)) =
+  trace_sound_matches_rust d;
+  match e <: t_RedemptionEvent with
+  | RedemptionEvent_Consumed _ -> ()
+  | RedemptionEvent_FinalPolicy _ -> ()
+  | RedemptionEvent_Insert _ -> ()
+  | RedemptionEvent_Recheck _ -> ()
+  | RedemptionEvent_Replayed _ -> ()
+
+/// After the replay verdict the driver is terminal: every event is inert.
+/// This is the replay analogue of `step_after_success` (a replay never
+/// inserts, so `f_insert_succeeded` stays false and cannot be used).
+let step_after_replay_verdict (d: t_RedemptionDriver) (e: t_RedemptionEvent)
+  : Lemma
+    (requires (trace_sound d /\ d.f_replay /\ is_done d))
+    (ensures (
+      (step d e).f_driver = d /\
+      (step d e).f_effect = RedemptionEffect_Idle)) =
+  trace_sound_matches_rust d;
+  match e <: t_RedemptionEvent with
+  | RedemptionEvent_Consumed _ -> ()
+  | RedemptionEvent_FinalPolicy _ -> ()
+  | RedemptionEvent_Insert _ -> ()
+  | RedemptionEvent_Recheck _ -> ()
+  | RedemptionEvent_Replayed _ -> ()
 
 // ── Unbounded trace execution ───────────────────────────────────────────────
 
@@ -139,6 +205,33 @@ let rec count_complete (d: t_RedemptionDriver) (events: list t_RedemptionEvent)
        | RedemptionEffect_Complete -> 1
        | _ -> 0) +
       count_complete (step d e).f_driver rest
+
+let rec count_insert (d: t_RedemptionDriver) (events: list t_RedemptionEvent)
+  : Pure nat
+    (requires (trace_sound d))
+    (ensures (fun _ -> True))
+    (decreases events) =
+  match events with
+  | [] -> 0
+  | e :: rest ->
+      trace_sound_matches_rust d;
+      step_sound d e;
+      (match (step d e).f_effect <: t_RedemptionEffect with
+       | RedemptionEffect_Insert _ -> 1
+       | _ -> 0) +
+      count_insert (step d e).f_driver rest
+
+let rec done_suffix_inert (d: t_RedemptionDriver) (events: list t_RedemptionEvent)
+  : Lemma
+    (requires (trace_sound d /\ is_done d))
+    (ensures (run d events = d /\ count_complete d events = 0 /\
+              count_insert d events = 0))
+    (decreases events) =
+  match events with
+  | [] -> ()
+  | e :: rest ->
+      step_after_done d e;
+      done_suffix_inert d rest
 
 let rec last_effect (d: t_RedemptionDriver) (events: list t_RedemptionEvent)
   : Pure t_RedemptionEffect
@@ -174,6 +267,44 @@ let last_effect_from_ready (ready: t_ReadyToConsume) (events: list t_RedemptionE
   begin_sound ready;
   trace_sound_matches_rust (begin_redemption ready).f_driver;
   last_effect (begin_redemption ready).f_driver events
+
+/// The U-24 replay start, as a total wrapper over the extracted
+/// `begin_redemption_replay`.
+let run_from_replay (events: list t_RedemptionEvent)
+  : Pure t_RedemptionDriver
+    (requires True)
+    (ensures (fun result -> trace_sound result))
+    (decreases events) =
+  begin_replay_sound ();
+  trace_sound_matches_rust (begin_redemption_replay ()).f_driver;
+  run (begin_redemption_replay ()).f_driver events
+
+/// Both starts in one wrapper, so the interpreter lemma can state its result
+/// for the request shape the handler actually runs.
+let run_from_start (start: t_RedemptionStart) (events: list t_RedemptionEvent)
+  : Pure t_RedemptionDriver
+    (requires True)
+    (ensures (fun result -> trace_sound result))
+    (decreases events) =
+  match start <: t_RedemptionStart with
+  | RedemptionStart_Redeem ready -> run_from_ready ready events
+  | RedemptionStart_Replay -> run_from_replay events
+
+/// The wrapper is the extracted begin composed with `run`.
+let run_from_start_is_begin (start: t_RedemptionStart) (events: list t_RedemptionEvent)
+  : Lemma (run_from_start start events == run (begin_redemption_from start).f_driver events) =
+  match start <: t_RedemptionStart with
+  | RedemptionStart_Redeem ready -> ()
+  | RedemptionStart_Replay -> ()
+
+let count_complete_from_start (start: t_RedemptionStart) (events: list t_RedemptionEvent)
+  : Pure nat (requires True) (ensures (fun _ -> True)) (decreases events) =
+  match start <: t_RedemptionStart with
+  | RedemptionStart_Redeem ready -> count_complete_from_ready ready events
+  | RedemptionStart_Replay ->
+      begin_replay_sound ();
+      trace_sound_matches_rust (begin_redemption_replay ()).f_driver;
+      count_complete (begin_redemption_replay ()).f_driver events
 
 // ── Trace properties ────────────────────────────────────────────────────────
 
@@ -218,6 +349,7 @@ let consumed_flag_origin (d: t_RedemptionDriver) (e: t_RedemptionEvent)
   | RedemptionEvent_FinalPolicy _ -> ()
   | RedemptionEvent_Insert _ -> ()
   | RedemptionEvent_Recheck _ -> ()
+  | RedemptionEvent_Replayed _ -> ()
 
 /// The final-policy provenance: `permit_issued` is only ever set by a
 /// `FinalPolicy` event whose actual `plan_enrollment` returned an enrollment
@@ -245,17 +377,22 @@ let permit_flag_origin (d: t_RedemptionDriver) (e: t_RedemptionEvent)
   | RedemptionEvent_FinalPolicy _ -> ()
   | RedemptionEvent_Insert _ -> ()
   | RedemptionEvent_Recheck _ -> ()
+  | RedemptionEvent_Replayed _ -> ()
 
-/// (2) Every `Complete` effect is a response to an actual
-/// `InsertObservation_Inserted` observation from the `Insert` stage. A
-/// `Skipped`/`Failed` observation cannot produce success.
-let complete_only_after_inserted (d: t_RedemptionDriver) (e: t_RedemptionEvent)
+/// (2) Every `Complete` effect answers exactly one of two observations: an
+/// `InsertObservation_Inserted` from the `Insert` stage, or a replay row whose
+/// stored keys equal the request's from the `Replay` stage. A
+/// `Skipped`/`Failed` insert and an absent or different-key replay row cannot
+/// produce success.
+let complete_only_after_inserted_or_replay (d: t_RedemptionDriver) (e: t_RedemptionEvent)
   : Lemma
     (requires (trace_sound d))
     (ensures (
       ((step d e).f_effect = RedemptionEffect_Complete) ==>
       (match e <: t_RedemptionEvent with
        | RedemptionEvent_Insert InsertObservation_Inserted -> is_insert d
+       | RedemptionEvent_Replayed (ReplayObservation_Enrolled c) ->
+           is_replay d /\ c.f_key_matches = true
        | _ -> False))) =
   match e <: t_RedemptionEvent with
   | RedemptionEvent_Consumed _ -> ()
@@ -266,6 +403,10 @@ let complete_only_after_inserted (d: t_RedemptionDriver) (e: t_RedemptionEvent)
        | InsertObservation_Skipped -> ()
        | InsertObservation_Failed -> ())
   | RedemptionEvent_Recheck _ -> ()
+  | RedemptionEvent_Replayed obs ->
+      (match obs <: t_ReplayObservation with
+       | ReplayObservation_Enrolled _ -> ()
+       | ReplayObservation_Absent -> ())
 
 /// (3) No restoration effect is ever emitted after an insert success.
 let no_restore_after_success (d: t_RedemptionDriver) (e: t_RedemptionEvent)
@@ -312,9 +453,15 @@ let rec complete_count_le_one (d: t_RedemptionDriver) (events: list t_Redemption
           | RedemptionEffect_Complete -> true
           | _ -> false)
       then begin
-        // Effect soundness makes the post-state a success, so the tail is inert.
-        assert (t.f_driver.f_insert_succeeded = true);
-        no_restore_after_success_suffix t.f_driver rest
+        // Effect soundness makes the post-state a success, so the tail is
+        // inert: an insert success for a redemption, a replay verdict for the
+        // U-24 lookup.
+        if t.f_driver.f_replay
+        then done_suffix_inert t.f_driver rest
+        else begin
+          assert (t.f_driver.f_insert_succeeded = true);
+          no_restore_after_success_suffix t.f_driver rest
+        end
       end else begin
         complete_count_le_one t.f_driver rest
       end
@@ -335,48 +482,24 @@ let no_second_success_after_prefix
   trace_sound_matches_rust (begin_redemption ready).f_driver;
   no_restore_after_success_suffix d suffix
 
-/// Headline unbounded theorem over the actual extracted driver. For every
-/// preflight permit and every event list, the final state is sound, a success
-/// is never paired with a restoration, and the number of insert successes in
-/// the trace is at most one.
+/// Headline unbounded theorem over the actual extracted driver, for either
+/// start. For every request and every event list, the final state is sound, a
+/// success is never paired with a restoration, and the trace contains at most
+/// one `Complete` effect.
 let redemption_trace_theorem
-      (ready: t_ReadyToConsume)
+      (start: t_RedemptionStart)
       (events: list t_RedemptionEvent)
   : Lemma (
-      let d = run_from_ready ready events in
+      let d = run_from_start start events in
       trace_sound d /\
       (d.f_insert_succeeded ==> not d.f_restored) /\
       (d.f_restored ==> not d.f_insert_succeeded) /\
-      count_complete_from_ready ready events <= 1) =
-  begin_sound ready;
-  trace_sound_matches_rust (begin_redemption ready).f_driver;
-  complete_count_le_one (begin_redemption ready).f_driver events;
+      count_complete_from_start start events <= 1) =
+  begin_from_sound start;
+  trace_sound_matches_rust (begin_redemption_from start).f_driver;
+  run_from_start_is_begin start events;
+  complete_count_le_one (begin_redemption_from start).f_driver events;
   ()
-
-/// A finished driver is inert for every event.
-let step_after_done (d: t_RedemptionDriver) (e: t_RedemptionEvent)
-  : Lemma
-    (requires (trace_sound d /\ is_done d))
-    (ensures (
-      (step d e).f_driver = d /\
-      (step d e).f_effect = RedemptionEffect_Idle)) =
-  trace_sound_matches_rust d;
-  match e <: t_RedemptionEvent with
-  | RedemptionEvent_Consumed _ -> ()
-  | RedemptionEvent_FinalPolicy _ -> ()
-  | RedemptionEvent_Insert _ -> ()
-  | RedemptionEvent_Recheck _ -> ()
-
-let rec done_suffix_inert (d: t_RedemptionDriver) (events: list t_RedemptionEvent)
-  : Lemma
-    (requires (trace_sound d /\ is_done d))
-    (ensures (run d events = d /\ count_complete d events = 0))
-    (decreases events) =
-  match events with
-  | [] -> ()
-  | e :: rest ->
-      step_after_done d e;
-      done_suffix_inert d rest
 
 /// (5) No insert outcome restores the grant. Restoration after an insert
 /// attempt is only possible from the recheck stage, which is reached only by
@@ -402,6 +525,7 @@ let insert_stage_never_restores (d: t_RedemptionDriver) (e: t_RedemptionEvent)
        | InsertObservation_Skipped -> ()
        | InsertObservation_Failed -> ())
   | RedemptionEvent_Recheck _ -> ()
+  | RedemptionEvent_Replayed _ -> ()
 
 /// (6) An ambiguous insert error is final for the whole trace: it fails
 /// without restoration and every later event, of any number, is inert, so the
@@ -422,6 +546,111 @@ let failed_insert_is_final
   let t = step d (RedemptionEvent_Insert InsertObservation_Failed) in
   step_sound d (RedemptionEvent_Insert InsertObservation_Failed);
   done_suffix_inert t.f_driver suffix
+
+// ── The U-24 replay: no insertion, one matching row ────────────────────────
+
+/// A replay request emits no `Insert` effect, whatever observations it is fed.
+/// The driver starts in the `Replay` stage, every event but `Replayed` is idle
+/// there, and the replay verdict is terminal; so no later step can reach the
+/// insert stage. This is the "a replay never enrolls a second device" half of
+/// the U-24 theorem, for an arbitrary-length event list.
+let rec replay_never_inserts (events: list t_RedemptionEvent)
+  : Lemma
+    (requires True)
+    (ensures (count_insert (begin_redemption_replay ()).f_driver events = 0))
+    (decreases events) =
+  begin_replay_sound ();
+  let d = (begin_redemption_replay ()).f_driver in
+  trace_sound_matches_rust d;
+  match events with
+  | [] -> ()
+  | e :: rest ->
+      let t = step d e in
+      step_sound d e;
+      (match e <: t_RedemptionEvent with
+       | RedemptionEvent_Replayed _ ->
+           done_suffix_inert t.f_driver rest
+       | _ ->
+           assert (t.f_driver = d);
+           replay_never_inserts rest)
+
+/// A replay only ever answers `Complete` from a `Replayed` observation that
+/// carries the matching-key row. Together with the store-model lemma
+/// `replay_finds_the_inserted_device` (the row the first request inserted is
+/// exactly the row this lookup returns), a replay returns the device the first
+/// request created.
+let replay_complete_only_from_a_matching_row
+      (d: t_RedemptionDriver)
+      (e: t_RedemptionEvent)
+  : Lemma
+    (requires (trace_sound d /\ is_replay d))
+    (ensures (
+      (step d e).f_effect = RedemptionEffect_Complete ==>
+      (match e <: t_RedemptionEvent with
+       | RedemptionEvent_Replayed (ReplayObservation_Enrolled c) ->
+           c.f_key_matches = true
+       | _ -> False))) =
+  match e <: t_RedemptionEvent with
+  | RedemptionEvent_Consumed _ -> ()
+  | RedemptionEvent_FinalPolicy _ -> ()
+  | RedemptionEvent_Insert _ -> ()
+  | RedemptionEvent_Recheck _ -> ()
+  | RedemptionEvent_Replayed obs ->
+      (match obs <: t_ReplayObservation with
+       | ReplayObservation_Enrolled _ -> ()
+       | ReplayObservation_Absent -> ())
+
+/// An absent row and a row whose keys differ from the request's are the same
+/// uniform `GrantUnavailable` refusal the missing-grant path always returned.
+let replay_refusal_is_grant_unavailable
+      (d: t_RedemptionDriver)
+      (observation: t_ReplayObservation)
+  : Lemma
+    (requires (trace_sound d /\ is_replay d))
+    (ensures (
+      (match observation <: t_ReplayObservation with
+       | ReplayObservation_Enrolled c -> c.f_key_matches = false
+       | ReplayObservation_Absent -> true) ==>
+      (step d (RedemptionEvent_Replayed observation)).f_effect =
+        RedemptionEffect_Fail RedemptionFailure_GrantUnavailable)) =
+  match observation <: t_ReplayObservation with
+  | ReplayObservation_Enrolled _ -> ()
+  | ReplayObservation_Absent -> ()
+
+/// A replay success is reachable from the extracted begin, and it neither
+/// inserts nor restores anything: one lookup answers `Complete`.
+let replay_success_is_reachable ()
+  : Lemma (
+      let d = run_from_replay
+        [ RedemptionEvent_Replayed
+            (ReplayObservation_Enrolled { f_key_matches = true }) ] in
+      d.f_replay_succeeded = true /\
+      not d.f_insert_succeeded /\
+      not d.f_insert_attempted /\
+      not d.f_restored /\
+      is_done d /\
+      count_insert (begin_redemption_replay ()).f_driver
+        [ RedemptionEvent_Replayed
+            (ReplayObservation_Enrolled { f_key_matches = true }) ] = 0) =
+  replay_never_inserts
+    [ RedemptionEvent_Replayed (ReplayObservation_Enrolled { f_key_matches = true }) ]
+
+/// A different-key replay is the historical refusal, reachable in one step.
+let replay_mismatch_is_reachable ()
+  : Lemma (
+      last_effect (begin_redemption_replay ()).f_driver
+        [ RedemptionEvent_Replayed
+            (ReplayObservation_Enrolled { f_key_matches = false }) ]
+      = RedemptionEffect_Fail RedemptionFailure_GrantUnavailable) =
+  ()
+
+/// A replay request whose lookup finds no row is the same refusal.
+let replay_absent_is_reachable ()
+  : Lemma (
+      last_effect (begin_redemption_replay ()).f_driver
+        [ RedemptionEvent_Replayed ReplayObservation_Absent ]
+      = RedemptionEffect_Fail RedemptionFailure_GrantUnavailable) =
+  ()
 
 // ── Reachability witnesses ──────────────────────────────────────────────────
 

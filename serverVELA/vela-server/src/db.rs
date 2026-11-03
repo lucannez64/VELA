@@ -52,6 +52,7 @@ fn init_schema(db: &Database) -> anyhow::Result<()> {
             hybrid_vk   TEXT NOT NULL,
             enrolled_by TEXT,
             enrollment_grant_id TEXT,
+            recovery_grant_id TEXT,
             rms_capsule TEXT,
             rms_capsule_epoch INTEGER,
             rekey_capable BOOLEAN NOT NULL DEFAULT FALSE,
@@ -269,6 +270,9 @@ fn migrate_rekey_schema(db: &Database) -> anyhow::Result<()> {
         "ALTER TABLE devices ADD COLUMN rms_capsule_epoch INTEGER",
         "ALTER TABLE devices ADD COLUMN rekey_capable BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE devices ADD COLUMN enrollment_grant_id TEXT",
+        // U-24: a device enrolled from a recovery grant records that grant, so
+        // a retry after a lost reply can find the device it created.
+        "ALTER TABLE devices ADD COLUMN recovery_grant_id TEXT",
         "ALTER TABLE web_sessions ADD COLUMN key_epoch INTEGER",
     ];
     for sql in ALTERS {
@@ -303,6 +307,13 @@ fn migrate_rekey_schema(db: &Database) -> anyhow::Result<()> {
     db.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_enrollment_grant_id
          ON devices(enrollment_grant_id)",
+        (),
+    )?;
+    // U-24: one grant may name at most one device, and the replay lookup reads
+    // the row by this exact pair.
+    db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_recovery_grant_id
+         ON devices(recovery_grant_id)",
         (),
     )?;
     Ok(())

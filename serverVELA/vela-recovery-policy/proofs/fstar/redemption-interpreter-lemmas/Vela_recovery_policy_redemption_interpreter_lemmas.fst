@@ -12,7 +12,7 @@ module Vela_recovery_policy_redemption_interpreter_lemmas
 ///    (`run_redemption_is_run_ev`);
 /// 2. the observations the executor returned form a list `evs` in which each
 ///    observation answers the effect it was returned for, and the final driver
-///    is `run_from_ready ready evs` (`run_ev_follows_the_driver`);
+///    is `run_from_start start evs` (`run_ev_follows_the_driver`);
 /// 3. the loop reaches a verdict within its five-turn budget, or stops early
 ///    because an effect aborted (the handler then renders the recorded error)
 ///    (`run_ev_reaches_a_verdict`);
@@ -43,7 +43,8 @@ let responds_to (e: t_RedemptionEffect) (ev: t_RedemptionEvent) : bool =
   | RedemptionEffect_Consume, RedemptionEvent_Consumed _
   | RedemptionEffect_FinalPolicy, RedemptionEvent_FinalPolicy _
   | RedemptionEffect_Insert _, RedemptionEvent_Insert _
-  | RedemptionEffect_Recheck, RedemptionEvent_Recheck _ -> true
+  | RedemptionEffect_Recheck, RedemptionEvent_Recheck _
+  | RedemptionEffect_Replay, RedemptionEvent_Replayed _ -> true
   | _ -> false
 
 let sound_transition (t: t_RedemptionTransition) : bool =
@@ -111,6 +112,13 @@ let turn_ev (#io_t: Type0) {| i: t_RedemptionIo io_t |}
         (match o with
          | Core_models.Option.Option_Some observation ->
              let ev = RedemptionEvent_Recheck observation in
+             (aborted, s', restore_done, step t.f_driver ev, Some ev)
+         | Core_models.Option.Option_None -> (true, s', restore_done, t, None))
+    | RedemptionEffect_Replay ->
+        let (s', o) = f_replay_enrolled_device #io_t #i s in
+        (match o with
+         | Core_models.Option.Option_Some observation ->
+             let ev = RedemptionEvent_Replayed observation in
              (aborted, s', restore_done, step t.f_driver ev, Some ev)
          | Core_models.Option.Option_None -> (true, s', restore_done, t, None))
     | RedemptionEffect_RestoreAndFail _ ->
@@ -196,17 +204,18 @@ let rec iter_turn_is_run_ev (#io_t: Type0) {| i: t_RedemptionIo io_t |} (n: nat)
     iter_turn_is_run_ev #io_t #i (n - 1) (a1, s1, r1, t1)
   end
 
-/// The extracted loop calls the executor exactly as `run_ev` does.
+/// The extracted loop calls the executor exactly as `run_ev` does, for either
+/// request start (a live-grant redemption or the U-24 replay).
 let run_redemption_is_run_ev (#io_t: Type0) {| i: t_RedemptionIo io_t |} (s: io_t)
-      (ready: Vela_recovery_policy.t_ReadyToConsume)
+      (start: t_RedemptionStart)
   : Lemma
-    (let t0 = begin_redemption ready in
+    (let t0 = begin_redemption_from start in
      let (a2, s2, r2, t2, _) = run_ev #io_t #i 5 (false, s, false, t0) in
-     run_redemption #io_t #i s ready ==
+     run_redemption #io_t #i s start ==
        (s2, (if a2 then Core_models.Option.Option_None else Core_models.Option.Option_Some t2))) =
-  let t0 = begin_redemption ready in
+  let t0 = begin_redemption_from start in
   assert (v v_REDEMPTION_MAX_EFFECTS = 5);
-  assert (run_redemption #io_t #i s ready ==
+  assert (run_redemption #io_t #i s start ==
           (let (a2, s2, r2, t2, _) = run_ev #io_t #i 5 (false, s, false, t0) in
            (s2, (if a2 then Core_models.Option.Option_None else Core_models.Option.Option_Some t2))))
 
@@ -275,6 +284,7 @@ let remaining (e: t_RedemptionEffect) : nat =
   | RedemptionEffect_FinalPolicy -> 3
   | RedemptionEffect_Insert _ -> 2
   | RedemptionEffect_Recheck -> 1
+  | RedemptionEffect_Replay -> 1
   | RedemptionEffect_Complete | RedemptionEffect_Fail _ | RedemptionEffect_RestoreAndFail _
   | RedemptionEffect_Idle -> 0
 
@@ -285,6 +295,7 @@ let remaining_zero_is_terminal (e: t_RedemptionEffect)
   | RedemptionEffect_FinalPolicy -> ()
   | RedemptionEffect_Insert _ -> ()
   | RedemptionEffect_Recheck -> ()
+  | RedemptionEffect_Replay -> ()
   | RedemptionEffect_Complete -> ()
   | RedemptionEffect_Fail _ -> ()
   | RedemptionEffect_RestoreAndFail _ -> ()
@@ -300,6 +311,7 @@ let step_decreases (t: t_RedemptionTransition) (ev: t_RedemptionEvent)
   | RedemptionEffect_FinalPolicy -> ()
   | RedemptionEffect_Insert _ -> ()
   | RedemptionEffect_Recheck -> ()
+  | RedemptionEffect_Replay -> ()
 
 /// Once a turn aborted, every later turn is inert and the abort flag stays set.
 let rec run_ev_aborted (#io_t: Type0) {| i: t_RedemptionIo io_t |} (n: nat)
@@ -356,35 +368,36 @@ let rec run_ev_reaches_a_verdict (#io_t: Type0) {| i: t_RedemptionIo io_t |} (n:
 // ── 4. The handler's final state satisfies the per-request theorems ───────
 
 let run_redemption_theorem (#io_t: Type0) {| i: t_RedemptionIo io_t |} (s: io_t)
-      (ready: Vela_recovery_policy.t_ReadyToConsume)
+      (start: t_RedemptionStart)
   : Lemma (
-      let (_, outcome) = run_redemption #io_t #i s ready in
+      let (_, outcome) = run_redemption #io_t #i s start in
       match outcome with
       | Core_models.Option.Option_None -> True
       | Core_models.Option.Option_Some t ->
           terminal t.f_effect /\
           sound_transition t /\
           (exists (evs: list t_RedemptionEvent).
-            responds (begin_redemption ready) evs /\
-            t.f_driver == run_from_ready ready evs /\
+            responds (begin_redemption_from start) evs /\
+            t.f_driver == run_from_start start evs /\
             trace_sound t.f_driver /\
             (let d = t.f_driver in
              (d.f_insert_succeeded ==> not d.f_restored) /\
              (d.f_restored ==> not d.f_insert_succeeded) /\
-             count_complete_from_ready ready evs <= 1))) =
-  let t0 = begin_redemption ready in
-  run_redemption_is_run_ev #io_t #i s ready;
+             count_complete_from_start start evs <= 1))) =
+  let t0 = begin_redemption_from start in
+  run_redemption_is_run_ev #io_t #i s start;
   let (a2, s2, r2, t2, evs) = run_ev #io_t #i 5 (false, s, false, t0) in
-  begin_sound ready;
+  begin_from_sound start;
   trace_sound_matches_rust t0.f_driver;
   run_ev_follows_the_driver #io_t #i 5 (false, s, false, t0);
   run_ev_reaches_a_verdict #io_t #i 5 (false, s, false, t0);
   if a2 then ()
   else begin
-    assert ((let (_, outcome) = run_redemption #io_t #i s ready in outcome) ==
+    assert ((let (_, outcome) = run_redemption #io_t #i s start in outcome) ==
             Core_models.Option.Option_Some t2);
     assert (responds t0 evs);
     assert (t2.f_driver == run t0.f_driver evs);
-    redemption_trace_theorem ready evs;
-    assert (t2.f_driver == run_from_ready ready evs)
+    redemption_trace_theorem start evs;
+    run_from_start_is_begin start evs;
+    assert (t2.f_driver == run_from_start start evs)
   end

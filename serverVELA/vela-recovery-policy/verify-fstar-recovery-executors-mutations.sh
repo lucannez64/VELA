@@ -25,8 +25,10 @@ set -euo pipefail
 #   classify-error     classify_insert maps a failed insert to Inserted
 #   classify-rows      classify_insert maps a zero-row insert to Inserted
 #   classify-authority classify_authority maps a missing commitment to StillRotating
+#   classify-replay    classify_replay reports any row as matching the request key
 #   plan-guard         plan_insert_device always uses the commitment guard
 #   plan-epoch         plan_insert_device writes a fixed epoch
+#   plan-grant         plan_insert_device records the user as the recovery grant
 #
 #   recovery-share family (`src/share_store.rs`)
 #   share-classify-stage-rows  a zero-row stage update reports Staged
@@ -81,7 +83,8 @@ hax_lib_root=$(
 )
 
 mutants=(
-  classify-match classify-error classify-rows classify-authority plan-guard plan-epoch
+  classify-match classify-error classify-rows classify-authority classify-replay
+  plan-guard plan-epoch plan-grant
   share-classify-stage-rows share-classify-account share-classify-read
   share-classify-delete-rows share-plan-epoch share-plan-split
   possession-classify-store possession-classify-attempt
@@ -100,8 +103,10 @@ declare -A expect=(
   [classify-error]=insert_device_is_honest
   [classify-rows]=insert_device_is_honest
   [classify-authority]=authority_observation_is_honest
+  [classify-replay]=replay_rejects_a_different_key
   [plan-guard]=insert_device_is_honest
   [plan-epoch]=insert_device_is_honest
+  [plan-grant]=insert_device_is_honest
   [share-classify-stage-rows]=stage_share_is_honest
   [share-classify-account]=stage_account_is_honest
   [share-classify-read]=read_share_is_honest
@@ -233,11 +238,23 @@ elif name == 'classify-authority':
         Vela_recovery_policy.Driver.AuthorityRecheckObservation_CommitmentRevoked''',
          '''      | Core_models.Option.Option_None  ->
         Vela_recovery_policy.Driver.AuthorityRecheckObservation_StillRotating''')
+elif name == 'classify-replay':
+    start = text.index('let classify_replay')
+    body = text[start:]
+    old = 'row.f_hybrid_ek =. hybrid_ek && row.f_hybrid_vk =. hybrid_vk'
+    if body.count(old) != 1:
+        sys.exit(f'{name}: replay key check shape changed')
+    text = text[:start] + body.replace(old, 'true')
 elif name == 'plan-guard':
     start, body, end = region('let plan_insert_device', '/// `recheck_authority`')
     if body.count('f_guard = guard') != 1:
         sys.exit(f'{name}: guard field not found')
     text = text[:start] + body.replace('f_guard = guard', 'f_guard = GrantGuard_Commitment') + text[end:]
+elif name == 'plan-grant':
+    start, body, end = region('let plan_insert_device', '/// The U-24 replay lookup')
+    if body.count('f_grant = grant') != 1:
+        sys.exit(f'{name}: grant field not found')
+    text = text[:start] + body.replace('f_grant = grant', 'f_grant = user') + text[end:]
 elif name == 'plan-epoch':
     start, body, end = region('let plan_insert_device', '/// `recheck_authority`')
     if body.count('f_epoch = epoch') != 1:

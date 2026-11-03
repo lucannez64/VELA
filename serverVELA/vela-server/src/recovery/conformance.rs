@@ -217,8 +217,9 @@ async fn load(db: &TursoDb, store: &crate::store::Store, state: &Model, keys: &[
     }
     for (id, row) in &state.devices {
         db.execute(
-            "INSERT INTO devices (id, user_id, device_name, device_type, hybrid_ek, hybrid_vk, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO devices
+             (id, user_id, device_name, device_type, hybrid_ek, hybrid_vk, created_at, recovery_grant_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             vec![
                 TursoValue::Text(id.clone()),
                 TursoValue::Text(row.user.clone()),
@@ -227,6 +228,7 @@ async fn load(db: &TursoDb, store: &crate::store::Store, state: &Model, keys: &[
                 TursoValue::Text(row.hybrid_ek.clone()),
                 TursoValue::Text(row.hybrid_vk.clone()),
                 TursoValue::Text(row.created_at.clone()),
+                opt(&row.grant),
             ],
         )
         .await
@@ -269,14 +271,16 @@ async fn snapshot(db: &TursoDb, store: &crate::store::Store, keys: &[String]) ->
     }
     for row in db
         .query(
-            "SELECT id, user_id, device_name, device_type, hybrid_ek, hybrid_vk, created_at FROM devices",
+            "SELECT id, user_id, device_name, device_type, hybrid_ek, hybrid_vk, created_at, recovery_grant_id FROM devices",
             vec![],
         )
         .await
         .unwrap()
     {
+        let id = text(&row, 0);
+        let grant = row.text(7).map(String::from);
         let previous = state.devices.insert(
-            text(&row, 0),
+            id.clone(),
             DeviceRow {
                 user: text(&row, 1),
                 name: text(&row, 2),
@@ -284,9 +288,14 @@ async fn snapshot(db: &TursoDb, store: &crate::store::Store, keys: &[String]) ->
                 hybrid_ek: text(&row, 4),
                 hybrid_vk: text(&row, 5),
                 created_at: text(&row, 6),
+                grant: grant.clone(),
             },
         );
         assert!(previous.is_none(), "duplicate devices id");
+        if let Some(grant) = grant {
+            let previous = state.grant_index.insert(grant, id);
+            assert!(previous.is_none(), "duplicate recovery_grant_id");
+        }
     }
     for key in keys {
         if let Some(value) = store.get(key).unwrap() {
@@ -378,6 +387,7 @@ async fn schema_has_the_modelled_columns() {
                 ("hybrid_ek", "TEXT NOT NULL"),
                 ("hybrid_vk", "TEXT NOT NULL"),
                 ("created_at", "TEXT NOT NULL"),
+                ("recovery_grant_id", "TEXT"),
             ],
         ),
     ];
@@ -530,8 +540,10 @@ async fn guarded_insert_matches_the_store_model() {
                         hybrid_ek: "ek".into(),
                         hybrid_vk: "vk".into(),
                         created_at: "t".into(),
+                        grant: Some(s(grant(7))),
                     },
                 );
+                pre.grant_index.insert(s(grant(7)), s(device(9)));
             }
             for (preflight, guard) in [
                 (credential_preflight(), GrantGuard::Credential { credential_id: t("c") }),
@@ -565,6 +577,7 @@ async fn guarded_insert_matches_the_store_model() {
                         NOW,
                         preflight.key_epoch,
                         &guard,
+                        &s(grant(0)),
                         fault,
                     );
                     let case = format!(
@@ -572,6 +585,33 @@ async fn guarded_insert_matches_the_store_model() {
                     );
                     assert_eq!(observed, Some(expected), "{case}");
                     assert_eq!(snapshot(&db, &store, &keys).await, post, "{case}");
+                    if expected == InsertObservation::Inserted {
+                        // The row records the grant that authorized it, and
+                        // the replay lookup finds exactly that device.
+                        assert_eq!(
+                            post.grant_index.get(&s(grant(0))).map(String::as_str),
+                            Some(device_id.as_str()),
+                            "{case}"
+                        );
+                        let mut replay = EnrollDeviceIo::for_replay_conformance(
+                            PoolSql(&db),
+                            StoreKv(&store),
+                            user(0),
+                            grant(0),
+                        );
+                        assert_eq!(
+                            replay.replay_enrolled_device().await,
+                            Some(vela_recovery_policy::driver::ReplayObservation::Enrolled {
+                                key_matches: true
+                            }),
+                            "{case}"
+                        );
+                        assert_eq!(
+                            replay.replay_device_id().map(|id| id.to_string()),
+                            Some(device_id.clone()),
+                            "{case}"
+                        );
+                    }
                     assert_eq!(
                         io.insert_error_is_set(),
                         expected == InsertObservation::Failed,
@@ -582,6 +622,94 @@ async fn guarded_insert_matches_the_store_model() {
             }
         }
     }
+    assert!(counts.states > 0 && counts.cases > 0 && counts.faulted > 0);
+}
+
+#[tokio::test]
+async fn replay_lookup_matches_the_store_model() {
+    let db = temp_db().await;
+    let store = temp_store();
+    let mut counts = Counts::default();
+    let key = redemption_store::grant_key(&s(user(0)), &s(grant(0)));
+    let keys = vec![key];
+
+    // Every device-table shape the replay lookup can meet: no row, a row for
+    // this grant and user, a row carrying another grant, and a row for the
+    // same grant id under a different user.
+    let row = |grant: Option<&str>, user_id: Uuid| DeviceRow {
+        user: s(user_id),
+        name: "recovered".into(),
+        kind: "recovered".into(),
+        hybrid_ek: DERIVED_EK.into(),
+        hybrid_vk: DERIVED_VK.into(),
+        created_at: NOW.into(),
+        grant: grant.map(|g| g.to_string()),
+    };
+    let states: Vec<Vec<(String, DeviceRow)>> = vec![
+        vec![],
+        vec![(s(device(0)), row(Some(&s(grant(0))), user(0)))],
+        vec![(s(device(0)), row(Some(&s(grant(9))), user(0)))],
+        vec![(s(device(0)), row(Some(&s(grant(0))), user(1)))],
+        vec![(s(device(0)), row(None, user(0)))],
+    ];
+    for devices in states {
+        counts.states += 1;
+        let mut state = Model::default();
+        for (id, row) in devices {
+            if let Some(grant) = &row.grant {
+                state.grant_index.insert(grant.clone(), id.clone());
+            }
+            state.devices.insert(id, row);
+        }
+        for fault in faults(1) {
+            load(&db, &store, &state, &keys).await;
+            let mut io = EnrollDeviceIo::for_replay_conformance(
+                Faulty::new(PoolSql(&db), fault),
+                StoreKv(&store),
+                user(0),
+                grant(0),
+            );
+            let observed = io.replay_enrolled_device().await;
+            let expected =
+                model::enrolled_device(&state, &s(user(0)), &s(grant(0)), &t(DERIVED_EK), &t(DERIVED_VK));
+            let case = format!("replay {state:?} fault {fault:?}");
+            match fault {
+                None => {
+                    assert_eq!(observed, Some(expected), "{case}");
+                    assert!(!io.error_is_set(), "{case}");
+                    match expected {
+                        vela_recovery_policy::driver::ReplayObservation::Enrolled {
+                            key_matches: true,
+                        } => assert_eq!(
+                            io.replay_device_id().map(|id| id.to_string()),
+                            Some(s(device(0))),
+                            "{case}"
+                        ),
+                        _ => assert!(io.replay_device_id().is_none(), "{case}"),
+                    }
+                }
+                Some(_) => {
+                    assert_eq!(observed, None, "{case}");
+                    assert!(io.error_is_set(), "{case}");
+                    assert_eq!(io.replay_device_id(), None, "{case}");
+                }
+            }
+            counts.case(fault);
+        }
+    }
+
+    // The presented-key mismatch is the classifier's decision, checked here
+    // against the same row the executor read.
+    let mut state = Model::default();
+    state
+        .devices
+        .insert(s(device(0)), row(Some(&s(grant(0))), user(0)));
+    state.grant_index.insert(s(grant(0)), s(device(0)));
+    load(&db, &store, &state, &keys).await;
+    assert_eq!(
+        model::enrolled_device(&state, &s(user(0)), &s(grant(0)), &t("BwgJ"), &t(DERIVED_VK)),
+        vela_recovery_policy::driver::ReplayObservation::Enrolled { key_matches: false }
+    );
     assert!(counts.states > 0 && counts.cases > 0 && counts.faulted > 0);
 }
 

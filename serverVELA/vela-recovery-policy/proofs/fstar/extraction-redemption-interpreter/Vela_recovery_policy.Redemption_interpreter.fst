@@ -75,6 +75,16 @@ class t_RedemptionIo (v_Self: Type0) = {
           Core_models.Option.t_Option Vela_recovery_policy.Driver.t_AuthorityRecheckObservation)
         (f_recheck_authority_pre x0)
         (fun result -> f_recheck_authority_post x0 result);
+  f_replay_enrolled_device_pre:self_: v_Self -> pred: Type0{true ==> pred};
+  f_replay_enrolled_device_post:
+      v_Self ->
+      (v_Self & Core_models.Option.t_Option Vela_recovery_policy.Driver.t_ReplayObservation)
+    -> Type0;
+  f_replay_enrolled_device:x0: v_Self
+    -> Prims.Pure
+        (v_Self & Core_models.Option.t_Option Vela_recovery_policy.Driver.t_ReplayObservation)
+        (f_replay_enrolled_device_pre x0)
+        (fun result -> f_replay_enrolled_device_post x0 result);
   f_restore_grant_pre:self_: v_Self -> pred: Type0{true ==> pred};
   f_restore_grant_post:v_Self -> (v_Self & Core_models.Option.t_Option Prims.unit) -> Type0;
   f_restore_grant:x0: v_Self
@@ -89,10 +99,10 @@ let run_redemption
       (#v_Io: Type0)
       (#[FStar.Tactics.Typeclasses.tcresolve ()] i0: t_RedemptionIo v_Io)
       (io: v_Io)
-      (ready: Vela_recovery_policy.t_ReadyToConsume)
+      (start: Vela_recovery_policy.Driver.t_RedemptionStart)
     : (v_Io & Core_models.Option.t_Option Vela_recovery_policy.Driver.t_RedemptionTransition) =
   let transition:Vela_recovery_policy.Driver.t_RedemptionTransition =
-    Vela_recovery_policy.Driver.begin_redemption ready
+    Vela_recovery_policy.Driver.begin_redemption_from start
   in
   let restore_done:bool = false in
   let aborted:bool = false in
@@ -129,7 +139,7 @@ let run_redemption
           then
             let
             ((aborted: bool), (io: v_Io), (restore_done: bool)),
-            (hoist6: Vela_recovery_policy.Driver.t_RedemptionTransition) =
+            (hoist7: Vela_recovery_policy.Driver.t_RedemptionTransition) =
               match
                 transition.Vela_recovery_policy.Driver.f_effect
                 <:
@@ -242,6 +252,31 @@ let run_redemption
                     (aborted, io, restore_done <: (bool & v_Io & bool)), transition
                     <:
                     ((bool & v_Io & bool) & Vela_recovery_policy.Driver.t_RedemptionTransition))
+              | Vela_recovery_policy.Driver.RedemptionEffect_Replay  ->
+                let
+                (tmp0: v_Io),
+                (out: Core_models.Option.t_Option Vela_recovery_policy.Driver.t_ReplayObservation) =
+                  f_replay_enrolled_device #v_Io #FStar.Tactics.Typeclasses.solve io
+                in
+                let io:v_Io = tmp0 in
+                (match
+                    out
+                    <:
+                    Core_models.Option.t_Option Vela_recovery_policy.Driver.t_ReplayObservation
+                  with
+                  | Core_models.Option.Option_Some observation ->
+                    (aborted, io, restore_done <: (bool & v_Io & bool)),
+                    Vela_recovery_policy.Driver.step transition.Vela_recovery_policy.Driver.f_driver
+                      (Vela_recovery_policy.Driver.RedemptionEvent_Replayed observation
+                        <:
+                        Vela_recovery_policy.Driver.t_RedemptionEvent)
+                    <:
+                    ((bool & v_Io & bool) & Vela_recovery_policy.Driver.t_RedemptionTransition)
+                  | Core_models.Option.Option_None  ->
+                    let aborted:bool = true in
+                    (aborted, io, restore_done <: (bool & v_Io & bool)), transition
+                    <:
+                    ((bool & v_Io & bool) & Vela_recovery_policy.Driver.t_RedemptionTransition))
               | Vela_recovery_policy.Driver.RedemptionEffect_RestoreAndFail _ ->
                 let (tmp0: v_Io), (out: Core_models.Option.t_Option Prims.unit) =
                   f_restore_grant #v_Io #FStar.Tactics.Typeclasses.solve io
@@ -262,7 +297,7 @@ let run_redemption
                 <:
                 ((bool & v_Io & bool) & Vela_recovery_policy.Driver.t_RedemptionTransition)
             in
-            let transition:Vela_recovery_policy.Driver.t_RedemptionTransition = hoist6 in
+            let transition:Vela_recovery_policy.Driver.t_RedemptionTransition = hoist7 in
             aborted, io, restore_done, transition
             <:
             (bool & v_Io & bool & Vela_recovery_policy.Driver.t_RedemptionTransition)

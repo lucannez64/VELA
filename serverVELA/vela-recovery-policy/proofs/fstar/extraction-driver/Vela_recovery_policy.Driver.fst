@@ -9,6 +9,7 @@ type t_RedemptionStage =
   | RedemptionStage_FinalPolicy : t_RedemptionStage
   | RedemptionStage_Insert : t_RedemptionStage
   | RedemptionStage_Recheck : t_RedemptionStage
+  | RedemptionStage_Replay : t_RedemptionStage
   | RedemptionStage_Done : t_RedemptionStage
 
 /// The grant value removed by the atomic `get_del`, as observed by the
@@ -58,6 +59,12 @@ type t_AuthorityRecheckObservation =
   | AuthorityRecheckObservation_CredentialReplaced : t_AuthorityRecheckObservation
   | AuthorityRecheckObservation_StillRotating : t_AuthorityRecheckObservation
 
+/// What the U-24 replay lookup observed. It runs only after the preflight
+/// found no live grant, and reads the device row this exact grant created.
+type t_ReplayObservation =
+  | ReplayObservation_Enrolled { f_key_matches:bool }: t_ReplayObservation
+  | ReplayObservation_Absent : t_ReplayObservation
+
 /// One driver event. The handler feeds exactly the observation it obtained
 /// from the corresponding effect.
 type t_RedemptionEvent =
@@ -65,6 +72,15 @@ type t_RedemptionEvent =
   | RedemptionEvent_FinalPolicy : t_FinalPolicyObservation -> t_RedemptionEvent
   | RedemptionEvent_Insert : t_InsertObservation -> t_RedemptionEvent
   | RedemptionEvent_Recheck : t_AuthorityRecheckObservation -> t_RedemptionEvent
+  | RedemptionEvent_Replayed : t_ReplayObservation -> t_RedemptionEvent
+
+/// How a redemption request starts. `Redeem` is the ordinary path: the
+/// checked preflight produced its permit, so the grant may be consumed.
+/// `Replay` is the lost-reply path: the preflight found no live grant, so
+/// only the non-consuming device-row lookup may run.
+type t_RedemptionStart =
+  | RedemptionStart_Redeem : Vela_recovery_policy.t_ReadyToConsume -> t_RedemptionStart
+  | RedemptionStart_Replay : t_RedemptionStart
 
 /// Failure categories, preserving the handler's historical status/message
 /// precedence. `GrantChanged` is the shared retryable "changed while
@@ -94,6 +110,7 @@ type t_RedemptionEffect =
   | RedemptionEffect_FinalPolicy : t_RedemptionEffect
   | RedemptionEffect_Insert : t_RedemptionInsertPermit -> t_RedemptionEffect
   | RedemptionEffect_Recheck : t_RedemptionEffect
+  | RedemptionEffect_Replay : t_RedemptionEffect
   | RedemptionEffect_Complete : t_RedemptionEffect
   | RedemptionEffect_Fail : t_RedemptionFailure -> t_RedemptionEffect
   | RedemptionEffect_RestoreAndFail : t_RedemptionFailure -> t_RedemptionEffect
@@ -109,7 +126,10 @@ type t_RedemptionDriver = {
   f_permit_issued:bool;
   f_insert_attempted:bool;
   f_insert_succeeded:bool;
-  f_restored:bool
+  f_restored:bool;
+  f_replay:bool;
+  f_replay_attempted:bool;
+  f_replay_succeeded:bool
 }
 
 type t_RedemptionTransition = {
@@ -123,15 +143,26 @@ let redemption_state_is_sound (driver: t_RedemptionDriver) : bool =
   let consume_clean:bool =
     ~.driver.f_consumed_matched && ~.driver.f_permit_issued && ~.driver.f_insert_attempted &&
     ~.driver.f_insert_succeeded &&
-    ~.driver.f_restored
+    ~.driver.f_restored &&
+    ~.driver.f_replay
   in
   let policy_clean:bool =
     driver.f_consumed_matched && ~.driver.f_permit_issued && ~.driver.f_insert_attempted &&
     ~.driver.f_insert_succeeded &&
-    ~.driver.f_restored
+    ~.driver.f_restored &&
+    ~.driver.f_replay
   in
   let insert_clean:bool =
     driver.f_consumed_matched && driver.f_permit_issued && driver.f_insert_attempted &&
+    ~.driver.f_insert_succeeded &&
+    ~.driver.f_restored &&
+    ~.driver.f_replay
+  in
+  let replay_clean:bool =
+    driver.f_replay && driver.f_replay_attempted && ~.driver.f_replay_succeeded &&
+    ~.driver.f_consumed_matched &&
+    ~.driver.f_permit_issued &&
+    ~.driver.f_insert_attempted &&
     ~.driver.f_insert_succeeded &&
     ~.driver.f_restored
   in
@@ -151,18 +182,36 @@ let redemption_state_is_sound (driver: t_RedemptionDriver) : bool =
     | RedemptionStage_Recheck  -> true
     | _ -> false) ||
   insert_clean) &&
+  (~.(match driver.f_stage <: t_RedemptionStage with
+    | RedemptionStage_Replay  -> true
+    | _ -> false) ||
+  replay_clean) &&
   (~.driver.f_insert_attempted || driver.f_consumed_matched && driver.f_permit_issued) &&
   (~.driver.f_insert_succeeded ||
   driver.f_insert_attempted && driver.f_consumed_matched && driver.f_permit_issued &&
   (match driver.f_stage <: t_RedemptionStage with
     | RedemptionStage_Done  -> true
     | _ -> false) &&
-  ~.driver.f_restored) &&
+  ~.driver.f_restored &&
+  ~.driver.f_replay) &&
   (~.driver.f_restored ||
   (match driver.f_stage <: t_RedemptionStage with
     | RedemptionStage_Done  -> true
     | _ -> false) &&
-  ~.driver.f_insert_succeeded)
+  ~.driver.f_insert_succeeded &&
+  ~.driver.f_replay) &&
+  (~.driver.f_replay ||
+  ~.driver.f_consumed_matched && ~.driver.f_permit_issued && ~.driver.f_insert_attempted &&
+  ~.driver.f_insert_succeeded &&
+  ~.driver.f_restored) &&
+  (~.driver.f_replay_attempted || driver.f_replay) &&
+  (~.driver.f_replay_succeeded ||
+  driver.f_replay && driver.f_replay_attempted &&
+  (match driver.f_stage <: t_RedemptionStage with
+    | RedemptionStage_Done  -> true
+    | _ -> false) &&
+  ~.driver.f_insert_succeeded &&
+  ~.driver.f_restored)
 
 /// Every effect the driver emits agrees with the state it produces. In
 /// particular an `Insert` effect leaves the driver in `Insert` with a matched
@@ -175,14 +224,16 @@ let redemption_effect_is_sound (driver: t_RedemptionDriver) (v_effect: t_Redempt
       | RedemptionStage_Consume  -> true
       | _ -> false) &&
     ~.driver.f_consumed_matched &&
-    ~.driver.f_insert_attempted
+    ~.driver.f_insert_attempted &&
+    ~.driver.f_replay
   | RedemptionEffect_FinalPolicy  ->
     (match driver.f_stage <: t_RedemptionStage with
       | RedemptionStage_FinalPolicy  -> true
       | _ -> false) &&
     driver.f_consumed_matched &&
     ~.driver.f_permit_issued &&
-    ~.driver.f_insert_attempted
+    ~.driver.f_insert_attempted &&
+    ~.driver.f_replay
   | RedemptionEffect_Insert permit ->
     (match driver.f_stage <: t_RedemptionStage with
       | RedemptionStage_Insert  -> true
@@ -192,6 +243,7 @@ let redemption_effect_is_sound (driver: t_RedemptionDriver) (v_effect: t_Redempt
     driver.f_insert_attempted &&
     ~.driver.f_insert_succeeded &&
     ~.driver.f_restored &&
+    ~.driver.f_replay &&
     permit.f_epoch =. driver.f_epoch &&
     permit.f_possession =. driver.f_possession
   | RedemptionEffect_Recheck  ->
@@ -202,24 +254,41 @@ let redemption_effect_is_sound (driver: t_RedemptionDriver) (v_effect: t_Redempt
     driver.f_permit_issued &&
     driver.f_insert_attempted &&
     ~.driver.f_insert_succeeded &&
+    ~.driver.f_restored &&
+    ~.driver.f_replay
+  | RedemptionEffect_Replay  ->
+    (match driver.f_stage <: t_RedemptionStage with
+      | RedemptionStage_Replay  -> true
+      | _ -> false) &&
+    driver.f_replay &&
+    driver.f_replay_attempted &&
+    ~.driver.f_replay_succeeded &&
+    ~.driver.f_consumed_matched &&
+    ~.driver.f_permit_issued &&
+    ~.driver.f_insert_attempted &&
+    ~.driver.f_insert_succeeded &&
     ~.driver.f_restored
   | RedemptionEffect_Complete  ->
     (match driver.f_stage <: t_RedemptionStage with
       | RedemptionStage_Done  -> true
       | _ -> false) &&
-    driver.f_insert_succeeded &&
-    ~.driver.f_restored
+    ~.driver.f_restored &&
+    (if driver.f_replay
+      then driver.f_replay_attempted && driver.f_replay_succeeded && ~.driver.f_insert_succeeded
+      else driver.f_insert_succeeded)
   | RedemptionEffect_Fail _ ->
     (match driver.f_stage <: t_RedemptionStage with
       | RedemptionStage_Done  -> true
       | _ -> false) &&
-    ~.driver.f_insert_succeeded
+    ~.driver.f_insert_succeeded &&
+    ~.driver.f_replay_succeeded
   | RedemptionEffect_RestoreAndFail _ ->
     (match driver.f_stage <: t_RedemptionStage with
       | RedemptionStage_Done  -> true
       | _ -> false) &&
     driver.f_restored &&
-    ~.driver.f_insert_succeeded
+    ~.driver.f_insert_succeeded &&
+    ~.driver.f_replay
   | RedemptionEffect_Idle  -> true
 
 let transition (driver: t_RedemptionDriver) (v_effect: t_RedemptionEffect) : t_RedemptionTransition =
@@ -267,11 +336,81 @@ let begin_redemption (ready: Vela_recovery_policy.t_ReadyToConsume)
         f_permit_issued = false;
         f_insert_attempted = false;
         f_insert_succeeded = false;
-        f_restored = false
+        f_restored = false;
+        f_replay = false;
+        f_replay_attempted = false;
+        f_replay_succeeded = false
       }
       <:
       t_RedemptionDriver)
     (RedemptionEffect_Consume <: t_RedemptionEffect)
+
+/// Start the U-24 replay ceremony: the checked preflight found no live grant,
+/// so the only permitted effect is the non-consuming lookup of the device row
+/// this exact grant created. No begin state of this ceremony can consume,
+/// insert or restore anything.
+let begin_redemption_replay (_: Prims.unit)
+    : Prims.Pure t_RedemptionTransition
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:t_RedemptionTransition = result in
+          redemption_state_is_sound result.f_driver &&
+          redemption_effect_is_sound result.f_driver result.f_effect &&
+          (match result.f_driver.f_stage <: t_RedemptionStage with
+            | RedemptionStage_Replay  -> true
+            | _ -> false) &&
+          result.f_driver.f_replay &&
+          result.f_driver.f_replay_attempted &&
+          ~.result.f_driver.f_replay_succeeded &&
+          ~.result.f_driver.f_consumed_matched &&
+          ~.result.f_driver.f_permit_issued &&
+          ~.result.f_driver.f_insert_attempted &&
+          ~.result.f_driver.f_insert_succeeded &&
+          ~.result.f_driver.f_restored) =
+  transition ({
+        f_stage = RedemptionStage_Replay <: t_RedemptionStage;
+        f_epoch = Vela_recovery_policy.v_INITIAL_EPOCH;
+        f_possession = false;
+        f_consumed_matched = false;
+        f_permit_issued = false;
+        f_insert_attempted = false;
+        f_insert_succeeded = false;
+        f_restored = false;
+        f_replay = true;
+        f_replay_attempted = true;
+        f_replay_succeeded = false
+      }
+      <:
+      t_RedemptionDriver)
+    (RedemptionEffect_Replay <: t_RedemptionEffect)
+
+/// The single entry point the interpreter uses: a request either redeems a
+/// live grant or replays the lost-reply lookup. It never does both, because
+/// the two starts are disjoint and neither driver can reach the other\'s
+/// stages.
+let begin_redemption_from (start: t_RedemptionStart)
+    : Prims.Pure t_RedemptionTransition
+      (requires true)
+      (ensures
+        fun result ->
+          let result:t_RedemptionTransition = result in
+          redemption_state_is_sound result.f_driver &&
+          redemption_effect_is_sound result.f_driver result.f_effect &&
+          ((match result.f_driver.f_stage <: t_RedemptionStage with
+            | RedemptionStage_Consume  -> true
+            | _ -> false) ||
+          (match result.f_driver.f_stage <: t_RedemptionStage with
+            | RedemptionStage_Replay  -> true
+            | _ -> false)) &&
+          ~.result.f_driver.f_consumed_matched &&
+          ~.result.f_driver.f_permit_issued &&
+          ~.result.f_driver.f_insert_attempted &&
+          ~.result.f_driver.f_insert_succeeded &&
+          ~.result.f_driver.f_restored) =
+  match start <: t_RedemptionStart with
+  | RedemptionStart_Redeem ready -> begin_redemption ready
+  | RedemptionStart_Replay  -> begin_redemption_replay ()
 
 let on_consumed (driver: t_RedemptionDriver) (observation: t_ConsumptionObservation)
     : t_RedemptionTransition =
@@ -366,6 +505,28 @@ let on_recheck (driver: t_RedemptionDriver) (observation: t_AuthorityRecheckObse
   | AuthorityRecheckObservation_StillRotating  ->
     restore_then_fail driver (RedemptionFailure_Rotating <: t_RedemptionFailure)
 
+/// The U-24 replay verdict. Only an `Enrolled` observation whose stored keys
+/// equal the request's may answer with a device; the row was written by this
+/// exact grant, so the answer is the device the first request created. A
+/// different key and an absent row are the same uniform grant-unavailable
+/// refusal the missing-grant path has always returned.
+let on_replayed (driver: t_RedemptionDriver) (observation: t_ReplayObservation)
+    : t_RedemptionTransition =
+  match observation <: t_ReplayObservation with
+  | ReplayObservation_Enrolled { f_key_matches = true } ->
+    transition ({
+          driver with
+          f_stage = RedemptionStage_Done <: t_RedemptionStage;
+          f_replay_succeeded = true
+        }
+        <:
+        t_RedemptionDriver)
+      (RedemptionEffect_Complete <: t_RedemptionEffect)
+  | ReplayObservation_Enrolled { f_key_matches = false } ->
+    terminal driver (RedemptionFailure_GrantUnavailable <: t_RedemptionFailure)
+  | ReplayObservation_Absent  ->
+    terminal driver (RedemptionFailure_GrantUnavailable <: t_RedemptionFailure)
+
 /// The complete, total transition relation. Events that do not match the
 /// current stage (and every event after `Done`) are ignored.
 let step (driver: t_RedemptionDriver) (event: t_RedemptionEvent)
@@ -405,6 +566,14 @@ let step (driver: t_RedemptionDriver) (event: t_RedemptionEvent)
       | RedemptionStage_Recheck  -> true
       | _ -> false
     then on_recheck driver observation
+    else idle driver
+  | RedemptionEvent_Replayed observation ->
+    if
+      (match driver.f_stage <: t_RedemptionStage with
+        | RedemptionStage_Replay  -> true
+        | _ -> false) &&
+      driver.f_replay
+    then on_replayed driver observation
     else idle driver
 
 let on_grant_consumed (driver: t_RedemptionDriver) (observation: t_ConsumptionObservation)
@@ -446,3 +615,13 @@ let on_authority_rechecked (driver: t_RedemptionDriver) (observation: t_Authorit
           redemption_effect_is_sound result.f_driver result.f_effect &&
           (~.(redemption_state_is_sound driver <: bool) || redemption_state_is_sound result.f_driver)
       ) = step driver (RedemptionEvent_Recheck observation <: t_RedemptionEvent)
+
+let on_replay_completed (driver: t_RedemptionDriver) (observation: t_ReplayObservation)
+    : Prims.Pure t_RedemptionTransition
+      (requires redemption_state_is_sound driver)
+      (ensures
+        fun result ->
+          let result:t_RedemptionTransition = result in
+          redemption_effect_is_sound result.f_driver result.f_effect &&
+          (~.(redemption_state_is_sound driver <: bool) || redemption_state_is_sound result.f_driver)
+      ) = step driver (RedemptionEvent_Replayed observation <: t_RedemptionEvent)

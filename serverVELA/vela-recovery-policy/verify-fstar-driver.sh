@@ -33,7 +33,7 @@ printf '%s\n' "$version"
 rm -rf proofs/fstar/extraction-driver
 cargo hax into \
   --output-dir proofs/fstar/extraction-driver \
-  -i '-** +vela_recovery_policy::driver::begin_redemption +vela_recovery_policy::driver::step +vela_recovery_policy::driver::on_grant_consumed +vela_recovery_policy::driver::on_final_policy_observed +vela_recovery_policy::driver::on_insert_completed +vela_recovery_policy::driver::on_authority_rechecked' \
+  -i '-** +vela_recovery_policy::driver::begin_redemption +vela_recovery_policy::driver::begin_redemption_replay +vela_recovery_policy::driver::begin_redemption_from +vela_recovery_policy::driver::step +vela_recovery_policy::driver::on_grant_consumed +vela_recovery_policy::driver::on_final_policy_observed +vela_recovery_policy::driver::on_insert_completed +vela_recovery_policy::driver::on_authority_rechecked +vela_recovery_policy::driver::on_replay_completed' \
   fstar --z3rlimit 500
 
 mapfile -t proof_files < <(

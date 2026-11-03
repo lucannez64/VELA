@@ -222,6 +222,29 @@ pub(super) fn put_grant<K: RecoveryKv>(kv: &mut K, stmt: &RedemptionStmt) -> Res
     }
 }
 
+/// The first `SelectEnrolledDevice` row (U-24): the device id and the stored
+/// key text, or `None` when no row carries the grant. A row missing a NOT NULL
+/// column is a storage error, not an absent row.
+pub(super) fn enrolled_device_row_view(
+    rows: &[VelaRow],
+) -> Result<Option<redemption_store::EnrolledDeviceRowView>> {
+    let Some(row) = rows.first() else {
+        return Ok(None);
+    };
+    let (Some(device_id), Some(hybrid_ek), Some(hybrid_vk)) =
+        (row.text(0), row.text(1), row.text(2))
+    else {
+        return Err(AppError::Internal(
+            "enrolled device row is missing its id or key material".into(),
+        ));
+    };
+    Ok(Some(redemption_store::EnrolledDeviceRowView {
+        device_id: device_id.to_string(),
+        hybrid_ek: hybrid_ek.to_string(),
+        hybrid_vk: hybrid_vk.to_string(),
+    }))
+}
+
 /// The first `SelectAuthority` row. An empty `recovery_auth_hash` is reported
 /// as no commitment, exactly as the insert guard's `<> ''` treats it.
 pub(super) fn authority_row_view(rows: &[VelaRow]) -> Option<AuthorityRowView> {

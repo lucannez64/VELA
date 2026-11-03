@@ -37,7 +37,12 @@ type t_RedemptionStmt =
     f_hybrid_vk:Alloc.String.t_String;
     f_created_at:Alloc.String.t_String;
     f_epoch:i64;
-    f_guard:t_GrantGuard
+    f_guard:t_GrantGuard;
+    f_grant:Alloc.String.t_String
+  }: t_RedemptionStmt
+  | RedemptionStmt_SelectEnrolledDevice {
+    f_user:Alloc.String.t_String;
+    f_grant:Alloc.String.t_String
   }: t_RedemptionStmt
   | RedemptionStmt_SelectAuthority { f_user:Alloc.String.t_String }: t_RedemptionStmt
   | RedemptionStmt_SelectEnrollmentAccount { f_user:Alloc.String.t_String }: t_RedemptionStmt
@@ -79,16 +84,27 @@ type t_GrantPeekObservation =
   | GrantPeekObservation_Absent : t_GrantPeekObservation
   | GrantPeekObservation_Present : t_GrantView -> t_GrantPeekObservation
 
+/// The cells of a `SelectEnrolledDevice` row: the device id and the stored
+/// base64 key material. `hybrid_ek`/`hybrid_vk` are the exact text the insert
+/// wrote, so the key equality the replay check makes is byte equality of the
+/// decoded keys.
+type t_EnrolledDeviceRowView = {
+  f_device_id:Alloc.String.t_String;
+  f_hybrid_ek:Alloc.String.t_String;
+  f_hybrid_vk:Alloc.String.t_String
+}
+
 /// `consume_grant`: the single-use `get_del` of the exact grant key.
 let plan_take_grant (key: Alloc.String.t_String) : t_RedemptionStmt =
   RedemptionStmt_TakeGrant ({ f_key = key }) <: t_RedemptionStmt
 
 /// `insert_device`: exactly one guarded device insert with the driver's
-/// permit and the grant's guard.
+/// permit and the grant's guard. The row records the grant that authorized it.
 let plan_insert_device
       (device_id user device_name device_type hybrid_ek hybrid_vk created_at: Alloc.String.t_String)
       (epoch: i64)
       (guard: t_GrantGuard)
+      (grant: Alloc.String.t_String)
     : Alloc.Vec.t_Vec t_RedemptionStmt Alloc.Alloc.t_Global =
   Alloc.Slice.impl__into_vec #t_RedemptionStmt
     #Alloc.Alloc.t_Global
@@ -104,7 +120,8 @@ let plan_insert_device
                 f_hybrid_vk = hybrid_vk;
                 f_created_at = created_at;
                 f_epoch = epoch;
-                f_guard = guard
+                f_guard = guard;
+                f_grant = grant
               })
             <:
             t_RedemptionStmt
@@ -114,6 +131,12 @@ let plan_insert_device
         Rust_primitives.Hax.array_of_list 1 list)
       <:
       t_Slice t_RedemptionStmt)
+
+/// The U-24 replay lookup: the device row (if any) that this exact recovery
+/// grant created for this user. The `recovery_grant_id` column is UNIQUE, so
+/// at most one row can carry a grant.
+let plan_enrolled_device (user grant: Alloc.String.t_String) : t_RedemptionStmt =
+  RedemptionStmt_SelectEnrolledDevice ({ f_user = user; f_grant = grant }) <: t_RedemptionStmt
 
 /// `recheck_authority`: read the live credential and commitment columns.
 let plan_authority_read (user: Alloc.String.t_String) : t_RedemptionStmt =
@@ -249,6 +272,30 @@ let classify_peek_grant (stored: Core_models.Option.t_Option t_GrantView) : t_Gr
     <:
     t_GrantPeekObservation
   | Core_models.Option.Option_None  -> GrantPeekObservation_Absent <: t_GrantPeekObservation
+
+/// The U-24 replay decision. A present row is `Enrolled`; `key_matches` is the
+/// exact equality of the request's encoded key material with the row's stored
+/// text. A missing row is `Absent`. Only `Enrolled { key_matches: true }` may
+/// answer with the device, so a retry presenting a different key is refused
+/// exactly like a missing grant.
+let classify_replay
+      (row: Core_models.Option.t_Option t_EnrolledDeviceRowView)
+      (hybrid_ek hybrid_vk: Alloc.String.t_String)
+    : Vela_recovery_policy.Driver.t_ReplayObservation =
+  match row <: Core_models.Option.t_Option t_EnrolledDeviceRowView with
+  | Core_models.Option.Option_Some row ->
+    Vela_recovery_policy.Driver.ReplayObservation_Enrolled
+    ({
+        Vela_recovery_policy.Driver.f_key_matches
+        =
+        row.f_hybrid_ek =. hybrid_ek && row.f_hybrid_vk =. hybrid_vk
+      })
+    <:
+    Vela_recovery_policy.Driver.t_ReplayObservation
+  | Core_models.Option.Option_None  ->
+    Vela_recovery_policy.Driver.ReplayObservation_Absent
+    <:
+    Vela_recovery_policy.Driver.t_ReplayObservation
 
 /// The preflight account view: the live row's facts as the classifier decides
 /// them. `None` is an absent row.

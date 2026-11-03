@@ -48,10 +48,10 @@ done
 cargo test --lib
 
 items=(
-  plan_take_grant plan_peek_grant plan_insert_device plan_authority_read
-  plan_enrollment_account plan_restore_grant
-  classify_take classify_peek_grant classify_insert classify_authority
-  observed_epoch classify_enrollment_account
+  plan_take_grant plan_peek_grant plan_insert_device plan_enrolled_device
+  plan_authority_read plan_enrollment_account plan_restore_grant
+  classify_take classify_peek_grant classify_insert classify_replay
+  classify_authority observed_epoch classify_enrollment_account
 )
 share_items=(
   plan_stage_share plan_promote_staged_split plan_delete_share

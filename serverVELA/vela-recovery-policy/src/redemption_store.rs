@@ -74,7 +74,13 @@ pub enum RedemptionStmt {
         created_at: String,
         epoch: i64,
         guard: GrantGuard,
+        /// The recovery grant that authorized this insert. It is written to the
+        /// row (U-24), so a retry after a lost reply can find the device it
+        /// created instead of failing on the consumed grant.
+        grant: String,
     },
+    /// The U-24 replay lookup: the device row this exact grant created.
+    SelectEnrolledDevice { user: String, grant: String },
     /// The live authority recheck.
     SelectAuthority { user: String },
     /// `post_enroll_device`'s preflight account read.
@@ -135,6 +141,17 @@ pub enum GrantPeekObservation {
     Present(GrantView),
 }
 
+/// The cells of a `SelectEnrolledDevice` row: the device id and the stored
+/// base64 key material. `hybrid_ek`/`hybrid_vk` are the exact text the insert
+/// wrote, so the key equality the replay check makes is byte equality of the
+/// decoded keys.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EnrolledDeviceRowView {
+    pub device_id: String,
+    pub hybrid_ek: String,
+    pub hybrid_vk: String,
+}
+
 // ── Plans ──────────────────────────────────────────────────────────────────
 
 /// The exact enrollment-grant key the store has always used.
@@ -149,7 +166,8 @@ pub fn plan_take_grant(key: String) -> RedemptionStmt {
 }
 
 /// `insert_device`: exactly one guarded device insert with the driver's
-/// permit and the grant's guard.
+/// permit and the grant's guard. The row records the grant that authorized it.
+#[allow(clippy::too_many_arguments)]
 pub fn plan_insert_device(
     device_id: String,
     user: String,
@@ -160,6 +178,7 @@ pub fn plan_insert_device(
     created_at: String,
     epoch: i64,
     guard: GrantGuard,
+    grant: String,
 ) -> Vec<RedemptionStmt> {
     vec![RedemptionStmt::InsertDevice {
         device_id,
@@ -171,7 +190,15 @@ pub fn plan_insert_device(
         created_at,
         epoch,
         guard,
+        grant,
     }]
+}
+
+/// The U-24 replay lookup: the device row (if any) that this exact recovery
+/// grant created for this user. The `recovery_grant_id` column is UNIQUE, so
+/// at most one row can carry a grant.
+pub fn plan_enrolled_device(user: String, grant: String) -> RedemptionStmt {
+    RedemptionStmt::SelectEnrolledDevice { user, grant }
 }
 
 /// `recheck_authority`: read the live credential and commitment columns.
@@ -276,6 +303,24 @@ pub fn classify_peek_grant(stored: Option<&GrantView>) -> GrantPeekObservation {
     }
 }
 
+/// The U-24 replay decision. A present row is `Enrolled`; `key_matches` is the
+/// exact equality of the request's encoded key material with the row's stored
+/// text. A missing row is `Absent`. Only `Enrolled { key_matches: true }` may
+/// answer with the device, so a retry presenting a different key is refused
+/// exactly like a missing grant.
+pub fn classify_replay(
+    row: Option<&EnrolledDeviceRowView>,
+    hybrid_ek: &String,
+    hybrid_vk: &String,
+) -> crate::driver::ReplayObservation {
+    match row {
+        Some(row) => crate::driver::ReplayObservation::Enrolled {
+            key_matches: &row.hybrid_ek == hybrid_ek && &row.hybrid_vk == hybrid_vk,
+        },
+        None => crate::driver::ReplayObservation::Absent,
+    }
+}
+
 /// The preflight account view: the live row's facts as the classifier decides
 /// them. `None` is an absent row.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -370,12 +415,13 @@ pub fn render(stmt: &RedemptionStmt) -> Rendered {
             created_at,
             epoch,
             guard,
+            grant,
         } => {
             let (sql, guard_params) = match guard {
                 GrantGuard::Credential { credential_id } => (
                     "INSERT INTO devices
-         (id, user_id, device_name, device_type, last_active, hybrid_ek, hybrid_vk, enrolled_by, created_at)
-         SELECT ?, ?, ?, ?, NULL, ?, ?, NULL, ?
+         (id, user_id, device_name, device_type, last_active, hybrid_ek, hybrid_vk, enrolled_by, recovery_grant_id, created_at)
+         SELECT ?, ?, ?, ?, NULL, ?, ?, NULL, ?, ?
          WHERE EXISTS (
              SELECT 1 FROM users
              WHERE id = ? AND key_epoch = ? AND rekey_state IS NULL
@@ -385,8 +431,8 @@ pub fn render(stmt: &RedemptionStmt) -> Rendered {
                 ),
                 GrantGuard::Commitment => (
                     "INSERT INTO devices
-         (id, user_id, device_name, device_type, last_active, hybrid_ek, hybrid_vk, enrolled_by, created_at)
-         SELECT ?, ?, ?, ?, NULL, ?, ?, NULL, ?
+         (id, user_id, device_name, device_type, last_active, hybrid_ek, hybrid_vk, enrolled_by, recovery_grant_id, created_at)
+         SELECT ?, ?, ?, ?, NULL, ?, ?, NULL, ?, ?
          WHERE EXISTS (
              SELECT 1 FROM users
              WHERE id = ? AND key_epoch = ? AND rekey_state IS NULL
@@ -404,6 +450,7 @@ pub fn render(stmt: &RedemptionStmt) -> Rendered {
                     Param::Text(device_type.clone()),
                     Param::Text(hybrid_ek.clone()),
                     Param::Text(hybrid_vk.clone()),
+                    Param::Text(grant.clone()),
                     Param::Text(created_at.clone()),
                     Param::Text(user.clone()),
                     Param::Int(*epoch),
@@ -413,6 +460,11 @@ pub fn render(stmt: &RedemptionStmt) -> Rendered {
                 .collect(),
             }
         }
+        RedemptionStmt::SelectEnrolledDevice { user, grant } => Rendered::Query {
+            sql: "SELECT id, hybrid_ek, hybrid_vk FROM devices
+                 WHERE user_id = ? AND recovery_grant_id = ?",
+            params: vec![Param::Text(user.clone()), Param::Text(grant.clone())],
+        },
         RedemptionStmt::SelectAuthority { user } => Rendered::Query {
             sql: "SELECT recovery_webauthn_cred_id, recovery_auth_hash FROM users WHERE id = ?",
             params: vec![Param::Text(user.clone())],
@@ -478,14 +530,15 @@ mod tests {
             s("t"),
             7,
             GrantGuard::Credential { credential_id: s("cred") },
+            s("grant"),
         );
         assert_eq!(credential.len(), 1);
         assert_eq!(
             exec(&credential[0]),
             (
                 "INSERT INTO devices
-         (id, user_id, device_name, device_type, last_active, hybrid_ek, hybrid_vk, enrolled_by, created_at)
-         SELECT ?, ?, ?, ?, NULL, ?, ?, NULL, ?
+         (id, user_id, device_name, device_type, last_active, hybrid_ek, hybrid_vk, enrolled_by, recovery_grant_id, created_at)
+         SELECT ?, ?, ?, ?, NULL, ?, ?, NULL, ?, ?
          WHERE EXISTS (
              SELECT 1 FROM users
              WHERE id = ? AND key_epoch = ? AND rekey_state IS NULL
@@ -498,6 +551,7 @@ mod tests {
                     Param::Text(s("kind")),
                     Param::Text(s("ek")),
                     Param::Text(s("vk")),
+                    Param::Text(s("grant")),
                     Param::Text(s("t")),
                     Param::Text(s("me")),
                     Param::Int(7),
@@ -515,13 +569,14 @@ mod tests {
             s("t"),
             7,
             GrantGuard::Commitment,
+            s("grant"),
         );
         assert_eq!(
             exec(&commitment[0]),
             (
                 "INSERT INTO devices
-         (id, user_id, device_name, device_type, last_active, hybrid_ek, hybrid_vk, enrolled_by, created_at)
-         SELECT ?, ?, ?, ?, NULL, ?, ?, NULL, ?
+         (id, user_id, device_name, device_type, last_active, hybrid_ek, hybrid_vk, enrolled_by, recovery_grant_id, created_at)
+         SELECT ?, ?, ?, ?, NULL, ?, ?, NULL, ?, ?
          WHERE EXISTS (
              SELECT 1 FROM users
              WHERE id = ? AND key_epoch = ? AND rekey_state IS NULL
@@ -534,10 +589,24 @@ mod tests {
                     Param::Text(s("kind")),
                     Param::Text(s("ek")),
                     Param::Text(s("vk")),
+                    Param::Text(s("grant")),
                     Param::Text(s("t")),
                     Param::Text(s("me")),
                     Param::Int(7),
                 ]
+            )
+        );
+    }
+
+    #[test]
+    fn replay_lookup_renders_the_historical_device_read() {
+        let plan = plan_enrolled_device(s("me"), s("grant"));
+        assert_eq!(
+            query(&plan),
+            (
+                "SELECT id, hybrid_ek, hybrid_vk FROM devices
+                 WHERE user_id = ? AND recovery_grant_id = ?",
+                vec![Param::Text(s("me")), Param::Text(s("grant"))]
             )
         );
     }
@@ -599,6 +668,28 @@ mod tests {
         );
         assert_eq!(classify_insert(&[Applied(0)]), InsertObservation::Skipped);
         assert_eq!(classify_insert(&[Failed]), InsertObservation::Failed);
+
+        let row = EnrolledDeviceRowView {
+            device_id: s("dev"),
+            hybrid_ek: s("ek"),
+            hybrid_vk: s("vk"),
+        };
+        assert_eq!(
+            classify_replay(Some(&row), &s("ek"), &s("vk")),
+            crate::driver::ReplayObservation::Enrolled { key_matches: true }
+        );
+        assert_eq!(
+            classify_replay(Some(&row), &s("ek"), &s("other")),
+            crate::driver::ReplayObservation::Enrolled { key_matches: false }
+        );
+        assert_eq!(
+            classify_replay(Some(&row), &s("other"), &s("vk")),
+            crate::driver::ReplayObservation::Enrolled { key_matches: false }
+        );
+        assert_eq!(
+            classify_replay(None, &s("ek"), &s("vk")),
+            crate::driver::ReplayObservation::Absent
+        );
 
         let live = ReadOutcome::Row(Some(AuthorityRowView {
             credential_id: Some(s("cred")),

@@ -41,7 +41,7 @@ cargo test --lib redemption_interpreter
 rm -rf proofs/fstar/extraction-redemption-interpreter
 cargo hax into \
   --output-dir proofs/fstar/extraction-redemption-interpreter \
-  -i '-** +vela_recovery_policy::redemption_interpreter::** +vela_recovery_policy::driver::begin_redemption +vela_recovery_policy::driver::step' \
+  -i '-** +vela_recovery_policy::redemption_interpreter::** +vela_recovery_policy::driver::begin_redemption_from +vela_recovery_policy::driver::step' \
   fstar --z3rlimit 500
 # The partial root and driver modules hax writes alongside are superseded by
 # the full extraction-driver artifact.

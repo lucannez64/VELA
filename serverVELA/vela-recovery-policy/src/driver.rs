@@ -8,6 +8,13 @@
 //! authorize an insert, how an insert success/zero/error is classified, and
 //! which live-recheck outcome restores the grant versus terminally revokes it.
 //!
+//! It also owns the U-24 replay decision. A request whose preflight finds no
+//! live grant (the grant was consumed by a request whose reply was lost) may
+//! ask the store whether this exact grant already created a device. The
+//! `Replay` ceremony answers `Complete` only for a device row that this grant
+//! created and whose stored key material equals the request's, so a replay
+//! returns exactly the device the first request created, never a second one.
+//!
 //! The driver is a per-request value: it does not coordinate concurrent HTTP
 //! requests and it does not observe the SQL/store state itself. Every input is
 //! an observation produced by the handler. In particular a `RestoreAndFail`
@@ -39,6 +46,9 @@ pub enum RedemptionStage {
     /// The insert observed zero rows; the handler must query live authority
     /// and report the result.
     Recheck,
+    /// U-24: the preflight found no live grant, so the handler may look up the
+    /// device row this exact grant created (once) and answer from it.
+    Replay,
     /// A terminal success or failure was decided. Later events are ignored.
     Done,
 }
@@ -109,6 +119,18 @@ pub enum AuthorityRecheckObservation {
     StillRotating,
 }
 
+/// What the U-24 replay lookup observed. It runs only after the preflight
+/// found no live grant, and reads the device row this exact grant created.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReplayObservation {
+    /// A device row carries this grant id for this user. `key_matches` is the
+    /// exact key-material equality with the row's stored keys; a request that
+    /// presents a different key cannot collect another key's device.
+    Enrolled { key_matches: bool },
+    /// No device row carries this grant id for this user.
+    Absent,
+}
+
 /// One driver event. The handler feeds exactly the observation it obtained
 /// from the corresponding effect.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -117,6 +139,18 @@ pub enum RedemptionEvent {
     FinalPolicy(FinalPolicyObservation),
     Insert(InsertObservation),
     Recheck(AuthorityRecheckObservation),
+    /// U-24 replay: the result of the device-row lookup after a missing grant.
+    Replayed(ReplayObservation),
+}
+
+/// How a redemption request starts. `Redeem` is the ordinary path: the
+/// checked preflight produced its permit, so the grant may be consumed.
+/// `Replay` is the lost-reply path: the preflight found no live grant, so
+/// only the non-consuming device-row lookup may run.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RedemptionStart {
+    Redeem(ReadyToConsume),
+    Replay,
 }
 
 /// Failure categories, preserving the handler's historical status/message
@@ -143,7 +177,6 @@ pub enum RedemptionFailure {
     /// Authority is unchanged; the zero-row insert was a rotation guard. Restore.
     Rotating,
 }
-
 /// The effect the handler must perform next. A `RestoreAndFail` requires the
 /// handler to restore the consumed grant before returning the failure; a
 /// `Fail` requires no restoration.
@@ -158,6 +191,8 @@ pub enum RedemptionEffect {
     Insert(RedemptionInsertPermit),
     /// Query live authority after a zero-row insert.
     Recheck,
+    /// U-24: perform the non-consuming device-row lookup for this grant.
+    Replay,
     /// Terminal success. No later driver transition emits any effect.
     Complete,
     /// Terminal failure without restoration.
@@ -196,6 +231,14 @@ pub struct RedemptionDriver {
     pub insert_succeeded: bool,
     /// The driver has instructed a grant restoration.
     pub restored: bool,
+    /// This request is the U-24 replay of an already-consumed grant. A replay
+    /// driver never consumes, inserts or restores anything.
+    pub replay: bool,
+    /// The replay lookup effect was emitted (at most once).
+    pub replay_attempted: bool,
+    /// The replay lookup found the device row whose stored keys equal the
+    /// request's, so the request may answer with that device.
+    pub replay_succeeded: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -211,30 +254,58 @@ pub fn redemption_state_is_sound(driver: RedemptionDriver) -> bool {
         && !driver.permit_issued
         && !driver.insert_attempted
         && !driver.insert_succeeded
-        && !driver.restored;
+        && !driver.restored
+        && !driver.replay;
     let policy_clean = driver.consumed_matched
         && !driver.permit_issued
         && !driver.insert_attempted
         && !driver.insert_succeeded
-        && !driver.restored;
+        && !driver.restored
+        && !driver.replay;
     let insert_clean = driver.consumed_matched
         && driver.permit_issued
         && driver.insert_attempted
+        && !driver.insert_succeeded
+        && !driver.restored
+        && !driver.replay;
+    let replay_clean = driver.replay
+        && driver.replay_attempted
+        && !driver.replay_succeeded
+        && !driver.consumed_matched
+        && !driver.permit_issued
+        && !driver.insert_attempted
         && !driver.insert_succeeded
         && !driver.restored;
     (!matches!(driver.stage, RedemptionStage::Consume) || consume_clean)
         && (!matches!(driver.stage, RedemptionStage::FinalPolicy) || policy_clean)
         && (!matches!(driver.stage, RedemptionStage::Insert) || insert_clean)
         && (!matches!(driver.stage, RedemptionStage::Recheck) || insert_clean)
+        && (!matches!(driver.stage, RedemptionStage::Replay) || replay_clean)
         && (!driver.insert_attempted || (driver.consumed_matched && driver.permit_issued))
         && (!driver.insert_succeeded
             || (driver.insert_attempted
                 && driver.consumed_matched
                 && driver.permit_issued
                 && matches!(driver.stage, RedemptionStage::Done)
-                && !driver.restored))
+                && !driver.restored
+                && !driver.replay))
         && (!driver.restored
-            || (matches!(driver.stage, RedemptionStage::Done) && !driver.insert_succeeded))
+            || (matches!(driver.stage, RedemptionStage::Done)
+                && !driver.insert_succeeded
+                && !driver.replay))
+        && (!driver.replay
+            || (!driver.consumed_matched
+                && !driver.permit_issued
+                && !driver.insert_attempted
+                && !driver.insert_succeeded
+                && !driver.restored))
+        && (!driver.replay_attempted || driver.replay)
+        && (!driver.replay_succeeded
+            || (driver.replay
+                && driver.replay_attempted
+                && matches!(driver.stage, RedemptionStage::Done)
+                && !driver.insert_succeeded
+                && !driver.restored))
 }
 
 /// Every effect the driver emits agrees with the state it produces. In
@@ -247,12 +318,14 @@ pub fn redemption_effect_is_sound(driver: RedemptionDriver, effect: RedemptionEf
             matches!(driver.stage, RedemptionStage::Consume)
                 && !driver.consumed_matched
                 && !driver.insert_attempted
+                && !driver.replay
         }
         RedemptionEffect::FinalPolicy => {
             matches!(driver.stage, RedemptionStage::FinalPolicy)
                 && driver.consumed_matched
                 && !driver.permit_issued
                 && !driver.insert_attempted
+                && !driver.replay
         }
         RedemptionEffect::Insert(permit) => {
             matches!(driver.stage, RedemptionStage::Insert)
@@ -261,6 +334,7 @@ pub fn redemption_effect_is_sound(driver: RedemptionDriver, effect: RedemptionEf
                 && driver.insert_attempted
                 && !driver.insert_succeeded
                 && !driver.restored
+                && !driver.replay
                 && permit.epoch == driver.epoch
                 && permit.possession == driver.possession
         }
@@ -271,19 +345,38 @@ pub fn redemption_effect_is_sound(driver: RedemptionDriver, effect: RedemptionEf
                 && driver.insert_attempted
                 && !driver.insert_succeeded
                 && !driver.restored
+                && !driver.replay
+        }
+        RedemptionEffect::Replay => {
+            matches!(driver.stage, RedemptionStage::Replay)
+                && driver.replay
+                && driver.replay_attempted
+                && !driver.replay_succeeded
+                && !driver.consumed_matched
+                && !driver.permit_issued
+                && !driver.insert_attempted
+                && !driver.insert_succeeded
+                && !driver.restored
         }
         RedemptionEffect::Complete => {
             matches!(driver.stage, RedemptionStage::Done)
-                && driver.insert_succeeded
                 && !driver.restored
+                && if driver.replay {
+                    driver.replay_attempted && driver.replay_succeeded && !driver.insert_succeeded
+                } else {
+                    driver.insert_succeeded
+                }
         }
         RedemptionEffect::Fail(_) => {
-            matches!(driver.stage, RedemptionStage::Done) && !driver.insert_succeeded
+            matches!(driver.stage, RedemptionStage::Done)
+                && !driver.insert_succeeded
+                && !driver.replay_succeeded
         }
         RedemptionEffect::RestoreAndFail(_) => {
             matches!(driver.stage, RedemptionStage::Done)
                 && driver.restored
                 && !driver.insert_succeeded
+                && !driver.replay
         }
         RedemptionEffect::Idle => true,
     }
@@ -341,9 +434,71 @@ pub fn begin_redemption(ready: ReadyToConsume) -> RedemptionTransition {
             insert_attempted: false,
             insert_succeeded: false,
             restored: false,
+            replay: false,
+            replay_attempted: false,
+            replay_succeeded: false,
         },
         RedemptionEffect::Consume,
     )
+}
+
+/// Start the U-24 replay ceremony: the checked preflight found no live grant,
+/// so the only permitted effect is the non-consuming lookup of the device row
+/// this exact grant created. No begin state of this ceremony can consume,
+/// insert or restore anything.
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    redemption_state_is_sound(result.driver)
+        && redemption_effect_is_sound(result.driver, result.effect)
+        && matches!(result.driver.stage, RedemptionStage::Replay)
+        && result.driver.replay
+        && result.driver.replay_attempted
+        && !result.driver.replay_succeeded
+        && !result.driver.consumed_matched
+        && !result.driver.permit_issued
+        && !result.driver.insert_attempted
+        && !result.driver.insert_succeeded
+        && !result.driver.restored
+}))]
+pub fn begin_redemption_replay() -> RedemptionTransition {
+    transition(
+        RedemptionDriver {
+            stage: RedemptionStage::Replay,
+            epoch: crate::INITIAL_EPOCH,
+            possession: false,
+            consumed_matched: false,
+            permit_issued: false,
+            insert_attempted: false,
+            insert_succeeded: false,
+            restored: false,
+            replay: true,
+            replay_attempted: true,
+            replay_succeeded: false,
+        },
+        RedemptionEffect::Replay,
+    )
+}
+
+/// The single entry point the interpreter uses: a request either redeems a
+/// live grant or replays the lost-reply lookup. It never does both, because
+/// the two starts are disjoint and neither driver can reach the other's
+/// stages.
+#[cfg_attr(hax, hax_lib::requires(true))]
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    redemption_state_is_sound(result.driver)
+        && redemption_effect_is_sound(result.driver, result.effect)
+        && (matches!(result.driver.stage, RedemptionStage::Consume)
+            || matches!(result.driver.stage, RedemptionStage::Replay))
+        && !result.driver.consumed_matched
+        && !result.driver.permit_issued
+        && !result.driver.insert_attempted
+        && !result.driver.insert_succeeded
+        && !result.driver.restored
+}))]
+pub fn begin_redemption_from(start: RedemptionStart) -> RedemptionTransition {
+    match start {
+        RedemptionStart::Redeem(ready) => begin_redemption(ready),
+        RedemptionStart::Replay => begin_redemption_replay(),
+    }
 }
 
 fn on_consumed(
@@ -453,6 +608,28 @@ fn on_recheck(
     }
 }
 
+/// The U-24 replay verdict. Only an `Enrolled` observation whose stored keys
+/// equal the request's may answer with a device; the row was written by this
+/// exact grant, so the answer is the device the first request created. A
+/// different key and an absent row are the same uniform grant-unavailable
+/// refusal the missing-grant path has always returned.
+fn on_replayed(driver: RedemptionDriver, observation: ReplayObservation) -> RedemptionTransition {
+    match observation {
+        ReplayObservation::Enrolled { key_matches: true } => transition(
+            RedemptionDriver {
+                stage: RedemptionStage::Done,
+                replay_succeeded: true,
+                ..driver
+            },
+            RedemptionEffect::Complete,
+        ),
+        ReplayObservation::Enrolled { key_matches: false } => {
+            terminal(driver, RedemptionFailure::GrantUnavailable)
+        }
+        ReplayObservation::Absent => terminal(driver, RedemptionFailure::GrantUnavailable),
+    }
+}
+
 /// The complete, total transition relation. Events that do not match the
 /// current stage (and every event after `Done`) are ignored.
 #[cfg_attr(hax, hax_lib::requires(redemption_state_is_sound(driver)))]
@@ -486,6 +663,13 @@ pub fn step(driver: RedemptionDriver, event: RedemptionEvent) -> RedemptionTrans
         RedemptionEvent::Recheck(observation) => {
             if matches!(driver.stage, RedemptionStage::Recheck) {
                 on_recheck(driver, observation)
+            } else {
+                idle(driver)
+            }
+        }
+        RedemptionEvent::Replayed(observation) => {
+            if matches!(driver.stage, RedemptionStage::Replay) && driver.replay {
+                on_replayed(driver, observation)
             } else {
                 idle(driver)
             }
@@ -539,4 +723,16 @@ pub fn on_authority_rechecked(
     observation: AuthorityRecheckObservation,
 ) -> RedemptionTransition {
     step(driver, RedemptionEvent::Recheck(observation))
+}
+
+#[cfg_attr(hax, hax_lib::requires(redemption_state_is_sound(driver)))]
+#[cfg_attr(hax, hax_lib::ensures(|result| {
+    redemption_effect_is_sound(result.driver, result.effect)
+        && (!redemption_state_is_sound(driver) || redemption_state_is_sound(result.driver))
+}))]
+pub fn on_replay_completed(
+    driver: RedemptionDriver,
+    observation: ReplayObservation,
+) -> RedemptionTransition {
+    step(driver, RedemptionEvent::Replayed(observation))
 }

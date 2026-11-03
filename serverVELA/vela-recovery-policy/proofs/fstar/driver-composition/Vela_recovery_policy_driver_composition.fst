@@ -13,7 +13,9 @@ module Vela_recovery_policy_driver_composition
 ///   `Failed` may or may not have written one: the schedule chooses);
 /// - `restore_enroll_grant`, performed exactly when the driver returns
 ///   `RestoreAndFail`, which re-arms the grant;
-/// - TTL expiry, which may remove the grant at any time.
+/// - TTL expiry, which may remove the grant at any time;
+/// - a U-24 replay request (`SpawnReplay`), which may deliver the device-row
+///   lookup observation (`ReplayDone`) and never writes a row itself.
 ///
 /// Theorem: for every schedule, at most one device row is ever written for the
 /// grant. Assumptions (not proved here): `get_del` is linearizable, the
@@ -78,6 +80,10 @@ let step_tokens (d: t_RedemptionDriver) (e: t_RedemptionEvent)
        | AuthorityRecheckObservation_CommitmentRevoked -> ()
        | AuthorityRecheckObservation_CredentialReplaced -> ()
        | AuthorityRecheckObservation_StillRotating -> ())
+  | RedemptionEvent_Replayed obs ->
+      (match obs <: t_ReplayObservation with
+       | ReplayObservation_Enrolled _ -> ()
+       | ReplayObservation_Absent -> ())
 
 /// An insert outcome that may have written a row (`Inserted`, or `Failed`
 /// with an unknown commit) releases the held grant and never restores it.
@@ -148,11 +154,15 @@ noeq type world = {
 
 type action =
   | Spawn : t_ReadyToConsume -> action
+  /// U-24: a request whose preflight found no live grant. It starts in the
+  /// replay stage and can only look the committed device row up.
+  | SpawnReplay : action
   | Expire : action
   | Consume : nat -> t_ConsumedGrantObservation -> action
   | Policy : nat -> t_FinalPolicyObservation -> action
   | InsertDone : nat -> t_InsertObservation -> committed_if_failed: bool -> action
   | Recheck : nat -> t_AuthorityRecheckObservation -> action
+  | ReplayDone : nat -> t_ReplayObservation -> action
 
 /// Rows written by an insert attempt: `Inserted` wrote one, `Skipped` none,
 /// and an errored attempt may have committed (chosen by the schedule).
@@ -179,6 +189,8 @@ let deliver (w: world) (i: nat{i < FStar.List.Tot.length w.reqs}) (e: t_Redempti
 let world_step (w: world) (a: action) : world =
   match a with
   | Spawn ready -> { w with reqs = (begin_redemption ready).f_driver :: w.reqs }
+  | SpawnReplay ->
+      { w with reqs = (begin_redemption_replay ()).f_driver :: w.reqs }
   | Expire -> { w with grant = false }
   | Consume i obs ->
       if i < FStar.List.Tot.length w.reqs && is_consume (FStar.List.Tot.index w.reqs i) then
@@ -198,6 +210,10 @@ let world_step (w: world) (a: action) : world =
   | Recheck i obs ->
       if i < FStar.List.Tot.length w.reqs && is_recheck (FStar.List.Tot.index w.reqs i)
       then deliver w i (RedemptionEvent_Recheck obs) w.grant 0
+      else w
+  | ReplayDone i obs ->
+      if i < FStar.List.Tot.length w.reqs && is_replay (FStar.List.Tot.index w.reqs i)
+      then deliver w i (RedemptionEvent_Replayed obs) w.grant 0
       else w
 
 let rec run_world (w: world) (schedule: list action) : Tot world (decreases schedule) =
@@ -235,6 +251,9 @@ let world_step_inv (w: world) (a: action)
   | Spawn ready ->
       begin_sound ready;
       trace_sound_matches_rust (begin_redemption ready).f_driver
+  | SpawnReplay ->
+      begin_replay_sound ();
+      trace_sound_matches_rust (begin_redemption_replay ()).f_driver
   | Expire -> ()
   | Consume i obs ->
       if i < FStar.List.Tot.length w.reqs && is_consume (FStar.List.Tot.index w.reqs i) then begin
@@ -272,6 +291,14 @@ let world_step_inv (w: world) (a: action)
       if i < FStar.List.Tot.length w.reqs && is_recheck (FStar.List.Tot.index w.reqs i) then begin
         index_sound w.reqs i;
         let e = RedemptionEvent_Recheck obs in
+        step_tokens (FStar.List.Tot.index w.reqs i) e;
+        update_held w.reqs i (FStar.List.Tot.index w.reqs i);
+        deliver_inv w i e w.grant 0
+      end
+  | ReplayDone i obs ->
+      if i < FStar.List.Tot.length w.reqs && is_replay (FStar.List.Tot.index w.reqs i) then begin
+        index_sound w.reqs i;
+        let e = RedemptionEvent_Replayed obs in
         step_tokens (FStar.List.Tot.index w.reqs i) e;
         update_held w.reqs i (FStar.List.Tot.index w.reqs i);
         deliver_inv w i e w.grant 0
@@ -442,5 +469,61 @@ let ambiguous_failure_keeps_grant_consumed ()
   run_cons a2 (Consume 0 consumed_ok) [];
   run_nil a3;
   a3_ok ()
+
+// ── U-24: a replay writes no row and answers the committed device ─────────
+
+/// The replay steps of any schedule never change the row counter: spawning a
+/// replay request adds no rows, and its single lookup verdict adds none.
+let spawn_replay_keeps_rows (w: world)
+  : Lemma ((world_step w SpawnReplay).rows = w.rows) = ()
+
+let replay_done_keeps_rows (w: world) (i: nat) (obs: t_ReplayObservation)
+  : Lemma ((world_step w (ReplayDone i obs)).rows = w.rows) = ()
+
+/// A request whose grant is already gone replays the committed row and writes
+/// nothing: one device total, and the replay answer is the terminal
+/// `Complete` the handler renders with the row's id.
+let u1 = world_step s4 (SpawnReplay)
+let u2 = world_step u1 (ReplayDone 0 (ReplayObservation_Enrolled { f_key_matches = true }))
+let u1_ok () : Lemma (u1.rows = 1 /\ u1.grant = false /\ FStar.List.Tot.length u1.reqs = 2 /\ is_replay (FStar.List.Tot.index u1.reqs 0)) = s4_ok ()
+let u2_ok () : Lemma (
+      u2.rows = 1 /\ u2.grant = false /\
+      FStar.List.Tot.length u2.reqs = 2 /\
+      is_done (FStar.List.Tot.index u2.reqs 0) /\
+      (FStar.List.Tot.index u2.reqs 0).f_replay_succeeded = true /\
+      not (FStar.List.Tot.index u2.reqs 0).f_insert_succeeded) = u1_ok ()
+
+let replay_after_success_schedule : list action =
+  [ Spawn ready_credential;
+    Consume 0 consumed_ok;
+    Policy 0 policy_ok;
+    InsertDone 0 InsertObservation_Inserted false;
+    SpawnReplay;
+    ReplayDone 0 (ReplayObservation_Enrolled { f_key_matches = true }) ]
+
+/// Non-vacuity of the U-24 path over the concurrent world: after a successful
+/// redemption, a replay request completes without writing a second row.
+let replay_writes_no_second_device ()
+  : Lemma (
+      u2.rows = 1 /\
+      (FStar.List.Tot.index u2.reqs 0).f_replay_succeeded = true /\
+      not (FStar.List.Tot.index u2.reqs 0).f_insert_succeeded) =
+  run_cons initial (Spawn ready_credential) (FStar.List.Tot.tl replay_after_success_schedule);
+  run_cons s1 (Consume 0 consumed_ok) [Policy 0 policy_ok; InsertDone 0 InsertObservation_Inserted false; SpawnReplay; ReplayDone 0 (ReplayObservation_Enrolled { f_key_matches = true })];
+  run_cons s2 (Policy 0 policy_ok) [InsertDone 0 InsertObservation_Inserted false; SpawnReplay; ReplayDone 0 (ReplayObservation_Enrolled { f_key_matches = true })];
+  run_cons s3 (InsertDone 0 InsertObservation_Inserted false) [SpawnReplay; ReplayDone 0 (ReplayObservation_Enrolled { f_key_matches = true })];
+  run_cons s4 SpawnReplay [ReplayDone 0 (ReplayObservation_Enrolled { f_key_matches = true })];
+  run_cons u1 (ReplayDone 0 (ReplayObservation_Enrolled { f_key_matches = true })) [];
+  run_nil u2;
+  u2_ok ()
+
+/// A replay that presents another key is the ordinary grant-unavailable
+/// verdict and still writes no row.
+let v1 = world_step s4 (SpawnReplay)
+let v2 = world_step v1 (ReplayDone 0 (ReplayObservation_Enrolled { f_key_matches = false }))
+let v2_ok () : Lemma (
+      v2.rows = 1 /\
+      (FStar.List.Tot.index v2.reqs 0).f_replay_succeeded = false /\
+      not (FStar.List.Tot.index v2.reqs 0).f_insert_succeeded) = s4_ok ()
 
 #pop-options
