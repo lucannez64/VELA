@@ -11,8 +11,10 @@ model and fail for Rust; each gap becomes a plan step or an explicit exclusion.
 This is a manual review, not a machine-checked refinement. Differential
 testing of these models against Rust is plan step T7.
 
-Sections by step: [T3: Vec, sequences and indexing](T3-vec.md) (separate
-file), T6 and T5 below.
+Sections by step: [T3: Vec, sequences and indexing](T3-vec.md) and
+[T4: String, str, UTF-8 and format!](T4-string.md) (separate files), T6 and
+T5 below. T4's main finding, that F* proves every `format!` result equal, is
+machine-checked in [format-collapse](format-collapse/Fmt_collapse.fst).
 
 ## T6: Option, Result, slices, ranges, loops and Clone
 

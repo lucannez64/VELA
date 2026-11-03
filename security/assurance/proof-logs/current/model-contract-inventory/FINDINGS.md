@@ -13,7 +13,16 @@ Inventory: [README.md](README.md), produced by
      `Alloc.Fmt.format` itself is defined over the abstract `format'`.
      So the store keys built with `format!` (`jti:revoked:{}`,
      `device:revoked:{}`, `challenge:{}`, `rl:streak:verify:{}:{}`, ...) are
-     opaque to F*: no proof can currently show two distinct keys differ.
+     not just opaque: hax models `t_Arguments` as `Arguments : unit ->
+     t_Arguments`, which has one value, so **F* proves every `format!` result
+     equal** ([check](../std-model-review/format-collapse/Fmt_collapse.fst),
+     verified 2026-11-03, [log](../std-model-review/format-collapse/fstar.log)).
+     A session-store proof can therefore treat two different keys as the same
+     key, which Rust does not. T4 found no lemma that asserts equality across
+     different prefixes, but two key-shape lemmas are only meaningful because
+     their prefixes happen to coincide. `format'` (an `assume val` reached
+     through `Alloc.Fmt.format`) belongs in the trusted list: "no assumed
+     symbol used" holds only for symbols the corpus names directly.
      **This blocks plan step O4** (store key builders are injective). O4 has
      to replace `format!` in those builders with an extracted byte or string
      concatenation that F* can see through, or model `format!` for the used
