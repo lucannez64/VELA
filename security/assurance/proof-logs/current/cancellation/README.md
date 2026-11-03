@@ -37,7 +37,7 @@ it; a turn that returns `None` leaves the previous (sound) transition in place.
 | `vela-session-policy` / `revocation-interpreter-lemmas` | `run_revocation`, `run_logout` | `revocation_cancellation`, `logout_cancellation` |
 | `vela-enrollment-policy` / `pairing-interpreter-lemmas` | `run_pairing` (all six pairing ceremonies) | `cancellation` |
 | `vela-recovery-policy` / `possession-interpreter-lemmas` | `run_possession_initiation`, `run_possession_recover` | `initiation_cancellation`, `recover_cancellation` |
-| `vela-recovery-policy` / `redemption-interpreter-lemmas` | `run_redemption` (`POST /recovery/enroll-device`) | `redemption_cancellation` |
+| `vela-recovery-policy` / `redemption-interpreter-lemmas` | `run_redemption` (`POST /recovery/enroll-device`, both starts) | `redemption_cancellation`, `redemption_replay_cancellation` |
 | `vela-recovery-policy` / `webauthn-interpreter-lemmas` | registration start/finish, auth start/finish | `rs_cancellation`, `reg_cancellation`, `as_cancellation`, `af_cancellation` |
 | `vela-rekey-policy` / `vault-upload-interpreter-lemmas` | upload and read | `upload_cancellation`, `read_cancellation` |
 | `vela-share-policy` / `interpreter-lemmas` | all five sharing handlers | `cancellation` |
@@ -74,7 +74,10 @@ covers the first nine families only.
   implies an issued one.
 - **redemption:** insert emitted ⇒ matched consumption + policy permit +
   recorded attempt; insert success ⇒ those facts and no restoration;
-  restoration only after a failed insert.
+  restoration only after a failed insert. The U-24 replay start carries the
+  complement: a replay request has no consumption, permit, insert attempt,
+  insert success or restoration fact, its only effect is the device-row
+  lookup, and its success is a matching-row verdict (never an insert).
 - **WebAuthn:** stored registration state/credential implies the observed,
   verified and unique credential and the policy permit; an issued grant implies
   the consumed verified attempt and all live account/share release facts; a
@@ -164,9 +167,36 @@ shorten the token window.
 |---|---|---|
 | `consume_grant` | recovery grant destructively consumed; no device row | safe, liveness loss |
 | `final_policy` | reads/CPU | none |
-| `insert_device` | recovered device row committed; response lost; grant already consumed | safe (one device); liveness loss (device id not returned). Analogue of U-20 but outside this task's fix |
+| `insert_device` | recovered device row committed; response lost; grant already consumed; the row records `recovery_grant_id` | safe (one device); the device id is recovered by the U-24 replay lookup (below); before that fix this was a liveness loss |
 | `recheck_authority` | reads only | none |
 | `restore_grant` | grant restored; no insert | safe |
+| Replay `replay_enrolled_device` | reads only; no consumption, insert or restoration, so the committed row and any in-flight first request are untouched | safe; a retry repeats the same lookup |
+| Replay verdict | in-memory only: `Complete` with the row's device id, or the uniform `Fail(GrantUnavailable)`; the response may be lost and a further retry reads the same row | safe, idempotent |
+
+**Since fixed (U-24):** a lost `POST /recovery/enroll-device` reply no longer
+strands the device. The recovered row records `recovery_grant_id` (unique), and
+a request whose preflight finds no live grant runs the proved `Replay`
+ceremony: one non-consuming lookup of the row that exact grant created, and a
+`200` with its `device_id` only when the stored `hybrid_ek`/`hybrid_vk` equal
+the request's. A different key, an absent row and every other rejection keep
+the historical `401 "recovery grant expired or already used"`; a replay never
+consumes, inserts or restores, and the unique index refuses a second device per
+grant. The cancellation statements cover this path in two ways:
+`redemption_cancellation` holds for every start transition (the replay state
+satisfies the same `sound_transition` predicate), and
+`redemption_replay_cancellation` states it at the extracted loop with
+`RedemptionStart_Replay`: after any prefix of replay turns the transition is
+sound and a replay driver has never attempted an insert. The driver lemmas
+`replay_never_inserts`, `replay_complete_only_from_a_matching_row` and
+`replay_refusal_is_grant_unavailable` show the same for unbounded traces and
+the refusal cases; the store-model lemma `replay_finds_the_inserted_device`
+shows the lookup returns exactly the device the first request created. A
+dropped replay reply therefore only loses a message that a retry reconstructs
+from the committed row. Regression test
+`enroll_device_recovers_the_device_after_a_lost_reply` discards the first
+`200`, checks the retry returns the same id, checks a different key gets the
+historical `401`, and checks the account keeps one recovered device. Evidence:
+[../u24-redemption-replay/README.md](../u24-redemption-replay/README.md).
 
 ### WebAuthn (`/recovery/webauthn/*`, `/recovery/initiate`, `/recovery/recover`)
 

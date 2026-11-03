@@ -79,7 +79,12 @@ Interpreter (`proofs/fstar/redemption-interpreter-lemmas`): `responds_to`,
 exactly once for the emitted `Replay` effect and to end in
 `run_from_start start evs`. `run_redemption_theorem` is stated for both
 starts. The cancellation evidence is in
-[../cancellation/README.md](../cancellation/README.md) (H3).
+[../cancellation/README.md](../cancellation/README.md) (H3): the generic
+`redemption_cancellation` covers every start, and
+`redemption_replay_cancellation` restates it at the extracted loop with
+`RedemptionStart_Replay`; the interpreter gate below checks both. Their
+sha256 (`55649004...` for the lemma module, `2eddecad...` for
+`src/redemption_interpreter.rs`) is printed by that gate.
 
 Store model (`proofs/fstar/redemption-lemmas`, F-1):
 

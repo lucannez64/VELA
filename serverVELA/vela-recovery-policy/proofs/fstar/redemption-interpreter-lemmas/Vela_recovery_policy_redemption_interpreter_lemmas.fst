@@ -229,6 +229,14 @@ let run_redemption_is_run_ev (#io_t: Type0) {| i: t_RedemptionIo io_t |} (s: io_
 /// implies exactly those facts and no restoration; a restoration is only
 /// decided after a failed insert), and the next effect agrees with the state
 /// that produced it.
+///
+/// U-24: the statement covers both starts, so it also covers the replay
+/// ceremony. A drop after the device-row lookup leaves no consumption, insert
+/// or restoration fact (`trace_sound` forces all of them false for a replay),
+/// and a retry re-runs the same non-consuming lookup; a drop before it leaves
+/// the request with only the replay effect emitted. In either case the client's
+/// next request answers from the committed row, which is what closes the
+/// lost-reply gap.
 let redemption_cancellation (#io_t: Type0) {| i: t_RedemptionIo io_t |}
       (k: nat) (acc: bool & io_t & bool & t_RedemptionTransition)
   : Lemma (requires sound_transition (acc_transition acc) /\ flag_sound acc)
@@ -236,6 +244,21 @@ let redemption_cancellation (#io_t: Type0) {| i: t_RedemptionIo io_t |}
                     sound_transition t2)) =
   let (_, _, _, _, _) = run_ev #io_t #i k acc in
   iter_turn_is_run_ev #io_t #i k acc
+
+/// The same cancellation theorem at the extracted loop, with the replay start
+/// made explicit: the driver left behind after any prefix of the replay turns
+/// is still the sound driver state (a replay that has emitted only its lookup,
+/// or a terminal replay verdict).
+let redemption_replay_cancellation (#io_t: Type0) {| i: t_RedemptionIo io_t |}
+      (k: nat) (s: io_t)
+  : Lemma (
+      let acc = (false, s, false, begin_redemption_from RedemptionStart_Replay) in
+      let (_, _, _, t2) = iter_turn #io_t #i k acc in
+      sound_transition t2 /\
+      (t2.f_driver.f_replay ==> not t2.f_driver.f_insert_attempted)) =
+  begin_from_sound RedemptionStart_Replay;
+  trace_sound_matches_rust (begin_redemption_from RedemptionStart_Replay).f_driver;
+  redemption_cancellation #io_t #i k (false, s, false, begin_redemption_from RedemptionStart_Replay)
 
 // ── 2. The observations drive the extracted driver ────────────────────────
 
