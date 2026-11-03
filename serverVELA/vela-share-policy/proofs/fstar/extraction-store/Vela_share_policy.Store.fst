@@ -831,10 +831,12 @@ type t_RecipientProbeObservation = {
 }
 
 /// Where a send's admission stopped. `Ready` means the transaction is open
-/// and all three quota reads returned their values.
+/// and all three quota reads returned their values; `ItemLimit` means the
+/// item count already failed, so the two byte sums did not run.
 type t_AdmissionStage =
   | AdmissionStage_Begin : t_AdmissionStage
   | AdmissionStage_Count : t_AdmissionStage
+  | AdmissionStage_ItemLimit : t_AdmissionStage
   | AdmissionStage_Pair : t_AdmissionStage
   | AdmissionStage_Total : t_AdmissionStage
   | AdmissionStage_Ready : t_AdmissionStage
@@ -1112,7 +1114,7 @@ let classify_send_admission (outcomes: t_Slice t_HandlerOutcome) : t_AdmissionOb
         with
         | HandlerOutcome_Ran , HandlerOutcome_Number count ->
           {
-            f_stage = AdmissionStage_Pair <: t_AdmissionStage;
+            f_stage = AdmissionStage_ItemLimit <: t_AdmissionStage;
             f_inbox_count = quota_cell count;
             f_pair_bytes = mk_i64 0;
             f_total_bytes = mk_i64 0

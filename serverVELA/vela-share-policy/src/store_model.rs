@@ -609,6 +609,29 @@ pub fn run_handler(db: &Db, plan: &[HandlerStmt], fault: Option<usize>) -> Vec<H
     outcomes
 }
 
+/// The mirrored send admission: begin, count, then the two byte sums only
+/// when the item quota passed. `fault = Some(k)` keeps the k-th plan
+/// statement's index. F*: `send_admission`.
+pub fn run_send_admission(
+    db: &Db,
+    recipient: &str,
+    sender: &str,
+    fault: Option<usize>,
+) -> Vec<HandlerOutcome> {
+    let plan = crate::store::plan_send_admission(recipient.to_string(), sender.to_string());
+    let mut outcomes = run_handler(db, &plan[..2], fault);
+    let count_ok = matches!(
+        outcomes.as_slice(),
+        [HandlerOutcome::Ran, HandlerOutcome::Number(Some(count))]
+            if *count < crate::driver::MAX_INBOX_ITEMS_PER_USER
+    );
+    if count_ok {
+        let bytes_fault = fault.and_then(|k| if k >= 2 { Some(k - 2) } else { None });
+        outcomes.extend(run_handler(db, &plan[2..], bytes_fault));
+    }
+    outcomes
+}
+
 /// The mirrored `sweep`: the plan's one write, or the injected failure.
 /// F*: `sweep`.
 pub fn run_sweep(
@@ -831,17 +854,38 @@ mod tests {
         );
 
         // vector_send_admission: one item of two bytes, ready.
-        let plan = crate::store::plan_send_admission(s("b"), s("a"));
-        let outcomes = run_handler(&pre, &plan, None);
+        let outcomes = run_send_admission(&pre, "b", "a", None);
         let admission = classify_send_admission(&outcomes);
         assert_eq!(admission.stage, AdmissionStage::Ready);
         assert_eq!(admission.inbox_count, 1);
         assert_eq!(admission.pair_bytes, 2);
         assert_eq!(admission.total_bytes, 2);
         // vector_send_admission_begin_fault: a failed begin publishes nothing.
-        let failed = classify_send_admission(&run_handler(&pre, &plan, Some(0)));
+        let failed = classify_send_admission(&run_send_admission(&pre, "b", "a", Some(0)));
         assert_eq!(failed.stage, AdmissionStage::Begin);
         assert_eq!(failed.total_bytes, 0);
+        // vector_send_admission_item_limit: a full inbox stops after the
+        // count, so the two byte sums never run.
+        let mut full = pre.clone();
+        // `pre` already holds one inbox row for this recipient.
+        for n in 0..crate::driver::MAX_INBOX_ITEMS_PER_USER - 1 {
+            full.inbox.insert(
+                format!("full-{n}"),
+                InboxRow {
+                    sender: s("a"),
+                    recipient: s("b"),
+                    capsule: s("cc"),
+                    created_at: s("t0"),
+                },
+            );
+        }
+        let stopped = run_send_admission(&full, "b", "a", None);
+        assert_eq!(stopped.len(), 2);
+        let item_limit = classify_send_admission(&stopped);
+        assert_eq!(item_limit.stage, AdmissionStage::ItemLimit);
+        assert_eq!(item_limit.inbox_count, crate::driver::MAX_INBOX_ITEMS_PER_USER);
+        assert_eq!(item_limit.pair_bytes, 0);
+        assert_eq!(item_limit.total_bytes, 0);
 
         // vector_recipient_probe.
         let probe = |user: &str, fault| {

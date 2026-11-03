@@ -24,9 +24,9 @@
 //! transition leads to.
 
 use crate::driver::{
-    CleanupObservation, EkDeviceObservation, InboxDeletePermit,
-    LinkUpdatePermit, RowsObservation, SendInsertPermit, SendResultObservation, ShareEffect,
-    ShareTransition,
+    CleanupObservation, EkDeviceObservation, InboxDeletePermit, LinkUpdatePermit,
+    RowsObservation, SendAdmissionObservation, SendInsertPermit, SendResultObservation,
+    ShareEffect, ShareTransition,
 };
 use crate::{EkRegistrationPermit, LinkMutationObservation};
 
@@ -77,6 +77,7 @@ executor_trait! {
     pub trait ShareIo {
         fn observe_link(&mut self) -> LinkMutationObservation;
         fn observe_device(&mut self) -> EkDeviceObservation;
+        fn admit_send(&mut self) -> SendAdmissionObservation;
         fn insert_capsule(&mut self, permit: SendInsertPermit) -> SendResultObservation;
         fn update_linked_item(&mut self, permit: LinkUpdatePermit) -> RowsObservation;
         fn revoke_linked_item(&mut self) -> RowsObservation;
@@ -106,6 +107,10 @@ macro_rules! share_interpreter {
                 __E::ObserveDevice => {
                     __step(transition.driver, __V::EkObserved($io.observe_device()$(.$aw)?))
                 }
+                __E::AdmitSend => __step(
+                    transition.driver,
+                    __V::SendAdmitted($io.admit_send()$(.$aw)?),
+                ),
                 __E::InsertCapsule(permit) => __step(
                     transition.driver,
                     __V::SendResult($io.insert_capsule(permit)$(.$aw)?),
@@ -181,9 +186,10 @@ mod tests {
     use crate::driver::{
         begin_ek_registration, begin_inbox_delete, begin_link_revoke, begin_link_update,
         begin_send, step, EkRegistrationStartObservation, LinkUpdateStartObservation,
-        SendRequestObservation, ShareEvent, ShareFailure,
+        SendAdmissionObservation, SendRequestObservation, ShareEvent, ShareFailure,
+        MAX_INBOX_ITEMS_PER_USER,
     };
-    use crate::{EkRegistrationObservation, SendObservation, SHARE_EK_LEN};
+    use crate::{EkRegistrationObservation, SHARE_EK_LEN};
 
     /// Plays a fixed script of outcomes and records every call.
     struct Scripted {
@@ -252,6 +258,45 @@ mod tests {
             self.events.push(ShareEvent::EkObserved(o));
             o
         }
+        fn admit_send(&mut self) -> SendAdmissionObservation {
+            let pick = self.record(ShareEffect::AdmitSend);
+            let o = match pick {
+                0 => SendAdmissionObservation {
+                    failed: false,
+                    recipient_can_receive: true,
+                    inbox_count: 0,
+                    pair_bytes: 0,
+                    total_bytes: 0,
+                    quota_read: true,
+                },
+                1 => SendAdmissionObservation {
+                    failed: false,
+                    recipient_can_receive: false,
+                    inbox_count: 0,
+                    pair_bytes: 0,
+                    total_bytes: 0,
+                    quota_read: false,
+                },
+                2 => SendAdmissionObservation {
+                    failed: true,
+                    recipient_can_receive: false,
+                    inbox_count: 0,
+                    pair_bytes: 0,
+                    total_bytes: 0,
+                    quota_read: false,
+                },
+                _ => SendAdmissionObservation {
+                    failed: false,
+                    recipient_can_receive: true,
+                    inbox_count: MAX_INBOX_ITEMS_PER_USER,
+                    pair_bytes: 0,
+                    total_bytes: 0,
+                    quota_read: false,
+                },
+            };
+            self.events.push(ShareEvent::SendAdmitted(o));
+            o
+        }
         fn insert_capsule(&mut self, permit: SendInsertPermit) -> SendResultObservation {
             let o = [
                 SendResultObservation::Committed,
@@ -315,15 +360,9 @@ mod tests {
 
     fn send_start() -> ShareTransition {
         begin_send(SendRequestObservation {
-            policy: SendObservation {
-                session_user_id_present: true,
-                recipient_has_share_ek: true,
-                capsule_len: 16,
-                existing_inbox_bytes: 0,
-            },
+            session_user_id_present: true,
             decode_failed: false,
-            inbox_count: 0,
-            pair_bytes: 0,
+            capsule_len: 16,
         })
     }
 
@@ -373,26 +412,47 @@ mod tests {
 
     #[test]
     fn a_refused_send_performs_nothing() {
-        let start = begin_send(SendRequestObservation {
-            policy: SendObservation {
-                session_user_id_present: true,
-                recipient_has_share_ek: false,
-                capsule_len: 16,
-                existing_inbox_bytes: 0,
-            },
-            decode_failed: false,
-            inbox_count: 0,
-            pair_bytes: 0,
-        });
+        // The recipient gate now runs in the admission executor, so it is the
+        // first and only effect; a rejected recipient performs no insert.
+        let start = send_start();
         let mut io = Scripted {
-            script: vec![],
+            script: vec![1],
             calls: vec![],
             events: vec![],
         };
         let result = run_share(&mut io, start);
-        assert!(io.calls.is_empty());
-        assert!(matches!(result.effect, ShareEffect::Fail(_)));
-        assert_eq!(result.effect, ShareEffect::Fail(ShareFailure::RecipientUnavailable));
+        assert_eq!(io.calls, vec![ShareEffect::AdmitSend]);
+        assert_eq!(
+            result.effect,
+            ShareEffect::Fail(ShareFailure::RecipientUnavailable)
+        );
+    }
+
+    #[test]
+    fn empty_and_oversized_capsules_perform_no_store_effect() {
+        // The size gate is the request observation: neither body reaches the
+        // admission executor, so no probe, transaction or aggregate runs.
+        for (len, failure) in [
+            (0i64, ShareFailure::CapsulePolicyRejected),
+            (
+                crate::MAX_CAPSULE_BYTES + 1,
+                ShareFailure::CapsuleTooLarge,
+            ),
+        ] {
+            let start = begin_send(SendRequestObservation {
+                session_user_id_present: true,
+                decode_failed: false,
+                capsule_len: len,
+            });
+            let mut io = Scripted {
+                script: vec![],
+                calls: vec![],
+                events: vec![],
+            };
+            let result = run_share(&mut io, start);
+            assert!(io.calls.is_empty(), "capsule {len} reached an executor");
+            assert_eq!(result.effect, ShareEffect::Fail(failure));
+        }
     }
 
     #[test]

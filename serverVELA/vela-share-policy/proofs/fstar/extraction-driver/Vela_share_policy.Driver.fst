@@ -19,6 +19,7 @@ type t_ShareRequestKind =
 
 /// Where the request is in its decision sequence.
 type t_ShareStage =
+  | ShareStage_SendAdmit : t_ShareStage
   | ShareStage_SendInsert : t_ShareStage
   | ShareStage_LinkUpdateObserve : t_ShareStage
   | ShareStage_LinkUpdateApply : t_ShareStage
@@ -30,14 +31,27 @@ type t_ShareStage =
   | ShareStage_EkRegister : t_ShareStage
   | ShareStage_Done : t_ShareStage
 
-/// Request-side observations for a capsule send. `decode_failed` records a
-/// base64 failure; the decoded lengths/quota counters are otherwise the values
-/// the handler read before opening the insert transaction.
+/// Request-side observations for a capsule send, available before any store
+/// read. The handler decodes the body and hands the driver the session and
+/// size facts; the driver decides the empty/oversized capsule first, so a
+/// rejected body performs no recipient probe, no transaction and no quota
+/// aggregate.
 type t_SendRequestObservation = {
-  f_policy:Vela_share_policy.t_SendObservation;
+  f_session_user_id_present:bool;
   f_decode_failed:bool;
+  f_capsule_len:i64
+}
+
+/// The observation the handler returns after the recipient probe and the
+/// short-circuited admission reads. `quota_read` records that both byte sums
+/// ran; a count-only stop (the item quota failed) leaves it false.
+type t_SendAdmissionObservation = {
+  f_failed:bool;
+  f_recipient_can_receive:bool;
   f_inbox_count:i64;
-  f_pair_bytes:i64
+  f_pair_bytes:i64;
+  f_total_bytes:i64;
+  f_quota_read:bool
 }
 
 /// Request-side observations for a linked-item update.
@@ -85,6 +99,7 @@ type t_CleanupObservation = { f_storage_failed:bool }
 type t_ShareEvent =
   | ShareEvent_LinkObserved : Vela_share_policy.t_LinkMutationObservation -> t_ShareEvent
   | ShareEvent_EkObserved : t_EkDeviceObservation -> t_ShareEvent
+  | ShareEvent_SendAdmitted : t_SendAdmissionObservation -> t_ShareEvent
   | ShareEvent_SendResult : t_SendResultObservation -> t_ShareEvent
   | ShareEvent_Mutated : t_RowsObservation -> t_ShareEvent
   | ShareEvent_Cleaned : t_CleanupObservation -> t_ShareEvent
@@ -130,6 +145,7 @@ type t_InboxDeletePermit = { f_recipient_scoped:bool }
 type t_ShareEffect =
   | ShareEffect_ObserveLink : t_ShareEffect
   | ShareEffect_ObserveDevice : t_ShareEffect
+  | ShareEffect_AdmitSend : t_ShareEffect
   | ShareEffect_InsertCapsule : t_SendInsertPermit -> t_ShareEffect
   | ShareEffect_UpdateLinkedItem : t_LinkUpdatePermit -> t_ShareEffect
   | ShareEffect_RevokeLinkedItem : t_ShareEffect
@@ -146,6 +162,13 @@ type t_ShareDriver = {
   f_kind:t_ShareRequestKind;
   f_stage:t_ShareStage;
   f_capsule_len:i64;
+  f_decode_failed:bool;
+  f_admit_issued:bool;
+  f_recipient_can_receive:bool;
+  f_inbox_count:i64;
+  f_pair_bytes:i64;
+  f_total_bytes:i64;
+  f_quota_read:bool;
   f_sender_authenticated:bool;
   f_caller_is_sender:bool;
   f_link_live:bool;
@@ -182,6 +205,19 @@ let share_state_is_sound (driver: t_ShareDriver) : bool =
     driver.f_cleanup_issued
   in
   let inbox_clean:bool = driver.f_recipient_scoped && ~.driver.f_committed in
+  (~.(match driver.f_stage <: t_ShareStage with
+    | ShareStage_SendAdmit  -> true
+    | _ -> false) ||
+  (match driver.f_kind <: t_ShareRequestKind with
+    | ShareRequestKind_SendCapsule  -> true
+    | _ -> false) &&
+  driver.f_admit_issued &&
+  ~.driver.f_authorized &&
+  ~.driver.f_effect_issued &&
+  ~.driver.f_committed &&
+  ~.driver.f_revoked &&
+  ~.driver.f_cleanup_issued &&
+  ~.driver.f_observe_issued) &&
   (~.(match driver.f_stage <: t_ShareStage with
     | ShareStage_SendInsert  -> true
     | _ -> false) ||
@@ -304,6 +340,17 @@ let share_effect_is_sound (driver: t_ShareDriver) (v_effect: t_ShareEffect) : bo
     (match driver.f_stage <: t_ShareStage with
       | ShareStage_EkObserve  -> true
       | _ -> false)
+  | ShareEffect_AdmitSend  ->
+    (match driver.f_kind <: t_ShareRequestKind with
+      | ShareRequestKind_SendCapsule  -> true
+      | _ -> false) &&
+    (match driver.f_stage <: t_ShareStage with
+      | ShareStage_SendAdmit  -> true
+      | _ -> false) &&
+    driver.f_admit_issued &&
+    ~.driver.f_authorized &&
+    ~.driver.f_effect_issued &&
+    ~.driver.f_committed
   | ShareEffect_InsertCapsule permit ->
     (match driver.f_kind <: t_ShareRequestKind with
       | ShareRequestKind_SendCapsule  -> true
@@ -311,6 +358,7 @@ let share_effect_is_sound (driver: t_ShareDriver) (v_effect: t_ShareEffect) : bo
     (match driver.f_stage <: t_ShareStage with
       | ShareStage_SendInsert  -> true
       | _ -> false) &&
+    driver.f_admit_issued &&
     driver.f_authorized &&
     driver.f_sender_authenticated &&
     driver.f_effect_issued &&
@@ -407,6 +455,13 @@ let base (kind: t_ShareRequestKind) (capsule_len: i64) (sender_authenticated: bo
     f_kind = kind;
     f_stage = ShareStage_Done <: t_ShareStage;
     f_capsule_len = capsule_len;
+    f_decode_failed = false;
+    f_admit_issued = false;
+    f_recipient_can_receive = false;
+    f_inbox_count = mk_i64 0;
+    f_pair_bytes = mk_i64 0;
+    f_total_bytes = mk_i64 0;
+    f_quota_read = false;
     f_sender_authenticated = sender_authenticated;
     f_caller_is_sender = false;
     f_link_live = false;
@@ -429,10 +484,12 @@ let sender_pair_has_capacity (pair_bytes capsule_len: i64) : bool =
   capsule_len <=. v_MAX_SENDER_TO_RECIPIENT_BYTES &&
   pair_bytes <=. (v_MAX_SENDER_TO_RECIPIENT_BYTES -! capsule_len <: i64)
 
-/// Start a send. The decision order is the handler\'s historical order:
-/// recipient availability, base64 decoding, global capsule cap, inbox item
-/// cap, per-pair byte cap, recipient byte cap (`send_facts`), then the real
-/// `plan_send` authorization.
+/// Start a send from the request observation alone. The empty and oversized
+/// capsule checks run here, before the handler probes the recipient, begins a
+/// transaction or runs any quota aggregate. A malformed body is carried to
+/// the admission event so the recipient gate keeps its historical precedence.
+/// A well-formed body asks the handler for the recipient probe and the
+/// short-circuited admission reads.
 let begin_send (obs: t_SendRequestObservation)
     : Prims.Pure t_ShareTransition
       Prims.l_True
@@ -442,59 +499,111 @@ let begin_send (obs: t_SendRequestObservation)
           share_state_is_sound result.f_driver &&
           share_effect_is_sound result.f_driver result.f_effect &&
           ((match result.f_driver.f_stage <: t_ShareStage with
-            | ShareStage_SendInsert  -> true
+            | ShareStage_SendAdmit  -> true
             | _ -> false) ||
           (match result.f_effect <: t_ShareEffect with
             | ShareEffect_Fail _ -> true
             | _ -> false))) =
   let driver:t_ShareDriver =
     base (ShareRequestKind_SendCapsule <: t_ShareRequestKind)
-      obs.f_policy.Vela_share_policy.f_capsule_len
-      obs.f_policy.Vela_share_policy.f_session_user_id_present
+      obs.f_capsule_len
+      obs.f_session_user_id_present
   in
-  if ~.obs.f_policy.Vela_share_policy.f_recipient_has_share_ek
-  then fail driver (ShareFailure_RecipientUnavailable <: t_ShareFailure)
-  else
-    if obs.f_decode_failed
-    then fail driver (ShareFailure_MalformedCapsule <: t_ShareFailure)
+  let driver:t_ShareDriver =
+    { driver with f_decode_failed = obs.f_decode_failed } <: t_ShareDriver
+  in
+  if ~.obs.f_decode_failed
+  then
+    if obs.f_capsule_len <=. mk_i64 0
+    then fail driver (ShareFailure_CapsulePolicyRejected <: t_ShareFailure)
     else
-      if obs.f_policy.Vela_share_policy.f_capsule_len >. Vela_share_policy.v_MAX_CAPSULE_BYTES
+      if obs.f_capsule_len >. Vela_share_policy.v_MAX_CAPSULE_BYTES
       then fail driver (ShareFailure_CapsuleTooLarge <: t_ShareFailure)
       else
-        if obs.f_inbox_count >=. v_MAX_INBOX_ITEMS_PER_USER
+        transition ({
+              driver with
+              f_stage = ShareStage_SendAdmit <: t_ShareStage;
+              f_admit_issued = true
+            }
+            <:
+            t_ShareDriver)
+          (ShareEffect_AdmitSend <: t_ShareEffect)
+  else
+    transition ({
+          driver with
+          f_stage = ShareStage_SendAdmit <: t_ShareStage;
+          f_admit_issued = true
+        }
+        <:
+        t_ShareDriver)
+      (ShareEffect_AdmitSend <: t_ShareEffect)
+
+/// The admission event: recipient availability first (as the historical
+/// handler did), then the decode failure, the item quota, the two byte caps
+/// and finally the real `plan_send` authorization. A count-only admission
+/// (`quota_read = false`) can only be the item-limit stop; any other
+/// count-only observation fails closed as a storage failure.
+let on_send_admitted (driver: t_ShareDriver) (observation: t_SendAdmissionObservation)
+    : t_ShareTransition =
+  let driver:t_ShareDriver =
+    {
+      driver with
+      f_recipient_can_receive = observation.f_recipient_can_receive;
+      f_inbox_count = observation.f_inbox_count;
+      f_pair_bytes = observation.f_pair_bytes;
+      f_total_bytes = observation.f_total_bytes;
+      f_quota_read = observation.f_quota_read
+    }
+    <:
+    t_ShareDriver
+  in
+  if observation.f_failed
+  then fail driver (ShareFailure_SendStorage <: t_ShareFailure)
+  else
+    if ~.observation.f_recipient_can_receive
+    then fail driver (ShareFailure_RecipientUnavailable <: t_ShareFailure)
+    else
+      if driver.f_decode_failed
+      then fail driver (ShareFailure_MalformedCapsule <: t_ShareFailure)
+      else
+        if observation.f_inbox_count >=. v_MAX_INBOX_ITEMS_PER_USER
         then fail driver (ShareFailure_InboxItemLimit <: t_ShareFailure)
         else
-          if
-            ~.(sender_pair_has_capacity obs.f_pair_bytes
-                obs.f_policy.Vela_share_policy.f_capsule_len
-              <:
-              bool)
-          then fail driver (ShareFailure_SenderQuotaExceeded <: t_ShareFailure)
+          if ~.observation.f_quota_read
+          then fail driver (ShareFailure_SendStorage <: t_ShareFailure)
           else
-            let facts:Vela_share_policy.t_SendCapsuleFacts =
-              Vela_share_policy.send_facts obs.f_policy
-            in
-            if ~.facts.Vela_share_policy.f_inbox_has_capacity
-            then fail driver (ShareFailure_RecipientQuotaExceeded <: t_ShareFailure)
+            if ~.(sender_pair_has_capacity observation.f_pair_bytes driver.f_capsule_len <: bool)
+            then fail driver (ShareFailure_SenderQuotaExceeded <: t_ShareFailure)
             else
-              match Vela_share_policy.plan_send facts <: Vela_share_policy.t_SendDecision with
-              | Vela_share_policy.SendDecision_Deliver  ->
-                transition ({
-                      driver with
-                      f_stage = ShareStage_SendInsert <: t_ShareStage;
-                      f_authorized = true;
-                      f_effect_issued = true
+              let facts:Vela_share_policy.t_SendCapsuleFacts =
+                Vela_share_policy.send_facts ({
+                      Vela_share_policy.f_session_user_id_present = driver.f_sender_authenticated;
+                      Vela_share_policy.f_recipient_has_share_ek = true;
+                      Vela_share_policy.f_capsule_len = driver.f_capsule_len;
+                      Vela_share_policy.f_existing_inbox_bytes = observation.f_total_bytes
                     }
                     <:
-                    t_ShareDriver)
-                  (ShareEffect_InsertCapsule
-                    ({ f_capsule_len = obs.f_policy.Vela_share_policy.f_capsule_len }
+                    Vela_share_policy.t_SendObservation)
+              in
+              if ~.facts.Vela_share_policy.f_inbox_has_capacity
+              then fail driver (ShareFailure_RecipientQuotaExceeded <: t_ShareFailure)
+              else
+                match Vela_share_policy.plan_send facts <: Vela_share_policy.t_SendDecision with
+                | Vela_share_policy.SendDecision_Deliver  ->
+                  transition ({
+                        driver with
+                        f_stage = ShareStage_SendInsert <: t_ShareStage;
+                        f_authorized = true;
+                        f_effect_issued = true
+                      }
                       <:
-                      t_SendInsertPermit)
-                    <:
-                    t_ShareEffect)
-              | Vela_share_policy.SendDecision_Reject  ->
-                fail driver (ShareFailure_CapsulePolicyRejected <: t_ShareFailure)
+                      t_ShareDriver)
+                    (ShareEffect_InsertCapsule
+                      ({ f_capsule_len = driver.f_capsule_len } <: t_SendInsertPermit)
+                      <:
+                      t_ShareEffect)
+                | Vela_share_policy.SendDecision_Reject  ->
+                  fail driver (ShareFailure_CapsulePolicyRejected <: t_ShareFailure)
 
 /// Start a linked-item update. Request-side decoding/length failures are
 /// decided here; a well-formed request then asks the handler to observe the
@@ -589,6 +698,13 @@ let begin_inbox_delete (_: Prims.unit)
       f_kind = ShareRequestKind_DeleteInboxItem <: t_ShareRequestKind;
       f_stage = ShareStage_InboxDelete <: t_ShareStage;
       f_capsule_len = mk_i64 0;
+      f_decode_failed = false;
+      f_admit_issued = false;
+      f_recipient_can_receive = false;
+      f_inbox_count = mk_i64 0;
+      f_pair_bytes = mk_i64 0;
+      f_total_bytes = mk_i64 0;
+      f_quota_read = false;
       f_sender_authenticated = false;
       f_caller_is_sender = false;
       f_link_live = false;
@@ -808,6 +924,13 @@ let step (driver: t_ShareDriver) (event: t_ShareEvent)
       | ShareStage_EkObserve  -> true
       | _ -> false
     then on_ek_observed driver observation
+    else idle driver
+  | ShareEvent_SendAdmitted observation ->
+    if
+      match driver.f_stage <: t_ShareStage with
+      | ShareStage_SendAdmit  -> true
+      | _ -> false
+    then on_send_admitted driver observation
     else idle driver
   | ShareEvent_SendResult observation ->
     if

@@ -173,6 +173,23 @@ let link_obs (w: world) (actor: actor) : t_LinkMutationObservation =
 let valid_update_start : t_LinkUpdateStartObservation =
   { f_decode_failed = false; f_capsule_len = mk_i64 1 }
 
+/// A send's admission observation after the recipient probe and the quota
+/// reads: the recipient can receive and all three reads ran.
+let valid_send_admission : t_SendAdmissionObservation =
+  {
+    f_failed = false;
+    f_recipient_can_receive = true;
+    f_inbox_count = mk_i64 0;
+    f_pair_bytes = mk_i64 0;
+    f_total_bytes = mk_i64 0;
+    f_quota_read = true;
+  }
+
+/// A spawned send runs the request gate and then the handler's admission,
+/// landing in the authorized insert stage.
+let spawn_send_driver (obs: t_SendRequestObservation) : t_ShareDriver =
+  (step (begin_send obs).f_driver (ShareEvent_SendAdmitted valid_send_admission)).f_driver
+
 let valid_ek_device : t_EkDeviceObservation =
   {
     f_registration = {
@@ -248,7 +265,7 @@ type action =
 let world_step (w: world) (a: action) : world =
   match a with
   | SpawnSend obs ->
-      { w with w_reqs = (begin_send obs).f_driver :: w.w_reqs }
+      { w with w_reqs = spawn_send_driver obs :: w.w_reqs }
   | SpawnUpdate ->
       { w with w_reqs = (begin_link_update valid_update_start).f_driver :: w.w_reqs }
   | SpawnRevoke ->
@@ -389,7 +406,7 @@ let initial : world =
 
 let spawn_send_inv (w: world) (obs: t_SendRequestObservation)
   : Lemma (requires (inv w)) (ensures (inv (world_step w (SpawnSend obs)))) =
-  all_sound_cons (begin_send obs).f_driver w.w_reqs
+  all_sound_cons (spawn_send_driver obs) w.w_reqs
 
 let spawn_update_inv (w: world)
   : Lemma (requires (inv w)) (ensures (inv (world_step w SpawnUpdate))) =
@@ -698,15 +715,9 @@ let only_sender_changes_link (schedule: list action)
 
 let valid_send_observation : t_SendRequestObservation =
   {
-    f_policy = {
-      Vela_share_policy.f_session_user_id_present = true;
-      Vela_share_policy.f_recipient_has_share_ek = true;
-      Vela_share_policy.f_capsule_len = mk_i64 16;
-      Vela_share_policy.f_existing_inbox_bytes = mk_i64 0;
-    };
+    f_session_user_id_present = true;
     f_decode_failed = false;
-    f_inbox_count = mk_i64 0;
-    f_pair_bytes = mk_i64 0;
+    f_capsule_len = mk_i64 16;
   }
 
 let valid_ek_start : t_EkRegistrationStartObservation =

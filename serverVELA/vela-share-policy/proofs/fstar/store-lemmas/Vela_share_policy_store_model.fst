@@ -566,6 +566,11 @@ let inbox_pair_bytes (d: db) (recipient sender: text) : nat =
 let inbox_total_bytes (d: db) (recipient: text) : nat =
   sum_capsule_len (L.filter (fun kr -> (snd kr).ib_recipient = recipient) (inbox_pairs d))
 
+/// `MAX_INBOX_ITEMS_PER_USER` from `Vela_share_policy.Driver` (500). The
+/// handler stops the admission after the count when it is reached, so the two
+/// byte sums never run.
+let send_item_limit : nat = 500
+
 /// The inbox rows `created_at < cutoff`: exactly what the sweep deletes.
 let inbox_expired (d: db) (cutoff: text) : list text =
   L.filter
@@ -749,10 +754,30 @@ let page_of (spec got: list text) (limit: usize) : prop =
 let stmts_of_handler (p: Alloc.Vec.t_Vec t_HandlerStmt Alloc.Alloc.t_Global) : list t_HandlerStmt =
   Seq.seq_to_list p._0
 
-/// `post_send`'s admission: the transaction begin and the three quota reads.
+/// `post_send`'s admission run: the transaction begin, the item count and —
+/// only when the item quota passed — the two byte sums. The plan is the
+/// handler's four statements; the run stops after the count when it already
+/// failed.
+let send_admission_outcomes
+      (d: db) (recipient sender: text) (f: option nat) : list t_HandlerOutcome =
+  let count_plan = [HandlerStmt_Begin; HandlerStmt_CountInbox { f_recipient = recipient }] in
+  let count_out = run_handler d count_plan 0 f in
+  match count_out with
+  | [HandlerOutcome_Ran;
+     HandlerOutcome_Number (Core_models.Option.Option_Some count)] ->
+    if v count >= send_item_limit
+    then count_out
+    else
+      count_out @
+      run_handler d
+        [HandlerStmt_SumPairBytes { f_recipient = recipient; f_sender = sender };
+         HandlerStmt_SumRecipientBytes { f_recipient = recipient }]
+        2 f
+  | _ -> count_out
+
+/// `post_send`'s admission observation.
 let send_admission (d: db) (recipient sender: text) (f: option nat) : t_AdmissionObservation =
-  classify_send_admission
-    (slice_of (run_handler d (stmts_of_handler (plan_send_admission recipient sender)) 0 f))
+  classify_send_admission (slice_of (send_admission_outcomes d recipient sender f))
 
 /// `post_send`'s recipient gate.
 let recipient_probe (d: db) (recipient: text) (f: option nat) : t_RecipientProbeObservation =

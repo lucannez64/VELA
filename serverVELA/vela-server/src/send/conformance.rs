@@ -69,7 +69,10 @@ impl<S: SendSql> SendSql for Faulty<S> {
 /// The moment every modelled expiry is compared against.
 const NOW: &str = "2026-10-29T12:00:00+00:00";
 /// After every link the states below mark live.
-const LATER: &str = "2026-11-01T00:00:00+00:00";
+/// Far enough ahead that the real executor's `Utc::now()` (not the model's
+/// fixed `NOW`) also sees these rows as live; the old 2026-11-01 value made the
+/// conformance suite fail once the wall clock passed it.
+const LATER: &str = "2099-01-01T00:00:00+00:00";
 
 fn now() -> chrono::DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 10, 29, 12, 0, 0).unwrap()

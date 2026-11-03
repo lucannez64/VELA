@@ -27,14 +27,18 @@ set -euo pipefail
 #   linked-limit          the linked-items page is planned with size 0
 #   rate-allow            a counter at the budget is refused (off by one)
 #   rate-fail             a failed store operation is reported as allowed
+#   admission-runs-sums   a count-only item-limit stop is classified as ready
+#   size-after-admit      the request gate admits an empty/oversized capsule
 
 proof_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cd "$proof_root"
 want=${1:-all}
 
 store=$proof_root/proofs/fstar/extraction-store/Vela_share_policy.Store.fst
+driver_store=$proof_root/proofs/fstar/extraction-driver
 model_dir=$proof_root/proofs/fstar/store-lemmas
 handler_dir=$proof_root/proofs/fstar/handler-lemmas
+driver_lemmas=$proof_root/proofs/fstar/driver-lemmas/Vela_share_policy_driver_lemmas.fst
 mut=$(mktemp -d "${TMPDIR:-/tmp}/vela-share-executor-mut.XXXXXX")
 # A fresh directory per run: CI runners and local runs share the build box.
 trap 'rm -rf "$mut"' EXIT
@@ -53,6 +57,7 @@ mutants=(
   classify-error classify-rows plan-drop plan-swap link-sender
   admission-classify admission-swap probe-empty page-has-more page-before
   sweep-classify sweep-swap linked-limit rate-allow rate-fail
+  admission-runs-sums size-after-admit
 )
 declare -A expect=(
   [classify-error]=send_insert_is_honest
@@ -70,6 +75,8 @@ declare -A expect=(
   [linked-limit]=linked_items_plan_facts
   [rate-allow]=rate_limit_is_honest
   [rate-fail]=rate_limit_is_honest
+  [admission-runs-sums]=send_admission_is_honest
+  [size-after-admit]=empty_or_oversized_capsule_performs_no_store_effect
 )
 # Which lemma module each mutant must be rejected by.
 declare -A target=(
@@ -88,6 +95,8 @@ declare -A target=(
   [linked-limit]=handler
   [rate-allow]=handler
   [rate-fail]=handler
+  [admission-runs-sums]=handler
+  [size-after-admit]=driver
 )
 
 # One mutant: prints its verdict, returns non-zero when the check fails.
@@ -95,21 +104,27 @@ run_mutant() {
   local name=$1
   [[ $want == all || $want == "$name" ]] || return 0
   d=$mut/$name
-  mkdir -p "$d/store" "$d/lemmas"
+  mkdir -p "$d/store" "$d/lemmas" "$d/driver"
   cp "$store" "$d/store/"
   cp "$model_dir"/*.fst "$d/lemmas/"
   if [[ ${target[$name]} == handler ]]; then
     cp "$handler_dir"/Vela_share_policy_handler_lemmas.fst "$d/lemmas/"
     module=$d/lemmas/Vela_share_policy_handler_lemmas.fst
     module_name=Vela_share_policy_handler_lemmas
+  elif [[ ${target[$name]} == driver ]]; then
+    cp "$driver_store"/*.fst "$d/driver/"
+    cp "$driver_lemmas" "$d/lemmas/"
+    module=$d/lemmas/Vela_share_policy_driver_lemmas.fst
+    module_name=Vela_share_policy_driver_lemmas
   else
     module=$d/lemmas/Vela_share_policy_store_lemmas.fst
     module_name=Vela_share_policy_store_lemmas
   fi
-  python3 - "$name" "$d/store/Vela_share_policy.Store.fst" <<'PY'
+  python3 - "$name" "$d/store/Vela_share_policy.Store.fst" "$d/driver/Vela_share_policy.Driver.fst" <<'PY'
 import sys, pathlib, re
-name, path = sys.argv[1], pathlib.Path(sys.argv[2])
+name, path, driver_path = sys.argv[1], pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3])
 text = path.read_text()
+driver_text = driver_path.read_text() if driver_path.exists() else ''
 
 def once(old, new):
     global text
@@ -196,8 +211,29 @@ elif name == 'rate-allow':
 elif name == 'rate-fail':
     once('| RateOutcome_Failed  ->\n      { f_count = mk_u64 0; f_allowed = false; f_failed = true }',
          '| RateOutcome_Failed  ->\n      { f_count = mk_u64 0; f_allowed = true; f_failed = true }')
+elif name == 'admission-runs-sums':
+    start, end, body = body_between('let classify_send_admission', 'let classify_recipient_ek')
+    old = 'f_stage = AdmissionStage_ItemLimit <: t_AdmissionStage'
+    if body.count(old) != 1:
+        sys.exit(f'{name}: item-limit branch not found')
+    text = text[:start] + body.replace(old, 'f_stage = AdmissionStage_Ready <: t_AdmissionStage') + text[end:]
+elif name == 'size-after-admit':
+    start = driver_text.index('let begin_send (obs: t_SendRequestObservation)')
+    end = driver_text.index('/// The admission event:', start)
+    body = driver_text[start:end]
+    body2 = body.replace('obs.f_capsule_len <=. mk_i64 0', 'false', 1)
+    body2 = body2.replace('obs.f_capsule_len >. Vela_share_policy.v_MAX_CAPSULE_BYTES', 'false', 1)
+    if body2 == body:
+        sys.exit(f'{name}: size checks not found')
+    driver_text = driver_text[:start] + body2 + driver_text[end:]
 path.write_text(text)
+if name == 'size-after-admit':
+    driver_path.write_text(driver_text)
 PY
+  extra_include=()
+  if [[ ${target[$name]} == driver ]]; then
+    extra_include=(--include "$d/driver")
+  fi
   set +e
   out=$(fstar.exe --cmi --cache_off --warn_error -331 --z3rlimit 200 --z3version 4.13.3 \
     --already_cached '+Prims+FStar+LowStar+C+Spec.Loops+TestLib' \
@@ -206,7 +242,7 @@ PY
     --include "$hax_lib_root/proofs/fstar/extraction" \
     --include "$proof_root/proofs/fstar/extraction-driver" \
     --include "$proof_root/proofs/fstar/extraction-send-driver" \
-    --include "$d/store" --include "$d/lemmas" \
+    --include "$d/store" "${extra_include[@]}" --include "$d/lemmas" \
     "$module" 2>&1)
   status=$?
   set -e

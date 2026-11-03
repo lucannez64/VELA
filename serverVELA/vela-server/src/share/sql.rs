@@ -19,6 +19,15 @@ pub(super) trait ShareSql {
     async fn query(&mut self, sql: &str, params: Vec<TursoValue>) -> anyhow::Result<Vec<VelaRow>>;
     async fn execute(&mut self, sql: &str, params: Vec<TursoValue>) -> anyhow::Result<u64>;
     async fn commit(&mut self) -> anyhow::Result<()>;
+    /// Adopt a transaction opened by the handler's admission step. Only the
+    /// plain transaction wrapper does; the fault-injection wrapper in the
+    /// conformance test supplies its own.
+    fn adopt_tx(_tx: TxSql) -> Option<Self>
+    where
+        Self: Sized,
+    {
+        None
+    }
 }
 
 /// The connection pool: each statement commits on its own.
@@ -50,6 +59,9 @@ impl TxSql {
 }
 
 impl ShareSql for TxSql {
+    fn adopt_tx(tx: TxSql) -> Option<Self> {
+        Some(tx)
+    }
     async fn query(&mut self, sql: &str, params: Vec<TursoValue>) -> anyhow::Result<Vec<VelaRow>> {
         self.guard()?.query(sql, params).await
     }

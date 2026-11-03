@@ -11,7 +11,7 @@
 
 use vela_share_policy::driver::{
     CleanupObservation, EkDeviceObservation, InboxDeletePermit, LinkUpdatePermit, RowsObservation,
-    SendInsertPermit, SendResultObservation,
+    SendAdmissionObservation, SendInsertPermit, SendResultObservation,
 };
 use vela_share_policy::{EkRegistrationPermit, LinkMutationObservation};
 
@@ -32,6 +32,16 @@ pub trait ShareExecutor {
             },
             stored_identity_vk_decode_failed: true,
             signature_decode_failed: true,
+        }
+    }
+    async fn admit_send(&mut self) -> SendAdmissionObservation {
+        SendAdmissionObservation {
+            failed: true,
+            recipient_can_receive: false,
+            inbox_count: 0,
+            pair_bytes: 0,
+            total_bytes: 0,
+            quota_read: false,
         }
     }
     async fn insert_capsule(&mut self, _permit: SendInsertPermit) -> SendResultObservation {

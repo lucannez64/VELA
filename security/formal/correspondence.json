@@ -325,18 +325,6 @@
       }
     },
     {
-      "boundary": "sharing driver (11 extracted contracts, 34 per-request lemmas, 45 composition lemmas): revocation finality and sender-only authorization depend on the driver; recipient-only inbox delete and the quota bound depend on modelled SQL guards/transaction serialization; SQL semantics, observation origins and handler effect fidelity remain open",
-      "artifacts": {
-        "serverVELA/vela-share-policy/src/driver.rs": "06445b82fdc87bb1dc5ff0a6282b1cd9032a6ee5a85d8e61a4ade609cced10ea",
-        "serverVELA/vela-share-policy/tests/driver.rs": "e7db4720a29163ca50a188b1e08e70409d0e21a3524ebf72ba21bfd019e553a7",
-        "serverVELA/vela-share-policy/verify-fstar-driver.sh": "bb1c326440b86199205a1563e2971e1f523a66898710f57da3ad000968d212d5",
-        "serverVELA/vela-share-policy/proofs/fstar/extraction-driver/Vela_share_policy.Driver.fst": "04face7802f23f651e4feb0279850b0f72c18b75e8069746b431acb12a6a7fa0",
-        "serverVELA/vela-share-policy/proofs/fstar/driver-lemmas/Vela_share_policy_driver_lemmas.fst": "db315296df922d071a47697950effaa12ee025e709444502d835d3a235eaac87",
-        "serverVELA/vela-share-policy/proofs/fstar/driver-composition/Vela_share_policy_driver_composition.fst": "dad18200ea11d1ff572b773ca54005252a3f116275a512b99fb6fac210686e9c",
-        "serverVELA/vela-server/src/share/mod.rs": "608965e20f3f53a3744c8971067a98cc86958f38924eb4fc7e2583bb866aba7b"
-      }
-    },
-    {
       "boundary": "possession-recovery drivers (11 extracted contracts, 35 per-request lemmas, 40 composition lemmas): at most one grant per proof state and at most k counted attempts for any interleaving; store linearizability, effect fidelity, verifier, rate-limit windows, TTL and initiation/recovery composition remain open",
       "artifacts": {
         "serverVELA/vela-recovery-policy/src/possession_driver.rs": "ac2c0a37154c3997be494f76c5e212bfad449ed3b8f302e76df9064b235b4b55",
@@ -488,17 +476,6 @@
         "serverVELA/vela-server/src/device/invitation.rs": "9ed0bb6cbc1e7de613ff2ae4df2bb93e3fbae7b5d91bcfd7398b6b995f4086b0",
         "serverVELA/vela-server/src/device/rendezvous.rs": "ae55f6fa78bd44ecf713ac21a51834ff4f1bbd8f34c7c49c90425c89961e83de",
         "serverVELA/vela-server/src/device/pairing_executor.rs": "dcfa1ff90ad32bb34ccb2654f519bd94c2426e115a87138b75b2e95ab9019c8c"
-      }
-    },
-    {
-      "boundary": "sharing handler-to-driver interpreter: the handler expands its policy crate's interpreter macro, whose synchronous expansion is proved for every executor to call exactly the method for the driver's current effect, stop at the verdict within its budget and end in a state the driver's per-request theorem covers; executor method I/O, the await-only macro difference, pre-driver validation and post-verdict rendering remain open",
-      "artifacts": {
-        "serverVELA/vela-share-policy/src/interpreter.rs": "98ff19fe6bccb08c6fcbc0f04e2ca4a1cdfeb081a4850d29fcd4c3f63cdbd908",
-        "serverVELA/vela-share-policy/verify-fstar-share-interpreter.sh": "7cdad02aeca6ffb87d33ed591d1926fe842a24a73638aaeb174b91109877be8d",
-        "serverVELA/vela-share-policy/proofs/fstar/extraction-interpreter/Vela_share_policy.Interpreter.fst": "fa2c6421ea4ece7ee55f8cbb8ef84f895a282cb4b5490601c1c16f556b7fc41c",
-        "serverVELA/vela-share-policy/proofs/fstar/interpreter-lemmas/Vela_share_policy_interpreter_lemmas.fst": "947bf5329c4b2bdeedd7280f12f91ac0a7c1acd06235b45272e21e927711fb22",
-        "serverVELA/vela-server/src/share/mod.rs": "608965e20f3f53a3744c8971067a98cc86958f38924eb4fc7e2583bb866aba7b",
-        "serverVELA/vela-server/src/share/executor.rs": "23cf66d4bd9ae47bd0da0a60e6fc739a7ee5c2d82671ceeb2390a75ee0b5ead6"
       }
     },
     {
@@ -740,35 +717,19 @@
       }
     },
     {
-      "boundary": "sharing executor honesty (F-1): for SendIo, InboxDeleteIo, LinkUpdateIo, LinkRevokeIo and ShareEkIo, the extracted plan_* and classify_* functions are proved against a transactional store model of shared_items, share_inbox, users and devices with a failure at any statement: a write succeeds exactly when its SQL guard held and nothing failed and then changes exactly the intended rows, any failure leaves the state unchanged, and read observations equal the stored rows' truth; five plan/classifier mutations break it; 6,072 real turso cases with injected faults match a Rust mirror of the model; render() is pinned to the SQL text by tests; serialized transactions, statement atomicity and the turso engine remain assumptions. Wave 2 extends the same model and lemmas to the handler I/O outside the executors: post_send's recipient share_ek probe, transaction begin and three inbox quota reads, get_recipient_ek, get_inbox's cursor and page, get_linked_items, the expiry sweeps and the four share/send rate limiters are extracted typed statements with pinned renderings and extracted classifiers, proved for every starting database (with a finite key-list association per table and tables_wf) and every fault point to report the store's truth (the admission's three quota values and named failed step, the gate's non-empty stored key, the cursor's own row, both listings' exact rows and page verdict, the sweeps' exact deleted rows and count, the limiter's exact count and verdict) and to change nothing on failure; ten further mutations each break a named theorem; 1,900 real turso cases (850 with injected faults) and the sled counter test match the mirror; a listing's engine order is not modelled and the counter's window rollover is a scheduler assumption",
-      "artifacts": {
-        "serverVELA/vela-share-policy/src/store.rs": "2aa076763148d9d7fb15f682b93dd67a81450b0410c907f06b5c5d05beed0e59",
-        "serverVELA/vela-share-policy/src/store_model.rs": "8d6c02f5c6a19ed9cdcbeebbb6cbb9a083b490f88ed8e2fda6b0a4e802337fa0",
-        "serverVELA/vela-share-policy/verify-fstar-share-executors.sh": "3d40b495071736b25eb06e4dacfde26d0c5677c986c44ff14a5d8ee0de70e5db",
-        "serverVELA/vela-share-policy/verify-fstar-share-executors-mutations.sh": "4ee2af4b845152c32737c1733bf6b8bf1f07005a0fe60d128752a31c72037542",
-        "serverVELA/vela-share-policy/proofs/fstar/store-lemmas/Vela_share_policy_store_lemmas.fst": "4a7522f0575be169246d7470f07f2d62d28a33c856e7b7ec50cb0b7a7dd7396a",
-        "serverVELA/vela-share-policy/proofs/fstar/store-lemmas/Vela_share_policy_store_model.fst": "133766ee202502aaa5e231ca1b7946589d455ce250ad33abb14e38f0912c6d12",
-        "serverVELA/vela-share-policy/proofs/fstar/extraction-store/Vela_share_policy.Store.fst": "d1b18e1b2672e1fd7b41f0d343f345940b6eb466d31dceed6e209fd4f70fcd6f",
-        "serverVELA/vela-server/src/share/mod.rs": "608965e20f3f53a3744c8971067a98cc86958f38924eb4fc7e2583bb866aba7b",
-        "serverVELA/vela-server/src/share/sql.rs": "09c24e81916437e74c667656d3747b90f3b197d8abdd0d2aa2dc599dbc8e0196",
-        "serverVELA/vela-server/src/share/conformance.rs": "4647ea7035dbf03de2f72aa426170d87abc367ca0b83624d4e6bac89113adc47",
-        "serverVELA/vela-share-policy/proofs/fstar/handler-lemmas/Vela_share_policy_handler_lemmas.fst": "74625c9ecc2f41bfc514edcd27d424a0636284fdea50728e2d52dcf8e9752d7d"
-      }
-    },
-    {
       "boundary": "send-link executors (F-1): each executor method in vela-server/src/send.rs (CreateSendIo, FetchSendIo, DeleteSendIo) is an extracted typed statement plan over the `sends` table, a pinned SQL rendering and an extracted observation classifier; for every starting database and every failing statement F* proves the create insert, the atomic view consume, the view-once delete, the owner-scoped delete and the payload read report exactly what their statement did (success exactly when the SQL guard held and nothing failed, then exactly the intended row changed; any failure leaves the table unchanged), with five plan/classifier mutations; 456 real turso cases with injected faults match a Rust mirror of the model; render_send() is pinned to the SQL text and bound parameters by tests; the expiry guard is the engine's stored-text comparison, supplied to the model as a parameter; statement atomicity, the turso engine and the concurrency between requests remain outside. Wave 2 adds the two remaining send.rs statements: the GET /sends owner listing and the expiry sweep are extracted typed statements with pinned renderings and extracted classifiers, proved to expose exactly the caller's live unexpired links with an exact page verdict and to delete exactly the expired links with an exact count, nothing on failure, plus 120 real turso cases (60 with injected faults)",
       "artifacts": {
-        "serverVELA/vela-share-policy/src/store.rs": "2aa076763148d9d7fb15f682b93dd67a81450b0410c907f06b5c5d05beed0e59",
-        "serverVELA/vela-share-policy/src/store_model.rs": "8d6c02f5c6a19ed9cdcbeebbb6cbb9a083b490f88ed8e2fda6b0a4e802337fa0",
+        "serverVELA/vela-share-policy/src/store.rs": "f135ded84bc393d41ae1d1bd300cba2df3dfb3176594166c591fcbe261b241ad",
+        "serverVELA/vela-share-policy/src/store_model.rs": "815062ad48dea0f33fb1299cd3fcd1e6bb14ddb91adb23960acaa3c5d9556b9c",
         "serverVELA/vela-share-policy/verify-fstar-send-executors.sh": "4bda84151922cd0d3946e81618281748b7d9c4434c79b5b1ccdc879a11a2ebc8",
         "serverVELA/vela-share-policy/verify-fstar-send-executors-mutations.sh": "3efa3f479f1a68a707cc68d9db855a94fcf47166ecf457af4fee3a3d0a339f2e",
-        "serverVELA/vela-share-policy/proofs/fstar/extraction-store/Vela_share_policy.Store.fst": "d1b18e1b2672e1fd7b41f0d343f345940b6eb466d31dceed6e209fd4f70fcd6f",
-        "serverVELA/vela-share-policy/proofs/fstar/store-lemmas/Vela_share_policy_store_model.fst": "133766ee202502aaa5e231ca1b7946589d455ce250ad33abb14e38f0912c6d12",
+        "serverVELA/vela-share-policy/proofs/fstar/extraction-store/Vela_share_policy.Store.fst": "f895f79a68c421c8a149869b549c624ecc11f1b4787a52dac88a6e4e838a07ae",
+        "serverVELA/vela-share-policy/proofs/fstar/store-lemmas/Vela_share_policy_store_model.fst": "35900eec881a3e4163d1af66d28895a0c2b48a65ac1ba194af5e0d5ae56582ca",
         "serverVELA/vela-share-policy/proofs/fstar/send-store-lemmas/Vela_share_policy_send_store_lemmas.fst": "cdf44650ef368530d37ede5693cd5a93ac31bb1e45360ee1b5d84c979f033587",
         "serverVELA/vela-server/src/send.rs": "3e88283f5a2e7fc5be58dbb87d336bb7bda413c0ae456d796862a03636421197",
         "serverVELA/vela-server/src/send/sql.rs": "2746392c8c3e679356a5f9249861b055b30150cd71246dbcb885bb744c36f7be",
-        "serverVELA/vela-server/src/send/conformance.rs": "dc72fa844bcfdbaca59160f0a13a772d5c4aa40fb34de12272e21174a1296c83",
-        "serverVELA/vela-share-policy/proofs/fstar/handler-lemmas/Vela_share_policy_handler_lemmas.fst": "74625c9ecc2f41bfc514edcd27d424a0636284fdea50728e2d52dcf8e9752d7d"
+        "serverVELA/vela-server/src/send/conformance.rs": "6a0586b206439c22e949e7a9e01240f774fd71fc06ec310f2a67ffb79e887a97",
+        "serverVELA/vela-share-policy/proofs/fstar/handler-lemmas/Vela_share_policy_handler_lemmas.fst": "02a3760f59f4771e9099ab38140aa2d0aa1a76dc642a694d635a2a7603fd2961"
       }
     },
     {
@@ -794,16 +755,16 @@
         "serverVELA/vela-session-policy/src/store_model.rs": "ad521e2cdf5a3e3a51848ee04d094b13a3cc2be073d73a137692e42f48ab58f3",
         "serverVELA/vela-session-policy/verify-fstar-session-executors-mutations.sh": "12a38f5789712e4b5d2cad5dddb528d77dbc3db8d7cd36969c4646f73732208d",
         "serverVELA/vela-session-policy/verify-fstar-session-executors.sh": "225b8a610ac79cab9510e9baaa32af10467ddb1bdf69e1fb1b9bc89a0edb1c84",
-        "serverVELA/vela-share-policy/src/store.rs": "2aa076763148d9d7fb15f682b93dd67a81450b0410c907f06b5c5d05beed0e59",
-        "serverVELA/vela-share-policy/src/store_model.rs": "8d6c02f5c6a19ed9cdcbeebbb6cbb9a083b490f88ed8e2fda6b0a4e802337fa0",
+        "serverVELA/vela-share-policy/src/store.rs": "f135ded84bc393d41ae1d1bd300cba2df3dfb3176594166c591fcbe261b241ad",
+        "serverVELA/vela-share-policy/src/store_model.rs": "815062ad48dea0f33fb1299cd3fcd1e6bb14ddb91adb23960acaa3c5d9556b9c",
         "serverVELA/vela-share-policy/verify-fstar-share-executors.sh": "3d40b495071736b25eb06e4dacfde26d0c5677c986c44ff14a5d8ee0de70e5db",
-        "serverVELA/vela-share-policy/verify-fstar-share-executors-mutations.sh": "4ee2af4b845152c32737c1733bf6b8bf1f07005a0fe60d128752a31c72037542",
-        "serverVELA/vela-share-policy/proofs/fstar/extraction-store/Vela_share_policy.Store.fst": "d1b18e1b2672e1fd7b41f0d343f345940b6eb466d31dceed6e209fd4f70fcd6f",
-        "serverVELA/vela-share-policy/proofs/fstar/store-lemmas/Vela_share_policy_store_model.fst": "133766ee202502aaa5e231ca1b7946589d455ce250ad33abb14e38f0912c6d12",
+        "serverVELA/vela-share-policy/verify-fstar-share-executors-mutations.sh": "d6261b674456eb36adbb3d7237fd458a47b2cea6e0d5a1409a92617ae3327ea2",
+        "serverVELA/vela-share-policy/proofs/fstar/extraction-store/Vela_share_policy.Store.fst": "f895f79a68c421c8a149869b549c624ecc11f1b4787a52dac88a6e4e838a07ae",
+        "serverVELA/vela-share-policy/proofs/fstar/store-lemmas/Vela_share_policy_store_model.fst": "35900eec881a3e4163d1af66d28895a0c2b48a65ac1ba194af5e0d5ae56582ca",
         "serverVELA/vela-share-policy/proofs/fstar/store-lemmas/Vela_share_policy_store_lemmas.fst": "4a7522f0575be169246d7470f07f2d62d28a33c856e7b7ec50cb0b7a7dd7396a",
-        "serverVELA/vela-server/src/share/sql.rs": "09c24e81916437e74c667656d3747b90f3b197d8abdd0d2aa2dc599dbc8e0196",
-        "serverVELA/vela-server/src/share/conformance.rs": "4647ea7035dbf03de2f72aa426170d87abc367ca0b83624d4e6bac89113adc47",
-        "serverVELA/vela-server/src/share/mod.rs": "608965e20f3f53a3744c8971067a98cc86958f38924eb4fc7e2583bb866aba7b"
+        "serverVELA/vela-server/src/share/sql.rs": "a4cd3efc6dd7ea61a16e639738c8e6c9cf0781a2735bd83ddb313c9d2efad837",
+        "serverVELA/vela-server/src/share/conformance.rs": "9dafef8355e1716441944b028dca4ea586280c478c9ba74f2a994d958ddb16fb",
+        "serverVELA/vela-server/src/share/mod.rs": "4e0c0bd36b1e23aadb14e45ab822effcb6dbd97ee5ebdeb964de6e28bdf84c66"
       }
     },
     {
@@ -882,6 +843,45 @@
         "serverVELA/vela-server/src/vault/schema.rs": "9608828e8411dad4e275a3f0d80fa4940a7ba8f0b031a448d5dae9bfb0d0401c",
         "serverVELA/vela-server/src/vault/sql.rs": "bd4c4ffa2f0ef2d150844106eb13c3535e007e3dd664d24cb7e48d78dfce3b1a",
         "serverVELA/vela-server/src/vault/mod.rs": "8ee746f08b292bf5dccafcf94c535620a8d140b82b4b8cb85a06d326cd3b94ec"
+      }
+    },
+    {
+      "boundary": "sharing driver (11 extracted contracts, 34 per-request lemmas, 45 composition lemmas): revocation finality and sender-only authorization depend on the driver; recipient-only inbox delete and the quota bound depend on modelled SQL guards/transaction serialization; SQL semantics, observation origins and handler effect fidelity remain open; the request-side `begin_send` gate rejects an empty or oversized capsule before any store read, and `empty_or_oversized_capsule_performs_no_store_effect` proves it emits no admission effect",
+      "artifacts": {
+        "serverVELA/vela-share-policy/src/driver.rs": "50b9ce5a53c602258cc413f6766f7afae5892042b1c8601784eacc8357c37d55",
+        "serverVELA/vela-share-policy/tests/driver.rs": "564091c10bad2db044d917087761be67dfb5e8cd6cb2a75761f4ae88338a4aa9",
+        "serverVELA/vela-share-policy/verify-fstar-driver.sh": "bb1c326440b86199205a1563e2971e1f523a66898710f57da3ad000968d212d5",
+        "serverVELA/vela-share-policy/proofs/fstar/extraction-driver/Vela_share_policy.Driver.fst": "2e72a55f59f44c221bad03ab877ded895bd9a5e4a21d07d262a9e147fae5e115",
+        "serverVELA/vela-share-policy/proofs/fstar/driver-lemmas/Vela_share_policy_driver_lemmas.fst": "491cde2a9c20c389aa0d1bb0a3d0e334b8f78a9ff87297c79c11e4c6b6571070",
+        "serverVELA/vela-share-policy/proofs/fstar/driver-composition/Vela_share_policy_driver_composition.fst": "7255c1ab66057f83aa50cd65162640750814be77f2279629333dd474d1426efc",
+        "serverVELA/vela-server/src/share/mod.rs": "4e0c0bd36b1e23aadb14e45ab822effcb6dbd97ee5ebdeb964de6e28bdf84c66"
+      }
+    },
+    {
+      "boundary": "sharing handler-to-driver interpreter: the handler expands its policy crate's interpreter macro, whose synchronous expansion is proved for every executor to call exactly the method for the driver's current effect, stop at the verdict within its budget and end in a state the driver's per-request theorem covers; executor method I/O, the await-only macro difference, pre-driver validation and post-verdict rendering remain open; the send start is the request gate, an `AdmitSend` turn performs the probe and the short-circuited admission, and the insert turn follows",
+      "artifacts": {
+        "serverVELA/vela-share-policy/src/interpreter.rs": "024cf8165b51e23a79a879ee7d941b99b986c55c023783ac8769974901de7f8b",
+        "serverVELA/vela-share-policy/verify-fstar-share-interpreter.sh": "7cdad02aeca6ffb87d33ed591d1926fe842a24a73638aaeb174b91109877be8d",
+        "serverVELA/vela-share-policy/proofs/fstar/extraction-interpreter/Vela_share_policy.Interpreter.fst": "2f3cb2f5878be0ae1dfa09c7c9d9931c6b40fd3d933816600e630c98cf63291b",
+        "serverVELA/vela-share-policy/proofs/fstar/interpreter-lemmas/Vela_share_policy_interpreter_lemmas.fst": "500160ca62f57e0488364e7fd7277007f080f40c12b9d833c715775e876b1515",
+        "serverVELA/vela-server/src/share/mod.rs": "4e0c0bd36b1e23aadb14e45ab822effcb6dbd97ee5ebdeb964de6e28bdf84c66",
+        "serverVELA/vela-server/src/share/executor.rs": "be0440e6fad58da46bc081c82571de976963161ed32ef614d426357caa1fdd06"
+      }
+    },
+    {
+      "boundary": "sharing executor honesty (F-1): for SendIo, InboxDeleteIo, LinkUpdateIo, LinkRevokeIo and ShareEkIo, the extracted plan_* and classify_* functions are proved against a transactional store model of shared_items, share_inbox, users and devices with a failure at any statement: a write succeeds exactly when its SQL guard held and nothing failed and then changes exactly the intended rows, any failure leaves the state unchanged, and read observations equal the stored rows' truth; five plan/classifier mutations break it; 6,072 real turso cases with injected faults match a Rust mirror of the model; render() is pinned to the SQL text by tests; serialized transactions, statement atomicity and the turso engine remain assumptions. Wave 2 extends the same model and lemmas to the handler I/O outside the executors: post_send's request-side empty/oversized capsule gate, recipient share_ek probe, transaction begin and short-circuited inbox quota reads (count first, then the two byte sums only when the item quota passed), get_recipient_ek, get_inbox's cursor and page, get_linked_items, the expiry sweeps and the four share/send rate limiters are extracted typed statements with pinned renderings and extracted classifiers, proved for every starting database (with a finite key-list association per table and tables_wf) and every fault point to report the store's truth (the admission's three quota values and named failed step, with `ItemLimit` carrying the true count when only the count ran, and no probe/begin/aggregate for an empty or oversized capsule, the gate's non-empty stored key, the cursor's own row, both listings' exact rows and page verdict, the sweeps' exact deleted rows and count, the limiter's exact count and verdict) and to change nothing on failure; twelve further mutations each break a named theorem; 1,905 real turso cases (854 with injected faults), including a full-inbox count-only state at every fault point and the sled counter test match the mirror; a listing's engine order is not modelled and the counter's window rollover is a scheduler assumption",
+      "artifacts": {
+        "serverVELA/vela-share-policy/src/store.rs": "f135ded84bc393d41ae1d1bd300cba2df3dfb3176594166c591fcbe261b241ad",
+        "serverVELA/vela-share-policy/src/store_model.rs": "815062ad48dea0f33fb1299cd3fcd1e6bb14ddb91adb23960acaa3c5d9556b9c",
+        "serverVELA/vela-share-policy/verify-fstar-share-executors.sh": "3d40b495071736b25eb06e4dacfde26d0c5677c986c44ff14a5d8ee0de70e5db",
+        "serverVELA/vela-share-policy/verify-fstar-share-executors-mutations.sh": "d6261b674456eb36adbb3d7237fd458a47b2cea6e0d5a1409a92617ae3327ea2",
+        "serverVELA/vela-share-policy/proofs/fstar/store-lemmas/Vela_share_policy_store_lemmas.fst": "4a7522f0575be169246d7470f07f2d62d28a33c856e7b7ec50cb0b7a7dd7396a",
+        "serverVELA/vela-share-policy/proofs/fstar/store-lemmas/Vela_share_policy_store_model.fst": "35900eec881a3e4163d1af66d28895a0c2b48a65ac1ba194af5e0d5ae56582ca",
+        "serverVELA/vela-share-policy/proofs/fstar/extraction-store/Vela_share_policy.Store.fst": "f895f79a68c421c8a149869b549c624ecc11f1b4787a52dac88a6e4e838a07ae",
+        "serverVELA/vela-server/src/share/mod.rs": "4e0c0bd36b1e23aadb14e45ab822effcb6dbd97ee5ebdeb964de6e28bdf84c66",
+        "serverVELA/vela-server/src/share/sql.rs": "a4cd3efc6dd7ea61a16e639738c8e6c9cf0781a2735bd83ddb313c9d2efad837",
+        "serverVELA/vela-server/src/share/conformance.rs": "9dafef8355e1716441944b028dca4ea586280c478c9ba74f2a994d958ddb16fb",
+        "serverVELA/vela-share-policy/proofs/fstar/handler-lemmas/Vela_share_policy_handler_lemmas.fst": "02a3760f59f4771e9099ab38140aa2d0aa1a76dc642a694d635a2a7603fd2961"
       }
     }
   ]

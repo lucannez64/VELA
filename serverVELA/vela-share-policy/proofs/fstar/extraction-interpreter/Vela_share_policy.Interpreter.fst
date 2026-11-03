@@ -30,6 +30,13 @@ class t_ShareIo (v_Self: Type0) = {
     -> Prims.Pure (v_Self & Vela_share_policy.Driver.t_EkDeviceObservation)
         (f_observe_device_pre x0)
         (fun result -> f_observe_device_post x0 result);
+  f_admit_send_pre:self_: v_Self -> pred: Type0{true ==> pred};
+  f_admit_send_post:v_Self -> (v_Self & Vela_share_policy.Driver.t_SendAdmissionObservation)
+    -> Type0;
+  f_admit_send:x0: v_Self
+    -> Prims.Pure (v_Self & Vela_share_policy.Driver.t_SendAdmissionObservation)
+        (f_admit_send_pre x0)
+        (fun result -> f_admit_send_post x0 result);
   f_insert_capsule_pre:self_: v_Self -> permit: Vela_share_policy.Driver.t_SendInsertPermit
     -> pred: Type0{true ==> pred};
   f_insert_capsule_post:
@@ -114,7 +121,7 @@ let run_share
       (fun temp_0_ temp_1_ ->
           let (io: v_Io), (transition: Vela_share_policy.Driver.t_ShareTransition) = temp_0_ in
           let _:usize = temp_1_ in
-          let (io: v_Io), (hoist30: Vela_share_policy.Driver.t_ShareTransition) =
+          let (io: v_Io), (hoist35: Vela_share_policy.Driver.t_ShareTransition) =
             match
               transition.Vela_share_policy.Driver.f_effect <: Vela_share_policy.Driver.t_ShareEffect
             with
@@ -138,6 +145,18 @@ let run_share
               io,
               Vela_share_policy.Driver.step transition.Vela_share_policy.Driver.f_driver
                 (Vela_share_policy.Driver.ShareEvent_EkObserved out
+                  <:
+                  Vela_share_policy.Driver.t_ShareEvent)
+              <:
+              (v_Io & Vela_share_policy.Driver.t_ShareTransition)
+            | Vela_share_policy.Driver.ShareEffect_AdmitSend  ->
+              let (tmp0: v_Io), (out: Vela_share_policy.Driver.t_SendAdmissionObservation) =
+                f_admit_send #v_Io #FStar.Tactics.Typeclasses.solve io
+              in
+              let io:v_Io = tmp0 in
+              io,
+              Vela_share_policy.Driver.step transition.Vela_share_policy.Driver.f_driver
+                (Vela_share_policy.Driver.ShareEvent_SendAdmitted out
                   <:
                   Vela_share_policy.Driver.t_ShareEvent)
               <:
@@ -219,7 +238,7 @@ let run_share
             | Vela_share_policy.Driver.ShareEffect_Idle  ->
               io, transition <: (v_Io & Vela_share_policy.Driver.t_ShareTransition)
           in
-          let transition:Vela_share_policy.Driver.t_ShareTransition = hoist30 in
+          let transition:Vela_share_policy.Driver.t_ShareTransition = hoist35 in
           io, transition <: (v_Io & Vela_share_policy.Driver.t_ShareTransition))
   in
   let hax_temp_output:Vela_share_policy.Driver.t_ShareTransition = transition in
