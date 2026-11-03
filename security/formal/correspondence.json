@@ -163,7 +163,7 @@
         "serverVELA/vela-recovery-policy/proofs/fstar/extraction/Vela_recovery_policy.fst": "eaf1148be9567b8d8d6dbca8ceca3a4369df8b3c3856f19afc2de9eeee070327",
         "serverVELA/vela-server/src/recovery/initiate.rs": "5fede13ed45bde8a42d1ea95cb4172b2abd6c5cd16f91d4a4f63eb2ea49ddb86",
         "serverVELA/vela-server/src/recovery/recover.rs": "e68cc08882ec7a6e12cb64d09a4884b91a4fcebde8ba7a43bca9fdcbd7e8cbf7",
-        "serverVELA/vela-server/tests/integration.rs": "fd025421b33defcf1a1b956156b787f1c3ee319481a3f25244e646320db9a917",
+        "serverVELA/vela-server/tests/integration.rs": "1bd5322314b52f7fb765053341c1e3cc0846594cee8dc40f13f8c2e60f39b9f1",
         "security/assurance/13-recovery-fact-refinement.md": "fd64f81ba6bff10f0a73c621c419464990d0c968a1790a3a2641d1186028eab0"
       }
     },
@@ -187,9 +187,9 @@
         "serverVELA/vela-recovery-policy/proofs/fstar/extraction/Vela_recovery_policy.fst": "eaf1148be9567b8d8d6dbca8ceca3a4369df8b3c3856f19afc2de9eeee070327",
         "serverVELA/vela-recovery-policy/tests/fact_construction.rs": "bb6d6ae116788d757220dec521b094613d33d7f60d0896d9ed96491d24f3b471",
         "serverVELA/vela-server/src/recovery/possess.rs": "5a9c3d83511a9563b371e8bab891f3cc905d51f1510367eae60f10feeab34588",
-        "serverVELA/vela-server/src/recovery/enroll_device.rs": "ca0a1db0e0808bf5560353b0c65407078c39ee0a282b4e9f9c706bca458a4b15",
+        "serverVELA/vela-server/src/recovery/enroll_device.rs": "d1507997e56ddc54a2ebb920eb4542218bfa8397db15ee892c46f5348e2bc522",
         "serverVELA/vela-server/src/recovery/recover.rs": "e68cc08882ec7a6e12cb64d09a4884b91a4fcebde8ba7a43bca9fdcbd7e8cbf7",
-        "serverVELA/vela-server/tests/integration.rs": "fd025421b33defcf1a1b956156b787f1c3ee319481a3f25244e646320db9a917",
+        "serverVELA/vela-server/tests/integration.rs": "1bd5322314b52f7fb765053341c1e3cc0846594cee8dc40f13f8c2e60f39b9f1",
         "security/assurance/15-recovery-possession-enrollment.md": "b311b885bc4910000bddcfca8ccfba081d720b5dc2ee502262743c5d716ff3f1",
         "security/assurance/16-enrollment-preflight.md": "2d8f5aeb5031f5fafc5f7be30a900de2bf87f91b6191d705437430feb88d41e3"
       }
@@ -278,14 +278,14 @@
     {
       "boundary": "enrollment-redemption driver (6 extracted Rust contracts + 23 per-request trace lemmas; concurrent composition: at most one device row per grant for every schedule, assuming atomic get_del and faithful effects; SQL guard/store semantics, grant issuance and handler glue remain open)",
       "artifacts": {
-        "serverVELA/vela-recovery-policy/src/driver.rs": "42078d422125fb26e77098cc0cd7cd29c3e1c316727ef8786774777761babcfe",
-        "serverVELA/vela-recovery-policy/tests/redemption_driver.rs": "b39736d2b52329ea1f9d8c25cad6046d3404d5f6829a728742f2de99fcc75dcc",
-        "serverVELA/vela-recovery-policy/verify-fstar-driver.sh": "182806364e887d78a146fe75416ff71bbdc3f6ebd23878940f322b59b8b0fd5c",
-        "serverVELA/vela-recovery-policy/proofs/fstar/extraction-driver/Vela_recovery_policy.Driver.fst": "1fe6d317eb20bba515092dc7d3181900968b5c64b65387195d58904db4fd1fe1",
-        "serverVELA/vela-recovery-policy/proofs/fstar/driver-lemmas/Vela_recovery_policy_driver_lemmas.fst": "074776c05b07a71af48c3fa39048f6e8220f8169ec3ab702b81a270a0aedb022",
-        "serverVELA/vela-server/src/recovery/enroll_device.rs": "ca0a1db0e0808bf5560353b0c65407078c39ee0a282b4e9f9c706bca458a4b15",
+        "serverVELA/vela-recovery-policy/src/driver.rs": "44dce99e96ef954314d27c59a8ed12d6186f7b6ff0683bb7553be411acd0cda3",
+        "serverVELA/vela-recovery-policy/tests/redemption_driver.rs": "7e3fab3daf098acd3126c815988d42c6ad50fb4d420146a9549647f247393c17",
+        "serverVELA/vela-recovery-policy/verify-fstar-driver.sh": "caeb06a0066ccf8df9454ca88648975054e4c8825b9d5c106b0c7ffc48e09e25",
+        "serverVELA/vela-recovery-policy/proofs/fstar/extraction-driver/Vela_recovery_policy.Driver.fst": "22f71877a397f44ca158cdc8a68dc314253a5642a7401f5b8f4806db02b9fc87",
+        "serverVELA/vela-recovery-policy/proofs/fstar/driver-lemmas/Vela_recovery_policy_driver_lemmas.fst": "e520908363ae2ddc8d8c1476bcd379ab44dddb3c6652fbab8b3debe8aa6beabe",
+        "serverVELA/vela-server/src/recovery/enroll_device.rs": "d1507997e56ddc54a2ebb920eb4542218bfa8397db15ee892c46f5348e2bc522",
         "serverVELA/vela-server/src/recovery/recover.rs": "e68cc08882ec7a6e12cb64d09a4884b91a4fcebde8ba7a43bca9fdcbd7e8cbf7",
-        "serverVELA/vela-recovery-policy/proofs/fstar/driver-composition/Vela_recovery_policy_driver_composition.fst": "6297a30d6f26365ee50dbd6d8f922387b4079de0958524aec1cf7644a89f1697"
+        "serverVELA/vela-recovery-policy/proofs/fstar/driver-composition/Vela_recovery_policy_driver_composition.fst": "818155d0870ddac09a3067bed1bd7ed5284b8121e90fbea246cf34c83dc3bb5b"
       }
     },
     {
@@ -311,7 +311,7 @@
       "artifacts": {
         "serverVELA/vela-server/tests/account_deletion_model.rs": "905f16454863187fc7edb537ccca5311c0f0a82eaf21796750fa4ebbf2099d8e",
         "serverVELA/vela-server/src/account/delete.rs": "3676236ade8d780739d77e6e067be4b0b5c9c3dc967805ef67aad357dd2c516e",
-        "serverVELA/vela-server/src/db.rs": "9aa31f0637bf56e1a623baad669df6edb69c5c1b576ccbfe23c6aaa709b87704"
+        "serverVELA/vela-server/src/db.rs": "c893ac5dc0939a96ed3c6849bcf3012aff1a31680569fbe0fd82c56ceab0d85e"
       }
     },
     {
@@ -321,7 +321,7 @@
         "serverVELA/vela-server/src/device/revoke.rs": "efcbadf0aa9097308430b7f56328ce15791f7969fabde9a9f0b6a1a5112116e9",
         "serverVELA/vela-server/src/auth/logout.rs": "dd1a67af0df08111c82e18ecf53fee8b896bd8352efca22ee422a1d617ccf916",
         "serverVELA/vela-server/src/middleware.rs": "28a8cd7a590fbec494b513a35fb0c14153c48c3afdd2f7beaabcce23a9fe2d05",
-        "serverVELA/vela-server/tests/integration.rs": "fd025421b33defcf1a1b956156b787f1c3ee319481a3f25244e646320db9a917"
+        "serverVELA/vela-server/tests/integration.rs": "1bd5322314b52f7fb765053341c1e3cc0846594cee8dc40f13f8c2e60f39b9f1"
       }
     },
     {
@@ -491,12 +491,12 @@
     {
       "boundary": "recovery enrollment-redemption handler-to-driver interpreter(s): the handler expands the interpreter macro whose synchronous expansion is proved for every executor to call exactly the method for the driver's current effect, stop at the verdict or an executor abort within its budget and end in a state the driver's per-request theorem covers; executor method I/O, the await-only macro difference, pre-driver validation and response rendering remain open",
       "artifacts": {
-        "serverVELA/vela-recovery-policy/src/redemption_interpreter.rs": "86bd5338d0eab17c00bd063f67072a3dc2136e82d3da225dcbe17c99fe1f9b22",
+        "serverVELA/vela-recovery-policy/src/redemption_interpreter.rs": "2eddecad38f74789e45ef03e284bcb2337dbf1d2961dc86c47929365ba44a0ec",
         "serverVELA/vela-recovery-policy/src/interpreter_support.rs": "45a42d7a4cdc48cb63528211cf58baf1d07cf2b0f51aa375771f4d409493fd0c",
-        "serverVELA/vela-recovery-policy/verify-fstar-redemption-interpreter.sh": "62cb3eeb97a8e21e247742a7d224d90fe50e4a8d625fe43172ff703cec382cca",
-        "serverVELA/vela-recovery-policy/proofs/fstar/extraction-redemption-interpreter/Vela_recovery_policy.Redemption_interpreter.fst": "68f6912be5baa06572afd2be1cba994fbce03f75e8697fcfbc299a298ff510c6",
-        "serverVELA/vela-recovery-policy/proofs/fstar/redemption-interpreter-lemmas/Vela_recovery_policy_redemption_interpreter_lemmas.fst": "dae0f3c6a5fcfd7d60325e523b98433bdd9ea0c5010a32e9625de5f24364b0be",
-        "serverVELA/vela-server/src/recovery/enroll_device.rs": "ca0a1db0e0808bf5560353b0c65407078c39ee0a282b4e9f9c706bca458a4b15"
+        "serverVELA/vela-recovery-policy/verify-fstar-redemption-interpreter.sh": "94b7cfe427ac1bf473017b36de743440e8cf8b0495b17fc83cbadfb3e8cc5f1a",
+        "serverVELA/vela-recovery-policy/proofs/fstar/extraction-redemption-interpreter/Vela_recovery_policy.Redemption_interpreter.fst": "1dc3e2f7b9a8edefd987a1d6a25f25ac5f2ac14ba18ade6eebb7f34b04f28408",
+        "serverVELA/vela-recovery-policy/proofs/fstar/redemption-interpreter-lemmas/Vela_recovery_policy_redemption_interpreter_lemmas.fst": "55649004c6bae9b8a4c793841aa9504f79bf49012e797081e7cbf3feba4bac45",
+        "serverVELA/vela-server/src/recovery/enroll_device.rs": "d1507997e56ddc54a2ebb920eb4542218bfa8397db15ee892c46f5348e2bc522"
       }
     },
     {
@@ -774,16 +774,16 @@
     {
       "boundary": "recovered-device enrollment, recovery-share, possession-proof and WebAuthn executor honesty (F-1): each EnrollDeviceIo method in vela-server/src/recovery/enroll_device.rs, each PutShareIo/FinalizeShareIo/GetShareIo/DeleteShareIo method in vela-server/src/recovery/mod.rs, each InitiateProofIo/RecoverProofIo method in vela-server/src/recovery/possess.rs, and each InitiateIo/RecoverIo/RegisterStartIo/RegisterFinishIo method in vela-server/src/recovery/{initiate,recover,webauthn}.rs is an extracted typed statement plan, a pinned SQL/key-value rendering and an extracted observation classifier; for every starting database, enrollment grant, users row, proof-attempt slot, WebAuthn attempt or registration slot, credential cell, credential-id index, backfill candidate set and failing statement, F* proves the redemption operations (single-use take, non-consuming grant peek, guarded device insert, live authority recheck, grant restoration), the enrollment preflight account read, the recovery-share operations (guarded stage, exact promote, full delete, live-row reads), the possession operations (live initiation observation and epoch, first-writer-wins challenge store, single-use attempt take, live account read, single-use grant store), the WebAuthn operations (live availability/context/account reads and split side channel, first-writer-wins attempt store, single-use attempt and registration-state takes, guarded credential compare-and-swap and persist, credential-id uniqueness lookup, share release, single-use grant store) and the startup credential-id backfill (the scan keeps only rows that need it and the run lands exactly the extracted writes), and that a failed run changes exactly what autocommit already published, with mutation checks; the fixed-window rate limiters are extracted statement plans over a counter model (the counter grows by one, saturating, and only a failed store call changes nothing) with a proved admission verdict; statement and store semantics, JSON/base64 decoding, the thin loops, the empty-commitment normalization and the four-field adapter from the extracted account view to the driver's facts are checked by bounded conformance against turso and sled, not proved; grant and challenge TTL expiry, concurrency, WebAuthn ceremony results (challenges, registration states, assertions, credential metadata updates), the credential-id index uniqueness, rate-limit window boundaries and the turso/sled engines remain assumptions",
       "artifacts": {
-        "serverVELA/vela-recovery-policy/src/redemption_store.rs": "cf119a42d1d8c9f5fa4361d83b64a00aaa1071370678b93b7262c479cb65d958",
-        "serverVELA/vela-recovery-policy/src/redemption_model.rs": "198075b6a8704fb5355d49c30160707269976a3d6691e3ec88d40781ce3e7acb",
-        "serverVELA/vela-recovery-policy/verify-fstar-recovery-executors.sh": "029f8c8afca00d9d8917c89d74907b16973d4775006813b177431496f62f144d",
-        "serverVELA/vela-recovery-policy/verify-fstar-recovery-executors-mutations.sh": "b115d5aff5b0b74398a8354b687771de3cfd03e8633790a5354b1b5f56f241a8",
-        "serverVELA/vela-recovery-policy/proofs/fstar/extraction-redemption/Vela_recovery_policy.Redemption_store.fst": "d11f412cd88742e943bcf482ddd174dc138a818a18113f26cbbf02cc92a31cd2",
-        "serverVELA/vela-recovery-policy/proofs/fstar/redemption-lemmas/Vela_recovery_policy_redemption_model.fst": "620cb6775d3bcfc2ba2a137eec552c467492fc1d4fb8cc4e2e244374169a705b",
-        "serverVELA/vela-recovery-policy/proofs/fstar/redemption-lemmas/Vela_recovery_policy_redemption_lemmas.fst": "eb2b898e81447b1c56dda620d462d6eab52c88c402d62b917093aad3275b5771",
-        "serverVELA/vela-server/src/recovery/enroll_device.rs": "ca0a1db0e0808bf5560353b0c65407078c39ee0a282b4e9f9c706bca458a4b15",
-        "serverVELA/vela-server/src/recovery/sql.rs": "1d5fc8e9b51c2424b68408a8a9b4f46e883100f51231fe07225ccf735bedaea1",
-        "serverVELA/vela-server/src/recovery/conformance.rs": "39cb8ff3cebe09e3a125fe190034b007ffaf91714d9d055d89750c85101d8f59",
+        "serverVELA/vela-recovery-policy/src/redemption_store.rs": "029b82775bf54a3522adfb280cd324ec123af6ceb53e91bbc105ccceafe90173",
+        "serverVELA/vela-recovery-policy/src/redemption_model.rs": "0b95036f8f902e90f9708994f6bc2b840f6cf62d850df9113c69f3a71732e3f4",
+        "serverVELA/vela-recovery-policy/verify-fstar-recovery-executors.sh": "cff62ff4b24d96912fc43a815c94635aa0662216abae92ec62f93ab07934a789",
+        "serverVELA/vela-recovery-policy/verify-fstar-recovery-executors-mutations.sh": "5f297ad696a5e7f1c6323855abcabd18119450c73d16032b31ba68f57850bc83",
+        "serverVELA/vela-recovery-policy/proofs/fstar/extraction-redemption/Vela_recovery_policy.Redemption_store.fst": "8fd98094b26b2b58c827e02516128ab4e7f5df71dee1ad2b119885e3270e932e",
+        "serverVELA/vela-recovery-policy/proofs/fstar/redemption-lemmas/Vela_recovery_policy_redemption_model.fst": "696c159780617ac1b49b3d1e7366a48745438bae8242ad646c9c97cf00deb4ae",
+        "serverVELA/vela-recovery-policy/proofs/fstar/redemption-lemmas/Vela_recovery_policy_redemption_lemmas.fst": "0d3e5441da12de22ca354c8584028082f0ddd005715b33d40ff3332b1d115c30",
+        "serverVELA/vela-server/src/recovery/enroll_device.rs": "d1507997e56ddc54a2ebb920eb4542218bfa8397db15ee892c46f5348e2bc522",
+        "serverVELA/vela-server/src/recovery/sql.rs": "0b3aa10baee7634429a3a360e08d2e2a23de258aa59f9f8a3134e25936504dff",
+        "serverVELA/vela-server/src/recovery/conformance.rs": "6283f490ef0b3696a83f0242048bf81e1862df3359ce2c868bd2c73857d19cda",
         "serverVELA/vela-recovery-policy/src/share_store.rs": "c7d54b9c957ba8eb01216cafd503d7c4f36b1529671f7bb8a4cc5bb811b2deaa",
         "serverVELA/vela-recovery-policy/proofs/fstar/extraction-share/Vela_recovery_policy.Share_store.fst": "f37c5f86cecad38eaf59ec93aec6ebfade46d87bd66a491735552999f2e48543",
         "serverVELA/vela-recovery-policy/proofs/fstar/extraction-share/Vela_recovery_policy.Redemption_store.fst": "6fd51764568dbeabadb7c7d8470d6fb5c06c319021eb866b95dcff1efbfa7b58",

@@ -325,7 +325,13 @@ each stopping point; that table is a review, not a proof. The review found no
 unsafe state, two lost-reply cases and one gap. The pairing case (U-20) is now
 fixed: the enrolled device row records its grant, and `/result` recovers the
 device id from it under the same signature check, proved in the pairing
-driver. The recovery-redemption case stays open (U-24). The gap: a revoked
+driver. The recovery-redemption case (U-24) is fixed the same way: the
+device row records the recovery grant it consumed, and a retry with the same
+grant and key material gets the existing device id back from a non-consuming
+lookup that runs through the same proved interpreter loop. The redemption
+driver proves a replay never inserts a device and completes only from a
+matching row, and its cancellation lemma covers the replay start
+([evidence](proof-logs/current/u24-redemption-replay/README.md)). The gap: a revoked
 linked share stayed fetchable from the recipient's inbox when the revocation's
 cleanup step failed or was cut off. It is fixed and tested (U-23). Six
 mutations, one per crate plus one for U-20, each fail.
