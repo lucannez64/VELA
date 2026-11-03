@@ -1451,6 +1451,45 @@
    "step": 103
   },
   {
+   "id": "N0a",
+   "area": "N",
+   "size": "M",
+   "hard": false,
+   "title": "Desktop: refuse unbound legacy chunks (U-28)",
+   "done": "Desktop downloads refuse unsealed blobs as the mobile bridges do (or a recorded migration re-seals them first); regression test; U-28 closed",
+   "deps": [
+    "N1"
+   ],
+   "level": 3,
+   "step": 104
+  },
+  {
+   "id": "N0b",
+   "area": "N",
+   "size": "S",
+   "hard": false,
+   "title": "Desktop: rollback gate on established facts (U-29)",
+   "done": "plan_chunk_download gets facts the open actually established, not literals; U-29 closed",
+   "deps": [
+    "N0a"
+   ],
+   "level": 4,
+   "step": 105
+  },
+  {
+   "id": "N0c",
+   "area": "N",
+   "size": "M",
+   "hard": false,
+   "title": "Web: admitted downloads (U-27)",
+   "done": "The WASM bridge exports the admitted download path; web refuses unsealed blobs and epochs below a floor it can authenticate; U-27 closed",
+   "deps": [
+    "N1"
+   ],
+   "level": 3,
+   "step": 106
+  },
+  {
    "id": "N2a",
    "area": "N",
    "size": "M",
@@ -1461,7 +1500,7 @@
     "N1"
    ],
    "level": 3,
-   "step": 104
+   "step": 107
   },
   {
    "id": "N2b",
@@ -1474,7 +1513,7 @@
     "N1"
    ],
    "level": 3,
-   "step": 105
+   "step": 108
   },
   {
    "id": "N2c",
@@ -1487,7 +1526,7 @@
     "N1"
    ],
    "level": 3,
-   "step": 106
+   "step": 109
   },
   {
    "id": "N3",
@@ -1502,7 +1541,7 @@
     "N2c"
    ],
    "level": 4,
-   "step": 107
+   "step": 110
   },
   {
    "id": "N4",
@@ -1515,7 +1554,7 @@
     "N1"
    ],
    "level": 3,
-   "step": 108
+   "step": 111
   },
   {
    "id": "N5a",
@@ -1529,7 +1568,7 @@
     "N3"
    ],
    "level": 5,
-   "step": 109
+   "step": 112
   },
   {
    "id": "N5b",
@@ -1542,7 +1581,7 @@
     "N5a"
    ],
    "level": 6,
-   "step": 110
+   "step": 113
   },
   {
    "id": "N5c",
@@ -1555,7 +1594,7 @@
     "N5a"
    ],
    "level": 6,
-   "step": 111
+   "step": 114
   },
   {
    "id": "N5d",
@@ -1569,7 +1608,7 @@
     "P3d"
    ],
    "level": 6,
-   "step": 112
+   "step": 115
   },
   {
    "id": "N6a",
@@ -1583,7 +1622,7 @@
     "N3"
    ],
    "level": 5,
-   "step": 113
+   "step": 116
   },
   {
    "id": "N6b",
@@ -1596,7 +1635,7 @@
     "N6a"
    ],
    "level": 6,
-   "step": 114
+   "step": 117
   },
   {
    "id": "N6c",
@@ -1609,7 +1648,7 @@
     "N6a"
    ],
    "level": 6,
-   "step": 115
+   "step": 118
   },
   {
    "id": "N6d",
@@ -1623,7 +1662,7 @@
     "P3d"
    ],
    "level": 6,
-   "step": 116
+   "step": 119
   },
   {
    "id": "N7a",
@@ -1634,10 +1673,11 @@
    "done": "As N5a",
    "deps": [
     "N4",
-    "N3"
+    "N3",
+    "N0b"
    ],
    "level": 5,
-   "step": 117
+   "step": 120
   },
   {
    "id": "N7b",
@@ -1648,10 +1688,11 @@
    "done": "As N5a",
    "deps": [
     "N4",
-    "N3"
+    "N3",
+    "N0c"
    ],
    "level": 5,
-   "step": 118
+   "step": 121
   },
   {
    "id": "N8",
@@ -1665,7 +1706,7 @@
     "N6a"
    ],
    "level": 6,
-   "step": 119
+   "step": 122
   },
   {
    "id": "N9",
@@ -1678,7 +1719,7 @@
     "B1"
    ],
    "level": 2,
-   "step": 120
+   "step": 123
   },
   {
    "id": "N10a",
@@ -1691,7 +1732,7 @@
     "B1"
    ],
    "level": 2,
-   "step": 121
+   "step": 124
   },
   {
    "id": "N10b",
@@ -1705,7 +1746,7 @@
     "N9"
    ],
    "level": 3,
-   "step": 122
+   "step": 125
   },
   {
    "id": "N10c",
@@ -1718,7 +1759,7 @@
     "N10b"
    ],
    "level": 4,
-   "step": 123
+   "step": 126
   },
   {
    "id": "N10d",
@@ -1731,7 +1772,7 @@
     "N10c"
    ],
    "level": 5,
-   "step": 124
+   "step": 127
   },
   {
    "id": "N10e",
@@ -1744,7 +1785,7 @@
     "N10d"
    ],
    "level": 6,
-   "step": 125
+   "step": 128
   },
   {
    "id": "N11",
@@ -1766,7 +1807,7 @@
     "N10e"
    ],
    "level": 7,
-   "step": 126
+   "step": 129
   },
   {
    "id": "Z1",
@@ -1780,7 +1821,7 @@
     "N11"
    ],
    "level": 15,
-   "step": 127
+   "step": 130
   },
   {
    "id": "Z2",
@@ -1796,7 +1837,7 @@
     "C18"
    ],
    "level": 16,
-   "step": 128
+   "step": 131
   },
   {
    "id": "Z3",
@@ -1809,7 +1850,7 @@
     "Z2"
    ],
    "level": 17,
-   "step": 129
+   "step": 132
   },
   {
    "id": "Z4",
@@ -1822,7 +1863,7 @@
     "Z3"
    ],
    "level": 18,
-   "step": 130
+   "step": 133
   }
  ]
 }

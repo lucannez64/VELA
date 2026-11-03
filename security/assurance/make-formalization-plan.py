@@ -193,6 +193,12 @@ NODES = [
 
     # ---------------- F-5 native ----------------
     ("N1", "S", False, "FFI call-site inventory", "Every Kotlin/Swift/TS call into the bridges listed", ["B1"]),
+    ("N0a", "M", False, "Desktop: refuse unbound legacy chunks (U-28)",
+     "Desktop downloads refuse unsealed blobs as the mobile bridges do (or a recorded migration re-seals them first); regression test; U-28 closed", ["N1"]),
+    ("N0b", "S", False, "Desktop: rollback gate on established facts (U-29)",
+     "plan_chunk_download gets facts the open actually established, not literals; U-29 closed", ["N0a"]),
+    ("N0c", "M", False, "Web: admitted downloads (U-27)",
+     "The WASM bridge exports the admitted download path; web refuses unsealed blobs and epochs below a floor it can authenticate; U-27 closed", ["N1"]),
     ("N2a", "M", False, "Android bridge is a thin wrapper", "hax proof: bridge fns call verified policies, no extra logic", ["N1"]),
     ("N2b", "M", False, "Apple bridge is a thin wrapper", "As N2a", ["N1"]),
     ("N2c", "M", False, "WASM bridge is a thin wrapper", "As N2a", ["N1"]),
@@ -206,8 +212,8 @@ NODES = [
     ("N6b", "M", False, "iOS sharing caller", "As N5a", ["N6a"]),
     ("N6c", "M", False, "iOS enrollment/recovery caller", "As N5a", ["N6a"]),
     ("N6d", "L", True, "iOS persistence", "As N5d", ["N6a", "P3d"]),
-    ("N7a", "M", False, "Desktop callers (gpui and Tauri)", "As N5a", ["N4", "N3"]),
-    ("N7b", "M", False, "Web and extension callers", "As N5a", ["N4", "N3"]),
+    ("N7a", "M", False, "Desktop callers (gpui and Tauri)", "As N5a", ["N4", "N3", "N0b"]),
+    ("N7b", "M", False, "Web and extension callers", "As N5a", ["N4", "N3", "N0c"]),
     ("N8", "M", True, "Unbounded native trace refinement", "Bounded download-gate conformance lifted to a proof", ["N5a", "N6a"]),
     ("N9", "M", True, "Enrollment UI trust", "Tamarin model of the human code comparison (extends M13)", ["B1"]),
     ("N10a", "M", False, "Joint model skeleton", "One Tamarin theory with shared accounts/devices/keys", ["B1"]),

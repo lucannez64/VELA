@@ -887,7 +887,7 @@ and complete handler traces remain open.
 
 The [plan to full formalization](20-formalization-plan.md) breaks each row's
 remaining work into small dependent steps: F-1 is O1-O15 and H1-H12, F-2 is
-H2-H12, F-3 is P1-P9, F-4 is C1-C18, F-5 is N1-N11 and F-6 is T1-T12. Live
+H2-H12, F-3 is P1-P9, F-4 is C1-C18, F-5 is N0a-N11 and F-6 is T1-T12. Live
 progress: `plan-live.py serve`. The first F-6 step, the
 [imported model inventory](proof-logs/current/model-contract-inventory/README.md),
 lists every hax library symbol the proofs use and which of them are trusted.

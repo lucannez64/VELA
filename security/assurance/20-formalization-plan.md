@@ -11,7 +11,7 @@ Whoever works on a step reports it with `./plan-live.py start|log|retry|block|do
 (`--who <name>`) from any worktree; the dashboard refreshes every 3 seconds.
 Progress is stored outside the repo, in `~/.cache/vela-plan/formalization-status.json`.
 
-130 steps, 19 dependency levels. Sizes: S < 1 day,
+133 steps, 19 dependency levels. Sizes: S < 1 day,
 M 1-3 days, L about a week, XL more. **hard** marks proofs that may need a
 redesign. Any step whose dependencies are all done can start, so steps on the
 same level can run in parallel.
@@ -125,33 +125,36 @@ Critical path (by size): B0 -> B1 -> B3 -> B4 -> O3a -> O3f -> O9 -> O13f -> H8f
 | 101 | C17 | 2 | S | Legacy v1 decision | decapsulate_legacy_v1 removed or explicitly excluded | B1 |
 | 102 | C18 | 10 | S | Close F-4 in 08 | CryptoVerif README open list empty or excluded | C7b, C11, C12, C13, C14, C15, C16, C17 |
 | 103 | N1 | 2 | S | FFI call-site inventory | Every Kotlin/Swift/TS call into the bridges listed | B1 |
-| 104 | N2a | 3 | M | Android bridge is a thin wrapper | hax proof: bridge fns call verified policies, no extra logic | N1 |
-| 105 | N2b | 3 | M | Apple bridge is a thin wrapper | As N2a | N1 |
-| 106 | N2c | 3 | M | WASM bridge is a thin wrapper | As N2a | N1 |
-| 107 | N3 | 4 | M | FFI type mapping | Bytes, errors and nullability mapping reviewed and tested both ways | N2a, N2b, N2c |
-| 108 | N4 | 3 | S | Choose the caller-verification method | Decision recorded (e.g. model-extracted state machines + trace refinement) | N1 |
-| 109 | N5a | 5 | M | Android sync caller | Caller proved to reach admission only via the bridge | N4, N3 |
-| 110 | N5b | 6 | M | Android sharing caller | As N5a | N5a |
-| 111 | N5c | 6 | M | Android enrollment/recovery caller | As N5a | N5a |
-| 112 | N5d | 6 | L **hard** | Android persistence | EncryptedVaultStore writes refine the journal contract | N5a, P3d |
-| 113 | N6a | 5 | M | iOS sync caller | As N5a | N4, N3 |
-| 114 | N6b | 6 | M | iOS sharing caller | As N5a | N6a |
-| 115 | N6c | 6 | M | iOS enrollment/recovery caller | As N5a | N6a |
-| 116 | N6d | 6 | L **hard** | iOS persistence | As N5d | N6a, P3d |
-| 117 | N7a | 5 | M | Desktop callers (gpui and Tauri) | As N5a | N4, N3 |
-| 118 | N7b | 5 | M | Web and extension callers | As N5a | N4, N3 |
-| 119 | N8 | 6 | M **hard** | Unbounded native trace refinement | Bounded download-gate conformance lifted to a proof | N5a, N6a |
-| 120 | N9 | 2 | M **hard** | Enrollment UI trust | Tamarin model of the human code comparison (extends M13) | B1 |
-| 121 | N10a | 2 | M | Joint model skeleton | One Tamarin theory with shared accounts/devices/keys | B1 |
-| 122 | N10b | 3 | M | Joint model: enrollment and recovery | Rules imported, lemmas re-proved | N10a, N9 |
-| 123 | N10c | 4 | M | Joint model: sync | As N10b | N10b |
-| 124 | N10d | 5 | M | Joint model: sharing | As N10b | N10c |
-| 125 | N10e | 6 | L **hard** | Joint model: revocation and claims | TC-6 claims proved in the joint model | N10d |
-| 126 | N11 | 7 | S | Close F-5 in 08 | F-5 row closed; U-8 closed | N5b, N5c, N5d, N6b, N6c, N6d, N7a, N7b, N8, N10e |
-| 127 | Z1 | 15 | M | Automate model<->policy correspondence (G-5) | Drift gate covers every family and mobile call site | H12, N11 |
-| 128 | Z2 | 16 | S | Whole-system claim in 08 | 08 header replaced by a scoped completion claim with its boundary | Z1, T12, P9, C18 |
-| 129 | Z3 | 17 | S | Hosted full run | run-all.sh green in the proof container on the claim commit | Z2 |
-| 130 | Z4 | 18 | L | Independent review (G-6) | Third party reproduces Z3 and reviews models; G-6 closed | Z3 |
+| 104 | N0a | 3 | M | Desktop: refuse unbound legacy chunks (U-28) | Desktop downloads refuse unsealed blobs as the mobile bridges do (or a recorded migration re-seals them first); regression test; U-28 closed | N1 |
+| 105 | N0b | 4 | S | Desktop: rollback gate on established facts (U-29) | plan_chunk_download gets facts the open actually established, not literals; U-29 closed | N0a |
+| 106 | N0c | 3 | M | Web: admitted downloads (U-27) | The WASM bridge exports the admitted download path; web refuses unsealed blobs and epochs below a floor it can authenticate; U-27 closed | N1 |
+| 107 | N2a | 3 | M | Android bridge is a thin wrapper | hax proof: bridge fns call verified policies, no extra logic | N1 |
+| 108 | N2b | 3 | M | Apple bridge is a thin wrapper | As N2a | N1 |
+| 109 | N2c | 3 | M | WASM bridge is a thin wrapper | As N2a | N1 |
+| 110 | N3 | 4 | M | FFI type mapping | Bytes, errors and nullability mapping reviewed and tested both ways | N2a, N2b, N2c |
+| 111 | N4 | 3 | S | Choose the caller-verification method | Decision recorded (e.g. model-extracted state machines + trace refinement) | N1 |
+| 112 | N5a | 5 | M | Android sync caller | Caller proved to reach admission only via the bridge | N4, N3 |
+| 113 | N5b | 6 | M | Android sharing caller | As N5a | N5a |
+| 114 | N5c | 6 | M | Android enrollment/recovery caller | As N5a | N5a |
+| 115 | N5d | 6 | L **hard** | Android persistence | EncryptedVaultStore writes refine the journal contract | N5a, P3d |
+| 116 | N6a | 5 | M | iOS sync caller | As N5a | N4, N3 |
+| 117 | N6b | 6 | M | iOS sharing caller | As N5a | N6a |
+| 118 | N6c | 6 | M | iOS enrollment/recovery caller | As N5a | N6a |
+| 119 | N6d | 6 | L **hard** | iOS persistence | As N5d | N6a, P3d |
+| 120 | N7a | 5 | M | Desktop callers (gpui and Tauri) | As N5a | N4, N3, N0b |
+| 121 | N7b | 5 | M | Web and extension callers | As N5a | N4, N3, N0c |
+| 122 | N8 | 6 | M **hard** | Unbounded native trace refinement | Bounded download-gate conformance lifted to a proof | N5a, N6a |
+| 123 | N9 | 2 | M **hard** | Enrollment UI trust | Tamarin model of the human code comparison (extends M13) | B1 |
+| 124 | N10a | 2 | M | Joint model skeleton | One Tamarin theory with shared accounts/devices/keys | B1 |
+| 125 | N10b | 3 | M | Joint model: enrollment and recovery | Rules imported, lemmas re-proved | N10a, N9 |
+| 126 | N10c | 4 | M | Joint model: sync | As N10b | N10b |
+| 127 | N10d | 5 | M | Joint model: sharing | As N10b | N10c |
+| 128 | N10e | 6 | L **hard** | Joint model: revocation and claims | TC-6 claims proved in the joint model | N10d |
+| 129 | N11 | 7 | S | Close F-5 in 08 | F-5 row closed; U-8 closed | N5b, N5c, N5d, N6b, N6c, N6d, N7a, N7b, N8, N10e |
+| 130 | Z1 | 15 | M | Automate model<->policy correspondence (G-5) | Drift gate covers every family and mobile call site | H12, N11 |
+| 131 | Z2 | 16 | S | Whole-system claim in 08 | 08 header replaced by a scoped completion claim with its boundary | Z1, T12, P9, C18 |
+| 132 | Z3 | 17 | S | Hosted full run | run-all.sh green in the proof container on the claim commit | Z2 |
+| 133 | Z4 | 18 | L | Independent review (G-6) | Third party reproduces Z3 and reviews models; G-6 closed | Z3 |
 
 ## Dependency DAG
 
@@ -273,6 +276,9 @@ flowchart TB
   end
   subgraph N["F-5 native clients and protocol composition"]
     N1["N1 FFI call-site inventory"]
+    N0a["N0a Desktop: refuse unbound legacy chunks (U-28)"]
+    N0b["N0b Desktop: rollback gate on established facts (U-29)"]
+    N0c["N0c Web: admitted downloads (U-27)"]
     N2a["N2a Android bridge is a thin wrapper"]
     N2b["N2b Apple bridge is a thin wrapper"]
     N2c["N2c WASM bridge is a thin wrapper"]
@@ -487,6 +493,9 @@ flowchart TB
   C16 --> C18
   C17 --> C18
   B1 --> N1
+  N1 --> N0a
+  N0a --> N0b
+  N1 --> N0c
   N1 --> N2a
   N1 --> N2b
   N1 --> N2c
@@ -508,8 +517,10 @@ flowchart TB
   P3d --> N6d
   N4 --> N7a
   N3 --> N7a
+  N0b --> N7a
   N4 --> N7b
   N3 --> N7b
+  N0c --> N7b
   N5a --> N8
   N6a --> N8
   B1 --> N9
@@ -544,8 +555,8 @@ flowchart TB
 - **0**: B0
 - **1**: B1
 - **2**: B2, B3, T1, T10, O1, H1, H2, P1, P2a, C1, C2, C4, C7a, C10, C15, C16, C17, N1, N9, N10a
-- **3**: B4, B5, T2, T3, T4, T5, T6, T9, T11, O2, O4, O7, O8, H3, H5, P2b, P2c, P3a, C6, C13, N2a, N2b, N2c, N4, N10b
-- **4**: T7, T8, O3a, O5, O6, O10, O11, O14a, H4, H6, H7, H10, P2d, P3c, P4, C3a, C12, C14, N3, N10c
+- **3**: B4, B5, T2, T3, T4, T5, T6, T9, T11, O2, O4, O7, O8, H3, H5, P2b, P2c, P3a, C6, C13, N0a, N0c, N2a, N2b, N2c, N4, N10b
+- **4**: T7, T8, O3a, O5, O6, O10, O11, O14a, H4, H6, H7, H10, P2d, P3c, P4, C3a, C12, C14, N0b, N3, N10c
 - **5**: T12, O3b, O3c, O3d, O3e, O3f, O13a, O14b, P3b, P3d, P7, C3b, N5a, N6a, N7a, N7b, N10d
 - **6**: O9, O12, O13b, O13c, O13e, O14c, O15, H8a, P5, P6, P8, C5, N5b, N5c, N5d, N6b, N6c, N6d, N8, N10e
 - **7**: O13d, O13f, H8b, H8c, H8e, H8g, P9, C7b, C8, N11
