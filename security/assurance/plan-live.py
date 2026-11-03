@@ -15,7 +15,9 @@ working on a step (you, Claude, a delegate) records milestones with:
 
 and the dashboard shows them live:
 
-    plan-live.py serve [--port 4318]   ->  http://127.0.0.1:4318
+    plan-live.py serve [--port 4318] [--tailscale]  ->  http://127.0.0.1:4318
+                                   (--tailscale also serves http://<tailscale-ip>:4318
+                                    to your other tailnet devices, e.g. a phone on 5G)
 
 Writes take a file lock and replace the file atomically, so several agents can
 report at once. Waiting and ready are not stored: they follow from the plan's
@@ -166,7 +168,15 @@ class Facts:
         }
 
 
-def serve(port):
+def tailscale_ip():
+    try:
+        out = subprocess.run(["tailscale", "ip", "-4"], capture_output=True, text=True, timeout=5).stdout.split()
+        return out[0] if out else None
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def serve(port, tailscale=False):
     facts = Facts()
 
     class H(BaseHTTPRequestHandler):
@@ -193,9 +203,11 @@ def serve(port):
         def do_POST(self):
             if self.path != "/api/step":
                 return self.send(404, "not found", "text/plain")
-            # Only accept same-origin requests from the dashboard itself.
+            # Only accept same-origin requests from the dashboard itself: a page
+            # on another site cannot send an Origin matching this Host.
             origin = self.headers.get("Origin", "")
-            if origin and origin not in (f"http://127.0.0.1:{port}", f"http://localhost:{port}"):
+            host = self.headers.get("Host", "")
+            if origin and origin not in (f"http://{host}", f"https://{host}"):
                 return self.send(403, "forbidden", "text/plain")
             try:
                 req = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
@@ -209,9 +221,18 @@ def serve(port):
         def log_message(self, *_):
             pass
 
-    srv = ThreadingHTTPServer(("127.0.0.1", port), H)
-    print(f"Formalization plan: http://127.0.0.1:{port}", flush=True)
-    srv.serve_forever()
+    binds = ["127.0.0.1"]
+    if tailscale:
+        ip = tailscale_ip()
+        if not ip:
+            sys.exit("--tailscale: no Tailscale IPv4 address (is tailscaled up?)")
+        binds.append(ip)  # reachable only from devices in this tailnet
+    servers = [ThreadingHTTPServer((b, port), H) for b in binds]
+    for b in binds:
+        print(f"Formalization plan: http://{b}:{port}", flush=True)
+    for srv in servers[1:]:
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+    servers[0].serve_forever()
 
 
 def show():
@@ -234,10 +255,12 @@ def main():
             p.add_argument("--commit", default="")
     p = sub.add_parser("serve")
     p.add_argument("--port", type=int, default=4318)
+    p.add_argument("--tailscale", action="store_true",
+                   help="also listen on this machine's Tailscale address (tailnet devices only)")
     sub.add_parser("show")
     a = ap.parse_args()
     if a.cmd == "serve":
-        serve(a.port)
+        serve(a.port, a.tailscale)
     elif a.cmd == "show":
         show()
     else:
