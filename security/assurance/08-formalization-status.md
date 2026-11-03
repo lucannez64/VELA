@@ -885,6 +885,13 @@ and complete handler traces remain open.
 
 ## Remaining obligations for the six requested areas
 
+The [plan to full formalization](20-formalization-plan.md) breaks each row's
+remaining work into small dependent steps: F-1 is O1-O15 and H1-H12, F-2 is
+H2-H12, F-3 is P1-P9, F-4 is C1-C18, F-5 is N1-N11 and F-6 is T1-T12. Live
+progress: `plan-live.py serve`. The first F-6 step, the
+[imported model inventory](proof-logs/current/model-contract-inventory/README.md),
+lists every hax library symbol the proofs use and which of them are trusted.
+
 | Area | Status | Required to close |
 |---|---|---|
 | F-1: handler facts | Partial: observation constructors and policy checks hosted on fdee2bc; executor observations proved honest for every planned executor (sharing, one-off share links, enrollment and pairing, all four recovery families, all ten session executors including web sessions, and vault, rotation and device capsules) against a transactional store model with fault injection, and matched on the real database; handler I/O outside the executors likewise planned and proved in every area (sharing, send links, session, enrollment, recovery, vault), including the vault re-key pacing limiter; still open: origins and full handlers | Maintain the sharing contracts reproduced on 5d8c366; verify the observation producers (SQL rows, store lookups, signature verifier, session ids) themselves; complete UTF-8/object and authenticated-open composition after the checked byte-frame parser; prove independent context origins; cover remaining token, epoch, recovery and handler fact construction |

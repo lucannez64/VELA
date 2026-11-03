@@ -171,3 +171,5 @@ valid assurance findings.
 
 19. [Login producer and composition](19-login-producer-composition.md): pure byte
     conversion and unbounded nonce accounting, with explicit store/handler gaps.
+20. [Plan to full formalization](20-formalization-plan.md): the remaining
+    obligations as a 130-step dependency graph, with an interactive and live view.
