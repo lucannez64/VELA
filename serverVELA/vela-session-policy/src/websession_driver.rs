@@ -809,7 +809,21 @@ pub enum TokenClaimObservation {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TokenIssueObservation {
     Issued,
+    /// Issuance failed before a token was handed to the caller. The one claim
+    /// must be released so a retry can succeed.
     Failed,
+    /// The issue-time sentinel showed the session was revoked. The session is
+    /// dead; the claim is deliberately not released.
+    Revoked,
+}
+
+/// Outcome of releasing the one claim after a failed issuance. A failed
+/// release leaves the claim in place: the exchange fails closed and every
+/// retry keeps getting `AlreadyIssued`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TokenReleaseObservation {
+    Released,
+    StorageFailed,
 }
 
 /// Where an exchange is in its decision sequence.
@@ -831,6 +845,8 @@ pub enum TokenStage {
     Claim,
     /// Issue (and track) the PASETO from the checked plan.
     Issue,
+    /// Give the claim back after issuance failed before a token was released.
+    Release,
     /// A terminal success or failure was decided. Later events are ignored.
     Done,
 }
@@ -846,6 +862,7 @@ pub enum TokenEvent {
     ResetObserved(TokenResetObservation),
     ClaimObserved(TokenClaimObservation),
     Issued(TokenIssueObservation),
+    Released(TokenReleaseObservation),
 }
 
 /// Failure categories, preserving the handler's historical status/message
@@ -873,6 +890,9 @@ pub enum TokenFailure {
     AlreadyIssued,
     ClaimStorage,
     IssueFailed,
+    /// The claim release itself failed; the claim stays, so the exchange
+    /// fails closed (retries keep seeing `AlreadyIssued`).
+    ReleaseFailed,
     /// The checked policy refused facts that passed the handler prechecks.
     InconsistentFacts,
 }
@@ -894,6 +914,8 @@ pub enum TokenEffect {
     ClaimToken,
     /// Sign the checked plan and track its JTI.
     IssueToken(TokenPlan),
+    /// Delete exactly the claim key after a failed issuance.
+    ReleaseToken,
     Complete,
     Fail(TokenFailure),
     Idle,
@@ -1035,6 +1057,17 @@ pub fn token_state_is_sound(d: TokenDriver) -> bool {
         && !d.token_issued
         && !d.responded
         && !d.failed;
+    let release = d.limits_allowed
+        && d.session_loaded
+        && d.session_eligible
+        && d.challenge_consumed
+        && d.signature_valid
+        && d.backoff_reset
+        && d.token_claimed
+        && d.plan_authorized
+        && !d.token_issued
+        && !d.responded
+        && !d.failed;
     let done = (d.responded || d.failed)
         && !(d.responded && d.failed)
         && (!d.responded
@@ -1055,6 +1088,7 @@ pub fn token_state_is_sound(d: TokenDriver) -> bool {
         && (!matches!(d.stage, TokenStage::Reset) || reset)
         && (!matches!(d.stage, TokenStage::Claim) || claim)
         && (!matches!(d.stage, TokenStage::Issue) || issue)
+        && (!matches!(d.stage, TokenStage::Release) || release)
         && (!matches!(d.stage, TokenStage::Done) || done)
         && (!d.session_loaded || d.limits_allowed)
         && (!d.session_eligible || d.session_loaded)
@@ -1154,6 +1188,20 @@ pub fn token_effect_is_sound(d: TokenDriver, effect: TokenEffect) -> bool {
         }
         TokenEffect::IssueToken(_plan) => {
             matches!(d.stage, TokenStage::Issue)
+                && d.session_eligible
+                && d.granted_by_same_account
+                && d.nonce_present
+                && d.challenge_consumed
+                && d.signature_valid
+                && d.backoff_reset
+                && d.token_claimed
+                && d.plan_authorized
+                && !d.token_issued
+                && !d.responded
+                && !d.failed
+        }
+        TokenEffect::ReleaseToken => {
+            matches!(d.stage, TokenStage::Release)
                 && d.session_eligible
                 && d.granted_by_same_account
                 && d.nonce_present
@@ -1438,7 +1486,31 @@ fn on_token_issued(driver: TokenDriver, observation: TokenIssueObservation) -> T
             },
             TokenEffect::Complete,
         ),
-        TokenIssueObservation::Failed => token_terminal(driver, TokenFailure::IssueFailed),
+        // The session was revoked at the issue-time sentinel. The session is
+        // dead, so the claim stays and is never released.
+        TokenIssueObservation::Revoked => token_terminal(driver, TokenFailure::IssueFailed),
+        // Nothing was handed to the caller. Give the one claim back so a
+        // retry can claim again; if the release itself fails the claim stays
+        // and the exchange fails closed.
+        TokenIssueObservation::Failed => token_transition(
+            TokenDriver {
+                stage: TokenStage::Release,
+                ..driver
+            },
+            TokenEffect::ReleaseToken,
+        ),
+    }
+}
+
+fn on_token_released(
+    driver: TokenDriver,
+    observation: TokenReleaseObservation,
+) -> TokenTransition {
+    match observation {
+        TokenReleaseObservation::Released => token_terminal(driver, TokenFailure::IssueFailed),
+        TokenReleaseObservation::StorageFailed => {
+            token_terminal(driver, TokenFailure::ReleaseFailed)
+        }
     }
 }
 
@@ -1505,6 +1577,13 @@ pub fn token_step(driver: TokenDriver, event: TokenEvent) -> TokenTransition {
         TokenEvent::Issued(observation) => {
             if matches!(driver.stage, TokenStage::Issue) {
                 on_token_issued(driver, observation)
+            } else {
+                token_idle(driver)
+            }
+        }
+        TokenEvent::Released(observation) => {
+            if matches!(driver.stage, TokenStage::Release) {
+                on_token_released(driver, observation)
             } else {
                 token_idle(driver)
             }
@@ -2026,6 +2105,31 @@ mod tests {
     }
 
     #[test]
+    fn failed_issue_releases_the_claim_but_revocation_does_not() {
+        let mut t = drive_token_to_reset(100);
+        t = token_step(t.driver, TokenEvent::ClaimObserved(TokenClaimObservation::Claimed));
+        assert!(matches!(t.effect, TokenEffect::IssueToken(_)));
+        t = token_step(t.driver, TokenEvent::Issued(TokenIssueObservation::Failed));
+        assert_eq!(t.effect, TokenEffect::ReleaseToken);
+        t = token_step(t.driver, TokenEvent::Released(TokenReleaseObservation::Released));
+        assert_eq!(t.effect, TokenEffect::Fail(TokenFailure::IssueFailed));
+        assert!(t.driver.failed && !t.driver.responded);
+
+        // A failed release keeps the claim and fails closed.
+        let mut t = drive_token_to_reset(100);
+        t = token_step(t.driver, TokenEvent::ClaimObserved(TokenClaimObservation::Claimed));
+        t = token_step(t.driver, TokenEvent::Issued(TokenIssueObservation::Failed));
+        t = token_step(t.driver, TokenEvent::Released(TokenReleaseObservation::StorageFailed));
+        assert_eq!(t.effect, TokenEffect::Fail(TokenFailure::ReleaseFailed));
+
+        // A revoked session is dead: no release is performed.
+        let mut t = drive_token_to_reset(100);
+        t = token_step(t.driver, TokenEvent::ClaimObserved(TokenClaimObservation::Claimed));
+        t = token_step(t.driver, TokenEvent::Issued(TokenIssueObservation::Revoked));
+        assert_eq!(t.effect, TokenEffect::Fail(TokenFailure::IssueFailed));
+    }
+
+    #[test]
     fn token_rejects_terminal_sessions_and_wrong_challenges() {
         for session in [
             TokenSessionObservation { phase: SessionPhase::Pending, ..valid_token_session() },
@@ -2128,6 +2232,7 @@ mod tests {
             TokenEvent::ChallengeObserved(TokenChallengeObservation::StorageFailed),
             TokenEvent::SignatureObserved(TokenSignatureObservation::Valid),
             TokenEvent::Issued(TokenIssueObservation::Issued),
+            TokenEvent::Released(TokenReleaseObservation::Released),
         ] {
             let t = token_step(token.driver, event);
             assert_eq!(t.driver, token.driver);

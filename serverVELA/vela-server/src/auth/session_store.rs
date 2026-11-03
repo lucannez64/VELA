@@ -112,6 +112,8 @@ pub(crate) trait SessionStore {
     /// `Store::set_ex_nx`: write only when the key is absent; `true` when this
     /// call inserted it.
     fn set_ex_nx(&mut self, key: &str, value: &[u8], ttl: u64) -> anyhow::Result<bool>;
+    /// `Store::del`: remove exactly this key. Deleting an absent key succeeds.
+    fn delete(&mut self, key: &str) -> anyhow::Result<()>;
     /// `Store::exists`: whether the key is present.
     fn exists(&mut self, key: &str) -> anyhow::Result<bool>;
     /// `Store::ttl`: the key's remaining lifetime in seconds (the historical
@@ -204,6 +206,11 @@ impl SessionStore for SledStore<'_> {
 
     fn set_ex_nx(&mut self, key: &str, value: &[u8], ttl: u64) -> anyhow::Result<bool> {
         Ok(self.0.set_ex_nx(key, value, ttl)?)
+    }
+
+    fn delete(&mut self, key: &str) -> anyhow::Result<()> {
+        self.0.del(key)?;
+        Ok(())
     }
 
     fn exists(&mut self, key: &str) -> anyhow::Result<bool> {
@@ -485,6 +492,11 @@ pub(crate) fn run_store<K: SessionStore>(
             RenderedStore {
                 op: StoreOp::SetExNxByte, ..
             } => Err(anyhow::anyhow!("a nonce statement in a write plan")),
+            RenderedStore {
+                op: StoreOp::Delete,
+                key,
+                ..
+            } => store.delete(&key),
             RenderedStore {
                 op: StoreOp::Exists, ..
             } => Err(anyhow::anyhow!("a read statement in a write plan")),

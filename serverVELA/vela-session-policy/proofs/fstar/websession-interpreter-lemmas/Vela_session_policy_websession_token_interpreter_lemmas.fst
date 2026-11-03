@@ -34,6 +34,7 @@ let token_responds_to (e: t_TokenEffect) (ev: t_TokenEvent) : bool =
   | TokenEffect_ResetTokenBackoff, TokenEvent_ResetObserved _ -> true
   | TokenEffect_ClaimToken, TokenEvent_ClaimObserved _ -> true
   | TokenEffect_IssueToken _, TokenEvent_Issued _ -> true
+  | TokenEffect_ReleaseToken, TokenEvent_Released _ -> true
   | _ -> false
 
 let token_sound_transition (t: t_TokenTransition) : bool =
@@ -75,6 +76,10 @@ let token_turn_ev (#io_t: Type0) {| i: t_TokenIo io_t |} (s: io_t) (t: t_TokenTr
   | TokenEffect_IssueToken plan ->
       let (s', o) = f_issue_token #io_t #i s plan in
       let ev = TokenEvent_Issued o in
+      (s', token_step t.f_driver ev, Some ev)
+  | TokenEffect_ReleaseToken ->
+      let (s', o) = f_release_token #io_t #i s in
+      let ev = TokenEvent_Released o in
       (s', token_step t.f_driver ev, Some ev)
   | TokenEffect_Complete | TokenEffect_Fail _ | TokenEffect_Idle -> (s, t, None)
 
@@ -138,12 +143,12 @@ let rec token_iter_turn_is_run_ev (#io_t: Type0) {| i: t_TokenIo io_t |} (n: nat
   end
 
 let token_run_is_run_ev (#io_t: Type0) {| i: t_TokenIo io_t |} (s: io_t)
-  : Lemma (let (s2, t2, _) = token_run_ev #io_t #i 7 s (begin_token ()) in
+  : Lemma (let (s2, t2, _) = token_run_ev #io_t #i 8 s (begin_token ()) in
            run_token #io_t #i s == (s2, t2)) =
   let t0 = begin_token () in
-  token_iter_turn_is_run_ev #io_t #i 7 s t0;
-  assert (v v_TOKEN_MAX_EFFECTS = 7);
-  assert (run_token #io_t #i s == token_iter_turn #io_t #i 7 (s, t0))
+  token_iter_turn_is_run_ev #io_t #i 8 s t0;
+  assert (v v_TOKEN_MAX_EFFECTS = 8);
+  assert (run_token #io_t #i s == token_iter_turn #io_t #i 8 (s, t0))
 
 let rec token_responds (t: t_TokenTransition) (evs: list t_TokenEvent)
   : Pure bool (requires token_sound_transition t) (ensures fun _ -> True) (decreases evs) =
@@ -173,14 +178,15 @@ let rec token_run_ev_follows_the_driver (#io_t: Type0) {| i: t_TokenIo io_t |}  
 
 let token_remaining (e: t_TokenEffect) : nat =
   match e with
-  | TokenEffect_CheckTokenLimits -> 7
-  | TokenEffect_LoadSession -> 6
-  | TokenEffect_ConsumeWebTokenChallenge -> 5
-  | TokenEffect_VerifyWebSignature -> 4
+  | TokenEffect_CheckTokenLimits -> 8
+  | TokenEffect_LoadSession -> 7
+  | TokenEffect_ConsumeWebTokenChallenge -> 6
+  | TokenEffect_VerifyWebSignature -> 5
   | TokenEffect_RecordTokenFailure -> 1
-  | TokenEffect_ResetTokenBackoff -> 3
-  | TokenEffect_ClaimToken -> 2
-  | TokenEffect_IssueToken _ -> 1
+  | TokenEffect_ResetTokenBackoff -> 4
+  | TokenEffect_ClaimToken -> 3
+  | TokenEffect_IssueToken _ -> 2
+  | TokenEffect_ReleaseToken -> 1
   | _ -> 0
 
 let token_step_decreases (t: t_TokenTransition) (ev: t_TokenEvent)
@@ -195,6 +201,7 @@ let token_step_decreases (t: t_TokenTransition) (ev: t_TokenEvent)
   | TokenEffect_ResetTokenBackoff -> ()
   | TokenEffect_ClaimToken -> ()
   | TokenEffect_IssueToken _ -> ()
+  | TokenEffect_ReleaseToken -> ()
   | _ -> ()
 
 let rec token_run_ev_reaches_a_verdict (#io_t: Type0) {| i: t_TokenIo io_t |} (n: nat) (s: io_t)
@@ -221,9 +228,9 @@ let token_run_theorem (#io_t: Type0) {| i: t_TokenIo io_t |} (s: io_t)
         token_effect_is_sound t.f_driver t.f_effect) =
   let t0 = begin_token () in
   token_run_is_run_ev #io_t #i s;
-  token_run_ev_follows_the_driver #io_t #i 7 s t0;
-  token_run_ev_reaches_a_verdict #io_t #i 7 s t0;
-  let (_, t2, evs) = token_run_ev #io_t #i 7 s t0 in
+  token_run_ev_follows_the_driver #io_t #i 8 s t0;
+  token_run_ev_reaches_a_verdict #io_t #i 8 s t0;
+  let (_, t2, evs) = token_run_ev #io_t #i 8 s t0 in
   assert (token_responds (begin_token ()) evs);
   assert (t2.f_driver == token_run_from_begin evs);
   ()

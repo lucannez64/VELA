@@ -191,7 +191,7 @@ pub fn run_grant<Io: GrantIo>(
 // ── POST /web-session/:id/token ────────────────────────────────────────────
 
 /// The eight effects an exchange can perform before its verdict.
-pub const TOKEN_MAX_EFFECTS: usize = 7;
+pub const TOKEN_MAX_EFFECTS: usize = 8;
 
 pub fn token_effect_is_terminal(effect: TokenEffect) -> bool {
     matches!(
@@ -215,6 +215,7 @@ executor_trait! {
         fn claim_token(&mut self) -> crate::websession_driver::TokenClaimObservation;
         fn issue_token(&mut self, plan: TokenPlan)
             -> crate::websession_driver::TokenIssueObservation;
+        fn release_token(&mut self) -> crate::websession_driver::TokenReleaseObservation;
     }
 }
 
@@ -267,6 +268,10 @@ macro_rules! websession_token_interpreter {
                 __E::IssueToken(plan) => __step(
                     __driver(transition),
                     __V::Issued($io.issue_token(plan)$(.$aw)?),
+                ),
+                __E::ReleaseToken => __step(
+                    __driver(transition),
+                    __V::Released($io.release_token()$(.$aw)?),
                 ),
                 // The driver has decided: perform nothing, keep the verdict.
                 __E::Complete | __E::Fail(_) | __E::Idle => transition,
@@ -483,6 +488,10 @@ mod tests {
         fn issue_token(&mut self, plan: TokenPlan) -> TokenIssueObservation {
             self.calls.push(TokenEffect::IssueToken(plan));
             TokenIssueObservation::Issued
+        }
+        fn release_token(&mut self) -> TokenReleaseObservation {
+            self.calls.push(TokenEffect::ReleaseToken);
+            TokenReleaseObservation::Released
         }
     }
 

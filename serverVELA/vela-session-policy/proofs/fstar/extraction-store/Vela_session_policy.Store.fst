@@ -165,6 +165,7 @@ type t_StoreStmt =
     f_value:u8;
     f_ttl:u64
   }: t_StoreStmt
+  | StoreStmt_Delete { f_key:Alloc.String.t_String }: t_StoreStmt
   | StoreStmt_Exists { f_key:Alloc.String.t_String }: t_StoreStmt
   | StoreStmt_Ttl { f_key:Alloc.String.t_String }: t_StoreStmt
 
@@ -1573,6 +1574,46 @@ let plan_token_sentinel (session: Alloc.String.t_String)
       <:
       t_Slice t_StoreStmt)
 
+/// `TokenIo::release_token`: give the one claim back after issuance failed
+/// before a token was handed to the caller. It deletes exactly the claim key
+/// `plan_token_claim` writes, so a retry can claim again.
+let plan_token_release (session: Alloc.String.t_String)
+    : Alloc.Vec.t_Vec t_StoreStmt Alloc.Alloc.t_Global =
+  let args:Alloc.String.t_String = session <: Alloc.String.t_String in
+  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 1) =
+    let list = [Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args] in
+    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+    Rust_primitives.Hax.array_of_list 1 list
+  in
+  Alloc.Slice.impl__into_vec #t_StoreStmt
+    #Alloc.Alloc.t_Global
+    ((let list =
+          [
+            StoreStmt_Delete
+            ({
+                f_key
+                =
+                Core_models.Hint.must_use #Alloc.String.t_String
+                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 1)
+                          (mk_usize 1)
+                          (let list = ["web_session:token_issued:"] in
+                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+                            Rust_primitives.Hax.array_of_list 1 list)
+                          args
+                        <:
+                        Core_models.Fmt.t_Arguments)
+                    <:
+                    Alloc.String.t_String)
+              })
+            <:
+            t_StoreStmt
+          ]
+        in
+        FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+        Rust_primitives.Hax.array_of_list 1 list)
+      <:
+      t_Slice t_StoreStmt)
+
 /// The logout marker: it was written exactly when its one statement ran.
 let classify_logout (outcomes: t_Slice t_StoreOutcome)
     : Vela_session_policy.Revocation_driver.t_LogoutObservation =
@@ -2008,7 +2049,9 @@ let classify_token_claim (outcome: t_NxOutcome)
     Vela_session_policy.Websession_driver.t_TokenClaimObservation
 
 /// `TokenIo::issue_token`: `Issued` exactly when the issuer produced a token,
-/// the issue-time sentinel was absent and the JTI was tracked.
+/// the issue-time sentinel was absent and the JTI was tracked. A revoked
+/// sentinel is its own observation: the session is dead and the claim is not
+/// released. Every other failure releases the claim.
 let classify_token_issue (issued: bool) (sentinel: t_ExistsOutcome) (tracked: t_StoreOutcome)
     : Vela_session_policy.Websession_driver.t_TokenIssueObservation =
   if
@@ -2024,9 +2067,31 @@ let classify_token_issue (issued: bool) (sentinel: t_ExistsOutcome) (tracked: t_
     <:
     Vela_session_policy.Websession_driver.t_TokenIssueObservation
   else
-    Vela_session_policy.Websession_driver.TokenIssueObservation_Failed
+    if
+      match sentinel <: t_ExistsOutcome with
+      | ExistsOutcome_Present  -> true
+      | _ -> false
+    then
+      Vela_session_policy.Websession_driver.TokenIssueObservation_Revoked
+      <:
+      Vela_session_policy.Websession_driver.t_TokenIssueObservation
+    else
+      Vela_session_policy.Websession_driver.TokenIssueObservation_Failed
+      <:
+      Vela_session_policy.Websession_driver.t_TokenIssueObservation
+
+/// `TokenIo::release_token`: `Released` exactly when the one delete ran.
+let classify_token_release (outcome: t_StoreOutcome)
+    : Vela_session_policy.Websession_driver.t_TokenReleaseObservation =
+  match outcome <: t_StoreOutcome with
+  | StoreOutcome_Applied  ->
+    Vela_session_policy.Websession_driver.TokenReleaseObservation_Released
     <:
-    Vela_session_policy.Websession_driver.t_TokenIssueObservation
+    Vela_session_policy.Websession_driver.t_TokenReleaseObservation
+  | StoreOutcome_Failed  ->
+    Vela_session_policy.Websession_driver.TokenReleaseObservation_StorageFailed
+    <:
+    Vela_session_policy.Websession_driver.t_TokenReleaseObservation
 
 /// `DeleteSessionIo::lockout_session`: `Applied` exactly when the sentinel
 /// write ran.

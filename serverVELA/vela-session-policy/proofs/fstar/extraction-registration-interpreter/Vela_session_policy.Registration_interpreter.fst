@@ -3,9 +3,9 @@ module Vela_session_policy.Registration_interpreter
 open FStar.Mul
 open Core_models
 
-/// Most effects one request performs: limiter, optional budget, transaction
-/// begin, two inserts, commit, token issue and JTI tracking.
-let v_REGISTRATION_MAX_EFFECTS: usize = mk_usize 8
+/// Most effects one request performs: limiter, optional budget, key validation,
+/// transaction begin, two inserts, commit, token issue and JTI tracking.
+let v_REGISTRATION_MAX_EFFECTS: usize = mk_usize 9
 
 /// The driver has decided: nothing more may be performed.
 let registration_effect_is_terminal
@@ -38,6 +38,13 @@ class t_RegistrationIo (v_Self: Type0) = {
     -> Prims.Pure (v_Self & Vela_session_policy.Registration_driver.t_BudgetObservation)
         (f_check_account_budget_pre x0)
         (fun result -> f_check_account_budget_post x0 result);
+  f_validate_keys_pre:self_: v_Self -> pred: Type0{true ==> pred};
+  f_validate_keys_post:v_Self -> (v_Self & Vela_session_policy.Registration_driver.t_KeyObservation)
+    -> Type0;
+  f_validate_keys:x0: v_Self
+    -> Prims.Pure (v_Self & Vela_session_policy.Registration_driver.t_KeyObservation)
+        (f_validate_keys_pre x0)
+        (fun result -> f_validate_keys_post x0 result);
   f_begin_transaction_pre:self_: v_Self -> pred: Type0{true ==> pred};
   f_begin_transaction_post:
       v_Self ->
@@ -122,7 +129,7 @@ let run_registration
           in
           let _:usize = temp_1_ in
           let
-          (io: v_Io), (hoist17: Vela_session_policy.Registration_driver.t_RegistrationTransition) =
+          (io: v_Io), (hoist19: Vela_session_policy.Registration_driver.t_RegistrationTransition) =
             match
               transition.Vela_session_policy.Registration_driver.f_effect
               <:
@@ -151,6 +158,19 @@ let run_registration
               Vela_session_policy.Registration_driver.step transition
                   .Vela_session_policy.Registration_driver.f_driver
                 (Vela_session_policy.Registration_driver.RegistrationEvent_BudgetObserved out
+                  <:
+                  Vela_session_policy.Registration_driver.t_RegistrationEvent)
+              <:
+              (v_Io & Vela_session_policy.Registration_driver.t_RegistrationTransition)
+            | Vela_session_policy.Registration_driver.RegistrationEffect_ValidateKeys  ->
+              let (tmp0: v_Io), (out: Vela_session_policy.Registration_driver.t_KeyObservation) =
+                f_validate_keys #v_Io #FStar.Tactics.Typeclasses.solve io
+              in
+              let io:v_Io = tmp0 in
+              io,
+              Vela_session_policy.Registration_driver.step transition
+                  .Vela_session_policy.Registration_driver.f_driver
+                (Vela_session_policy.Registration_driver.RegistrationEvent_KeysObserved out
                   <:
                   Vela_session_policy.Registration_driver.t_RegistrationEvent)
               <:
@@ -243,7 +263,7 @@ let run_registration
               (v_Io & Vela_session_policy.Registration_driver.t_RegistrationTransition)
           in
           let transition:Vela_session_policy.Registration_driver.t_RegistrationTransition =
-            hoist17
+            hoist19
           in
           io, transition
           <:

@@ -430,6 +430,11 @@ let token_is_issue (d: t_TokenDriver) : bool =
   | TokenStage_Issue -> true
   | _ -> false
 
+let token_is_release (d: t_TokenDriver) : bool =
+  match d.f_stage <: t_TokenStage with
+  | TokenStage_Release -> true
+  | _ -> false
+
 let token_is_done (d: t_TokenDriver) : bool =
   match d.f_stage <: t_TokenStage with
   | TokenStage_Done -> true
@@ -473,6 +478,11 @@ let token_trace_sound (d: t_TokenDriver) : bool =
               d.f_token_claimed && d.f_plan_authorized &&
               not d.f_token_issued &&
               not d.f_responded && not d.f_failed in
+  let release = d.f_limits_allowed && d.f_session_loaded && d.f_session_eligible &&
+                d.f_challenge_consumed && d.f_signature_valid && d.f_backoff_reset &&
+                d.f_token_claimed && d.f_plan_authorized &&
+                not d.f_token_issued &&
+                not d.f_responded && not d.f_failed in
   let done = (d.f_responded || d.f_failed) && not (d.f_responded && d.f_failed) &&
              (not d.f_responded ||
               (d.f_limits_allowed && d.f_session_loaded && d.f_session_eligible &&
@@ -487,6 +497,7 @@ let token_trace_sound (d: t_TokenDriver) : bool =
   (not (token_is_reset d) || reset) &&
   (not (token_is_claim d) || claim) &&
   (not (token_is_issue d) || issue) &&
+  (not (token_is_release d) || release) &&
   (not (token_is_done d) || done) &&
   (not d.f_session_loaded || d.f_limits_allowed) &&
   (not d.f_session_eligible || d.f_session_loaded) &&
@@ -513,6 +524,7 @@ let token_trace_sound_matches_rust (d: t_TokenDriver)
   | TokenStage_Reset -> ()
   | TokenStage_Claim -> ()
   | TokenStage_Issue -> ()
+  | TokenStage_Release -> ()
   | TokenStage_Done -> ()
 
 let token_step_sound (d: t_TokenDriver) (e: t_TokenEvent)
@@ -643,13 +655,47 @@ let issue_step_no_issue (d: t_TokenDriver) (e: t_TokenEvent)
   match d.f_stage <: t_TokenStage with
   | TokenStage_Issue -> ()
 
-let issue_step_is_issue_or_done (d: t_TokenDriver) (e: t_TokenEvent)
+let issue_step_is_issue_or_release_or_done (d: t_TokenDriver) (e: t_TokenEvent)
   : Lemma (requires (token_trace_sound d /\ token_is_issue d))
           (ensures (token_is_issue (token_step d e).f_driver \/
+                    token_is_release (token_step d e).f_driver \/
                     token_is_done (token_step d e).f_driver)) =
   token_trace_sound_matches_rust d;
   match d.f_stage <: t_TokenStage with
   | TokenStage_Issue -> ()
+
+let release_step_no_issue (d: t_TokenDriver) (e: t_TokenEvent)
+  : Lemma (requires (token_trace_sound d /\ token_is_release d))
+          (ensures (
+            (match (token_step d e).f_effect <: t_TokenEffect with
+             | TokenEffect_IssueToken _ -> false
+             | _ -> true))) =
+  token_trace_sound_matches_rust d;
+  match d.f_stage <: t_TokenStage with
+  | TokenStage_Release -> ()
+
+let release_step_is_release_or_done (d: t_TokenDriver) (e: t_TokenEvent)
+  : Lemma (requires (token_trace_sound d /\ token_is_release d))
+          (ensures (token_is_release (token_step d e).f_driver \/
+                    token_is_done (token_step d e).f_driver)) =
+  token_trace_sound_matches_rust d;
+  match d.f_stage <: t_TokenStage with
+  | TokenStage_Release -> ()
+
+let rec no_issue_from_release (d: t_TokenDriver) (events: list t_TokenEvent)
+  : Lemma (requires (token_trace_sound d /\ token_is_release d))
+          (ensures (token_count_issue d events = 0))
+          (decreases events) =
+  match events with
+  | [] -> ()
+  | e :: rest ->
+      token_step_sound d e;
+      release_step_no_issue d e;
+      release_step_is_release_or_done d e;
+      let t = token_step d e in
+      if token_is_done t.f_driver
+      then token_done_suffix_inert t.f_driver rest
+      else no_issue_from_release t.f_driver rest
 
 let rec no_issue_from_issue (d: t_TokenDriver) (events: list t_TokenEvent)
   : Lemma (requires (token_trace_sound d /\ token_is_issue d))
@@ -660,10 +706,12 @@ let rec no_issue_from_issue (d: t_TokenDriver) (events: list t_TokenEvent)
   | e :: rest ->
       token_step_sound d e;
       issue_step_no_issue d e;
-      issue_step_is_issue_or_done d e;
+      issue_step_is_issue_or_release_or_done d e;
       let t = token_step d e in
       if token_is_done t.f_driver
       then token_done_suffix_inert t.f_driver rest
+      else if token_is_release t.f_driver
+      then no_issue_from_release t.f_driver rest
       else no_issue_from_issue t.f_driver rest
 
 let rec token_issue_count_le_one (d: t_TokenDriver) (events: list t_TokenEvent)

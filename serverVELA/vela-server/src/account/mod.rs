@@ -24,7 +24,7 @@ use crate::{
 
 use vela_session_policy::store::{self, CountOutcome, StoreOutcome, WriteOutcome};
 use vela_session_policy::registration_driver::{
-    BudgetObservation, CommitObservation, InsertObservation, RateLimitObservation,
+    BudgetObservation, CommitObservation, InsertObservation, KeyObservation, RateLimitObservation,
     RegistrationEffect, RegistrationFailure, RegistrationRequestObservation, TokenObservation,
     TrackObservation, TransactionObservation,
 };
@@ -225,6 +225,24 @@ impl<S: SessionSql, K: SessionStore, T: SessionTokens> RegisterIo<S, K, T> {
         }
     }
 
+    /// Decode the keys and verify the share-key binding signature. The driver
+    /// emits this only after the per-IP limiter and the account budget pass, so
+    /// an unauthenticated or over-budget request never forces a post-quantum
+    /// verification.
+    pub(crate) async fn validate_keys(&mut self) -> KeyObservation {
+        let parsed = observe_keys(&self.body);
+        let valid = parsed.error.is_none()
+            && parsed.identity_ek_valid
+            && parsed.identity_vk_valid
+            && parsed.share_ek_valid;
+        self.keys = parsed;
+        if valid {
+            KeyObservation::Valid
+        } else {
+            KeyObservation::Invalid
+        }
+    }
+
     pub(crate) async fn begin_transaction(&mut self) -> TransactionObservation {
         match self.sql.begin().await {
             Ok(()) => store::classify_registration_transaction(&WriteOutcome::Applied(0)),
@@ -375,16 +393,12 @@ pub async fn post_register(
     Json(body): Json<RegisterRequest>,
 ) -> Result<Json<RegisterResponse>> {
     let ip = net::client_ip(&headers, addr.map(|ConnectInfo(a)| a.ip()), &state.config);
-    let keys = observe_keys(&body);
     let max_accounts = state.config.max_accounts;
     let request = RegistrationRequestObservation {
         has_account_limit: max_accounts.is_some(),
         account_limit: max_accounts
             .map(|limit| limit.min(i64::MAX as u64) as i64)
             .unwrap_or(0),
-        identity_ek_valid: keys.identity_ek_valid,
-        identity_vk_valid: keys.identity_vk_valid,
-        share_ek_valid: keys.share_ek_valid,
     };
 
     let device_name = body
@@ -415,7 +429,15 @@ pub async fn post_register(
         )),
         ip,
         body,
-        keys,
+        keys: ParsedKeys {
+            identity_ek: None,
+            identity_vk: None,
+            share_ek_b64: String::new(),
+            identity_ek_valid: false,
+            identity_vk_valid: false,
+            share_ek_valid: false,
+            error: None,
+        },
         user_id,
         device_id,
         now,

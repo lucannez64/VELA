@@ -35,7 +35,8 @@ use vela_session_policy::{
         StartEffect, StartFailure, StartInsertObservation, StartLimitObservation,
         StartValidationObservation, TokenChallengeObservation, TokenClaimObservation,
         TokenEffect, TokenFailure, TokenFailureRecordObservation, TokenIssueObservation,
-        TokenLimitObservation, TokenLookupObservation, TokenResetObservation,
+        TokenLimitObservation, TokenLookupObservation, TokenReleaseObservation,
+        TokenResetObservation,
         TokenSessionObservation, TokenSignatureObservation,
     },
     GrantObservation, SessionMode as PolicyMode, SessionPhase as PolicyPhase,
@@ -1181,6 +1182,23 @@ impl<K: SessionStore, T: SessionTokens> TokenIo<'_, K, T> {
         }
         observed
     }
+
+    /// Give the one claim back after issuance failed before a token was handed
+    /// to the caller. The delete targets exactly the `plan_token_claim` key, so
+    /// a retry can claim again. A failed delete leaves the claim in place: the
+    /// exchange fails closed and retries keep seeing `AlreadyIssued`.
+    pub(crate) async fn release_token(&mut self) -> TokenReleaseObservation {
+        let plan = vela_session_policy::store::plan_token_release(self.id_str.clone());
+        let (outcomes, error) = run_store(&mut self.store, &plan);
+        if let Some(error) = error {
+            keep_error(&mut self.error, error);
+        }
+        let outcome = outcomes
+            .first()
+            .copied()
+            .unwrap_or(vela_session_policy::store::StoreOutcome::Failed);
+        vela_session_policy::store::classify_token_release(&outcome)
+    }
 }
 
 fn token_failure_error<K: SessionStore, T: SessionTokens>(
@@ -1255,6 +1273,10 @@ fn token_failure_error<K: SessionStore, T: SessionTokens>(
             .error
             .take()
             .unwrap_or_else(|| AppError::Internal("token issuance failed".into())),
+        TokenFailure::ReleaseFailed => io
+            .error
+            .take()
+            .unwrap_or_else(|| AppError::Internal("token claim release failed".into())),
         TokenFailure::InconsistentFacts => AppError::Unauthorized(
             "web session capability facts are inconsistent".into(),
         ),

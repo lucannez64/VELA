@@ -23,8 +23,9 @@ since the same increment.
 - `StartIo` (`web_session/mod.rs`): `insert_pending`;
 - `GrantIo` (`web_session/mod.rs`): `update_grant` (the epoch/approver/device
   CAS);
-- `TokenIo` (`web_session/mod.rs`): `claim_token` and the `issue_token`
-  sentinel re-check plus JTI tracking;
+- `TokenIo` (`web_session/mod.rs`): `claim_token`, the `issue_token`
+  sentinel re-check plus JTI tracking, and `release_token` (the claim delete
+  after a failed issuance);
 - `DeleteSessionIo` (`web_session/mod.rs`): `lockout_session` and
   `record_revocation`.
 
@@ -62,7 +63,7 @@ There are 31 SQL statement types (`SqlStmt`):
 - the three cleanup deletes;
 - `Commit`.
 
-There are 11 store statement types (`StoreStmt`):
+There are 12 store statement types (`StoreStmt`):
 
 - `SetEx`: a key, a value byte and a TTL;
 - `Ttl`: the backoff precheck's remaining-TTL read (a live window refuses);
@@ -108,8 +109,11 @@ The web-session executors add three SQL statements and two store statements:
 - `RevokeSessionById`: the delete handler's audit update (`status = 'revoked',
   capsule = NULL WHERE id = ?`, whose row count the handler does not observe);
 - in the store, `SetExNxByte`, the first-writer-wins `web_session:token_issued:`
-  marker (exact one-byte value), and `Exists`, the read-only
-  `device:revoked:` sentinel check at the point of token issue.
+  marker (exact one-byte value), `Exists`, the read-only `device:revoked:`
+  sentinel check at the point of token issue, and `Delete`, the release of
+  exactly that claim key after issuance failed before a token was released.
+  A successful delete frees the claim for a retry; a failed delete leaves the
+  claim in place (fails closed).
 
 ## Exact theorems
 
@@ -149,12 +153,13 @@ fault point:
   `login_accepts_only_its_stored_tag` and `login_tracks_the_issued_jti`.
 - **Web sessions:** `insert_pending_is_honest`, `grant_update_is_honest`,
   `revoke_session_is_honest`, `lockout_session_is_honest`,
-  `token_claim_is_honest`, `token_sentinel_is_honest` and
-  `token_issue_is_honest`. Its driver facts are `inserted_pending_is_stored`,
-  `grant_updated_only_pending_guarded`, `grant_updated_changes_only_sessions`,
-  `token_claim_is_first_writer_wins`, `issued_token_is_not_locked_out`,
-  `issued_token_is_tracked`, `lockout_applied_means_sentinel_stored` and
-  `revoke_record_marks_the_session`.
+  `token_claim_is_honest`, `token_sentinel_is_honest`,
+  `token_release_is_honest` and `token_issue_is_honest`. Its driver facts are
+  `inserted_pending_is_stored`, `grant_updated_only_pending_guarded`,
+  `grant_updated_changes_only_sessions`, `token_claim_is_first_writer_wins`,
+  `token_release_frees_the_claim`, `token_release_failure_keeps_the_claim`,
+  `issued_token_is_not_locked_out`, `issued_token_is_tracked`,
+  `lockout_applied_means_sentinel_stored` and `revoke_record_marks_the_session`.
 - **Plan shapes:** 31 `plan_*_shape` lemmas state the statements each plan must
   emit; the honesty proofs build on them.
 - **Wave 2 reads, cleanup and limiters:** `session_lookup_is_honest`,
@@ -213,6 +218,8 @@ theorem:
 | `classify-claim-error` | `token_claim_is_honest` |
 | `plan-claim-ttl` | `plan_token_claim_shape` |
 | `classify-issue-track` | `token_issue_is_honest` |
+| `classify-release-error` | `token_release_is_honest` |
+| `plan-release-read` | `plan_token_release_shape` |
 | `classify-lockout-session-error` | `lockout_session_is_honest` |
 | `plan-revoke-session-key` | `plan_revoke_session_shape` |
 | `classify-revoke-session-error` | `revoke_session_observes_its_run` |
@@ -248,9 +255,9 @@ and sled, with a failure injected at every statement:
 | Login | 3 | 78 | 36 |
 | Challenge issue | 2 | 10 | 5 |
 | Registration | 3 | 96 | 57 |
-| Web sessions | 37 | 97 | 50 |
+| Web sessions | 39 | 101 | 52 |
 | Wave 2 reads/cleanup/limits | 35 | 150 | 84 |
-| **Total** | | **648** | **378** |
+| **Total** | | **652** | **380** |
 
 Every statement kind is faulted at least once. The schema check pins the
 modelled columns of all eight tables and rejects a duplicate id. The
@@ -287,7 +294,9 @@ dishonest.
   schema check.
 - Web-session PASETO issuance is an input (the plan policy is proved
   elsewhere); the executor's proof is that `Issued` is only reported while no
-  `device:revoked:` sentinel is stored and the JTI was tracked.
+  `device:revoked:` sentinel is stored and the JTI was tracked, and that a
+  failure before release deletes exactly the claim key (`Released`) while a
+  failed delete leaves the claim in place (`StorageFailed`, fail closed).
 - `get_sessions_list`'s `ORDER BY created_at DESC LIMIT 1000` is presentation:
   the model states the exact set and conformance compares it. Cleanup decides
   `expires_at < ?` and `created_at < ?` on the numeric instant the stored

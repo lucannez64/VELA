@@ -88,5 +88,5 @@ printf ' %q' "${fstar_args[@]}"
 printf '\n'
 fstar.exe "${fstar_args[@]}"
 
-echo "registration interpreter: the handler's loop calls only the executor method for the driver's current effect, stops at the verdict within 8 turns, and ends in the driver state the per-request theorems cover"
+echo "registration interpreter: the handler's loop calls only the executor method for the driver's current effect, stops at the verdict within 9 turns, and ends in the driver state the per-request theorems cover"
 sha256sum "${generated[@]}" "${lemmas[@]}" src/registration_interpreter.rs

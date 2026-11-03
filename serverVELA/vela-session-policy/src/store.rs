@@ -45,7 +45,7 @@ use crate::revocation_driver::{
 use crate::websession_driver::{
     DeleteRecordObservation, DeleteSentinelObservation, GrantUpdateObservation,
     StartInsertObservation, TokenClaimObservation, TokenFailureRecordObservation,
-    TokenIssueObservation,
+    TokenIssueObservation, TokenReleaseObservation,
 };
 
 /// The remaining-lifetime TTL of a revoked JTI, in seconds
@@ -253,6 +253,9 @@ pub enum StoreStmt {
         value: u8,
         ttl: u64,
     },
+    /// `Store::del(key)`: remove exactly this key (the token claim release
+    /// after a failed issuance). Deleting an absent key is still `Applied`.
+    Delete { key: String },
     /// `Store::exists(key)`: a read, so it never changes the store.
     Exists { key: String },
     /// `Store::ttl(key) > 0`: the exponential-backoff precheck. A read, so it
@@ -883,6 +886,15 @@ pub fn plan_token_sentinel(session: String) -> Vec<StoreStmt> {
     }]
 }
 
+/// `TokenIo::release_token`: give the one claim back after issuance failed
+/// before a token was handed to the caller. It deletes exactly the claim key
+/// `plan_token_claim` writes, so a retry can claim again.
+pub fn plan_token_release(session: String) -> Vec<StoreStmt> {
+    vec![StoreStmt::Delete {
+        key: format!("web_session:token_issued:{}", session),
+    }]
+}
+
 // ── Classification ─────────────────────────────────────────────────────────
 
 /// The logout marker: it was written exactly when its one statement ran.
@@ -1174,7 +1186,9 @@ pub fn classify_token_claim(outcome: &NxOutcome) -> TokenClaimObservation {
 }
 
 /// `TokenIo::issue_token`: `Issued` exactly when the issuer produced a token,
-/// the issue-time sentinel was absent and the JTI was tracked.
+/// the issue-time sentinel was absent and the JTI was tracked. A revoked
+/// sentinel is its own observation: the session is dead and the claim is not
+/// released. Every other failure releases the claim.
 pub fn classify_token_issue(
     issued: bool,
     sentinel: &ExistsOutcome,
@@ -1185,8 +1199,18 @@ pub fn classify_token_issue(
         && matches!(tracked, StoreOutcome::Applied)
     {
         TokenIssueObservation::Issued
+    } else if matches!(sentinel, ExistsOutcome::Present) {
+        TokenIssueObservation::Revoked
     } else {
         TokenIssueObservation::Failed
+    }
+}
+
+/// `TokenIo::release_token`: `Released` exactly when the one delete ran.
+pub fn classify_token_release(outcome: &StoreOutcome) -> TokenReleaseObservation {
+    match outcome {
+        StoreOutcome::Applied => TokenReleaseObservation::Released,
+        StoreOutcome::Failed => TokenReleaseObservation::StorageFailed,
     }
 }
 
@@ -1374,6 +1398,7 @@ pub enum StoreOp {
     AddMember,
     SetExNx,
     SetExNxByte,
+    Delete,
     Exists,
     Ttl,
 }
@@ -1708,6 +1733,14 @@ pub fn render_store(stmt: &StoreStmt) -> RenderedStore {
             key: key.clone(),
             value: *value,
             ttl: *ttl,
+            limit: 0,
+            member: String::new(),
+        },
+        StoreStmt::Delete { key } => RenderedStore {
+            op: StoreOp::Delete,
+            key: key.clone(),
+            value: 0,
+            ttl: 0,
             limit: 0,
             member: String::new(),
         },
@@ -2494,6 +2527,28 @@ mod tests {
             }
         );
 
+        let plan = plan_token_release(s("sess"));
+        assert_eq!(plan.len(), 1);
+        assert_eq!(
+            render_store(&plan[0]),
+            RenderedStore {
+                op: StoreOp::Delete,
+                key: s("web_session:token_issued:sess"),
+                value: 0,
+                ttl: 0,
+                limit: 0,
+                member: String::new()
+            }
+        );
+        assert_eq!(
+            classify_token_release(&StoreOutcome::Applied),
+            TokenReleaseObservation::Released
+        );
+        assert_eq!(
+            classify_token_release(&StoreOutcome::Failed),
+            TokenReleaseObservation::StorageFailed
+        );
+
         // The delete handler's sentinel is the shared plan, with the web
         // session ceiling.
         assert_eq!(
@@ -2839,7 +2894,6 @@ mod tests {
         );
         for (issued, sentinel, tracked) in [
             (false, ExistsOutcome::Absent, StoreOutcome::Applied),
-            (true, ExistsOutcome::Present, StoreOutcome::Applied),
             (true, ExistsOutcome::Failed, StoreOutcome::Applied),
             (true, ExistsOutcome::Absent, StoreOutcome::Failed),
         ] {
@@ -2849,6 +2903,10 @@ mod tests {
                 "issued {issued}, sentinel {sentinel:?}, tracked {tracked:?}"
             );
         }
+        assert_eq!(
+            classify_token_issue(true, &ExistsOutcome::Present, &StoreOutcome::Applied),
+            TokenIssueObservation::Revoked
+        );
         assert_eq!(
             classify_lockout_session(&StoreOutcome::Applied),
             DeleteSentinelObservation::Applied

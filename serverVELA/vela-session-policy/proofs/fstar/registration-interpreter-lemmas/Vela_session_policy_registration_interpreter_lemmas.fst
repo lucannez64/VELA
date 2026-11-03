@@ -13,7 +13,7 @@ module Vela_session_policy_registration_interpreter_lemmas
 ///    observation answers the effect it was returned for, and the final driver
 ///    is `run_from_observation observation evs`
 ///    (`run_ev_follows_the_driver`);
-/// 3. the driver always reaches a verdict within the loop budget of eight
+/// 3. the driver always reaches a verdict within the loop budget of nine
 ///    turns (`run_ev_reaches_a_verdict`);
 /// 4. hence every per-request registration theorem holds for the state the
 ///    real handler ends in (`run_registration_theorem`).
@@ -40,6 +40,7 @@ let responds_to (e: t_RegistrationEffect) (ev: t_RegistrationEvent) : bool =
   match e, ev with
   | RegistrationEffect_CheckRateLimit, RegistrationEvent_RateLimitObserved _
   | RegistrationEffect_CheckAccountBudget, RegistrationEvent_BudgetObserved _
+  | RegistrationEffect_ValidateKeys, RegistrationEvent_KeysObserved _
   | RegistrationEffect_BeginTransaction, RegistrationEvent_TransactionObserved _
   | RegistrationEffect_InsertAccount, RegistrationEvent_AccountInserted _
   | RegistrationEffect_InsertDevice, RegistrationEvent_DeviceInserted _
@@ -68,6 +69,10 @@ let turn_ev (#io_t: Type0) {| i: t_RegistrationIo io_t |} (s: io_t)
   | RegistrationEffect_CheckAccountBudget ->
       let (s', o) = f_check_account_budget #io_t #i s in
       let ev = RegistrationEvent_BudgetObserved o in
+      (s', step t.f_driver ev, Some ev)
+  | RegistrationEffect_ValidateKeys ->
+      let (s', o) = f_validate_keys #io_t #i s in
+      let ev = RegistrationEvent_KeysObserved o in
       (s', step t.f_driver ev, Some ev)
   | RegistrationEffect_BeginTransaction ->
       let (s', o) = f_begin_transaction #io_t #i s in
@@ -173,12 +178,12 @@ let rec iter_turn_is_run_ev (#io_t: Type0) {| i: t_RegistrationIo io_t |} (n: na
 /// The extracted loop calls the executor exactly as `run_ev` does.
 let run_registration_is_run_ev (#io_t: Type0) {| i: t_RegistrationIo io_t |} (s: io_t)
     (observation: t_RegistrationRequestObservation)
-  : Lemma (let (s2, t2, _) = run_ev #io_t #i 8 s (begin_registration observation) in
+  : Lemma (let (s2, t2, _) = run_ev #io_t #i 9 s (begin_registration observation) in
            run_registration #io_t #i s observation == (s2, t2)) =
   let t0 = begin_registration observation in
-  iter_turn_is_run_ev #io_t #i 8 s t0;
-  assert (v v_REGISTRATION_MAX_EFFECTS = 8);
-  assert (run_registration #io_t #i s observation == iter_turn #io_t #i 8 (s, t0))
+  iter_turn_is_run_ev #io_t #i 9 s t0;
+  assert (v v_REGISTRATION_MAX_EFFECTS = 9);
+  assert (run_registration #io_t #i s observation == iter_turn #io_t #i 9 (s, t0))
 
 // ── 2. The observations drive the extracted driver ────────────────────────
 
@@ -215,8 +220,9 @@ let rec run_ev_follows_the_driver (#io_t: Type0) {| i: t_RegistrationIo io_t |}
 /// Effects still to perform before a verdict, at most.
 let remaining (e: t_RegistrationEffect) : nat =
   match e <: t_RegistrationEffect with
-  | RegistrationEffect_CheckRateLimit -> 8
-  | RegistrationEffect_CheckAccountBudget -> 7
+  | RegistrationEffect_CheckRateLimit -> 9
+  | RegistrationEffect_CheckAccountBudget -> 8
+  | RegistrationEffect_ValidateKeys -> 7
   | RegistrationEffect_BeginTransaction -> 6
   | RegistrationEffect_InsertAccount -> 5
   | RegistrationEffect_InsertDevice -> 4
@@ -232,6 +238,7 @@ let step_decreases (t: t_RegistrationTransition) (ev: t_RegistrationEvent)
   match t.f_effect <: t_RegistrationEffect with
   | RegistrationEffect_CheckRateLimit -> ()
   | RegistrationEffect_CheckAccountBudget -> ()
+  | RegistrationEffect_ValidateKeys -> ()
   | RegistrationEffect_BeginTransaction -> ()
   | RegistrationEffect_InsertAccount -> ()
   | RegistrationEffect_InsertDevice -> ()
@@ -276,9 +283,9 @@ let run_registration_theorem (#io_t: Type0) {| i: t_RegistrationIo io_t |} (s: i
          count_fail (begin_registration observation).f_driver evs <= 1)) =
   let t0 = begin_registration observation in
   run_registration_is_run_ev #io_t #i s observation;
-  run_ev_follows_the_driver #io_t #i 8 s t0;
-  run_ev_reaches_a_verdict #io_t #i 8 s t0;
-  let (_, t2, evs) = run_ev #io_t #i 8 s t0 in
+  run_ev_follows_the_driver #io_t #i 9 s t0;
+  run_ev_reaches_a_verdict #io_t #i 9 s t0;
+  let (_, t2, evs) = run_ev #io_t #i 9 s t0 in
   registration_trace_theorem observation evs
 
 /// Cancellation (POST /account/register): the handler future may be dropped after any

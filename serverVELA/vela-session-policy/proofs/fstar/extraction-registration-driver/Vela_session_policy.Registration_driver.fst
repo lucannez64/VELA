@@ -3,15 +3,19 @@ module Vela_session_policy.Registration_driver
 open FStar.Mul
 open Core_models
 
-/// Request-side observations established before any effect. Key validity is a
-/// pure decode/length/binding-signature fact computed by the handler.
+/// Request-side observations established before any effect. The keys are
+/// deliberately *not* here: decoding them and verifying the share-key binding
+/// signature is expensive, so it is a driver effect emitted only after the
+/// per-IP limiter and the account budget pass.
 type t_RegistrationRequestObservation = {
   f_has_account_limit:bool;
-  f_account_limit:i64;
-  f_identity_ek_valid:bool;
-  f_identity_vk_valid:bool;
-  f_share_ek_valid:bool
+  f_account_limit:i64
 }
+
+/// Outcome of the key decode and share-key binding verification effect.
+type t_KeyObservation =
+  | KeyObservation_Valid : t_KeyObservation
+  | KeyObservation_Invalid : t_KeyObservation
 
 /// Outcome of the per-IP registration limiter.
 type t_RateLimitObservation =
@@ -52,6 +56,7 @@ type t_TrackObservation =
 type t_RegistrationStage =
   | RegistrationStage_RateLimit : t_RegistrationStage
   | RegistrationStage_AccountBudget : t_RegistrationStage
+  | RegistrationStage_ValidateKeys : t_RegistrationStage
   | RegistrationStage_BeginTransaction : t_RegistrationStage
   | RegistrationStage_InsertAccount : t_RegistrationStage
   | RegistrationStage_InsertDevice : t_RegistrationStage
@@ -65,6 +70,7 @@ type t_RegistrationStage =
 type t_RegistrationEvent =
   | RegistrationEvent_RateLimitObserved : t_RateLimitObservation -> t_RegistrationEvent
   | RegistrationEvent_BudgetObserved : t_BudgetObservation -> t_RegistrationEvent
+  | RegistrationEvent_KeysObserved : t_KeyObservation -> t_RegistrationEvent
   | RegistrationEvent_TransactionObserved : t_TransactionObservation -> t_RegistrationEvent
   | RegistrationEvent_AccountInserted : t_InsertObservation -> t_RegistrationEvent
   | RegistrationEvent_DeviceInserted : t_InsertObservation -> t_RegistrationEvent
@@ -90,6 +96,7 @@ type t_RegistrationFailure =
 type t_RegistrationEffect =
   | RegistrationEffect_CheckRateLimit : t_RegistrationEffect
   | RegistrationEffect_CheckAccountBudget : t_RegistrationEffect
+  | RegistrationEffect_ValidateKeys : t_RegistrationEffect
   | RegistrationEffect_BeginTransaction : t_RegistrationEffect
   | RegistrationEffect_InsertAccount : t_RegistrationEffect
   | RegistrationEffect_InsertDevice : t_RegistrationEffect
@@ -106,9 +113,8 @@ type t_RegistrationDriver = {
   f_stage:t_RegistrationStage;
   f_has_account_limit:bool;
   f_account_limit:i64;
-  f_identity_ek_valid:bool;
-  f_identity_vk_valid:bool;
-  f_share_ek_valid:bool;
+  f_keys_valid:bool;
+  f_keys_validated:bool;
   f_rate_allowed:bool;
   f_budget_checked:bool;
   f_transaction_open:bool;
@@ -155,12 +161,23 @@ let registration_state_is_sound (d: t_RegistrationDriver) : bool =
     ~.d.f_budget_checked &&
     pre
   in
+  let validate_keys:bool =
+    (match d.f_stage <: t_RegistrationStage with
+      | RegistrationStage_ValidateKeys  -> true
+      | _ -> false) &&
+    d.f_rate_allowed &&
+    d.f_budget_checked &&
+    ~.d.f_keys_validated &&
+    pre
+  in
   let begin_transaction:bool =
     (match d.f_stage <: t_RegistrationStage with
       | RegistrationStage_BeginTransaction  -> true
       | _ -> false) &&
     d.f_rate_allowed &&
     d.f_budget_checked &&
+    d.f_keys_validated &&
+    d.f_keys_valid &&
     ~.d.f_transaction_open &&
     ~.d.f_transaction_started &&
     ~.d.f_account_inserted &&
@@ -259,6 +276,7 @@ let registration_state_is_sound (d: t_RegistrationDriver) : bool =
   (match d.f_stage <: t_RegistrationStage with
     | RegistrationStage_RateLimit  -> rate_limit
     | RegistrationStage_AccountBudget  -> account_budget
+    | RegistrationStage_ValidateKeys  -> validate_keys
     | RegistrationStage_BeginTransaction  -> begin_transaction
     | RegistrationStage_InsertAccount  -> insert_account
     | RegistrationStage_InsertDevice  -> insert_device
@@ -267,7 +285,9 @@ let registration_state_is_sound (d: t_RegistrationDriver) : bool =
     | RegistrationStage_TrackToken  -> track_token
     | RegistrationStage_Done  -> done) &&
   (~.d.f_budget_checked || d.f_rate_allowed) &&
-  (~.d.f_transaction_open || d.f_budget_checked) &&
+  (~.d.f_keys_validated || d.f_budget_checked) &&
+  (~.d.f_keys_valid || d.f_keys_validated) &&
+  (~.d.f_transaction_open || d.f_keys_validated) &&
   (~.d.f_transaction_started || d.f_transaction_open) &&
   (~.d.f_account_inserted || d.f_transaction_started) &&
   (~.d.f_device_inserted || d.f_account_inserted) &&
@@ -278,7 +298,6 @@ let registration_state_is_sound (d: t_RegistrationDriver) : bool =
 
 /// Every effect the driver emits agrees with the state it produces.
 let registration_effect_is_sound (d: t_RegistrationDriver) (v_effect: t_RegistrationEffect) : bool =
-  let valid_keys:bool = d.f_identity_ek_valid && d.f_identity_vk_valid && d.f_share_ek_valid in
   let pre:bool =
     ~.d.f_transaction_open && ~.d.f_transaction_started && ~.d.f_account_inserted &&
     ~.d.f_device_inserted &&
@@ -303,13 +322,22 @@ let registration_effect_is_sound (d: t_RegistrationDriver) (v_effect: t_Registra
     d.f_has_account_limit &&
     ~.d.f_budget_checked &&
     pre
+  | RegistrationEffect_ValidateKeys  ->
+    (match d.f_stage <: t_RegistrationStage with
+      | RegistrationStage_ValidateKeys  -> true
+      | _ -> false) &&
+    d.f_rate_allowed &&
+    d.f_budget_checked &&
+    ~.d.f_keys_validated &&
+    pre
   | RegistrationEffect_BeginTransaction  ->
     (match d.f_stage <: t_RegistrationStage with
       | RegistrationStage_BeginTransaction  -> true
       | _ -> false) &&
     d.f_rate_allowed &&
     d.f_budget_checked &&
-    valid_keys &&
+    d.f_keys_validated &&
+    d.f_keys_valid &&
     ~.d.f_transaction_open &&
     pre
   | RegistrationEffect_InsertAccount  ->
@@ -409,9 +437,8 @@ let request_state (observation: t_RegistrationRequestObservation) : t_Registrati
     f_stage = RegistrationStage_RateLimit <: t_RegistrationStage;
     f_has_account_limit = observation.f_has_account_limit;
     f_account_limit = observation.f_account_limit;
-    f_identity_ek_valid = observation.f_identity_ek_valid;
-    f_identity_vk_valid = observation.f_identity_vk_valid;
-    f_share_ek_valid = observation.f_share_ek_valid;
+    f_keys_valid = false;
+    f_keys_validated = false;
     f_rate_allowed = false;
     f_budget_checked = false;
     f_transaction_open = false;
@@ -427,12 +454,10 @@ let request_state (observation: t_RegistrationRequestObservation) : t_Registrati
   <:
   t_RegistrationDriver
 
-let keys_valid (driver: t_RegistrationDriver) : bool =
-  driver.f_identity_ek_valid && driver.f_identity_vk_valid && driver.f_share_ek_valid
-
-/// Start a per-request registration. The request-side key observations are
-/// checked only after the limiter and the account budget, preserving the
-/// historical error precedence (rate limit, then budget, then key decode).
+/// Start a per-request registration. The expensive key decode and share-key
+/// binding verification are a driver effect emitted only after the limiter and
+/// the account budget, preserving the historical error precedence (rate limit,
+/// then budget, then key decode).
 let begin_registration (observation: t_RegistrationRequestObservation)
     : Prims.Pure t_RegistrationTransition
       Prims.l_True
@@ -444,12 +469,14 @@ let begin_registration (observation: t_RegistrationRequestObservation)
   transition (request_state observation <: t_RegistrationDriver)
     (RegistrationEffect_CheckRateLimit <: t_RegistrationEffect)
 
-/// The budget question is resolved (or not configured): decode the keys and
-/// either open the transaction or refuse the request with no SQL effect.
+/// The budget question is resolved (or not configured): decode the keys next.
+/// No SQL effect happens before the keys are valid.
 let begin_after_budget (driver: t_RegistrationDriver)
     : Prims.Pure t_RegistrationTransition
       (requires
-        driver.f_rate_allowed && driver.f_budget_checked && ~.driver.f_transaction_open &&
+        registration_state_is_sound driver && driver.f_rate_allowed && driver.f_budget_checked &&
+        ~.driver.f_keys_validated &&
+        ~.driver.f_transaction_open &&
         ~.driver.f_transaction_started &&
         ~.driver.f_account_inserted &&
         ~.driver.f_device_inserted &&
@@ -463,13 +490,10 @@ let begin_after_budget (driver: t_RegistrationDriver)
           let result:t_RegistrationTransition = result in
           registration_effect_is_sound result.f_driver result.f_effect &&
           registration_state_is_sound result.f_driver) =
-  if keys_valid driver
-  then
-    transition ({ driver with f_stage = RegistrationStage_BeginTransaction <: t_RegistrationStage }
-        <:
-        t_RegistrationDriver)
-      (RegistrationEffect_BeginTransaction <: t_RegistrationEffect)
-  else terminal driver (RegistrationFailure_InvalidRequest <: t_RegistrationFailure)
+  transition ({ driver with f_stage = RegistrationStage_ValidateKeys <: t_RegistrationStage }
+      <:
+      t_RegistrationDriver)
+    (RegistrationEffect_ValidateKeys <: t_RegistrationEffect)
 
 let on_rate_limit (driver: t_RegistrationDriver) (observation: t_RateLimitObservation)
     : Prims.Pure t_RegistrationTransition
@@ -507,7 +531,53 @@ let on_rate_limit (driver: t_RegistrationDriver) (observation: t_RateLimitObserv
           <:
           t_RegistrationDriver)
         (RegistrationEffect_CheckAccountBudget <: t_RegistrationEffect)
-    else begin_after_budget ({ allowed with f_budget_checked = true } <: t_RegistrationDriver)
+    else
+      begin_after_budget ({
+            allowed with
+            f_stage = RegistrationStage_ValidateKeys <: t_RegistrationStage;
+            f_budget_checked = true
+          }
+          <:
+          t_RegistrationDriver)
+
+let on_keys (driver: t_RegistrationDriver) (observation: t_KeyObservation)
+    : Prims.Pure t_RegistrationTransition
+      (requires
+        registration_state_is_sound driver &&
+        (match driver.f_stage <: t_RegistrationStage with
+          | RegistrationStage_ValidateKeys  -> true
+          | _ -> false) &&
+        driver.f_rate_allowed &&
+        driver.f_budget_checked &&
+        ~.driver.f_keys_validated &&
+        ~.driver.f_transaction_open &&
+        ~.driver.f_transaction_started &&
+        ~.driver.f_account_inserted &&
+        ~.driver.f_device_inserted &&
+        ~.driver.f_committed &&
+        ~.driver.f_token_issued &&
+        ~.driver.f_token_tracked &&
+        ~.driver.f_responded &&
+        ~.driver.f_failed)
+      (ensures
+        fun result ->
+          let result:t_RegistrationTransition = result in
+          registration_effect_is_sound result.f_driver result.f_effect &&
+          (~.(registration_state_is_sound driver <: bool) ||
+          registration_state_is_sound result.f_driver)) =
+  match observation <: t_KeyObservation with
+  | KeyObservation_Invalid  ->
+    terminal driver (RegistrationFailure_InvalidRequest <: t_RegistrationFailure)
+  | KeyObservation_Valid  ->
+    transition ({
+          driver with
+          f_stage = RegistrationStage_BeginTransaction <: t_RegistrationStage;
+          f_keys_valid = true;
+          f_keys_validated = true
+        }
+        <:
+        t_RegistrationDriver)
+      (RegistrationEffect_BeginTransaction <: t_RegistrationEffect)
 
 let on_budget (driver: t_RegistrationDriver) (observation: t_BudgetObservation)
     : Prims.Pure t_RegistrationTransition
@@ -539,7 +609,14 @@ let on_budget (driver: t_RegistrationDriver) (observation: t_BudgetObservation)
     terminal driver (RegistrationFailure_AccountCountStorage <: t_RegistrationFailure)
   | BudgetObservation_Counted { f_count = count } ->
     if count >=. mk_i64 0 && count <. driver.f_account_limit
-    then begin_after_budget ({ driver with f_budget_checked = true } <: t_RegistrationDriver)
+    then
+      begin_after_budget ({
+            driver with
+            f_stage = RegistrationStage_ValidateKeys <: t_RegistrationStage;
+            f_budget_checked = true
+          }
+          <:
+          t_RegistrationDriver)
     else terminal driver (RegistrationFailure_AccountLimit <: t_RegistrationFailure)
 
 let on_transaction (driver: t_RegistrationDriver) (observation: t_TransactionObservation)
@@ -725,6 +802,13 @@ let step (driver: t_RegistrationDriver) (event: t_RegistrationEvent)
       | RegistrationStage_AccountBudget  -> true
       | _ -> false
     then on_budget driver observation
+    else idle driver
+  | RegistrationEvent_KeysObserved observation ->
+    if
+      match driver.f_stage <: t_RegistrationStage with
+      | RegistrationStage_ValidateKeys  -> true
+      | _ -> false
+    then on_keys driver observation
     else idle driver
   | RegistrationEvent_TransactionObserved observation ->
     if
