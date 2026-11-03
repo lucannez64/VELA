@@ -1,0 +1,1538 @@
+{
+  "step": "N1",
+  "title": "FFI call-site inventory",
+  "delegate": "vela-n1-ffi",
+  "read_only": true,
+  "repository_commit_at_analysis": "94696ed",
+  "generated_by": "hand-written inventory of export declarations and caller greps; no builds or tests were run",
+  "count_definitions": {
+    "exports_with_any_call_site": "at least one call site is listed, including in-crate Rust tests and client wrappers that production never calls",
+    "exports_reached_by_production_code": "at least one call site is in reachable production code (the calling client function is itself called in production)"
+  },
+  "bridges": [
+    {
+      "name": "vela-android-bridge",
+      "abi": "JNI + C",
+      "crate_type": [
+        "cdylib",
+        "staticlib",
+        "rlib"
+      ],
+      "exports": 43,
+      "jni_exports": 36,
+      "c_abi_exports": 7,
+      "exports_with_any_call_site": 37,
+      "exports_reached_by_production_code": 32,
+      "policy_deps": [
+        "vela-sync-policy",
+        "vela-client-recovery-policy",
+        "vela-crypto",
+        "vela-core",
+        "vela-import"
+      ],
+      "platform": "Android (Kotlin com.vela.android)",
+      "entry_point": "System.loadLibrary(\"vela_android_bridge\") in androidVELA/.../core/NativeVelaCore.kt:8"
+    },
+    {
+      "name": "vela-apple-bridge",
+      "abi": "C (staticlib -> XCFramework)",
+      "crate_type": [
+        "staticlib",
+        "rlib"
+      ],
+      "exports": 39,
+      "c_abi_exports": 39,
+      "exports_with_any_call_site": 33,
+      "exports_reached_by_production_code": 29,
+      "policy_deps": [
+        "vela-sync-policy",
+        "vela-client-recovery-policy",
+        "vela-crypto",
+        "vela-core",
+        "vela-import"
+      ],
+      "platform": "iOS (Swift iosVELA)",
+      "entry_point": "import VelaCore (module.modulemap)"
+    },
+    {
+      "name": "vela-wasm-bridge",
+      "abi": "wasm-bindgen",
+      "crate_type": [
+        "cdylib",
+        "rlib"
+      ],
+      "exports": 9,
+      "exports_with_any_call_site": 7,
+      "exports_reached_by_production_code": 7,
+      "policy_deps": [
+        "vela-core",
+        "vela-crypto"
+      ],
+      "platform": "browser (webVELA TypeScript)",
+      "entry_point": "webVELA/src/vela.ts:3-11"
+    }
+  ],
+  "exports": [
+    {
+      "bridge": "android",
+      "symbol": "vela_bridge_version",
+      "kind": "C",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:359",
+      "delegates_to": "none \u2014 returns the literal \"vela-android-bridge/0.1.0\"",
+      "extra_logic": "none",
+      "callers": [
+        "none in production (no caller in repo)"
+      ],
+      "call_sites_listed": 0,
+      "reached_by_production_code": false,
+      "has_any_call_site": false
+    },
+    {
+      "bridge": "android",
+      "symbol": "vela_bridge_free_string",
+      "kind": "C",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:846",
+      "delegates_to": "none \u2014 drops a CString",
+      "extra_logic": "none",
+      "callers": [
+        "none in production"
+      ],
+      "call_sites_listed": 0,
+      "reached_by_production_code": false,
+      "has_any_call_site": false
+    },
+    {
+      "bridge": "android",
+      "symbol": "vela_bridge_free_bytes",
+      "kind": "C",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:856",
+      "delegates_to": "none \u2014 rebuilds a boxed slice and drops it",
+      "extra_logic": "none",
+      "callers": [
+        "lib.rs:1981 (in-crate test only)"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": false,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "android",
+      "symbol": "vela_password_strength_json",
+      "kind": "C",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:865",
+      "delegates_to": "vela_core::calculate_password_strength",
+      "extra_logic": "JSON decode; JSON encode",
+      "callers": [
+        "lib.rs:1987 (in-crate test only)"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": false,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "android",
+      "symbol": "vela_encrypt_vault_json",
+      "kind": "C",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:875",
+      "delegates_to": "vela_crypto::kdf::derive + aead::encrypt",
+      "extra_logic": "RMS from base64 in JSON; VaultStore parse validation; base64 out",
+      "callers": [
+        "lib.rs:2432 (in-crate test only)"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": false,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "android",
+      "symbol": "vela_decrypt_vault_json",
+      "kind": "C",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:880",
+      "delegates_to": "vela_crypto::kdf::derive + aead::decrypt",
+      "extra_logic": "RMS from base64 in JSON; base64 in; UTF-8 conversion",
+      "callers": [
+        "lib.rs:2446 (in-crate test only)"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": false,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "android",
+      "symbol": "vela_encrypt_bytes",
+      "kind": "C",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:885",
+      "delegates_to": "vela_crypto::kdf::derive + aead::encrypt",
+      "extra_logic": "returns VelaByteBuffer; on error returns null/0 with **no error message**",
+      "callers": [
+        "none in production",
+        "none in the crate's tests either"
+      ],
+      "call_sites_listed": 0,
+      "reached_by_production_code": false,
+      "has_any_call_site": false
+    },
+    {
+      "bridge": "android",
+      "symbol": "nativeVersion",
+      "kind": "JNI",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:364",
+      "delegates_to": "none \u2014 literal version string",
+      "extra_logic": "none",
+      "callers": [
+        "androidVELA/.../core/NativeVelaCore.kt:27 -> SharedCoreStatus.kt:12 (display only)"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "android",
+      "symbol": "nativeEnrollmentVerificationCode",
+      "kind": "JNI",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:376",
+      "delegates_to": "vela_crypto::verification::enrollment_verification_code",
+      "extra_logic": "a JString that fails to decode becomes \"\" (silently)",
+      "callers": [
+        "androidVELA/.../ui/screens/EnrollDeviceScreen.kt:94 (shows code before import)"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "android",
+      "symbol": "nativeEncryptVaultJson",
+      "kind": "JNI",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:390",
+      "delegates_to": "vela_crypto::kdf::derive + aead::encrypt",
+      "extra_logic": "RMS from JByteArray; VaultStore parse validation; base64 out",
+      "callers": [
+        "androidVELA/.../security/EncryptedVaultStore.kt:84 (persists ciphertext, null -> error)"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "android",
+      "symbol": "nativeDecryptVaultJson",
+      "kind": "JNI",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:403",
+      "delegates_to": "vela_crypto::kdf::derive + aead::decrypt",
+      "extra_logic": "RMS from JByteArray; base64 in; UTF-8 conversion",
+      "callers": [
+        "androidVELA/.../security/EncryptedVaultStore.kt:53 (unlock; null -> error, no fallback)"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "android",
+      "symbol": "nativeEncryptVaultChunkJson",
+      "kind": "JNI",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:416",
+      "delegates_to": "vela_crypto::kdf::chunk_key + rekey::seal_fleet_chunk",
+      "extra_logic": "i64->u64 epoch with positivity check; VaultStore parse validation",
+      "callers": [
+        "androidVELA/.../sync/VaultSyncManager.kt:1061 (upload path)",
+        "androidVELA/.../core/LocalVaultRepository.kt:102 encryptSnapshotForSync (no live caller)"
+      ],
+      "call_sites_listed": 2,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "android",
+      "symbol": "nativeDecryptVaultChunkJson",
+      "kind": "JNI",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:429",
+      "delegates_to": "vela_crypto::kdf::chunk_key + rekey::open_fleet_chunk",
+      "extra_logic": "no admission decision of any kind (documented low-level path)",
+      "callers": [
+        "androidVELA/.../core/LocalVaultRepository.kt:116 decryptSyncedVault \u2014 dead code: no caller"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": false,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "android",
+      "symbol": "nativeDecryptAdmittedVaultChunkJson",
+      "kind": "JNI",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:446",
+      "delegates_to": "vela_sync_policy::plan_sync_epoch_match; aead::is_sealed; rekey::open_fleet_chunk; vela_sync_policy::plan_chunk_download",
+      "extra_logic": "adds: (1) refuses any blob without the VAE1 sealed header \u2014 a gate that exists in no policy/crypto crate; (2) sets aad_binding_verified literally true after the open; (3) derives key_epoch_positive from the integer; (4) formats the refusal message; (5) returns the admitted clock",
+      "callers": [
+        "androidVELA/.../sync/VaultSyncManager.kt:988 (downloadRemoteVault; null -> error(); floors recorded only after replaceAllAdmitted 594/678/695/717/748)"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "android",
+      "symbol": "nativeIdentityCreateJson",
+      "kind": "JNI",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:469",
+      "delegates_to": "vela_crypto::identity::DeviceIdentity::generate + identity::register",
+      "extra_logic": "seal key from JByteArray (32-byte check); public halves + sealed blob serialised",
+      "callers": [
+        "androidVELA/.../sync/ServerIdentityStore.kt:68, :108"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "android",
+      "symbol": "nativeIdentityImportJson",
+      "kind": "JNI",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:482",
+      "delegates_to": "vela_crypto::identity::DeviceIdentity::import",
+      "extra_logic": "base64 decode of hybrid_sk/share_dk/hybrid_ek; empty string means None",
+      "callers": [
+        "androidVELA/.../sync/ServerIdentityStore.kt:151, :257 (legacy migration)"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "android",
+      "symbol": "nativeIdentityOpenJson",
+      "kind": "JNI",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:495",
+      "delegates_to": "vela_crypto::identity::DeviceIdentity::open",
+      "extra_logic": "seal key 32-byte check",
+      "callers": [
+        "androidVELA/.../sync/ServerIdentityStore.kt:177"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "android",
+      "symbol": "nativeIdentityRotateShareKeyJson",
+      "kind": "JNI",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:508",
+      "delegates_to": "identity.rotate_share_key + identity.seal",
+      "extra_logic": "seal key 32-byte check",
+      "callers": [
+        "androidVELA/.../sync/ServerIdentityStore.kt:190"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "android",
+      "symbol": "nativeIdentitySignJson",
+      "kind": "JNI",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:521",
+      "delegates_to": "identity.sign_auth",
+      "extra_logic": "base64 decode challenge, base64 encode signature",
+      "callers": [
+        "androidVELA/.../sync/VaultSyncManager.kt:856 (device auth)"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "android",
+      "symbol": "nativeIdentitySignShareEkJson",
+      "kind": "JNI",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:556",
+      "delegates_to": "identity.sign_share_ek_binding",
+      "extra_logic": "base64 decode/encode",
+      "callers": [
+        "androidVELA/.../sync/ServerIdentityStore.kt:74, :114, :194",
+        "androidVELA/.../sync/VaultSyncManager.kt:823"
+      ],
+      "call_sites_listed": 2,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "android",
+      "symbol": "nativeOpenRekeyCapsuleJson",
+      "kind": "JNI",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:569",
+      "delegates_to": "vela_crypto::rekey::open_rekey_capsule",
+      "extra_logic": "previous_rms arrives as a JSON integer array (key material inside JSON); 32-byte check",
+      "callers": [
+        "none \u2014 NativeVelaCore.kt declares no matching external"
+      ],
+      "call_sites_listed": 0,
+      "reached_by_production_code": false,
+      "has_any_call_site": false
+    },
+    {
+      "bridge": "android",
+      "symbol": "nativePasskeyKeygenJson",
+      "kind": "JNI",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:586",
+      "delegates_to": "bridge-local src/passkey.rs keygen (p256 + ciborium + sha2). NOT delegated to vela-crypto/vela-core",
+      "extra_logic": "whole WebAuthn primitive implemented inside the bridge as a hand-mirrored copy of desktopVELA/vela-desktop-core/src/passkey.rs",
+      "callers": [
+        "androidVELA/.../security/passkey/PasskeyAuthenticator.kt:84"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "android",
+      "symbol": "nativePasskeyAuthDataJson",
+      "kind": "JNI",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:599",
+      "delegates_to": "bridge-local passkey::build_authenticator_data",
+      "extra_logic": "same mirrored implementation; the UP/UV flags arrive as an opaque caller int",
+      "callers": [
+        "androidVELA/.../security/passkey/PasskeyAuthenticator.kt:89, :171"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "android",
+      "symbol": "nativePasskeyAttestationObjectJson",
+      "kind": "JNI",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:612",
+      "delegates_to": "bridge-local passkey::build_attestation_object",
+      "extra_logic": "same mirrored implementation (none attestation, zero AAGUID)",
+      "callers": [
+        ".../PasskeyAuthenticator.kt:96"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "android",
+      "symbol": "nativePasskeySignJson",
+      "kind": "JNI",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:625",
+      "delegates_to": "bridge-local passkey::sign (p256 ECDSA-SHA256, DER)",
+      "extra_logic": "same mirrored implementation",
+      "callers": [
+        ".../PasskeyAuthenticator.kt:180"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "android",
+      "symbol": "nativeIdentityEnrollmentFingerprintJson",
+      "kind": "JNI",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:640",
+      "delegates_to": "identity.enrollment_fingerprint",
+      "extra_logic": "handle only; no key bytes accepted",
+      "callers": [
+        "androidVELA/.../sync/ServerIdentityStore.kt:138"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "android",
+      "symbol": "nativeIdentitySignEnrollmentResultJson",
+      "kind": "JNI",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:652",
+      "delegates_to": "identity.sign_enrollment_result",
+      "extra_logic": "base64 encode",
+      "callers": [
+        "androidVELA/.../sync/VaultSyncManager.kt:183"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "android",
+      "symbol": "nativeIdentityOpenEnrollmentCapsuleJson",
+      "kind": "JNI",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:664",
+      "delegates_to": "identity.open_identity_capsule",
+      "extra_logic": "rejects any plaintext that is not exactly 32 bytes; base64 out",
+      "callers": [
+        "androidVELA/.../sync/VaultSyncManager.kt:200"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "android",
+      "symbol": "nativeIdentitySealSignedShareJson",
+      "kind": "JNI",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:677",
+      "delegates_to": "identity.seal_signed_share",
+      "extra_logic": "base64 decode/encode only",
+      "callers": [
+        "androidVELA/.../core/FeatureRepositories.kt:167, :229"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "android",
+      "symbol": "nativeIdentityAdmitShareJson",
+      "kind": "JNI",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:690",
+      "delegates_to": "identity.admit_share -> vela_crypto::share_envelope::admit -> vela_client_share_policy::plan_share_admission",
+      "extra_logic": "maps the optional pin JSON to SharePin; recomputes sender_fingerprint; re-serialises the admitted pin. The `pin` argument is optional and no mobile caller ever supplies it.",
+      "callers": [
+        "androidVELA/.../core/FeatureRepositories.kt:345 (null -> share silently dropped)"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "android",
+      "symbol": "nativeIdentityOpenShareJson",
+      "kind": "JNI",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:702",
+      "delegates_to": "identity.open_share",
+      "extra_logic": "base64 decode/encode",
+      "callers": [
+        "none \u2014 NativeVelaCore.kt:363 wrapper has no caller"
+      ],
+      "call_sites_listed": 0,
+      "reached_by_production_code": false,
+      "has_any_call_site": false
+    },
+    {
+      "bridge": "android",
+      "symbol": "nativeIdentityForgetJson",
+      "kind": "JNI",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:714",
+      "delegates_to": "identity::forget",
+      "extra_logic": "returns {ok: bool}",
+      "callers": [
+        "androidVELA/.../sync/ServerIdentityStore.kt:230 (return value ignored by design)"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "android",
+      "symbol": "nativeIdentityForgetAllJson",
+      "kind": "JNI",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:724",
+      "delegates_to": "identity::forget_all",
+      "extra_logic": "none",
+      "callers": [
+        "none \u2014 NativeVelaCore.kt:439 wrapper has no caller"
+      ],
+      "call_sites_listed": 0,
+      "reached_by_production_code": false,
+      "has_any_call_site": false
+    },
+    {
+      "bridge": "android",
+      "symbol": "nativeWebSessionChunkKeysJson",
+      "kind": "JNI",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:736",
+      "delegates_to": "vela_crypto::kdf::web_session_chunk_keys",
+      "extra_logic": "ignores the request JSON entirely; base64-encodes each key",
+      "callers": [
+        "androidVELA/.../core/FeatureRepositories.kt:290 (rw grant; RMS wiped in finally)"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "android",
+      "symbol": "nativeDecryptRmsCapsuleJson",
+      "kind": "JNI",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:749",
+      "delegates_to": "aead::decrypt (via decrypt_rms_capsule_json)",
+      "extra_logic": "requires exactly 32 plaintext bytes; returns the secret through an out JByteArray; internally base64-encodes then decodes the same RMS",
+      "callers": [
+        "androidVELA/.../sync/VaultSyncManager.kt:131"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "android",
+      "symbol": "nativeDecryptEnrollmentPackageJson",
+      "kind": "JNI",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:762",
+      "delegates_to": "aead::decrypt",
+      "extra_logic": "32-byte key check; UTF-8 conversion",
+      "callers": [
+        "androidVELA/.../sync/VaultSyncManager.kt:1330"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "android",
+      "symbol": "nativeSealShareJson",
+      "kind": "JNI",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:774",
+      "delegates_to": "vela_crypto::kem::seal_share",
+      "extra_logic": "base64 decode/encode",
+      "callers": [
+        "androidVELA/.../core/FeatureRepositories.kt:302 (web-session envelope)"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "android",
+      "symbol": "nativeSplitRecoveryJson",
+      "kind": "JNI",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:788",
+      "delegates_to": "vela_crypto::shamir::split",
+      "extra_logic": "RMS from JByteArray; base64 per share",
+      "callers": [
+        "androidVELA/.../sync/VaultSyncManager.kt:244"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "android",
+      "symbol": "nativeCombineRecoveryJson",
+      "kind": "JNI",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:804",
+      "delegates_to": "vela_crypto::recovery::reconstruct_account_recovery OR shamir::reconstruct (legacy)",
+      "extra_logic": "chooses the path from which caller-supplied binding fields are present; enforces exactly two shares on the bound path; maps channel strings to the enum; trusts the caller's recipient_bound flag; returns the RMS through an out JByteArray",
+      "callers": [
+        "androidVELA/.../sync/VaultSyncManager.kt:484 (combinePairRecovery)"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "android",
+      "symbol": "nativeRmsPossessionHashJson",
+      "kind": "JNI",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:818",
+      "delegates_to": "vela_crypto::recovery::rms_possession_commitment",
+      "extra_logic": "requires exactly 32 bytes; hand-rolled JSON, bypasses the shared helper",
+      "callers": [
+        "androidVELA/.../sync/VaultSyncManager.kt:241"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "android",
+      "symbol": "nativePlanRecoveryPublicationJson",
+      "kind": "JNI",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:836",
+      "delegates_to": "vela_client_recovery_policy::plan_publication_resume",
+      "extra_logic": "12 caller-supplied booleans/ints pass straight through; enum -> string mapping",
+      "callers": [
+        "androidVELA/.../sync/VaultSyncManager.kt:426"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "android",
+      "symbol": "nativeParseImportJson",
+      "kind": "JNI",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:2607",
+      "delegates_to": "vela_import::parse_import_request",
+      "extra_logic": "JSON in/out",
+      "callers": [
+        "androidVELA/.../core/VaultImport.kt:40",
+        "androidVELA/app/src/debug/.../InstrumentReviewActivity.kt:297"
+      ],
+      "call_sites_listed": 2,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "android",
+      "symbol": "nativeRichItemsJson",
+      "kind": "JNI",
+      "rust_location": "libVELA/vela-android-bridge/src/lib.rs:2617",
+      "delegates_to": "vela_core::rich_api::process",
+      "extra_logic": "JSON in/out",
+      "callers": [
+        "androidVELA/.../core/RichItems.kt:42, :45, :47, :51",
+        "androidVELA/.../core/LocalVaultRepository.kt:133"
+      ],
+      "call_sites_listed": 2,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "apple",
+      "symbol": "vela_ffi_version",
+      "kind": "C",
+      "rust_location": "libVELA/vela-apple-bridge/src/lib.rs:324",
+      "delegates_to": "none \u2014 literal version string",
+      "extra_logic": "none",
+      "callers": [
+        "iosVELA/Shared/VelaCoreFFI.swift:66 -> SettingsView.swift:248, WelcomeView.swift:31 (display only)",
+        "libVELA/vela-apple-bridge/smoke/smoke.swift:13"
+      ],
+      "call_sites_listed": 2,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "apple",
+      "symbol": "vela_ffi_free_string",
+      "kind": "C",
+      "rust_location": "libVELA/vela-apple-bridge/src/lib.rs:333",
+      "delegates_to": "none \u2014 drops a CString",
+      "extra_logic": "none",
+      "callers": [
+        "iosVELA/Shared/VelaCoreFFI.swift:30 (consume helper, every call)"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "apple",
+      "symbol": "vela_ffi_enrollment_verification_code",
+      "kind": "C",
+      "rust_location": "libVELA/vela-apple-bridge/src/lib.rs:348",
+      "delegates_to": "vela_crypto::verification::enrollment_verification_code",
+      "extra_logic": "null/invalid C string degrades to \"\"",
+      "callers": [
+        "iosVELA/Shared/VelaCoreFFI.swift:510 -> Sources/EnrollView.swift:35"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "apple",
+      "symbol": "vela_ffi_password_strength_json",
+      "kind": "C",
+      "rust_location": "libVELA/vela-apple-bridge/src/lib.rs:358",
+      "delegates_to": "vela_core::calculate_password_strength",
+      "extra_logic": "JSON decode/encode",
+      "callers": [
+        "iosVELA/Shared/VelaCoreFFI.swift:600 (wrapper has no caller)"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": false,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "apple",
+      "symbol": "vela_ffi_encrypt_vault_json",
+      "kind": "C",
+      "rust_location": "libVELA/vela-apple-bridge/src/lib.rs:375",
+      "delegates_to": "vela_crypto::kdf::derive + aead::encrypt",
+      "extra_logic": "RMS as (ptr,len) beside the JSON; VaultStore parse validation; base64 out",
+      "callers": [
+        "iosVELA/Shared/VelaCoreFFI.swift:609 -> Shared/VaultRepository.swift:95, :116"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "apple",
+      "symbol": "vela_ffi_decrypt_vault_json",
+      "kind": "C",
+      "rust_location": "libVELA/vela-apple-bridge/src/lib.rs:392",
+      "delegates_to": "vela_crypto::kdf::derive + aead::decrypt",
+      "extra_logic": "RMS as (ptr,len); base64 in; UTF-8 conversion",
+      "callers": [
+        "iosVELA/Shared/VelaCoreFFI.swift:620 -> Shared/VaultRepository.swift:104, :129"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "apple",
+      "symbol": "vela_ffi_identity_create",
+      "kind": "C",
+      "rust_location": "libVELA/vela-apple-bridge/src/lib.rs:412",
+      "delegates_to": "DeviceIdentity::generate + identity::register",
+      "extra_logic": "seal key as (ptr,len); public halves + sealed blob serialised",
+      "callers": [
+        "iosVELA/Shared/VelaCoreFFI.swift:128 -> Sources/AccountViewModel.swift:109, :633, :783"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "apple",
+      "symbol": "vela_ffi_identity_import",
+      "kind": "C",
+      "rust_location": "libVELA/vela-apple-bridge/src/lib.rs:423",
+      "delegates_to": "DeviceIdentity::import",
+      "extra_logic": "base64 decode; empty string means None",
+      "callers": [
+        "iosVELA/Shared/VelaCoreFFI.swift:149 -> Shared/AccountStore.swift:260 (legacy migration)"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "apple",
+      "symbol": "vela_ffi_identity_open",
+      "kind": "C",
+      "rust_location": "libVELA/vela-apple-bridge/src/lib.rs:435",
+      "delegates_to": "DeviceIdentity::open",
+      "extra_logic": "seal key as (ptr,len)",
+      "callers": [
+        "iosVELA/Shared/VelaCoreFFI.swift:160 -> Shared/AccountStore.swift:251"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "apple",
+      "symbol": "vela_ffi_identity_rotate_share_key",
+      "kind": "C",
+      "rust_location": "libVELA/vela-apple-bridge/src/lib.rs:447",
+      "delegates_to": "identity.rotate_share_key + identity.seal",
+      "extra_logic": "seal key as (ptr,len)",
+      "callers": [
+        "iosVELA/Shared/VelaCoreFFI.swift:171 -> Sources/AccountViewModel.swift:203"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "apple",
+      "symbol": "vela_ffi_open_rekey_capsule_json",
+      "kind": "C",
+      "rust_location": "libVELA/vela-apple-bridge/src/lib.rs:464",
+      "delegates_to": "vela_crypto::rekey::open_rekey_capsule",
+      "extra_logic": "previous RMS arrives base64 **inside the JSON** (audit I-2 says key material crosses as bytes); 32-byte check",
+      "callers": [
+        "none \u2014 not wrapped by VelaCoreFFI.swift"
+      ],
+      "call_sites_listed": 0,
+      "reached_by_production_code": false,
+      "has_any_call_site": false
+    },
+    {
+      "bridge": "apple",
+      "symbol": "vela_ffi_identity_sign_share_ek_json",
+      "kind": "C",
+      "rust_location": "libVELA/vela-apple-bridge/src/lib.rs:473",
+      "delegates_to": "identity.sign_share_ek_binding",
+      "extra_logic": "base64 decode/encode",
+      "callers": [
+        "iosVELA/Shared/VelaCoreFFI.swift:189 -> Sources/AccountViewModel.swift:119, :210"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "apple",
+      "symbol": "vela_ffi_identity_sign_json",
+      "kind": "C",
+      "rust_location": "libVELA/vela-apple-bridge/src/lib.rs:480",
+      "delegates_to": "identity.sign_auth",
+      "extra_logic": "base64 decode/encode",
+      "callers": [
+        "iosVELA/Shared/VelaCoreFFI.swift:182 -> Sources/AccountViewModel.swift:149, :641, :704, :822"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "apple",
+      "symbol": "vela_ffi_identity_open_share_json",
+      "kind": "C",
+      "rust_location": "libVELA/vela-apple-bridge/src/lib.rs:487",
+      "delegates_to": "identity.open_share",
+      "extra_logic": "base64 decode/encode",
+      "callers": [
+        "iosVELA/Shared/VelaCoreFFI.swift:196 (wrapper has no caller)"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": false,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "apple",
+      "symbol": "vela_ffi_identity_seal_signed_share_json",
+      "kind": "C",
+      "rust_location": "libVELA/vela-apple-bridge/src/lib.rs:498",
+      "delegates_to": "identity.seal_signed_share",
+      "extra_logic": "base64 decode/encode",
+      "callers": [
+        "iosVELA/Shared/VelaCoreFFI.swift:235 -> Sources/AccountViewModel.swift:237, :368"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "apple",
+      "symbol": "vela_ffi_identity_admit_share_json",
+      "kind": "C",
+      "rust_location": "libVELA/vela-apple-bridge/src/lib.rs:509",
+      "delegates_to": "identity.admit_share -> vela_crypto::share_envelope::admit -> vela_client_share_policy::plan_share_admission",
+      "extra_logic": "pin JSON <-> SharePin; recomputes sender_fingerprint; the `pin` argument is optional and no iOS caller supplies it",
+      "callers": [
+        "iosVELA/Shared/VelaCoreFFI.swift:251 -> Sources/SharingViewModel.swift:51 (nil -> \"Unverified share\" row)"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "apple",
+      "symbol": "vela_ffi_identity_enrollment_fingerprint_json",
+      "kind": "C",
+      "rust_location": "libVELA/vela-apple-bridge/src/lib.rs:520",
+      "delegates_to": "identity.enrollment_fingerprint",
+      "extra_logic": "handle only",
+      "callers": [
+        "iosVELA/Shared/VelaCoreFFI.swift:283 -> Sources/AccountViewModel.swift:791"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "apple",
+      "symbol": "vela_ffi_identity_sign_enrollment_result_json",
+      "kind": "C",
+      "rust_location": "libVELA/vela-apple-bridge/src/lib.rs:529",
+      "delegates_to": "identity.sign_enrollment_result",
+      "extra_logic": "base64 encode",
+      "callers": [
+        "iosVELA/Shared/VelaCoreFFI.swift:294 -> Sources/AccountViewModel.swift:801"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "apple",
+      "symbol": "vela_ffi_identity_open_enrollment_capsule_json",
+      "kind": "C",
+      "rust_location": "libVELA/vela-apple-bridge/src/lib.rs:538",
+      "delegates_to": "identity.open_identity_capsule",
+      "extra_logic": "rejects plaintext not exactly 32 bytes",
+      "callers": [
+        "iosVELA/Shared/VelaCoreFFI.swift:304 -> Sources/AccountViewModel.swift:840"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "apple",
+      "symbol": "vela_ffi_identity_forget_json",
+      "kind": "C",
+      "rust_location": "libVELA/vela-apple-bridge/src/lib.rs:547",
+      "delegates_to": "identity::forget",
+      "extra_logic": "returns {ok: bool}",
+      "callers": [
+        "iosVELA/Shared/VelaCoreFFI.swift:312 (wrapper has no caller)"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": false,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "apple",
+      "symbol": "vela_ffi_identity_forget_all",
+      "kind": "C",
+      "rust_location": "libVELA/vela-apple-bridge/src/lib.rs:552",
+      "delegates_to": "identity::forget_all",
+      "extra_logic": "none",
+      "callers": [
+        "iosVELA/Shared/VelaCoreFFI.swift:316 -> Shared/AccountStore.swift:236 (clear)"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "apple",
+      "symbol": "vela_ffi_web_session_chunk_keys_json",
+      "kind": "C",
+      "rust_location": "libVELA/vela-apple-bridge/src/lib.rs:563",
+      "delegates_to": "vela_crypto::kdf::web_session_chunk_keys",
+      "extra_logic": "request struct has no fields; base64-encodes each key",
+      "callers": [
+        "iosVELA/Shared/VelaCoreFFI.swift:491 -> Sources/AccountViewModel.swift:298 (rw grant)"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "apple",
+      "symbol": "vela_ffi_encrypt_vault_chunk_json",
+      "kind": "C",
+      "rust_location": "libVELA/vela-apple-bridge/src/lib.rs:580",
+      "delegates_to": "vela_crypto::kdf::chunk_key + rekey::seal_fleet_chunk",
+      "extra_logic": "key_epoch defaults to 1 when absent; VaultStore parse validation",
+      "callers": [
+        "iosVELA/Shared/VelaCoreFFI.swift:358 -> Shared/SyncEngine.swift:366 (upload)"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "apple",
+      "symbol": "vela_ffi_decrypt_vault_chunk_json",
+      "kind": "C",
+      "rust_location": "libVELA/vela-apple-bridge/src/lib.rs:597",
+      "delegates_to": "vela_crypto::kdf::chunk_key + rekey::open_fleet_chunk",
+      "extra_logic": "key_epoch defaults to 1; no admission decision",
+      "callers": [
+        "iosVELA/Shared/VelaCoreFFI.swift:390 \u2014 no production caller (tests only)"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": false,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "apple",
+      "symbol": "vela_ffi_decrypt_admitted_vault_chunk_json",
+      "kind": "C",
+      "rust_location": "libVELA/vela-apple-bridge/src/lib.rs:616",
+      "delegates_to": "vela_sync_policy::plan_sync_epoch_match; aead::is_sealed; rekey::open_fleet_chunk; vela_sync_policy::plan_chunk_download",
+      "extra_logic": "same five additions as the Android export: sealed-header gate (not in any policy crate), aad_binding_verified := true after the open, key_epoch_positive from the integer, message formatting, admitted clock",
+      "callers": [
+        "iosVELA/Shared/VelaCoreFFI.swift:444 (OrThrow) -> Shared/SyncEngine.swift:311",
+        "iosVELA/Shared/VelaCoreFFI.swift:470 (try? wrapper) -> tests only"
+      ],
+      "call_sites_listed": 2,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "apple",
+      "symbol": "vela_ffi_decrypt_rms_capsule_json",
+      "kind": "C",
+      "rust_location": "libVELA/vela-apple-bridge/src/lib.rs:630",
+      "delegates_to": "aead::decrypt",
+      "extra_logic": "accepts plaintext **>= 32** bytes and silently truncates to the first 32 (Android requires exactly 32)",
+      "callers": [
+        "iosVELA/Shared/VelaCoreFFI.swift:516 -> Sources/AccountViewModel.swift:722"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "apple",
+      "symbol": "vela_ffi_decrypt_enrollment_package_json",
+      "kind": "C",
+      "rust_location": "libVELA/vela-apple-bridge/src/lib.rs:639",
+      "delegates_to": "aead::decrypt",
+      "extra_logic": "32-byte key check; UTF-8 conversion",
+      "callers": [
+        "iosVELA/Shared/VelaCoreFFI.swift:523 -> Shared/EnrollmentCode.swift:82"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "apple",
+      "symbol": "vela_ffi_split_recovery_json",
+      "kind": "C",
+      "rust_location": "libVELA/vela-apple-bridge/src/lib.rs:651",
+      "delegates_to": "vela_crypto::shamir::split",
+      "extra_logic": "RMS as (ptr,len); base64 per share",
+      "callers": [
+        "iosVELA/Shared/VelaCoreFFI.swift:534 -> Sources/AccountViewModel.swift:442"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "apple",
+      "symbol": "vela_ffi_combine_recovery_json",
+      "kind": "C",
+      "rust_location": "libVELA/vela-apple-bridge/src/lib.rs:665",
+      "delegates_to": "recovery::reconstruct_account_recovery OR shamir::reconstruct",
+      "extra_logic": "same path selection/enum mapping/recipient_bound trust as Android",
+      "callers": [
+        "iosVELA/Shared/VelaCoreFFI.swift:543 (legacy wrapper, no caller)",
+        "iosVELA/Shared/VelaCoreFFI.swift:587 (combinePairRecovery) -> Sources/AccountViewModel.swift:616"
+      ],
+      "call_sites_listed": 2,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "apple",
+      "symbol": "vela_ffi_seal_contact_share_json",
+      "kind": "C",
+      "rust_location": "libVELA/vela-apple-bridge/src/lib.rs:674",
+      "delegates_to": "recovery::seal_contact_share",
+      "extra_logic": "assembles the outer envelope JSON itself (version/account/epoch/split/coordinate)",
+      "callers": [
+        "none \u2014 no Swift wrapper"
+      ],
+      "call_sites_listed": 0,
+      "reached_by_production_code": false,
+      "has_any_call_site": false
+    },
+    {
+      "bridge": "apple",
+      "symbol": "vela_ffi_open_contact_share_json",
+      "kind": "C",
+      "rust_location": "libVELA/vela-apple-bridge/src/lib.rs:683",
+      "delegates_to": "recovery::open_contact_share / open_contact_share_response",
+      "extra_logic": "picks the opener from a caller-supplied `response` boolean",
+      "callers": [
+        "none \u2014 no Swift wrapper"
+      ],
+      "call_sites_listed": 0,
+      "reached_by_production_code": false,
+      "has_any_call_site": false
+    },
+    {
+      "bridge": "apple",
+      "symbol": "vela_ffi_seal_contact_share_response_json",
+      "kind": "C",
+      "rust_location": "libVELA/vela-apple-bridge/src/lib.rs:692",
+      "delegates_to": "recovery::seal_contact_share_response",
+      "extra_logic": "assembles the response envelope JSON",
+      "callers": [
+        "none \u2014 no Swift wrapper"
+      ],
+      "call_sites_listed": 0,
+      "reached_by_production_code": false,
+      "has_any_call_site": false
+    },
+    {
+      "bridge": "apple",
+      "symbol": "vela_ffi_possession_proof_json",
+      "kind": "C",
+      "rust_location": "libVELA/vela-apple-bridge/src/lib.rs:701",
+      "delegates_to": "recovery::rms_possession_sign + rms_possession_commitment",
+      "extra_logic": "RMS arrives base64 in JSON; computes both the commitment and the proof",
+      "callers": [
+        "none \u2014 no Swift wrapper"
+      ],
+      "call_sites_listed": 0,
+      "reached_by_production_code": false,
+      "has_any_call_site": false
+    },
+    {
+      "bridge": "apple",
+      "symbol": "vela_ffi_generate_recovery_request_json",
+      "kind": "C",
+      "rust_location": "libVELA/vela-apple-bridge/src/lib.rs:709",
+      "delegates_to": "vela_crypto::kem::generate_keypair",
+      "extra_logic": "base64 encode of both halves",
+      "callers": [
+        "none \u2014 no Swift wrapper"
+      ],
+      "call_sites_listed": 0,
+      "reached_by_production_code": false,
+      "has_any_call_site": false
+    },
+    {
+      "bridge": "apple",
+      "symbol": "vela_ffi_rms_possession_hash_json",
+      "kind": "C",
+      "rust_location": "libVELA/vela-apple-bridge/src/lib.rs:716",
+      "delegates_to": "recovery::rms_possession_commitment",
+      "extra_logic": "RMS as (ptr,len); JSON built inline",
+      "callers": [
+        "iosVELA/Shared/VelaCoreFFI.swift:594 -> Sources/AccountViewModel.swift:446"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "apple",
+      "symbol": "vela_ffi_plan_recovery_publication_json",
+      "kind": "C",
+      "rust_location": "libVELA/vela-apple-bridge/src/lib.rs:733",
+      "delegates_to": "vela_client_recovery_policy::plan_publication_resume",
+      "extra_logic": "12 caller-supplied facts pass through; enum -> string mapping",
+      "callers": [
+        "iosVELA/Shared/VelaCoreFFI.swift:91 -> Sources/AccountViewModel.swift:996"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "apple",
+      "symbol": "vela_ffi_seal_share_json",
+      "kind": "C",
+      "rust_location": "libVELA/vela-apple-bridge/src/lib.rs:744",
+      "delegates_to": "vela_crypto::kem::seal_share",
+      "extra_logic": "base64 decode/encode",
+      "callers": [
+        "iosVELA/Shared/VelaCoreFFI.swift:324 -> Sources/AccountViewModel.swift:309"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "apple",
+      "symbol": "vela_ffi_rich_items_json",
+      "kind": "C",
+      "rust_location": "libVELA/vela-apple-bridge/src/lib.rs:2397",
+      "delegates_to": "vela_core::rich_api::process",
+      "extra_logic": "JSON in/out",
+      "callers": [
+        "iosVELA/Shared/VelaCoreFFI.swift:9 -> Shared/VaultMerge.swift:60, :88; Sources/VaultViewModel.swift:220, :238, :287, :302, :531, :555, :630"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "apple",
+      "symbol": "vela_ffi_parse_import_json",
+      "kind": "C",
+      "rust_location": "libVELA/vela-apple-bridge/src/lib.rs:2407",
+      "delegates_to": "vela_import::parse_import_request",
+      "extra_logic": "JSON in/out",
+      "callers": [
+        "iosVELA/Shared/VelaCoreFFI.swift:20 -> Sources/VaultViewModel.swift:490"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "wasm",
+      "symbol": "vela_wasm_version",
+      "kind": "wasm_bindgen",
+      "rust_location": "libVELA/vela-wasm-bridge/src/lib.rs:300",
+      "delegates_to": "none \u2014 literal version string",
+      "extra_logic": "none",
+      "callers": [
+        "none \u2014 not imported by webVELA/src/vela.ts"
+      ],
+      "call_sites_listed": 0,
+      "reached_by_production_code": false,
+      "has_any_call_site": false
+    },
+    {
+      "bridge": "wasm",
+      "symbol": "generate_ephemeral_keypair",
+      "kind": "wasm_bindgen",
+      "rust_location": "libVELA/vela-wasm-bridge/src/lib.rs:307",
+      "delegates_to": "vela_crypto::kem::generate_keypair",
+      "extra_logic": "base64 encode",
+      "callers": [
+        "webVELA/src/vela.ts:28 -> webVELA/src/main.ts:666"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "wasm",
+      "symbol": "generate_signing_keypair",
+      "kind": "wasm_bindgen",
+      "rust_location": "libVELA/vela-wasm-bridge/src/lib.rs:314",
+      "delegates_to": "vela_crypto::signing::generate_keypair",
+      "extra_logic": "base64 encode; secret stays in JS/WASM memory",
+      "callers": [
+        "webVELA/src/vela.ts:32 -> webVELA/src/main.ts:667"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "wasm",
+      "symbol": "create_auth_signature_json",
+      "kind": "wasm_bindgen",
+      "rust_location": "libVELA/vela-wasm-bridge/src/lib.rs:321",
+      "delegates_to": "vela_crypto::signing::auth_message + signing::sign",
+      "extra_logic": "decodes caller-supplied sk; JSON in/out",
+      "callers": [
+        "webVELA/src/vela.ts:37 -> webVELA/src/main.ts:451 (RW token request)"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "wasm",
+      "symbol": "open_share_json",
+      "kind": "wasm_bindgen",
+      "rust_location": "libVELA/vela-wasm-bridge/src/lib.rs:328",
+      "delegates_to": "vela_crypto::kem::open_share",
+      "extra_logic": "base64 decode; UTF-8 conversion",
+      "callers": [
+        "webVELA/src/vela.ts:43 -> webVELA/src/main.ts:601 (grant capsule -> chunk keys)"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "wasm",
+      "symbol": "open_link_json",
+      "kind": "wasm_bindgen",
+      "rust_location": "libVELA/vela-wasm-bridge/src/lib.rs:336",
+      "delegates_to": "vela_crypto::link::open_link",
+      "extra_logic": "decodes URL-safe link key, optional salt/passphrase; treats empty passphrase as absent",
+      "callers": [
+        "webVELA/src/vela.ts:61 -> webVELA/src/send.ts:182"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "wasm",
+      "symbol": "encrypt_vault_chunk_json",
+      "kind": "wasm_bindgen",
+      "rust_location": "libVELA/vela-wasm-bridge/src/lib.rs:343",
+      "delegates_to": "vela_crypto::rekey::seal_fleet_chunk",
+      "extra_logic": "per-chunk key (no RMS in this bridge by design); epoch Option -> 1",
+      "callers": [
+        "webVELA/src/vela.ts:119 -> webVELA/src/main.ts:574 (save)"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "wasm",
+      "symbol": "decrypt_vault_chunk_json",
+      "kind": "wasm_bindgen",
+      "rust_location": "libVELA/vela-wasm-bridge/src/lib.rs:350",
+      "delegates_to": "vela_crypto::rekey::open_fleet_chunk",
+      "extra_logic": "**no admission policy at all**: no epoch-match call, no rollback baseline, no sealed-header gate, no admitted-clock return",
+      "callers": [
+        "webVELA/src/vela.ts:91 -> webVELA/src/main.ts:478 (pullRemoteVault)"
+      ],
+      "call_sites_listed": 1,
+      "reached_by_production_code": true,
+      "has_any_call_site": true
+    },
+    {
+      "bridge": "wasm",
+      "symbol": "password_strength_json",
+      "kind": "wasm_bindgen",
+      "rust_location": "libVELA/vela-wasm-bridge/src/lib.rs:356",
+      "delegates_to": "vela_core::calculate_password_strength",
+      "extra_logic": "JSON in/out",
+      "callers": [
+        "none \u2014 not imported by webVELA/src/vela.ts"
+      ],
+      "call_sites_listed": 0,
+      "reached_by_production_code": false,
+      "has_any_call_site": false
+    }
+  ],
+  "type_mapping": [
+    {
+      "boundary": "Android JNI",
+      "request": "JString: UTF-8 JSON built by Kotlin with org.json",
+      "secrets_in": "JByteArray (RMS, seal key); copied into a zeroizing buffer and wiped on drop",
+      "response": "jstring JSON (always allocated; a failed allocation yields a null pointer)",
+      "secrets_out": "out-parameter JByteArray written with set_byte_array_region after casting u8->i8; the JSON only carries {\"ok\":true}",
+      "errors": "never a Java exception: JSON-returning calls always carry {\"error\": \"...\"} (version and verification-code calls return bare strings); Kotlin re-raises as IllegalStateException",
+      "optionals": "absent JSON key (last_seen_lamport) or JSONObject.NULL (split_id) -> serde Option; numbers are i64/u64 as JSON numbers"
+    },
+    {
+      "boundary": "Apple C ABI",
+      "request": "*const c_char: UTF-8 JSON, NUL-terminated (an interior NUL silently truncates the payload)",
+      "secrets_in": "(*const u8, len) beside the JSON for RMS/seal key; an empty Data passes (null, 0) and fails with \"RMS must be 32 bytes\"",
+      "response": "*mut c_char owned by Rust; the caller must free with vela_ffi_free_string",
+      "secrets_out": "none \u2014 recovered RMS returns base64 inside JSON (unlike Android, iOS has no byte out-parameter)",
+      "errors": "{\"error\": \"...\"} JSON; CString::new failure falls back to an empty string, so an interior NUL loses the message",
+      "optionals": "omitted JSON key -> serde Option (last_seen_lamport, split_id); key_epoch defaults to 1 when absent"
+    },
+    {
+      "boundary": "WASM (wasm_bindgen)",
+      "request": "&str: UTF-8 JSON",
+      "secrets_in": "base64 inside the JSON (per-chunk keys, ephemeral sk, link key); the RMS never crosses this boundary",
+      "response": "String: JSON",
+      "secrets_out": "base64 inside JSON",
+      "errors": "{\"error\": \"...\"} JSON, i.e. an in-band error with a successful WASM call; the TS wrapper throws",
+      "optionals": "serde Option: null/absent (passphrase, salt_b64); epoch: Option<u64> defaulting to 1"
+    },
+    {
+      "boundary": "Desktop Tauri IPC (not FFI)",
+      "request": "invoke(cmd, args) -> JSON over the webview IPC; gpui calls the same Rust functions in-process",
+      "secrets_in": "never crosses: keys stay in the Rust process",
+      "response": "JSON serialized Tauri value",
+      "secrets_out": "none (only revealed item fields requested by the UI)",
+      "errors": "rejected JS promise carrying a String message",
+      "optionals": "serde Option through Tauri's JSON codec"
+    }
+  ],
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "high",
+      "title": "The web client reads server chunks with no admission gate",
+      "evidence": [
+        "libVELA/vela-wasm-bridge/src/lib.rs has no admitted-chunk export (the only chunk entry points are encrypt_vault_chunk_json:343 and decrypt_vault_chunk_json:350)",
+        "webVELA/src/main.ts:478-484 decrypts each chunk with `authed.epoch`",
+        "webVELA/src/api.ts:148 sets `this.epoch = m.epoch` from the server's own sync-manifest response",
+        "webVELA/src/main.ts:477 `if (!ct) continue` silently drops a chunk the server did not return"
+      ],
+      "detail": "plan_chunk_download, plan_sync_epoch_match and the sealed-header gate are never reached on the web path. Epoch agreement is with a server-supplied number, and there is no per-chunk baseline. This is the same rollback class the mobile bridges close (18-mobile-sync-admission.md). N5-N7 must treat the web client as a caller that does not reach admission at all."
+    },
+    {
+      "id": "F2",
+      "severity": "high",
+      "title": "The sealed-ciphertext gate lives only in the Android/Apple bridges",
+      "evidence": [
+        "libVELA/vela-android-bridge/src/lib.rs:1011 `if !aead::is_sealed(blob)`",
+        "libVELA/vela-apple-bridge/src/lib.rs:1160 same check, duplicated",
+        "libVELA/vela-crypto/src/aead.rs:55-66 open_vault_chunk decrypts an unsealed blob and ignores chunk_id/lamport",
+        "desktopVELA/vela-desktop-core/src/sync.rs:1090 calls open_fleet_chunk directly with no is_sealed check"
+      ],
+      "detail": "Two consequences. (a) N2 cannot reduce either bridge to type conversion while the gate stays there: it has to move into vela-sync-policy or vela-crypto first. (b) The desktop path, which is the reference implementation for the other clients, accepts a pre-C-2 unsealed chunk relabelled to any clock: reject_rollback (sync.rs:526) passes whenever the attacker-supplied clock is >= the recorded floor, and the open then ignores the label. The mobile gate stops exactly this; desktop does not."
+    },
+    {
+      "id": "F3",
+      "severity": "high",
+      "title": "aad_binding_verified is a caller-supplied constant on the desktop path",
+      "evidence": [
+        "desktopVELA/vela-desktop-core/src/sync.rs:531-538 reject_rollback passes aad_binding_verified: true and key_epoch_positive: true as literals",
+        "desktopVELA/vela-desktop-core/src/sync.rs:1086 calls reject_rollback *before* the AEAD open at :1090"
+      ],
+      "detail": "On mobile the flag is set after a successful open (android:1069, apple:1200). On desktop it is an assumption asserted before decryption, i.e. the fact 17-universal-chunk-admission.md explicitly says its theorem does not establish. Desktop also never calls plan_sync_epoch_match."
+    },
+    {
+      "id": "F4",
+      "severity": "medium",
+      "title": "Android passkey primitives are a hand-mirrored copy, not a delegation",
+      "evidence": [
+        "libVELA/vela-android-bridge/src/passkey.rs:1-27 states the WebAuthn layouts are 'line-for-line ports' of desktopVELA/vela-desktop-core/src/passkey.rs",
+        "libVELA/vela-android-bridge/src/passkey.rs uses p256/ciborium/sha2 directly; it never calls vela-core or vela-crypto"
+      ],
+      "detail": "These four exports (and the Kotlin ceremony) cannot be proved to be thin wrappers because the logic is implemented twice. The desktop side additionally has a PresenceToken linear type that the JNI boundary cannot carry, so 'one ceremony per approval' is enforced in Kotlin."
+    },
+    {
+      "id": "F5",
+      "severity": "medium",
+      "title": "The user-verification decision crosses the Android boundary as an opaque int",
+      "evidence": [
+        "androidVELA/.../security/passkey/PasskeyAuthenticator.kt:171-174 computes `flags = FLAG_UP or (if (verified) FLAG_UV else 0)` and passes it",
+        "libVELA/vela-android-bridge/src/lib.rs:599 nativePasskeyAuthDataJson forwards `flags` into the authenticator data"
+      ],
+      "detail": "The WebAuthn UV bit, which RPs rely on, is decided in Kotlin from a `verified` boolean and is not checkable by the bridge. Any proof of the passkey path has to include the Kotlin caller, or the flag has to be derived natively."
+    },
+    {
+      "id": "F6",
+      "severity": "medium",
+      "title": "Neither mobile client uses the share pin, so share-envelope v2 forgery protection is inert on mobile",
+      "evidence": [
+        "androidVELA/.../core/FeatureRepositories.kt:345-347 calls identityAdmitShare with no pin and no persisted SharePin anywhere in androidVELA",
+        "iosVELA/Sources/SharingViewModel.swift:51-53 calls identityAdmitShare without a pin",
+        "libVELA/vela-android-bridge/src/lib.rs:690 and the Apple twin accept an optional pin and the verified policy consumes it"
+      ],
+      "detail": "Every mobile share admission is therefore 'first contact': the sender key is accepted and re-pinned per item. A sender-key swap for an existing lineage would be accepted. The desktop path does consult vela-client-share-policy with a stored generation (desktopVELA/vela-desktop-core/src/sharing.rs:195, :261, :784)."
+    },
+    {
+      "id": "F7",
+      "severity": "medium",
+      "title": "Two mobile clients duplicate the epoch and manifest-floor decisions in native code",
+      "evidence": [
+        "androidVELA/.../sync/VaultSyncManager.kt:43-49 requireMatchingSyncEpoch, called at :581, :627, :658; rejectRollback :912-924; requireReadableBaseline :927-933",
+        "iosVELA/Shared/SyncEngine.swift:298-302 epoch equality + rejectRollback (:233-249)"
+      ],
+      "detail": "These are deliberate defence-in-depth (18-mobile-sync-admission.md calls the iOS manifest floor a stricter, fail-closed difference), but they mean the admission decision is not reachable only through the bridge: three implementations of the same predicate must stay in sync. N5-N7 should either prove them equivalent to the policy or retire them."
+    },
+    {
+      "id": "F8",
+      "severity": "medium",
+      "title": "Caller-supplied security facts pass straight through the bridges",
+      "evidence": [
+        "recipient_bound is taken from the request and fed to the verified recovery policy: android lib.rs:1548, apple lib.rs:1317,1572",
+        "plan_recovery_publication: 12 caller booleans/ints (android lib.rs:1609, apple lib.rs:1508; Kotlin VaultSyncManager.kt:426, Swift AccountViewModel.swift:996)",
+        "desktop sync.rs:359 computes server_epoch_is_next itself and passes it to plan_epoch_adoption (noted as remaining caller-supplied in 18-mobile-sync-admission.md:65)"
+      ],
+      "detail": "The verified kernels are only as strong as the facts handed to them, and these facts are observations the app claims to have made. N2/N5 must either derive them in Rust or state them as assumptions."
+    },
+    {
+      "id": "F9",
+      "severity": "medium",
+      "title": "Error identity is recovered by matching a Rust message substring",
+      "evidence": [
+        "androidVELA/.../core/NativeVelaCore.kt:716-728 mapAdmittedChunkFailure matches 'legacy unsealed chunk ciphertext cannot be admitted'",
+        "iosVELA/Shared/SyncEngine.swift:319 does the same string match"
+      ],
+      "detail": "The bridge returns {\"error\": \"...\"} with no machine-readable code, so both clients branch on English text. Any rewording in libVELA silently changes a security-relevant client behaviour."
+    },
+    {
+      "id": "F10",
+      "severity": "low",
+      "title": "Error handling is inconsistent across the three bridges and their wrappers",
+      "evidence": [
+        "Android: every JNI call returns JSON; Kotlin throws IllegalStateException (NativeVelaCore.kt:630-633)",
+        "Apple: most wrappers return nil on refusal (VelaCoreFFI.swift:41-62), so a rejected share and a missing handle are indistinguishable; only the admission path preserves the reason (AdmissionError.refused, :412-459)",
+        "WASM: {\"error\":...} is a successful call; only the TS wrapper turns it into a throw (webVELA/src/vela.ts:21-25)"
+      ],
+      "detail": "N2's 'thin wrapper' property has to be stated per-platform because the failure channel differs, and any exhaustive caller analysis must model three different refusal semantics (Android's version and verification-code exports return bare strings, not error JSON)."
+    },
+    {
+      "id": "F11",
+      "severity": "low",
+      "title": "Bridge ABI divergences that make the two mobile bridges non-identical",
+      "evidence": [
+        "signature key name: Android 'signature' (lib.rs:1232) vs Apple 'signature_b64' (lib.rs:877)",
+        "RMS capsule: Android requires exactly 32 bytes (lib.rs:1465) while Apple accepts >=32 and truncates (lib.rs:1236-1241)",
+        "open_rekey_capsule: Android takes previous_rms as a JSON int array (lib.rs:536) while Apple takes previous_rms_b64 as a string (lib.rs:892)",
+        "Apple alone exposes trusted-contact envelopes and possession proofs (lib.rs:674-711); Android alone exposes passkey primitives (lib.rs:586-635)"
+      ],
+      "detail": "N2a-c cannot share one statement across the two bridges until these are reconciled; the truncation difference is the only one with a direct security reading."
+    },
+    {
+      "id": "F12",
+      "severity": "low",
+      "title": "Dead and unreachable ABI surface",
+      "evidence": [
+        "android C ABI vela_encrypt_bytes (lib.rs:885) has no caller anywhere, and returns no error message on failure",
+        "android nativeOpenRekeyCapsuleJson (lib.rs:569) has no Kotlin external",
+        "android Kotlin wrappers identityOpenShare (:363) and identityForgetAll (:439) have no caller",
+        "Apple vela_ffi_open_rekey_capsule_json, seal/open/seal_response contact-share, possession_proof, generate_recovery_request have no Swift wrapper",
+        "androidVELA LocalVaultRepository.decryptSyncedVault (:109) is the only user of the non-admitting chunk decrypt and has no caller"
+      ],
+      "detail": "Harmless today, but each is a path on which a future caller can reach decryption without admission. N5-N7 should treat them as open doors rather than remove them silently."
+    }
+  ],
+  "unverified": [
+    "JNI symbol resolution and jni crate behaviour were not executed (no build was run); the JNI names are read from source and matched by eye to com.vela.android.core.NativeVelaCore.",
+    "Swift was not compiled on this host; call-site analysis is textual.",
+    "The generated webVELA/src/wasm/*.js bindings are build artefacts and are not in the tree, so the TS <-> wasm calling convention is read from the #[wasm_bindgen] signatures only.",
+    "Whether any out-of-tree consumer (e.g. a published XCFramework consumer) calls the Apple exports with no Swift wrapper is unknown.",
+    "Desktop Tauri command count (109) is from attribute scanning; the gpui front end's 245 vela_desktop_core references were not individually classified."
+  ]
+}
