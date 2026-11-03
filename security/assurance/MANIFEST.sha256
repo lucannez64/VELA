@@ -445,6 +445,8 @@ c96534da63a8f8642538a6e1ea871e5aede16ae472aba1ae9093f0d628d398cc  security/assur
 a2af6c09886802d94f3c19de0ff0121c9ca4bf8de1e2446019f2a107829116c4  security/assurance/proof-logs/current/f5-universal-chunk-admission/parent-full-verify.log
 9a2cd17e56e50a5f98ce949d20fb99f7814d40b8a80a62428383aa7c79456f10  security/assurance/proof-logs/current/f5-universal-chunk-admission/parent-sources.txt
 43e54679903cae7d9623b7bbdc770c7310e3639733cbd26565560ec18039d9ae  security/assurance/proof-logs/current/f5-universal-chunk-admission/policy-tests.log
+05018dcfecdb236da11fd44f70eb93a7ad69fe58f650f7f7f86540ba7927aa8d  security/assurance/proof-logs/current/ffi-inventory/README.md
+02c6609bddf2eeb611fbec4b179b275e5090d05b9c7bfe8a9d5f1dcbe7b6a223  security/assurance/proof-logs/current/ffi-inventory/ffi-inventory.json
 b8c5ae65388ddf9ac59f5eb6a80eaa0501b6efac11b26ef39bee2700f1e8fc39  security/assurance/proof-logs/current/frame-parser-refinement/README.md
 23bc5e98d9b1484681861aea9b8de22b10362751a87be52504c0cca3242a75c2  security/assurance/proof-logs/current/frame-parser-refinement/android-tests.log
 ed69ed9051ff13900ae9e250c073f330e7c8d9794075b07d0ebe192a1941ef02  security/assurance/proof-logs/current/frame-parser-refinement/apple-tests.log
