@@ -891,6 +891,13 @@ H2-H12, F-3 is P1-P9, F-4 is C1-C18, F-5 is N1-N11 and F-6 is T1-T12. Live
 progress: `plan-live.py serve`. The first F-6 step, the
 [imported model inventory](proof-logs/current/model-contract-inventory/README.md),
 lists every hax library symbol the proofs use and which of them are trusted.
+A repository-wide check (`security/formal/check-no-proof-escapes.py`, in CI)
+now rejects `assume`, `admit`, axioms and unimplemented interfaces in every
+tracked F* file; all 168 pass. Its `--all` mode also scans generated
+extractions and lists one hax-generated assumption: the `PartialEq` instance
+for `t_Phase` in the vault-upload driver's root module, which that gate keeps
+out of its focused source check. The instance is satisfiable but unspecified;
+step T7 reviews it.
 
 | Area | Status | Required to close |
 |---|---|---|

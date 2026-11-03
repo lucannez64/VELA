@@ -136,6 +136,11 @@ jobs:
       - name: Check driver proof source-policy regressions
         run: python3 -m unittest discover -s security/formal/tests -p 'test_driver_proof_sources.py'
 
+      - name: Check no tracked F* file contains a proof escape
+        run: |
+          python3 security/formal/check-no-proof-escapes.py
+          python3 -m unittest discover -s security/formal/tests -p 'test_no_proof_escapes.py'
+
       - name: Check the proof jobs' reuse keys cover their inputs
         run: python3 -m unittest discover -s security/formal/tests -p 'test_proof_inputs.py'
 
