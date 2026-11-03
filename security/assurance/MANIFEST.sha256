@@ -983,6 +983,7 @@ a0f607cb52c03633cd45ba95f70a4521177e12593756c4bce0db286dfcfc8def  security/assur
 28fb4d480cba74d04cae2d43f04dc8b6dbbc9aff143055416db15b83436ed5de  security/assurance/proof-logs/current/sharing-fixes/desktop-core-flaky-test-before-fix.log
 611f02009e5b5a37071684b086a357ad7645af9897a17261e54260da254fd659  security/assurance/proof-logs/current/sharing-fixes/desktop-core-tests.log
 9e0753f22c09d6e862c67ab0eaf15d37518fa467cc1b955632a4ed108d19af87  security/assurance/proof-logs/current/sharing-fixes/versions.txt
+719b284dec65a068f9a59e7dc7138e00f34cd6960d96d4eba0a6c2fb566df9bb  security/assurance/proof-logs/current/std-model-review/README.md
 2ddc241dbeadb0d2041381108b4d4a69dde0c17e5e18eddc97c107f4597fceb7  security/assurance/proof-logs/current/toolchain-status.txt
 0a77a3dff39e8ddddd24f444ded2ca5db60455848c8c2ec21a0b9f6154ecc11c  security/assurance/proof-logs/current/trusted-boundary/README.md
 0d74ae7591c8b52b9b75c7f34b0a66b1083c20931ae3e07af5c80c3a486b95ee  security/assurance/proof-logs/current/trusted-boundary/android-bridge-tests.log
