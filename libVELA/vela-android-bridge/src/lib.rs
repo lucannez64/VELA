@@ -980,49 +980,12 @@ fn decrypt_vault_chunk_with_rms(
     })
 }
 
-/// Open a chunk on the production download path.
-///
-/// [`rekey::open_fleet_chunk`] deliberately keeps the pre-C-2 wire shape
-/// readable at epoch 1 so a fleet can upgrade one client at a time. That
-/// compatibility includes **unsealed** blobs (`aead::encrypt`), which
-/// authenticate neither the chunk id nor the revision — `aead::open_vault_chunk`
-/// simply decrypts them and ignores both labels. Admitting one here would make
-/// `plan_chunk_download`'s rollback decision meaningless, because any
-/// ciphertext would open at any claimed clock.
-///
-/// The sealed shape is self-describing (`aead::is_sealed`), so the production
-/// entry point requires it before opening:
-///
-/// - epoch 1 sealed: AAD binds `chunk_id ‖ lamport_clock`;
-/// - epoch 2+ sealed: AAD additionally binds the account epoch.
-///
-/// Pre-C-2 unsealed blobs have no such binding and must go through the explicit
-/// migration path (re-seal under the current epoch on a trusted client); they
-/// are refused here rather than silently trusted. The lower-level
-/// [`decrypt_vault_chunk_with_rms`] keeps reading them for that migration and
-/// for unit/legacy callers, and makes no admission claim.
-fn open_admitted_fleet_chunk(
-    key: &[u8; 32],
-    blob: &[u8],
-    epoch: u64,
-    chunk_id: &str,
-    lamport_clock: i64,
-) -> anyhow_like::Result<Zeroizing<Vec<u8>>> {
-    if !aead::is_sealed(blob) {
-        return Err(
-            "legacy unsealed chunk ciphertext cannot be admitted; migrate it through the \
-             explicit pre-C-2 path"
-                .into(),
-        );
-    }
-    Ok(rekey::open_fleet_chunk(
-        key,
-        blob,
-        epoch,
-        chunk_id,
-        lamport_clock,
-    )?)
-}
+// The production download path opens through
+// `rekey::open_sealed_fleet_chunk`, the shared gate that refuses pre-C-2
+// unsealed blobs (no chunk id / revision binding) and only then performs the
+// AAD-bound AEAD open. The lower-level [`decrypt_vault_chunk_with_rms`] keeps
+// reading the unsealed shape for the explicit migration path and makes no
+// admission claim.
 
 /// Production mobile download admission (M23/F-5).
 ///
@@ -1055,14 +1018,14 @@ fn decrypt_admitted_vault_chunk_with_rms(
     let ciphertext = B64.decode(request.ciphertext_b64.as_bytes())?;
     let key = chunk_key(&rms, &request.chunk_id);
     let epoch = u64::try_from(request.key_epoch).map_err(|_| "vault key epoch must be positive")?;
-    let plaintext = open_admitted_fleet_chunk(
+    let plaintext = rekey::open_sealed_fleet_chunk(
         &key,
         &ciphertext,
         epoch,
         &request.chunk_id,
         request.lamport_clock,
     )?;
-    // The helper above refuses shapes without a self-describing sealed header
+    // The shared gate refuses shapes without a self-describing sealed header
     // and only returns after an AAD-bound open authenticated the chunk id and
     // revision (epoch 1) or the epoch as well (epoch 2+). This is the *only*
     // place the fact becomes true; nothing in the request can set it.

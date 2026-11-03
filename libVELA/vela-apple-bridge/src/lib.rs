@@ -1138,40 +1138,12 @@ fn decrypt_vault_chunk_json(
     })
 }
 
-/// Open a chunk on the production download path.
-///
-/// The shared fleet reader deliberately keeps pre-C-2 wire shapes readable at
-/// epoch 1 during rollout. That includes **unsealed** blobs (`aead::encrypt`),
-/// which authenticate neither the chunk id nor the revision; letting one
-/// through would make the rollback decision meaningless because the ciphertext
-/// would open at any claimed clock.
-///
-/// Production admission therefore requires the self-describing sealed header
-/// (`aead::is_sealed`) first. Epoch 1 seals bind `chunk_id ‖ lamport_clock`;
-/// epoch 2+ seals also bind the account epoch. Unsealed legacy blobs must be
-/// re-sealed through the explicit migration path instead of admitted here.
-fn open_admitted_fleet_chunk(
-    key: &[u8; 32],
-    blob: &[u8],
-    epoch: u64,
-    chunk_id: &str,
-    lamport_clock: i64,
-) -> FfiResult<zeroize::Zeroizing<Vec<u8>>> {
-    if !aead::is_sealed(blob) {
-        return Err(
-            "legacy unsealed chunk ciphertext cannot be admitted; migrate it through the \
-             explicit pre-C-2 path"
-                .into(),
-        );
-    }
-    Ok(vela_crypto::rekey::open_fleet_chunk(
-        key,
-        blob,
-        epoch,
-        chunk_id,
-        lamport_clock,
-    )?)
-}
+// The production download path opens through
+// `rekey::open_sealed_fleet_chunk`, the shared gate that refuses pre-C-2
+// unsealed blobs (no chunk id / revision binding) and only then performs the
+// AAD-bound AEAD open. The lower-level [`decrypt_vault_chunk_json`] keeps
+// reading the unsealed shape for the explicit migration path and makes no
+// admission claim.
 
 /// Production Apple download admission (M23/F-5): exact epoch agreement from
 /// the two integers, a real AEAD open, then the verified rollback decision.
@@ -1192,8 +1164,13 @@ fn decrypt_admitted_vault_chunk_json(
     let ciphertext = B64.decode(req.ciphertext_b64.as_bytes())?;
     let key = chunk_key(&rms, &req.chunk_id);
     let epoch = u64::try_from(req.key_epoch).map_err(|_| "key_epoch must be positive")?;
-    let plaintext =
-        open_admitted_fleet_chunk(&key, &ciphertext, epoch, &req.chunk_id, req.lamport_clock)?;
+    let plaintext = vela_crypto::rekey::open_sealed_fleet_chunk(
+        &key,
+        &ciphertext,
+        epoch,
+        &req.chunk_id,
+        req.lamport_clock,
+    )?;
     // Only a sealed blob that opened under its AAD reaches this point: epoch 1
     // binds chunk id + revision, epoch 2+ also binds the epoch. Nothing Swift
     // sends can set this fact.

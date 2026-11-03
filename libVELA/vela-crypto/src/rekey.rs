@@ -164,11 +164,26 @@ pub fn seal_fleet_chunk(
     }
 }
 
+/// Refusal text for a pre-C-2 blob that carries no sealed header.
+///
+/// The Android and iOS clients branch on this substring to show their
+/// "migrate through the pre-C-2 path" hint (`NativeVelaCore.mapAdmittedChunkFailure`,
+/// `SyncEngine`), because the ABI has no error codes yet (FFI inventory F9).
+/// Keeping the one constant here keeps the three production download paths
+/// saying the same thing.
+pub const LEGACY_UNSEALED_REFUSAL: &str = "legacy unsealed chunk ciphertext cannot be admitted; \
+     migrate it through the explicit pre-C-2 path";
+
 /// Canonical fleet wire policy for chunk decryption.
 ///
 /// Epoch 1 accepts legacy chunk AAD. Epochs above 1 require an authenticated
 /// binding to the exact requested epoch; the legacy fallback exposed by
 /// [`open_epoch_chunk`] is never accepted after rotation.
+///
+/// This keeps the pre-C-2 **unsealed** shape readable at epoch 1 for the
+/// explicit migration paths (re-key rotation, enrollment import, the
+/// desktop-only audit log). A sync download must use
+/// [`open_sealed_fleet_chunk`] instead.
 pub fn open_fleet_chunk(
     key: &[u8; 32],
     blob: &[u8],
@@ -192,6 +207,44 @@ pub fn open_fleet_chunk(
             Ok(plaintext)
         }
     }
+}
+
+/// Open a chunk on a production sync download path.
+///
+/// [`open_fleet_chunk`] deliberately keeps the pre-C-2 **unsealed** wire shape
+/// readable at epoch 1 so a fleet can upgrade one client at a time. That shape
+/// (`aead::encrypt`) authenticates neither the chunk id nor the revision:
+/// `aead::open_vault_chunk` simply decrypts it and ignores both labels. A
+/// storage server that relabels such a blob with a higher Lamport clock makes
+/// every reader succeed, so admitting one would make the verified rollback
+/// decision (`vela-sync-policy::plan_chunk_download`) meaningless.
+///
+/// Every production writer now seals through [`seal_fleet_chunk`] — desktop,
+/// Android, Apple and web all call it — and legacy rows are migrated by the
+/// desktop re-key rotation, which re-seals every chunk under the current
+/// epoch. The unsealed shape is therefore refused here, before the AEAD open:
+///
+/// - epoch 1 seals bind `chunk_id ‖ lamport_clock`;
+/// - epoch 2+ seals additionally bind the account epoch.
+///
+/// Callers that legitimately read legacy rows (the re-key rotation, enrollment
+/// import and the desktop-only audit log) call [`open_fleet_chunk`] or
+/// [`open_epoch_chunk`] directly and must not claim admission for the result.
+/// Android, Apple and desktop all use this function so the gate has one
+/// implementation, not one per client.
+pub fn open_sealed_fleet_chunk(
+    key: &[u8; 32],
+    blob: &[u8],
+    epoch: u64,
+    chunk_id: &str,
+    lamport_clock: i64,
+) -> Result<Zeroizing<Vec<u8>>> {
+    if !aead::is_sealed(blob) {
+        return Err(VelaError::InvalidParameter(
+            LEGACY_UNSEALED_REFUSAL.to_string(),
+        ));
+    }
+    open_fleet_chunk(key, blob, epoch, chunk_id, lamport_clock)
 }
 
 /// Split the NEW seed into fresh recovery shares.
@@ -487,6 +540,55 @@ mod tests {
             &aead::open_vault_chunk(&key, &epoch_one, chunk_id, clock).unwrap()[..],
             plaintext
         );
+    }
+
+    /// The production download gate: an unsealed pre-C-2 blob has no chunk id
+    /// or revision binding, so it must be refused before opening even though
+    /// the migration reader still accepts the same bytes.
+    #[test]
+    fn admission_open_refuses_the_unsealed_legacy_shape() {
+        let key = *kdf::derive(kdf::contexts::CHUNK_KEY, &seed(13)).as_bytes();
+        let plaintext = b"pre-C-2 chunk body";
+        let chunk_id = "vault-data-000001";
+        let clock = 17;
+
+        let legacy = aead::encrypt(&key, plaintext).unwrap();
+        assert!(!aead::is_sealed(&legacy));
+
+        for epoch in 1..=4 {
+            let error = open_sealed_fleet_chunk(&key, &legacy, epoch, chunk_id, clock)
+                .expect_err("unsealed legacy blob must not be admitted");
+            assert!(
+                error.to_string().contains(LEGACY_UNSEALED_REFUSAL),
+                "epoch {epoch}: {error}"
+            );
+        }
+
+        // The migration reader still opens the same bytes — even under a
+        // relabelled id and inflated clock, which is exactly why admission
+        // cannot rely on this call.
+        assert_eq!(
+            &open_fleet_chunk(&key, &legacy, 1, "vault-data-000009", 9_000).unwrap()[..],
+            plaintext
+        );
+
+        for epoch in 1..=4 {
+            let sealed = seal_fleet_chunk(&key, plaintext, epoch, chunk_id, clock).unwrap();
+            assert_eq!(
+                &open_sealed_fleet_chunk(&key, &sealed, epoch, chunk_id, clock).unwrap()[..],
+                plaintext
+            );
+            // A sealed blob relabelled to another chunk id, revision or epoch
+            // fails to open; the admission path inherits that binding.
+            assert!(open_sealed_fleet_chunk(&key, &sealed, epoch, "other", clock).is_err());
+            assert!(open_sealed_fleet_chunk(&key, &sealed, epoch, chunk_id, clock + 1).is_err());
+            assert!(open_sealed_fleet_chunk(&key, &sealed, epoch + 1, chunk_id, clock).is_err());
+        }
+
+        // Epoch 0 is reserved: no blob opens through admission at it.
+        assert!(open_sealed_fleet_chunk(&key, &legacy, 0, chunk_id, clock).is_err());
+        let sealed = seal_fleet_chunk(&key, plaintext, 1, chunk_id, clock).unwrap();
+        assert!(open_sealed_fleet_chunk(&key, &sealed, 0, chunk_id, clock).is_err());
     }
 
     #[test]
