@@ -1319,6 +1319,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "vela-sync-policy"
+version = "0.1.0"
+dependencies = [
+ "hax-lib",
+]
+
+[[package]]
 name = "vela-wasm-bridge"
 version = "0.1.0"
 dependencies = [
@@ -1330,6 +1337,7 @@ dependencies = [
  "uuid",
  "vela-core",
  "vela-crypto",
+ "vela-sync-policy",
  "wasm-bindgen",
  "wasm-bindgen-test",
 ]

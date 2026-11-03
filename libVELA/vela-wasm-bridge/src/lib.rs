@@ -6,14 +6,15 @@
 //! lives in plain `*_impl` functions so it is exercised by native `cargo test`;
 //! the `#[wasm_bindgen]` wrappers only adapt them to the browser ABI.
 
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 use vela_core::calculate_password_strength;
-#[cfg(test)]
-use vela_crypto::aead;
-use vela_crypto::{kem, signing};
+use vela_crypto::{aead, kem, signing};
 
 // ── Response plumbing ───────────────────────────────────────────────────────────
 
@@ -97,9 +98,9 @@ struct EncryptChunkRequest {
     /// session never receives the root seed (audit D-2).
     chunk_key_b64: String,
     vault_json: String,
+    chunk_id: String,
     /// The clock this chunk will be stored under, bound into the ciphertext so
     /// the server cannot replay an older revision (audit C-2).
-    chunk_id: String,
     lamport_clock: i64,
     /// Current account key epoch. Absent callers and explicit epoch 1 both use
     /// the fleet's legacy chunk AAD; epoch binding begins at epoch 2.
@@ -113,23 +114,77 @@ struct EncryptChunkResponse {
 }
 
 #[derive(Deserialize)]
-struct DecryptChunkRequest {
+struct AdmittedDecryptChunkRequest {
     /// The per-chunk key granted for this chunk id — **not** the RMS.
     chunk_key_b64: String,
     ciphertext_b64: String,
-    /// Chunk id and the revision the server claimed for it. Verified for sealed
-    /// ciphertexts, ignored for legacy ones (audit C-2, rollout step 2).
-    #[serde(default)]
+    /// Chunk id and the revision the server claimed for it. Both are bound into
+    /// the ciphertext's AAD, so a mislabelled or replayed blob fails to open.
     chunk_id: String,
-    #[serde(default)]
     lamport_clock: i64,
-    #[serde(default)]
-    epoch: Option<u64>,
+    /// Vault key epoch the server's `GET /vault/sync` manifest reports. A
+    /// malicious server controls this integer; the tab's own floor is what
+    /// makes it meaningful (see `AdmissionState`).
+    key_epoch: i64,
 }
 
 #[derive(Serialize)]
-struct DecryptChunkResponse {
+struct AdmittedDecryptChunkResponse {
     vault_json: String,
+    /// Revision the verified policy admitted, so the caller records exactly
+    /// what passed instead of the manifest entry it asked for.
+    lamport_clock: i64,
+}
+
+/// Per-tab admission state.
+///
+/// The web client has **no durable store**: this lives in WASM memory and dies
+/// with the page (a reload needs a fresh grant, and starts a fresh first
+/// contact). The mobile bridges keep the same facts in Keystore/Keychain-backed
+/// settings and pass them in; the browser has no such store, so the state lives
+/// beside the policy instead of in the (server-facing) caller.
+#[derive(Default)]
+struct AdmissionState {
+    /// First positive epoch this tab admitted. Every later download must use
+    /// exactly this epoch (`plan_sync_epoch_match`); there is no adoption path
+    /// on the web, so a rotation forces a re-grant.
+    epoch_floor: Option<i64>,
+    /// Highest revision this tab admitted for each chunk id.
+    last_seen: BTreeMap<String, i64>,
+}
+
+thread_local! {
+    static ADMISSION: RefCell<AdmissionState> = RefCell::new(AdmissionState::default());
+}
+
+fn admitted_epoch_floor() -> Option<i64> {
+    ADMISSION.with(|state| state.borrow().epoch_floor)
+}
+
+fn admitted_last_seen(chunk_id: &str) -> Option<i64> {
+    ADMISSION.with(|state| state.borrow().last_seen.get(chunk_id).copied())
+}
+
+/// Record the facts of an admission that already passed every gate. Callers
+/// must only call this after the plaintext was produced and decoded, so a
+/// failed attempt never moves the floor or the per-chunk baseline.
+fn record_admission(epoch: i64, chunk_id: &str, lamport_clock: i64) {
+    ADMISSION.with(|state| {
+        let mut state = state.borrow_mut();
+        if state.epoch_floor.is_none() {
+            state.epoch_floor = Some(epoch);
+        }
+        state
+            .last_seen
+            .entry(chunk_id.to_string())
+            .and_modify(|seen| *seen = (*seen).max(lamport_clock))
+            .or_insert(lamport_clock);
+    });
+}
+
+#[cfg(test)]
+fn reset_admission_state() {
+    ADMISSION.with(|state| *state.borrow_mut() = AdmissionState::default());
 }
 
 #[derive(Deserialize)]
@@ -263,23 +318,112 @@ fn encrypt_vault_chunk_impl(request_json: &str) -> Result<EncryptChunkResponse, 
     })
 }
 
-fn decrypt_vault_chunk_impl(request_json: &str) -> Result<DecryptChunkResponse, String> {
-    let req: DecryptChunkRequest = serde_json::from_str(request_json).map_err(|e| e.to_string())?;
+/// Production web download admission (U-27, mirroring the mobile bridges).
+///
+/// The server supplies `lamport_clock`, `key_epoch` and the blob; neither is
+/// trusted on its own. This function:
+///
+/// 1. refuses any blob without the self-describing sealed header, because the
+///    pre-C-2 unsealed shape binds neither the chunk id nor the revision — an
+///    open would make the rollback decision below meaningless;
+/// 2. pins the first admitted epoch as this tab's floor and thereafter requires
+///    exact agreement through the verified `plan_sync_epoch_match` (a lower
+///    epoch is a downgrade, a higher one an unadopted rotation: both refuse);
+/// 3. performs the real AEAD open, so `aad_binding_verified` below is a fact
+///    about successful Rust decryption, never a JSON boolean; and
+/// 4. runs the verified `plan_chunk_download` rollback decision against the
+///    highest revision this tab already admitted for the chunk.
+///
+/// Only after all four does plaintext leave this function. The floor and the
+/// per-chunk baselines are tab-local (WASM memory); there is no durable state.
+fn decrypt_admitted_vault_chunk_impl(
+    request_json: &str,
+) -> Result<AdmittedDecryptChunkResponse, String> {
+    let req: AdmittedDecryptChunkRequest =
+        serde_json::from_str(request_json).map_err(|e| e.to_string())?;
     let ciphertext = B64
         .decode(req.ciphertext_b64.as_bytes())
         .map_err(|e| e.to_string())?;
     let key = decode_key(&req.chunk_key_b64)?;
+
+    // A sealed blob is the only shape whose opening checks the labels below.
+    if !aead::is_sealed(&ciphertext) {
+        return Err(format!(
+            "chunk \"{}\" uses the old unsealed format, which does not bind it to its chunk \
+             or revision; open the vault in an app to migrate it",
+            req.chunk_id
+        ));
+    }
+
+    // First contact pins the tab's floor; nothing in a web grant authenticates
+    // the epoch (the approver sends `key_epoch` to the server, not to us, and
+    // the capsule is sealed to a public key the server also holds), so the
+    // first manifest epoch is server-asserted — U-27's residual risk.
+    let floor = admitted_epoch_floor();
+    let local_epoch = floor.unwrap_or(req.key_epoch);
+    if !vela_sync_policy::plan_sync_epoch_match(vela_sync_policy::SyncEpochFacts {
+        server_epoch: req.key_epoch,
+        local_epoch,
+    }) {
+        return Err(match floor {
+            Some(seen) if req.key_epoch < seen => format!(
+                "the server offered vault key epoch {} but this page already used epoch {}; \
+                 refusing the downgrade",
+                req.key_epoch, seen
+            ),
+            Some(seen) => format!(
+                "the vault key epoch changed to {} while this page was open (it was {}); \
+                 reload this page and approve access again from your app",
+                req.key_epoch, seen
+            ),
+            None => format!(
+                "the server offered an invalid vault key epoch {}",
+                req.key_epoch
+            ),
+        });
+    }
+
+    let epoch =
+        u64::try_from(req.key_epoch).map_err(|_| "vault key epoch must be positive".to_string())?;
     let plaintext = vela_crypto::rekey::open_fleet_chunk(
         &key,
         &ciphertext,
-        req.epoch.unwrap_or(1),
+        epoch,
         &req.chunk_id,
         req.lamport_clock,
     )
-    .map_err(|e| e.to_string())?;
-    Ok(DecryptChunkResponse {
-        vault_json: String::from_utf8(plaintext.to_vec()).map_err(|e| e.to_string())?,
-    })
+    .map_err(|e| {
+        format!(
+            "could not authenticate chunk \"{}\" at epoch {} revision {}: {e}",
+            req.chunk_id, req.key_epoch, req.lamport_clock
+        )
+    })?;
+
+    let last_seen = admitted_last_seen(&req.chunk_id);
+    match vela_sync_policy::plan_chunk_download(vela_sync_policy::ChunkDownloadFacts {
+        server_lamport: req.lamport_clock,
+        last_seen_lamport: last_seen,
+        // Only a sealed blob that opened under its epoch/chunk/revision AAD
+        // reaches this line; the request cannot set this fact.
+        aad_binding_verified: true,
+        key_epoch_positive: req.key_epoch >= vela_sync_policy::INITIAL_EPOCH,
+    }) {
+        vela_sync_policy::ChunkDownloadDecision::Accept(permit) => {
+            let vault_json = String::from_utf8(plaintext.to_vec()).map_err(|e| e.to_string())?;
+            record_admission(req.key_epoch, &req.chunk_id, permit.lamport());
+            Ok(AdmittedDecryptChunkResponse {
+                vault_json,
+                lamport_clock: permit.lamport(),
+            })
+        }
+        vela_sync_policy::ChunkDownloadDecision::Reject => Err(format!(
+            "the server returned revision {} of chunk \"{}\" but this page already admitted \
+             revision {}; refusing the rollback",
+            req.lamport_clock,
+            req.chunk_id,
+            last_seen.map_or_else(|| "none".to_string(), |seen| seen.to_string())
+        )),
+    }
 }
 
 fn password_strength_impl(request_json: &str) -> Result<PasswordStrengthResponse, String> {
@@ -338,17 +482,22 @@ pub fn open_link_json(request_json: &str) -> String {
 }
 
 /// Encrypt a vault chunk with the granted per-chunk key.
-/// Request `{ chunk_key_b64, vault_json }` → `{ ciphertext_b64 }`.
+/// Request `{ chunk_key_b64, vault_json, chunk_id, lamport_clock, epoch? }`
+/// → `{ ciphertext_b64 }`.
 #[wasm_bindgen]
 pub fn encrypt_vault_chunk_json(request_json: &str) -> String {
     respond(encrypt_vault_chunk_impl(request_json))
 }
 
-/// Decrypt a vault chunk with the granted per-chunk key.
-/// Request `{ chunk_key_b64, ciphertext_b64 }` → `{ vault_json }`.
+/// Admit and decrypt a vault chunk on the production download path.
+/// Request `{ chunk_key_b64, ciphertext_b64, chunk_id, lamport_clock, key_epoch }`
+/// → `{ vault_json, lamport_clock }`.
+///
+/// The older `decrypt_vault_chunk_json` export is gone: it had no admission
+/// decision and no production caller after `webVELA/src/main.ts` switched here.
 #[wasm_bindgen]
-pub fn decrypt_vault_chunk_json(request_json: &str) -> String {
-    respond(decrypt_vault_chunk_impl(request_json))
+pub fn decrypt_admitted_vault_chunk_json(request_json: &str) -> String {
+    respond(decrypt_admitted_vault_chunk_impl(request_json))
 }
 
 /// Password strength. Request `{ password }` → `{ entropy, score, crack_time }`.
@@ -408,7 +557,10 @@ mod tests {
             "ciphertext_b64": B64.encode(&ciphertext),
         })
         .to_string();
-        assert_eq!(field(&open_link_json(&req), "secret_json").as_bytes(), secret);
+        assert_eq!(
+            field(&open_link_json(&req), "secret_json").as_bytes(),
+            secret
+        );
 
         // A passphrase link needs both halves.
         let protected =
@@ -420,7 +572,10 @@ mod tests {
             "ciphertext_b64": B64.encode(&protected),
         })
         .to_string();
-        assert_eq!(field(&open_link_json(&req), "secret_json").as_bytes(), secret);
+        assert_eq!(
+            field(&open_link_json(&req), "secret_json").as_bytes(),
+            secret
+        );
 
         let missing_passphrase = serde_json::json!({
             "link_key_b64": URL_SAFE_NO_PAD.encode(link_key),
@@ -431,52 +586,224 @@ mod tests {
         assert!(open_link_json(&missing_passphrase).contains("error"));
     }
 
-    #[test]
-    fn chunk_encrypt_decrypt_roundtrip() {
-        let key_b64 = B64.encode(kdf::chunk_key(&[7u8; 32], b"vault-data-000000").as_bytes());
-        let vault_json = "{\"items\":[],\"tombstones\":[]}";
-        let enc = encrypt_vault_chunk_json(
-            &serde_json::json!({
-                "chunk_key_b64": key_b64,
-                "vault_json": vault_json,
-                "chunk_id": "vault-data-000000",
-                "lamport_clock": 4,
-            })
-            .to_string(),
-        );
-        let ct = field(&enc, "ciphertext_b64");
-        assert!(!ct.is_empty());
-        let dec = decrypt_vault_chunk_json(
-            &serde_json::json!({
-                "chunk_key_b64": key_b64,
-                "ciphertext_b64": ct,
-                "chunk_id": "vault-data-000000",
-                "lamport_clock": 4,
-            })
-            .to_string(),
-        );
-        assert_eq!(field(&dec, "vault_json"), vault_json);
+    fn number(json: &str, key: &str) -> i64 {
+        let v: serde_json::Value = serde_json::from_str(json).unwrap();
+        v.get(key).and_then(|x| x.as_i64()).unwrap_or_default()
+    }
 
-        // An older revision of the same chunk must not open — the rollback the
-        // seal exists to stop (audit C-2).
-        let replayed = decrypt_vault_chunk_json(
+    fn chunk_key(chunk_id: &str) -> [u8; 32] {
+        *kdf::chunk_key(&[7u8; 32], chunk_id.as_bytes()).as_bytes()
+    }
+
+    fn seal(
+        key: &[u8; 32],
+        chunk_id: &str,
+        lamport_clock: i64,
+        epoch: u64,
+        vault_json: &str,
+    ) -> String {
+        B64.encode(
+            vela_crypto::rekey::seal_fleet_chunk(
+                key,
+                vault_json.as_bytes(),
+                epoch,
+                chunk_id,
+                lamport_clock,
+            )
+            .unwrap(),
+        )
+    }
+
+    fn admit(
+        key: &[u8; 32],
+        ciphertext_b64: &str,
+        chunk_id: &str,
+        lamport_clock: i64,
+        key_epoch: i64,
+    ) -> String {
+        decrypt_admitted_vault_chunk_json(
             &serde_json::json!({
-                "chunk_key_b64": key_b64,
-                "ciphertext_b64": ct,
-                "chunk_id": "vault-data-000000",
-                "lamport_clock": 3,
+                "chunk_key_b64": B64.encode(key),
+                "ciphertext_b64": ciphertext_b64,
+                "chunk_id": chunk_id,
+                "lamport_clock": lamport_clock,
+                "key_epoch": key_epoch,
             })
             .to_string(),
-        );
+        )
+    }
+
+    #[test]
+    fn admitted_download_roundtrips_and_returns_the_admitted_clock() {
+        reset_admission_state();
+        let key = chunk_key("vault-data-000000");
+        let vault_json = "{\"items\":[],\"tombstones\":[]}";
+        let ct = seal(&key, "vault-data-000000", 4, 1, vault_json);
+        let dec = admit(&key, &ct, "vault-data-000000", 4, 1);
+        assert_eq!(field(&dec, "vault_json"), vault_json);
+        assert_eq!(number(&dec, "lamport_clock"), 4);
+    }
+
+    #[test]
+    fn admitted_download_refuses_unsealed_legacy_blobs() {
+        reset_admission_state();
+        let key = chunk_key("vault-data-000000");
+        // The pre-C-2 shape: a fresh nonce and no AAD at all, so the server can
+        // relabel it as any chunk or revision.
+        let unsealed = B64.encode(aead::encrypt(&key, b"{\"items\":[]}").unwrap());
+        let refused = admit(&key, &unsealed, "vault-data-000000", 4, 1);
+        let error = field(&refused, "error");
         assert!(
-            replayed.contains("error"),
-            "clock must bind the ciphertext: {replayed}"
+            error.contains("unsealed"),
+            "unsealed blob must be refused: {refused}"
+        );
+        assert!(field(&refused, "vault_json").is_empty());
+    }
+
+    #[test]
+    fn admitted_download_refuses_epoch_below_the_tab_floor() {
+        reset_admission_state();
+        let key = chunk_key("vault-data-000000");
+        let at_epoch_3 = seal(&key, "vault-data-000000", 4, 3, "{\"items\":[]}");
+        assert_eq!(
+            field(
+                &admit(&key, &at_epoch_3, "vault-data-000000", 4, 3),
+                "vault_json"
+            ),
+            "{\"items\":[]}"
+        );
+
+        // Once the tab has admitted epoch 3, an epoch-1 blob — the shape with
+        // no epoch binding — must not be accepted even though it opens.
+        let at_epoch_1 = seal(&key, "vault-data-000000", 5, 1, "{\"items\":[\"old\"]}");
+        let downgraded = admit(&key, &at_epoch_1, "vault-data-000000", 5, 1);
+        let error = field(&downgraded, "error");
+        assert!(
+            error.contains("epoch 1") && error.contains("downgrade"),
+            "epoch downgrade must be refused: {downgraded}"
+        );
+        assert!(field(&downgraded, "vault_json").is_empty());
+
+        // The floor did not move: epoch 3 still admits.
+        let later = seal(&key, "vault-data-000000", 6, 3, "{\"items\":[\"new\"]}");
+        assert_eq!(
+            field(
+                &admit(&key, &later, "vault-data-000000", 6, 3),
+                "vault_json"
+            ),
+            "{\"items\":[\"new\"]}"
+        );
+    }
+
+    #[test]
+    fn admitted_download_refuses_an_epoch_change_after_the_pin() {
+        reset_admission_state();
+        let key = chunk_key("vault-data-000000");
+        let at_epoch_3 = seal(&key, "vault-data-000000", 4, 3, "{}");
+        assert_eq!(
+            field(
+                &admit(&key, &at_epoch_3, "vault-data-000000", 4, 3),
+                "vault_json"
+            ),
+            "{}"
+        );
+
+        // There is no epoch-adoption path in the browser: a rotation needs a
+        // fresh grant, so a higher epoch is refused rather than trusted.
+        let at_epoch_4 = seal(&key, "vault-data-000000", 5, 4, "{}");
+        let rotated = admit(&key, &at_epoch_4, "vault-data-000000", 5, 4);
+        let error = field(&rotated, "error");
+        assert!(
+            error.contains("changed") && error.contains("reload"),
+            "epoch change must be refused: {rotated}"
+        );
+    }
+
+    #[test]
+    fn admitted_download_refuses_rollback_and_allows_equal_redelivery() {
+        reset_admission_state();
+        let key = chunk_key("vault-data-000000");
+        let latest = seal(&key, "vault-data-000000", 7, 2, "{\"items\":[\"latest\"]}");
+        assert_eq!(
+            field(
+                &admit(&key, &latest, "vault-data-000000", 7, 2),
+                "vault_json"
+            ),
+            "{\"items\":[\"latest\"]}"
+        );
+
+        let older = seal(&key, "vault-data-000000", 3, 2, "{\"items\":[\"old\"]}");
+        let rollback = admit(&key, &older, "vault-data-000000", 3, 2);
+        let error = field(&rollback, "error");
+        assert!(
+            error.contains("rollback") && error.contains("revision 7"),
+            "older revision must be refused: {rollback}"
+        );
+        assert!(field(&rollback, "vault_json").is_empty());
+
+        // The policy admits an equal clock (redelivery of the same revision).
+        assert_eq!(
+            field(
+                &admit(&key, &latest, "vault-data-000000", 7, 2),
+                "vault_json"
+            ),
+            "{\"items\":[\"latest\"]}"
+        );
+    }
+
+    #[test]
+    fn admitted_download_refuses_nonpositive_epochs() {
+        reset_admission_state();
+        let key = chunk_key("vault-data-000000");
+        let ct = seal(&key, "vault-data-000000", 4, 1, "{}");
+        for epoch in [0, -1] {
+            let refused = admit(&key, &ct, "vault-data-000000", 4, epoch);
+            assert!(
+                field(&refused, "error").contains("invalid vault key epoch"),
+                "epoch {epoch} must be refused: {refused}"
+            );
+        }
+    }
+
+    #[test]
+    fn admitted_download_binds_the_chunk_id() {
+        reset_admission_state();
+        let key_a = chunk_key("vault-data-000000");
+        let key_b = chunk_key("vault-data-000009");
+        let ct = seal(&key_a, "vault-data-000000", 4, 2, "{\"items\":[]}");
+        let refused = admit(&key_b, &ct, "vault-data-000009", 4, 2);
+        assert!(
+            field(&refused, "error").contains("could not authenticate"),
+            "a blob relabelled as another chunk must fail: {refused}"
+        );
+    }
+
+    /// A failed first contact must not pin the floor: the server cannot use a
+    /// probe to lower it, and the correct epoch still works afterwards.
+    #[test]
+    fn admitted_download_does_not_pin_a_failed_first_attempt() {
+        reset_admission_state();
+        let key = chunk_key("vault-data-000000");
+        let at_epoch_3 = seal(&key, "vault-data-000000", 4, 3, "{\"items\":[]}");
+        let wrong_claim = admit(&key, &at_epoch_3, "vault-data-000000", 4, 2);
+        assert!(
+            field(&wrong_claim, "error").contains("could not authenticate"),
+            "the blob is epoch-3 bound: {wrong_claim}"
+        );
+        assert_eq!(
+            field(
+                &admit(&key, &at_epoch_3, "vault-data-000000", 4, 3),
+                "vault_json"
+            ),
+            "{\"items\":[]}"
         );
     }
 
     #[test]
     fn epoch_chunk_roundtrip_rejects_wrong_or_legacy_epoch() {
-        let key_b64 = B64.encode(kdf::chunk_key(&[7u8; 32], b"vault-data-000000").as_bytes());
+        reset_admission_state();
+        let key = chunk_key("vault-data-000000");
+        let key_b64 = B64.encode(key);
         let request = |epoch: Option<u64>| {
             serde_json::json!({
                 "chunk_key_b64": key_b64,
@@ -491,33 +818,32 @@ mod tests {
             &encrypt_vault_chunk_json(&request(Some(2))),
             "ciphertext_b64",
         );
-        let decrypt = |epoch| {
-            decrypt_vault_chunk_json(
-                &serde_json::json!({
-                    "chunk_key_b64": key_b64,
-                    "ciphertext_b64": ct,
-                    "chunk_id": "vault-data-000000",
-                    "lamport_clock": 4,
-                    "epoch": epoch,
-                })
-                .to_string(),
-            )
-        };
-        assert_eq!(field(&decrypt(2), "vault_json"), "{}");
-        assert!(!field(&decrypt(3), "error").is_empty());
-
-        let legacy = field(&encrypt_vault_chunk_json(&request(None)), "ciphertext_b64");
-        let refused = decrypt_vault_chunk_json(
-            &serde_json::json!({
-                "chunk_key_b64": key_b64,
-                "ciphertext_b64": legacy,
-                "chunk_id": "vault-data-000000",
-                "lamport_clock": 4,
-                "epoch": 2,
-            })
-            .to_string(),
+        assert_eq!(
+            field(&admit(&key, &ct, "vault-data-000000", 4, 2), "vault_json"),
+            "{}"
         );
-        assert!(refused.contains("legacy chunk ciphertext is forbidden"));
+
+        // An epoch-2 blob is bound to its epoch; the epoch-1 AAD cannot open it.
+        reset_admission_state();
+        let wrong_epoch = admit(&key, &ct, "vault-data-000000", 4, 1);
+        assert!(
+            field(&wrong_epoch, "error").contains("could not authenticate"),
+            "epoch binding must reject a wrong claimed epoch: {wrong_epoch}"
+        );
+
+        // The crypto layer keeps the epoch-1 shape readable at epoch 1 only;
+        // above it the legacy fallback is refused. The bridge gate rejects the
+        // downgrade before this point, so assert the underlying rule directly.
+        let legacy = field(&encrypt_vault_chunk_json(&request(None)), "ciphertext_b64");
+        let legacy_bytes = B64.decode(&legacy).unwrap();
+        let err =
+            vela_crypto::rekey::open_fleet_chunk(&key, &legacy_bytes, 2, "vault-data-000000", 4)
+                .unwrap_err()
+                .to_string();
+        assert!(
+            err.contains("legacy chunk ciphertext is forbidden"),
+            "epoch-2 open must refuse the legacy shape: {err}"
+        );
     }
 
     #[test]
@@ -548,15 +874,13 @@ mod tests {
             &aead::vault_chunk_aad(chunk_id, lamport_clock),
         )
         .unwrap();
-        let opened_by_web = decrypt_vault_chunk_json(
-            &serde_json::json!({
-                "chunk_key_b64": key_b64,
-                "ciphertext_b64": B64.encode(legacy_ciphertext),
-                "chunk_id": chunk_id,
-                "lamport_clock": lamport_clock,
-                "epoch": 1,
-            })
-            .to_string(),
+        reset_admission_state();
+        let opened_by_web = admit(
+            &key,
+            &B64.encode(legacy_ciphertext),
+            chunk_id,
+            lamport_clock,
+            1,
         );
         assert_eq!(field(&opened_by_web, "vault_json"), "{\"items\":[]}");
 
@@ -569,38 +893,30 @@ mod tests {
         })
         .to_string();
         assert!(encrypt_vault_chunk_json(&invalid).contains("epoch must be positive"));
-        let invalid_open = serde_json::json!({
-            "chunk_key_b64": key_b64,
-            "ciphertext_b64": B64.encode(web_ciphertext),
-            "chunk_id": chunk_id,
-            "lamport_clock": lamport_clock,
-            "epoch": 0,
-        })
-        .to_string();
-        assert!(decrypt_vault_chunk_json(&invalid_open).contains("epoch must be positive"));
+        // A first contact with a nonpositive epoch has no floor yet, so the
+        // epoch policy itself refuses it.
+        reset_admission_state();
+        let invalid_open = admit(
+            &key,
+            &B64.encode(web_ciphertext),
+            chunk_id,
+            lamport_clock,
+            0,
+        );
+        assert!(invalid_open.contains("invalid vault key epoch"));
     }
 
     /// The granted keys are per chunk id: a key for one chunk cannot open
     /// another, so a session only ever reaches the chunks it was granted.
     #[test]
     fn chunk_key_from_another_chunk_fails() {
+        reset_admission_state();
         let rms = [7u8; 32];
-        let enc = encrypt_vault_chunk_json(
-            &serde_json::json!({
-                "chunk_key_b64": B64.encode(kdf::chunk_key(&rms, b"vault-data-000000").as_bytes()),
-                "vault_json": "{}",
-            })
-            .to_string(),
-        );
-        let ct = field(&enc, "ciphertext_b64");
-        let dec = decrypt_vault_chunk_json(
-            &serde_json::json!({
-                "chunk_key_b64": B64.encode(kdf::chunk_key(&rms, b"vault-data-000009").as_bytes()),
-                "ciphertext_b64": ct,
-            })
-            .to_string(),
-        );
-        assert!(!field(&dec, "error").is_empty());
+        let key_a = *kdf::chunk_key(&rms, b"vault-data-000000").as_bytes();
+        let key_b = *kdf::chunk_key(&rms, b"vault-data-000009").as_bytes();
+        let ct = seal(&key_a, "vault-data-000000", 4, 1, "{}");
+        let dec = admit(&key_b, &ct, "vault-data-000009", 4, 1);
+        assert!(field(&dec, "error").contains("could not authenticate"));
     }
 
     /// The web bridge must decrypt exactly what the other clients wrote: the

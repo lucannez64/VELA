@@ -1,0 +1,30 @@
+   Compiling vela-wasm-bridge v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-1ab9758d/libVELA/vela-wasm-bridge)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.00s
+     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-1ab9758d/target-vela-n0c-web/debug/build/vela-wasm-bridge/af5124ceb5c8f549/out/vela_wasm_bridge-af5124ceb5c8f549)
+
+running 16 tests
+test tests::admitted_download_binds_the_chunk_id ... ok
+test tests::admitted_download_does_not_pin_a_failed_first_attempt ... ok
+test tests::admitted_download_refuses_an_epoch_change_after_the_pin ... ok
+test tests::admitted_download_refuses_epoch_below_the_tab_floor ... ok
+test tests::admitted_download_refuses_nonpositive_epochs ... ok
+test tests::admitted_download_refuses_rollback_and_allows_equal_redelivery ... ok
+test tests::admitted_download_refuses_unsealed_legacy_blobs ... ok
+test tests::admitted_download_roundtrips_and_returns_the_admitted_clock ... ok
+test tests::chunk_key_from_another_chunk_fails ... ok
+test tests::epoch_chunk_roundtrip_rejects_wrong_or_legacy_epoch ... ok
+test tests::epoch_one_uses_the_fleet_legacy_chunk_format ... ok
+test tests::granted_keys_match_the_approver_derivation ... ok
+test tests::keypair_and_open_share_roundtrip ... ok
+test tests::open_link_roundtrip_matches_the_sender_seal ... ok
+test tests::password_strength_scores ... ok
+test tests::signing_keypair_sign_and_verify ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.14s
+
+   Doc-tests vela_wasm_bridge
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

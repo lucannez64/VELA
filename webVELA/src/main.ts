@@ -6,7 +6,7 @@ import {
   generateSigningKeypair,
   createAuthSignature,
   openShare,
-  decryptVaultChunk,
+  admitVaultChunk,
   encryptVaultChunk,
   bytesToB64,
   b64ToBytes,
@@ -475,13 +475,22 @@ async function pullRemoteVault(): Promise<Record<string, unknown>[]> {
   for (const id of readIds) {
     const ct = await authed.getChunk(id);
     if (!ct) continue;
-    json += decryptVaultChunk(
-      chunkKeyFor(id),
-      bytesToB64(ct),
-      id,
-      man.get(id)?.lamport ?? 0,
-      authed.epoch,
-    );
+    let admitted: { vaultJson: string };
+    try {
+      // The WASM bridge, not this page, decides whether the chunk may be
+      // admitted: sealed format, the epoch this tab pinned, and its own
+      // per-chunk revision floor (U-27).
+      admitted = admitVaultChunk(
+        chunkKeyFor(id),
+        bytesToB64(ct),
+        id,
+        man.get(id)?.lamport ?? 0,
+        authed.epoch,
+      );
+    } catch (e) {
+      throw new Error(`Could not safely open "${id}" from the server: ${(e as Error).message}`);
+    }
+    json += admitted.vaultJson;
   }
   vaultEnvelope = json ? JSON.parse(json) : {};
   return (vaultEnvelope.items as Record<string, unknown>[] | undefined) ?? [];

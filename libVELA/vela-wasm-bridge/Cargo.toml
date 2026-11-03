@@ -21,6 +21,8 @@ wasm-bindgen = "0.2"
 # Argon2id for the RW reload-survival PIN wrap (EPHEMERAL_WEB_ACCESS_DESIGN §8.1).
 vela-core = { path = "../vela-core" }
 vela-crypto = { path = "../vela-crypto", default-features = false }
+# The same verified download-admission decision the mobile bridges call.
+vela-sync-policy = { path = "../vela-sync-policy" }
 
 # `crypto-common` (pulled transitively via ml-kem / blake3 / digest) depends on
 # getrandom 0.4, whose browser backend must be explicitly enabled. We force its
