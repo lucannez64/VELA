@@ -1,0 +1,1219 @@
+{
+  "step": "H1",
+  "title": "Handler inventory: request-to-reply formal coverage per HTTP route",
+  "generated": "2026-11-03",
+  "author": "vela-h1-handlers",
+  "corpus": {
+    "route_table": "serverVELA/vela-server/src/routes.rs",
+    "route_count": 64,
+    "additional_routers": "none: lib.rs has no router; main.rs only adds RequestBodyLimitLayer + TimeoutLayer to routes::build",
+    "fallback": "SPA fallback_service when WEB_DIR is set (routes.rs:232-240), not an API route and not counted",
+    "auth_extractors": "serverVELA/vela-server/src/middleware.rs",
+    "error_mapping": "serverVELA/vela-server/src/error.rs:46-77",
+    "handler_interpreter_guard": "security/formal/tests/test_handler_interpreters.py",
+    "correspondence": "security/formal/correspondence.json is drift-detection snapshots of protocol/client artifacts, not a route map; it has no per-route entry"
+  },
+  "verdict_definitions": {
+    "driver+interpreter+executors proved": "the handler reaches a policy driver only through that crate's proved interpreter macro (or an equivalent proved loop), and every SQL/store operation in the request is an extracted plan proved against the store model",
+    "partially proved": "at least the store statements are extracted plans with a store-model proof, but at least one part named in the row is ordinary handler code (usually: no decision driver at all, or a write whose authority is an inline branch)",
+    "no proof (read-only)": "no driver and no proved statement I/O; the route only reads (or probes) and its reply cannot change security state",
+    "no proof (writes)": "a route that writes with neither a proved decision loop nor proved statement I/O"
+  },
+  "summary": {
+    "total_routes": 64,
+    "by_verdict": {
+      "driver+interpreter+executors proved": 47,
+      "partially proved": 15,
+      "no proof (read-only)": 2,
+      "no proof (writes)": 0
+    },
+    "writing_routes_without_a_decision_driver": [
+      "GET /device/capsule (read-once clear)",
+      "GET /vault/epoch (lazy rollback, handler-called)",
+      "GET /vault/sync (lazy rollback via read_epoch)",
+      "GET /vault/events (lazy rollback via read_epoch)",
+      "GET /vault/oram/:tree_id/path/:leaf (lazy rollback via read_epoch)",
+      "GET /web-session/:id (one-shot capsule clear)"
+    ],
+    "partial_breakdown": {
+      "read_only_no_driver": 9,
+      "write_capable_no_driver": 6
+    }
+  },
+  "global_middleware": [
+    "TraceLayer::new_for_http (routes.rs:243)",
+    "enforce_https: production cleartext -> 426, /health exempt (routes.rs:244, 306-320)",
+    "CORS allow-list or wildcard-if-explicitly-allowed, exposes X-New-Token (routes.rs:36-60)",
+    "security_headers: nosniff, DENY, no-referrer, CSP, HSTS when HTTPS (routes.rs:248, 255-296)",
+    "RequestBodyLimitLayer(config.max_body_bytes, default 2 MiB) and TimeoutLayer(120 s) (main.rs:267-276)",
+    "AuthSession: PASETO verify, exp/nbf/hard-cap, revocation markers + durable device row, 300 req/min per JTI, verified renewal (middleware.rs:78-241)",
+    "DeviceSession: AuthSession + authorize_route(PermanentAccount) refusing web-session scope (middleware.rs:300-323)"
+  ],
+  "routes": [
+    {
+      "method": "POST",
+      "path": "/account/register",
+      "route_registration_line": 63,
+      "handler": "account/mod.rs:389 post_register",
+      "auth_and_middleware": "none (unauthenticated); per-IP registration limiter and account budget run as executor effects",
+      "request_validation": "`Json<RegisterRequest>`; base64 key decode and exact lengths (1600/2624/1568 B) via `observe_keys`/`decode_b64_exact` (account/mod.rs:474) supplied to the driver as facts; device name/type defaulted at account/mod.rs:404-415",
+      "decision": {
+        "driver": "vela-session-policy::registration_driver",
+        "interpreter": "registration_interpreter!",
+        "budget": 8,
+        "evidence": "registration-interpreter"
+      },
+      "io": "`RegisterIo` (session-executors): rate limit, account count, begin, insert user, insert device, commit, issue token, track JTI. No SQL outside plans.",
+      "reply": "`RegisterResponse{user_id, device_id, token}` on `Complete`; `registration_failure_error` (account/mod.rs:348) maps each driver failure to 429/400/500; unmatched effect = 500. Errors render through `AppError` (error.rs:46).",
+      "conformance_tests": "`register_creates_account_and_device`, `register_rejects_bad_key_size`, `failed_registration_rolls_back_the_account` (integration.rs); executor cases in session-executors log",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/account",
+      "route_registration_line": 64,
+      "handler": "account/delete.rs:204 delete_account",
+      "auth_and_middleware": "`DeviceSession` (device token only)",
+      "request_validation": "no body; actor facts are constants checked again by the driver (delete.rs:212)",
+      "decision": {
+        "driver": "vela-session-policy::deletion_driver",
+        "interpreter": "deletion_interpreter!",
+        "budget": 14,
+        "evidence": "deletion-interpreter"
+      },
+      "io": "`DeleteAccountIo`: device/web-session scans, the seven table deletes in driver order, then the users delete, commit; each statement an extracted plan (session-executors).",
+      "reply": "`{\"deleted\":true,\"user_id\":...}` on `Complete`; failure branches keep the recorded store error, else `deletion_failure_error`; unmatched = 500.",
+      "conformance_tests": "`every_bounded_account_deletion_trace_matches_the_model` (account_deletion_model.rs); `failed_account_deletion_rolls_back_every_table`, `account_delete_without_token_returns_401` (integration.rs)",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "GET",
+      "path": "/auth/challenge",
+      "route_registration_line": 65,
+      "handler": "auth/challenge.rs:268 get_challenge",
+      "auth_and_middleware": "none; per-IP limiter is the driver's first effect",
+      "request_validation": "`Query<ChallengeQuery>`; `ChallengePurpose::parse` (challenge.rs:277) \u2014 default login, unknown purpose = terminal 400 with no limiter/store effect",
+      "decision": {
+        "driver": "vela-session-policy::challenge_issue_driver",
+        "interpreter": "challenge_issue_interpreter!",
+        "budget": 3,
+        "evidence": "challenge-issue-interpreter"
+      },
+      "io": "`ChallengeIssueIo`: limiter increment and first-writer-wins `SetExNx` nonce (session-executors).",
+      "reply": "`{\"challenge\":...}` on `Issue`; `issue_failure_error` maps `InvalidPurpose`/`RateLimited`/collision/storage; unmatched = 500.",
+      "conformance_tests": "`every_bounded_challenge_trace_matches_the_single_use_model`, `one_challenge_yields_exactly_one_success_under_concurrency` (challenge_single_use_model.rs); `challenge_returns_nonce` (integration.rs)",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "POST",
+      "path": "/auth/verify",
+      "route_registration_line": 69,
+      "handler": "auth/verify.rs:314 post_verify",
+      "auth_and_middleware": "none; per-IP limiter and (ip,device) backoff precheck run before the driver (verify.rs:323-341), both planned",
+      "request_validation": "`Json<VerifyRequest>`; device id, challenge and signature supplied as body strings; challenge take, base64 and signature verification are driver effects",
+      "decision": {
+        "driver": "vela-session-policy::login_driver",
+        "interpreter": "login_interpreter!",
+        "budget": 6,
+        "evidence": "login-interpreter"
+      },
+      "io": "`VerifyIo` (session-executors): take challenge, device lookup, signature verify, failure counter/backoff, issue PASETO, track JTI; pre-driver limiter passes are planned store statements.",
+      "reply": "`VerifyResponse{token,user_id}` on `Respond`; failure table (verify.rs:391-416) maps missing/wrong-purpose/decoding/verifier/storage to 401/400/500; device-auth errors unified to avoid existence oracles.",
+      "conformance_tests": "`successful_login_tracks_the_jti_and_replay_is_refused`, `two_logins_with_one_nonce_yield_at_most_one_token`, `malformed_consumed_nonce_is_bad_request_before_failure_counting` (login_driver_handler.rs); `auth_signature_succeeds_once_and_replay_fails`, `device_existence_is_not_revealed_by_auth_failures` (integration.rs)",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "POST",
+      "path": "/auth/logout",
+      "route_registration_line": 70,
+      "handler": "auth/logout.rs:52 post_logout",
+      "auth_and_middleware": "`AuthSession`; renewal deliberately suppressed for this path (middleware.rs:204-207)",
+      "request_validation": "no body; the JTI comes from the verified token",
+      "decision": {
+        "driver": "vela-session-policy::revocation_driver (logout branch)",
+        "interpreter": "logout_interpreter!",
+        "budget": 1,
+        "evidence": "revocation-interpreter"
+      },
+      "io": "`LogoutJtiIo`: one `revoke_jtis` store statement (session-executors). No SQL.",
+      "reply": "204 with empty headers and body `\"logged out\"` on `Complete`; storage failure keeps the store error; unmatched = 500.",
+      "conformance_tests": "`revoke_and_logout_invalidate_exactly_the_expected_authority`, `logout_schema_and_revoke_do_not_mint_undelivered_replacements` (device_revocation_model.rs); `logout_without_token_returns_401` (integration.rs)",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "POST",
+      "path": "/device/enroll",
+      "route_registration_line": 71,
+      "handler": "device/enroll.rs:420 post_enroll",
+      "auth_and_middleware": "none; pre-driver per-IP enroll limiter (enroll.rs:427), planned",
+      "request_validation": "`Json<EnrollRequest>`; enrolling device id, new keys, capsule and signature decoded/checked by the driver's effects (`verify_enrollment_signature` enroll.rs:496)",
+      "decision": {
+        "driver": "vela-enrollment-policy::enroll_driver",
+        "interpreter": "enroll_interpreter!",
+        "budget": 5,
+        "evidence": "enroll-interpreter"
+      },
+      "io": "`EnrollIo` over `ExecIo`: limiter, challenge take, device lookup, signature verify, rekey permit, guarded insert; all plans (enrollment-executors).",
+      "reply": "`{\"device_id\":...}` on `Complete`; `enroll_failure_error` maps driver failures; unmatched = 500.",
+      "conformance_tests": "bounded traces in `challenge_single_use_model.rs` (same transcript as verify); `challenge_is_bound_to_its_purpose_and_spent_on_misuse`, `device_existence_is_not_revealed_by_auth_failures`, `v2_and_v3_enrollment_capsules_are_atomically_epoch_bound` (integration.rs)",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "POST",
+      "path": "/device/enrollment-package",
+      "route_registration_line": 72,
+      "handler": "device/invitation.rs:92 post_enrollment_package",
+      "auth_and_middleware": "none; pre-driver per-IP package-store limiter (invitation.rs:99), planned",
+      "request_validation": "`Json<StoreEnrollmentPackageRequest>`; `validate_token` (invitation.rs:218: 32..=96 chars, alnum/-/_) and ciphertext 1..=64 KiB are observations to `start_store_package` (104-110)",
+      "decision": {
+        "driver": "vela-enrollment-policy::pairing_driver",
+        "interpreter": "pairing_interpreter!",
+        "budget": 5,
+        "evidence": "pairing-interpreter"
+      },
+      "io": "`StorePackageIo` over `ExecIo`: limiter and `set_ex` package write (enrollment-executors).",
+      "reply": "`{\"stored\":true,\"expires_in\":...}` on `Complete`; retained error or `invitation_failure_error` (invalid token/ciphertext = 400); unmatched = 500.",
+      "conformance_tests": "`every_bounded_pairing_trace_matches_the_m13_ceremony` (pairing_model.rs)",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "GET",
+      "path": "/device/enrollment-package/:token",
+      "route_registration_line": 76,
+      "handler": "device/invitation.rs:166 get_enrollment_package",
+      "auth_and_middleware": "none; pre-driver per-IP package-fetch limiter (invitation.rs:173), planned",
+      "request_validation": "`Path<String>` token, but an `x-enrollment-token` header takes precedence (invitation.rs:179-183); `validate_token` as above. The header-over-path choice is handler logic, not proved.",
+      "decision": {
+        "driver": "vela-enrollment-policy::pairing_driver",
+        "interpreter": "pairing_interpreter!",
+        "budget": 5,
+        "evidence": "pairing-interpreter"
+      },
+      "io": "`RedeemPackageIo`: limiter plus atomic get-and-delete of the package (enrollment-executors).",
+      "reply": "`{\"ciphertext\":...}` on `Complete`; missing/expired = 404, invalid token = 400; unmatched = 500.",
+      "conformance_tests": "`every_bounded_pairing_trace_matches_the_m13_ceremony` (pairing_model.rs)",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "POST",
+      "path": "/device/enrollment-grant",
+      "route_registration_line": 84,
+      "handler": "device/rendezvous.rs:189 post_grant",
+      "auth_and_middleware": "`DeviceSession` (device token only); pre-driver per-user grant limiter (rendezvous.rs:193), planned",
+      "request_validation": "no body; scope/user/device presence and TTL are observations to `start_open_grant` (198-203)",
+      "decision": {
+        "driver": "vela-enrollment-policy::pairing_driver",
+        "interpreter": "pairing_interpreter!",
+        "budget": 5,
+        "evidence": "pairing-interpreter"
+      },
+      "io": "`OpenGrantIo`: limiter plus `set_ex` grant write (enrollment-executors).",
+      "reply": "`CreateGrantResponse{grant_id,expires_in}` plus renewal header; failures via `rendezvous_failure_error`; unmatched = 500.",
+      "conformance_tests": "`every_bounded_pairing_trace_matches_the_m13_ceremony`, `web_session_token_is_refused...` guard in integration.rs",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "POST",
+      "path": "/device/enrollment-grant/:id/claim",
+      "route_registration_line": 88,
+      "handler": "device/rendezvous.rs:365 post_claim",
+      "auth_and_middleware": "none; pre-driver per-IP claim limiter (rendezvous.rs:373), planned",
+      "request_validation": "`Path<String>` + `validate_id` (rendezvous.rs:374); `Json<ClaimRequest>`; base64 key decoding and lengths are the `check_claim` effect; grant-liveness probe is a planned read (380)",
+      "decision": {
+        "driver": "vela-enrollment-policy::pairing_driver",
+        "interpreter": "pairing_interpreter!",
+        "budget": 5,
+        "evidence": "pairing-interpreter"
+      },
+      "io": "`ClaimIo`: limiter, planned grant-exists read, planned claim-existence read, guarded first-writer-wins claim write (enrollment-executors).",
+      "reply": "`{\"claimed\":true}` on `Complete`; failures via retained error or `rendezvous_failure_error`; unmatched = 500.",
+      "conformance_tests": "`every_bounded_pairing_trace_matches_the_m13_ceremony` (pairing_model.rs)",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "GET",
+      "path": "/device/enrollment-grant/:id",
+      "route_registration_line": 92,
+      "handler": "device/rendezvous.rs:426 get_claim",
+      "auth_and_middleware": "`DeviceSession`",
+      "request_validation": "`Path<String>` + `validate_id` (431); grant/user/opener binding via `read_grant` (1566) and `authorize_grant`; claim payload decode in `load_claim`",
+      "decision": null,
+      "io": "Planned reads `plan_grant_read`/claim read through `ExecIo`; no executor trait, no driver. The inspect decision is the separate proved pure policy `authorize_inspection` (445-450).",
+      "reply": "`ClaimView` on `Inspect`; absent claim and absent/foreign grant both 404 (deliberate indistinguishability); unmatched state = 404.",
+      "conformance_tests": "`every_bounded_pairing_trace_matches_the_m13_ceremony` (pairing_model.rs) inspects claims",
+      "verdict": "partially proved",
+      "missing": [
+        "no interpreter loop: the read sequence and reply are handler code; only the inspect decision is a proved pure policy and the reads are planned"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/device/enrollment-grant/:id/complete",
+      "route_registration_line": 96,
+      "handler": "device/rendezvous.rs:1030 post_complete",
+      "auth_and_middleware": "`DeviceSession`",
+      "request_validation": "`Path` + `validate_id` (1036); `Json<CompleteRequest>`; account-epoch preflight, claim decode, capsule/signature/opener checks are driver effects; `RestoreAndFail` may re-write the taken ceremony (authorized by the verdict)",
+      "decision": {
+        "driver": "vela-enrollment-policy::pairing_driver",
+        "interpreter": "pairing_interpreter!",
+        "budget": 5,
+        "evidence": "pairing-interpreter"
+      },
+      "io": "`CompleteIo`: planned grant read/claim read, guarded ceremony take, guarded device insert, result write, restore (enrollment-executors).",
+      "reply": "`{\"device_id\":...}` on `Complete`; 404/409/401/400 table at rendezvous.rs:1090-1200 (grant absence indistinguishable); insert error is terminal (U-19).",
+      "conformance_tests": "`every_bounded_pairing_trace_matches_the_m13_ceremony`, `a_pairing_ceremony_completes_once_and_replays_are_refused` (pairing_model.rs)",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "POST",
+      "path": "/device/enrollment-grant/:id/result",
+      "route_registration_line": 104,
+      "handler": "device/rendezvous.rs:1457 post_result",
+      "auth_and_middleware": "none (joining device has no identity); pre-driver per-IP result limiter (rendezvous.rs:1465), planned",
+      "request_validation": "`Path` + `validate_id` (1466); `Json<ResultRequest>`; `decode_exact` signature length (1469) before the driver",
+      "decision": {
+        "driver": "vela-enrollment-policy::pairing_driver",
+        "interpreter": "pairing_interpreter!",
+        "budget": 5,
+        "evidence": "pairing-interpreter"
+      },
+      "io": "`ResultIo`: planned result/claim/device reads plus signature verification; no writes (enrollment-executors).",
+      "reply": "`Enrolled{device_id}` or `Pending`; unreadable rows = 500 with the recorded error; signature/authority refusal = 401; unmatched = 500.",
+      "conformance_tests": "`a_lost_result_record_is_recovered_from_the_enrolled_device_row`, `a_lost_result_record_is_not_returned_for_a_wrong_signature`, `a_grant_without_a_result_or_device_row_is_not_found` (pairing_model.rs)",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "POST",
+      "path": "/device/revoke",
+      "route_registration_line": 108,
+      "handler": "device/revoke.rs:199 post_revoke",
+      "auth_and_middleware": "`DeviceSession`; renewal suppressed (middleware.rs:204)",
+      "request_validation": "`Json<RevokeRequest>` target device id typed as UUID by serde; actor facts re-checked by the driver (207-210)",
+      "decision": {
+        "driver": "vela-session-policy::revocation_driver",
+        "interpreter": "revocation_interpreter!",
+        "budget": 4,
+        "evidence": "revocation-interpreter"
+      },
+      "io": "`RevokeDeviceIo`: target lookup, lockout sentinel, revocation record, web-session cascade; all planned (session-executors).",
+      "reply": "`{\"revoked\":...}` on `Complete`; storage failures keep their error, otherwise `revocation_failure_error`; unmatched = 500.",
+      "conformance_tests": "`every_bounded_revocation_trace_matches_the_model`, `revoke_and_logout_invalidate_exactly_the_expected_authority`, `the_device_sentinel_stops_a_token_that_escaped_jti_enumeration` (device_revocation_model.rs); `revoking_a_device_revokes_the_web_sessions_it_approved` (integration.rs)",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "GET",
+      "path": "/device/capsule",
+      "route_registration_line": 109,
+      "handler": "device/capsule.rs:24 get_capsule",
+      "auth_and_middleware": "`DeviceSession`",
+      "request_validation": "none (no body); device/user from the session",
+      "decision": null,
+      "io": "Transaction begin + `plan_read_capsule`, conditional `plan_clear_enrollment_capsule` (enrollment capsules only), commit; all `VaultStmt` plans proved against the store model (vault-executors wave 2). The branch `capsule_epoch.is_none()` is handler code.",
+      "reply": "`CapsuleResponse{capsule,epoch,rotation_id}`; missing capsule = 404; clear failure = 500; commit race = 409. This GET performs a write (read-once clear).",
+      "conformance_tests": "`the_capsule_is_delivered_once_even_under_concurrent_polls`, `v2_and_v3_enrollment_capsules_are_atomically_epoch_bound` (integration.rs)",
+      "verdict": "partially proved",
+      "missing": [
+        "no driver/interpreter: the read-then-clear decision and the epoch branch are handler code; statement-level I/O is proved"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/device/capsule/ack",
+      "route_registration_line": 110,
+      "handler": "device/capsule.rs:186 post_capsule_ack",
+      "auth_and_middleware": "`DeviceSession`",
+      "request_validation": "`Json<CapsuleAck{epoch}>`; authenticated/device-scope facts are constants (203-206)",
+      "decision": {
+        "driver": "vela-rekey-policy::vault_mutation_driver",
+        "interpreter": "capsule_ack_interpreter!",
+        "budget": "per driver",
+        "evidence": "vault-mutation-interpreter"
+      },
+      "io": "`CapsuleAckIo`: pending-epoch read and guarded ack write (vault-executors).",
+      "reply": "204 on `Complete`; failure table at capsule.rs:217-236 (401/403/409/500); unmatched = 500.",
+      "conformance_tests": "`the_capsule_is_delivered_once_even_under_concurrent_polls` (integration.rs); vault-executors conformance",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "GET",
+      "path": "/devices",
+      "route_registration_line": 114,
+      "handler": "device/list.rs:38 list_devices",
+      "auth_and_middleware": "`DeviceSession`",
+      "request_validation": "none",
+      "decision": null,
+      "io": "`plan_read_devices` through `run_read` (vault-executors wave 2); row decoding in `parse_device_row_turso`.",
+      "reply": "`ListDevicesResponse{devices}` with per-row fields; read failure = 500.",
+      "conformance_tests": "`devices_without_token_returns_401` (integration.rs); `list_devices_query_returns_devices_for_user` (unit); vault-executors conformance",
+      "verdict": "partially proved",
+      "missing": [
+        "read-only: no decision driver, only the listing plan is proved"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/device/rekey-capable",
+      "route_registration_line": 115,
+      "handler": "device/list.rs:120 post_rekey_capable",
+      "auth_and_middleware": "`DeviceSession`",
+      "request_validation": "none; authenticated/device-scope constants (133-139)",
+      "decision": {
+        "driver": "vela-rekey-policy::vault_mutation_driver",
+        "interpreter": "rekey_capable_interpreter!",
+        "budget": "per driver",
+        "evidence": "vault-mutation-interpreter"
+      },
+      "io": "`CapableIo::attest`: one guarded update (vault-executors).",
+      "reply": "204 on `Complete`; 401/403/404/500 table; unmatched = 500.",
+      "conformance_tests": "`rekey_rotation_lifecycle_end_to_end` (integration.rs); vault-executors conformance",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "GET",
+      "path": "/vault/sync",
+      "route_registration_line": 119,
+      "handler": "vault/sync.rs:28 get_sync",
+      "auth_and_middleware": "`AuthSession`",
+      "request_validation": "none",
+      "decision": null,
+      "io": "`read_epoch` (planned key-state read) then `plan_read_sync`; both proved plans (vault-executors wave 2). `read_epoch` calls `maybe_rollback` (rekey.rs:369-372), so this GET can also lazily abort an expired FREEZING rotation \u2014 a write from a read-only route.",
+      "reply": "`SyncManifest{epoch,chunks}`; epoch or query failure = 500.",
+      "conformance_tests": "`rekey_rotation_lifecycle_end_to_end`, `web_session_token_still_reaches_the_vault`, `vault_sync_without_token_returns_401` (integration.rs)",
+      "verdict": "partially proved",
+      "missing": [
+        "read-only: no decision driver; epoch selection and reply assembly are handler code"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/vault/schema",
+      "route_registration_line": 120,
+      "handler": "vault/schema.rs:86 get_schema",
+      "auth_and_middleware": "`AuthSession`",
+      "request_validation": "none",
+      "decision": null,
+      "io": "`minimum` -> `plan_read_schema_floor` (vault-executors wave 2); store value must be absent or `\"2\"`.",
+      "reply": "`SchemaStatus{minimum_write_schema,supported_schema}`; unknown floor value = 500.",
+      "conformance_tests": "`rich_schema_activation_blocks_legacy_uploads_and_deletes_without_mutation` (integration.rs)",
+      "verdict": "partially proved",
+      "missing": [
+        "read-only: no driver; the value-to-status mapping is handler code"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/vault/schema",
+      "route_registration_line": 120,
+      "handler": "vault/schema.rs:125 activate",
+      "auth_and_middleware": "`DeviceSession`; renewal suppressed",
+      "request_validation": "none; per-account mutex `lock` (schema.rs:17) serializes with chunk writes",
+      "decision": {
+        "driver": "vela-rekey-policy::vault_mutation_driver",
+        "interpreter": "schema_interpreter!",
+        "budget": "per driver",
+        "evidence": "vault-mutation-interpreter"
+      },
+      "io": "`ActivateIo::write_floor`: one `SchemaFloorPut` plan (vault-executors).",
+      "reply": "`SchemaStatus{2,2}` on `Complete`; 401/403/500 table; unmatched = 500.",
+      "conformance_tests": "`rich_schema_activation_waits_for_an_in_flight_account_write`, `rich_schema_activation_blocks_legacy_uploads_and_deletes_without_mutation` (integration.rs)",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "GET",
+      "path": "/vault/events",
+      "route_registration_line": 121,
+      "handler": "vault/events.rs:166 get_events",
+      "auth_and_middleware": "`AuthSession`",
+      "request_validation": "none; per-account stream-slot cap (events.rs:181)",
+      "decision": null,
+      "io": "`read_epoch` (planned read) then the in-process broadcast (not store state). `read_epoch` calls `maybe_rollback` (rekey.rs:369-372), so opening the stream can lazily roll back an expired rotation.",
+      "reply": "SSE: `hello` (revision+epoch), then `change`/`resync`; slot exhaustion = 429. Reply filtering is by `user_id` (195).",
+      "conformance_tests": "`vault_events_streams_hello_then_changes` (integration.rs); `subscribers_only_see_their_own_accounts_events` (unit)",
+      "verdict": "partially proved",
+      "missing": [
+        "read-only stream: no decision driver"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/vault/epoch",
+      "route_registration_line": 122,
+      "handler": "vault/rekey.rs:914 get_epoch",
+      "auth_and_middleware": "`DeviceSession`",
+      "request_validation": "none",
+      "decision": null,
+      "io": "`load_key_state` (planned read) then `maybe_rollback` -> `plan_timeout` and, when expired, `rollback_rekey`'s begin/CAS/cleanup/commit plans. **This GET can write**: it lazily aborts an expired FREEZING rotation (rekey.rs:137-182).",
+      "reply": "`EpochResponse{epoch,state}` from the (possibly rolled-back) key state; lookup failure = 404/500; rollback failure propagates.",
+      "conformance_tests": "`rekey_rotation_lifecycle_end_to_end`, `expired_rotation_beats_commit_and_cleans_every_attempt_artifact` (rekey_state_model.rs/integration.rs)",
+      "verdict": "partially proved",
+      "missing": [
+        "a write (lazy timeout rollback) with no driver/interpreter: `plan_timeout` and the rollback statements are proved, but no per-request theorem covers this decision path"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/vault/rekey/start",
+      "route_registration_line": 123,
+      "handler": "vault/rekey.rs:933 post_start",
+      "auth_and_middleware": "`DeviceSession`; per-account rekey pacing limiter is a driver effect",
+      "request_validation": "none; authenticated/device-scope constants (953-957)",
+      "decision": {
+        "driver": "vela-rekey-policy::rekey_driver",
+        "interpreter": "rekey_start_interpreter!",
+        "budget": 12,
+        "evidence": "rekey-interpreter"
+      },
+      "io": "`RekeyIo`: limiter, key-state read, freeze transaction/CAS, inventory read, epoch publication; all plans (vault-executors).",
+      "reply": "`StartResponse{epoch,rotation_id,chunks}` on `Complete`; `rekey_failure_error`; unmatched = 500.",
+      "conformance_tests": "`rekey_rotation_lifecycle_end_to_end`, `rekey_start_refuses_accounts_with_oram_buckets` (integration.rs); rekey-composition",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "POST",
+      "path": "/vault/rekey/capsules",
+      "route_registration_line": 124,
+      "handler": "vault/rekey.rs:992 post_capsules",
+      "auth_and_middleware": "`DeviceSession`",
+      "request_validation": "`Json<CapsulesRequest>`; capsule count is the only pre-driver observation (1000-1005); capsule contents are opaque strings",
+      "decision": {
+        "driver": "vela-rekey-policy::rekey_driver",
+        "interpreter": "rekey_capsules_interpreter!",
+        "budget": 68,
+        "evidence": "rekey-interpreter"
+      },
+      "io": "`RekeyIo`: attempt/state reads, guarded capsule writes, per-capsule result; planned (vault-executors).",
+      "reply": "204 on `Complete`; `rekey_failure_error`; unmatched = 500.",
+      "conformance_tests": "`rekey_rotation_lifecycle_end_to_end` (integration.rs); rekey-composition",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "POST",
+      "path": "/vault/rekey/commit",
+      "route_registration_line": 128,
+      "handler": "vault/rekey.rs:1047 post_commit",
+      "auth_and_middleware": "`DeviceSession`",
+      "request_validation": "none; the `x-vela-rekey-id` header is read by the driver's effects from `RekeyIo`",
+      "decision": {
+        "driver": "vela-rekey-policy::rekey_driver",
+        "interpreter": "rekey_commit_interpreter!",
+        "budget": 10,
+        "evidence": "rekey-interpreter"
+      },
+      "io": "`RekeyIo`: completeness probes, commit CAS, sweep, epoch publication, lost-response replay; planned.",
+      "reply": "204 for `Complete` and `CompleteReplay`; `rekey_failure_error`; unmatched = 500.",
+      "conformance_tests": "`rekey_commit_replay_is_bound_to_the_completed_attempt`, `rekey_rotation_lifecycle_end_to_end` (integration.rs)",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "POST",
+      "path": "/vault/rekey/abort",
+      "route_registration_line": 132,
+      "handler": "vault/rekey.rs:1099 post_abort",
+      "auth_and_middleware": "`DeviceSession`",
+      "request_validation": "none",
+      "decision": {
+        "driver": "vela-rekey-policy::rekey_driver",
+        "interpreter": "rekey_abort_interpreter!",
+        "budget": 4,
+        "evidence": "rekey-interpreter"
+      },
+      "io": "`RekeyIo`: rollback CAS, cleanup, commit; planned.",
+      "reply": "204 on `Complete`; `rekey_failure_error`; unmatched = 500.",
+      "conformance_tests": "`rekey_rotation_lifecycle_end_to_end` (integration.rs); rekey-composition",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "GET",
+      "path": "/vault/chunk/:id",
+      "route_registration_line": 133,
+      "handler": "vault/chunk.rs:113 get_chunk",
+      "auth_and_middleware": "`AuthSession` (web sessions may read)",
+      "request_validation": "`Path<String>` + `validate_id` (118)",
+      "decision": {
+        "driver": "vela-rekey-policy::vault_upload_driver",
+        "interpreter": "read_interpreter!",
+        "budget": 2,
+        "evidence": "vault-upload-interpreter"
+      },
+      "io": "`GetChunkIo`: served-epoch read (`read_epoch`, chunk.rs:47-48) and scoped row lookup (vault-executors). The epoch read also runs `maybe_rollback`, so a rollback write can occur inside the executor method whose emitted effect is a read.",
+      "reply": "200 with raw ciphertext and `X-Chunk-Version`/`X-Lamport-Clock`/`X-Last-Writer`/octet-stream headers; `read_failure_error` maps 404/401/500.",
+      "conformance_tests": "`two_users_can_store_same_chunk_id` (integration.rs); `device_revocation_model.rs` chunk reads; vault-upload driver/executor logs",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "PUT",
+      "path": "/vault/chunk/:id",
+      "route_registration_line": 134,
+      "handler": "vault/chunk.rs:477 put_chunk",
+      "auth_and_middleware": "`AuthSession` (web-session write authority checked by the driver)",
+      "request_validation": "`Path` + `validate_id`; per-account schema lock and `check_write` (484-485); body <= `max_chunk_bytes` (default 1 MiB, config.rs:135-138); required `If-Match` and `X-Lamport-Clock` integer headers (494-506); `parse_declared_epoch` (514); opaque `x-vela-rekey-id`",
+      "decision": {
+        "driver": "vela-rekey-policy::vault_upload_driver",
+        "interpreter": "upload_interpreter!",
+        "budget": 7,
+        "evidence": "vault-upload-interpreter"
+      },
+      "io": "`PutChunkIo`: route resolution, shadow/active guarded write, read-back, quota, publication; planned (vault-executors) Route/epoch resolution calls `resolve_write_epoch`, which may lazily roll back an expired rotation (rekey.rs:285-300) inside an executor method.",
+      "reply": "200 `{\"version\":N}` plus `X-Chunk-Version`; `upload_error` maps epoch/schema/conflict/404/500; unmatched = 500.",
+      "conformance_tests": "`two_users_can_store_same_chunk_id`, `rekey_rotation_lifecycle_end_to_end`, `rich_schema_activation_blocks...` (integration.rs); vault-upload driver + composition logs",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/vault/chunk/:id",
+      "route_registration_line": 135,
+      "handler": "vault/chunk.rs:717 delete_chunk",
+      "auth_and_middleware": "`AuthSession`",
+      "request_validation": "`Path` + `validate_id`; schema lock (726); required `If-Match` (728-733); `parse_declared_epoch` (735)",
+      "decision": {
+        "driver": "vela-rekey-policy::vault_mutation_driver",
+        "interpreter": "chunk_delete_interpreter!",
+        "budget": "per driver",
+        "evidence": "vault-mutation-interpreter"
+      },
+      "io": "`DeleteChunkIo`: schema floor, epoch/authority checks, guarded versioned delete (vault-executors) Route/epoch resolution calls `resolve_write_epoch`, which may lazily roll back an expired rotation (rekey.rs:285-300) inside an executor method.",
+      "reply": "200 `{\"deleted\":true,\"version\":N}`; failure table at chunk.rs:775-805 (409 `vault_rekeyed`/404/500); unmatched = 500.",
+      "conformance_tests": "`delete_chunk_without_token_returns_401`, `rich_schema_activation_blocks_legacy_uploads_and_deletes_without_mutation` (integration.rs)",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "GET",
+      "path": "/vault/oram/:tree_id/path/:leaf",
+      "route_registration_line": 139,
+      "handler": "vault/oram.rs:70 get_path",
+      "auth_and_middleware": "`AuthSession`",
+      "request_validation": "`Path<(String,u64)>`; `validate_id` (76); `Query<PathQuery>` height and `path_bucket_indices` (77) bound leaf/height before any read",
+      "decision": null,
+      "io": "`read_epoch` then one `plan_read_oram_bucket` per bucket (vault-executors wave 2). No driver; `read_epoch` may lazily roll back an expired rotation (write).",
+      "reply": "`OramPathResponse{tree_id,leaf,height,buckets}`; missing buckets are returned as version 0/empty, storage error = 500.",
+      "conformance_tests": "`oram_writes_declare_and_accept_post_rotation_epoch` (integration.rs); vault-executors conformance",
+      "verdict": "partially proved",
+      "missing": [
+        "read-only: the per-bucket loop and response assembly are handler code; the read statement is proved"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/vault/oram/:tree_id/path/:leaf",
+      "route_registration_line": 143,
+      "handler": "vault/oram.rs:366 put_path",
+      "auth_and_middleware": "`AuthSession`",
+      "request_validation": "`Path<(String,u64)>`; `validate_id`; `Json<PutOramPathRequest>`; exact bucket count (378-384) and bucket-index membership (386-393) checked before `create_mask`/driver",
+      "decision": {
+        "driver": "vela-rekey-policy::vault_mutation_driver",
+        "interpreter": "oram_interpreter!",
+        "budget": "per driver",
+        "evidence": "vault-mutation-interpreter"
+      },
+      "io": "`PutOramIo`: per-bucket epoch recheck, guarded insert/CAS write, publication; planned (vault-executors) Route/epoch resolution calls `resolve_write_epoch`, which may lazily roll back an expired rotation (rekey.rs:285-300) inside an executor method.",
+      "reply": "`PutOramPathResponse{buckets}`; failure table at oram.rs:439-470 (409/401/500); unmatched = 500.",
+      "conformance_tests": "`oram_writes_declare_and_accept_post_rotation_epoch`, `rekey_rotation_lifecycle_end_to_end` (integration.rs)",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "POST",
+      "path": "/share/send",
+      "route_registration_line": 147,
+      "handler": "share/mod.rs:338 post_send",
+      "auth_and_middleware": "`AuthSession` (web sessions allowed); per-sender send limiter (343)",
+      "request_validation": "`Json<SendRequest>`; capsule base64 decode and empty/oversized gate are the driver's `start_send` observation (363-367); recipient id typed UUID",
+      "decision": {
+        "driver": "vela-share-policy::driver",
+        "interpreter": "share_interpreter!",
+        "budget": 3,
+        "evidence": "share-interpreter"
+      },
+      "io": "`SendIo`: recipient `share_ek` probe, send transaction begin, item/byte quota reads, guarded insert, commit; plus handler admission plans (share-executors waves 1-2).",
+      "reply": "`SendResponse{inbox_id,share_id}`; storage failure 500, commit race 409, policy failures via `share_failure_error`; unmatched = 500.",
+      "conformance_tests": "`every_bounded_share_trace_matches_the_m19_m21_state_machine` (share_channel_model.rs); `share_send_without_token_returns_401` (integration.rs)",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "GET",
+      "path": "/share/inbox",
+      "route_registration_line": 148,
+      "handler": "share/mod.rs:453 get_inbox",
+      "auth_and_middleware": "`AuthSession`",
+      "request_validation": "`Query<InboxQuery>`; `limit` clamped to 1..=MAX_INBOX_LIMIT (458-461); `before` UUID cursor",
+      "decision": null,
+      "io": "`plan_inbox_cursor` + `plan_inbox_page` with proved classifiers, pagination and row decode (share-executors wave 2). No driver.",
+      "reply": "`InboxResponse{items,has_more}`; unknown cursor = 404; read/parse failure = 500; row capsule re-encoded.",
+      "conformance_tests": "`every_bounded_share_trace_matches_the_m19_m21_state_machine`, `a_revoked_share_leaves_the_inbox_even_if_cleanup_never_ran` (share_channel_model.rs)",
+      "verdict": "partially proved",
+      "missing": [
+        "read-only: no decision driver; cursor/page/has_more assembly is handler code over proved plans"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/share/inbox/:id",
+      "route_registration_line": 149,
+      "handler": "share/mod.rs:565 delete_inbox_item",
+      "auth_and_middleware": "`AuthSession`",
+      "request_validation": "`Path<Uuid>` typed by serde",
+      "decision": {
+        "driver": "vela-share-policy::driver",
+        "interpreter": "share_interpreter!",
+        "budget": 3,
+        "evidence": "share-interpreter"
+      },
+      "io": "`InboxDeleteIo`: one recipient-scoped guarded delete (share-executors).",
+      "reply": "204 on `Complete`; not found = 404; unmatched = 500.",
+      "conformance_tests": "bounded share traces incl. `DELETE /share/inbox/{id}` (share_channel_model.rs); `inbox_delete_is_recipient_scoped_and_classifies_rows` (policy driver tests)",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "GET",
+      "path": "/share/linked",
+      "route_registration_line": 150,
+      "handler": "share/mod.rs:621 get_linked_items",
+      "auth_and_middleware": "`AuthSession`",
+      "request_validation": "none",
+      "decision": null,
+      "io": "`plan_linked_items` (page 1000) with proved classifier and row decode (share-executors wave 2). No driver.",
+      "reply": "`LinkedSharesResponse{items}`; read/parse failure = 500.",
+      "conformance_tests": "`every_bounded_share_trace_matches_the_m19_m21_state_machine` (share_channel_model.rs); deletion model reads it",
+      "verdict": "partially proved",
+      "missing": [
+        "read-only: no decision driver"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/share/linked/:id",
+      "route_registration_line": 151,
+      "handler": "share/mod.rs:695 put_linked_item",
+      "auth_and_middleware": "`AuthSession`",
+      "request_validation": "`Path<Uuid>`; `Json<UpdateLinkedShareRequest>`; capsule base64 decode and length are the driver's `start_link_update` observation (709-712)",
+      "decision": {
+        "driver": "vela-share-policy::driver",
+        "interpreter": "share_interpreter!",
+        "budget": 3,
+        "evidence": "share-interpreter"
+      },
+      "io": "`LinkUpdateIo`: sender/live-row observation and guarded update (share-executors).",
+      "reply": "`{\"updated\":true}`; 404 for absent/foreign/revoked (indistinguishable); unmatched = 500.",
+      "conformance_tests": "`every_bounded_share_trace_matches_the_m19_m21_state_machine` (share_channel_model.rs); `link_mutations_require_the_sender_and_a_live_item` (policy tests)",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/share/linked/:id",
+      "route_registration_line": 152,
+      "handler": "share/mod.rs:777 delete_linked_item",
+      "auth_and_middleware": "`AuthSession`",
+      "request_validation": "`Path<Uuid>`",
+      "decision": {
+        "driver": "vela-share-policy::driver",
+        "interpreter": "share_interpreter!",
+        "budget": 3,
+        "evidence": "share-interpreter"
+      },
+      "io": "`LinkRevokeIo`: sender/live-row observation, guarded revoke, inbox cleanup (share-executors).",
+      "reply": "`{\"deleted\":true}`; 404 for absent/foreign/revoked; unmatched = 500.",
+      "conformance_tests": "`every_bounded_share_trace_matches_the_m19_m21_state_machine`, `a_revoked_share_leaves_the_inbox_even_if_cleanup_never_ran` (share_channel_model.rs)",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "GET",
+      "path": "/share/recipient/:user_id/ek",
+      "route_registration_line": 156,
+      "handler": "share/mod.rs:843 get_recipient_ek",
+      "auth_and_middleware": "`AuthSession`",
+      "request_validation": "`Path<Uuid>` typed by serde",
+      "decision": null,
+      "io": "`plan_recipient_ek` + `classify_recipient_ek` (share-executors wave 2). No driver.",
+      "reply": "`{\"share_ek\",\"signed_at\"}`; absent/empty key = 404 `SHARE_RECIPIENT_UNAVAILABLE`.",
+      "conformance_tests": "`share_ek_registration_requires_device_signed_binding` (integration.rs); share-executors conformance",
+      "verdict": "partially proved",
+      "missing": [
+        "read-only: no decision driver"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/share/my-ek",
+      "route_registration_line": 160,
+      "handler": "share/mod.rs:1016 put_my_ek",
+      "auth_and_middleware": "`DeviceSession`",
+      "request_validation": "`Json<PutShareEkRequest>`; base64 key length; `signed_at` must be canonical `...Z` second-precision and within 300 s future skew (1031-1042) \u2014 supplied to the driver as observations",
+      "decision": {
+        "driver": "vela-share-policy::driver",
+        "interpreter": "share_interpreter!",
+        "budget": 3,
+        "evidence": "share-interpreter"
+      },
+      "io": "`ShareEkIo`: signing-device row read, signature verification, monotonic binding check, guarded `users` update (share-executors wave 1).",
+      "reply": "`{\"updated\":true}`; 400 for not-enrolled/bad stored key/bad signature, 404 absent user; unmatched = 500.",
+      "conformance_tests": "`share_ek_registration_requires_device_signed_binding` (integration.rs); `ek_registration_keeps_the_handlers_error_precedence` (policy tests)",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "POST",
+      "path": "/send",
+      "route_registration_line": 164,
+      "handler": "send.rs:169 post_share_link",
+      "auth_and_middleware": "`DeviceSession`; per-user create limiter (174)",
+      "request_validation": "`Json<CreateSendRequest>`; ciphertext and optional passphrase-salt decode, TTL/view bounds are `start_create` observations (199-214)",
+      "decision": {
+        "driver": "vela-share-policy::send_driver",
+        "interpreter": "send_interpreter!",
+        "budget": 3,
+        "evidence": "send-interpreter"
+      },
+      "io": "`CreateSendIo`: one guarded insert (send-executors).",
+      "reply": "`CreateSendResponse{id,...}`; `send_failure_error` maps malformed/empty/oversized/salt/insert failures; unmatched = 500.",
+      "conformance_tests": "driver-level: `create_clamps_the_ttl_and_view_bounds_in_the_permit`, `create_rejects_malformed_inputs_in_handler_order` (send_driver.rs); no route-level HTTP test found",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "GET",
+      "path": "/send/:id",
+      "route_registration_line": 165,
+      "handler": "send.rs:370 get_share_link",
+      "auth_and_middleware": "none by design (no-account recipient); per-IP fetch limiter (377)",
+      "request_validation": "`Path<Uuid>`",
+      "decision": {
+        "driver": "vela-share-policy::send_driver",
+        "interpreter": "send_interpreter!",
+        "budget": 3,
+        "evidence": "send-interpreter"
+      },
+      "io": "`FetchSendIo`: guarded row read, single-view consume, optional remove (send-executors).",
+      "reply": "`FetchSendResponse{ciphertext,has_passphrase,kdf_salt,view_once,max_views,views_remaining,expires_at}`; not found/expired/revoked = 404 `SEND_NOT_FOUND`; unmatched = 500.",
+      "conformance_tests": "driver-level: `a_view_once_fetch_delivers_then_removes_and_stops`, `a_failed_cleanup_still_delivers_the_payload` (send_driver.rs); no route-level HTTP test found",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/send/:id",
+      "route_registration_line": 166,
+      "handler": "send.rs:542 delete_share_link",
+      "auth_and_middleware": "`DeviceSession`",
+      "request_validation": "`Path<Uuid>`; owner presence is `start_delete(!is_nil)` (547-548)",
+      "decision": {
+        "driver": "vela-share-policy::send_driver",
+        "interpreter": "send_interpreter!",
+        "budget": 3,
+        "evidence": "send-interpreter"
+      },
+      "io": "`DeleteSendIo`: one owner-scoped guarded delete (send-executors).",
+      "reply": "`{\"deleted\":bool}`; policy failures via `send_failure_error`; unmatched = 500.",
+      "conformance_tests": "driver-level: `delete_requires_an_owner_and_reports_the_row_count` (send_driver.rs); no route-level HTTP test found",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "GET",
+      "path": "/sends",
+      "route_registration_line": 167,
+      "handler": "send.rs:441 list_share_links",
+      "auth_and_middleware": "`DeviceSession`; per-user list limiter (445)",
+      "request_validation": "none",
+      "decision": null,
+      "io": "`plan_own_sends` with proved listing classifier/sweep (share-executors wave 2; `owner_listing_and_expiry_sweep_match_the_store_model` in send/conformance.rs). No driver.",
+      "reply": "`{\"sends\":[...]}`; read failure = 500.",
+      "conformance_tests": "`owner_listing_and_expiry_sweep_match_the_store_model` (send/conformance.rs); deletion-model reads `GET /sends`",
+      "verdict": "partially proved",
+      "missing": [
+        "read-only: no decision driver"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/web-session/start",
+      "route_registration_line": 168,
+      "handler": "web_session/mod.rs:247 post_start",
+      "auth_and_middleware": "none; per-IP start limiter is a driver effect",
+      "request_validation": "`Json<StartRequest>`; approver binding, key lengths and nonce are `StartIo` observations supplied to the driver",
+      "decision": {
+        "driver": "vela-session-policy::websession_driver",
+        "interpreter": "websession_start_interpreter!",
+        "budget": 3,
+        "evidence": "websession-interpreter"
+      },
+      "io": "`StartIo`: limiter and pending-row insert (session-executors).",
+      "reply": "`{\"session_id\":...}`; `start_failure_error` (400/429/500); unmatched = 500.",
+      "conformance_tests": "`web_session_start_and_poll_pending`, `web_session_start_rejects_bad_key_length`, `web_session_start_requires_an_approver_account` (integration.rs)",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "GET",
+      "path": "/web-sessions",
+      "route_registration_line": 169,
+      "handler": "web_session/mod.rs:1480 get_sessions_list",
+      "auth_and_middleware": "`DeviceSession`",
+      "request_validation": "none",
+      "decision": null,
+      "io": "`plan_sessions_list` (session-executors wave 2). No driver.",
+      "reply": "`SessionsListResponse{sessions}` with expired rows filtered in the handler (1521).",
+      "conformance_tests": "`web_session_is_bound_to_the_committed_approver` (integration.rs); session-executors conformance",
+      "verdict": "partially proved",
+      "missing": [
+        "read-only: no decision driver; expiry filter is handler code"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/web-session/:id",
+      "route_registration_line": 170,
+      "handler": "web_session/mod.rs:443 get_session",
+      "auth_and_middleware": "none (browser poll); per-IP poll limiter (451-462); poll-secret header check (473)",
+      "request_validation": "`Path<Uuid>`; `check_poll_secret` constant-time SHA-256 compare (437); status/expiry branches (475-491)",
+      "decision": null,
+      "io": "`load_session` (planned) and `plan_capsule_clear` (planned) \u2014 the clear decides one-shot delivery (511-538). **This GET performs a write.** No driver.",
+      "reply": "`PollResponse{status,mode,capsule,expires_at}`; missing session and wrong secret both 401 (indistinguishability); clear failure = 500.",
+      "conformance_tests": "`the_capsule_is_delivered_once_even_under_concurrent_polls`, `web_session_poll_requires_the_browsers_secret` (integration.rs); session-executors conformance",
+      "verdict": "partially proved",
+      "missing": [
+        "one-shot clear and status/expiry reply are inline handler decisions; no interpreter loop (statement I/O is proved)"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/web-session/:id/keys",
+      "route_registration_line": 171,
+      "handler": "web_session/mod.rs:565 get_keys",
+      "auth_and_middleware": "`DeviceSession`; per-user key-fetch limiter (570-582)",
+      "request_validation": "`Path<Uuid>`; approver scope is in `plan_session_keys`",
+      "decision": null,
+      "io": "`plan_session_keys`/`classify_session_keys` (session-executors wave 2). No driver.",
+      "reply": "`KeysResponse{ephemeral_pk,web_vk}`; absent = 404, non-pending = 409.",
+      "conformance_tests": "web-session grant tests (integration.rs); session-executors conformance",
+      "verdict": "partially proved",
+      "missing": [
+        "read-only: no decision driver"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/web-session/:id",
+      "route_registration_line": 172,
+      "handler": "web_session/mod.rs:1424 delete_session",
+      "auth_and_middleware": "`DeviceSession`",
+      "request_validation": "`Path<Uuid>`; actor user passed to the driver (1429-1447)",
+      "decision": {
+        "driver": "vela-session-policy::websession_driver",
+        "interpreter": "websession_delete_interpreter!",
+        "budget": 3,
+        "evidence": "websession-interpreter"
+      },
+      "io": "`DeleteSessionIo`: session lookup, lockout sentinel, revocation record (session-executors).",
+      "reply": "`{\"revoked\":true}` on `Complete`; `delete_failure_error`; unmatched = 500.",
+      "conformance_tests": "`web_session_is_bound_to_the_committed_approver`, `committed_approver_can_decline_a_pending_session` (integration.rs); websession-composition log",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "POST",
+      "path": "/web-session/:id/grant",
+      "route_registration_line": 176,
+      "handler": "web_session/mod.rs:837 post_grant",
+      "auth_and_middleware": "`DeviceSession`",
+      "request_validation": "`Path<Uuid>`; `Json<GrantRequest>` (mode, capsule, link_nonce, key_epoch, ttl); actor facts constants (843-846)",
+      "decision": {
+        "driver": "vela-session-policy::websession_driver",
+        "interpreter": "websession_grant_interpreter!",
+        "budget": 3,
+        "evidence": "websession-interpreter"
+      },
+      "io": "`GrantIo`: session lookup, approver/epoch/device CAS, TTL clamp (session-executors).",
+      "reply": "`GrantResponse{granted,expires_at}`; `grant_failure_error`; unmatched = 500.",
+      "conformance_tests": "`web_session_grant_rejects_wrong_link_nonce`, `web_session_grant_rejects_a_capsule_from_an_old_key_epoch`, `a_previously_admitted_web_grant_is_refused_by_the_live_sql_guard` (integration.rs)",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "POST",
+      "path": "/web-session/:id/token",
+      "route_registration_line": 180,
+      "handler": "web_session/mod.rs:1286 post_token",
+      "auth_and_middleware": "none (browser, proves possession of web key); per-IP/session limiters and backoff are driver effects",
+      "request_validation": "`Path<Uuid>`; `Json<TokenRequest>{challenge,signature}`; challenge consume and verifier are `TokenIo` effects",
+      "decision": {
+        "driver": "vela-session-policy::websession_driver",
+        "interpreter": "websession_token_interpreter!",
+        "budget": 7,
+        "evidence": "websession-interpreter"
+      },
+      "io": "`TokenIo`: limiter/backoff, session lookup, challenge take, verifier, first-writer token claim, JTI track, release on failure (session-executors).",
+      "reply": "`TokenResponse{token,user_id,expires_at}`; `token_failure_error` (401/409/429/500); unmatched = 500. Second token for a grant = 409 (U-25).",
+      "conformance_tests": "`web_session_issues_at_most_one_token_per_grant`, `web_session_token_is_not_issued_after_its_lockout`, `web_session_token_budget_cannot_be_burned_by_an_onlooker` (integration.rs)",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "PUT",
+      "path": "/recovery/share",
+      "route_registration_line": 184,
+      "handler": "recovery/mod.rs:232 put_share",
+      "auth_and_middleware": "`DeviceSession`",
+      "request_validation": "`Json<PutShareRequest>`; base64 share <= `MAX_SHARE_BYTES`; `key_epoch >= 1`; required `split_id`; 32-byte `possession_hash`; `recovery_mutation_permit(key_epoch)` (237-263)",
+      "decision": {
+        "driver": "vela-recovery-policy::recovery_share_driver",
+        "interpreter": "recovery_share_interpreter!",
+        "budget": "4 expansions",
+        "evidence": "recovery-share-interpreter"
+      },
+      "io": "`PutShareIo`: staged-share write plus possession-hash/account facts (recovery-executors).",
+      "reply": "`PutShareResponse{staged,split_id}`; `stage_failure`; unmatched = 500.",
+      "conformance_tests": "`recovery_share_writes_are_epoch_bound_and_refuse_freezing_accounts`, `recovery_publication_finalizes_exactly_the_current_staged_split` (integration.rs); share-store conformance",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "GET",
+      "path": "/recovery/share",
+      "route_registration_line": 185,
+      "handler": "recovery/mod.rs:529 get_share",
+      "auth_and_middleware": "`DeviceSession`",
+      "request_validation": "none; request facts are constants (533-541)",
+      "decision": {
+        "driver": "vela-recovery-policy::recovery_share_driver",
+        "interpreter": "recovery_share_interpreter!",
+        "budget": "4 expansions",
+        "evidence": "recovery-share-interpreter"
+      },
+      "io": "`GetShareIo::read_share`: one account-row read (recovery-executors).",
+      "reply": "`GetShareResponse{share,split_id,key_epoch}`; `common_failure` (404/500); unmatched = 500.",
+      "conformance_tests": "`recovery_publication_finalizes_exactly_the_current_staged_split` (integration.rs); `share_read_matches_the_store_model` (recovery/conformance.rs)",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/recovery/share",
+      "route_registration_line": 186,
+      "handler": "recovery/mod.rs:632 delete_share",
+      "auth_and_middleware": "`DeviceSession`; renewal suppressed (middleware.rs:206)",
+      "request_validation": "required `X-Vela-Epoch` positive integer (637-644) then `recovery_mutation_permit` (647)",
+      "decision": {
+        "driver": "vela-recovery-policy::recovery_share_driver",
+        "interpreter": "recovery_share_interpreter!",
+        "budget": "4 expansions",
+        "evidence": "recovery-share-interpreter"
+      },
+      "io": "`DeleteShareIo`: one guarded delete of the active split (recovery-executors).",
+      "reply": "204 on `Complete`; invalid epoch = 400; `common_failure`; unmatched = 500.",
+      "conformance_tests": "`recovery_share_writes_are_epoch_bound_and_refuse_freezing_accounts` (integration.rs); `share_delete_matches_the_store_model` (recovery/conformance.rs)",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "POST",
+      "path": "/recovery/share/finalize",
+      "route_registration_line": 187,
+      "handler": "recovery/mod.rs:396 finalize_share",
+      "auth_and_middleware": "`DeviceSession`",
+      "request_validation": "`Json<FinalizeShareRequest>{key_epoch,split_id}`; `recovery_mutation_permit` (403)",
+      "decision": {
+        "driver": "vela-recovery-policy::recovery_share_driver",
+        "interpreter": "recovery_share_interpreter!",
+        "budget": "4 expansions",
+        "evidence": "recovery-share-interpreter"
+      },
+      "io": "`FinalizeShareIo`: promote exactly the staged split, account re-query (recovery-executors).",
+      "reply": "`FinalizeShareResponse{finalized,split_id}`; `finalize_failure`; unmatched = 500.",
+      "conformance_tests": "`recovery_publication_finalizes_exactly_the_current_staged_split`, `recovery_share_upload_cannot_survive_a_concurrent_epoch_commit` (integration.rs)",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "GET",
+      "path": "/recovery/webauthn/config",
+      "route_registration_line": 191,
+      "handler": "recovery/webauthn.rs:51 get_webauthn_config",
+      "auth_and_middleware": "none",
+      "request_validation": "none",
+      "decision": null,
+      "io": "none (returns configured `rp_id`/`rp_origin`; no store)",
+      "reply": "static `WebauthnConfigResponse`",
+      "conformance_tests": "policy-level only; no HTTP test found",
+      "verdict": "no proof (read-only)",
+      "missing": [
+        "no store I/O; nothing to prove beyond the config value being deployment metadata"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/recovery/webauthn/register/start",
+      "route_registration_line": 195,
+      "handler": "recovery/webauthn.rs:128 post_register_start",
+      "auth_and_middleware": "`DeviceSession`",
+      "request_validation": "`Json<RegisterStartRequest>` (optional names)",
+      "decision": {
+        "driver": "vela-recovery-policy::webauthn_driver",
+        "interpreter": "registration_start_interpreter!",
+        "budget": 3,
+        "evidence": "webauthn-interpreter"
+      },
+      "io": "`RegisterStartIo`: credential read, WebAuthn ceremony start, registration-state store (recovery-executors).",
+      "reply": "`RegisterStartResponse{public_key}`; ceremony 400 / state-store 500 / driver failures; unmatched = 500.",
+      "conformance_tests": "`web_session_token_is_refused_on_permanent_power_routes` (integration.rs); `webauthn_registration_start_matches_the_store_model` (recovery/conformance.rs)",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "POST",
+      "path": "/recovery/webauthn/register/finish",
+      "route_registration_line": 199,
+      "handler": "recovery/webauthn.rs:363 post_register_finish",
+      "auth_and_middleware": "`DeviceSession`",
+      "request_validation": "`Json<RegisterPublicKeyCredential>` parsed by the WebAuthn type; state/verification/uniqueness are driver effects",
+      "decision": {
+        "driver": "vela-recovery-policy::webauthn_driver",
+        "interpreter": "registration_interpreter!",
+        "budget": 5,
+        "evidence": "webauthn-interpreter"
+      },
+      "io": "`RegisterFinishIo`: attempt count, state take, ceremony verify, credential-uniqueness probe, guarded credential write (recovery-executors).",
+      "reply": "`RegisterFinishResponse{registered:true}` on `Complete`; `registration_failure_error`; unmatched = 500.",
+      "conformance_tests": "`webauthn_registration_finish_matches_the_store_model` (recovery/conformance.rs); recovery lifecycle model",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "POST",
+      "path": "/recovery/initiate",
+      "route_registration_line": 203,
+      "handler": "recovery/initiate.rs:59 post_initiate",
+      "auth_and_middleware": "none; three limiters (IP, IP+user, user) at 66-73, all planned",
+      "request_validation": "`Json<InitiateRequest>`; `user_id` is unauthenticated body data (RT-1/S-3); credential decode and attempt-slot probe are driver effects",
+      "decision": {
+        "driver": "vela-recovery-policy::webauthn_driver",
+        "interpreter": "auth_start_interpreter!",
+        "budget": 3,
+        "evidence": "webauthn-interpreter"
+      },
+      "io": "`InitiateIo`: availability/credential reads, attempt-slot probe, challenge state write (recovery-executors).",
+      "reply": "`InitiateResponse{recovery_id,public_key}`; ceremony 400 / state-store 500 / `auth_start_failure` (404 unavailable); unmatched = 500.",
+      "conformance_tests": "`recovery_initiate_unknown_user_returns_404`, `recovery_initiate_existing_account_without_share_returns_404`, `recovery_initiate_without_credential_returns_404`, `recovery_initiate_limit_cannot_be_burned_for_someone_else` (integration.rs); `every_bounded_initiation_and_registration_matches_m14` (recovery_lifecycle_model.rs)",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "POST",
+      "path": "/recovery/recover",
+      "route_registration_line": 207,
+      "handler": "recovery/recover.rs:64 post_recover",
+      "auth_and_middleware": "none; IP+user limiter and attempt counter are driver effects",
+      "request_validation": "`Json<RecoverRequest>{user_id,recovery_id,credential}`; WebAuthn assertion parse; context/consume/verify are driver effects",
+      "decision": {
+        "driver": "vela-recovery-policy::webauthn_driver",
+        "interpreter": "auth_finish_interpreter!",
+        "budget": 8,
+        "evidence": "webauthn-interpreter"
+      },
+      "io": "`RecoverIo`: count, context read, attempt take, assertion verify, credential update, live-row read, share release, grant store (recovery-executors).",
+      "reply": "`RecoverResponse{share,key_epoch,split_id,recovery_grant}`; `auth_finish_failure` (400/401/404/409/500); unmatched = 500.",
+      "conformance_tests": "`recovery_recover_limit_cannot_be_burned_for_someone_else` (integration.rs); `every_bounded_share_release_and_credential_update_matches_m14` (recovery_lifecycle_model.rs)",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "POST",
+      "path": "/recovery/initiate-proof",
+      "route_registration_line": 213,
+      "handler": "recovery/possess.rs:132 post_initiate_proof",
+      "auth_and_middleware": "none; three limiters (139-141), planned",
+      "request_validation": "`Json<InitiateProofRequest>`; `user_id` unauthenticated body data; commitment decode is an observation (`Corrupt`), epoch from the live row",
+      "decision": {
+        "driver": "vela-recovery-policy::possession_driver",
+        "interpreter": "possession_initiation_interpreter!",
+        "budget": 3,
+        "evidence": "possession-interpreter"
+      },
+      "io": "`InitiateProofIo`: account/commitment read, attempt-slot probe, challenge `set_nx` write (recovery-executors).",
+      "reply": "`InitiateProofResponse{recovery_id,challenge_b64,key_epoch}`; `initiate_failure_error`; unmatched = 500.",
+      "conformance_tests": "`possession_initiation_rejects_an_empty_decoded_commitment` (integration.rs); `possession_initiation_matches_the_store_model`, `possession_challenge_store_matches_the_store_model` (recovery/conformance.rs); `every_bounded_possession_recovery_trace_matches_the_m18_chain`",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "POST",
+      "path": "/recovery/recover/proof",
+      "route_registration_line": 217,
+      "handler": "recovery/possess.rs:306 post_recover_proof",
+      "auth_and_middleware": "none; per-IP/user limiter and attempt counter are driver effects",
+      "request_validation": "`Json<RecoverProofRequest>`; proof base64 and legacy-v1 switch (`allow_legacy_possession_v1`) supplied to the driver",
+      "decision": {
+        "driver": "vela-recovery-policy::possession_driver",
+        "interpreter": "possession_recover_interpreter!",
+        "budget": 6,
+        "evidence": "possession-interpreter"
+      },
+      "io": "`RecoverProofIo`: count, attempt take, live-row/commitment read, proof verification, grant store (recovery-executors).",
+      "reply": "`RecoverProofResponse{key_epoch,recovery_grant}`; failure table at possess.rs:358-393 (400/401/404/409/500); unmatched = 500.",
+      "conformance_tests": "`every_bounded_possession_recovery_trace_matches_the_m18_chain`, `possession_proof_recovery_grants_enrollment_without_webauthn` (recovery_possession_model.rs/integration.rs)",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "POST",
+      "path": "/recovery/enroll-device",
+      "route_registration_line": 221,
+      "handler": "recovery/enroll_device.rs:73 post_enroll_device",
+      "auth_and_middleware": "none (grant possession is the credential); three limiters (80-85), planned",
+      "request_validation": "`Json<EnrollDeviceRequest>`; base64 keys and exact 1600/2624-byte lengths (87-103); non-consuming grant peek + account preflight (110-161) before redemption",
+      "decision": {
+        "driver": "vela-recovery-policy::driver",
+        "interpreter": "redemption_interpreter!",
+        "budget": 5,
+        "evidence": "redemption-interpreter"
+      },
+      "io": "`EnrollDeviceIo`: grant peek/account preflight, grant take, guarded device insert, authority recheck, grant restore (recovery-executors).",
+      "reply": "`EnrollDeviceResponse{device_id}`; preflight `preflight_rejection_error`; insert error terminal; restore paths; unmatched = 500.",
+      "conformance_tests": "`enroll_device_redeems_grant_exactly_once`, `enroll_device_validates_keys_before_the_grant_lookup_and_consumption`, `enrollment_preflight_handles_missing_and_malformed_state_in_order`, `recovery_enrollment_grant_is_invalid_after_key_rotation` (integration.rs); `every_bounded_recovered_device_enrollment_matches_m14`",
+      "verdict": "driver+interpreter+executors proved",
+      "missing": []
+    },
+    {
+      "method": "GET",
+      "path": "/health",
+      "route_registration_line": 225,
+      "handler": "routes.rs:389 health",
+      "auth_and_middleware": "none; exempt from the HTTPS enforcement layer (routes.rs:313)",
+      "request_validation": "none",
+      "decision": null,
+      "io": "raw `state.sqldb.query(\"SELECT 1\")` and `state.store.inner().size_on_disk()` directly in the handler (routes.rs:395-403) \u2014 outside any plan.",
+      "reply": "200 `{\"status\":\"ok\"}` or 503 `{\"status\":\"degraded\"}`; backend detail goes to logs only (routes.rs:407-411).",
+      "conformance_tests": "`health_returns_ok`, `hsts_header_absent_on_cleartext_requests`, `hsts_header_present_on_https_requests` (integration.rs)",
+      "verdict": "no proof (read-only)",
+      "missing": [
+        "probe only; the two liveness calls are not planned and have no proof"
+      ]
+    }
+  ]
+}
