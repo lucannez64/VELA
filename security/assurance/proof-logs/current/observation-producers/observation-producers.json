@@ -1,0 +1,4463 @@
+{
+ "step": "O1",
+ "title": "Observation producers consumed by the verified policy crates",
+ "source_commit": "94696ed",
+ "scope": "serverVELA/vela-*-policy/src structs ending Facts/Observation/View/Verdict/Row/Snapshot, excluding *_model.rs",
+ "totals": {
+  "types": 134,
+  "fields": 565,
+  "open_fields": 96,
+  "partly_open_fields": 116
+ },
+ "coverage_labels": {
+  "covered:plans": "extracted plan/render/classify proved against the store model, matched on the real store (08 Executor honesty + Handler I/O outside ...)",
+  "covered:constructor": "checked observation-to-fact constructor (docs 13/14/15); origin not proved",
+  "open:body": "request body parsing/decoding",
+  "open:verifier": "signature verdict input",
+  "open:webauthn": "WebAuthn verdict input",
+  "open:token": "PASETO/session extractor",
+  "open:clock": "clock read",
+  "open:random": "OS randomness",
+  "constant": "literal or config"
+ },
+ "areas": [
+  {
+   "id": "sharing",
+   "title": "Cross-user sharing (send capsule, linked-item update/revoke, inbox delete, share-EK registration)",
+   "types": [
+    {
+     "name": "SendRequestObservation",
+     "definition": "vela-share-policy/src/driver.rs:90",
+     "consumer": "interpreter::start_send (share/mod.rs:363)",
+     "fields": [
+      {
+       "field": "session_user_id_present",
+       "kind": "token/session",
+       "producer": "share/mod.rs:364 `!session.user_id.is_nil()` (AuthSession extractor)",
+       "coverage": "open: token/session origin (PASETO verification and extractor unverified)"
+      },
+      {
+       "field": "decode_failed",
+       "kind": "request body",
+       "producer": "share/mod.rs:350 `B64.decode(&body.capsule)`",
+       "coverage": "open: request body (unverified parsing)"
+      },
+      {
+       "field": "capsule_len",
+       "kind": "request body",
+       "producer": "share/mod.rs:352 decoded body length",
+       "coverage": "open: request body (unverified parsing)"
+      }
+     ]
+    },
+    {
+     "name": "SendAdmissionObservation",
+     "definition": "vela-share-policy/src/driver.rs:103",
+     "consumer": "ShareExecutor::admit_send -> driver SendAdmitted (share/mod.rs:154-215)",
+     "fields": [
+      {
+       "field": "failed",
+       "kind": "SQL row/classifier",
+       "producer": "store.rs:856 classify_recipient_probe over plan_recipient_probe (store.rs:772; SQL \"SELECT share_ek FROM users\" store.rs:1329); share/mod.rs:158",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "recipient_can_receive",
+       "kind": "SQL row/classifier",
+       "producer": "same classifier (store.rs:856); share/mod.rs:166",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "inbox_count",
+       "kind": "SQL aggregate",
+       "producer": "store.rs:884 classify_send_admission over COUNT(*) (plan store.rs:778; SQL store.rs:1334)",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "pair_bytes",
+       "kind": "SQL aggregate",
+       "producer": "SUM(LENGTH(capsule)) pair query (SQL store.rs:1338); store.rs:884",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "total_bytes",
+       "kind": "SQL aggregate",
+       "producer": "SUM(LENGTH(capsule)) inbox query (SQL store.rs:1346); store.rs:884",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "quota_read",
+       "kind": "classifier stage",
+       "producer": "store.rs:884 (AdmissionStage::Ready); share/mod.rs:210",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      }
+     ]
+    },
+    {
+     "name": "LinkUpdateStartObservation",
+     "definition": "vela-share-policy/src/driver.rs:121",
+     "consumer": "interpreter::start_link_update (share/mod.rs:709)",
+     "fields": [
+      {
+       "field": "decode_failed",
+       "kind": "request body",
+       "producer": "share/mod.rs:701 `B64.decode(&body.capsule)`",
+       "coverage": "open: request body (unverified parsing)"
+      },
+      {
+       "field": "capsule_len",
+       "kind": "request body",
+       "producer": "share/mod.rs:703 decoded length",
+       "coverage": "open: request body (unverified parsing)"
+      }
+     ]
+    },
+    {
+     "name": "EkRegistrationStartObservation",
+     "definition": "vela-share-policy/src/driver.rs:144",
+     "consumer": "interpreter::start_ek_registration (share/mod.rs:1046)",
+     "fields": [
+      {
+       "field": "ek_decode_failed",
+       "kind": "request body",
+       "producer": "share/mod.rs:1021 `B64.decode(&body.share_ek)`",
+       "coverage": "open: request body (unverified parsing)"
+      },
+      {
+       "field": "ek_len",
+       "kind": "request body",
+       "producer": "share/mod.rs:1023 decoded length",
+       "coverage": "open: request body (unverified parsing)"
+      },
+      {
+       "field": "signed_at_not_canonical",
+       "kind": "request body",
+       "producer": "share/mod.rs:1031-1035 `body.signed_at` suffix/length test",
+       "coverage": "open: request body (unverified parsing)"
+      },
+      {
+       "field": "signed_at_unparseable",
+       "kind": "request body",
+       "producer": "share/mod.rs:1038 RFC3339 parse of `body.signed_at`",
+       "coverage": "open: request body (unverified parsing)"
+      },
+      {
+       "field": "signed_at_future",
+       "kind": "request body + clock",
+       "producer": "share/mod.rs:1040-1043 `Utc::now()` vs parsed `signed_at`",
+       "coverage": "open: clock read (TTL/scheduler choice)"
+      }
+     ]
+    },
+    {
+     "name": "EkDeviceObservation",
+     "definition": "vela-share-policy/src/driver.rs:131",
+     "consumer": "ShareExecutor::observe_device (share/mod.rs:907)",
+     "fields": [
+      {
+       "field": "registration.ek_len",
+       "kind": "request body",
+       "producer": "ShareEkIo.ek_bytes (share/mod.rs:910,1023,1048)",
+       "coverage": "open: request body (unverified parsing)"
+      },
+      {
+       "field": "registration.signature_verified",
+       "kind": "signature verifier",
+       "producer": "share/mod.rs:965 `verify_hybrid_signature(vk,...,\"share-key binding signature invalid\")`",
+       "coverage": "open: signature verdict is an input (08 Handler I/O outside the other executors)"
+      },
+      {
+       "field": "registration.device_row_present",
+       "kind": "SQL row",
+       "producer": "plan_device_read (store.rs:181; SQL \"SELECT d.hybrid_vk, d.revoked, u.share_ek_since, d.user_id\" store.rs:1525); classify_device store.rs:280",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "registration.device_user_matches",
+       "kind": "SQL row + session",
+       "producer": "classify_device (store.rs:280) compares row user_id with caller = session.user_id (share/mod.rs:911)",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors) ; caller id open: token/session origin (PASETO verification and extractor unverified)"
+      },
+      {
+       "field": "registration.device_active",
+       "kind": "SQL row",
+       "producer": "devices.revoked of the same row; classify_device store.rs:280",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "registration.signed_at_is_fresher",
+       "kind": "SQL row + request body",
+       "producer": "pure `vela_share_policy::timestamp_is_fresher(canonical_signed_at, share_ek_since)` share/mod.rs:972-975",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors) for the stored cell; canonical value open: request body (unverified parsing)"
+      },
+      {
+       "field": "registration.binding_exists",
+       "kind": "SQL row",
+       "producer": "`share_ek_since` presence in DeviceRowView (share/sql.rs:126-141)",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "stored_identity_vk_decode_failed",
+       "kind": "row decode",
+       "producer": "share/mod.rs:938-947 `crate::db::decode_b64(&hybrid_vk)`",
+       "coverage": "open: row/body decoding outside the store model (store.rs DeviceVerdicts note)"
+      },
+      {
+       "field": "signature_decode_failed",
+       "kind": "request body decode",
+       "producer": "share/mod.rs:950-959 `B64.decode(&self.signature)`",
+       "coverage": "open: row/body decoding outside the store model (store.rs DeviceVerdicts note)"
+      }
+     ]
+    },
+    {
+     "name": "EkRegistrationObservation",
+     "definition": "vela-share-policy/src/lib.rs:34",
+     "consumer": "ek_registration_facts -> plan_ek_registration (driver step EkObserved)",
+     "fields": [
+      {
+       "field": "ek_len",
+       "kind": "request body",
+       "producer": "share/mod.rs:1019 (EkDeviceObservation.registration.ek_len)",
+       "coverage": "open: request body (unverified parsing)"
+      },
+      {
+       "field": "signature_verified",
+       "kind": "signature verifier",
+       "producer": "share/mod.rs:965",
+       "coverage": "open: signature verdict is an input (08 Handler I/O outside the other executors)"
+      },
+      {
+       "field": "device_row_present",
+       "kind": "SQL row",
+       "producer": "classify_device store.rs:280",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "device_user_matches",
+       "kind": "SQL row + session",
+       "producer": "classify_device store.rs:280; caller share/mod.rs:911",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "device_active",
+       "kind": "SQL row",
+       "producer": "classify_device store.rs:280",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "signed_at_is_fresher",
+       "kind": "SQL row + body",
+       "producer": "share/mod.rs:972-975",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "binding_exists",
+       "kind": "SQL row",
+       "producer": "share/sql.rs:134 `share_ek_since`",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      }
+     ]
+    },
+    {
+     "name": "RowsObservation",
+     "definition": "vela-share-policy/src/driver.rs:155",
+     "consumer": "driver Mutated event (update/revoke/EK/inbox delete)",
+     "fields": [
+      {
+       "field": "rows",
+       "kind": "SQL affected-row count",
+       "producer": "store.rs:221 classify_rows over run_writes (share/mod.rs:675,760,988; 554)",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      }
+     ]
+    },
+    {
+     "name": "CleanupObservation",
+     "definition": "vela-share-policy/src/driver.rs:173",
+     "consumer": "driver Cleaned event (revoke cleanup)",
+     "fields": [
+      {
+       "field": "storage_failed",
+       "kind": "SQL affected rows/classifier",
+       "producer": "store.rs:233 classify_cleanup over plan_linked_inbox_cleanup (store.rs:171; SQL 1507); share/mod.rs:770",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      }
+     ]
+    },
+    {
+     "name": "LinkMutationObservation",
+     "definition": "vela-share-policy/src/lib.rs:278",
+     "consumer": "link_mutation_facts -> plan_link_mutation (ShareExecutor::observe_link)",
+     "fields": [
+      {
+       "field": "item_present",
+       "kind": "SQL row",
+       "producer": "store.rs:252 classify_link over plan_link_read (store.rs:151; SQL \"SELECT sender_user_id, revoked FROM shared_items\" store.rs:1127); share/mod.rs:828",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "caller_matches_sender",
+       "kind": "SQL row + session",
+       "producer": "classify_link compares row sender with session.user_id (share/mod.rs:838)",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors) ; caller id open: token/session origin (PASETO verification and extractor unverified)"
+      },
+      {
+       "field": "item_not_revoked",
+       "kind": "SQL row",
+       "producer": "`revoked` column; classify_link store.rs:252",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      }
+     ]
+    },
+    {
+     "name": "SendObservation",
+     "definition": "vela-share-policy/src/lib.rs:205",
+     "consumer": "send_facts -> plan_send (driver.rs:662)",
+     "fields": [
+      {
+       "field": "session_user_id_present",
+       "kind": "derived",
+       "producer": "driver.rs:663 from SendRequestObservation.session_user_id_present",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors) (driver); origin open: token/session origin (PASETO verification and extractor unverified)"
+      },
+      {
+       "field": "recipient_has_share_ek",
+       "kind": "constant",
+       "producer": "driver.rs:664 literal `true`, reached only after SendAdmissionObservation.recipient_can_receive passed (driver.rs:647)",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "capsule_len",
+       "kind": "derived",
+       "producer": "driver.rs:665 from SendRequestObservation.capsule_len",
+       "coverage": "open: request body (unverified parsing)"
+      },
+      {
+       "field": "existing_inbox_bytes",
+       "kind": "derived",
+       "producer": "driver.rs:666 from SendAdmissionObservation.total_bytes",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      }
+     ]
+    },
+    {
+     "name": "SendCapsuleFacts",
+     "definition": "vela-share-policy/src/lib.rs:217",
+     "consumer": "send_is_authorized / plan_send",
+     "fields": [
+      {
+       "field": "sender_authenticated",
+       "kind": "derived",
+       "producer": "send_facts lib.rs:236-243 (from SendObservation)",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "recipient_registered",
+       "kind": "derived",
+       "producer": "send_facts lib.rs:236-243",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "capsule_size_valid",
+       "kind": "derived",
+       "producer": "send_facts lib.rs:236-243",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "inbox_has_capacity",
+       "kind": "derived",
+       "producer": "send_facts lib.rs:236-243 (i128-bounded sum)",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      }
+     ]
+    },
+    {
+     "name": "EkRegistrationFacts",
+     "definition": "vela-share-policy/src/lib.rs:55",
+     "consumer": "ek_registration_is_authorized / plan_ek_registration",
+     "fields": [
+      {
+       "field": "ek_size_valid",
+       "kind": "derived",
+       "producer": "ek_registration_facts lib.rs:99-114",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      },
+      {
+       "field": "signature_verified",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      },
+      {
+       "field": "device_owned_by_caller",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      },
+      {
+       "field": "device_active",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      },
+      {
+       "field": "signed_at_is_fresher",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      },
+      {
+       "field": "seq",
+       "kind": "derived (1 or 2)",
+       "producer": "same, from binding_exists",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      }
+     ]
+    },
+    {
+     "name": "LinkMutationFacts",
+     "definition": "vela-share-policy/src/lib.rs:288",
+     "consumer": "link_mutation_is_authorized / plan_link_mutation",
+     "fields": [
+      {
+       "field": "caller_is_sender",
+       "kind": "derived",
+       "producer": "link_mutation_facts lib.rs:315-330",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      },
+      {
+       "field": "item_exists",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      },
+      {
+       "field": "not_already_revoked",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      }
+     ]
+    },
+    {
+     "name": "LinkRowView",
+     "definition": "vela-share-policy/src/store.rs:93",
+     "consumer": "classify_link (store.rs:252)",
+     "fields": [
+      {
+       "field": "sender",
+       "kind": "SQL row column 0",
+       "producer": "share/sql.rs:122-125 `SELECT sender_user_id` (SQL store.rs:1127)",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "revoked",
+       "kind": "SQL row column 1",
+       "producer": "share/sql.rs:123 `revoked`",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      }
+     ]
+    },
+    {
+     "name": "DeviceRowView",
+     "definition": "vela-share-policy/src/store.rs:102",
+     "consumer": "classify_device (store.rs:280)",
+     "fields": [
+      {
+       "field": "hybrid_vk",
+       "kind": "SQL row column 0",
+       "producer": "share/sql.rs:131-141 (SQL store.rs:1525)",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "revoked",
+       "kind": "SQL row column 1",
+       "producer": "share/sql.rs:133-137 (integer or text \"1\")",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "share_ek_since",
+       "kind": "SQL row column 2",
+       "producer": "share/sql.rs:138 (users.share_ek_since)",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "user_id",
+       "kind": "SQL row column 3",
+       "producer": "share/sql.rs:139",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      }
+     ]
+    },
+    {
+     "name": "DeviceVerdicts",
+     "definition": "vela-share-policy/src/store.rs:113",
+     "consumer": "classify_device input",
+     "fields": [
+      {
+       "field": "signature_verified",
+       "kind": "signature verifier",
+       "producer": "share/mod.rs:965",
+       "coverage": "open: signature verdict is an input (08 Handler I/O outside the other executors)"
+      },
+      {
+       "field": "stored_vk_decode_failed",
+       "kind": "row decode",
+       "producer": "share/mod.rs:931-942",
+       "coverage": "open: row/body decoding outside the store model (store.rs DeviceVerdicts note)"
+      },
+      {
+       "field": "signature_decode_failed",
+       "kind": "body decode",
+       "producer": "share/mod.rs:944-953",
+       "coverage": "open: row/body decoding outside the store model (store.rs DeviceVerdicts note)"
+      },
+      {
+       "field": "signed_at_is_fresher",
+       "kind": "row + body",
+       "producer": "share/mod.rs:972-975",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      }
+     ]
+    },
+    {
+     "name": "EkRowView",
+     "definition": "vela-share-policy/src/store.rs:683",
+     "consumer": "classify_recipient_probe / classify_recipient_ek",
+     "fields": [
+      {
+       "field": "share_ek",
+       "kind": "SQL row column 0",
+       "producer": "share/sql.rs:185-190 `SELECT share_ek, share_ek_since FROM users` (SQL store.rs:1351)",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "share_ek_since",
+       "kind": "SQL row column 1",
+       "producer": "share/sql.rs:188",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      }
+     ]
+    },
+    {
+     "name": "CursorRowView",
+     "definition": "vela-share-policy/src/store.rs:690",
+     "consumer": "classify_inbox_cursor (store.rs:1014)",
+     "fields": [
+      {
+       "field": "created_at",
+       "kind": "SQL row column 0",
+       "producer": "share/sql.rs:193-196 (SQL store.rs:1355)",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      }
+     ]
+    },
+    {
+     "name": "RecipientProbeObservation",
+     "definition": "vela-share-policy/src/store.rs:698",
+     "consumer": "SendExecutor::admit_send",
+     "fields": [
+      {
+       "field": "can_receive",
+       "kind": "SQL row/classifier",
+       "producer": "store.rs:856 classify_recipient_probe",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "failed",
+       "kind": "read error/classifier",
+       "producer": "store.rs:856",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      }
+     ]
+    },
+    {
+     "name": "AdmissionObservation",
+     "definition": "vela-share-policy/src/store.rs:719",
+     "consumer": "classify_send_admission -> SendAdmissionObservation",
+     "fields": [
+      {
+       "field": "stage",
+       "kind": "classifier",
+       "producer": "store.rs:884",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "inbox_count",
+       "kind": "SQL aggregate",
+       "producer": "SQL store.rs:1334",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "pair_bytes",
+       "kind": "SQL aggregate",
+       "producer": "SQL store.rs:1338",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "total_bytes",
+       "kind": "SQL aggregate",
+       "producer": "SQL store.rs:1346",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      }
+     ]
+    },
+    {
+     "name": "RecipientEkObservation",
+     "definition": "vela-share-policy/src/store.rs:729",
+     "consumer": "classify_recipient_ek (store.rs:982)",
+     "fields": [
+      {
+       "field": "share_ek",
+       "kind": "SQL row",
+       "producer": "store.rs:982 over EkRowView",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "signed_at",
+       "kind": "SQL row",
+       "producer": "store.rs:982",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "failed",
+       "kind": "read/classifier",
+       "producer": "store.rs:982",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      }
+     ]
+    },
+    {
+     "name": "CursorObservation",
+     "definition": "vela-share-policy/src/store.rs:738",
+     "consumer": "get_inbox cursor",
+     "fields": [
+      {
+       "field": "created_at",
+       "kind": "SQL row",
+       "producer": "store.rs:1014 over CursorRowView",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "absent",
+       "kind": "classifier",
+       "producer": "store.rs:1014",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "failed",
+       "kind": "read/classifier",
+       "producer": "store.rs:1014",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      }
+     ]
+    },
+    {
+     "name": "PageObservation",
+     "definition": "vela-share-policy/src/store.rs:747",
+     "consumer": "classify_listing (store.rs:1036)",
+     "fields": [
+      {
+       "field": "keep",
+       "kind": "row count/limit",
+       "producer": "store.rs:1036",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "has_more",
+       "kind": "row count/limit",
+       "producer": "store.rs:1036",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "failed",
+       "kind": "read error",
+       "producer": "store.rs:1036",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      }
+     ]
+    },
+    {
+     "name": "SweepObservation",
+     "definition": "vela-share-policy/src/store.rs:755",
+     "consumer": "classify_sweep (store.rs:1059); inbox/expiry cleanup tasks",
+     "fields": [
+      {
+       "field": "purged",
+       "kind": "SQL affected rows",
+       "producer": "store.rs:1059 over plan_expired_inbox_cleanup/plan_expired_sends_cleanup (store.rs:822,827)",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "failed",
+       "kind": "SQL outcome",
+       "producer": "store.rs:1059",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      }
+     ]
+    },
+    {
+     "name": "RateLimitObservation",
+     "definition": "vela-share-policy/src/store.rs:763",
+     "consumer": "plan_rate_limit classifier (store.rs:1085)",
+     "fields": [
+      {
+       "field": "count",
+       "kind": "store counter",
+       "producer": "store.rs:1085 over plan_rate_limit (store.rs:832)",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "allowed",
+       "kind": "store counter",
+       "producer": "store.rs:1085",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "failed",
+       "kind": "store outcome",
+       "producer": "store.rs:1085",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      }
+     ]
+    },
+    {
+     "name": "SendFetchObservation",
+     "definition": "vela-share-policy/src/store.rs:389",
+     "consumer": "classify_send_read (store.rs:562) -> send driver",
+     "fields": [
+      {
+       "field": "read",
+       "kind": "classifier",
+       "producer": "store.rs:562 over SendRowView",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "missing_cell",
+       "kind": "classifier",
+       "producer": "store.rs:562",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "ciphertext",
+       "kind": "SQL row",
+       "producer": "store.rs:562; send/sql.rs:90 column 0",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "has_passphrase",
+       "kind": "SQL row",
+       "producer": "send/sql.rs:92 column 1",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "kdf_salt",
+       "kind": "SQL row",
+       "producer": "send/sql.rs:93 column 2",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "view_once",
+       "kind": "SQL row",
+       "producer": "send/sql.rs:94 column 3",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "max_views",
+       "kind": "SQL row",
+       "producer": "send/sql.rs:95 column 4",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "view_count",
+       "kind": "SQL row",
+       "producer": "send/sql.rs:96 column 5",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "expires_at",
+       "kind": "SQL row (timestamp parse)",
+       "producer": "send/sql.rs:97 column 6 (`row.timestamp`)",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      }
+     ]
+    },
+    {
+     "name": "SendRowView",
+     "definition": "vela-share-policy/src/store.rs:368",
+     "consumer": "classify_send_read",
+     "fields": [
+      {
+       "field": "ciphertext",
+       "kind": "SQL row column 0",
+       "producer": "send/sql.rs:90-98 (SQL store.rs:1279)",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "has_passphrase",
+       "kind": "SQL row column 1",
+       "producer": "send/sql.rs:92",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "kdf_salt",
+       "kind": "SQL row column 2",
+       "producer": "send/sql.rs:93",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "view_once",
+       "kind": "SQL row column 3",
+       "producer": "send/sql.rs:94",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "max_views",
+       "kind": "SQL row column 4",
+       "producer": "send/sql.rs:95",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "view_count",
+       "kind": "SQL row column 5",
+       "producer": "send/sql.rs:96",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      },
+      {
+       "field": "expires_at",
+       "kind": "SQL row column 6",
+       "producer": "send/sql.rs:97 (RFC3339 parse)",
+       "coverage": "covered: share executor plans (08 Executor honesty: sharing; share-executors)"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "send-links",
+   "title": "One-off share links (POST /send, GET /send/:id, DELETE /send/:id, owner listing, expiry sweep)",
+   "types": [
+    {
+     "name": "CreateObservation",
+     "definition": "vela-share-policy/src/send_driver.rs:71",
+     "consumer": "send_interpreter::start_create (send.rs:199)",
+     "fields": [
+      {
+       "field": "owner_present",
+       "kind": "token/session",
+       "producer": "send.rs:201 `!session.user_id.is_nil()` (DeviceSession extractor)",
+       "coverage": "open: token/session origin (PASETO verification and extractor unverified)"
+      },
+      {
+       "field": "ciphertext_decode_failed",
+       "kind": "request body",
+       "producer": "send.rs:174 `B64.decode(&body.ciphertext)`",
+       "coverage": "open: request body (unverified parsing)"
+      },
+      {
+       "field": "ciphertext_len",
+       "kind": "request body",
+       "producer": "send.rs:174 decoded length",
+       "coverage": "open: request body (unverified parsing)"
+      },
+      {
+       "field": "has_passphrase",
+       "kind": "request body",
+       "producer": "send.rs:204 `body.has_passphrase`",
+       "coverage": "open: request body (unverified parsing)"
+      },
+      {
+       "field": "kdf_salt_present",
+       "kind": "request body",
+       "producer": "send.rs:180-187 salt match arm",
+       "coverage": "open: request body (unverified parsing)"
+      },
+      {
+       "field": "kdf_salt_decode_failed",
+       "kind": "request body",
+       "producer": "send.rs:180-187 `B64.decode(salt)`",
+       "coverage": "open: request body (unverified parsing)"
+      },
+      {
+       "field": "kdf_salt_len",
+       "kind": "request body",
+       "producer": "send.rs:181 decoded salt length",
+       "coverage": "open: request body (unverified parsing)"
+      },
+      {
+       "field": "has_ttl",
+       "kind": "request body",
+       "producer": "send.rs:206 `body.ttl_secs.is_some()`",
+       "coverage": "open: request body (unverified parsing)"
+      },
+      {
+       "field": "ttl_secs",
+       "kind": "request body",
+       "producer": "send.rs:207 `body.ttl_secs.unwrap_or(0)`",
+       "coverage": "open: request body (unverified parsing)"
+      },
+      {
+       "field": "has_max_views",
+       "kind": "request body",
+       "producer": "send.rs:208 `body.max_views.is_some()`",
+       "coverage": "open: request body (unverified parsing)"
+      },
+      {
+       "field": "max_views",
+       "kind": "request body",
+       "producer": "send.rs:209 `body.max_views.unwrap_or(0)`",
+       "coverage": "open: request body (unverified parsing)"
+      },
+      {
+       "field": "view_once",
+       "kind": "request body",
+       "producer": "send.rs:210 `body.view_once`",
+       "coverage": "open: request body (unverified parsing)"
+      }
+     ]
+    },
+    {
+     "name": "RowsObservation",
+     "definition": "vela-share-policy/src/send_driver.rs:126",
+     "consumer": "SendExecutor insert/delete (send.rs:102,158,346,359,491,507)",
+     "fields": [
+      {
+       "field": "rows",
+       "kind": "SQL affected rows",
+       "producer": "store.rs:480 classify_send_create / store.rs:538 classify_send_delete",
+       "coverage": "covered: send-link plans (08 Executor honesty: one-off share links; send-executors)"
+      },
+      {
+       "field": "failed",
+       "kind": "SQL outcome",
+       "producer": "same",
+       "coverage": "covered: send-link plans (08 Executor honesty: one-off share links; send-executors)"
+      }
+     ]
+    },
+    {
+     "name": "RemoveObservation",
+     "definition": "vela-share-policy/src/send_driver.rs:119",
+     "consumer": "SendExecutor::remove_fetched (send.rs:332)",
+     "fields": [
+      {
+       "field": "removed",
+       "kind": "SQL affected rows",
+       "producer": "store.rs:516 classify_send_remove over plan_send_remove (store.rs:467; SQL 1284)",
+       "coverage": "covered: send-link plans (08 Executor honesty: one-off share links; send-executors)"
+      },
+      {
+       "field": "failed",
+       "kind": "SQL outcome",
+       "producer": "store.rs:516",
+       "coverage": "covered: send-link plans (08 Executor honesty: one-off share links; send-executors)"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "session",
+   "title": "Session and web session (login, registration, revocation/logout, admission, deletion, challenge issue, web sessions)",
+   "types": [
+    {
+     "name": "FailureRecordObservation",
+     "definition": "vela-session-policy/src/login_driver.rs:105",
+     "consumer": "on_failure_recorded (login driver)",
+     "fields": [
+      {
+       "field": "fallback_counter_ok",
+       "kind": "store counter",
+       "producer": "store.rs:1057 classify_failure_counter over plan_failure_counter (store.rs:579); verify.rs:196-209",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      }
+     ]
+    },
+    {
+     "name": "RegistrationRequestObservation",
+     "definition": "vela-session-policy/src/registration_driver.rs:42",
+     "consumer": "interpreter::start_registration (account/mod.rs:397)",
+     "fields": [
+      {
+       "field": "has_account_limit",
+       "kind": "config",
+       "producer": "account/mod.rs:398 `state.config.max_accounts.is_some()`",
+       "coverage": "constant/config (inspection only)"
+      },
+      {
+       "field": "account_limit",
+       "kind": "config",
+       "producer": "account/mod.rs:399-402 `config.max_accounts` clamped to i64",
+       "coverage": "constant/config (inspection only)"
+      }
+     ]
+    },
+    {
+     "name": "ActorObservation",
+     "definition": "vela-session-policy/src/revocation_driver.rs:38",
+     "consumer": "revocation_interpreter! (device/revoke.rs:207)",
+     "fields": [
+      {
+       "field": "authenticated",
+       "kind": "token/session (constant at call site)",
+       "producer": "device/revoke.rs:208 literal `true`; justified by DeviceSession extractor",
+       "coverage": "open: token/session origin (PASETO verification and extractor unverified)"
+      },
+      {
+       "field": "device_active",
+       "kind": "token/session (constant at call site)",
+       "producer": "device/revoke.rs:209 literal `true`; middleware durable check (middleware.rs:159-176)",
+       "coverage": "open: token/session origin (PASETO verification and extractor unverified)"
+      }
+     ]
+    },
+    {
+     "name": "TargetObservation",
+     "definition": "vela-session-policy/src/revocation_driver.rs:45",
+     "consumer": "target classification in the revocation driver (built inside classify_target)",
+     "fields": [
+      {
+       "field": "same_account",
+       "kind": "SQL row + session",
+       "producer": "vela_session_policy::store::classify_target over TargetRowView (session_store.rs:538); row user_id vs session.user_id",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors) ; caller id open: token/session origin (PASETO verification and extractor unverified)"
+      },
+      {
+       "field": "already_revoked",
+       "kind": "SQL row",
+       "producer": "TargetRowView.revoked (session_store.rs:539-542)",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      }
+     ]
+    },
+    {
+     "name": "AdmissionObservation",
+     "definition": "vela-session-policy/src/revocation_driver.rs:771",
+     "consumer": "enforce_admission (middleware.rs:116,143,181)",
+     "fields": [
+      {
+       "field": "jti_revoked",
+       "kind": "store lookup",
+       "producer": "middleware.rs:113 `store.exists(\"jti:revoked:<jti>\")`",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      },
+      {
+       "field": "device_revoked",
+       "kind": "store lookup",
+       "producer": "middleware.rs:114 `store.exists(\"device:revoked:<id>\")`",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      },
+      {
+       "field": "account_present",
+       "kind": "SQL row",
+       "producer": "middleware.rs:143 after `SELECT key_epoch FROM users WHERE id = ?` (middleware.rs:133)",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      },
+      {
+       "field": "device_row_active",
+       "kind": "SQL row",
+       "producer": "middleware.rs:181 after `SELECT id FROM devices WHERE id=? AND user_id=? AND revoked=0` (middleware.rs:172)",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      },
+      {
+       "field": "device_scoped",
+       "kind": "token/session claim",
+       "producer": "middleware.rs:121 `claims.scope == TokenScope::Device` (PASETO claims)",
+       "coverage": "open: token/session origin (PASETO verification and extractor unverified)"
+      }
+     ]
+    },
+    {
+     "name": "DeletionActorObservation",
+     "definition": "vela-session-policy/src/deletion_driver.rs:37",
+     "consumer": "deletion_interpreter! (account/delete.rs:212)",
+     "fields": [
+      {
+       "field": "authenticated",
+       "kind": "token/session (constant)",
+       "producer": "account/delete.rs:213 literal `true` after DeviceSession extraction",
+       "coverage": "open: token/session origin (PASETO verification and extractor unverified)"
+      },
+      {
+       "field": "device_active",
+       "kind": "token/session (constant)",
+       "producer": "account/delete.rs:214 literal `true` (middleware durable check)",
+       "coverage": "open: token/session origin (PASETO verification and extractor unverified)"
+      },
+      {
+       "field": "scoped_to_session_account",
+       "kind": "constant/code shape",
+       "producer": "account/delete.rs:215 literal `true`; single `session.user_id` scopes every effect",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      }
+     ]
+    },
+    {
+     "name": "GrantObservation",
+     "definition": "vela-session-policy/src/lib.rs:174",
+     "consumer": "grant_facts -> plan_grant / plan_observed_grant (web_session grant)",
+     "fields": [
+      {
+       "field": "phase",
+       "kind": "SQL row",
+       "producer": "web_session/mod.rs:755-760 from web_sessions.status (load_session)",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      },
+      {
+       "field": "mode",
+       "kind": "request body",
+       "producer": "web_session/mod.rs:761 `self.body.mode == \"rw\"`",
+       "coverage": "open: request body (unverified parsing)"
+      },
+      {
+       "field": "approver_user",
+       "kind": "SQL row",
+       "producer": "web_session/mod.rs:764 `existing.approver_user_id.map(as_u128)`",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      },
+      {
+       "field": "authenticated_user",
+       "kind": "token/session",
+       "producer": "web_session/mod.rs:765 `self.session.user_id.as_u128()`",
+       "coverage": "open: token/session origin (PASETO verification and extractor unverified)"
+      },
+      {
+       "field": "nonce_length",
+       "kind": "request body",
+       "producer": "web_session/mod.rs:766 `given_nonce.len()` from body.link_nonce (web_session/mod.rs:727-729)",
+       "coverage": "open: request body (unverified parsing)"
+      },
+      {
+       "field": "nonce_equal",
+       "kind": "body + SQL row",
+       "producer": "web_session/mod.rs:731-739 `ct_eq(given_nonce, stored_nonce)`",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors) for stored cell; comparison glue open: request body (unverified parsing)"
+      },
+      {
+       "field": "has_web_vk",
+       "kind": "SQL row",
+       "producer": "web_session/mod.rs:767 `existing.web_vk.is_some()`",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      },
+      {
+       "field": "declared_epoch",
+       "kind": "request body",
+       "producer": "web_session/mod.rs:768 `self.body.key_epoch` -> used as grant epoch (see finding O13c)",
+       "coverage": "open: request body (unverified parsing)"
+      }
+     ]
+    },
+    {
+     "name": "GrantFacts",
+     "definition": "vela-session-policy/src/lib.rs:95",
+     "consumer": "grant_is_authorized / plan_grant",
+     "fields": [
+      {
+       "field": "phase",
+       "kind": "derived",
+       "producer": "grant_facts lib.rs:205-217",
+       "coverage": "covered: constructor mapping (14); origin open where the source observation is open"
+      },
+      {
+       "field": "mode",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (14); origin open where the source observation is open"
+      },
+      {
+       "field": "approver_matches",
+       "kind": "derived",
+       "producer": "same (None never matches)",
+       "coverage": "covered: constructor mapping (14); origin open where the source observation is open"
+      },
+      {
+       "field": "nonce_matches",
+       "kind": "derived",
+       "producer": "same (32-byte length + equality)",
+       "coverage": "covered: constructor mapping (14); origin open where the source observation is open"
+      },
+      {
+       "field": "has_web_vk",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (14); origin open where the source observation is open"
+      },
+      {
+       "field": "declared_epoch",
+       "kind": "derived",
+       "producer": "same; origin is body",
+       "coverage": "open: request body (unverified parsing)"
+      }
+     ]
+    },
+    {
+     "name": "WebTokenObservation",
+     "definition": "vela-session-policy/src/lib.rs:226",
+     "consumer": "web_token_facts -> plan_observed_web_token (built inside the token driver from TokenSessionObservation + challenge/signature observations)",
+     "fields": [
+      {
+       "field": "phase",
+       "kind": "SQL row",
+       "producer": "web_session/mod.rs:997-1005 via TokenSessionObservation.phase",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      },
+      {
+       "field": "mode",
+       "kind": "SQL row",
+       "producer": "web_session/mod.rs:1006-1009",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      },
+      {
+       "field": "granted_user",
+       "kind": "SQL row",
+       "producer": "web_session/mod.rs:1011 `session.user_id.map(as_u128)`",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      },
+      {
+       "field": "approver_user",
+       "kind": "SQL row",
+       "producer": "web_session/mod.rs:1012 `session.approver_user_id.map(as_u128)`",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      },
+      {
+       "field": "nonce_present",
+       "kind": "SQL row",
+       "producer": "web_session/mod.rs:1013 `session.link_nonce.is_some()`",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      },
+      {
+       "field": "challenge_consumed",
+       "kind": "store take",
+       "producer": "web_session/mod.rs:1030 `take_challenge(..., WebToken)` (plan_take_challenge store.rs:557)",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      },
+      {
+       "field": "signature_valid",
+       "kind": "signature verifier",
+       "producer": "web_session/mod.rs:1049 `verify_auth_signature(web_vk, challenge, id, body.signature)`",
+       "coverage": "open: signature verdict is an input (08 Handler I/O outside the other executors)"
+      }
+     ]
+    },
+    {
+     "name": "WebTokenFacts",
+     "definition": "vela-session-policy/src/lib.rs:161",
+     "consumer": "web_token_is_authorized / plan_observed_web_token",
+     "fields": [
+      {
+       "field": "phase",
+       "kind": "derived",
+       "producer": "web_token_facts lib.rs:243-252",
+       "coverage": "covered: constructor mapping (14); origin open where the source observation is open"
+      },
+      {
+       "field": "mode",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (14); origin open where the source observation is open"
+      },
+      {
+       "field": "approver_bound",
+       "kind": "derived",
+       "producer": "same (both ids present and equal)",
+       "coverage": "covered: constructor mapping (14); origin open where the source observation is open"
+      },
+      {
+       "field": "nonce_bound",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (14); origin open where the source observation is open"
+      },
+      {
+       "field": "challenge_consumed",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (14); origin open where the source observation is open"
+      },
+      {
+       "field": "signature_valid",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (14); origin open where the source observation is open"
+      }
+     ]
+    },
+    {
+     "name": "TokenSessionObservation",
+     "definition": "vela-session-policy/src/websession_driver.rs:742",
+     "consumer": "TokenIo::token_load_session (web_session/mod.rs:997)",
+     "fields": [
+      {
+       "field": "phase",
+       "kind": "SQL row",
+       "producer": "web_session/mod.rs:997 via status (web_session/mod.rs:961-966)",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      },
+      {
+       "field": "mode",
+       "kind": "SQL row",
+       "producer": "web_session/mod.rs:1006-1009 (mode column)",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      },
+      {
+       "field": "granted_user",
+       "kind": "SQL row",
+       "producer": "web_session/mod.rs:1011 (user_id column)",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      },
+      {
+       "field": "approver_user",
+       "kind": "SQL row",
+       "producer": "web_session/mod.rs:1012 (approver_user_id column)",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      },
+      {
+       "field": "nonce_present",
+       "kind": "SQL row",
+       "producer": "web_session/mod.rs:1013 (link_nonce column)",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      },
+      {
+       "field": "web_vk_present",
+       "kind": "SQL row",
+       "producer": "web_session/mod.rs:1014 (web_vk column)",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      },
+      {
+       "field": "key_epoch",
+       "kind": "SQL row",
+       "producer": "web_session/mod.rs:1015 (key_epoch column, `unwrap_or(1)`)",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      },
+      {
+       "field": "now",
+       "kind": "clock",
+       "producer": "web_session/mod.rs:996 `Utc::now().timestamp()`",
+       "coverage": "open: clock read (TTL/scheduler choice)"
+      },
+      {
+       "field": "expires_at",
+       "kind": "SQL row",
+       "producer": "web_session/mod.rs:1016 `session.expires_at.map(timestamp)`",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      }
+     ]
+    },
+    {
+     "name": "GrantActorObservation",
+     "definition": "vela-session-policy/src/websession_driver.rs:329",
+     "consumer": "websession_grant_interpreter! (web_session/mod.rs:843)",
+     "fields": [
+      {
+       "field": "authenticated",
+       "kind": "token/session (constant)",
+       "producer": "web_session/mod.rs:844 literal `true`",
+       "coverage": "open: token/session origin (PASETO verification and extractor unverified)"
+      },
+      {
+       "field": "device_active",
+       "kind": "token/session (constant)",
+       "producer": "web_session/mod.rs:845 literal `true`; middleware durable check",
+       "coverage": "open: token/session origin (PASETO verification and extractor unverified)"
+      }
+     ]
+    },
+    {
+     "name": "DeleteActorObservation",
+     "definition": "vela-session-policy/src/websession_driver.rs:1600",
+     "consumer": "websession_delete_interpreter! (web_session/mod.rs:1443)",
+     "fields": [
+      {
+       "field": "authenticated",
+       "kind": "token/session (constant)",
+       "producer": "web_session/mod.rs:1444 literal `true`",
+       "coverage": "open: token/session origin (PASETO verification and extractor unverified)"
+      },
+      {
+       "field": "user",
+       "kind": "token/session",
+       "producer": "web_session/mod.rs:1445 `actor_user = session.user_id.as_u128()` (web_session/mod.rs:1425)",
+       "coverage": "open: token/session origin (PASETO verification and extractor unverified)"
+      }
+     ]
+    },
+    {
+     "name": "DeleteSessionFacts",
+     "definition": "vela-session-policy/src/websession_driver.rs:1608",
+     "consumer": "delete driver ownership check",
+     "fields": [
+      {
+       "field": "session_user",
+       "kind": "SQL row",
+       "producer": "web_session/mod.rs:1363 from load_session row user_id",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      },
+      {
+       "field": "approver_user",
+       "kind": "SQL row",
+       "producer": "web_session/mod.rs:1364 from load_session row approver_user_id",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      }
+     ]
+    },
+    {
+     "name": "TargetRowView",
+     "definition": "vela-session-policy/src/store.rs:299",
+     "consumer": "classify_target (revocation driver)",
+     "fields": [
+      {
+       "field": "user_id",
+       "kind": "row (decoded DeviceRow)",
+       "producer": "device/revoke.rs:106 `parse_device_row_turso` then session_store.rs:538-543 target_row_view",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors) ; DeviceRow decode open: row/body decoding outside the store model (store.rs DeviceVerdicts note)"
+      },
+      {
+       "field": "revoked",
+       "kind": "row (decoded DeviceRow)",
+       "producer": "device/revoke.rs:106 then session_store.rs:539-542",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors) ; DeviceRow decode open: row/body decoding outside the store model (store.rs DeviceVerdicts note)"
+      }
+     ]
+    },
+    {
+     "name": "SessionRowView",
+     "definition": "vela-session-policy/src/store.rs:355",
+     "consumer": "classify_session_lookup (store.rs:1239) / load_session",
+     "fields": [
+      {
+       "field": "user_id",
+       "kind": "SQL row column 0",
+       "producer": "web_session/mod.rs:377-388 `SELECT ... FROM web_sessions WHERE id = ?` (store.rs:753)",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      },
+      {
+       "field": "approver_user_id",
+       "kind": "SQL row column 7",
+       "producer": "web_session/mod.rs:384",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      },
+      {
+       "field": "poll_secret_hash",
+       "kind": "SQL row column 8",
+       "producer": "web_session/mod.rs:385",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      },
+      {
+       "field": "web_vk",
+       "kind": "SQL row column 1",
+       "producer": "web_session/mod.rs:379",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      },
+      {
+       "field": "link_nonce",
+       "kind": "SQL row column 2",
+       "producer": "web_session/mod.rs:380",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      },
+      {
+       "field": "mode",
+       "kind": "SQL row column 3",
+       "producer": "web_session/mod.rs:381",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      },
+      {
+       "field": "status",
+       "kind": "SQL row column 4",
+       "producer": "web_session/mod.rs:382",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      },
+      {
+       "field": "capsule",
+       "kind": "SQL row column 5",
+       "producer": "web_session/mod.rs:383",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      },
+      {
+       "field": "expires_at",
+       "kind": "SQL row column 6",
+       "producer": "web_session/mod.rs:386",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      },
+      {
+       "field": "key_epoch",
+       "kind": "SQL row column 9",
+       "producer": "web_session/mod.rs:387",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      }
+     ]
+    },
+    {
+     "name": "SessionListRowView",
+     "definition": "vela-session-policy/src/store.rs:379",
+     "consumer": "classify_sessions_list (store.rs:1249)",
+     "fields": [
+      {
+       "field": "id",
+       "kind": "SQL row column 0",
+       "producer": "web_session/mod.rs:396-403 (plan_sessions_list store.rs:758)",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      },
+      {
+       "field": "mode",
+       "kind": "SQL row column 1",
+       "producer": "web_session/mod.rs:399",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      },
+      {
+       "field": "status",
+       "kind": "SQL row column 2",
+       "producer": "web_session/mod.rs:400",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      },
+      {
+       "field": "created_at",
+       "kind": "SQL row column 3",
+       "producer": "web_session/mod.rs:401",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      },
+      {
+       "field": "expires_at",
+       "kind": "SQL row column 4",
+       "producer": "web_session/mod.rs:402",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      }
+     ]
+    },
+    {
+     "name": "SessionKeysView",
+     "definition": "vela-session-policy/src/store.rs:423",
+     "consumer": "classify_session_keys (store.rs:1355)",
+     "fields": [
+      {
+       "field": "ephemeral_pk",
+       "kind": "SQL row column 0",
+       "producer": "web_session/mod.rs:594-598 (plan_session_keys store.rs:867)",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      },
+      {
+       "field": "web_vk",
+       "kind": "SQL row column 1",
+       "producer": "web_session/mod.rs:596",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      },
+      {
+       "field": "status",
+       "kind": "SQL row column 2",
+       "producer": "web_session/mod.rs:597",
+       "coverage": "covered: session plans (08 Executor honesty: session, login, registration and web sessions; session-executors)"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "enrollment",
+   "title": "Device enrollment, invitation packages, pairing rendezvous (vela-enrollment-policy)",
+   "types": [
+    {
+     "name": "OpenObservation",
+     "definition": "vela-enrollment-policy/src/lib.rs:36",
+     "consumer": "open_facts -> plan_open (pairing_interpreter::start_open_grant, rendezvous.rs:198)",
+     "fields": [
+      {
+       "field": "scope_is_device",
+       "kind": "token/session",
+       "producer": "rendezvous.rs:199 `matches!(session.scope, TokenScope::Device)` (PASETO claim)",
+       "coverage": "open: token/session origin (PASETO verification and extractor unverified)"
+      },
+      {
+       "field": "user_id_present",
+       "kind": "token/session",
+       "producer": "rendezvous.rs:200 `!session.user_id.is_nil()`",
+       "coverage": "open: token/session origin (PASETO verification and extractor unverified)"
+      },
+      {
+       "field": "device_id_present",
+       "kind": "token/session",
+       "producer": "rendezvous.rs:201 `!session.device_id.is_nil()`",
+       "coverage": "open: token/session origin (PASETO verification and extractor unverified)"
+      },
+      {
+       "field": "ttl_secs",
+       "kind": "constant",
+       "producer": "rendezvous.rs:202 `GRANT_TTL_SECS`",
+       "coverage": "constant/config (inspection only)"
+      }
+     ]
+    },
+    {
+     "name": "OpenFacts",
+     "definition": "vela-enrollment-policy/src/lib.rs:48",
+     "consumer": "open_is_authorized / plan_open",
+     "fields": [
+      {
+       "field": "device_scope",
+       "kind": "derived",
+       "producer": "open_facts lib.rs:74-84",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      },
+      {
+       "field": "user_bound",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      },
+      {
+       "field": "opener_bound",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      },
+      {
+       "field": "ttl_positive",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      }
+     ]
+    },
+    {
+     "name": "ClaimObservation",
+     "definition": "vela-enrollment-policy/src/lib.rs:106",
+     "consumer": "claim_facts -> plan_claim (PairingExecutor::check_claim, rendezvous.rs:284)",
+     "fields": [
+      {
+       "field": "grant_live",
+       "kind": "store exists",
+       "producer": "rendezvous.rs:381-385 plan_grant_exists + classify_grant_exists (exists(enroll_grant:<id>))",
+       "coverage": "covered: enrollment/pairing plans (08 Executor honesty: enrollment and pairing; enrollment-executors)"
+      },
+      {
+       "field": "claim_exists",
+       "kind": "store exists",
+       "producer": "rendezvous.rs:299 plan_claim_check + classify_claim_check:311 (exists(enroll_claim:<id>))",
+       "coverage": "covered: enrollment/pairing plans (08 Executor honesty: enrollment and pairing; enrollment-executors)"
+      },
+      {
+       "field": "hybrid_ek_len",
+       "kind": "request body",
+       "producer": "rendezvous.rs:285-292 `decode_base64_field(&self.body.hybrid_ek)` then ek.len()",
+       "coverage": "open: request body (unverified parsing)"
+      },
+      {
+       "field": "hybrid_vk_len",
+       "kind": "request body",
+       "producer": "rendezvous.rs:293-301 `decode_base64_field(&self.body.hybrid_vk)` then vk.len()",
+       "coverage": "open: request body (unverified parsing)"
+      }
+     ]
+    },
+    {
+     "name": "ClaimFacts",
+     "definition": "vela-enrollment-policy/src/lib.rs:118",
+     "consumer": "claim_is_authorized / plan_claim",
+     "fields": [
+      {
+       "field": "phase",
+       "kind": "derived",
+       "producer": "claim_facts lib.rs:150-170",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      },
+      {
+       "field": "grant_live",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      },
+      {
+       "field": "no_existing_claim",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      },
+      {
+       "field": "public_keys_valid",
+       "kind": "derived",
+       "producer": "same (1600/2624-byte constants)",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      }
+     ]
+    },
+    {
+     "name": "InspectObservation",
+     "definition": "vela-enrollment-policy/src/lib.rs:185",
+     "consumer": "inspect_facts -> authorize_inspection (get_claim, rendezvous.rs:446)",
+     "fields": [
+      {
+       "field": "claim_present",
+       "kind": "store get",
+       "producer": "rendezvous.rs:434 load_claim -> plan_claim_read (get(enroll_claim:<id>))",
+       "coverage": "covered: enrollment/pairing plans (08 Executor honesty: enrollment and pairing; enrollment-executors)"
+      },
+      {
+       "field": "user_matches",
+       "kind": "store get + session",
+       "producer": "rendezvous.rs:432 `authorize_grant` -> read_grant comparison (grant.user_id vs session.user_id)",
+       "coverage": "covered: enrollment/pairing plans (08 Executor honesty: enrollment and pairing; enrollment-executors) ; session open: token/session origin (PASETO verification and extractor unverified)"
+      },
+      {
+       "field": "opener_matches",
+       "kind": "store get + session",
+       "producer": "same (grant.device_id vs session.device_id)",
+       "coverage": "covered: enrollment/pairing plans (08 Executor honesty: enrollment and pairing; enrollment-executors) ; session open: token/session origin (PASETO verification and extractor unverified)"
+      }
+     ]
+    },
+    {
+     "name": "InspectFacts",
+     "definition": "vela-enrollment-policy/src/lib.rs:195",
+     "consumer": "inspection_is_authorized / authorize_inspection",
+     "fields": [
+      {
+       "field": "phase",
+       "kind": "derived",
+       "producer": "inspect_facts lib.rs:230-243",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      },
+      {
+       "field": "user_matches",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      },
+      {
+       "field": "opener_matches",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      },
+      {
+       "field": "claim_present",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      }
+     ]
+    },
+    {
+     "name": "CompletionObservation",
+     "definition": "vela-enrollment-policy/src/lib.rs:271",
+     "consumer": "completion_facts -> plan_completion (internal: no server construction; the shipped path uses CompletionPreflightObservation)",
+     "fields": [
+      {
+       "field": "claim_present",
+       "kind": "derived (internal)",
+       "producer": "completion_facts lib.rs:365-400; no direct server literal",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      },
+      {
+       "field": "user_matches",
+       "kind": "derived (internal)",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      },
+      {
+       "field": "opener_matches",
+       "kind": "derived (internal)",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      },
+      {
+       "field": "opener_active",
+       "kind": "derived (internal)",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      },
+      {
+       "field": "signature_verified",
+       "kind": "derived (internal)",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      },
+      {
+       "field": "claim_key_source",
+       "kind": "derived (internal)",
+       "producer": "same; `StoredClaim` is a structural constant at the call site",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      },
+      {
+       "field": "account_epoch",
+       "kind": "derived (internal)",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      },
+      {
+       "field": "declared_epoch",
+       "kind": "derived (internal)",
+       "producer": "same; body when used",
+       "coverage": "open: request body (unverified parsing)"
+      },
+      {
+       "field": "rotation_in_progress",
+       "kind": "derived (internal)",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      }
+     ]
+    },
+    {
+     "name": "CompletionFacts",
+     "definition": "vela-enrollment-policy/src/lib.rs:293",
+     "consumer": "completion_is_authorized / plan_completion",
+     "fields": [
+      {
+       "field": "phase",
+       "kind": "derived",
+       "producer": "completion_facts lib.rs:365-400",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      },
+      {
+       "field": "user_matches",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      },
+      {
+       "field": "opener_matches",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      },
+      {
+       "field": "opener_active",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      },
+      {
+       "field": "claim_present",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      },
+      {
+       "field": "displayed_claim_is_stored_claim",
+       "kind": "derived",
+       "producer": "same (claim_key_source)",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      },
+      {
+       "field": "signature_covers_stored_claim",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      },
+      {
+       "field": "account_epoch_active",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      }
+     ]
+    },
+    {
+     "name": "ResultObservation",
+     "definition": "vela-enrollment-policy/src/lib.rs:412",
+     "consumer": "result_facts -> plan_result (internal: built by the result driver from ResultReadObservation)",
+     "fields": [
+      {
+       "field": "source",
+       "kind": "derived (internal)",
+       "producer": "result_facts lib.rs:470-490; store reads classify_result_read",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      },
+      {
+       "field": "claimed_key_len",
+       "kind": "derived (internal)",
+       "producer": "same; stored claim/result decode",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      },
+      {
+       "field": "signature_verified",
+       "kind": "derived (internal)",
+       "producer": "same; collector verifier (rendezvous.rs:1270 verify_result_signature)",
+       "coverage": "open: signature verdict is an input (08 Handler I/O outside the other executors)"
+      }
+     ]
+    },
+    {
+     "name": "ResultFacts",
+     "definition": "vela-enrollment-policy/src/lib.rs:421",
+     "consumer": "result_is_authorized / plan_result",
+     "fields": [
+      {
+       "field": "phase",
+       "kind": "derived",
+       "producer": "result_facts lib.rs:470-490",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      },
+      {
+       "field": "claimed_key_present",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      },
+      {
+       "field": "claimed_key_proof_valid",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (08 enrollment ceremony); origin open where the source observation is open"
+      }
+     ]
+    },
+    {
+     "name": "PackageStoreObservation",
+     "definition": "vela-enrollment-policy/src/pairing_driver.rs:50",
+     "consumer": "start_store_package (invitation.rs:105)",
+     "fields": [
+      {
+       "field": "token_valid",
+       "kind": "request body",
+       "producer": "invitation.rs:106 `validate_token(&body.token)` (format check, invitation.rs:218)",
+       "coverage": "open: request body (unverified parsing)"
+      },
+      {
+       "field": "ciphertext_len_valid",
+       "kind": "request body",
+       "producer": "invitation.rs:107-108 `body.ciphertext` length bounds",
+       "coverage": "open: request body (unverified parsing)"
+      }
+     ]
+    },
+    {
+     "name": "PackageTokenObservation",
+     "definition": "vela-enrollment-policy/src/pairing_driver.rs:58",
+     "consumer": "start_redeem_package (invitation.rs:186)",
+     "fields": [
+      {
+       "field": "token_valid",
+       "kind": "request body/header",
+       "producer": "invitation.rs:187 `validate_token(&token)`; token from `x-enrollment-token` or path (invitation.rs:180-185)",
+       "coverage": "open: request body (unverified parsing)"
+      }
+     ]
+    },
+    {
+     "name": "CompletionPreflightObservation",
+     "definition": "vela-enrollment-policy/src/pairing_driver.rs:141",
+     "consumer": "classify_completion_preflight (rendezvous.rs:585-780)",
+     "fields": [
+      {
+       "field": "claim",
+       "kind": "store get + JSON decode",
+       "producer": "rendezvous.rs:588,620-676 get(enroll_claim:<id>) via plan_completion_preflight; ClaimRowView from serde_json",
+       "coverage": "covered: enrollment/pairing plans (08 Executor honesty: enrollment and pairing; enrollment-executors)"
+      },
+      {
+       "field": "capsule_valid",
+       "kind": "request body",
+       "producer": "rendezvous.rs:678-681 `decode_any(&self.body.rms_capsule)`",
+       "coverage": "open: request body (unverified parsing)"
+      },
+      {
+       "field": "signature_field_valid",
+       "kind": "request body",
+       "producer": "rendezvous.rs:681 `decode_exact(&self.body.signature, HYBRID_SIG_LEN)`",
+       "coverage": "open: request body (unverified parsing)"
+      },
+      {
+       "field": "opener",
+       "kind": "SQL row",
+       "producer": "rendezvous.rs:683-718 devices row (hybrid_vk, revoked) read by plan_completion_preflight",
+       "coverage": "covered: enrollment/pairing plans (08 Executor honesty: enrollment and pairing; enrollment-executors)"
+      },
+      {
+       "field": "signature",
+       "kind": "signature verifier",
+       "producer": "rendezvous.rs:732-750 verify_enrollment_signature (primary_vk, hybrid_ek/vk, capsule, signature)",
+       "coverage": "open: signature verdict is an input (08 Handler I/O outside the other executors)"
+      },
+      {
+       "field": "account_epoch",
+       "kind": "SQL row",
+       "producer": "rendezvous.rs:546-556 AccountRowView.key_epoch (check_account, plan_account_read)",
+       "coverage": "covered: enrollment/pairing plans (08 Executor honesty: enrollment and pairing; enrollment-executors)"
+      },
+      {
+       "field": "declared_epoch",
+       "kind": "request body",
+       "producer": "rendezvous.rs:769 `self.body.key_epoch`",
+       "coverage": "open: request body (unverified parsing)"
+      },
+      {
+       "field": "rotation_in_progress",
+       "kind": "SQL row",
+       "producer": "rendezvous.rs:551 AccountRowView.rekey_state.is_some()",
+       "coverage": "covered: enrollment/pairing plans (08 Executor honesty: enrollment and pairing; enrollment-executors)"
+      },
+      {
+       "field": "account_epoch_active",
+       "kind": "rekey policy over SQL row",
+       "producer": "rendezvous.rs:573-582 `authorize_active_mutation(observed_state, permit)`; observed_state epoch/phase from the row",
+       "coverage": "covered: enrollment/pairing plans (08 Executor honesty: enrollment and pairing; enrollment-executors)"
+      }
+     ]
+    },
+    {
+     "name": "CompletionAccountObservation",
+     "definition": "vela-enrollment-policy/src/pairing_driver.rs:913",
+     "consumer": "check_account (rendezvous.rs:540)",
+     "fields": [
+      {
+       "field": "account_query_ok",
+       "kind": "SQL row",
+       "producer": "rendezvous.rs:541-552 plan_account_read result",
+       "coverage": "covered: enrollment/pairing plans (08 Executor honesty: enrollment and pairing; enrollment-executors)"
+      },
+      {
+       "field": "declared_epoch_positive",
+       "kind": "request body",
+       "producer": "rendezvous.rs:584 `self.body.key_epoch >= 1`",
+       "coverage": "open: request body (unverified parsing)"
+      },
+      {
+       "field": "rekey_permitted",
+       "kind": "rekey policy over SQL row",
+       "producer": "rendezvous.rs:557-582 plan_active_mutation/authorize_active_mutation",
+       "coverage": "covered: enrollment/pairing plans (08 Executor honesty: enrollment and pairing; enrollment-executors)"
+      }
+     ]
+    },
+    {
+     "name": "GrantRecordView",
+     "definition": "vela-enrollment-policy/src/executor.rs:163",
+     "consumer": "classify_grant_read / plan_ceremony_restore",
+     "fields": [
+      {
+       "field": "user_id",
+       "kind": "store get JSON",
+       "producer": "rendezvous.rs:1577-1581 decoded Grant from get(enroll_grant:<id>)",
+       "coverage": "covered: enrollment/pairing plans (08 Executor honesty: enrollment and pairing; enrollment-executors)"
+      },
+      {
+       "field": "device_id",
+       "kind": "store get JSON",
+       "producer": "same",
+       "coverage": "covered: enrollment/pairing plans (08 Executor honesty: enrollment and pairing; enrollment-executors)"
+      }
+     ]
+    },
+    {
+     "name": "ClaimRecordView",
+     "definition": "vela-enrollment-policy/src/executor.rs:170",
+     "consumer": "plan_ceremony_restore / completion",
+     "fields": [
+      {
+       "field": "hybrid_ek",
+       "kind": "store get JSON",
+       "producer": "rendezvous.rs:642-647 decoded Claim (enroll_claim:<id>)",
+       "coverage": "covered: enrollment/pairing plans (08 Executor honesty: enrollment and pairing; enrollment-executors)"
+      },
+      {
+       "field": "hybrid_vk",
+       "kind": "store get JSON",
+       "producer": "rendezvous.rs:643",
+       "coverage": "covered: enrollment/pairing plans (08 Executor honesty: enrollment and pairing; enrollment-executors)"
+      },
+      {
+       "field": "device_name",
+       "kind": "store get JSON",
+       "producer": "rendezvous.rs:644",
+       "coverage": "covered: enrollment/pairing plans (08 Executor honesty: enrollment and pairing; enrollment-executors)"
+      },
+      {
+       "field": "device_type",
+       "kind": "store get JSON",
+       "producer": "rendezvous.rs:645",
+       "coverage": "covered: enrollment/pairing plans (08 Executor honesty: enrollment and pairing; enrollment-executors)"
+      }
+     ]
+    },
+    {
+     "name": "ClaimRowView",
+     "definition": "vela-enrollment-policy/src/executor.rs:233",
+     "consumer": "classify_completion_preflight / classify_claim_inspection",
+     "fields": [
+      {
+       "field": "hybrid_ek",
+       "kind": "store get JSON",
+       "producer": "rendezvous.rs:636-641 (and 977,1333,1668)",
+       "coverage": "covered: enrollment/pairing plans (08 Executor honesty: enrollment and pairing; enrollment-executors)"
+      },
+      {
+       "field": "hybrid_vk",
+       "kind": "store get JSON",
+       "producer": "same",
+       "coverage": "covered: enrollment/pairing plans (08 Executor honesty: enrollment and pairing; enrollment-executors)"
+      },
+      {
+       "field": "device_name",
+       "kind": "store get JSON",
+       "producer": "same",
+       "coverage": "covered: enrollment/pairing plans (08 Executor honesty: enrollment and pairing; enrollment-executors)"
+      },
+      {
+       "field": "device_type",
+       "kind": "store get JSON",
+       "producer": "same",
+       "coverage": "covered: enrollment/pairing plans (08 Executor honesty: enrollment and pairing; enrollment-executors)"
+      }
+     ]
+    },
+    {
+     "name": "ResultRowView",
+     "definition": "vela-enrollment-policy/src/executor.rs:242",
+     "consumer": "classify_result_read",
+     "fields": [
+      {
+       "field": "device_id",
+       "kind": "store get JSON",
+       "producer": "rendezvous.rs:1281-1284 decoded EnrollmentResult from get(enroll_result:<id>)",
+       "coverage": "covered: enrollment/pairing plans (08 Executor honesty: enrollment and pairing; enrollment-executors)"
+      },
+      {
+       "field": "hybrid_vk",
+       "kind": "store get JSON",
+       "producer": "same",
+       "coverage": "covered: enrollment/pairing plans (08 Executor honesty: enrollment and pairing; enrollment-executors)"
+      }
+     ]
+    },
+    {
+     "name": "AccountRowView",
+     "definition": "vela-enrollment-policy/src/executor.rs:250",
+     "consumer": "classify_account",
+     "fields": [
+      {
+       "field": "key_epoch",
+       "kind": "SQL row column 0",
+       "producer": "rendezvous.rs:546-549 `SELECT key_epoch, rekey_state FROM users`",
+       "coverage": "covered: enrollment/pairing plans (08 Executor honesty: enrollment and pairing; enrollment-executors)"
+      },
+      {
+       "field": "rekey_state",
+       "kind": "SQL row column 1",
+       "producer": "rendezvous.rs:549",
+       "coverage": "covered: enrollment/pairing plans (08 Executor honesty: enrollment and pairing; enrollment-executors)"
+      }
+     ]
+    },
+    {
+     "name": "CompletionVerdicts",
+     "definition": "vela-enrollment-policy/src/executor.rs:299",
+     "consumer": "classify_completion_preflight input (rendezvous.rs:727-773)",
+     "fields": [
+      {
+       "field": "claim_keys_usable",
+       "kind": "store get + decoders",
+       "producer": "rendezvous.rs:606-680 stored claim base64 decodes",
+       "coverage": "covered: enrollment/pairing plans (08 Executor honesty: enrollment and pairing; enrollment-executors)"
+      },
+      {
+       "field": "capsule_valid",
+       "kind": "request body",
+       "producer": "rendezvous.rs:678 `decode_any(&self.body.rms_capsule)`",
+       "coverage": "open: request body (unverified parsing)"
+      },
+      {
+       "field": "signature_field_valid",
+       "kind": "request body",
+       "producer": "rendezvous.rs:681 `decode_exact(&self.body.signature, HYBRID_SIG_LEN)`",
+       "coverage": "open: request body (unverified parsing)"
+      },
+      {
+       "field": "opener_key_decodes",
+       "kind": "SQL row + decode",
+       "producer": "rendezvous.rs:683-718 opener hybrid_vk base64 decode",
+       "coverage": "covered: enrollment/pairing plans (08 Executor honesty: enrollment and pairing; enrollment-executors)"
+      },
+      {
+       "field": "signature_verified",
+       "kind": "signature verifier",
+       "producer": "rendezvous.rs:732-750 verify_enrollment_signature",
+       "coverage": "open: signature verdict is an input (08 Handler I/O outside the other executors)"
+      },
+      {
+       "field": "account_epoch",
+       "kind": "SQL row",
+       "producer": "rendezvous.rs:548-556 AccountRowView.key_epoch",
+       "coverage": "covered: enrollment/pairing plans (08 Executor honesty: enrollment and pairing; enrollment-executors)"
+      },
+      {
+       "field": "declared_epoch",
+       "kind": "request body",
+       "producer": "rendezvous.rs:769 self.body.key_epoch",
+       "coverage": "open: request body (unverified parsing)"
+      },
+      {
+       "field": "rotation_in_progress",
+       "kind": "SQL row",
+       "producer": "rendezvous.rs:551 AccountRowView.rekey_state",
+       "coverage": "covered: enrollment/pairing plans (08 Executor honesty: enrollment and pairing; enrollment-executors)"
+      },
+      {
+       "field": "account_epoch_active",
+       "kind": "rekey policy over SQL row",
+       "producer": "rendezvous.rs:573-582 authorize_active_mutation",
+       "coverage": "covered: enrollment/pairing plans (08 Executor honesty: enrollment and pairing; enrollment-executors)"
+      }
+     ]
+    },
+    {
+     "name": "CollectorVerdicts",
+     "definition": "vela-enrollment-policy/src/executor.rs:333",
+     "consumer": "classify_result_read input (rendezvous.rs:1265-1285)",
+     "fields": [
+      {
+       "field": "key_decodes",
+       "kind": "store get + decode",
+       "producer": "rendezvous.rs:1273 `crate::db::decode_b64(&result.hybrid_vk)`",
+       "coverage": "covered: enrollment/pairing plans (08 Executor honesty: enrollment and pairing; enrollment-executors)"
+      },
+      {
+       "field": "key_len",
+       "kind": "store get + decode",
+       "producer": "rendezvous.rs:1277 `vk.len()`",
+       "coverage": "covered: enrollment/pairing plans (08 Executor honesty: enrollment and pairing; enrollment-executors)"
+      },
+      {
+       "field": "signature_verified",
+       "kind": "signature verifier",
+       "producer": "rendezvous.rs:1270-1276 verify_result_signature",
+       "coverage": "open: signature verdict is an input (08 Handler I/O outside the other executors)"
+      }
+     ]
+    },
+    {
+     "name": "DeviceRowView",
+     "definition": "vela-enrollment-policy/src/executor.rs:257",
+     "consumer": "classify_completion_preflight / enroll device read",
+     "fields": [
+      {
+       "field": "device_id",
+       "kind": "SQL row / decoded DeviceRow",
+       "producer": "enroll.rs:146-155 `parse_device_row_turso` (plan_active_device_read); row decode is app glue; rendezvous.rs:687 (None here)",
+       "coverage": "covered: enrollment/pairing plans (08 Executor honesty: enrollment and pairing; enrollment-executors)"
+      },
+      {
+       "field": "hybrid_vk",
+       "kind": "SQL row",
+       "producer": "rendezvous.rs:690 `row.text(0)`; enroll.rs:151 `row.text(6)`",
+       "coverage": "covered: enrollment/pairing plans (08 Executor honesty: enrollment and pairing; enrollment-executors)"
+      },
+      {
+       "field": "revoked",
+       "kind": "SQL row",
+       "producer": "rendezvous.rs:695-699 integer/text \"0\" test; enroll.rs:152 constant 0 after the query",
+       "coverage": "covered: enrollment/pairing plans (08 Executor honesty: enrollment and pairing; enrollment-executors)"
+      },
+      {
+       "field": "user_id",
+       "kind": "SQL row / decoded row",
+       "producer": "enroll.rs:153 (DeviceRow decode open); rendezvous.rs:692 None",
+       "coverage": "covered: enrollment/pairing plans (08 Executor honesty: enrollment and pairing; enrollment-executors) ; open: row/body decoding outside the store model (store.rs DeviceVerdicts note)"
+      },
+      {
+       "field": "enrollment_grant_id",
+       "kind": "decoded row",
+       "producer": "rendezvous.rs:693 None; used by the result path at 1403",
+       "coverage": "covered: enrollment/pairing plans (08 Executor honesty: enrollment and pairing; enrollment-executors)"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "recovery",
+   "title": "Recovery (grant redemption, recovery share, possession proof, WebAuthn recovery)",
+   "types": [
+    {
+     "name": "ConsumedGrantObservation",
+     "definition": "vela-recovery-policy/src/driver.rs:51",
+     "consumer": "redemption driver Consumed event (redemption_store::classify_take)",
+     "fields": [
+      {
+       "field": "key_epoch",
+       "kind": "store get_del + JSON decode",
+       "producer": "redemption_store.rs:203-212 classify_take over plan_take_grant (get_del); grant JSON decoded in recovery/recover.rs (open)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors) ; JSON open: row/body decoding outside the store model (store.rs DeviceVerdicts note)"
+      },
+      {
+       "field": "possession",
+       "kind": "store get_del + JSON decode",
+       "producer": "same",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "matches_observed_grant",
+       "kind": "store get_del vs preflight value",
+       "producer": "redemption_store.rs:203-212 compares decoded value with the preflight GrantView (enroll_device.rs:300)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      }
+     ]
+    },
+    {
+     "name": "FinalPolicyObservation",
+     "definition": "vela-recovery-policy/src/driver.rs:79",
+     "consumer": "redemption driver FinalPolicy event (enroll_device.rs:327)",
+     "fields": [
+      {
+       "field": "enrollment",
+       "kind": "derived",
+       "producer": "enroll_device.rs:328-341 from server-side grant/account observations",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "rekey",
+       "kind": "rekey policy over consumed grant epoch",
+       "producer": "enroll_device.rs:316-326 plan_active_mutation(consumed epoch, RecoveryGrant authority)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      }
+     ]
+    },
+    {
+     "name": "PublicationStateFacts",
+     "definition": "vela-recovery-policy/src/lib.rs:170",
+     "consumer": "pending_publication_can_commit (internal to publication policy; handler passes row observations)",
+     "fields": [
+      {
+       "field": "account_epoch_active",
+       "kind": "SQL row",
+       "producer": "share_store::classify_stage_account (share_store.rs:154) over StageAccountRowView",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "active_share_absent",
+       "kind": "SQL row",
+       "producer": "share_store.rs:154",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "account_epoch",
+       "kind": "SQL row",
+       "producer": "StageAccountRowView.stored_epoch (recovery/sql.rs:268)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "pending_epoch",
+       "kind": "derived",
+       "producer": "share_store.rs:154 (staged epoch vs stored)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "pending_split_matches",
+       "kind": "SQL row",
+       "producer": "share_store.rs:154 (recovery_split_id column)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "pending_share_present",
+       "kind": "derived + row",
+       "producer": "share_store.rs:154",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      }
+     ]
+    },
+    {
+     "name": "InitiateObservation",
+     "definition": "vela-recovery-policy/src/lib.rs:303",
+     "consumer": "initiate_facts -> plan_initiate (internal: built by webauthn_store::classify_auth_start from the start-observe reads)",
+     "fields": [
+      {
+       "field": "account_present",
+       "kind": "SQL row",
+       "producer": "webauthn_store::classify_auth_start (initiate.rs:162-171) over ShareRowView (recovery/sql.rs:636)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "share_present",
+       "kind": "SQL row",
+       "producer": "webauthn_store::classify_auth_start over ShareRowView (recovery/sql.rs:636-646)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "credential_present",
+       "kind": "SQL row + JSON decode",
+       "producer": "recovery/sql.rs:587-626 credential_row (CredentialRowView)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "attempt_id_fresh",
+       "kind": "store exists",
+       "producer": "initiate.rs:193-205 probe_auth_slot (exists(auth_state:<user>:<attempt>))",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "ttl_secs",
+       "kind": "constant",
+       "producer": "initiate.rs:207 `AUTH_STATE_TTL_SECS`",
+       "coverage": "constant/config (inspection only)"
+      }
+     ]
+    },
+    {
+     "name": "InitiateFacts",
+     "definition": "vela-recovery-policy/src/lib.rs:317",
+     "consumer": "initiate_is_authorized / plan_initiate",
+     "fields": [
+      {
+       "field": "phase",
+       "kind": "derived",
+       "producer": "initiate_facts lib.rs:350-375",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "account_exists",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "share_present",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "credential_present",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "attempt_id_fresh",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "ttl_positive",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      }
+     ]
+    },
+    {
+     "name": "RegistrationFacts",
+     "definition": "vela-recovery-policy/src/lib.rs:406",
+     "consumer": "registration_is_authorized / plan_registration (WebAuthn register finish)",
+     "fields": [
+      {
+       "field": "device_scope",
+       "kind": "token/session",
+       "producer": "recovery/webauthn.rs registration driver `registration_facts` input (session.scope)",
+       "coverage": "open: token/session origin (PASETO verification and extractor unverified)"
+      },
+      {
+       "field": "account_matches",
+       "kind": "token/session",
+       "producer": "same (session user vs requested user)",
+       "coverage": "open: token/session origin (PASETO verification and extractor unverified)"
+      },
+      {
+       "field": "challenge_pending",
+       "kind": "store get_del",
+       "producer": "recovery/webauthn.rs:540-560 take_register_state",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "challenge_consumed",
+       "kind": "store get_del",
+       "producer": "same",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "credential_valid",
+       "kind": "WebAuthn verifier",
+       "producer": "recovery/webauthn.rs:578-590 finish_passkey_registration",
+       "coverage": "open: WebAuthn verdict is an input (recovery-executors: assumptions)"
+      },
+      {
+       "field": "credential_unique",
+       "kind": "SQL row",
+       "producer": "recovery/webauthn.rs:596+ registration_check_uniqueness (holder_view recovery/sql.rs:680-700)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      }
+     ]
+    },
+    {
+     "name": "RecoverObservation",
+     "definition": "vela-recovery-policy/src/lib.rs:470",
+     "consumer": "recover_facts -> plan_recover (internal: WebAuthn recover driver builds it from take/assertion/account observations)",
+     "fields": [
+      {
+       "field": "attempt_source",
+       "kind": "store get_del",
+       "producer": "recover.rs:380-416 take_auth_state (classify_take_auth_state)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "user_matches",
+       "kind": "store get_del + request",
+       "producer": "webauthn_store::classify_take_auth_state (user id in the envelope vs request)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "attempt_matches",
+       "kind": "store get_del + request",
+       "producer": "same",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "credential_matches_current",
+       "kind": "WebAuthn verifier + SQL row",
+       "producer": "recover.rs:436-446 assertion_result cred_id vs challenge credential id",
+       "coverage": "open: WebAuthn verdict is an input (recovery-executors: assumptions)"
+      },
+      {
+       "field": "assertion_valid",
+       "kind": "WebAuthn verifier",
+       "producer": "recover.rs:430-448 finish_passkey_authentication",
+       "coverage": "open: WebAuthn verdict is an input (recovery-executors: assumptions)"
+      },
+      {
+       "field": "user_verified",
+       "kind": "WebAuthn verifier",
+       "producer": "recover.rs:439 auth_result.user_verified()",
+       "coverage": "open: WebAuthn verdict is an input (recovery-executors: assumptions)"
+      },
+      {
+       "field": "share_present",
+       "kind": "SQL row",
+       "producer": "recover.rs:528-540 finish_account_row_view (share column, recovery/sql.rs:651)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "account_epoch_active",
+       "kind": "SQL row",
+       "producer": "recover.rs:528-540 rekey_state column",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "stored_epoch",
+       "kind": "SQL row",
+       "producer": "recover.rs:528-540 key_epoch column",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      }
+     ]
+    },
+    {
+     "name": "RecoverFacts",
+     "definition": "vela-recovery-policy/src/lib.rs:492",
+     "consumer": "recover_is_authorized / plan_recover",
+     "fields": [
+      {
+       "field": "phase",
+       "kind": "derived",
+       "producer": "recover_facts lib.rs:540-590",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "user_matches",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "attempt_matches",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "challenge_consumed",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "credential_matches_current",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "assertion_valid",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "user_verified",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "share_present",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "account_epoch_active",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "epoch",
+       "kind": "derived",
+       "producer": "same (observed_recovery_epoch normalization, lib.rs:22-26 of 13)",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      }
+     ]
+    },
+    {
+     "name": "ProofInitiateObservation",
+     "definition": "vela-recovery-policy/src/lib.rs:641",
+     "consumer": "proof_initiate_facts -> plan_proof_initiation (possession InitiateProofIo::observe, possess.rs:207)",
+     "fields": [
+      {
+       "field": "account_present",
+       "kind": "SQL row",
+       "producer": "possess.rs:208-218 plan_initiate_account -> InitiateRowView (recovery/sql.rs:329)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "share_present",
+       "kind": "SQL row",
+       "producer": "InitiateRowView.share_present (recovery/sql.rs:329)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "commitment_len",
+       "kind": "SQL row + base64 decode",
+       "producer": "initiate_row decoded `recovery_auth_hash` (recovery/sql.rs:300-335)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "rotation_active",
+       "kind": "SQL row",
+       "producer": "InitiateRowView.rotation_active (rekey_state)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "attempt_id_fresh",
+       "kind": "store exists",
+       "producer": "possess.rs:224-236 probe_proof_slot (exists(proof_state:<user>:<attempt>))",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "ttl_secs",
+       "kind": "constant",
+       "producer": "possess.rs:239 `PROOF_STATE_TTL_SECS`",
+       "coverage": "constant/config (inspection only)"
+      }
+     ]
+    },
+    {
+     "name": "ProofInitiateFacts",
+     "definition": "vela-recovery-policy/src/lib.rs:659",
+     "consumer": "proof_initiation_is_authorized / plan_proof_initiation",
+     "fields": [
+      {
+       "field": "phase",
+       "kind": "derived",
+       "producer": "proof_initiate_facts lib.rs:700-750",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "account_exists",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "share_present",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "possession_hash_present",
+       "kind": "derived",
+       "producer": "same (commitment_len > 0)",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "attempt_id_fresh",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "ttl_positive",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      }
+     ]
+    },
+    {
+     "name": "PossessionRecoverObservation",
+     "definition": "vela-recovery-policy/src/lib.rs:757",
+     "consumer": "possession_recover_facts -> plan_possession_recover (driven by ProofObservation/ProofAccountObservation in possession driver)",
+     "fields": [
+      {
+       "field": "attempt_source",
+       "kind": "store get_del",
+       "producer": "possess.rs:455-483 take_proof_attempt (classify_attempt, possession_store.rs:211)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "account_present",
+       "kind": "SQL row",
+       "producer": "possession_store.rs:228 classify_proof_account (ProofAccountRowView)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "user_matches",
+       "kind": "store envelope + request",
+       "producer": "possession_store.rs:211 classify_attempt",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "attempt_matches",
+       "kind": "store envelope + request",
+       "producer": "same",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "proof_verified",
+       "kind": "signature verifier",
+       "producer": "possess.rs:528-536 verify_possession_proof (hybrid verifier)",
+       "coverage": "open: signature verdict is an input (08 Handler I/O outside the other executors)"
+      },
+      {
+       "field": "account_epoch_active",
+       "kind": "SQL row",
+       "producer": "ProofAccountRowView.rotation_active (recovery/sql.rs:361)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "commitment_len",
+       "kind": "SQL row decode",
+       "producer": "ProofAccountRowView.commitment (recovery/sql.rs:361)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "commitment_epoch",
+       "kind": "store envelope",
+       "producer": "PossessionProofState.key_epoch decoded at possess.rs:471-476",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "stored_epoch",
+       "kind": "SQL row",
+       "producer": "ProofAccountRowView.stored_epoch",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      }
+     ]
+    },
+    {
+     "name": "PossessionRecoverFacts",
+     "definition": "vela-recovery-policy/src/lib.rs:738",
+     "consumer": "possession_recover_is_authorized",
+     "fields": [
+      {
+       "field": "phase",
+       "kind": "derived",
+       "producer": "possession_recover_facts lib.rs:800-860",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "account_present",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "user_matches",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "attempt_matches",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "challenge_consumed",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "proof_verified",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "account_epoch_active",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "commitment_present",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "commitment_epoch_matches",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "epoch",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      }
+     ]
+    },
+    {
+     "name": "CredentialUpdateObservation",
+     "definition": "vela-recovery-policy/src/lib.rs:906",
+     "consumer": "credential_update_facts -> plan_credential_update (recover.rs:436)",
+     "fields": [
+      {
+       "field": "assertion_valid",
+       "kind": "WebAuthn verifier",
+       "producer": "recover.rs:436 `assertion_valid: true` on finish_passkey_authentication success",
+       "coverage": "open: WebAuthn verdict is an input (recovery-executors: assumptions)"
+      },
+      {
+       "field": "credential_matches_current",
+       "kind": "WebAuthn verifier + stored id",
+       "producer": "recover.rs:437-438 base64 cred_id vs auth_state.credential_id",
+       "coverage": "open: WebAuthn verdict is an input (recovery-executors: assumptions)"
+      },
+      {
+       "field": "needs_update",
+       "kind": "WebAuthn verifier",
+       "producer": "recover.rs:440 auth_result.needs_update()",
+       "coverage": "open: WebAuthn verdict is an input (recovery-executors: assumptions)"
+      }
+     ]
+    },
+    {
+     "name": "CredentialUpdateFacts",
+     "definition": "vela-recovery-policy/src/lib.rs:916",
+     "consumer": "credential_update_is_authorized / plan_credential_update",
+     "fields": [
+      {
+       "field": "assertion_valid",
+       "kind": "derived",
+       "producer": "credential_update_facts lib.rs:928-936",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "credential_matches_current",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "needs_update",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      }
+     ]
+    },
+    {
+     "name": "EnrollmentGrantFacts",
+     "definition": "vela-recovery-policy/src/lib.rs:981",
+     "consumer": "plan_enrollment_preflight (enroll_device.rs:132)",
+     "fields": [
+      {
+       "field": "epoch",
+       "kind": "store get + JSON decode",
+       "producer": "enroll_device.rs:133 `grant.key_epoch` from observe_enroll_grant (recover.rs:672-690)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "possession",
+       "kind": "store get + JSON decode",
+       "producer": "enroll_device.rs:134 `grant.possession`",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      }
+     ]
+    },
+    {
+     "name": "EnrollmentAccountFacts",
+     "definition": "vela-recovery-policy/src/lib.rs:991",
+     "consumer": "plan_enrollment_preflight (enroll_device.rs:464,506)",
+     "fields": [
+      {
+       "field": "stored_epoch",
+       "kind": "SQL row",
+       "producer": "enroll_device.rs:464 from EnrollmentAccountRowView.stored_epoch (recovery/sql.rs:258)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "epoch_active",
+       "kind": "SQL row",
+       "producer": "enroll_device.rs:465 rotation_active",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "credential_id_matches",
+       "kind": "SQL row + stored grant",
+       "producer": "enroll_device.rs:466 comparison of row credential id with the grant",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "commitment_len",
+       "kind": "SQL row + decode",
+       "producer": "enroll_device.rs:467 EnrollmentAccountRowView.commitment_len",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      }
+     ]
+    },
+    {
+     "name": "EnrollmentPreflightObservation",
+     "definition": "vela-recovery-policy/src/lib.rs:1015",
+     "consumer": "plan_enrollment_preflight (enroll_device.rs:139)",
+     "fields": [
+      {
+       "field": "grant",
+       "kind": "store get + JSON decode",
+       "producer": "enroll_device.rs:112-117 observe_enroll_grant",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "account",
+       "kind": "SQL row (conditional)",
+       "producer": "enroll_device.rs:122-128 enrollment_account_preflight -> EnrollmentAccountRowView",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      }
+     ]
+    },
+    {
+     "name": "EnrollmentFacts",
+     "definition": "vela-recovery-policy/src/lib.rs:1729",
+     "consumer": "enrollment_facts / plan_enrollment (driver final policy)",
+     "fields": [
+      {
+       "field": "phase",
+       "kind": "derived",
+       "producer": "enrollment_facts lib.rs:1830-1900",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "account_present",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "user_matches",
+       "kind": "derived",
+       "producer": "same (= grant_present; store-key binding, 15 `Unproved correspondence`)",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "grant_live",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "grant_consumed",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "credential_matches_current",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "possession_grant",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "possession_hash_present",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "public_keys_valid",
+       "kind": "derived",
+       "producer": "same (1600/2624 decoded lengths)",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "account_epoch_active",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "grant_epoch",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      },
+      {
+       "field": "account_epoch",
+       "kind": "derived",
+       "producer": "same",
+       "coverage": "covered: constructor mapping (13/15); origin open where the source observation is open"
+      }
+     ]
+    },
+    {
+     "name": "EnrollmentObservation",
+     "definition": "vela-recovery-policy/src/lib.rs:1756",
+     "consumer": "enrollment_facts (enroll_device.rs:328, device/enroll.rs:205)",
+     "fields": [
+      {
+       "field": "grant_present",
+       "kind": "store get + JSON decode",
+       "producer": "enroll_device.rs:112-117 observe_enroll_grant (non-consuming get)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "grant_consumed",
+       "kind": "store get_del",
+       "producer": "enroll_device.rs:300 classify_take over get_del(enroll_grant)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "consumed_matches_observed",
+       "kind": "store get_del vs preflight",
+       "producer": "redemption_store.rs:203-212",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "account_present",
+       "kind": "SQL row",
+       "producer": "enroll_device.rs:464 EnrollmentAccountRowView",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "grant_possession",
+       "kind": "store get + JSON decode",
+       "producer": "enroll_device.rs:134 / 328 `consumed.possession`",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "grant_epoch",
+       "kind": "store get + JSON decode",
+       "producer": "enroll_device.rs:324 `consumed.key_epoch`",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "stored_epoch",
+       "kind": "SQL row",
+       "producer": "enroll_device.rs:337 `self.account.stored_epoch`",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "account_epoch_active",
+       "kind": "SQL row",
+       "producer": "enroll_device.rs:338 `self.account.epoch_active`",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "credential_id_matches",
+       "kind": "SQL row + stored grant",
+       "producer": "enroll_device.rs:339",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "commitment_len",
+       "kind": "SQL row + decode",
+       "producer": "enroll_device.rs:340",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "hybrid_ek_len",
+       "kind": "request body",
+       "producer": "enroll_device.rs:341 `self.hybrid_ek.len()` (validated 1600 at enroll_device.rs:90)",
+       "coverage": "open: request body (unverified parsing)"
+      },
+      {
+       "field": "hybrid_vk_len",
+       "kind": "request body",
+       "producer": "enroll_device.rs:342 `self.hybrid_vk.len()` (validated 2624 at enroll_device.rs:99)",
+       "coverage": "open: request body (unverified parsing)"
+      }
+     ]
+    },
+    {
+     "name": "InitiateObservation",
+     "definition": "vela-recovery-policy/src/possession_driver.rs:66",
+     "consumer": "begin_initiation (possession driver)",
+     "fields": [
+      {
+       "field": "account_present",
+       "kind": "SQL row",
+       "producer": "possession_store.rs:164 classify_initiate over InitiateRowView (recovery/sql.rs:329)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "share_present",
+       "kind": "SQL row",
+       "producer": "same",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "commitment",
+       "kind": "SQL row decode",
+       "producer": "InitiateRowView.commitment (recovery/sql.rs:300-335)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "rotation_active",
+       "kind": "SQL row",
+       "producer": "InitiateRowView.rotation_active",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "attempt_id_fresh",
+       "kind": "store exists",
+       "producer": "possess.rs:224-236 probe_proof_slot",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "ttl_secs",
+       "kind": "constant",
+       "producer": "possess.rs:239 PROOF_STATE_TTL_SECS",
+       "coverage": "constant/config (inspection only)"
+      }
+     ]
+    },
+    {
+     "name": "ProofAccountObservation",
+     "definition": "vela-recovery-policy/src/possession_driver.rs:397",
+     "consumer": "possession driver after attempt consumption (possess.rs:515)",
+     "fields": [
+      {
+       "field": "account_present",
+       "kind": "SQL row",
+       "producer": "possession_store.rs:228 classify_proof_account (recovery/sql.rs:361)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "account_epoch_active",
+       "kind": "SQL row",
+       "producer": "ProofAccountRowView.rotation_active",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "commitment",
+       "kind": "SQL row decode",
+       "producer": "ProofAccountRowView.commitment",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "stored_epoch",
+       "kind": "SQL row",
+       "producer": "ProofAccountRowView.stored_epoch",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      }
+     ]
+    },
+    {
+     "name": "ProofObservation",
+     "definition": "vela-recovery-policy/src/possession_driver.rs:408",
+     "consumer": "possession driver verify step (possess.rs:529)",
+     "fields": [
+      {
+       "field": "verified",
+       "kind": "signature verifier",
+       "producer": "possess.rs:529-537 `verify_possession_proof(allow_legacy_v1, commitment, attempt, presented)`",
+       "coverage": "open: signature verdict is an input (08 Handler I/O outside the other executors)"
+      }
+     ]
+    },
+    {
+     "name": "ProofAttemptView",
+     "definition": "vela-recovery-policy/src/possession_store.rs:63",
+     "consumer": "plan_store_challenge / classify_attempt (store envelope)",
+     "fields": [
+      {
+       "field": "user",
+       "kind": "store key / request",
+       "producer": "possess.rs:271-274 from `self.user_id` (request body user_id, possess.rs:151)",
+       "coverage": "open: request body (unverified parsing)"
+      },
+      {
+       "field": "attempt",
+       "kind": "store key / request",
+       "producer": "possess.rs:272 from `self.recovery_id` (fresh v4, possess.rs:152)",
+       "coverage": "open: OS randomness (plan step O11 / T9)"
+      },
+      {
+       "field": "key_epoch",
+       "kind": "SQL row",
+       "producer": "possess.rs:273 `self.key_epoch`, set by initiate_epoch (possession_store.rs:191) from InitiateRowView",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      }
+     ]
+    },
+    {
+     "name": "EnrollmentGrantView",
+     "definition": "vela-recovery-policy/src/possession_store.rs:71",
+     "consumer": "plan_issue_grant",
+     "fields": [
+      {
+       "field": "key_epoch",
+       "kind": "driver permit",
+       "producer": "possess.rs:555 `permit.epoch()` (possession driver decision over SQL row)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      }
+     ]
+    },
+    {
+     "name": "InitiateRowView",
+     "definition": "vela-recovery-policy/src/possession_store.rs:78",
+     "consumer": "classify_initiate / initiate_epoch",
+     "fields": [
+      {
+       "field": "share_present",
+       "kind": "SQL row column 0",
+       "producer": "recovery/sql.rs:329-336 (`recovery_share`)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "commitment",
+       "kind": "SQL row column 1 + base64",
+       "producer": "recovery/sql.rs:300-325 commitment_cell",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "key_epoch",
+       "kind": "SQL row column 2",
+       "producer": "recovery/sql.rs:331",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "rotation_active",
+       "kind": "SQL row column 3",
+       "producer": "recovery/sql.rs:332 (`rekey_state`)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      }
+     ]
+    },
+    {
+     "name": "ProofAccountRowView",
+     "definition": "vela-recovery-policy/src/possession_store.rs:90",
+     "consumer": "classify_proof_account",
+     "fields": [
+      {
+       "field": "commitment",
+       "kind": "SQL row column 0 + base64",
+       "producer": "recovery/sql.rs:361-368",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "stored_epoch",
+       "kind": "SQL row column 1",
+       "producer": "recovery/sql.rs:363",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "rotation_active",
+       "kind": "SQL row column 2",
+       "producer": "recovery/sql.rs:364",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      }
+     ]
+    },
+    {
+     "name": "ShareActorObservation",
+     "definition": "vela-recovery-policy/src/recovery_share_driver.rs:54",
+     "consumer": "recovery_share_interpreter! (recovery/mod.rs:268,404,533,649)",
+     "fields": [
+      {
+       "field": "authenticated",
+       "kind": "token/session (constant)",
+       "producer": "recovery/mod.rs:67 literal `true`",
+       "coverage": "open: token/session origin (PASETO verification and extractor unverified)"
+      },
+      {
+       "field": "device_active",
+       "kind": "token/session (constant)",
+       "producer": "recovery/mod.rs:68 literal `true`",
+       "coverage": "open: token/session origin (PASETO verification and extractor unverified)"
+      },
+      {
+       "field": "scoped_to_session_account",
+       "kind": "constant/code shape",
+       "producer": "recovery/mod.rs:69 literal `true`; single session.user_id",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      }
+     ]
+    },
+    {
+     "name": "ShareRequestObservation",
+     "definition": "vela-recovery-policy/src/recovery_share_driver.rs:70",
+     "consumer": "recovery_share_interpreter! (put/finalize/delete/get)",
+     "fields": [
+      {
+       "field": "operation",
+       "kind": "constant per handler",
+       "producer": "recovery/mod.rs:269,405,534,650 (Stage/Finalize/Delete/Read)",
+       "coverage": "constant/config (inspection only)"
+      },
+      {
+       "field": "actor",
+       "kind": "derived",
+       "producer": "recovery/mod.rs:66-71 actor()",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "declared_epoch",
+       "kind": "request body/header",
+       "producer": "recovery/mod.rs:271 `body.key_epoch`; :407 body; :535 X-Vela-Epoch header (recovery/mod.rs:637-644); :651 constant 0 for Read",
+       "coverage": "open: request body (unverified parsing)"
+      },
+      {
+       "field": "split_id_present",
+       "kind": "constant `true`",
+       "producer": "recovery/mod.rs:272,406,536,652",
+       "coverage": "constant/config (inspection only)"
+      },
+      {
+       "field": "share_present",
+       "kind": "constant `true` / decoded body",
+       "producer": "recovery/mod.rs:273,407,537,653 (Stage: `!share_bytes.is_empty()` at :274)",
+       "coverage": "open: request body (unverified parsing)"
+      },
+      {
+       "field": "device_authority",
+       "kind": "constant `true` after policy check",
+       "producer": "recovery/mod.rs:275,409,539,655; `recovery_mutation_permit` (recovery/mod.rs:42-55) is fed the same request epoch",
+       "coverage": "open: request body (unverified parsing)"
+      },
+      {
+       "field": "split",
+       "kind": "body split id / 0",
+       "producer": "recovery/mod.rs:276,408 `split_token(body.split_id)`; :540,656 constant 0",
+       "coverage": "open: request body (unverified parsing)"
+      }
+     ]
+    },
+    {
+     "name": "StageAccountObservation",
+     "definition": "vela-recovery-policy/src/recovery_share_driver.rs:98",
+     "consumer": "classify_stage_account (share_store.rs:154)",
+     "fields": [
+      {
+       "field": "account_present",
+       "kind": "SQL row",
+       "producer": "share_store.rs:154 over StageAccountRowView (recovery/sql.rs:268)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "stored_epoch",
+       "kind": "SQL row",
+       "producer": "StageAccountRowView.stored_epoch",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "rotation_active",
+       "kind": "SQL row",
+       "producer": "StageAccountRowView.rotation_active",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "active_share_matches",
+       "kind": "SQL row vs request copy",
+       "producer": "share_store.rs:154 compares stored share text with `stored_share` (body-derived)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors) ; value open: request body (unverified parsing)"
+      },
+      {
+       "field": "active_split_matches",
+       "kind": "SQL row vs request copy",
+       "producer": "share_store.rs:154 compares stored split id with request split",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors) ; value open: request body (unverified parsing)"
+      }
+     ]
+    },
+    {
+     "name": "FinalizeAccountObservation",
+     "definition": "vela-recovery-policy/src/recovery_share_driver.rs:121",
+     "consumer": "classify_finalize_account (share_store.rs:198)",
+     "fields": [
+      {
+       "field": "account_present",
+       "kind": "SQL row",
+       "producer": "share_store.rs:198 over FinalizeAccountRowView (recovery/sql.rs:278)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "stored_epoch",
+       "kind": "SQL row",
+       "producer": "FinalizeAccountRowView.stored_epoch",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "rotation_active",
+       "kind": "SQL row",
+       "producer": "FinalizeAccountRowView.rotation_active",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "active_split_matches",
+       "kind": "SQL row vs request copy",
+       "producer": "share_store.rs:198 vs request split id",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      }
+     ]
+    },
+    {
+     "name": "ReadObservation",
+     "definition": "vela-recovery-policy/src/recovery_share_driver.rs:141",
+     "consumer": "classify_read_share (share_store.rs:238)",
+     "fields": [
+      {
+       "field": "account_present",
+       "kind": "SQL row",
+       "producer": "share_store.rs:238 over ShareRowView (recovery/sql.rs:287)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "share_present",
+       "kind": "SQL row",
+       "producer": "ShareRowView.share",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      }
+     ]
+    },
+    {
+     "name": "GrantView",
+     "definition": "vela-recovery-policy/src/redemption_store.rs:41",
+     "consumer": "classify_take / plan_take_grant",
+     "fields": [
+      {
+       "field": "key_epoch",
+       "kind": "store value JSON",
+       "producer": "recover.rs:682-688 decoded RecoveryEnrollGrant (get_del); JSON decode open (15)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors) ; JSON open: row/body decoding outside the store model (store.rs DeviceVerdicts note)"
+      },
+      {
+       "field": "credential_id",
+       "kind": "store value JSON",
+       "producer": "recover.rs:684; JSON decode open",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "possession",
+       "kind": "store value JSON",
+       "producer": "recover.rs:685; JSON decode open",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      }
+     ]
+    },
+    {
+     "name": "AuthorityRowView",
+     "definition": "vela-recovery-policy/src/redemption_store.rs:110",
+     "consumer": "classify_grant_peek / redemption preflight",
+     "fields": [
+      {
+       "field": "credential_id",
+       "kind": "SQL row column 0",
+       "producer": "recovery/sql.rs:228-231 `SelectAuthority` (recovery_webauthn_cred_id)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "auth_hash",
+       "kind": "SQL row column 1",
+       "producer": "recovery/sql.rs:229 (empty filtered, matching the insert guard)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      }
+     ]
+    },
+    {
+     "name": "EnrollmentAccountRowView",
+     "definition": "vela-recovery-policy/src/redemption_store.rs:119",
+     "consumer": "EnrollmentAccountView adapter / enrollment_account_preflight",
+     "fields": [
+      {
+       "field": "stored_epoch",
+       "kind": "SQL row column 0",
+       "producer": "recovery/sql.rs:258-266",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "rotation_active",
+       "kind": "SQL row column 1",
+       "producer": "recovery/sql.rs:262 (`rekey_state`)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "credential_id",
+       "kind": "SQL row column 2",
+       "producer": "recovery/sql.rs:264",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "commitment_len",
+       "kind": "SQL row column 3 + base64",
+       "producer": "recovery/sql.rs:246-256 (decoded only when epoch/rotation gate open)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      }
+     ]
+    },
+    {
+     "name": "EnrollmentAccountView",
+     "definition": "vela-recovery-policy/src/redemption_store.rs:282",
+     "consumer": "four-field structural adapter -> EnrollmentAccountFacts (enroll_device.rs:464-470)",
+     "fields": [
+      {
+       "field": "stored_epoch",
+       "kind": "derived (copy)",
+       "producer": "enroll_device.rs:464 (EnrollmentAccountRowView.stored_epoch)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "epoch_active",
+       "kind": "derived (copy)",
+       "producer": "enroll_device.rs:465",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "credential_id_matches",
+       "kind": "derived",
+       "producer": "enroll_device.rs:466",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "commitment_len",
+       "kind": "derived (copy)",
+       "producer": "enroll_device.rs:467",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      }
+     ]
+    },
+    {
+     "name": "StageAccountRowView",
+     "definition": "vela-recovery-policy/src/share_store.rs:55",
+     "consumer": "classify_stage_account",
+     "fields": [
+      {
+       "field": "stored_epoch",
+       "kind": "SQL row column 0",
+       "producer": "recovery/sql.rs:268-275 `SelectStageAccount`",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "rotation_active",
+       "kind": "SQL row column 1",
+       "producer": "recovery/sql.rs:270",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "active_share",
+       "kind": "SQL row column 2",
+       "producer": "recovery/sql.rs:271",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "active_split",
+       "kind": "SQL row column 3",
+       "producer": "recovery/sql.rs:272",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      }
+     ]
+    },
+    {
+     "name": "FinalizeAccountRowView",
+     "definition": "vela-recovery-policy/src/share_store.rs:65",
+     "consumer": "classify_finalize_account",
+     "fields": [
+      {
+       "field": "stored_epoch",
+       "kind": "SQL row column 0",
+       "producer": "recovery/sql.rs:278-284",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "rotation_active",
+       "kind": "SQL row column 1",
+       "producer": "recovery/sql.rs:280",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "active_split",
+       "kind": "SQL row column 2",
+       "producer": "recovery/sql.rs:281",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      }
+     ]
+    },
+    {
+     "name": "ShareRowView",
+     "definition": "vela-recovery-policy/src/share_store.rs:75",
+     "consumer": "classify_read_share",
+     "fields": [
+      {
+       "field": "share",
+       "kind": "SQL row column 0",
+       "producer": "recovery/sql.rs:287-294 `SelectShare`",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "split_id",
+       "kind": "SQL row column 1",
+       "producer": "recovery/sql.rs:289",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "epoch",
+       "kind": "SQL row column 2",
+       "producer": "recovery/sql.rs:290",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      }
+     ]
+    },
+    {
+     "name": "RegistrationStartObservation",
+     "definition": "vela-recovery-policy/src/webauthn_driver.rs:114",
+     "consumer": "WebAuthn registration-start driver",
+     "fields": [
+      {
+       "field": "account_present",
+       "kind": "SQL row",
+       "producer": "recovery/webauthn.rs:214-230 credential_row (recovery/sql.rs:589)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "credential",
+       "kind": "SQL row + JSON decode",
+       "producer": "recovery/webauthn.rs:214-230 credential_row",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      }
+     ]
+    },
+    {
+     "name": "RegistrationVerificationObservation",
+     "definition": "vela-recovery-policy/src/webauthn_driver.rs:456",
+     "consumer": "finish_passkey_registration observation (recovery/webauthn.rs:578)",
+     "fields": [
+      {
+       "field": "credential_valid",
+       "kind": "WebAuthn verifier",
+       "producer": "recovery/webauthn.rs:565-590 `finish_passkey_registration`",
+       "coverage": "open: WebAuthn verdict is an input (recovery-executors: assumptions)"
+      }
+     ]
+    },
+    {
+     "name": "AuthStartObservation",
+     "definition": "vela-recovery-policy/src/webauthn_driver.rs:961",
+     "consumer": "auth_start_observe (initiate.rs:161)",
+     "fields": [
+      {
+       "field": "account_present",
+       "kind": "SQL row",
+       "producer": "initiate.rs:162-171 webauthn_share_row_view (recovery/sql.rs:636)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "share_present",
+       "kind": "SQL row",
+       "producer": "initiate.rs:162-171",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "credential",
+       "kind": "SQL row + JSON decode",
+       "producer": "initiate.rs:172-186 credential_row (recovery/sql.rs:589)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "attempt_id_fresh",
+       "kind": "store exists",
+       "producer": "initiate.rs:193-205 probe_auth_slot",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "ttl_secs",
+       "kind": "constant",
+       "producer": "initiate.rs:208 AUTH_STATE_TTL_SECS",
+       "coverage": "constant/config (inspection only)"
+      }
+     ]
+    },
+    {
+     "name": "AuthFinishContextObservation",
+     "definition": "vela-recovery-policy/src/webauthn_driver.rs:1321",
+     "consumer": "auth_finish_context (recover.rs:339)",
+     "fields": [
+      {
+       "field": "account_present",
+       "kind": "SQL row",
+       "producer": "recover.rs:340-352 webauthn_share_row_view",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "share_present",
+       "kind": "SQL row",
+       "producer": "same",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "credential",
+       "kind": "SQL row + JSON decode",
+       "producer": "recover.rs:353-367 credential_row",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "attempt_id_present",
+       "kind": "request body",
+       "producer": "recover.rs:369 `self.recovery_id.is_some()` (body attempt id)",
+       "coverage": "open: request body (unverified parsing)"
+      }
+     ]
+    },
+    {
+     "name": "AssertionObservation",
+     "definition": "vela-recovery-policy/src/webauthn_driver.rs:1348",
+     "consumer": "auth_finish_verify (recover.rs:425)",
+     "fields": [
+      {
+       "field": "assertion_valid",
+       "kind": "WebAuthn verifier",
+       "producer": "recover.rs:436 `finish_passkey_authentication` result",
+       "coverage": "open: WebAuthn verdict is an input (recovery-executors: assumptions)"
+      },
+      {
+       "field": "user_verified",
+       "kind": "WebAuthn verifier",
+       "producer": "recover.rs:439 `auth_result.user_verified()`",
+       "coverage": "open: WebAuthn verdict is an input (recovery-executors: assumptions)"
+      },
+      {
+       "field": "credential_matches",
+       "kind": "WebAuthn verifier + stored id",
+       "producer": "recover.rs:437-438 `B64.encode(auth_result.cred_id()) == auth_state.credential_id`",
+       "coverage": "open: WebAuthn verdict is an input (recovery-executors: assumptions)"
+      },
+      {
+       "field": "needs_update",
+       "kind": "WebAuthn verifier",
+       "producer": "recover.rs:440 `auth_result.needs_update()`",
+       "coverage": "open: WebAuthn verdict is an input (recovery-executors: assumptions)"
+      }
+     ]
+    },
+    {
+     "name": "AuthAccountObservation",
+     "definition": "vela-recovery-policy/src/webauthn_driver.rs:1368",
+     "consumer": "auth_finish_account (recover.rs:519)",
+     "fields": [
+      {
+       "field": "account_present",
+       "kind": "SQL row",
+       "producer": "webauthn_store::classify_finish_account over FinishAccountRowView (recovery/sql.rs:651)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "account_epoch_active",
+       "kind": "SQL row",
+       "producer": "FinishAccountRowView.rotation_active",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "share_present",
+       "kind": "SQL row",
+       "producer": "FinishAccountRowView.share",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "stored_credential_matches",
+       "kind": "SQL row vs challenge",
+       "producer": "classify_finish_account compares stored credential id",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "stored_epoch",
+       "kind": "SQL row",
+       "producer": "FinishAccountRowView.stored_epoch",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      }
+     ]
+    },
+    {
+     "name": "AuthStateView",
+     "definition": "vela-recovery-policy/src/webauthn_store.rs:104",
+     "consumer": "classify_take_auth_state",
+     "fields": [
+      {
+       "field": "user",
+       "kind": "store envelope JSON",
+       "producer": "initiate.rs:391-396 decode_auth_attempt",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "attempt",
+       "kind": "store envelope JSON",
+       "producer": "same",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "credential_id",
+       "kind": "store envelope JSON",
+       "producer": "same",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      }
+     ]
+    },
+    {
+     "name": "CredentialGrantView",
+     "definition": "vela-recovery-policy/src/webauthn_store.rs:112",
+     "consumer": "plan_store_credential_grant",
+     "fields": [
+      {
+       "field": "key_epoch",
+       "kind": "driver permit",
+       "producer": "recover.rs:580 `permit_epoch` (WebAuthn finish driver decision over SQL row)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "credential_id",
+       "kind": "SQL row + challenge",
+       "producer": "recover.rs:581 challenge-bound credential id",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "possession",
+       "kind": "constant",
+       "producer": "recover.rs:583 literal `false` for a WebAuthn grant",
+       "coverage": "constant/config (inspection only)"
+      }
+     ]
+    },
+    {
+     "name": "ShareRowView",
+     "definition": "vela-recovery-policy/src/webauthn_store.rs:121",
+     "consumer": "classify_auth_start / classify_finish_context",
+     "fields": [
+      {
+       "field": "account_present",
+       "kind": "SQL row",
+       "producer": "recovery/sql.rs:636-646 (`SELECT recovery_share FROM users`)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "share_present",
+       "kind": "SQL row",
+       "producer": "recovery/sql.rs:689",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      }
+     ]
+    },
+    {
+     "name": "CredentialRowView",
+     "definition": "vela-recovery-policy/src/webauthn_store.rs:129",
+     "consumer": "classify_auth_start / finish context",
+     "fields": [
+      {
+       "field": "account_present",
+       "kind": "SQL row",
+       "producer": "recovery/sql.rs:587-626 credential_row",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "credential",
+       "kind": "SQL row + JSON decode",
+       "producer": "recovery/sql.rs:600-625 StoredCredentialObservation (Missing/Present/Corrupt)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      }
+     ]
+    },
+    {
+     "name": "FinishAccountRowView",
+     "definition": "vela-recovery-policy/src/webauthn_store.rs:136",
+     "consumer": "classify_finish_account",
+     "fields": [
+      {
+       "field": "share",
+       "kind": "SQL row column 0",
+       "producer": "recovery/sql.rs:651-659 `SelectFinishAccount`",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "stored_epoch",
+       "kind": "SQL row column 1",
+       "producer": "recovery/sql.rs:653",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "rotation_active",
+       "kind": "SQL row column 2",
+       "producer": "recovery/sql.rs:654",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "stored_credential_id",
+       "kind": "SQL row column 3",
+       "producer": "recovery/sql.rs:655",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "split_id",
+       "kind": "SQL row column 4",
+       "producer": "recovery/sql.rs:656",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      }
+     ]
+    },
+    {
+     "name": "LegacyCredentialRowView",
+     "definition": "vela-recovery-policy/src/webauthn_store.rs:203",
+     "consumer": "startup credential backfill",
+     "fields": [
+      {
+       "field": "user",
+       "kind": "SQL row column 0",
+       "producer": "recovery/sql.rs:664-675 legacy_credential_rows (backfill scan)",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      },
+      {
+       "field": "credential",
+       "kind": "SQL row column 1",
+       "producer": "recovery/sql.rs:668",
+       "coverage": "covered: recovery plans (08 Executor honesty: recovery; recovery-executors)"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "vault",
+   "title": "Vault chunks, ORAM, sync, rotation and device capsules (vela-rekey-policy)",
+   "types": [
+    {
+     "name": "ChunkRowView",
+     "definition": "vela-rekey-policy/src/executor.rs:248",
+     "consumer": "classify_chunk_read / plan_read_chunk (vault/chunk.rs:70)",
+     "fields": [
+      {
+       "field": "chunk_id",
+       "kind": "SQL row column 0",
+       "producer": "vault/sql.rs:245-253 `SelectChunkRow`",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "user_id",
+       "kind": "SQL row column 1",
+       "producer": "vault/sql.rs:248",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "version",
+       "kind": "SQL row column 2",
+       "producer": "vault/sql.rs:249",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "lamport_clock",
+       "kind": "SQL row column 3",
+       "producer": "vault/sql.rs:250",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "last_writer",
+       "kind": "SQL row column 4",
+       "producer": "vault/sql.rs:251",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "ciphertext",
+       "kind": "SQL row column 5",
+       "producer": "vault/sql.rs:251",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "epoch",
+       "kind": "SQL row column 6",
+       "producer": "vault/sql.rs:252",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      }
+     ]
+    },
+    {
+     "name": "InventoryRowView",
+     "definition": "vela-rekey-policy/src/executor.rs:260",
+     "consumer": "rotation completeness probes / inventory row set",
+     "fields": [
+      {
+       "field": "chunk_id",
+       "kind": "SQL row column 0",
+       "producer": "vault/sql.rs:271-276 `SelectInventory`",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "version",
+       "kind": "SQL row column 1",
+       "producer": "vault/sql.rs:273",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "lamport_clock",
+       "kind": "SQL row column 2",
+       "producer": "vault/sql.rs:274",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      }
+     ]
+    },
+    {
+     "name": "PendingRowView",
+     "definition": "vela-rekey-policy/src/executor.rs:268",
+     "consumer": "capsule acknowledgement / pending epoch",
+     "fields": [
+      {
+       "field": "epoch",
+       "kind": "SQL row column 0",
+       "producer": "vault/sql.rs:263-267 `SelectPendingCapsule`",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      }
+     ]
+    },
+    {
+     "name": "ExistsView",
+     "definition": "vela-rekey-policy/src/executor.rs:274",
+     "consumer": "ORAM bucket probe (classifier built inside the executor plan)",
+     "fields": [
+      {
+       "field": "found",
+       "kind": "SQL row existence",
+       "producer": "vault/sql.rs:256-259 `exists_view(rows)` (bool, folded into the ORAM observation)",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      }
+     ]
+    },
+    {
+     "name": "KeyStateView",
+     "definition": "vela-rekey-policy/src/executor.rs:280",
+     "consumer": "load_key_state (vault/rekey.rs:100-125)",
+     "fields": [
+      {
+       "field": "key_epoch",
+       "kind": "SQL row column 0",
+       "producer": "vault/sql.rs:283-293 `SelectKeyState`",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "rekey_state",
+       "kind": "SQL row column 1",
+       "producer": "vault/sql.rs:285",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "rekey_started_at",
+       "kind": "SQL row column 2",
+       "producer": "vault/sql.rs:286",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "rekey_starter",
+       "kind": "SQL row column 3",
+       "producer": "vault/sql.rs:287",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "rekey_id",
+       "kind": "SQL row column 4",
+       "producer": "vault/sql.rs:288",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "last_rekey_id",
+       "kind": "SQL row column 5",
+       "producer": "vault/sql.rs:289",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "last_rekey_epoch",
+       "kind": "SQL row column 6",
+       "producer": "vault/sql.rs:290",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      }
+     ]
+    },
+    {
+     "name": "OramRowView",
+     "definition": "vela-rekey-policy/src/executor.rs:315",
+     "consumer": "ORAM path read/write",
+     "fields": [
+      {
+       "field": "version",
+       "kind": "SQL row column 0",
+       "producer": "vault/sql.rs:307-313 `SelectOramRow`",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "lamport_clock",
+       "kind": "SQL row column 1",
+       "producer": "vault/sql.rs:309",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "last_writer",
+       "kind": "SQL row column 2",
+       "producer": "vault/sql.rs:310",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "ciphertext",
+       "kind": "SQL row column 3",
+       "producer": "vault/sql.rs:311",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      }
+     ]
+    },
+    {
+     "name": "SyncRowView",
+     "definition": "vela-rekey-policy/src/executor.rs:333",
+     "consumer": "sync manifest listing",
+     "fields": [
+      {
+       "field": "chunk_id",
+       "kind": "SQL row column 0",
+       "producer": "vault/sql.rs:318-325 `SelectSyncManifest`",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "version",
+       "kind": "SQL row column 1",
+       "producer": "vault/sql.rs:320",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "lamport_clock",
+       "kind": "SQL row column 2",
+       "producer": "vault/sql.rs:321",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "last_writer",
+       "kind": "SQL row column 3",
+       "producer": "vault/sql.rs:322",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      }
+     ]
+    },
+    {
+     "name": "CapsuleView",
+     "definition": "vela-rekey-policy/src/executor.rs:363",
+     "consumer": "get_capsule (capsule delivery)",
+     "fields": [
+      {
+       "field": "capsule",
+       "kind": "SQL row column 0",
+       "producer": "vault/sql.rs:329-335 `SelectCapsule`",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "capsule_epoch",
+       "kind": "SQL row column 1",
+       "producer": "vault/sql.rs:331",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "rotation_id",
+       "kind": "SQL row column 2",
+       "producer": "vault/sql.rs:332",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      }
+     ]
+    },
+    {
+     "name": "DeviceListRowView",
+     "definition": "vela-rekey-policy/src/executor.rs:387",
+     "consumer": "device listing (`list_devices` is outside the vault executor proof set, 08)",
+     "fields": [
+      {
+       "field": "id",
+       "kind": "SQL row column 0",
+       "producer": "vault/sql.rs:339-356 `SelectDeviceList`",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "user_id",
+       "kind": "SQL row column 1",
+       "producer": "vault/sql.rs:341",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "device_name",
+       "kind": "SQL row column 2",
+       "producer": "vault/sql.rs:342",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "device_type",
+       "kind": "SQL row column 3",
+       "producer": "vault/sql.rs:343",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "last_active",
+       "kind": "SQL row column 4",
+       "producer": "vault/sql.rs:344",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "hybrid_ek",
+       "kind": "SQL row column 5",
+       "producer": "vault/sql.rs:345",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "hybrid_vk",
+       "kind": "SQL row column 6",
+       "producer": "vault/sql.rs:346",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "enrolled_by",
+       "kind": "SQL row column 7",
+       "producer": "vault/sql.rs:347",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "rms_capsule",
+       "kind": "SQL row column 8",
+       "producer": "vault/sql.rs:348",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "revoked",
+       "kind": "SQL row column 9",
+       "producer": "vault/sql.rs:349",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "revoked_at",
+       "kind": "SQL row column 10",
+       "producer": "vault/sql.rs:350",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "revoked_by",
+       "kind": "SQL row column 11",
+       "producer": "vault/sql.rs:351",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "created_at",
+       "kind": "SQL row column 12",
+       "producer": "vault/sql.rs:352",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "rekey_capable",
+       "kind": "SQL row column 13",
+       "producer": "vault/sql.rs:353",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      }
+     ]
+    },
+    {
+     "name": "StartFacts",
+     "definition": "vela-rekey-policy/src/lib.rs:132",
+     "consumer": "start_is_authorized / plan_start (only constructed inside the crate/tests; no server literal)",
+     "fields": [
+      {
+       "field": "no_oram",
+       "kind": "derived (internal)",
+       "producer": "rekey_driver start path; ORAM probe observation",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "all_devices_rekey_capable",
+       "kind": "derived (internal)",
+       "producer": "device-list observation",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "all_devices_acknowledged",
+       "kind": "derived (internal)",
+       "producer": "capsule acknowledgements",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      }
+     ]
+    },
+    {
+     "name": "CommitFacts",
+     "definition": "vela-rekey-policy/src/lib.rs:257",
+     "consumer": "commit_is_authorized / plan_commit (internal; no server literal)",
+     "fields": [
+      {
+       "field": "authority",
+       "kind": "derived (internal)",
+       "producer": "attempt authority from the key-state row",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "chunk_shadows_complete",
+       "kind": "derived (internal)",
+       "producer": "chunk-shadow completeness probe",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "device_capsules_complete",
+       "kind": "derived (internal)",
+       "producer": "device-capsule completeness probe",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      }
+     ]
+    },
+    {
+     "name": "TimeoutFacts",
+     "definition": "vela-rekey-policy/src/lib.rs:346",
+     "consumer": "plan_timeout (vault/rekey.rs:155)",
+     "fields": [
+      {
+       "field": "expired",
+       "kind": "SQL row + clock",
+       "producer": "vault/rekey.rs:147-152 parses `rekey_started_at` and compares with `Utc::now()`",
+       "coverage": "open: clock read (TTL/scheduler choice)"
+      },
+      {
+       "field": "rotation_id_present",
+       "kind": "SQL row",
+       "producer": "vault/rekey.rs:153 `ks.rotation_id.is_some()` (KeyStateView.rekey_id)",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      }
+     ]
+    },
+    {
+     "name": "CommitReplayFacts",
+     "definition": "vela-rekey-policy/src/lib.rs:395",
+     "consumer": "authorize_commit_replay (internal; no server literal)",
+     "fields": [
+      {
+       "field": "target_epoch",
+       "kind": "derived (internal)",
+       "producer": "commit request epoch",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "recorded_epoch",
+       "kind": "derived (internal)",
+       "producer": "`last_rekey_epoch` row cell",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "rotation_id_present",
+       "kind": "derived (internal)",
+       "producer": "`rekey_id` row cell",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      },
+      {
+       "field": "rotation_id_matches",
+       "kind": "derived (internal)",
+       "producer": "request rotation id vs row cell",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      }
+     ]
+    },
+    {
+     "name": "ReadEpochObservation",
+     "definition": "vela-rekey-policy/src/vault_upload_driver.rs:843",
+     "consumer": "upload/read driver ReadEpoch effect (vault/chunk.rs:53)",
+     "fields": [
+      {
+       "field": "epoch",
+       "kind": "SQL row",
+       "producer": "vault/chunk.rs:47-56 `crate::vault::rekey::read_epoch` (`SELECT key_epoch FROM users WHERE id = ?`)",
+       "coverage": "covered: vault/rotation plans (08 Executor honesty: vault, rotation and device capsules; vault-executors)"
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "findings": [
+  {
+   "id": "O1-F1",
+   "target": "O13c",
+   "severity": "body-used-as-context",
+   "finding": "The web-session grant epoch is taken from the request body (`GrantObservation.declared_epoch = self.body.key_epoch`, web_session/mod.rs:768) and passed through the checked `grant_facts`/`plan_grant` as the epoch to grant (vela-session-policy/src/lib.rs:205-217, 99-121). The verified policy only requires `declared_epoch >= INITIAL_EPOCH`; the tie to the live account epoch is the SQL CAS `EXISTS (... users ... key_epoch = ?)` in `StoreStmt::GrantWebSession` (vela-session-policy/src/store.rs:2461-2470), not a proved observation. Functionally a stale or forged epoch fails the CAS, but the value used as authentication context is request-supplied. `GrantObservation.mode` is also body-chosen (`web_session/mod.rs:761`); the policy admits ReadWrite only with a stored `web_vk` (`lib.rs:99-121`), so that value stays a bounded request parameter. O13c should derive the epoch from a store read observation or prove the CAS guard as the binding."
+  },
+  {
+   "id": "O1-F2",
+   "target": "O13e",
+   "severity": "body-used-as-authority",
+   "finding": "Every recovery-share mutation takes its epoch from the request (`body.key_epoch` at recovery/mod.rs:271,407; `X-Vela-Epoch` header at recovery/mod.rs:637) and then calls `recovery_mutation_permit(epoch)` (recovery/mod.rs:42-55) with the same value as both `declared_epoch` and `authority_epoch`. The resulting `ShareRequestObservation.device_authority` is therefore a constant `true` (recovery/mod.rs:275,409,539,655) rather than an observation. The only real binding is the SQL predicate `WHERE id = ? AND key_epoch = ? AND rekey_state IS NULL ...` (vela-recovery-policy/src/share_store.rs:264-277). The possession path has the same shape: the attempt envelope is written with the request's `user_id` and generated `recovery_id` (`recovery/possess.rs:271-274,152`) and the recovery driver later compares the consumed envelope's user/attempt with the request (`possession_store.rs:211`), so the binding is a compare over body-chosen ids, not an authenticated identity. This is the recovery counterpart of O1-F1 and belongs to O13e."
+  },
+  {
+   "id": "O1-F3",
+   "target": "O13c",
+   "severity": "body-identity",
+   "finding": "`POST /auth/verify` (login) builds the device identity and verifier context from the request body: `device_id_str = body.device_id.to_string()` (auth/verify.rs:321), the device row is looked up by that id (auth/verify.rs:123), and the same string is passed into `verify_auth_signature` (auth/verify.rs:175). Login is unauthenticated by design, so this is expected; it is recorded here because the driver's `DeviceObservation` and `VerifierObservation` are decided over a body-chosen identity plus an open verifier verdict, and O13c must not mistake the row read for a session-derived context."
+  },
+  {
+   "id": "O1-F4",
+   "target": "O13a",
+   "severity": "body-value-signed",
+   "finding": "Share-EK registration uses the body timestamp `signed_at` for the monotonic freshness relation (`vela_share_policy::timestamp_is_fresher(self.canonical_signed_at, current_since)`, share/mod.rs:972-975) after a canonical-form and 300 s future-skew check (share/mod.rs:1038-1046). The value is covered by the device signature over `share_ek_binding_message(share_ek, signed_at)` (share/mod.rs:942-944), and the stored `share_ek_since` cell is a proved row read, so the producer is not an unauthenticated context; O13a should still record that the compared instant is body-supplied (signed) rather than clock- or row-derived."
+  },
+  {
+   "id": "O1-F5",
+   "target": "O13d",
+   "severity": "body-key-material",
+   "finding": "The pairing claim uses the request body's `hybrid_ek`/`hybrid_vk`; the verified claim policy observes only their decoded lengths (`ClaimObservation.hybrid_ek_len/hybrid_vk_len`, vela-enrollment-policy/src/lib.rs:106-118; rendezvous.rs:284-301). The completion path then reads the *stored* claim and verifies the opener's signature over it (`claim_key_source: StoredClaim`, lib.rs:271-293; rendezvous.rs:620-676,732-750), so enrollment authority is not body-derived. The claim's key material itself is body-supplied and length-checked only (1600/2624 bytes); users compare it out of band. Also, the redemption path records `hybrid_ek_len`/`hybrid_vk_len` from the request body (recovery/enroll_device.rs:341-342) after exact decoded-length checks. O13d should state the trust chain explicitly."
+  },
+  {
+   "id": "O1-F6",
+   "target": "O13d",
+   "severity": "observation-placeholder",
+   "finding": "The middleware's first admission call passes `account_present: true` and `device_row_active: true` as placeholders (middleware.rs:116-124) because neither can matter while a revocation marker is set; the tail is re-evaluated with real reads at middleware.rs:143-149 and 181-188. The pure `admission_is_authorized` proof is unaffected, but the observation-honesty claim for those two fields holds only at the later call sites. O13d/O13c should treat the first call as a partial observation."
+  },
+  {
+   "id": "O1-F7",
+   "target": "O13a..f",
+   "severity": "constant-actor-facts",
+   "finding": "Actor observations are constants at every call site: `ActorObservation { authenticated: true, device_active: true }` (device/revoke.rs:207-210), `DeletionActorObservation` (account/delete.rs:212-216), `ShareActorObservation`/`actor()` (recovery/mod.rs:65-71), `GrantActorObservation` (web_session/mod.rs:843-846), `DeleteActorObservation` (web_session/mod.rs:1443-1446). Their truth rests entirely on the `DeviceSession`/`AuthSession` extractor and its PASETO verification, which are open (08: token issuance and verifier inputs; middleware admission is a pure decision). This is the single largest open origin across the areas."
+  },
+  {
+   "id": "O1-F8",
+   "target": "O11",
+   "severity": "entropy",
+   "finding": "Freshness values come from the OS: challenge nonces `getrandom::getrandom` (auth/challenge.rs:183, recovery/possess.rs:247), and identifiers from `Uuid::new_v4()` (e.g. share/mod.rs:355 inbox id, recovery/enroll_device.rs:354 device id, recovery/possess.rs:152 attempt id). The policies observe only lengths/freshness booleans; entropy quality and v4 uniqueness are open (plan O11/T9)."
+  },
+  {
+   "id": "O1-F9",
+   "target": "O9",
+   "severity": "clock",
+   "finding": "Clock reads feed observations directly: `Utc::now()` into `SendRequestObservation`-adjacent values and expiry (`send.rs:191,291`, `share/mod.rs:356`), web-session `TokenSessionObservation.now` (web_session/mod.rs:996), grant expiry (web_session/mod.rs:769), recovery-share timeout `TimeoutFacts.expired` (vault/rekey.rs:147-152), and TTL-based key lifetimes. 08 lists TTL expiry as a scheduler choice; O9 must model expiry as adversarial deletion rather than trust the clock."
+  },
+  {
+   "id": "O1-F10",
+   "target": "O13",
+   "severity": "literal-true-fact",
+   "finding": "`SendObservation.recipient_has_share_ek` is a literal `true` in the driver (vela-share-policy/src/driver.rs:664), set after `SendAdmissionObservation.recipient_can_receive` passed (driver.rs:647). The verified fact is therefore not independently observed at that point; the real producer is the recipient probe (share/mod.rs:157-166, store.rs:856). Not a bug, but the inventory records the indirection so a later refinement does not over-credit the fact."
+  },
+  {
+   "id": "O1-F11",
+   "target": "O12",
+   "severity": "structural-adapter",
+   "finding": "`EnrollmentAccountView` (vela-recovery-policy/src/redemption_store.rs:282-287) is copied field-for-field into `EnrollmentAccountFacts` in the handler (recovery/enroll_device.rs:464-470). 08 and the recovery evidence state this adapter is conformance-checked but not extracted, so its four fields are outside the F* mapping."
+  },
+  {
+   "id": "O1-F12",
+   "target": "O1",
+   "severity": "scope-gap",
+   "finding": "`serverVELA/vela-server/src/device/list.rs` `list_devices` and the vault `list_devices` path are read-only listings whose rows are not consumed by a policy driver; `DeviceListRowView` is a rotation/listing input, and 08 lists `list_devices` among the vault items not covered yet. O1 therefore records it as a row view with plan coverage but no driver consumer. No driver consumes it."
+  }
+ ]
+}
