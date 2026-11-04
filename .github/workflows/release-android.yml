@@ -11,6 +11,7 @@ on:
       - "androidVELA/**"
       - "libVELA/vela-android-bridge/**"
       - "libVELA/vela-crypto/**"
+      - "libVELA/vela-sync-policy/**"
       - ".github/workflows/release-android.yml"
 
 concurrency:

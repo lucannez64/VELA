@@ -39,6 +39,8 @@ WORKDIR /src
 # vela-server's Cargo.toml expects: vela-crypto = { path = "../../libVELA/vela-crypto" }.
 COPY serverVELA/ serverVELA/
 COPY libVELA/vela-crypto/ libVELA/vela-crypto/
+# vela-crypto depends on vela-sync-policy (shared download admission, N2).
+COPY libVELA/vela-sync-policy/ libVELA/vela-sync-policy/
 COPY libVELA/vela-client-recovery-policy/ libVELA/vela-client-recovery-policy/
 COPY libVELA/vela-client-share-policy/ libVELA/vela-client-share-policy/
 WORKDIR /src/serverVELA

@@ -10,6 +10,7 @@ on:
     paths:
       - "desktopVELA/**"
       - "libVELA/vela-crypto/**"
+      - "libVELA/vela-sync-policy/**"
       - "libVELA/vela-core/**"
       - "extension/native-messaging/**"
       - ".github/workflows/desktop-macos.yml"
@@ -20,6 +21,7 @@ on:
     paths:
       - "desktopVELA/**"
       - "libVELA/vela-crypto/**"
+      - "libVELA/vela-sync-policy/**"
       - "libVELA/vela-core/**"
       - "extension/native-messaging/**"
       - ".github/workflows/desktop-macos.yml"

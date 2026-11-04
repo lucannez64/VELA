@@ -19,12 +19,14 @@ on:
     paths:
       - "desktopVELA/**"
       - "libVELA/vela-crypto/**"
+      - "libVELA/vela-sync-policy/**"
       - ".github/workflows/release-desktop.yml"
   push:
     branches: [main]
     paths:
       - "desktopVELA/**"
       - "libVELA/vela-crypto/**"
+      - "libVELA/vela-sync-policy/**"
       - ".github/workflows/release-desktop.yml"
 
 concurrency:

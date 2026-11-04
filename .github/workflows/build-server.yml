@@ -9,6 +9,7 @@ on:
     paths:
       - "serverVELA/**"
       - "libVELA/vela-crypto/**"
+      - "libVELA/vela-sync-policy/**"
       - "libVELA/vela-core/**"
       - "libVELA/vela-wasm-bridge/**"
       - "webVELA/**"

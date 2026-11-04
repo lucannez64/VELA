@@ -11,6 +11,7 @@ on:
       - "libVELA/vela-apple-bridge/**"
       - "libVELA/vela-core/**"
       - "libVELA/vela-crypto/**"
+      - "libVELA/vela-sync-policy/**"
       - ".github/workflows/ios-core.yml"
   pull_request:
     branches: [main]
@@ -18,6 +19,7 @@ on:
       - "libVELA/vela-apple-bridge/**"
       - "libVELA/vela-core/**"
       - "libVELA/vela-crypto/**"
+      - "libVELA/vela-sync-policy/**"
       - ".github/workflows/ios-core.yml"
 
 concurrency:

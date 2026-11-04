@@ -11,7 +11,7 @@
         "security/formal/m19c_share_v1_baseline.spthy": "5e42bb07a3c6bfddeb4467736edbab9c8d89d12f8795907dbdefdcf82fed9b57",
         "desktopVELA/vela-desktop-core/src/lib.rs": "fc669ad646ca899e39cff2891e06d2f0d4d47d3332b610464ee9aecff7caa856",
         "desktopVELA/vela-desktop-core/src/store.rs": "74a0e241304e4afd059d9189ef5526462dd2c2918749bd777b175aaaa20e2042",
-        "desktopVELA/Cargo.lock": "011fd365cedb93861f3a0232c5db2b283da63567d32a5feff932dc2734bb9610"
+        "desktopVELA/Cargo.lock": "a2ade00ac662f8713896b9dbeb9a433bc4bda39e31a782846590af0dfd8b5771"
       }
     },
     {
@@ -53,7 +53,7 @@
         "desktopVELA/vela-desktop-core/src/store.rs": "74a0e241304e4afd059d9189ef5526462dd2c2918749bd777b175aaaa20e2042",
         "desktopVELA/vela-desktop-core/src/lib.rs": "fc669ad646ca899e39cff2891e06d2f0d4d47d3332b610464ee9aecff7caa856",
         "desktopVELA/vela-desktop-core/Cargo.toml": "f213f083ac9a00e39509ebc999d6f122ad8990147e57b3d9a0c18b6dbae3224b",
-        "desktopVELA/Cargo.lock": "011fd365cedb93861f3a0232c5db2b283da63567d32a5feff932dc2734bb9610",
+        "desktopVELA/Cargo.lock": "a2ade00ac662f8713896b9dbeb9a433bc4bda39e31a782846590af0dfd8b5771",
         "security/formal/m28-trace-equivalence/M28TraceEquivalence.fst": "739c530661a3bbbd49051fb8490f81ed0c42b6b49c4809e3e32dd6dcdbc2e16c",
         "security/formal/m28-trace-equivalence/README.md": "a6f3ee81e6bba545954b4350c953472977536d87ccd6878f48621c2b44b99514",
         "security/formal/m28-trace-equivalence/verify.sh": "31cfcc912622f0cb8637dca1e628fbf1ae4604a70ffbf6a889746dd6f8b97947",
@@ -67,7 +67,7 @@
     {
       "boundary": "signed sharing composition and structural policy comparisons (conditional; manual Rust trace refinement)",
       "artifacts": {
-        "libVELA/vela-client-recovery-policy/src/lib.rs": "787d421ea62a246aa66cd55d320cf17b2193ea2466180afaeefb2e1fa670cdc7",
+        "libVELA/vela-client-recovery-policy/src/lib.rs": "39eb909f142221832e8b487668bb5a5ee67ef6440f984f792c4b5cadd1b43d43",
         "libVELA/vela-client-share-policy/src/lib.rs": "97a94c6af11d40b6eafa4930940212d62d2cb5393d6940c7457bb9ce12e9a261",
         "libVELA/vela-client-share-policy/verify-fstar.sh": "4268a7d2c8db86028962f32b1ce9a9f9d93cd1ec302e9d1ab920f1ec68256d15",
         "libVELA/vela-crypto/src/share_envelope.rs": "da8715343d9151cf827edd290751b0b161c971ba4c1cd6afcc5709057b23de2d",
@@ -94,8 +94,8 @@
         "security/assurance/11-parser-refinement.md": "8b3600d56aed22f16d6a3b7b3996b0b34748f7eae814ecb689cd6829da8ea279",
         "libVELA/vela-crypto/proofs/fstar/extraction/Vela_crypto.Share_envelope.fst": "d871879623161fe0679b800b786e540254e7060f0ad7c787878d898319a9d00a",
         "libVELA/vela-crypto/proofs/fstar/extraction/Vela_crypto.Signing.fst": "d6b62ebffa9ca4ce5cd61b4c2969d26c0f3979be0409b3cbc5a9827c8dc6834b",
-        "libVELA/vela-apple-bridge/src/lib.rs": "5963e94cfc0c35c66f9ae36bc325a3456a30582ef0c83362ac38346a8934ad28",
-        "libVELA/vela-android-bridge/src/lib.rs": "0c4e035b4746fba1c13d24149353a1fb6a03660c7a81f82b69bca7b32fc96e0a",
+        "libVELA/vela-apple-bridge/src/lib.rs": "29c8b001c3bd29b150ab61b97381962eaefdc584bd02629b557eb6ec1dfb3248",
+        "libVELA/vela-android-bridge/src/lib.rs": "3302cf45fd7adbd0054aefbbc75c532a6a36478b78d6a694c9f82da3df8d4dd4",
         "libVELA/vela-crypto/proofs/fstar/models/Alloc.Vec.fst": "e67ad0f23c2e21d3175dc8cacd62c0496c6c09f53b144ff6e113df669cb34982",
         "security/assurance/12-authenticated-transcript.md": "81e96b0a7a9bbc8990803ddeddc272b53df7d83cb69430436e34e9175e795334"
       }
@@ -207,7 +207,7 @@
     {
       "boundary": "recovery constructions (computational)",
       "artifacts": {
-        "libVELA/vela-crypto/src/recovery.rs": "8616d8f3726e12462e9f9dbfd1dfc63033bd6c6eb2276891502ab3c2da24230c",
+        "libVELA/vela-crypto/src/recovery.rs": "41f962d01dc6e3c13387ff2fef61e906cfeb2fb600f82b8c453e4f28143997c6",
         "libVELA/vela-crypto/src/shamir.rs": "ce5d2de0e02f290f4496c1154c8394cf06c1dcaca559192553e795822cd96fbd",
         "security/formal/cryptoverif/possession_proof_mldsa.ocv": "80a66316485738eb11af5378da0f02e2c41be9ae879d08924783ec32a17c66cf",
         "security/formal/cryptoverif/possession_proof_ed25519.ocv": "f6c8d3137ff46598f95f8fd19fa200a0ec993d678a3b2bed4451073291c560f6",
@@ -252,13 +252,13 @@
         "iosVELA/Sources/AccountViewModel.swift": "a7cef9587b3ba9bc8b8c2623198f2aa398cfbb6ff51d4b7bc35c39403d8872e6",
         "iosVELA/Sources/VaultViewModel.swift": "52995eb00768e9a5f8e7e9b0d2dd3c5538926c3ec2da2409e82328b03b90ae6a",
         "iosVELA/Tests/Phase4Tests.swift": "01d4e994f04ef5500fda0859c5c9030079bae4d2a14d56b560e5a87ffac11d36",
-        "libVELA/vela-android-bridge/Cargo.lock": "c886e0e6d7e5dfa3b8d7a1bfffac6ee78fcfdadd85543b879e60877747ffcef4",
+        "libVELA/vela-android-bridge/Cargo.lock": "35c24cad7a88f0aa87ca8032f5b94e42177932d92bf88838dcb3da5cf8e61454",
         "libVELA/vela-android-bridge/Cargo.toml": "8c6d0764f0e39b60587c905807fdb2b64ffb4f719449723b79013f6488904d4a",
-        "libVELA/vela-android-bridge/src/lib.rs": "0c4e035b4746fba1c13d24149353a1fb6a03660c7a81f82b69bca7b32fc96e0a",
-        "libVELA/vela-apple-bridge/Cargo.lock": "f76ff90ebe3f5bc9fec1ef18847b1ad80ba59afe633a039e3b7f3248f1109044",
+        "libVELA/vela-android-bridge/src/lib.rs": "3302cf45fd7adbd0054aefbbc75c532a6a36478b78d6a694c9f82da3df8d4dd4",
+        "libVELA/vela-apple-bridge/Cargo.lock": "b2d533b0c6b5e5eb6adccd91eb936557dd47474c3d505a832513b45fb71b7eaa",
         "libVELA/vela-apple-bridge/Cargo.toml": "d46a41003468d361d6f42f6e987d020a59889fe40623adc6aa28ed53d9e9b316",
         "libVELA/vela-apple-bridge/include/vela_apple.h": "4af87996c92151504f2103ec989bd98d2568834bed52fdb3ea981863fdc9eacc",
-        "libVELA/vela-apple-bridge/src/lib.rs": "5963e94cfc0c35c66f9ae36bc325a3456a30582ef0c83362ac38346a8934ad28",
+        "libVELA/vela-apple-bridge/src/lib.rs": "29c8b001c3bd29b150ab61b97381962eaefdc584bd02629b557eb6ec1dfb3248",
         "libVELA/vela-sync-policy/README.md": "185e73e79e0186737e8c4447dad2a46625a0632df0eb67e438e7bf6715a4e49d",
         "libVELA/vela-sync-policy/proofs/fstar/epoch-lemmas/Vela_sync_policy_epoch_lemmas.fst": "81843c5aa65b9e1269bcd865ba5fcc957286d72de18311e48a725dfc90ee174b",
         "libVELA/vela-sync-policy/proofs/fstar/extraction-epoch/Vela_sync_policy.fst": "0b7febd0c062d955831133476fba4afc8d9616b83e6be49b63d6ba10fe404393",
@@ -376,7 +376,7 @@
         "serverVELA/vela-session-policy/proofs/fstar/login-raw-nonce-lemmas/Vela_session_policy_login_raw_nonce.fst": "41d223392eef947a168786177e4f9b6c7bfc44c623841cae742870edef38afa6",
         "serverVELA/vela-session-policy/proofs/fstar/login-raw-nonce-lemmas/README.md": "c59f1b048985cf68750b9c33c4ffe4699624cf47e8b5df8ef4c0387a3494adcc",
         "serverVELA/Cargo.toml": "77e23c5dddb56901a805f46b5432e15215ee5bf2e13bed26080459a04e3a2173",
-        "serverVELA/Cargo.lock": "ef7091dac2deae0ba834b502b1590b512928ec52894fe34c94df3ff44c45d18d",
+        "serverVELA/Cargo.lock": "681e556f133bf83bca005cdc9837c74e84892385e168d18d927107dc8e2874f4",
         "serverVELA/vela-session-policy/Cargo.toml": "9891af2597c255e247172bade4aa01e6f979d198f4baa567fb4df5800fda8677",
         "serverVELA/vela-session-policy/proofs/fstar/challenge-take-adapter-lemmas/Vela_session_policy_challenge_take_adapter.fst": "55d6f8e91b56ded9db7f8e38cbd9de0e59bd7bf53d35630e05e6048b64a4ac31",
         "serverVELA/vela-session-policy/proofs/fstar/challenge-store-world-lemmas/Vela_session_policy_challenge_store_world.fst": "c4ac18f38ba8e136b7b1143d359f300d9c9b083f69d68a9b1f4012b9d7bf0d0c"

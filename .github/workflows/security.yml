@@ -359,7 +359,7 @@ jobs:
           - { name: vela-rekey-policy-executors, dir: serverVELA/vela-rekey-policy, script: verify-fstar.sh, args: executors, fresh: false, ships: false, deps: '' }
           - { name: vela-enrollment-policy, dir: serverVELA/vela-enrollment-policy, script: verify-fstar.sh, fresh: true, ships: true, deps: '' }
           - { name: vela-share-policy, dir: serverVELA/vela-share-policy, script: verify-fstar.sh, fresh: true, ships: true, deps: 'serverVELA/vela-rekey-policy/README.md' }
-          - { name: share-facts, dir: libVELA/vela-crypto, script: verify-share-facts-fstar.sh, fresh: false, ships: true, deps: 'libVELA/vela-client-recovery-policy libVELA/vela-client-share-policy' }
+          - { name: share-facts, dir: libVELA/vela-crypto, script: verify-share-facts-fstar.sh, fresh: false, ships: true, deps: 'libVELA/vela-client-recovery-policy libVELA/vela-client-share-policy libVELA/vela-sync-policy' }
           - { name: vela-sync-policy, dir: libVELA/vela-sync-policy, script: verify-fstar.sh, fresh: true, ships: true, deps: 'libVELA/vela-client-recovery-policy/README.md security/formal/tests' }
           - { name: vela-client-recovery-policy, dir: libVELA/vela-client-recovery-policy, script: verify-fstar.sh, fresh: true, ships: true, deps: '' }
           - { name: vela-client-share-policy, dir: libVELA/vela-client-share-policy, script: verify-fstar.sh, fresh: true, ships: true, deps: '' }

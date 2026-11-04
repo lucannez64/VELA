@@ -4759,6 +4759,7 @@ dependencies = [
  "thiserror 1.0.69",
  "vela-client-recovery-policy",
  "vela-client-share-policy",
+ "vela-sync-policy",
  "x25519-dalek",
  "zeroize",
 ]
@@ -4851,6 +4852,13 @@ dependencies = [
 
 [[package]]
 name = "vela-share-policy"
+version = "0.1.0"
+dependencies = [
+ "hax-lib",
+]
+
+[[package]]
+name = "vela-sync-policy"
 version = "0.1.0"
 dependencies = [
  "hax-lib",
