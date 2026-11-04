@@ -8,6 +8,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use vela_client_share_journal::{
+    JournalEffect, JournalEvent, JournalImage, JournalPhase, JournalState, PendingItem, SharePin,
+};
 use vela_crypto::{kem, share_envelope, signing};
 
 use crate::api::ApiClient;
@@ -172,23 +175,77 @@ fn share_commit_checkpoint(phase: &'static str) -> Result<(), String> {
     })
 }
 
-/// The encrypted share file is the write-ahead record: new pins and their
-/// pending item changes reach disk together, BEFORE any vault changes.
-/// Recovery never lowers a pin. Replaying an already applied item is harmless;
-/// a later local edit/deletion wins over a pending replacement.
-fn finish_pending_items(
-    store: &crate::store::Store,
-    crypto: &crate::crypto::Crypto,
-    vault: &mut crate::vault::VaultStore,
-    snapshot: &mut ShareStore,
-) -> Result<(), String> {
-    if snapshot.pending_items.is_empty() {
-        return Ok(());
+/// The journal facts the pure step needs from a persisted share store.
+fn journal_state(snapshot: &ShareStore) -> JournalState {
+    JournalState {
+        generation: snapshot.generation,
+        phase: if snapshot.pending_items.is_empty() {
+            JournalPhase::Clean
+        } else {
+            JournalPhase::Pending
+        },
+        pending: journal_pending(snapshot),
+        pins: journal_pins(snapshot),
     }
-    // A prior replacement may be visible even though its directory sync
-    // reported failure. Reading it is not a durability acknowledgment. Re-arm
-    // the journal before touching the vault, including on in-process retries.
-    write_share_store(store, crypto, snapshot)?;
+}
+
+fn journal_pending(snapshot: &ShareStore) -> Vec<PendingItem> {
+    snapshot
+        .pending_items
+        .iter()
+        .enumerate()
+        .map(|(id, change)| PendingItem {
+            id: id as u64,
+            had_before: change.before.is_some(),
+        })
+        .collect()
+}
+
+/// One pin per received share, keyed by its position (the M28 slot projection
+/// is P3b work; the step carries pins but does not decide their order).
+fn journal_pins(snapshot: &ShareStore) -> Vec<SharePin> {
+    snapshot
+        .received_shares
+        .iter()
+        .enumerate()
+        .filter_map(|(slot, share)| {
+            share.pin.as_ref().map(|pin| SharePin {
+                slot: slot as u64,
+                revision: pin.revision,
+            })
+        })
+        .collect()
+}
+
+/// The image the shell just wrote for a journal effect, reconstructed from the
+/// real store rather than from the effect value. Tests compare it with the
+/// step's effect to check the shell performed exactly what was planned.
+#[cfg(test)]
+fn journal_image(snapshot: &ShareStore) -> JournalImage {
+    JournalImage {
+        generation: snapshot.generation,
+        pending: journal_pending(snapshot),
+        pins: journal_pins(snapshot),
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static OBSERVED_JOURNAL_EFFECTS:
+        std::cell::RefCell<Vec<JournalEffect>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[cfg(test)]
+fn record_journal_effect(effect: JournalEffect) {
+    OBSERVED_JOURNAL_EFFECTS.with(|observed| observed.borrow_mut().push(effect));
+}
+
+#[cfg(test)]
+fn take_observed_journal_effects() -> Vec<JournalEffect> {
+    OBSERVED_JOURNAL_EFFECTS.with(|observed| std::mem::take(&mut *observed.borrow_mut()))
+}
+
+fn apply_pending_items(vault: &mut crate::vault::VaultStore, snapshot: &ShareStore) {
     for change in &snapshot.pending_items {
         let current = vault.get_item(change.after.id());
         let deleted = vault.tombstones.iter().any(|t| t.id == change.after.id());
@@ -204,15 +261,77 @@ fn finish_pending_items(
             }
         }
     }
-    // Also persist when the in-memory replay is a no-op: a prior write may
-    // have failed after mutating memory but before reaching durable storage.
-    store.save_vault(vault, crypto).map_err(|e| e.to_string())?;
-    #[cfg(test)]
-    share_commit_checkpoint("vault")?;
-    let mut finished = snapshot.clone();
-    finished.pending_items.clear();
-    write_share_store(store, crypto, &finished)?;
-    *snapshot = finished;
+}
+
+/// Perform the pure step's effects in order, updating the in-memory snapshot
+/// exactly as each durable write lands. This is the only interpreter of
+/// `JournalEffect`; the state machine itself has no I/O.
+fn perform_journal_effects(
+    store: &crate::store::Store,
+    crypto: &crate::crypto::Crypto,
+    vault: &mut crate::vault::VaultStore,
+    snapshot: &mut ShareStore,
+    effects: Vec<JournalEffect>,
+) -> Result<(), String> {
+    for effect in effects {
+        match &effect {
+            JournalEffect::WriteJournal(image) => {
+                let mut committed = snapshot.clone();
+                committed.generation = image.generation;
+                write_share_store(store, crypto, &committed)?;
+                *snapshot = committed;
+                #[cfg(test)]
+                record_journal_effect(JournalEffect::WriteJournal(journal_image(snapshot)));
+            }
+            JournalEffect::WriteVault => {
+                apply_pending_items(vault, snapshot);
+                // Also persist when the in-memory replay is a no-op: a prior
+                // write may have failed after mutating memory but before
+                // reaching durable storage.
+                store.save_vault(vault, crypto).map_err(|e| e.to_string())?;
+                #[cfg(test)]
+                share_commit_checkpoint("vault")?;
+                #[cfg(test)]
+                record_journal_effect(JournalEffect::WriteVault);
+            }
+            JournalEffect::ClearJournal(image) => {
+                let mut finished = snapshot.clone();
+                finished.generation = image.generation;
+                finished.pending_items.clear();
+                write_share_store(store, crypto, &finished)?;
+                *snapshot = finished;
+                #[cfg(test)]
+                record_journal_effect(JournalEffect::ClearJournal(journal_image(snapshot)));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The encrypted share file is the write-ahead record: new pins and their
+/// pending item changes reach disk together, BEFORE any vault changes.
+/// Recovery never lowers a pin. Replaying an already applied item is harmless;
+/// a later local edit/deletion wins over a pending replacement.
+fn finish_pending_items(
+    store: &crate::store::Store,
+    crypto: &crate::crypto::Crypto,
+    vault: &mut crate::vault::VaultStore,
+    snapshot: &mut ShareStore,
+) -> Result<(), String> {
+    if snapshot.pending_items.is_empty() {
+        return Ok(());
+    }
+    // A prior replacement may be visible even though its directory sync
+    // reported failure. Reading it is not a durability acknowledgment. The
+    // recovery plan always re-arms the journal before touching the vault,
+    // including on in-process retries, then applies and clears it.
+    let planned = vela_client_share_journal::plan_recovery(journal_state(snapshot));
+    if planned.effects.is_empty() {
+        return Err("Share journal is not pending; reload before recovering".into());
+    }
+    perform_journal_effects(store, crypto, vault, snapshot, planned.effects)?;
+    debug_assert!(snapshot.pending_items.is_empty());
+    debug_assert_eq!(snapshot.generation, planned.state.generation);
     Ok(())
 }
 
@@ -258,17 +377,34 @@ fn save_share_store(state: &AppState, snapshot: &mut ShareStore) -> Result<(), S
     let crypto = state.crypto.read();
     let crypto = crypto.as_ref().ok_or("Crypto not initialized")?;
     let current = read_share_store(&state.store, crypto)?;
+    // Keep the already-proved policy decision as the fast refusal; the pure
+    // step makes the same check and owns the durable phase transition.
     let next_generation = vela_client_share_policy::next_store_generation(
         current.generation,
         snapshot.generation,
         !current.pending_items.is_empty(),
     )
     .ok_or("Share store changed or exhausted; reload before saving")?;
-    let mut committed = snapshot.clone();
-    committed.generation = next_generation;
+    let committed = vela_client_share_journal::step(
+        journal_state(&current),
+        JournalEvent::PersistJournal {
+            snapshot_generation: snapshot.generation,
+            pending: journal_pending(snapshot),
+            pins: journal_pins(snapshot),
+        },
+    );
+    if committed.effects.is_empty() {
+        return Err("Share store changed or exhausted; reload before saving".into());
+    }
+    debug_assert_eq!(next_generation, committed.state.generation);
     // Pin and intended content become durable in this one atomic replacement.
-    write_share_store(&state.store, crypto, &committed)?;
-    *snapshot = committed;
+    perform_journal_effects(
+        &state.store,
+        crypto,
+        &mut state.vault.write(),
+        snapshot,
+        committed.effects,
+    )?;
     #[cfg(test)]
     share_commit_checkpoint("journal")?;
     if !snapshot.pending_items.is_empty() {
@@ -1466,6 +1602,81 @@ mod assurance_boundary_review {
         assert!(persisted.pending_items.is_empty());
         assert!(read_share_store(&reopened, &old).is_err());
     }
+    #[test]
+    fn commit_performs_exactly_the_step_effects() {
+        let (_dir, state, bob, alice, mut store) = fixture();
+        store.received_shares[0].encrypted_payload = Some(capsule(&alice, &bob, 3, "new-revision"));
+        sync_received_linked_items(&state, &mut store).unwrap();
+        let expected = {
+            let crypto = state.crypto.read();
+            let current = read_share_store(&state.store, crypto.as_ref().unwrap()).unwrap();
+            vela_client_share_journal::plan_commit(
+                journal_state(&current),
+                store.generation,
+                journal_pending(&store),
+                journal_pins(&store),
+            )
+            .expect("fixture commit is authorized")
+        };
+        take_observed_journal_effects();
+        save_share_store(&state, &mut store).unwrap();
+        let observed = take_observed_journal_effects();
+        assert_eq!(observed, expected.effects.clone().into_effects());
+        // The clear write keeps the generation the journal write published.
+        match (&expected.effects.persist, &expected.effects.clear) {
+            (JournalEffect::WriteJournal(journal), JournalEffect::ClearJournal(clear)) => {
+                assert_eq!(clear.generation, journal.generation);
+                assert!(clear.pending.is_empty());
+            }
+            other => panic!("unexpected commit plan: {other:?}"),
+        }
+        assert!(store.pending_items.is_empty());
+        assert_eq!(store.generation, expected.state.generation);
+    }
+
+    #[test]
+    fn metadata_only_commit_performs_only_the_journal_write() {
+        let (_dir, state, _bob, _alice, mut store) = fixture();
+        let effects = {
+            let crypto = state.crypto.read();
+            let current = read_share_store(&state.store, crypto.as_ref().unwrap()).unwrap();
+            vela_client_share_journal::step(
+                journal_state(&current),
+                JournalEvent::PersistJournal {
+                    snapshot_generation: store.generation,
+                    pending: Vec::new(),
+                    pins: journal_pins(&store),
+                },
+            )
+            .effects
+        };
+        assert_eq!(effects.len(), 1);
+        assert!(matches!(effects[0], JournalEffect::WriteJournal(_)));
+        take_observed_journal_effects();
+        save_share_store(&state, &mut store).unwrap();
+        assert_eq!(take_observed_journal_effects(), effects);
+    }
+
+    #[test]
+    fn recovery_performs_exactly_the_step_effects() {
+        let (_dir, state, bob, alice, mut store) = fixture();
+        store.received_shares[0].encrypted_payload = Some(capsule(&alice, &bob, 3, "new-revision"));
+        sync_received_linked_items(&state, &mut store).unwrap();
+        FAIL_SHARE_COMMIT_AT.with(|p| p.set(Some("journal")));
+        assert!(save_share_store(&state, &mut store).is_err());
+        let expected = {
+            let crypto = state.crypto.read();
+            let pending = read_share_store(&state.store, crypto.as_ref().unwrap()).unwrap();
+            assert!(!pending.pending_items.is_empty());
+            vela_client_share_journal::plan_recovery(journal_state(&pending))
+        };
+        take_observed_journal_effects();
+        let recovered = load_share_store(&state).unwrap();
+        assert_eq!(take_observed_journal_effects(), expected.effects);
+        assert_eq!(recovered.generation, expected.state.generation);
+        assert!(recovered.pending_items.is_empty());
+    }
+
     #[test]
     fn uncertain_journal_write_is_rearmed_before_recovery_changes_vault() {
         let (_dir, state, bob, alice, mut store) = fixture();

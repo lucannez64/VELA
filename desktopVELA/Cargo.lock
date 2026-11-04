@@ -10634,6 +10634,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "vela-client-share-journal"
+version = "0.1.0"
+dependencies = [
+ "hax-lib",
+]
+
+[[package]]
 name = "vela-client-share-policy"
 version = "0.1.0"
 dependencies = [
@@ -10767,6 +10774,7 @@ dependencies = [
  "urlencoding",
  "uuid",
  "vela-client-recovery-policy",
+ "vela-client-share-journal",
  "vela-client-share-policy",
  "vela-core",
  "vela-crypto",
