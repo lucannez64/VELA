@@ -413,6 +413,87 @@ impl Counts {
     }
 }
 
+// Runtime half of the schema pin: reads the real engine's sqlite_master, which
+// the static check (security/formal/check-sql-schema.py) cannot do.
+#[tokio::test]
+async fn schema_has_the_modelled_columns() {
+    let db = temp_db().await;
+    let expected: [(&str, &[(&str, &str)]); 4] = [
+        (
+            "shared_items",
+            &[
+                ("id", "TEXT UNIQUE NOT NULL"),
+                ("sender_user_id", "TEXT NOT NULL"),
+                ("recipient_user_id", "TEXT NOT NULL"),
+                ("capsule", "TEXT NOT NULL"),
+                ("created_at", "TEXT NOT NULL"),
+                ("updated_at", "TEXT NOT NULL"),
+                ("revoked", "INTEGER NOT NULL DEFAULT 0"),
+            ],
+        ),
+        (
+            "share_inbox",
+            &[
+                ("id", "TEXT UNIQUE NOT NULL"),
+                ("sender_user_id", "TEXT NOT NULL"),
+                ("recipient_user_id", "TEXT NOT NULL"),
+                ("capsule", "TEXT NOT NULL"),
+                ("created_at", "TEXT NOT NULL"),
+            ],
+        ),
+        (
+            "users",
+            &[
+                ("id", "TEXT UNIQUE NOT NULL"),
+                ("share_ek", "TEXT"),
+                ("share_ek_since", "TEXT"),
+                ("share_ek_device_id", "TEXT"),
+            ],
+        ),
+        (
+            "devices",
+            &[
+                ("id", "TEXT UNIQUE NOT NULL"),
+                ("user_id", "TEXT NOT NULL"),
+                ("hybrid_vk", "TEXT NOT NULL"),
+                ("revoked", "INTEGER NOT NULL DEFAULT 0"),
+            ],
+        ),
+    ];
+    for (table, columns) in expected {
+        let rows = db
+            .query(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+                vec![TursoValue::Text(table.into())],
+            )
+            .await
+            .unwrap();
+        let ddl = rows.first().and_then(|r| r.text(0)).unwrap_or_else(|| panic!("no table {table}"));
+        let normal = ddl.split_whitespace().collect::<Vec<_>>().join(" ");
+        for (column, declaration) in columns {
+            let wanted = format!("{column} {declaration}");
+            let found = normal.match_indices(&wanted).any(|(at, _)| {
+                let before = normal[..at].chars().last();
+                let after = normal[at + wanted.len()..].chars().next();
+                matches!(before, Some('(') | Some(' ') | Some(','))
+                    && matches!(after, Some(',') | Some(')'))
+            });
+            assert!(found, "{table}.{column} is not declared `{declaration}` in: {normal}");
+        }
+    }
+    // The model keys every table by id: a second row with the same id fails.
+    let mut state = Model { users: base_users(), ..Model::default() };
+    put_slot(&mut state, item(0), Slot::LiveWithInbox);
+    load(&db, &state).await;
+    let duplicate = db
+        .execute(
+            "INSERT INTO share_inbox (id, sender_user_id, recipient_user_id, capsule, created_at) VALUES (?, 'a', 'b', 'c', 't')",
+            vec![TursoValue::Text(s(item(0)))],
+        )
+        .await;
+    assert!(duplicate.is_err(), "share_inbox accepted a duplicate id");
+}
+
 #[tokio::test]
 async fn model_tables_reject_duplicate_ids() {
     // Column existence and declarations are checked once, statically, by
