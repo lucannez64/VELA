@@ -25,7 +25,7 @@ struct DeviceIdStore {
     user_id: String,
 }
 
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct IdentityKeysStore {
     pub hybrid_ek: Vec<u8>,
     pub hybrid_vk: Vec<u8>,
@@ -48,6 +48,33 @@ pub struct IdentityKeysStore {
     /// capsule is only ever sealed to a device that is *joining*.
     #[serde(default)]
     pub hybrid_dk: Vec<u8>,
+}
+
+impl std::fmt::Debug for IdentityKeysStore {
+    /// The public halves stay visible; the three private keys do not. The
+    /// derived `Debug` printed them verbatim into any log line that formatted
+    /// the record.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IdentityKeysStore")
+            .field("hybrid_ek", &format_args!("[public; {} bytes]", self.hybrid_ek.len()))
+            .field("hybrid_vk", &format_args!("[public; {} bytes]", self.hybrid_vk.len()))
+            .field("hybrid_sk", &"[REDACTED]")
+            .field("share_ek", &format_args!("[public; {} bytes]", self.share_ek.len()))
+            .field("share_dk", &"[REDACTED]")
+            .field("hybrid_dk", &"[REDACTED]")
+            .finish()
+    }
+}
+
+impl Drop for IdentityKeysStore {
+    /// `hybrid_sk`, `share_dk`, and `hybrid_dk` are private keys. Serde buffers
+    /// and callers make copies, but every record wipes its own fields.
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.hybrid_sk.zeroize();
+        self.share_dk.zeroize();
+        self.hybrid_dk.zeroize();
+    }
 }
 
 pub struct Store {
@@ -607,7 +634,9 @@ impl Store {
                 hybrid_ek: hybrid_ek.to_vec(),
                 hybrid_vk: hybrid_vk.to_vec(),
                 hybrid_sk: hybrid_sk.to_vec(),
-                ..Default::default()
+                share_ek: Vec::new(),
+                share_dk: Vec::new(),
+                hybrid_dk: Vec::new(),
             },
             crypto,
         )
@@ -810,6 +839,25 @@ mod tests {
             allow_second_factor_downgrade: None,
         });
         vault
+    }
+
+    #[test]
+    fn identity_keys_debug_redacts_private_keys() {
+        let keys = IdentityKeysStore {
+            hybrid_ek: b"public-ek".to_vec(),
+            hybrid_vk: b"public-vk".to_vec(),
+            hybrid_sk: b"sk-signing-secret".to_vec(),
+            share_ek: b"public-share-ek".to_vec(),
+            share_dk: b"share-decapsulation-secret".to_vec(),
+            hybrid_dk: b"hybrid-dk-secret".to_vec(),
+        };
+        let rendered = format!("{keys:?}");
+        for secret in ["sk-signing-secret", "share-decapsulation-secret", "hybrid-dk-secret"] {
+            assert!(!rendered.contains(secret), "private key leaked: {rendered}");
+        }
+        assert!(rendered.contains("[REDACTED]"), "{rendered}");
+        // Public halves remain useful for debugging.
+        assert!(rendered.contains("hybrid_ek"), "{rendered}");
     }
 
     #[test]

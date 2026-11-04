@@ -43,7 +43,7 @@ use ml_kem::{
 use rand_core::OsRng;
 use sha2::{Digest, Sha256};
 use x25519_dalek::{EphemeralSecret, PublicKey as X25519PublicKey, StaticSecret};
-use zeroize::Zeroizing;
+use zeroize::{ZeroizeOnDrop, Zeroizing};
 
 use crate::error::{Result, VelaError};
 
@@ -61,13 +61,18 @@ pub struct HybridPublicKey {
 
 /// A hybrid secret key bundle (decapsulation side).
 ///
-/// Note: `ml_kem::DecapsulationKey` does not implement `Zeroize` in rc.0, so we
-/// rely on drop semantics for the ML-KEM key.  The X25519 static secret implements
-/// `ZeroizeOnDrop` natively via `x25519-dalek`.
+/// Both fields wipe themselves when dropped: `ml-kem`'s `DecapsulationKey`
+/// implements `Drop` + `ZeroizeOnDrop` when its `zeroize` feature is enabled
+/// (see `libVELA/vela-crypto/Cargo.toml`), and `x25519-dalek`'s `StaticSecret`
+/// zeroizes on drop by default.
 pub struct HybridSecretKey {
     pub mlkem_dk: MlKemDk,
     pub x25519_sk: StaticSecret,
 }
+
+// Marker only: the two field destructors above do the wiping. Do not add a
+// manual `Drop` that would short-circuit either of them.
+impl ZeroizeOnDrop for HybridSecretKey {}
 
 /// The wire-format capsule sent to the recipient.
 pub struct HybridCapsule {

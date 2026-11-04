@@ -404,14 +404,17 @@ async fn adopt_server_epoch(
     let (old_crypto, hybrid_dk) = {
         let guard = state.crypto.read();
         let crypto = guard.as_ref().ok_or("Vault is locked")?;
-        let identity = state
+        let mut identity = state
             .store
             .load_identity_keys(crypto)
             .map_err(|e| format!("Failed to load identity keys for epoch adoption: {e}"))?
             .ok_or("No identity keys available for epoch adoption")?;
+        // `IdentityKeysStore` wipes its key fields on drop, so the field cannot
+        // be moved out by value; taking it leaves an empty vector that the
+        // destructor wipes.
         (
             crate::crypto::Crypto::new(&crypto.rms()),
-            identity.hybrid_dk,
+            std::mem::take(&mut identity.hybrid_dk),
         )
     };
     if hybrid_dk.is_empty() {
@@ -758,7 +761,10 @@ async fn ensure_share_key(state: &AppState, client: &ApiClient, token: &str) {
     let updated = crate::store::IdentityKeysStore {
         share_ek: share_ek.clone(),
         share_dk: share_dk.clone(),
-        ..keys.clone()
+        hybrid_ek: keys.hybrid_ek.clone(),
+        hybrid_vk: keys.hybrid_vk.clone(),
+        hybrid_sk: keys.hybrid_sk.clone(),
+        hybrid_dk: keys.hybrid_dk.clone(),
     };
     if let Err(e) = state.store.save_identity_keys_full(&updated, crypto) {
         tracing::warn!("Share key backfill: failed to persist keys: {}", e);

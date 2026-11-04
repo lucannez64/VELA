@@ -79,10 +79,28 @@ pub struct ShareHeader {
 /// use vela_crypto::share_envelope::OpenedShare;
 /// fn change(share: &mut OpenedShare) { share.item.clear(); }
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct OpenedShare {
     header: ShareHeader,
     item: Vec<u8>,
+}
+
+impl std::fmt::Debug for OpenedShare {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpenedShare")
+            .field("header", &self.header)
+            .field("item", &"[REDACTED]")
+            .finish()
+    }
+}
+
+impl Drop for OpenedShare {
+    /// `item` is decrypted plaintext (a credential, note, or key). Clone makes
+    /// copies, but every copy wipes its own buffer when it goes away.
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.item.zeroize();
+    }
 }
 
 impl OpenedShare {
@@ -120,8 +138,12 @@ pub fn opened_share_item(share: &OpenedShare) -> &[u8] {
 }
 
 #[cfg_attr(hax, hax_lib::ensures(|bytes| bytes.as_slice() == share.item.as_slice()))]
-pub fn into_opened_share_item(share: OpenedShare) -> Vec<u8> {
-    share.item
+pub fn into_opened_share_item(mut share: OpenedShare) -> Vec<u8> {
+    // `OpenedShare` has a `Drop` impl (it wipes `item`), so the field cannot be
+    // moved out by value; take it and let the destructor wipe the now-empty
+    // buffer. The returned vector is the caller's plaintext on the existing
+    // API — see the C16 erasure log for the `Zeroizing` follow-up.
+    std::mem::take(&mut share.item)
 }
 
 /// What a recipient remembers about a share it accepted.
@@ -608,6 +630,19 @@ mod tests {
             attributed_sender_user_id: "alice",
             pin,
         }
+    }
+
+    #[test]
+    fn debug_redacts_the_decrypted_item() {
+        let alice = device();
+        let (bob_pk, _) = kem::generate_keypair();
+        let opened = OpenedShare {
+            header: header(&alice, &bob_pk, 1),
+            item: b"super-secret plaintext".to_vec(),
+        };
+        let rendered = format!("{opened:?}");
+        assert!(rendered.contains("[REDACTED]"), "{rendered}");
+        assert!(!rendered.contains("super-secret plaintext"), "{rendered}");
     }
 
     #[test]

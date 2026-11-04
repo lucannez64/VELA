@@ -21,6 +21,7 @@ use vela_client_recovery_policy::{
     AdoptionDecision, AdoptionFacts, BoundShareFacts, ReconstructionDecision, ReconstructionFacts,
     RecoveryChannel,
 };
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RecoveryShareChannel {
@@ -52,10 +53,19 @@ pub struct BoundRecoveryShare<'a> {
     pub share: &'a Share,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Zeroize, ZeroizeOnDrop, Eq, PartialEq)]
 pub struct ReconstructedRms {
     pub rms: [u8; 32],
     pub key_epoch: i64,
+}
+
+impl std::fmt::Debug for ReconstructedRms {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ReconstructedRms")
+            .field("rms", &"[REDACTED]")
+            .field("key_epoch", &self.key_epoch)
+            .finish()
+    }
 }
 
 /// Reconstruct an RMS from any two distinct recovery channels of the exact
@@ -89,8 +99,11 @@ pub fn reconstruct_account_recovery(
         }
     };
 
-    let secret = shamir::reconstruct(&[first.share.clone(), second.share.clone()], 32)?;
-    let rms: [u8; 32] = secret.try_into().map_err(|_| {
+    let secret = Zeroizing::new(shamir::reconstruct(
+        &[first.share.clone(), second.share.clone()],
+        32,
+    )?);
+    let rms: [u8; 32] = secret.as_slice().try_into().map_err(|_| {
         VelaError::InvalidParameter("reconstructed RMS must be exactly 32 bytes".into())
     })?;
 
@@ -351,6 +364,7 @@ pub const POSSESSION_PROOF_LEN: usize = crate::signing::HYBRID_SIG_LEN;
 /// keygen from this stream instead of OS entropy. The resulting ML-DSA-87 key
 /// pair is an ordinary FIPS 204 key pair; its post-quantum security depends on
 /// ML-DSA, not on this wrapper.
+#[derive(Zeroize, ZeroizeOnDrop)]
 struct KdfStreamRng {
     seed: [u8; 32],
     block: [u8; 32],
@@ -419,9 +433,9 @@ impl rand_core::CryptoRng for KdfStreamRng {}
 /// component through `KdfStreamRng` key generation. Distinct derivation
 /// contexts prevent any cross-component key reuse.
 fn possession_keys(rms: &[u8; 32]) -> (MlDsaSk, MlDsaVk, Ed25519Sk) {
-    let ml_seed = crate::kdf::derive("vela rms possession ml-dsa v1", rms).0;
-    let ed_seed = crate::kdf::derive("vela rms possession ed25519 v1", rms).0;
-    let mut rng = KdfStreamRng::new(ml_seed);
+    let ml_seed = Zeroizing::new(crate::kdf::derive("vela rms possession ml-dsa v1", rms).0);
+    let ed_seed = Zeroizing::new(crate::kdf::derive("vela rms possession ed25519 v1", rms).0);
+    let mut rng = KdfStreamRng::new(*ml_seed);
     // Keygen consumes only our deterministic stream; the Infallible-style error
     // arm is unreachable for well-formed RNG output.
     let (ml_vk, ml_sk) =
@@ -936,6 +950,18 @@ mod tests {
         // Direction confusion: a delivery envelope is not a valid response.
         let delivery = seal_contact_share(&request_pk, &context, &shares[1]).unwrap();
         assert!(open_contact_share_response(&request_sk, &context, &delivery).is_err());
+    }
+
+    #[test]
+    fn debug_redacts_the_reconstructed_rms() {
+        let recovered = ReconstructedRms {
+            rms: [0xAB; 32],
+            key_epoch: 7,
+        };
+        let rendered = format!("{recovered:?}");
+        assert!(rendered.contains("[REDACTED]"), "{rendered}");
+        assert!(rendered.contains("key_epoch: 7"), "{rendered}");
+        assert!(!rendered.contains("171"), "RMS bytes leaked: {rendered}");
     }
 
     #[test]

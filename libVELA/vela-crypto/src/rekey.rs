@@ -272,6 +272,7 @@ pub fn rekey_recovery_shares(
 pub fn shares_reconstruct_to(shares: &[shamir::Share], expected: &[u8; 32]) -> bool {
     shamir::reconstruct(shares, expected.len())
         .map(|secret| {
+            let secret = Zeroizing::new(secret);
             if secret.len() != expected.len() {
                 return false;
             }

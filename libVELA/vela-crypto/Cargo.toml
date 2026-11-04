@@ -20,7 +20,7 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(hax)", "cfg(hax_compilatio
 
 [dependencies]
 # Hybrid KEM
-ml-kem         = { version = "0.3.0", features = ["getrandom"] }
+ml-kem         = { version = "0.3.0", features = ["getrandom", "zeroize"] }
 x25519-dalek   = { version = "2", features = ["static_secrets"] }
 hkdf           = "0.12"
 sha2           = "0.10"

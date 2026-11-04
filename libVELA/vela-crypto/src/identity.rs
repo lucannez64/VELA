@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use rand_core::{OsRng, RngCore};
-use zeroize::Zeroizing;
+use zeroize::{ZeroizeOnDrop, Zeroizing};
 
 use crate::error::{Result, VelaError};
 use crate::{aead, kem, signing};
@@ -58,6 +58,10 @@ pub struct DeviceIdentity {
     hybrid_dk: Option<kem::HybridSecretKey>,
     publics: IdentityPublics,
 }
+
+// Marker only: both key fields wipe themselves on drop. Do not add a manual
+// `Drop` that would short-circuit their destructors.
+impl ZeroizeOnDrop for DeviceIdentity {}
 
 impl std::fmt::Debug for DeviceIdentity {
     /// Never print key material — `VaultItem`'s derived `Debug` leaking secrets

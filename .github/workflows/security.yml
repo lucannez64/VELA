@@ -141,6 +141,11 @@ jobs:
           python3 security/formal/check-no-proof-escapes.py
           python3 -m unittest discover -s security/formal/tests -p 'test_no_proof_escapes.py'
 
+      - name: Check secret-bearing Rust types erase on drop
+        run: |
+          python3 -I security/formal/check-secret-erasure.py
+          python3 -I -m unittest discover -s security/formal/tests -p 'test_secret_erasure.py'
+
       - name: Check the proof jobs' reuse keys cover their inputs
         run: python3 -m unittest discover -s security/formal/tests -p 'test_proof_inputs.py'
 
