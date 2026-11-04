@@ -23,3 +23,4 @@ formal_tests: 111 passed (python3 -m unittest discover -s security/formal/tests)
 tamarin_rules_changed: 0 (.spthy header comment only)
 tamarin_rerun: not run here (box offline); rules, restriction and lemmas unchanged
 rust_files_changed: 0
+seed_runs: seeds 1,2,3 passed (148s, 130s, 140s) via z3-seed/verify-fstar-seeded.sh

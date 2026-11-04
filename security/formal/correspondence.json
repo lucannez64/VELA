@@ -41,10 +41,10 @@
       }
     },
     {
-      "boundary": "recoverable share journal and fact construction (typed F* equivalence, encoded all-pairs safety and concrete order/witness checked; actual Tamarin source embeddings and Rust/filesystem refinement remain open)",
+      "boundary": "recoverable share journal and fact construction (typed F* equivalence, encoded all-pairs safety, and the Tamarin-to-F* source bridge with all ten M28 lemmas on source traces checked under a trusted F* transcription of Tamarin's semantics; Rust/filesystem refinement remains open)",
       "artifacts": {
-        "security/formal/m28_share_journal.spthy": "90ba8a430aa2ec0e0fe7d93b99d9e6dd0be8b5f675acf001f708e6a866bd13db",
-        "security/formal/share-journal-correspondence.md": "01810c19409a83edfffd9466fc80eeade3bf1983988035ab2f1c6c1f2af2ce7d",
+        "security/formal/m28_share_journal.spthy": "5e788a4f58babb096f391f8127ac757c9be2f7e8c9be5bcd6d2313d0abce8630",
+        "security/formal/share-journal-correspondence.md": "6ce9702d4ac45c6cb8f7b0b952c67e2b2373426e29d8c2c92ee8931f0b6d7d1a",
         "libVELA/vela-client-share-policy/src/lib.rs": "97a94c6af11d40b6eafa4930940212d62d2cb5393d6940c7457bb9ce12e9a261",
         "libVELA/vela-crypto/src/share_envelope.rs": "e35e59660e2000e24047ce524e3cebd05b3b10e98e9c37a9389a22b4d11b8cc5",
         "libVELA/vela-crypto/verify-share-facts-fstar.sh": "3320e20074adbc981ae1594533cd1c210d4d708a95107438328aa71c3a78838a",
@@ -54,14 +54,22 @@
         "desktopVELA/vela-desktop-core/src/lib.rs": "fc669ad646ca899e39cff2891e06d2f0d4d47d3332b610464ee9aecff7caa856",
         "desktopVELA/vela-desktop-core/Cargo.toml": "f213f083ac9a00e39509ebc999d6f122ad8990147e57b3d9a0c18b6dbae3224b",
         "desktopVELA/Cargo.lock": "a2ade00ac662f8713896b9dbeb9a433bc4bda39e31a782846590af0dfd8b5771",
-        "security/formal/m28-trace-equivalence/M28TraceEquivalence.fst": "739c530661a3bbbd49051fb8490f81ed0c42b6b49c4809e3e32dd6dcdbc2e16c",
-        "security/formal/m28-trace-equivalence/README.md": "a6f3ee81e6bba545954b4350c953472977536d87ccd6878f48621c2b44b99514",
-        "security/formal/m28-trace-equivalence/verify.sh": "31cfcc912622f0cb8637dca1e628fbf1ae4604a70ffbf6a889746dd6f8b97947",
+        "security/formal/m28-trace-equivalence/M28TraceEquivalence.fst": "2e049ca0404d910891e88f33a144b3367204cb4b4130214123d01e197ca7b7a1",
+        "security/formal/m28-trace-equivalence/README.md": "82efbc8111e9b22088f08f41266e82cb04ca5e45c26294c568d517cac0cfe8cd",
+        "security/formal/m28-trace-equivalence/verify.sh": "7a9ab7652daf691fa3fc7220f7da6f0f47b308620e3a56fc885f8df13b10e958",
         "security/formal/fstar-bounded.sh": "0d1738e9e4aab789076ad85feca20485df99353a04ff085b58f1fe9313a7fa4c",
         "security/formal/check-m28-semantic-proof.py": "d98c56b2269ec9d9d90fd3c8b8e41a52cffb551a22c5ca2c6f29468695c82f3b",
         "security/formal/tests/test_m28_semantic_guard.py": "cded6610a79219203e6983495adb59fc973ec3e7c8805363ed0ef83feb4f3344",
-        "security/formal/run-share-journal-proofs.sh": "1f7e57325f69632e3235ce55261ced0fc7ebe0308fff1f1924dc64ce5648b4d3",
-        "security/assurance/install-formal-fstar.sh": "5d576f39327ec3d45590e8e4bc0882b004c6d74835a414152a07cc637331f0dc"
+        "security/formal/run-share-journal-proofs.sh": "d498f82adb97be97b7e81d179306cb540a33be3cbd0183a1fe20918eb6fea134",
+        "security/assurance/install-formal-fstar.sh": "5d576f39327ec3d45590e8e4bc0882b004c6d74835a414152a07cc637331f0dc",
+        "security/formal/m28-trace-equivalence/M28_source_terms.fst": "694f1f24de0e6cde73dfd35c5b63d01df93285bb27ddd47c062acaa446fdb46f",
+        "security/formal/m28-trace-equivalence/M28_source_semantics.fst": "f20b40e21ff4592ad9fe3935c263794d92c18287ea2cb4c621f81398ef9ac72e",
+        "security/formal/m28-trace-equivalence/M28_slot_projection.fst": "81af6bf9753a184bb3379cae7ff1fde503472b709cd0d02dcfae1389e43112c5",
+        "security/formal/m28-trace-equivalence/M28_source_bridge.fst": "be813c702beb02a95a6cbae6ddaf19a00f2c8ad4735c6bd33e93adfa14fdab5f",
+        "security/formal/m28-trace-equivalence/M28_source_lemmas.fst": "b36fe97c655d5a6cdccfe501406d62246bd292468e63f31f59a8187edd077455",
+        "security/formal/m28-trace-equivalence/M28_source_witness.fst": "2c0d6e290ce75e6fb25a1848a0f58274aa9472598f67b423f3183caf228d3b9d",
+        "security/formal/check-m28-transcription.py": "5571abf5ce3ed909054fd9519f9e78b1e12fb978edcfb206c77829a7367895b5",
+        "security/formal/tests/test_m28_transcription.py": "8e0b9a7239ea83f8aa0223eb5ee628ecb9e0e4a7cbd6ef98f5bdd5b412288097"
       }
     },
     {

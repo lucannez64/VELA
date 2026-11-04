@@ -1,0 +1,32 @@
+z3-seed: gate=security/formal/m28-trace-equivalence/verify.sh seed=3
+z3-seed: fstar.exe on PATH: /home/hirew/.t3/worktrees/VELA/t3-m28-source-bridge/security/assurance/z3-seed/fstar.exe
+z3-seed: VELA_Z3_SEED=3 VELA_FSTAR_CACHE=0 query_stats=0
+semantic proof source guard passed
+181 F* files: no proof escapes, no unimplemented interfaces.
+m28 transcription matches the .spthy: 7 rules, 18 facts, 10 lemmas
+z3-seed: not a module check (seed 3 unused); pass-through to /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/bin/fstar.exe
+z3-seed: exec /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/bin/fstar.exe --version
+F* 2025.10.06
+platform=Linux_x86_64
+compiler=OCaml 4.14.2
+date=2025-10-06 12:00:42 -0700
+commit=7b347386330d0e5a331a220535b6f15288903234
+2e049ca0404d910891e88f33a144b3367204cb4b4130214123d01e197ca7b7a1  /home/hirew/.t3/worktrees/VELA/t3-m28-source-bridge/security/formal/m28-trace-equivalence/M28TraceEquivalence.fst
+694f1f24de0e6cde73dfd35c5b63d01df93285bb27ddd47c062acaa446fdb46f  /home/hirew/.t3/worktrees/VELA/t3-m28-source-bridge/security/formal/m28-trace-equivalence/M28_source_terms.fst
+f20b40e21ff4592ad9fe3935c263794d92c18287ea2cb4c621f81398ef9ac72e  /home/hirew/.t3/worktrees/VELA/t3-m28-source-bridge/security/formal/m28-trace-equivalence/M28_source_semantics.fst
+81af6bf9753a184bb3379cae7ff1fde503472b709cd0d02dcfae1389e43112c5  /home/hirew/.t3/worktrees/VELA/t3-m28-source-bridge/security/formal/m28-trace-equivalence/M28_slot_projection.fst
+be813c702beb02a95a6cbae6ddaf19a00f2c8ad4735c6bd33e93adfa14fdab5f  /home/hirew/.t3/worktrees/VELA/t3-m28-source-bridge/security/formal/m28-trace-equivalence/M28_source_bridge.fst
+b36fe97c655d5a6cdccfe501406d62246bd292468e63f31f59a8187edd077455  /home/hirew/.t3/worktrees/VELA/t3-m28-source-bridge/security/formal/m28-trace-equivalence/M28_source_lemmas.fst
+2c0d6e290ce75e6fb25a1848a0f58274aa9472598f67b423f3183caf228d3b9d  /home/hirew/.t3/worktrees/VELA/t3-m28-source-bridge/security/formal/m28-trace-equivalence/M28_source_witness.fst
+argv: --cache_off --z3rlimit 100 --z3version 4.13.3 --include /home/hirew/.t3/worktrees/VELA/t3-m28-source-bridge/security/formal/m28-trace-equivalence /home/hirew/.t3/worktrees/VELA/t3-m28-source-bridge/security/formal/m28-trace-equivalence/M28TraceEquivalence.fst /home/hirew/.t3/worktrees/VELA/t3-m28-source-bridge/security/formal/m28-trace-equivalence/M28_source_terms.fst /home/hirew/.t3/worktrees/VELA/t3-m28-source-bridge/security/formal/m28-trace-equivalence/M28_source_semantics.fst /home/hirew/.t3/worktrees/VELA/t3-m28-source-bridge/security/formal/m28-trace-equivalence/M28_slot_projection.fst /home/hirew/.t3/worktrees/VELA/t3-m28-source-bridge/security/formal/m28-trace-equivalence/M28_source_bridge.fst /home/hirew/.t3/worktrees/VELA/t3-m28-source-bridge/security/formal/m28-trace-equivalence/M28_source_lemmas.fst /home/hirew/.t3/worktrees/VELA/t3-m28-source-bridge/security/formal/m28-trace-equivalence/M28_source_witness.fst
+z3-seed: exec /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/bin/fstar.exe --z3seed 3 --cache_off --z3rlimit 100 --z3version 4.13.3 --include /home/hirew/.t3/worktrees/VELA/t3-m28-source-bridge/security/formal/m28-trace-equivalence /home/hirew/.t3/worktrees/VELA/t3-m28-source-bridge/security/formal/m28-trace-equivalence/M28TraceEquivalence.fst /home/hirew/.t3/worktrees/VELA/t3-m28-source-bridge/security/formal/m28-trace-equivalence/M28_source_terms.fst /home/hirew/.t3/worktrees/VELA/t3-m28-source-bridge/security/formal/m28-trace-equivalence/M28_source_semantics.fst /home/hirew/.t3/worktrees/VELA/t3-m28-source-bridge/security/formal/m28-trace-equivalence/M28_slot_projection.fst /home/hirew/.t3/worktrees/VELA/t3-m28-source-bridge/security/formal/m28-trace-equivalence/M28_source_bridge.fst /home/hirew/.t3/worktrees/VELA/t3-m28-source-bridge/security/formal/m28-trace-equivalence/M28_source_lemmas.fst /home/hirew/.t3/worktrees/VELA/t3-m28-source-bridge/security/formal/m28-trace-equivalence/M28_source_witness.fst
+Verified module: M28TraceEquivalence
+Verified module: M28_source_terms
+Verified module: M28_source_semantics
+Verified module: M28_slot_projection
+Verified module: M28_source_bridge
+Verified module: M28_source_lemmas
+Verified module: M28_source_witness
+All verification conditions discharged successfully
+m28-trace-equivalence: F* modules verified
+z3-seed: gate=security/formal/m28-trace-equivalence/verify.sh seed=3 seconds=140 exit=0

@@ -122,3 +122,16 @@ cap the gate's own `bounded.sh` was skipped with `VELA_BOUNDED=1`, and
    invocation.
 
 No solver option is set inside the new modules.
+
+After merging the T8 seed shim, the same gate passed under Z3 seeds 1, 2 and
+3 (`security/assurance/z3-seed/verify-fstar-seeded.sh SEED
+security/formal/m28-trace-equivalence/verify.sh`, same local caps). The runs
+took 148, 130 and 140 s; see [`verify-seed-1.log`](verify-seed-1.log),
+[`verify-seed-2.log`](verify-seed-2.log) and [`verify-seed-3.log`](verify-seed-3.log).
+Each log shows the `--z3seed` argument reaching F*.
+
+Tamarin was not rerun for this change, because the build box with Tamarin
+was offline. The `.spthy` change is to its header comment only, and the drift
+check strips comments, so the ten M28 verdicts recorded in
+[`journal-all-pairs`](../journal-all-pairs/README.md) still apply to the same
+rules. Rust files are unchanged.
