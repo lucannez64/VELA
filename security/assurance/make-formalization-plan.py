@@ -30,12 +30,12 @@ NODES = [
     # ---------------- Baseline ----------------
     ("B0", "S", False, "Get PR #175 green",
      "Cancelled formal run on 654a0ee rerun; vela-box runners healthy; every PR check passes", []),
-    ("B1", "S", False, "Merge PR #175 into main",
-     "main contains the F-1/F-2 work; 08 baseline section points at the merge commit", ["B0"]),
+    ("B1", "S", False, "Merge PR #175 into main (when approved)",
+     "main contains the work; 08 baseline points at the merge commit. Work proceeds on the PR branch until then", ["B0"]),
     ("B2", "S", False, "Link this plan from 08",
-     "08 'Remaining obligations' rows each list their plan node ids", ["B1"]),
+     "08 'Remaining obligations' rows each list their plan node ids", ["B0"]),
     ("B3", "M", False, "Dedupe the copied Sql/Faulty harnesses",
-     "One shared Rust test harness crate; all executor conformance suites use it and pass", ["B1"]),
+     "One shared Rust test harness crate; all executor conformance suites use it and pass", ["B0"]),
     ("B4", "M", True, "One shared F* store/SQL model",
      "All executor proofs import one Vela.Store.Model module (txn, faults, rows); per-crate copies deleted; all gates green", ["B3"]),
     ("B5", "S", False, "Plan-node check in check-correspondence",
@@ -43,7 +43,7 @@ NODES = [
 
     # ---------------- F-6 trusted base ----------------
     ("T1", "S", False, "Inventory imported model contracts",
-     "Script lists every hax/std/F* library symbol the corpus relies on, with use counts; output committed", ["B1"]),
+     "Script lists every hax/std/F* library symbol the corpus relies on, with use counts; output committed", ["B0"]),
     ("T2", "S", False, "Zero-assumption gate over all F*",
      "check-proof-boundary rejects assume/admit/axiom in extracted AND handwritten modules; mutation fixture rejected", ["T1"]),
     ("T3", "M", False, "Review the Vec model",
@@ -60,7 +60,7 @@ NODES = [
     ("T9", "S", False, "List OS/library interface assumptions",
      "09 lists each assumed interface (entropy, clock, fs, locks, DB isolation) with its call sites", ["T1"]),
     ("T10", "M", False, "Pin the rest of the environment (G-3)",
-     "opam lock, action SHAs and OS packages pinned; G-3 closed", ["B1"]),
+     "opam lock, action SHAs and OS packages pinned; G-3 closed", ["B0"]),
     ("T11", "M", False, "One proof container",
      "A pinned image runs run-all.sh end to end; hosted CI uses it", ["T10"]),
     ("T12", "S", False, "Update the trusted-base docs",
@@ -68,7 +68,7 @@ NODES = [
 
     # ---------------- F-1 origins ----------------
     ("O1", "S", False, "Inventory observation producers",
-     "Table: every observation field -> producing code (SQL query, store get, verifier, token, clock); committed", ["B1"]),
+     "Table: every observation field -> producing code (SQL query, store get, verifier, token, clock); committed", ["B0"]),
     ("O2", "M", False, "Schema check for every rendered SQL",
      "Gate parses migrations into a schema model and checks every byte-pinned statement's tables/columns/types", ["O1"]),
     ("O3a", "S", False, "Row decoders: sharing", "Row->observation decoders extracted and proved against the row model", ["O1", "B4"]),
@@ -113,9 +113,9 @@ NODES = [
 
     # ---------------- Full handlers ----------------
     ("H1", "S", False, "Handler inventory",
-     "Every route (about 60 route entries) tagged: parse / origins / interpreter / reply, each covered or not", ["B1"]),
+     "Every route (about 60 route entries) tagged: parse / origins / interpreter / reply, each covered or not", ["B0"]),
     ("H2", "M", False, "Fix U-24 (lost recovery-redemption reply)",
-     "Device row records its grant, replay recovers the device id; proved in the redemption driver; U-24 closed", ["B1"]),
+     "Device row records its grant, replay recovers the device id; proved in the redemption driver; U-24 closed", ["B0"]),
     ("H3", "S", False, "Cancellation lemma for the U-24 fix", "Cancellation README shows no lost-reply case left", ["H2"]),
     ("H4", "M", False, "Request validation",
      "For each handler, typed request -> validated input proved (JSON decode itself trusted per T9)", ["H1", "T4"]),
@@ -148,8 +148,8 @@ NODES = [
 
     # ---------------- F-3 persistence ----------------
     ("P1", "S", False, "Journal implementation inventory",
-     "Map vela-desktop-core store/sharing/sync journal ops to M28 rules", ["B1"]),
-    ("P2a", "M", False, "Tamarin bridge: source term representation", "F* type for Tamarin terms used by M28", ["B1"]),
+     "Map vela-desktop-core store/sharing/sync journal ops to M28 rules", ["B0"]),
+    ("P2a", "M", False, "Tamarin bridge: source term representation", "F* type for Tamarin terms used by M28", ["B0"]),
     ("P2b", "M", False, "Tamarin bridge: slot projection", "Proved projection from multi-slot traces to single-slot", ["P2a"]),
     ("P2c", "M", True, "Tamarin bridge: derivability and freshness", "Input derivability and global freshness encoded", ["P2a"]),
     ("P2d", "L", True, "Tamarin bridge theorem",
@@ -170,29 +170,29 @@ NODES = [
     ("P9", "S", False, "Close F-3 in 08", "Gate in CI; F-3 row closed", ["P5", "P6", "P7", "P8"]),
 
     # ---------------- F-4 crypto ----------------
-    ("C1", "M", False, "SHA-256 bridge as a game", "Collision step for ct_mlkem/pk_mlkem machine-checked in CryptoVerif", ["B1"]),
-    ("C2", "L", True, "X25519 cofactor and low-order inputs", "Game models cofactor-8 group and the kem.rs reject check", ["B1"]),
+    ("C1", "M", False, "SHA-256 bridge as a game", "Collision step for ct_mlkem/pk_mlkem machine-checked in CryptoVerif", ["B0"]),
+    ("C2", "L", True, "X25519 cofactor and low-order inputs", "Game models cofactor-8 group and the kem.rs reject check", ["B0"]),
     ("C3a", "M", False, "kem.rs encoding checks in Rust", "hax proof that kem.rs rejects low-order/non-canonical inputs as claimed", ["T5"]),
     ("C3b", "M", False, "Link wire encodings to the game", "Encoding->group-element map proved injective modulo the rejected set", ["C3a", "C2"]),
-    ("C4", "M", True, "Clamped scalar distribution", "Machine-checked collision bound for the clamped distribution", ["B1"]),
+    ("C4", "M", True, "Clamped scalar distribution", "Machine-checked collision bound for the clamped distribution", ["B0"]),
     ("C5", "L", True, "Concrete X25519 combiner theorem", "One theorem replacing the model-level COMP-5", ["C1", "C3b", "C4"]),
     ("C6", "L", True, "Multi-user, multi-challenge KEM", "Game or hybrid argument with stated loss", ["C1"]),
-    ("C7a", "S", False, "Decide quantum-query scope", "Choice recorded in 09: QROM proof, paper reduction, or excluded", ["B1"]),
+    ("C7a", "S", False, "Decide quantum-query scope", "Choice recorded in 09: QROM proof, paper reduction, or excluded", ["B0"]),
     ("C7b", "XL", True, "Quantum-query composition", "Per C7a decision; skipped if excluded", ["C7a", "C5"]),
     ("C8", "M", False, "Instantiate KEM-DEM with the combiner", "Composition lemma checked, not manual", ["C5", "C6"]),
     ("C9", "M", True, "AAD and signed share-envelope game", "Encryption theorem covers the real envelope with AAD", ["C8", "O14a"]),
-    ("C10", "L", True, "HKDF beyond the random oracle", "Reductions under named PRF/extractor assumptions", ["B1"]),
+    ("C10", "L", True, "HKDF beyond the random oracle", "Reductions under named PRF/extractor assumptions", ["B0"]),
     ("C11", "M", False, "Envelope framing game", "Framing injectivity (from wire proofs) used in the game", ["C9"]),
     ("C12", "M", False, "Hybrid-signature Rust wrapper correspondence", "Wrapper <-> game composition closed (open item in 10)", ["O7"]),
     ("C13", "M", False, "Recovery KDF and password-hashing constructions", "Game for recovery key derivation", ["C10"]),
     ("C14", "M", False, "Application randomness", "Keys/nonces drawn from the OS RNG with right lengths; AEAD nonce uniqueness proved", ["T9"]),
-    ("C15", "M", False, "Uniform decryption errors", "No error-oracle: all decrypt failures map to one error, proved at the wrapper", ["B1"]),
-    ("C16", "M", False, "Secret erasure", "Zeroize gate: secret types implement ZeroizeOnDrop; lint plus review", ["B1"]),
-    ("C17", "S", False, "Legacy v1 decision", "decapsulate_legacy_v1 removed or explicitly excluded", ["B1"]),
+    ("C15", "M", False, "Uniform decryption errors", "No error-oracle: all decrypt failures map to one error, proved at the wrapper", ["B0"]),
+    ("C16", "M", False, "Secret erasure", "Zeroize gate: secret types implement ZeroizeOnDrop; lint plus review", ["B0"]),
+    ("C17", "S", False, "Legacy v1 decision", "decapsulate_legacy_v1 removed or explicitly excluded", ["B0"]),
     ("C18", "S", False, "Close F-4 in 08", "CryptoVerif README open list empty or excluded", ["C7b", "C11", "C12", "C13", "C14", "C15", "C16", "C17"]),
 
     # ---------------- F-5 native ----------------
-    ("N1", "S", False, "FFI call-site inventory", "Every Kotlin/Swift/TS call into the bridges listed", ["B1"]),
+    ("N1", "S", False, "FFI call-site inventory", "Every Kotlin/Swift/TS call into the bridges listed", ["B0"]),
     ("N0a", "M", False, "Desktop: refuse unbound legacy chunks (U-28)",
      "Desktop downloads refuse unsealed blobs as the mobile bridges do (or a recorded migration re-seals them first); regression test; U-28 closed", ["N1"]),
     ("N0b", "S", False, "Desktop: rollback gate on established facts (U-29)",
@@ -215,8 +215,8 @@ NODES = [
     ("N7a", "M", False, "Desktop callers (gpui and Tauri)", "As N5a", ["N4", "N3", "N0b"]),
     ("N7b", "M", False, "Web and extension callers", "As N5a", ["N4", "N3", "N0c"]),
     ("N8", "M", True, "Unbounded native trace refinement", "Bounded download-gate conformance lifted to a proof", ["N5a", "N6a"]),
-    ("N9", "M", True, "Enrollment UI trust", "Tamarin model of the human code comparison (extends M13)", ["B1"]),
-    ("N10a", "M", False, "Joint model skeleton", "One Tamarin theory with shared accounts/devices/keys", ["B1"]),
+    ("N9", "M", True, "Enrollment UI trust", "Tamarin model of the human code comparison (extends M13)", ["B0"]),
+    ("N10a", "M", False, "Joint model skeleton", "One Tamarin theory with shared accounts/devices/keys", ["B0"]),
     ("N10b", "M", False, "Joint model: enrollment and recovery", "Rules imported, lemmas re-proved", ["N10a", "N9"]),
     ("N10c", "M", False, "Joint model: sync", "As N10b", ["N10b"]),
     ("N10d", "M", False, "Joint model: sharing", "As N10b", ["N10c"]),
@@ -225,7 +225,7 @@ NODES = [
 
     # ---------------- Closing ----------------
     ("Z1", "M", False, "Automate model<->policy correspondence (G-5)", "Drift gate covers every family and mobile call site", ["H12", "N11"]),
-    ("Z2", "S", False, "Whole-system claim in 08", "08 header replaced by a scoped completion claim with its boundary", ["Z1", "T12", "P9", "C18"]),
+    ("Z2", "S", False, "Whole-system claim in 08", "08 header replaced by a scoped completion claim with its boundary", ["Z1", "T12", "P9", "C18", "B1"]),
     ("Z3", "S", False, "Hosted full run", "run-all.sh green in the proof container on the claim commit", ["Z2"]),
     ("Z4", "L", False, "Independent review (G-6)", "Third party reproduces Z3 and reviews models; G-6 closed", ["Z3"]),
 ]

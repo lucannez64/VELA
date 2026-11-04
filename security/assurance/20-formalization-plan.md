@@ -11,150 +11,150 @@ Whoever works on a step reports it with `./plan-live.py start|log|retry|block|do
 (`--who <name>`) from any worktree; the dashboard refreshes every 3 seconds.
 Progress is stored outside the repo, in `~/.cache/vela-plan/formalization-status.json`.
 
-133 steps, 19 dependency levels. Sizes: S < 1 day,
+133 steps, 18 dependency levels. Sizes: S < 1 day,
 M 1-3 days, L about a week, XL more. **hard** marks proofs that may need a
 redesign. Any step whose dependencies are all done can start, so steps on the
 same level can run in parallel.
 
-Critical path (by size): B0 -> B1 -> B3 -> B4 -> O3a -> O3f -> O9 -> O13f -> H8f -> H11a -> H11b -> H11c -> H11d -> H11e -> H12 -> Z1 -> Z2 -> Z3 -> Z4
+Critical path (by size): B0 -> B3 -> B4 -> O3a -> O3f -> O9 -> O13f -> H8f -> H11a -> H11b -> H11c -> H11d -> H11e -> H12 -> Z1 -> Z2 -> Z3 -> Z4
 
 ## Topological order
 
 | # | Id | Lvl | Size | Step | Done when | After |
 |---|---|---|---|---|---|---|
 | 1 | B0 | 0 | S | Get PR #175 green | Cancelled formal run on 654a0ee rerun; vela-box runners healthy; every PR check passes | - |
-| 2 | B1 | 1 | S | Merge PR #175 into main | main contains the F-1/F-2 work; 08 baseline section points at the merge commit | B0 |
-| 3 | B2 | 2 | S | Link this plan from 08 | 08 'Remaining obligations' rows each list their plan node ids | B1 |
-| 4 | B3 | 2 | M | Dedupe the copied Sql/Faulty harnesses | One shared Rust test harness crate; all executor conformance suites use it and pass | B1 |
-| 5 | B4 | 3 | M **hard** | One shared F* store/SQL model | All executor proofs import one Vela.Store.Model module (txn, faults, rows); per-crate copies deleted; all gates green | B3 |
-| 6 | B5 | 3 | S | Plan-node check in check-correspondence | check-correspondence.py fails if a correspondence pair cites an unknown plan node | B2 |
-| 7 | T1 | 2 | S | Inventory imported model contracts | Script lists every hax/std/F* library symbol the corpus relies on, with use counts; output committed | B1 |
-| 8 | T2 | 3 | S | Zero-assumption gate over all F* | check-proof-boundary rejects assume/admit/axiom in extracted AND handwritten modules; mutation fixture rejected | T1 |
-| 9 | T3 | 3 | M | Review the Vec model | Review note maps each used Vec op (len/index/push/extend/slice) to Rust std semantics incl. panics | T1 |
-| 10 | T4 | 3 | M | Review the String/UTF-8 model | Review note for String/str/from_utf8 ops used; gaps listed as nodes or excluded | T1 |
-| 11 | T5 | 3 | M | Review integer and overflow models | Every u8..u128/i64 op used is checked against Rust release-mode semantics (wrapping vs panic) | T1 |
-| 12 | T6 | 3 | S | Review Option/Result/slice models | Review note committed | T1 |
-| 13 | T7 | 4 | L **hard** | Differential tests of the std models | Extracted F* model functions run (OCaml extraction) against Rust on random inputs; zero mismatches over 10^6 cases per op | T3, T4, T5, T6 |
-| 14 | T8 | 4 | M | Proof stability gate | Every F* module verifies with 3 Z3 seeds and z3 pinned; rlimits recorded; flaky modules split | T2 |
-| 15 | T9 | 3 | S | List OS/library interface assumptions | 09 lists each assumed interface (entropy, clock, fs, locks, DB isolation) with its call sites | T1 |
-| 16 | T10 | 2 | M | Pin the rest of the environment (G-3) | opam lock, action SHAs and OS packages pinned; G-3 closed | B1 |
-| 17 | T11 | 3 | M | One proof container | A pinned image runs run-all.sh end to end; hosted CI uses it | T10 |
-| 18 | T12 | 5 | S | Update the trusted-base docs | 07/09 updated from T7-T9; F-6 row reads closed except independent review | T7, T8, T9, T11 |
-| 19 | O1 | 2 | S | Inventory observation producers | Table: every observation field -> producing code (SQL query, store get, verifier, token, clock); committed | B1 |
-| 20 | O2 | 3 | M | Schema check for every rendered SQL | Gate parses migrations into a schema model and checks every byte-pinned statement's tables/columns/types | O1 |
-| 21 | O3a | 4 | S | Row decoders: sharing | Row->observation decoders extracted and proved against the row model | O1, B4 |
-| 22 | O3b | 5 | S | Row decoders: send links | As O3a for send | O3a |
-| 23 | O3c | 5 | M | Row decoders: session and web sessions | As O3a for session | O3a |
-| 24 | O3d | 5 | M | Row decoders: enrollment and pairing | As O3a for enrollment | O3a |
-| 25 | O3e | 5 | M | Row decoders: recovery | As O3a for all four recovery families | O3a |
-| 26 | O3f | 5 | M | Row decoders: vault, rotation, capsules | As O3a for vault | O3a |
-| 27 | O4 | 3 | M | Store key builders are injective | Proof that every store key builder (rl:*, challenge, grant, ...) is injective and namespaces are disjoint | O1 |
-| 28 | O5 | 4 | M **hard** | Store value codecs round-trip | decode(encode v) = v and encode injective for every stored value type | O4, T3 |
-| 29 | O6 | 4 | S | Grant store-key user binding | Proof that a grant key read in a handler is bound to the session user (open item from 15) | O4 |
-| 30 | O7 | 3 | M | Signature-verifier wrapper | Extracted wrapper proved: Ok iff both components verify on the exact signed bytes; components trusted | O1 |
-| 31 | O8 | 3 | M | Token and session-id producer | Claims construction and parse->session observation proved; PASETO crypto trusted | O1 |
-| 32 | O9 | 6 | M **hard** | Epoch freshness | Epoch read/normalize composed with the vault row model proves freshness, not just normalization | O3f |
-| 33 | O10 | 4 | M | TTL expiry as adversarial deletion | Store model lets expiry delete any TTL key at any step; driver and executor theorems still hold | B4 |
-| 34 | O11 | 4 | S | Nonce source contract | Nonce length and single use proved; entropy trusted per T9 | T9 |
-| 35 | O12 | 6 | S | Prove the EnrollmentAccountView adapter | Adapter extracted and proved; conformance test kept as backup | O3d |
-| 36 | O13a | 5 | M | Context origins: sharing | Every context field used in sharing admission is proved to come from the session or a DB row, never the body | O3a, O8 |
-| 37 | O13b | 6 | S | Context origins: send links | As O13a | O3b, O8 |
-| 38 | O13c | 6 | M | Context origins: session | As O13a | O3c, O8 |
-| 39 | O13d | 7 | M | Context origins: enrollment | As O13a | O3d, O8, O12 |
-| 40 | O13e | 6 | M | Context origins: recovery | As O13a; includes WebAuthn verdict origin | O3e, O8, O7, O6 |
-| 41 | O13f | 7 | M | Context origins: vault | As O13a | O3f, O8, O9 |
-| 42 | O14a | 4 | M | Share-envelope encoder inverse | parse(encode x) = x over the checked byte-frame grammar | T4 |
-| 43 | O14b | 5 | M | UTF-8/object conversion | Opened bytes -> object conversion proved against the String model | T4, O14a |
-| 44 | O14c | 6 | L **hard** | Authenticated-open composition | frame parse ; signature check ; open ; object decode composed into one theorem for the production opener | O14b, O7 |
-| 45 | O15 | 6 | M | Recovery fact construction leftovers | Decoders, verifiers, storage effects and restoration for recovery covered (open items from 13/15) | O3e, O7 |
-| 46 | H1 | 2 | S | Handler inventory | Every route (about 60 route entries) tagged: parse / origins / interpreter / reply, each covered or not | B1 |
-| 47 | H2 | 2 | M | Fix U-24 (lost recovery-redemption reply) | Device row records its grant, replay recovers the device id; proved in the redemption driver; U-24 closed | B1 |
-| 48 | H3 | 3 | S | Cancellation lemma for the U-24 fix | Cancellation README shows no lost-reply case left | H2 |
-| 49 | H4 | 4 | M | Request validation | For each handler, typed request -> validated input proved (JSON decode itself trusted per T9) | H1, T4 |
-| 50 | H5 | 3 | M | Reply construction | Verdict -> status/body mapping proved total and leak-free for every handler | H1 |
-| 51 | H6 | 4 | M | Auth middleware | Middleware session extraction proved; composed with O8 | O8, H1 |
-| 52 | H7 | 4 | M | Read-only and leftover routes | Routes with no driver (GET /devices, /sends, /vault/events, /health, ...) proved write-free and auth-correct | H1, B4 |
-| 53 | H8a | 6 | L | Whole-handler theorem: sharing | parse ; middleware ; origins ; interpreter ; reply refines the M19b/M21 state machine | H4, H5, H6, O13a |
-| 54 | H8b | 7 | M | Whole-handler theorem: send links | As H8a | H4, H5, H6, O13b |
-| 55 | H8c | 7 | L | Whole-handler theorem: session and web sessions | As H8a | H4, H5, H6, O13c |
-| 56 | H8d | 8 | L | Whole-handler theorem: enrollment and pairing | As H8a (M13) | H4, H5, H6, O13d |
-| 57 | H8e | 7 | L **hard** | Whole-handler theorem: recovery | As H8a (M18/M26a) | H4, H5, H6, O13e, O15, H3 |
-| 58 | H8f | 8 | L **hard** | Whole-handler theorem: vault and rekey | As H8a (M11) | H4, H5, H6, O13f, O10 |
-| 59 | H8g | 7 | M | Whole-handler theorem: account deletion | As H8a | H4, H5, H6, O13c |
-| 60 | H9 | 9 | M | Early returns and panic freedom | Every early-return path proved to match the spec's state; deny(unwrap/expect/indexing) in handlers | H8a, H8b, H8c, H8d, H8e, H8f, H8g |
-| 61 | H10 | 4 | M | DB isolation stated and tested | Turso/sled linearizability kept as a named trusted interface, backed by a concurrency conformance suite | T9 |
-| 62 | H11a | 9 | M | Cross-driver world: add vault and rekey | Composition theorem re-proved with the new drivers | H8f, H10 |
-| 63 | H11b | 10 | M | Cross-driver world: add sharing and send | As H11a | H11a, H8a, H8b |
-| 64 | H11c | 11 | M | Cross-driver world: add web sessions and enrollment | As H11a | H11b, H8c, H8d |
-| 65 | H11d | 12 | L **hard** | Drop the 'four reads are one step' assumption | Admission reads interleave freely; theorem still holds or a fix lands | H11c |
-| 66 | H11e | 13 | L **hard** | Revocation landing mid-request | Remove the 'checked at start/decision' assumption for revocation and pairing | H11d |
-| 67 | H12 | 14 | S | Close F-1 and F-2 in 08 | Both rows say closed under the boundary; evidence READMEs and correspondence pairs updated | H9, H11e, O2, O14c |
-| 68 | P1 | 2 | S | Journal implementation inventory | Map vela-desktop-core store/sharing/sync journal ops to M28 rules | B1 |
-| 69 | P2a | 2 | M | Tamarin bridge: source term representation | F* type for Tamarin terms used by M28 | B1 |
-| 70 | P2b | 3 | M | Tamarin bridge: slot projection | Proved projection from multi-slot traces to single-slot | P2a |
-| 71 | P2c | 3 | M **hard** | Tamarin bridge: derivability and freshness | Input derivability and global freshness encoded | P2a |
-| 72 | P2d | 4 | L **hard** | Tamarin bridge theorem | Source traces embed into the core encoding and lifts are admissible; M28 lemmas transfer | P2b, P2c |
-| 73 | P3a | 3 | M | Extract the journal step function | Pure journal step in Rust, called by the real code, extracted by hax | P1 |
-| 74 | P3b | 5 | L **hard** | Journal step refines M28 | Every Rust step maps to an M28 rule or a stutter | P3a, P2d |
-| 75 | P3c | 4 | M **hard** | Filesystem model | F* model of write/rename/fsync/crash under the T9 interface | T9 |
-| 76 | P3d | 5 | L **hard** | File operations implement durability phases | Proof that the fs calls realize Persist/Clear phases under any crash point | P3a, P3c |
-| 77 | P4 | 4 | M | Collection equality | Formal definition and proof used by sync/journal | P3a |
-| 78 | P5 | 6 | M | Compose local edits and deletions | Edits/deletions composed with the journal refinement | P3b, P4 |
-| 79 | P6 | 6 | M | Compose RMS migration | Migration path proved to preserve journal invariants | P3b |
-| 80 | P7 | 5 | M | Independent processes | Either a lock with a proved mutual-exclusion argument, or an explicit exclusion in 09 | P3c |
-| 81 | P8 | 6 | M | Uncertain-write re-arm ordering | The fixed re-arm ordering proved, regression kept | P3d |
-| 82 | P9 | 7 | S | Close F-3 in 08 | Gate in CI; F-3 row closed | P5, P6, P7, P8 |
-| 83 | C1 | 2 | M | SHA-256 bridge as a game | Collision step for ct_mlkem/pk_mlkem machine-checked in CryptoVerif | B1 |
-| 84 | C2 | 2 | L **hard** | X25519 cofactor and low-order inputs | Game models cofactor-8 group and the kem.rs reject check | B1 |
-| 85 | C3a | 4 | M | kem.rs encoding checks in Rust | hax proof that kem.rs rejects low-order/non-canonical inputs as claimed | T5 |
-| 86 | C3b | 5 | M | Link wire encodings to the game | Encoding->group-element map proved injective modulo the rejected set | C3a, C2 |
-| 87 | C4 | 2 | M **hard** | Clamped scalar distribution | Machine-checked collision bound for the clamped distribution | B1 |
-| 88 | C5 | 6 | L **hard** | Concrete X25519 combiner theorem | One theorem replacing the model-level COMP-5 | C1, C3b, C4 |
-| 89 | C6 | 3 | L **hard** | Multi-user, multi-challenge KEM | Game or hybrid argument with stated loss | C1 |
-| 90 | C7a | 2 | S | Decide quantum-query scope | Choice recorded in 09: QROM proof, paper reduction, or excluded | B1 |
-| 91 | C7b | 7 | XL **hard** | Quantum-query composition | Per C7a decision; skipped if excluded | C7a, C5 |
-| 92 | C8 | 7 | M | Instantiate KEM-DEM with the combiner | Composition lemma checked, not manual | C5, C6 |
-| 93 | C9 | 8 | M **hard** | AAD and signed share-envelope game | Encryption theorem covers the real envelope with AAD | C8, O14a |
-| 94 | C10 | 2 | L **hard** | HKDF beyond the random oracle | Reductions under named PRF/extractor assumptions | B1 |
-| 95 | C11 | 9 | M | Envelope framing game | Framing injectivity (from wire proofs) used in the game | C9 |
-| 96 | C12 | 4 | M | Hybrid-signature Rust wrapper correspondence | Wrapper <-> game composition closed (open item in 10) | O7 |
-| 97 | C13 | 3 | M | Recovery KDF and password-hashing constructions | Game for recovery key derivation | C10 |
-| 98 | C14 | 4 | M | Application randomness | Keys/nonces drawn from the OS RNG with right lengths; AEAD nonce uniqueness proved | T9 |
-| 99 | C15 | 2 | M | Uniform decryption errors | No error-oracle: all decrypt failures map to one error, proved at the wrapper | B1 |
-| 100 | C16 | 2 | M | Secret erasure | Zeroize gate: secret types implement ZeroizeOnDrop; lint plus review | B1 |
-| 101 | C17 | 2 | S | Legacy v1 decision | decapsulate_legacy_v1 removed or explicitly excluded | B1 |
-| 102 | C18 | 10 | S | Close F-4 in 08 | CryptoVerif README open list empty or excluded | C7b, C11, C12, C13, C14, C15, C16, C17 |
-| 103 | N1 | 2 | S | FFI call-site inventory | Every Kotlin/Swift/TS call into the bridges listed | B1 |
-| 104 | N0a | 3 | M | Desktop: refuse unbound legacy chunks (U-28) | Desktop downloads refuse unsealed blobs as the mobile bridges do (or a recorded migration re-seals them first); regression test; U-28 closed | N1 |
-| 105 | N0b | 4 | S | Desktop: rollback gate on established facts (U-29) | plan_chunk_download gets facts the open actually established, not literals; U-29 closed | N0a |
-| 106 | N0c | 3 | M | Web: admitted downloads (U-27) | The WASM bridge exports the admitted download path; web refuses unsealed blobs and epochs below a floor it can authenticate; U-27 closed | N1 |
-| 107 | N2a | 3 | M | Android bridge is a thin wrapper | hax proof: bridge fns call verified policies, no extra logic | N1 |
-| 108 | N2b | 3 | M | Apple bridge is a thin wrapper | As N2a | N1 |
-| 109 | N2c | 3 | M | WASM bridge is a thin wrapper | As N2a | N1 |
-| 110 | N3 | 4 | M | FFI type mapping | Bytes, errors and nullability mapping reviewed and tested both ways | N2a, N2b, N2c |
-| 111 | N4 | 3 | S | Choose the caller-verification method | Decision recorded (e.g. model-extracted state machines + trace refinement) | N1 |
-| 112 | N5a | 5 | M | Android sync caller | Caller proved to reach admission only via the bridge | N4, N3 |
-| 113 | N5b | 6 | M | Android sharing caller | As N5a | N5a |
-| 114 | N5c | 6 | M | Android enrollment/recovery caller | As N5a | N5a |
-| 115 | N5d | 6 | L **hard** | Android persistence | EncryptedVaultStore writes refine the journal contract | N5a, P3d |
-| 116 | N6a | 5 | M | iOS sync caller | As N5a | N4, N3 |
-| 117 | N6b | 6 | M | iOS sharing caller | As N5a | N6a |
-| 118 | N6c | 6 | M | iOS enrollment/recovery caller | As N5a | N6a |
-| 119 | N6d | 6 | L **hard** | iOS persistence | As N5d | N6a, P3d |
-| 120 | N7a | 5 | M | Desktop callers (gpui and Tauri) | As N5a | N4, N3, N0b |
-| 121 | N7b | 5 | M | Web and extension callers | As N5a | N4, N3, N0c |
-| 122 | N8 | 6 | M **hard** | Unbounded native trace refinement | Bounded download-gate conformance lifted to a proof | N5a, N6a |
-| 123 | N9 | 2 | M **hard** | Enrollment UI trust | Tamarin model of the human code comparison (extends M13) | B1 |
-| 124 | N10a | 2 | M | Joint model skeleton | One Tamarin theory with shared accounts/devices/keys | B1 |
-| 125 | N10b | 3 | M | Joint model: enrollment and recovery | Rules imported, lemmas re-proved | N10a, N9 |
-| 126 | N10c | 4 | M | Joint model: sync | As N10b | N10b |
-| 127 | N10d | 5 | M | Joint model: sharing | As N10b | N10c |
-| 128 | N10e | 6 | L **hard** | Joint model: revocation and claims | TC-6 claims proved in the joint model | N10d |
-| 129 | N11 | 7 | S | Close F-5 in 08 | F-5 row closed; U-8 closed | N5b, N5c, N5d, N6b, N6c, N6d, N7a, N7b, N8, N10e |
-| 130 | Z1 | 15 | M | Automate model<->policy correspondence (G-5) | Drift gate covers every family and mobile call site | H12, N11 |
-| 131 | Z2 | 16 | S | Whole-system claim in 08 | 08 header replaced by a scoped completion claim with its boundary | Z1, T12, P9, C18 |
-| 132 | Z3 | 17 | S | Hosted full run | run-all.sh green in the proof container on the claim commit | Z2 |
-| 133 | Z4 | 18 | L | Independent review (G-6) | Third party reproduces Z3 and reviews models; G-6 closed | Z3 |
+| 2 | B1 | 1 | S | Merge PR #175 into main (when approved) | main contains the work; 08 baseline points at the merge commit. Work proceeds on the PR branch until then | B0 |
+| 3 | B2 | 1 | S | Link this plan from 08 | 08 'Remaining obligations' rows each list their plan node ids | B0 |
+| 4 | B3 | 1 | M | Dedupe the copied Sql/Faulty harnesses | One shared Rust test harness crate; all executor conformance suites use it and pass | B0 |
+| 5 | B4 | 2 | M **hard** | One shared F* store/SQL model | All executor proofs import one Vela.Store.Model module (txn, faults, rows); per-crate copies deleted; all gates green | B3 |
+| 6 | B5 | 2 | S | Plan-node check in check-correspondence | check-correspondence.py fails if a correspondence pair cites an unknown plan node | B2 |
+| 7 | T1 | 1 | S | Inventory imported model contracts | Script lists every hax/std/F* library symbol the corpus relies on, with use counts; output committed | B0 |
+| 8 | T2 | 2 | S | Zero-assumption gate over all F* | check-proof-boundary rejects assume/admit/axiom in extracted AND handwritten modules; mutation fixture rejected | T1 |
+| 9 | T3 | 2 | M | Review the Vec model | Review note maps each used Vec op (len/index/push/extend/slice) to Rust std semantics incl. panics | T1 |
+| 10 | T4 | 2 | M | Review the String/UTF-8 model | Review note for String/str/from_utf8 ops used; gaps listed as nodes or excluded | T1 |
+| 11 | T5 | 2 | M | Review integer and overflow models | Every u8..u128/i64 op used is checked against Rust release-mode semantics (wrapping vs panic) | T1 |
+| 12 | T6 | 2 | S | Review Option/Result/slice models | Review note committed | T1 |
+| 13 | T7 | 3 | L **hard** | Differential tests of the std models | Extracted F* model functions run (OCaml extraction) against Rust on random inputs; zero mismatches over 10^6 cases per op | T3, T4, T5, T6 |
+| 14 | T8 | 3 | M | Proof stability gate | Every F* module verifies with 3 Z3 seeds and z3 pinned; rlimits recorded; flaky modules split | T2 |
+| 15 | T9 | 2 | S | List OS/library interface assumptions | 09 lists each assumed interface (entropy, clock, fs, locks, DB isolation) with its call sites | T1 |
+| 16 | T10 | 1 | M | Pin the rest of the environment (G-3) | opam lock, action SHAs and OS packages pinned; G-3 closed | B0 |
+| 17 | T11 | 2 | M | One proof container | A pinned image runs run-all.sh end to end; hosted CI uses it | T10 |
+| 18 | T12 | 4 | S | Update the trusted-base docs | 07/09 updated from T7-T9; F-6 row reads closed except independent review | T7, T8, T9, T11 |
+| 19 | O1 | 1 | S | Inventory observation producers | Table: every observation field -> producing code (SQL query, store get, verifier, token, clock); committed | B0 |
+| 20 | O2 | 2 | M | Schema check for every rendered SQL | Gate parses migrations into a schema model and checks every byte-pinned statement's tables/columns/types | O1 |
+| 21 | O3a | 3 | S | Row decoders: sharing | Row->observation decoders extracted and proved against the row model | O1, B4 |
+| 22 | O3b | 4 | S | Row decoders: send links | As O3a for send | O3a |
+| 23 | O3c | 4 | M | Row decoders: session and web sessions | As O3a for session | O3a |
+| 24 | O3d | 4 | M | Row decoders: enrollment and pairing | As O3a for enrollment | O3a |
+| 25 | O3e | 4 | M | Row decoders: recovery | As O3a for all four recovery families | O3a |
+| 26 | O3f | 4 | M | Row decoders: vault, rotation, capsules | As O3a for vault | O3a |
+| 27 | O4 | 2 | M | Store key builders are injective | Proof that every store key builder (rl:*, challenge, grant, ...) is injective and namespaces are disjoint | O1 |
+| 28 | O5 | 3 | M **hard** | Store value codecs round-trip | decode(encode v) = v and encode injective for every stored value type | O4, T3 |
+| 29 | O6 | 3 | S | Grant store-key user binding | Proof that a grant key read in a handler is bound to the session user (open item from 15) | O4 |
+| 30 | O7 | 2 | M | Signature-verifier wrapper | Extracted wrapper proved: Ok iff both components verify on the exact signed bytes; components trusted | O1 |
+| 31 | O8 | 2 | M | Token and session-id producer | Claims construction and parse->session observation proved; PASETO crypto trusted | O1 |
+| 32 | O9 | 5 | M **hard** | Epoch freshness | Epoch read/normalize composed with the vault row model proves freshness, not just normalization | O3f |
+| 33 | O10 | 3 | M | TTL expiry as adversarial deletion | Store model lets expiry delete any TTL key at any step; driver and executor theorems still hold | B4 |
+| 34 | O11 | 3 | S | Nonce source contract | Nonce length and single use proved; entropy trusted per T9 | T9 |
+| 35 | O12 | 5 | S | Prove the EnrollmentAccountView adapter | Adapter extracted and proved; conformance test kept as backup | O3d |
+| 36 | O13a | 4 | M | Context origins: sharing | Every context field used in sharing admission is proved to come from the session or a DB row, never the body | O3a, O8 |
+| 37 | O13b | 5 | S | Context origins: send links | As O13a | O3b, O8 |
+| 38 | O13c | 5 | M | Context origins: session | As O13a | O3c, O8 |
+| 39 | O13d | 6 | M | Context origins: enrollment | As O13a | O3d, O8, O12 |
+| 40 | O13e | 5 | M | Context origins: recovery | As O13a; includes WebAuthn verdict origin | O3e, O8, O7, O6 |
+| 41 | O13f | 6 | M | Context origins: vault | As O13a | O3f, O8, O9 |
+| 42 | O14a | 3 | M | Share-envelope encoder inverse | parse(encode x) = x over the checked byte-frame grammar | T4 |
+| 43 | O14b | 4 | M | UTF-8/object conversion | Opened bytes -> object conversion proved against the String model | T4, O14a |
+| 44 | O14c | 5 | L **hard** | Authenticated-open composition | frame parse ; signature check ; open ; object decode composed into one theorem for the production opener | O14b, O7 |
+| 45 | O15 | 5 | M | Recovery fact construction leftovers | Decoders, verifiers, storage effects and restoration for recovery covered (open items from 13/15) | O3e, O7 |
+| 46 | H1 | 1 | S | Handler inventory | Every route (about 60 route entries) tagged: parse / origins / interpreter / reply, each covered or not | B0 |
+| 47 | H2 | 1 | M | Fix U-24 (lost recovery-redemption reply) | Device row records its grant, replay recovers the device id; proved in the redemption driver; U-24 closed | B0 |
+| 48 | H3 | 2 | S | Cancellation lemma for the U-24 fix | Cancellation README shows no lost-reply case left | H2 |
+| 49 | H4 | 3 | M | Request validation | For each handler, typed request -> validated input proved (JSON decode itself trusted per T9) | H1, T4 |
+| 50 | H5 | 2 | M | Reply construction | Verdict -> status/body mapping proved total and leak-free for every handler | H1 |
+| 51 | H6 | 3 | M | Auth middleware | Middleware session extraction proved; composed with O8 | O8, H1 |
+| 52 | H7 | 3 | M | Read-only and leftover routes | Routes with no driver (GET /devices, /sends, /vault/events, /health, ...) proved write-free and auth-correct | H1, B4 |
+| 53 | H8a | 5 | L | Whole-handler theorem: sharing | parse ; middleware ; origins ; interpreter ; reply refines the M19b/M21 state machine | H4, H5, H6, O13a |
+| 54 | H8b | 6 | M | Whole-handler theorem: send links | As H8a | H4, H5, H6, O13b |
+| 55 | H8c | 6 | L | Whole-handler theorem: session and web sessions | As H8a | H4, H5, H6, O13c |
+| 56 | H8d | 7 | L | Whole-handler theorem: enrollment and pairing | As H8a (M13) | H4, H5, H6, O13d |
+| 57 | H8e | 6 | L **hard** | Whole-handler theorem: recovery | As H8a (M18/M26a) | H4, H5, H6, O13e, O15, H3 |
+| 58 | H8f | 7 | L **hard** | Whole-handler theorem: vault and rekey | As H8a (M11) | H4, H5, H6, O13f, O10 |
+| 59 | H8g | 6 | M | Whole-handler theorem: account deletion | As H8a | H4, H5, H6, O13c |
+| 60 | H9 | 8 | M | Early returns and panic freedom | Every early-return path proved to match the spec's state; deny(unwrap/expect/indexing) in handlers | H8a, H8b, H8c, H8d, H8e, H8f, H8g |
+| 61 | H10 | 3 | M | DB isolation stated and tested | Turso/sled linearizability kept as a named trusted interface, backed by a concurrency conformance suite | T9 |
+| 62 | H11a | 8 | M | Cross-driver world: add vault and rekey | Composition theorem re-proved with the new drivers | H8f, H10 |
+| 63 | H11b | 9 | M | Cross-driver world: add sharing and send | As H11a | H11a, H8a, H8b |
+| 64 | H11c | 10 | M | Cross-driver world: add web sessions and enrollment | As H11a | H11b, H8c, H8d |
+| 65 | H11d | 11 | L **hard** | Drop the 'four reads are one step' assumption | Admission reads interleave freely; theorem still holds or a fix lands | H11c |
+| 66 | H11e | 12 | L **hard** | Revocation landing mid-request | Remove the 'checked at start/decision' assumption for revocation and pairing | H11d |
+| 67 | H12 | 13 | S | Close F-1 and F-2 in 08 | Both rows say closed under the boundary; evidence READMEs and correspondence pairs updated | H9, H11e, O2, O14c |
+| 68 | P1 | 1 | S | Journal implementation inventory | Map vela-desktop-core store/sharing/sync journal ops to M28 rules | B0 |
+| 69 | P2a | 1 | M | Tamarin bridge: source term representation | F* type for Tamarin terms used by M28 | B0 |
+| 70 | P2b | 2 | M | Tamarin bridge: slot projection | Proved projection from multi-slot traces to single-slot | P2a |
+| 71 | P2c | 2 | M **hard** | Tamarin bridge: derivability and freshness | Input derivability and global freshness encoded | P2a |
+| 72 | P2d | 3 | L **hard** | Tamarin bridge theorem | Source traces embed into the core encoding and lifts are admissible; M28 lemmas transfer | P2b, P2c |
+| 73 | P3a | 2 | M | Extract the journal step function | Pure journal step in Rust, called by the real code, extracted by hax | P1 |
+| 74 | P3b | 4 | L **hard** | Journal step refines M28 | Every Rust step maps to an M28 rule or a stutter | P3a, P2d |
+| 75 | P3c | 3 | M **hard** | Filesystem model | F* model of write/rename/fsync/crash under the T9 interface | T9 |
+| 76 | P3d | 4 | L **hard** | File operations implement durability phases | Proof that the fs calls realize Persist/Clear phases under any crash point | P3a, P3c |
+| 77 | P4 | 3 | M | Collection equality | Formal definition and proof used by sync/journal | P3a |
+| 78 | P5 | 5 | M | Compose local edits and deletions | Edits/deletions composed with the journal refinement | P3b, P4 |
+| 79 | P6 | 5 | M | Compose RMS migration | Migration path proved to preserve journal invariants | P3b |
+| 80 | P7 | 4 | M | Independent processes | Either a lock with a proved mutual-exclusion argument, or an explicit exclusion in 09 | P3c |
+| 81 | P8 | 5 | M | Uncertain-write re-arm ordering | The fixed re-arm ordering proved, regression kept | P3d |
+| 82 | P9 | 6 | S | Close F-3 in 08 | Gate in CI; F-3 row closed | P5, P6, P7, P8 |
+| 83 | C1 | 1 | M | SHA-256 bridge as a game | Collision step for ct_mlkem/pk_mlkem machine-checked in CryptoVerif | B0 |
+| 84 | C2 | 1 | L **hard** | X25519 cofactor and low-order inputs | Game models cofactor-8 group and the kem.rs reject check | B0 |
+| 85 | C3a | 3 | M | kem.rs encoding checks in Rust | hax proof that kem.rs rejects low-order/non-canonical inputs as claimed | T5 |
+| 86 | C3b | 4 | M | Link wire encodings to the game | Encoding->group-element map proved injective modulo the rejected set | C3a, C2 |
+| 87 | C4 | 1 | M **hard** | Clamped scalar distribution | Machine-checked collision bound for the clamped distribution | B0 |
+| 88 | C5 | 5 | L **hard** | Concrete X25519 combiner theorem | One theorem replacing the model-level COMP-5 | C1, C3b, C4 |
+| 89 | C6 | 2 | L **hard** | Multi-user, multi-challenge KEM | Game or hybrid argument with stated loss | C1 |
+| 90 | C7a | 1 | S | Decide quantum-query scope | Choice recorded in 09: QROM proof, paper reduction, or excluded | B0 |
+| 91 | C7b | 6 | XL **hard** | Quantum-query composition | Per C7a decision; skipped if excluded | C7a, C5 |
+| 92 | C8 | 6 | M | Instantiate KEM-DEM with the combiner | Composition lemma checked, not manual | C5, C6 |
+| 93 | C9 | 7 | M **hard** | AAD and signed share-envelope game | Encryption theorem covers the real envelope with AAD | C8, O14a |
+| 94 | C10 | 1 | L **hard** | HKDF beyond the random oracle | Reductions under named PRF/extractor assumptions | B0 |
+| 95 | C11 | 8 | M | Envelope framing game | Framing injectivity (from wire proofs) used in the game | C9 |
+| 96 | C12 | 3 | M | Hybrid-signature Rust wrapper correspondence | Wrapper <-> game composition closed (open item in 10) | O7 |
+| 97 | C13 | 2 | M | Recovery KDF and password-hashing constructions | Game for recovery key derivation | C10 |
+| 98 | C14 | 3 | M | Application randomness | Keys/nonces drawn from the OS RNG with right lengths; AEAD nonce uniqueness proved | T9 |
+| 99 | C15 | 1 | M | Uniform decryption errors | No error-oracle: all decrypt failures map to one error, proved at the wrapper | B0 |
+| 100 | C16 | 1 | M | Secret erasure | Zeroize gate: secret types implement ZeroizeOnDrop; lint plus review | B0 |
+| 101 | C17 | 1 | S | Legacy v1 decision | decapsulate_legacy_v1 removed or explicitly excluded | B0 |
+| 102 | C18 | 9 | S | Close F-4 in 08 | CryptoVerif README open list empty or excluded | C7b, C11, C12, C13, C14, C15, C16, C17 |
+| 103 | N1 | 1 | S | FFI call-site inventory | Every Kotlin/Swift/TS call into the bridges listed | B0 |
+| 104 | N0a | 2 | M | Desktop: refuse unbound legacy chunks (U-28) | Desktop downloads refuse unsealed blobs as the mobile bridges do (or a recorded migration re-seals them first); regression test; U-28 closed | N1 |
+| 105 | N0b | 3 | S | Desktop: rollback gate on established facts (U-29) | plan_chunk_download gets facts the open actually established, not literals; U-29 closed | N0a |
+| 106 | N0c | 2 | M | Web: admitted downloads (U-27) | The WASM bridge exports the admitted download path; web refuses unsealed blobs and epochs below a floor it can authenticate; U-27 closed | N1 |
+| 107 | N2a | 2 | M | Android bridge is a thin wrapper | hax proof: bridge fns call verified policies, no extra logic | N1 |
+| 108 | N2b | 2 | M | Apple bridge is a thin wrapper | As N2a | N1 |
+| 109 | N2c | 2 | M | WASM bridge is a thin wrapper | As N2a | N1 |
+| 110 | N3 | 3 | M | FFI type mapping | Bytes, errors and nullability mapping reviewed and tested both ways | N2a, N2b, N2c |
+| 111 | N4 | 2 | S | Choose the caller-verification method | Decision recorded (e.g. model-extracted state machines + trace refinement) | N1 |
+| 112 | N5a | 4 | M | Android sync caller | Caller proved to reach admission only via the bridge | N4, N3 |
+| 113 | N5b | 5 | M | Android sharing caller | As N5a | N5a |
+| 114 | N5c | 5 | M | Android enrollment/recovery caller | As N5a | N5a |
+| 115 | N5d | 5 | L **hard** | Android persistence | EncryptedVaultStore writes refine the journal contract | N5a, P3d |
+| 116 | N6a | 4 | M | iOS sync caller | As N5a | N4, N3 |
+| 117 | N6b | 5 | M | iOS sharing caller | As N5a | N6a |
+| 118 | N6c | 5 | M | iOS enrollment/recovery caller | As N5a | N6a |
+| 119 | N6d | 5 | L **hard** | iOS persistence | As N5d | N6a, P3d |
+| 120 | N7a | 4 | M | Desktop callers (gpui and Tauri) | As N5a | N4, N3, N0b |
+| 121 | N7b | 4 | M | Web and extension callers | As N5a | N4, N3, N0c |
+| 122 | N8 | 5 | M **hard** | Unbounded native trace refinement | Bounded download-gate conformance lifted to a proof | N5a, N6a |
+| 123 | N9 | 1 | M **hard** | Enrollment UI trust | Tamarin model of the human code comparison (extends M13) | B0 |
+| 124 | N10a | 1 | M | Joint model skeleton | One Tamarin theory with shared accounts/devices/keys | B0 |
+| 125 | N10b | 2 | M | Joint model: enrollment and recovery | Rules imported, lemmas re-proved | N10a, N9 |
+| 126 | N10c | 3 | M | Joint model: sync | As N10b | N10b |
+| 127 | N10d | 4 | M | Joint model: sharing | As N10b | N10c |
+| 128 | N10e | 5 | L **hard** | Joint model: revocation and claims | TC-6 claims proved in the joint model | N10d |
+| 129 | N11 | 6 | S | Close F-5 in 08 | F-5 row closed; U-8 closed | N5b, N5c, N5d, N6b, N6c, N6d, N7a, N7b, N8, N10e |
+| 130 | Z1 | 14 | M | Automate model<->policy correspondence (G-5) | Drift gate covers every family and mobile call site | H12, N11 |
+| 131 | Z2 | 15 | S | Whole-system claim in 08 | 08 header replaced by a scoped completion claim with its boundary | Z1, T12, P9, C18, B1 |
+| 132 | Z3 | 16 | S | Hosted full run | run-all.sh green in the proof container on the claim commit | Z2 |
+| 133 | Z4 | 17 | L | Independent review (G-6) | Third party reproduces Z3 and reviews models; G-6 closed | Z3 |
 
 ## Dependency DAG
 
@@ -162,7 +162,7 @@ Critical path (by size): B0 -> B1 -> B3 -> B4 -> O3a -> O3f -> O9 -> O13f -> H8f
 flowchart TB
   subgraph B["Baseline and bookkeeping"]
     B0["B0 Get PR #175 green"]
-    B1["B1 Merge PR #175 into main"]
+    B1["B1 Merge PR #175 into main (when approved)"]
     B2["B2 Link this plan from 08"]
     B3["B3 Dedupe the copied Sql/Faulty harnesses"]
     B4{{"B4 One shared F* store/SQL model"}}
@@ -310,11 +310,11 @@ flowchart TB
     Z4["Z4 Independent review (G-6)"]
   end
   B0 --> B1
-  B1 --> B2
-  B1 --> B3
+  B0 --> B2
+  B0 --> B3
   B3 --> B4
   B2 --> B5
-  B1 --> T1
+  B0 --> T1
   T1 --> T2
   T1 --> T3
   T1 --> T4
@@ -326,13 +326,13 @@ flowchart TB
   T6 --> T7
   T2 --> T8
   T1 --> T9
-  B1 --> T10
+  B0 --> T10
   T10 --> T11
   T7 --> T12
   T8 --> T12
   T9 --> T12
   T11 --> T12
-  B1 --> O1
+  B0 --> O1
   O1 --> O2
   O1 --> O3a
   B4 --> O3a
@@ -374,8 +374,8 @@ flowchart TB
   O7 --> O14c
   O3e --> O15
   O7 --> O15
-  B1 --> H1
-  B1 --> H2
+  B0 --> H1
+  B0 --> H2
   H2 --> H3
   H1 --> H4
   T4 --> H4
@@ -437,8 +437,8 @@ flowchart TB
   H11e --> H12
   O2 --> H12
   O14c --> H12
-  B1 --> P1
-  B1 --> P2a
+  B0 --> P1
+  B0 --> P2a
   P2a --> P2b
   P2a --> P2c
   P2b --> P2d
@@ -459,31 +459,31 @@ flowchart TB
   P6 --> P9
   P7 --> P9
   P8 --> P9
-  B1 --> C1
-  B1 --> C2
+  B0 --> C1
+  B0 --> C2
   T5 --> C3a
   C3a --> C3b
   C2 --> C3b
-  B1 --> C4
+  B0 --> C4
   C1 --> C5
   C3b --> C5
   C4 --> C5
   C1 --> C6
-  B1 --> C7a
+  B0 --> C7a
   C7a --> C7b
   C5 --> C7b
   C5 --> C8
   C6 --> C8
   C8 --> C9
   O14a --> C9
-  B1 --> C10
+  B0 --> C10
   C9 --> C11
   O7 --> C12
   C10 --> C13
   T9 --> C14
-  B1 --> C15
-  B1 --> C16
-  B1 --> C17
+  B0 --> C15
+  B0 --> C16
+  B0 --> C17
   C7b --> C18
   C11 --> C18
   C12 --> C18
@@ -492,7 +492,7 @@ flowchart TB
   C15 --> C18
   C16 --> C18
   C17 --> C18
-  B1 --> N1
+  B0 --> N1
   N1 --> N0a
   N0a --> N0b
   N1 --> N0c
@@ -523,8 +523,8 @@ flowchart TB
   N0c --> N7b
   N5a --> N8
   N6a --> N8
-  B1 --> N9
-  B1 --> N10a
+  B0 --> N9
+  B0 --> N10a
   N10a --> N10b
   N9 --> N10b
   N10b --> N10c
@@ -546,6 +546,7 @@ flowchart TB
   T12 --> Z2
   P9 --> Z2
   C18 --> Z2
+  B1 --> Z2
   Z2 --> Z3
   Z3 --> Z4
 ```
@@ -553,21 +554,20 @@ flowchart TB
 ## Levels
 
 - **0**: B0
-- **1**: B1
-- **2**: B2, B3, T1, T10, O1, H1, H2, P1, P2a, C1, C2, C4, C7a, C10, C15, C16, C17, N1, N9, N10a
-- **3**: B4, B5, T2, T3, T4, T5, T6, T9, T11, O2, O4, O7, O8, H3, H5, P2b, P2c, P3a, C6, C13, N0a, N0c, N2a, N2b, N2c, N4, N10b
-- **4**: T7, T8, O3a, O5, O6, O10, O11, O14a, H4, H6, H7, H10, P2d, P3c, P4, C3a, C12, C14, N0b, N3, N10c
-- **5**: T12, O3b, O3c, O3d, O3e, O3f, O13a, O14b, P3b, P3d, P7, C3b, N5a, N6a, N7a, N7b, N10d
-- **6**: O9, O12, O13b, O13c, O13e, O14c, O15, H8a, P5, P6, P8, C5, N5b, N5c, N5d, N6b, N6c, N6d, N8, N10e
-- **7**: O13d, O13f, H8b, H8c, H8e, H8g, P9, C7b, C8, N11
-- **8**: H8d, H8f, C9
-- **9**: H9, H11a, C11
-- **10**: H11b, C18
-- **11**: H11c
-- **12**: H11d
-- **13**: H11e
-- **14**: H12
-- **15**: Z1
-- **16**: Z2
-- **17**: Z3
-- **18**: Z4
+- **1**: B1, B2, B3, T1, T10, O1, H1, H2, P1, P2a, C1, C2, C4, C7a, C10, C15, C16, C17, N1, N9, N10a
+- **2**: B4, B5, T2, T3, T4, T5, T6, T9, T11, O2, O4, O7, O8, H3, H5, P2b, P2c, P3a, C6, C13, N0a, N0c, N2a, N2b, N2c, N4, N10b
+- **3**: T7, T8, O3a, O5, O6, O10, O11, O14a, H4, H6, H7, H10, P2d, P3c, P4, C3a, C12, C14, N0b, N3, N10c
+- **4**: T12, O3b, O3c, O3d, O3e, O3f, O13a, O14b, P3b, P3d, P7, C3b, N5a, N6a, N7a, N7b, N10d
+- **5**: O9, O12, O13b, O13c, O13e, O14c, O15, H8a, P5, P6, P8, C5, N5b, N5c, N5d, N6b, N6c, N6d, N8, N10e
+- **6**: O13d, O13f, H8b, H8c, H8e, H8g, P9, C7b, C8, N11
+- **7**: H8d, H8f, C9
+- **8**: H9, H11a, C11
+- **9**: H11b, C18
+- **10**: H11c
+- **11**: H11d
+- **12**: H11e
+- **13**: H12
+- **14**: Z1
+- **15**: Z2
+- **16**: Z3
+- **17**: Z4

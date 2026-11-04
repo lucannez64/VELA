@@ -11,7 +11,6 @@
  },
  "critical_path": [
   "B0",
-  "B1",
   "B3",
   "B4",
   "O3a",
@@ -47,8 +46,8 @@
    "area": "B",
    "size": "S",
    "hard": false,
-   "title": "Merge PR #175 into main",
-   "done": "main contains the F-1/F-2 work; 08 baseline section points at the merge commit",
+   "title": "Merge PR #175 into main (when approved)",
+   "done": "main contains the work; 08 baseline points at the merge commit. Work proceeds on the PR branch until then",
    "deps": [
     "B0"
    ],
@@ -63,9 +62,9 @@
    "title": "Link this plan from 08",
    "done": "08 'Remaining obligations' rows each list their plan node ids",
    "deps": [
-    "B1"
+    "B0"
    ],
-   "level": 2,
+   "level": 1,
    "step": 3
   },
   {
@@ -76,9 +75,9 @@
    "title": "Dedupe the copied Sql/Faulty harnesses",
    "done": "One shared Rust test harness crate; all executor conformance suites use it and pass",
    "deps": [
-    "B1"
+    "B0"
    ],
-   "level": 2,
+   "level": 1,
    "step": 4
   },
   {
@@ -91,7 +90,7 @@
    "deps": [
     "B3"
    ],
-   "level": 3,
+   "level": 2,
    "step": 5
   },
   {
@@ -104,7 +103,7 @@
    "deps": [
     "B2"
    ],
-   "level": 3,
+   "level": 2,
    "step": 6
   },
   {
@@ -115,9 +114,9 @@
    "title": "Inventory imported model contracts",
    "done": "Script lists every hax/std/F* library symbol the corpus relies on, with use counts; output committed",
    "deps": [
-    "B1"
+    "B0"
    ],
-   "level": 2,
+   "level": 1,
    "step": 7
   },
   {
@@ -130,7 +129,7 @@
    "deps": [
     "T1"
    ],
-   "level": 3,
+   "level": 2,
    "step": 8
   },
   {
@@ -143,7 +142,7 @@
    "deps": [
     "T1"
    ],
-   "level": 3,
+   "level": 2,
    "step": 9
   },
   {
@@ -156,7 +155,7 @@
    "deps": [
     "T1"
    ],
-   "level": 3,
+   "level": 2,
    "step": 10
   },
   {
@@ -169,7 +168,7 @@
    "deps": [
     "T1"
    ],
-   "level": 3,
+   "level": 2,
    "step": 11
   },
   {
@@ -182,7 +181,7 @@
    "deps": [
     "T1"
    ],
-   "level": 3,
+   "level": 2,
    "step": 12
   },
   {
@@ -198,7 +197,7 @@
     "T5",
     "T6"
    ],
-   "level": 4,
+   "level": 3,
    "step": 13
   },
   {
@@ -211,7 +210,7 @@
    "deps": [
     "T2"
    ],
-   "level": 4,
+   "level": 3,
    "step": 14
   },
   {
@@ -224,7 +223,7 @@
    "deps": [
     "T1"
    ],
-   "level": 3,
+   "level": 2,
    "step": 15
   },
   {
@@ -235,9 +234,9 @@
    "title": "Pin the rest of the environment (G-3)",
    "done": "opam lock, action SHAs and OS packages pinned; G-3 closed",
    "deps": [
-    "B1"
+    "B0"
    ],
-   "level": 2,
+   "level": 1,
    "step": 16
   },
   {
@@ -250,7 +249,7 @@
    "deps": [
     "T10"
    ],
-   "level": 3,
+   "level": 2,
    "step": 17
   },
   {
@@ -266,7 +265,7 @@
     "T9",
     "T11"
    ],
-   "level": 5,
+   "level": 4,
    "step": 18
   },
   {
@@ -277,9 +276,9 @@
    "title": "Inventory observation producers",
    "done": "Table: every observation field -> producing code (SQL query, store get, verifier, token, clock); committed",
    "deps": [
-    "B1"
+    "B0"
    ],
-   "level": 2,
+   "level": 1,
    "step": 19
   },
   {
@@ -292,7 +291,7 @@
    "deps": [
     "O1"
    ],
-   "level": 3,
+   "level": 2,
    "step": 20
   },
   {
@@ -306,7 +305,7 @@
     "O1",
     "B4"
    ],
-   "level": 4,
+   "level": 3,
    "step": 21
   },
   {
@@ -319,7 +318,7 @@
    "deps": [
     "O3a"
    ],
-   "level": 5,
+   "level": 4,
    "step": 22
   },
   {
@@ -332,7 +331,7 @@
    "deps": [
     "O3a"
    ],
-   "level": 5,
+   "level": 4,
    "step": 23
   },
   {
@@ -345,7 +344,7 @@
    "deps": [
     "O3a"
    ],
-   "level": 5,
+   "level": 4,
    "step": 24
   },
   {
@@ -358,7 +357,7 @@
    "deps": [
     "O3a"
    ],
-   "level": 5,
+   "level": 4,
    "step": 25
   },
   {
@@ -371,7 +370,7 @@
    "deps": [
     "O3a"
    ],
-   "level": 5,
+   "level": 4,
    "step": 26
   },
   {
@@ -384,7 +383,7 @@
    "deps": [
     "O1"
    ],
-   "level": 3,
+   "level": 2,
    "step": 27
   },
   {
@@ -398,7 +397,7 @@
     "O4",
     "T3"
    ],
-   "level": 4,
+   "level": 3,
    "step": 28
   },
   {
@@ -411,7 +410,7 @@
    "deps": [
     "O4"
    ],
-   "level": 4,
+   "level": 3,
    "step": 29
   },
   {
@@ -424,7 +423,7 @@
    "deps": [
     "O1"
    ],
-   "level": 3,
+   "level": 2,
    "step": 30
   },
   {
@@ -437,7 +436,7 @@
    "deps": [
     "O1"
    ],
-   "level": 3,
+   "level": 2,
    "step": 31
   },
   {
@@ -450,7 +449,7 @@
    "deps": [
     "O3f"
    ],
-   "level": 6,
+   "level": 5,
    "step": 32
   },
   {
@@ -463,7 +462,7 @@
    "deps": [
     "B4"
    ],
-   "level": 4,
+   "level": 3,
    "step": 33
   },
   {
@@ -476,7 +475,7 @@
    "deps": [
     "T9"
    ],
-   "level": 4,
+   "level": 3,
    "step": 34
   },
   {
@@ -489,7 +488,7 @@
    "deps": [
     "O3d"
    ],
-   "level": 6,
+   "level": 5,
    "step": 35
   },
   {
@@ -503,7 +502,7 @@
     "O3a",
     "O8"
    ],
-   "level": 5,
+   "level": 4,
    "step": 36
   },
   {
@@ -517,7 +516,7 @@
     "O3b",
     "O8"
    ],
-   "level": 6,
+   "level": 5,
    "step": 37
   },
   {
@@ -531,7 +530,7 @@
     "O3c",
     "O8"
    ],
-   "level": 6,
+   "level": 5,
    "step": 38
   },
   {
@@ -546,7 +545,7 @@
     "O8",
     "O12"
    ],
-   "level": 7,
+   "level": 6,
    "step": 39
   },
   {
@@ -562,7 +561,7 @@
     "O7",
     "O6"
    ],
-   "level": 6,
+   "level": 5,
    "step": 40
   },
   {
@@ -577,7 +576,7 @@
     "O8",
     "O9"
    ],
-   "level": 7,
+   "level": 6,
    "step": 41
   },
   {
@@ -590,7 +589,7 @@
    "deps": [
     "T4"
    ],
-   "level": 4,
+   "level": 3,
    "step": 42
   },
   {
@@ -604,7 +603,7 @@
     "T4",
     "O14a"
    ],
-   "level": 5,
+   "level": 4,
    "step": 43
   },
   {
@@ -618,7 +617,7 @@
     "O14b",
     "O7"
    ],
-   "level": 6,
+   "level": 5,
    "step": 44
   },
   {
@@ -632,7 +631,7 @@
     "O3e",
     "O7"
    ],
-   "level": 6,
+   "level": 5,
    "step": 45
   },
   {
@@ -643,9 +642,9 @@
    "title": "Handler inventory",
    "done": "Every route (about 60 route entries) tagged: parse / origins / interpreter / reply, each covered or not",
    "deps": [
-    "B1"
+    "B0"
    ],
-   "level": 2,
+   "level": 1,
    "step": 46
   },
   {
@@ -656,9 +655,9 @@
    "title": "Fix U-24 (lost recovery-redemption reply)",
    "done": "Device row records its grant, replay recovers the device id; proved in the redemption driver; U-24 closed",
    "deps": [
-    "B1"
+    "B0"
    ],
-   "level": 2,
+   "level": 1,
    "step": 47
   },
   {
@@ -671,7 +670,7 @@
    "deps": [
     "H2"
    ],
-   "level": 3,
+   "level": 2,
    "step": 48
   },
   {
@@ -685,7 +684,7 @@
     "H1",
     "T4"
    ],
-   "level": 4,
+   "level": 3,
    "step": 49
   },
   {
@@ -698,7 +697,7 @@
    "deps": [
     "H1"
    ],
-   "level": 3,
+   "level": 2,
    "step": 50
   },
   {
@@ -712,7 +711,7 @@
     "O8",
     "H1"
    ],
-   "level": 4,
+   "level": 3,
    "step": 51
   },
   {
@@ -726,7 +725,7 @@
     "H1",
     "B4"
    ],
-   "level": 4,
+   "level": 3,
    "step": 52
   },
   {
@@ -742,7 +741,7 @@
     "H6",
     "O13a"
    ],
-   "level": 6,
+   "level": 5,
    "step": 53
   },
   {
@@ -758,7 +757,7 @@
     "H6",
     "O13b"
    ],
-   "level": 7,
+   "level": 6,
    "step": 54
   },
   {
@@ -774,7 +773,7 @@
     "H6",
     "O13c"
    ],
-   "level": 7,
+   "level": 6,
    "step": 55
   },
   {
@@ -790,7 +789,7 @@
     "H6",
     "O13d"
    ],
-   "level": 8,
+   "level": 7,
    "step": 56
   },
   {
@@ -808,7 +807,7 @@
     "O15",
     "H3"
    ],
-   "level": 7,
+   "level": 6,
    "step": 57
   },
   {
@@ -825,7 +824,7 @@
     "O13f",
     "O10"
    ],
-   "level": 8,
+   "level": 7,
    "step": 58
   },
   {
@@ -841,7 +840,7 @@
     "H6",
     "O13c"
    ],
-   "level": 7,
+   "level": 6,
    "step": 59
   },
   {
@@ -860,7 +859,7 @@
     "H8f",
     "H8g"
    ],
-   "level": 9,
+   "level": 8,
    "step": 60
   },
   {
@@ -873,7 +872,7 @@
    "deps": [
     "T9"
    ],
-   "level": 4,
+   "level": 3,
    "step": 61
   },
   {
@@ -887,7 +886,7 @@
     "H8f",
     "H10"
    ],
-   "level": 9,
+   "level": 8,
    "step": 62
   },
   {
@@ -902,7 +901,7 @@
     "H8a",
     "H8b"
    ],
-   "level": 10,
+   "level": 9,
    "step": 63
   },
   {
@@ -917,7 +916,7 @@
     "H8c",
     "H8d"
    ],
-   "level": 11,
+   "level": 10,
    "step": 64
   },
   {
@@ -930,7 +929,7 @@
    "deps": [
     "H11c"
    ],
-   "level": 12,
+   "level": 11,
    "step": 65
   },
   {
@@ -943,7 +942,7 @@
    "deps": [
     "H11d"
    ],
-   "level": 13,
+   "level": 12,
    "step": 66
   },
   {
@@ -959,7 +958,7 @@
     "O2",
     "O14c"
    ],
-   "level": 14,
+   "level": 13,
    "step": 67
   },
   {
@@ -970,9 +969,9 @@
    "title": "Journal implementation inventory",
    "done": "Map vela-desktop-core store/sharing/sync journal ops to M28 rules",
    "deps": [
-    "B1"
+    "B0"
    ],
-   "level": 2,
+   "level": 1,
    "step": 68
   },
   {
@@ -983,9 +982,9 @@
    "title": "Tamarin bridge: source term representation",
    "done": "F* type for Tamarin terms used by M28",
    "deps": [
-    "B1"
+    "B0"
    ],
-   "level": 2,
+   "level": 1,
    "step": 69
   },
   {
@@ -998,7 +997,7 @@
    "deps": [
     "P2a"
    ],
-   "level": 3,
+   "level": 2,
    "step": 70
   },
   {
@@ -1011,7 +1010,7 @@
    "deps": [
     "P2a"
    ],
-   "level": 3,
+   "level": 2,
    "step": 71
   },
   {
@@ -1025,7 +1024,7 @@
     "P2b",
     "P2c"
    ],
-   "level": 4,
+   "level": 3,
    "step": 72
   },
   {
@@ -1038,7 +1037,7 @@
    "deps": [
     "P1"
    ],
-   "level": 3,
+   "level": 2,
    "step": 73
   },
   {
@@ -1052,7 +1051,7 @@
     "P3a",
     "P2d"
    ],
-   "level": 5,
+   "level": 4,
    "step": 74
   },
   {
@@ -1065,7 +1064,7 @@
    "deps": [
     "T9"
    ],
-   "level": 4,
+   "level": 3,
    "step": 75
   },
   {
@@ -1079,7 +1078,7 @@
     "P3a",
     "P3c"
    ],
-   "level": 5,
+   "level": 4,
    "step": 76
   },
   {
@@ -1092,7 +1091,7 @@
    "deps": [
     "P3a"
    ],
-   "level": 4,
+   "level": 3,
    "step": 77
   },
   {
@@ -1106,7 +1105,7 @@
     "P3b",
     "P4"
    ],
-   "level": 6,
+   "level": 5,
    "step": 78
   },
   {
@@ -1119,7 +1118,7 @@
    "deps": [
     "P3b"
    ],
-   "level": 6,
+   "level": 5,
    "step": 79
   },
   {
@@ -1132,7 +1131,7 @@
    "deps": [
     "P3c"
    ],
-   "level": 5,
+   "level": 4,
    "step": 80
   },
   {
@@ -1145,7 +1144,7 @@
    "deps": [
     "P3d"
    ],
-   "level": 6,
+   "level": 5,
    "step": 81
   },
   {
@@ -1161,7 +1160,7 @@
     "P7",
     "P8"
    ],
-   "level": 7,
+   "level": 6,
    "step": 82
   },
   {
@@ -1172,9 +1171,9 @@
    "title": "SHA-256 bridge as a game",
    "done": "Collision step for ct_mlkem/pk_mlkem machine-checked in CryptoVerif",
    "deps": [
-    "B1"
+    "B0"
    ],
-   "level": 2,
+   "level": 1,
    "step": 83
   },
   {
@@ -1185,9 +1184,9 @@
    "title": "X25519 cofactor and low-order inputs",
    "done": "Game models cofactor-8 group and the kem.rs reject check",
    "deps": [
-    "B1"
+    "B0"
    ],
-   "level": 2,
+   "level": 1,
    "step": 84
   },
   {
@@ -1200,7 +1199,7 @@
    "deps": [
     "T5"
    ],
-   "level": 4,
+   "level": 3,
    "step": 85
   },
   {
@@ -1214,7 +1213,7 @@
     "C3a",
     "C2"
    ],
-   "level": 5,
+   "level": 4,
    "step": 86
   },
   {
@@ -1225,9 +1224,9 @@
    "title": "Clamped scalar distribution",
    "done": "Machine-checked collision bound for the clamped distribution",
    "deps": [
-    "B1"
+    "B0"
    ],
-   "level": 2,
+   "level": 1,
    "step": 87
   },
   {
@@ -1242,7 +1241,7 @@
     "C3b",
     "C4"
    ],
-   "level": 6,
+   "level": 5,
    "step": 88
   },
   {
@@ -1255,7 +1254,7 @@
    "deps": [
     "C1"
    ],
-   "level": 3,
+   "level": 2,
    "step": 89
   },
   {
@@ -1266,9 +1265,9 @@
    "title": "Decide quantum-query scope",
    "done": "Choice recorded in 09: QROM proof, paper reduction, or excluded",
    "deps": [
-    "B1"
+    "B0"
    ],
-   "level": 2,
+   "level": 1,
    "step": 90
   },
   {
@@ -1282,7 +1281,7 @@
     "C7a",
     "C5"
    ],
-   "level": 7,
+   "level": 6,
    "step": 91
   },
   {
@@ -1296,7 +1295,7 @@
     "C5",
     "C6"
    ],
-   "level": 7,
+   "level": 6,
    "step": 92
   },
   {
@@ -1310,7 +1309,7 @@
     "C8",
     "O14a"
    ],
-   "level": 8,
+   "level": 7,
    "step": 93
   },
   {
@@ -1321,9 +1320,9 @@
    "title": "HKDF beyond the random oracle",
    "done": "Reductions under named PRF/extractor assumptions",
    "deps": [
-    "B1"
+    "B0"
    ],
-   "level": 2,
+   "level": 1,
    "step": 94
   },
   {
@@ -1336,7 +1335,7 @@
    "deps": [
     "C9"
    ],
-   "level": 9,
+   "level": 8,
    "step": 95
   },
   {
@@ -1349,7 +1348,7 @@
    "deps": [
     "O7"
    ],
-   "level": 4,
+   "level": 3,
    "step": 96
   },
   {
@@ -1362,7 +1361,7 @@
    "deps": [
     "C10"
    ],
-   "level": 3,
+   "level": 2,
    "step": 97
   },
   {
@@ -1375,7 +1374,7 @@
    "deps": [
     "T9"
    ],
-   "level": 4,
+   "level": 3,
    "step": 98
   },
   {
@@ -1386,9 +1385,9 @@
    "title": "Uniform decryption errors",
    "done": "No error-oracle: all decrypt failures map to one error, proved at the wrapper",
    "deps": [
-    "B1"
+    "B0"
    ],
-   "level": 2,
+   "level": 1,
    "step": 99
   },
   {
@@ -1399,9 +1398,9 @@
    "title": "Secret erasure",
    "done": "Zeroize gate: secret types implement ZeroizeOnDrop; lint plus review",
    "deps": [
-    "B1"
+    "B0"
    ],
-   "level": 2,
+   "level": 1,
    "step": 100
   },
   {
@@ -1412,9 +1411,9 @@
    "title": "Legacy v1 decision",
    "done": "decapsulate_legacy_v1 removed or explicitly excluded",
    "deps": [
-    "B1"
+    "B0"
    ],
-   "level": 2,
+   "level": 1,
    "step": 101
   },
   {
@@ -1434,7 +1433,7 @@
     "C16",
     "C17"
    ],
-   "level": 10,
+   "level": 9,
    "step": 102
   },
   {
@@ -1445,9 +1444,9 @@
    "title": "FFI call-site inventory",
    "done": "Every Kotlin/Swift/TS call into the bridges listed",
    "deps": [
-    "B1"
+    "B0"
    ],
-   "level": 2,
+   "level": 1,
    "step": 103
   },
   {
@@ -1460,7 +1459,7 @@
    "deps": [
     "N1"
    ],
-   "level": 3,
+   "level": 2,
    "step": 104
   },
   {
@@ -1473,7 +1472,7 @@
    "deps": [
     "N0a"
    ],
-   "level": 4,
+   "level": 3,
    "step": 105
   },
   {
@@ -1486,7 +1485,7 @@
    "deps": [
     "N1"
    ],
-   "level": 3,
+   "level": 2,
    "step": 106
   },
   {
@@ -1499,7 +1498,7 @@
    "deps": [
     "N1"
    ],
-   "level": 3,
+   "level": 2,
    "step": 107
   },
   {
@@ -1512,7 +1511,7 @@
    "deps": [
     "N1"
    ],
-   "level": 3,
+   "level": 2,
    "step": 108
   },
   {
@@ -1525,7 +1524,7 @@
    "deps": [
     "N1"
    ],
-   "level": 3,
+   "level": 2,
    "step": 109
   },
   {
@@ -1540,7 +1539,7 @@
     "N2b",
     "N2c"
    ],
-   "level": 4,
+   "level": 3,
    "step": 110
   },
   {
@@ -1553,7 +1552,7 @@
    "deps": [
     "N1"
    ],
-   "level": 3,
+   "level": 2,
    "step": 111
   },
   {
@@ -1567,7 +1566,7 @@
     "N4",
     "N3"
    ],
-   "level": 5,
+   "level": 4,
    "step": 112
   },
   {
@@ -1580,7 +1579,7 @@
    "deps": [
     "N5a"
    ],
-   "level": 6,
+   "level": 5,
    "step": 113
   },
   {
@@ -1593,7 +1592,7 @@
    "deps": [
     "N5a"
    ],
-   "level": 6,
+   "level": 5,
    "step": 114
   },
   {
@@ -1607,7 +1606,7 @@
     "N5a",
     "P3d"
    ],
-   "level": 6,
+   "level": 5,
    "step": 115
   },
   {
@@ -1621,7 +1620,7 @@
     "N4",
     "N3"
    ],
-   "level": 5,
+   "level": 4,
    "step": 116
   },
   {
@@ -1634,7 +1633,7 @@
    "deps": [
     "N6a"
    ],
-   "level": 6,
+   "level": 5,
    "step": 117
   },
   {
@@ -1647,7 +1646,7 @@
    "deps": [
     "N6a"
    ],
-   "level": 6,
+   "level": 5,
    "step": 118
   },
   {
@@ -1661,7 +1660,7 @@
     "N6a",
     "P3d"
    ],
-   "level": 6,
+   "level": 5,
    "step": 119
   },
   {
@@ -1676,7 +1675,7 @@
     "N3",
     "N0b"
    ],
-   "level": 5,
+   "level": 4,
    "step": 120
   },
   {
@@ -1691,7 +1690,7 @@
     "N3",
     "N0c"
    ],
-   "level": 5,
+   "level": 4,
    "step": 121
   },
   {
@@ -1705,7 +1704,7 @@
     "N5a",
     "N6a"
    ],
-   "level": 6,
+   "level": 5,
    "step": 122
   },
   {
@@ -1716,9 +1715,9 @@
    "title": "Enrollment UI trust",
    "done": "Tamarin model of the human code comparison (extends M13)",
    "deps": [
-    "B1"
+    "B0"
    ],
-   "level": 2,
+   "level": 1,
    "step": 123
   },
   {
@@ -1729,9 +1728,9 @@
    "title": "Joint model skeleton",
    "done": "One Tamarin theory with shared accounts/devices/keys",
    "deps": [
-    "B1"
+    "B0"
    ],
-   "level": 2,
+   "level": 1,
    "step": 124
   },
   {
@@ -1745,7 +1744,7 @@
     "N10a",
     "N9"
    ],
-   "level": 3,
+   "level": 2,
    "step": 125
   },
   {
@@ -1758,7 +1757,7 @@
    "deps": [
     "N10b"
    ],
-   "level": 4,
+   "level": 3,
    "step": 126
   },
   {
@@ -1771,7 +1770,7 @@
    "deps": [
     "N10c"
    ],
-   "level": 5,
+   "level": 4,
    "step": 127
   },
   {
@@ -1784,7 +1783,7 @@
    "deps": [
     "N10d"
    ],
-   "level": 6,
+   "level": 5,
    "step": 128
   },
   {
@@ -1806,7 +1805,7 @@
     "N8",
     "N10e"
    ],
-   "level": 7,
+   "level": 6,
    "step": 129
   },
   {
@@ -1820,7 +1819,7 @@
     "H12",
     "N11"
    ],
-   "level": 15,
+   "level": 14,
    "step": 130
   },
   {
@@ -1834,9 +1833,10 @@
     "Z1",
     "T12",
     "P9",
-    "C18"
+    "C18",
+    "B1"
    ],
-   "level": 16,
+   "level": 15,
    "step": 131
   },
   {
@@ -1849,7 +1849,7 @@
    "deps": [
     "Z2"
    ],
-   "level": 17,
+   "level": 16,
    "step": 132
   },
   {
@@ -1862,7 +1862,7 @@
    "deps": [
     "Z3"
    ],
-   "level": 18,
+   "level": 17,
    "step": 133
   }
  ]
