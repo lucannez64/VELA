@@ -133,7 +133,7 @@
       }
     },
     {
-      "boundary": "computational games and reviewed manual Rust mapping (RO/uniform-group/perfect-correctness assumptions; SHA-256 collision step machine-checked in three companion games; multi-user multi-challenge versions machine-checked; concrete scalar/encoding/composition bridges remain open)",
+      "boundary": "computational games and reviewed manual Rust mapping (RO/uniform-group/perfect-correctness assumptions; SHA-256 collision step machine-checked in three companion games; multi-user multi-challenge versions machine-checked; X25519 cofactor-8 and the kem.rs low-order reject check machine-checked; concrete scalar/encoding-alias/composition bridges remain open)",
       "artifacts": {
         "security/formal/cryptoverif/hybrid_sig_ed25519_euf.ocv": "89fdf3ca41a6ac0638f5818f689a18d99835f58740c1f549194ce4a37c8ca03f",
         "security/formal/cryptoverif/hybrid_sig_mldsa_euf.ocv": "835dec5e6880fa6aa669ea65b55312b804a4787f0ad861fea05d4fd992970287",
@@ -141,10 +141,10 @@
         "security/formal/cryptoverif/kem_v1_x25519_baseline.ocv": "cf5b6b780c01cd8bca5749723f4f083b7deb29c09dac3ef6a3e94e30a06e39cb",
         "security/formal/cryptoverif/kem_v2_mlkem_cca.ocv": "0aee82cc577eb7fa26b6525bbed79a1f08e2ce738edca8f2228b2ea946c01b5e",
         "security/formal/cryptoverif/kem_v2_x25519_gdh.ocv": "fc5f9fa9beb55117e6a4ff9a0496a8f5b5287f2d2b8724a7608f434848e96777",
-        "security/formal/cryptoverif/README.md": "279d60c0a4e1760363efbdecba296d8a92f94efe983f3ad25bf4f0b739ab468f",
-        "security/formal/run-cryptoverif-proofs.sh": "64f4e45564caae9fe286cad55dc764e364adc1edb69924af77db17fd996120fe",
+        "security/formal/cryptoverif/README.md": "dd7a76eb4ffe1a117a7eba6c980f0d56c0d1566f7ce7149ae58f1cff4442308a",
+        "security/formal/run-cryptoverif-proofs.sh": "978ac49b8e5d423e197fc5ba697103b4727d0e6d61400d366ad9da2e18684f49",
         "security/formal/check-cryptoverif-boundary.py": "3e79da3d7b3ecb9b88aa435ee6fd0c2cebd3d0b41fad322643193879915158cd",
-        "security/formal/tests/test_cryptoverif_runner.py": "46612db5a865d0329dfd4bad2cd8491c14a0dde60183e48865f52c4de60e8e4c",
+        "security/formal/tests/test_cryptoverif_runner.py": "dcaccec52def47be3e913e2c106728633a8a65de1ce1cc91cdd32bf47fef406d",
         "libVELA/vela-crypto/src/kem.rs": "828694f872a7b63cfbec1ab8810141c08368e9fe9674d59690145894d7bcc155",
         "libVELA/vela-crypto/src/signing.rs": "82c9e2f3f9882d62cad5707cd8287b1299b373b10629eff912477f519249150b",
         "libVELA/vela-crypto/src/aead.rs": "9e48d9122dbe59d689a5432c9805edf56551a2f805ca48c736ec7fd6aa08c3ca",
@@ -157,7 +157,10 @@
         "security/formal/check-cryptoverif-sha256-bound.py": "400bb1e8b37ebc914ba76741a043949a8156eef962bc07aee4c5259655163f4f",
         "security/formal/cryptoverif/kem_v2_x25519_gdh_multi_sha256.ocv": "0d54e6be58598302c920aa9fbfd2d5ae08899f0228deb8295df8cc4c4764dc05",
         "security/formal/cryptoverif/kem_v2_x25519_gdh_nonuniform_multi_sha256.ocv": "479a0ee4491ebea4b31535045c02296bc35c01ae20bfc1d0561f402937bb47b1",
-        "security/formal/cryptoverif/kem_v2_mlkem_cca_multi_sha256.ocv": "c7f904dd1c55d3157c77454faac689f61ff0152e7ee347cc131e0b446eeac5fa"
+        "security/formal/cryptoverif/kem_v2_mlkem_cca_multi_sha256.ocv": "c7f904dd1c55d3157c77454faac689f61ff0152e7ee347cc131e0b446eeac5fa",
+        "security/formal/cryptoverif/kem_v2_x25519_cofactor_sha256.ocv": "f2664dc0998eb06ccfe9de2058147317f4e0f10dbf09d583f8c4f9844e924002",
+        "security/formal/cryptoverif/x25519_cofactor_projection.ocv": "bab0223cc9a8d2ccbe66373884d4b8e7c6c3eebc0b28c7ccfe1f4adb18cff199",
+        "security/formal/check-cryptoverif-cofactor.py": "225418488bd07be67b3b16ddbcffff5d0676c26ffeff93a1957305e0b834b1ea"
       }
     },
     {
