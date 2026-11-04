@@ -73,3 +73,14 @@ evidence, not substitutes for a missing theorem.
   which binds no transcript. Envelopes still in the old format stop opening;
   their owners have to re-share. The separate v1 possession-commitment check
   (`allow_legacy_v1`) is a different path and is not part of this decision.
+- **Native callers are verified by architecture, CI rules and conformance
+  testing, not deductive proof (2026-11-04, plan step N4).** (1) Security
+  decisions stay in the verified Rust core and Kotlin, Swift and TypeScript
+  callers stay thin. (2) CI rules (detekt or Android Lint, SwiftLint, and
+  repository scripts) fail the build when a caller bypasses the bridge, ignores
+  an admission error or reimplements a security decision. (3) Each caller flow
+  gets conformance and property-based tests against the Rust rules, extending
+  the existing bounded mobile sync conformance. This gives strong evidence for
+  the native side, not a proof; TC-5 claims for Kotlin and Swift say so.
+  Bounded model checking of compiled Kotlin (for example JBMC) may be added
+  later for the most critical Android flows.

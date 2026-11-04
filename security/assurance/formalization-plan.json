@@ -1548,7 +1548,7 @@
    "size": "S",
    "hard": false,
    "title": "Choose the caller-verification method",
-   "done": "Decision recorded (e.g. model-extracted state machines + trace refinement)",
+   "done": "Decided 2026-11-04 (09): thin callers + CI rules + conformance/property tests",
    "deps": [
     "N1"
    ],
@@ -1561,7 +1561,7 @@
    "size": "M",
    "hard": false,
    "title": "Android sync caller",
-   "done": "Caller proved to reach admission only via the bridge",
+   "done": "CI rule rejects any sync download that bypasses the bridge or ignores its error; property tests match the Rust rules",
    "deps": [
     "N4",
     "N3"
@@ -1575,7 +1575,7 @@
    "size": "M",
    "hard": false,
    "title": "Android sharing caller",
-   "done": "As N5a",
+   "done": "As N5a (CI rule + property tests)",
    "deps": [
     "N5a"
    ],
@@ -1588,7 +1588,7 @@
    "size": "M",
    "hard": false,
    "title": "Android enrollment/recovery caller",
-   "done": "As N5a",
+   "done": "As N5a (CI rule + property tests)",
    "deps": [
     "N5a"
    ],
@@ -1698,8 +1698,8 @@
    "area": "N",
    "size": "M",
    "hard": true,
-   "title": "Unbounded native trace refinement",
-   "done": "Bounded download-gate conformance lifted to a proof",
+   "title": "Native conformance at scale",
+   "done": "Property-based conformance of every native caller flow against the Rust rules runs in CI on Android and iOS (no unbounded proof, per N4)",
    "deps": [
     "N5a",
     "N6a"

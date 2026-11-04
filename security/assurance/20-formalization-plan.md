@@ -132,10 +132,10 @@ Critical path (by size): B0 -> B3 -> B4 -> O3a -> O3f -> O9 -> O13f -> H8f -> H1
 | 108 | N2b | 2 | M | Apple bridge is a thin wrapper | As N2a | N1 |
 | 109 | N2c | 2 | M | WASM bridge is a thin wrapper | As N2a | N1 |
 | 110 | N3 | 3 | M | FFI type mapping | Bytes, errors and nullability mapping reviewed and tested both ways | N2a, N2b, N2c |
-| 111 | N4 | 2 | S | Choose the caller-verification method | Decision recorded (e.g. model-extracted state machines + trace refinement) | N1 |
-| 112 | N5a | 4 | M | Android sync caller | Caller proved to reach admission only via the bridge | N4, N3 |
-| 113 | N5b | 5 | M | Android sharing caller | As N5a | N5a |
-| 114 | N5c | 5 | M | Android enrollment/recovery caller | As N5a | N5a |
+| 111 | N4 | 2 | S | Choose the caller-verification method | Decided 2026-11-04 (09): thin callers + CI rules + conformance/property tests | N1 |
+| 112 | N5a | 4 | M | Android sync caller | CI rule rejects any sync download that bypasses the bridge or ignores its error; property tests match the Rust rules | N4, N3 |
+| 113 | N5b | 5 | M | Android sharing caller | As N5a (CI rule + property tests) | N5a |
+| 114 | N5c | 5 | M | Android enrollment/recovery caller | As N5a (CI rule + property tests) | N5a |
 | 115 | N5d | 5 | L **hard** | Android persistence | EncryptedVaultStore writes refine the journal contract | N5a, P3d |
 | 116 | N6a | 4 | M | iOS sync caller | As N5a | N4, N3 |
 | 117 | N6b | 5 | M | iOS sharing caller | As N5a | N6a |
@@ -143,7 +143,7 @@ Critical path (by size): B0 -> B3 -> B4 -> O3a -> O3f -> O9 -> O13f -> H8f -> H1
 | 119 | N6d | 5 | L **hard** | iOS persistence | As N5d | N6a, P3d |
 | 120 | N7a | 4 | M | Desktop callers (gpui and Tauri) | As N5a | N4, N3, N0b |
 | 121 | N7b | 4 | M | Web and extension callers | As N5a | N4, N3, N0c |
-| 122 | N8 | 5 | M **hard** | Unbounded native trace refinement | Bounded download-gate conformance lifted to a proof | N5a, N6a |
+| 122 | N8 | 5 | M **hard** | Native conformance at scale | Property-based conformance of every native caller flow against the Rust rules runs in CI on Android and iOS (no unbounded proof, per N4) | N5a, N6a |
 | 123 | N9 | 1 | M **hard** | Enrollment UI trust | Tamarin model of the human code comparison (extends M13) | B0 |
 | 124 | N10a | 1 | M | Joint model skeleton | One Tamarin theory with shared accounts/devices/keys | B0 |
 | 125 | N10b | 2 | M | Joint model: enrollment and recovery | Rules imported, lemmas re-proved | N10a, N9 |
@@ -294,7 +294,7 @@ flowchart TB
     N6d{{"N6d iOS persistence"}}
     N7a["N7a Desktop callers (gpui and Tauri)"]
     N7b["N7b Web and extension callers"]
-    N8{{"N8 Unbounded native trace refinement"}}
+    N8{{"N8 Native conformance at scale"}}
     N9{{"N9 Enrollment UI trust"}}
     N10a["N10a Joint model skeleton"]
     N10b["N10b Joint model: enrollment and recovery"]
