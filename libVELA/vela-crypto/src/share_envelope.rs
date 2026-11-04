@@ -198,6 +198,113 @@ fn push_header(out: &mut Vec<u8>, header: &ShareHeader) {
     out.extend_from_slice(&crate::wire::encode_u64_be(header.revision));
 }
 
+/// Wire bytes of the signed envelope header, in frame order.
+///
+/// Text fields are the UTF-8 bytes of the corresponding [`ShareHeader`]
+/// strings; [`seal_signed_item`] fills them with `as_bytes()`. Keeping the
+/// encoder on bytes makes the frame grammar checked by
+/// [`parse_share_frame`] the whole input of the encoder theorem; the
+/// String-to-bytes correspondence is the separate UTF-8 conversion step.
+#[derive(Clone, Copy, Debug)]
+pub struct ShareEnvelopeBytes<'a> {
+    pub sender_user_id: &'a [u8],
+    pub sender_device_id: &'a [u8],
+    pub sender_vk: &'a [u8],
+    pub recipient_user_id: &'a [u8],
+    pub recipient_ek_digest: &'a [u8; 32],
+    pub lineage_id: &'a [u8],
+    pub revision: u64,
+}
+
+/// Append `value`, rejecting a frame that would exceed the byte-vector limit.
+///
+/// The check is part of the functional contract, not defensive style: the
+/// extracted `Alloc.Vec` model requires the concatenation length to fit
+/// `usize`, and the inverse theorem rules this branch out from the input's
+/// stated total-length bound.
+#[cfg_attr(hax, hax_lib::fstar::options("--fuel 2 --ifuel 2"))]
+#[cfg_attr(hax, hax_lib::ensures(|result| match result {
+    Some(out) => value.len() <= usize::MAX - input.len()
+        && out.len() == input.len() + value.len()
+        && &out.as_slice()[..input.len()] == input.as_slice()
+        && &out.as_slice()[input.len()..] == value,
+    None => value.len() > usize::MAX - input.len(),
+}))]
+fn push_bytes(mut input: Vec<u8>, value: &[u8]) -> Option<Vec<u8>> {
+    if value.len() > usize::MAX - input.len() {
+        return None;
+    }
+    input.extend_from_slice(value);
+    Some(input)
+}
+
+fn push_u64(input: Vec<u8>, value: u64) -> Option<Vec<u8>> {
+    push_bytes(input, &crate::wire::encode_u64_be(value))
+}
+
+fn push_lp_checked(input: Vec<u8>, value: &[u8]) -> Option<Vec<u8>> {
+    let input = push_u64(input, value.len() as u64)?;
+    push_bytes(input, value)
+}
+
+/// Append the signed body: every header field, then `lp(item)`.
+fn push_share_body(
+    input: Vec<u8>,
+    fields: &ShareEnvelopeBytes<'_>,
+    item: &[u8],
+) -> Option<Vec<u8>> {
+    let input = push_lp_checked(input, fields.sender_user_id)?;
+    let input = push_lp_checked(input, fields.sender_device_id)?;
+    let input = push_lp_checked(input, fields.sender_vk)?;
+    let input = push_lp_checked(input, fields.recipient_user_id)?;
+    let input = push_bytes(input, &fields.recipient_ek_digest[..])?;
+    let input = push_lp_checked(input, fields.lineage_id)?;
+    let input = push_u64(input, fields.revision)?;
+    push_lp_checked(input, item)
+}
+
+/// Append the `VSE2` marker and the signed body.
+fn push_share_prefix(
+    input: Vec<u8>,
+    fields: &ShareEnvelopeBytes<'_>,
+    item: &[u8],
+) -> Option<Vec<u8>> {
+    let input = push_bytes(input, &SHARE_ENVELOPE_MAGIC[..])?;
+    push_share_body(input, fields, item)
+}
+
+/// Encode the bytes the sender signs a share item over (after the marker).
+///
+/// Returns `None` only when the concatenation would exceed the addressable
+/// byte-vector length. Field-width checks (2624-byte key, 4691-byte signature)
+/// are separate parser admission checks.
+pub fn encode_share_prefix(
+    fields: &ShareEnvelopeBytes<'_>,
+    item: &[u8],
+) -> Option<Vec<u8>> {
+    push_share_prefix(Vec::new(), fields, item)
+}
+
+/// Append `lp(signature)` to an encoded prefix, producing the complete frame.
+pub fn append_share_signature(prefix: Vec<u8>, signature: &[u8]) -> Option<Vec<u8>> {
+    push_lp_checked(prefix, signature)
+}
+
+/// Complete VSE2 frame: marker, header, `lp(item)`, `lp(signature)`.
+///
+/// This is the production encoder for the bytes [`parse_share_frame`] reads.
+/// `signature` is the sender's hybrid signature over
+/// [`signing_transcript`]'s body (or, equivalently, the signed plaintext minus
+/// the marker and signature trailer).
+pub fn encode_share_frame(
+    fields: &ShareEnvelopeBytes<'_>,
+    item: &[u8],
+    signature: &[u8],
+) -> Option<Vec<u8>> {
+    let prefix = encode_share_prefix(fields, item)?;
+    append_share_signature(prefix, signature)
+}
+
 /// The exact bytes the sending device signs.
 pub fn signing_transcript(header: &ShareHeader, item: &[u8]) -> Vec<u8> {
     let mut out =
@@ -234,18 +341,28 @@ pub fn seal_signed_item(
             "share revisions start at 1".into(),
         ));
     }
-    let mut plaintext = zeroize::Zeroizing::new(Vec::with_capacity(
-        SHARE_ENVELOPE_MAGIC.len() + header.sender_vk.len() + item.len() + 4_900,
-    ));
-    plaintext.extend_from_slice(SHARE_ENVELOPE_MAGIC);
-    push_header(&mut plaintext, header);
-    push_lp(&mut plaintext, item);
+    let fields = ShareEnvelopeBytes {
+        sender_user_id: header.sender_user_id.as_bytes(),
+        sender_device_id: header.sender_device_id.as_bytes(),
+        sender_vk: &header.sender_vk,
+        recipient_user_id: header.recipient_user_id.as_bytes(),
+        recipient_ek_digest: &header.recipient_ek_digest,
+        lineage_id: header.lineage_id.as_bytes(),
+        revision: header.revision,
+    };
+    let capacity = SHARE_ENVELOPE_MAGIC.len() + header.sender_vk.len() + item.len() + 4_900;
+    let prefix = push_share_prefix(Vec::with_capacity(capacity), &fields, item)
+        .ok_or_else(|| VelaError::InvalidParameter("share envelope is too large".into()))?;
     // Serialize once: authenticate the same bytes that are placed in the frame.
     let transcript =
-        crate::wire::domain_message(SHARE_ITEM_CONTEXT, &plaintext[SHARE_ENVELOPE_MAGIC.len()..])
+        crate::wire::domain_message(SHARE_ITEM_CONTEXT, &prefix[SHARE_ENVELOPE_MAGIC.len()..])
             .ok_or_else(|| VelaError::InvalidParameter("share transcript is too large".into()))?;
     let signature = signing::sign(signing_key, &transcript)?;
-    push_lp(&mut plaintext, &signature.to_bytes());
+    let frame = append_share_signature(prefix, &signature.to_bytes())
+        .ok_or_else(|| VelaError::InvalidParameter("share envelope is too large".into()))?;
+    // `capacity` above reserves the complete frame, so this single buffer holds
+    // the plaintext and is wiped on drop.
+    let plaintext = zeroize::Zeroizing::new(frame);
     kem::seal_share(recipient, &plaintext)
 }
 
@@ -696,6 +813,89 @@ mod tests {
         assert!(parse_share_frame(&plaintext).is_none());
         plaintext[4..12].copy_from_slice(&u64::MAX.to_be_bytes());
         assert!(parse_share_frame(&plaintext).is_none());
+    }
+
+    /// Reassemble the pre-refactor frame with the reference helpers: marker,
+    /// header, LP item, LP signature.
+    fn legacy_frame(header: &ShareHeader, item: &[u8], signature: &[u8]) -> Vec<u8> {
+        let mut out = SHARE_ENVELOPE_MAGIC.to_vec();
+        push_header(&mut out, header);
+        push_lp(&mut out, item);
+        push_lp(&mut out, signature);
+        out
+    }
+
+    fn bytes_of(header: &ShareHeader) -> ShareEnvelopeBytes<'_> {
+        ShareEnvelopeBytes {
+            sender_user_id: header.sender_user_id.as_bytes(),
+            sender_device_id: header.sender_device_id.as_bytes(),
+            sender_vk: &header.sender_vk,
+            recipient_user_id: header.recipient_user_id.as_bytes(),
+            recipient_ek_digest: &header.recipient_ek_digest,
+            lineage_id: header.lineage_id.as_bytes(),
+            revision: header.revision,
+        }
+    }
+
+    #[test]
+    fn encoder_matches_the_pre_refactor_assembly_on_fixtures() {
+        let signature = vec![0x5a; signing::HYBRID_SIG_LEN];
+        let sender_vk = vec![0x11; signing::HYBRID_VK_LEN];
+        let header = |sender_user_id: &str, revision: u64| ShareHeader {
+            sender_user_id: sender_user_id.into(),
+            sender_device_id: "device-\u{1f511}".into(),
+            sender_vk: sender_vk.clone(),
+            recipient_user_id: "recipient".into(),
+            recipient_ek_digest: [0xa7; 32],
+            lineage_id: "lineage".into(),
+            revision,
+        };
+        let fixtures: Vec<(ShareHeader, Vec<u8>)> = vec![
+            (header("", 1), Vec::new()),
+            (header("alice", 0x0102_0304_0506_0708), b"\0\xffpayload".to_vec()),
+            (header("a longer account id \u{e9}", u64::MAX), vec![0x7f; 1_000]),
+            (header("alice", 0), b"x".to_vec()),
+        ];
+        for (header, item) in fixtures {
+            let fields = bytes_of(&header);
+            let encoded = encode_share_frame(&fields, &item, &signature).unwrap();
+            assert_eq!(encoded, legacy_frame(&header, &item, &signature));
+        }
+    }
+
+    #[test]
+    fn encoder_output_parses_back_to_its_fields() {
+        let signature = vec![0x33; signing::HYBRID_SIG_LEN];
+        let header = ShareHeader {
+            sender_user_id: "alice".into(),
+            sender_device_id: "alice-laptop".into(),
+            sender_vk: vec![0x22; signing::HYBRID_VK_LEN],
+            recipient_user_id: "bob".into(),
+            recipient_ek_digest: [0x44; 32],
+            lineage_id: "lineage-9".into(),
+            revision: 0x0102_0304_0506_0708,
+        };
+        let item = b"a\0\xffpayload";
+        let fields = bytes_of(&header);
+        let frame = encode_share_frame(&fields, item, &signature).unwrap();
+        let parsed = parse_share_frame(&frame).unwrap();
+        assert_eq!(parsed.sender_user_id, header.sender_user_id.as_bytes());
+        assert_eq!(parsed.sender_device_id, header.sender_device_id.as_bytes());
+        assert_eq!(parsed.sender_vk, header.sender_vk.as_slice());
+        assert_eq!(parsed.recipient_user_id, header.recipient_user_id.as_bytes());
+        assert_eq!(parsed.recipient_ek_digest, &header.recipient_ek_digest[..]);
+        assert_eq!(parsed.lineage_id, header.lineage_id.as_bytes());
+        assert_eq!(parsed.revision, header.revision);
+        assert_eq!(parsed.item, item);
+        assert_eq!(parsed.signature, signature.as_slice());
+        assert_eq!(
+            parsed.signed_body,
+            &frame[SHARE_ENVELOPE_MAGIC.len()..frame.len() - (8 + signing::HYBRID_SIG_LEN)]
+        );
+        assert_eq!(
+            crate::wire::domain_message(SHARE_ITEM_CONTEXT, parsed.signed_body).unwrap(),
+            signing_transcript(&header, item)
+        );
     }
 
     #[test]

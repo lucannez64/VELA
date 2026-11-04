@@ -93,6 +93,248 @@ type t_AdmissionContext = {
   f_pin:Core_models.Option.t_Option t_SharePin
 }
 
+/// Wire bytes of the signed envelope header, in frame order.
+/// Text fields are the UTF-8 bytes of the corresponding [`ShareHeader`]
+/// strings; [`seal_signed_item`] fills them with `as_bytes()`. Keeping the
+/// encoder on bytes makes the frame grammar checked by
+/// [`parse_share_frame`] the whole input of the encoder theorem; the
+/// String-to-bytes correspondence is the separate UTF-8 conversion step.
+type t_ShareEnvelopeBytes = {
+  f_sender_user_id:t_Slice u8;
+  f_sender_device_id:t_Slice u8;
+  f_sender_vk:t_Slice u8;
+  f_recipient_user_id:t_Slice u8;
+  f_recipient_ek_digest:t_Array u8 (mk_usize 32);
+  f_lineage_id:t_Slice u8;
+  f_revision:u64
+}
+
+#push-options "--fuel 2 --ifuel 2"
+
+/// Append `value`, rejecting a frame that would exceed the byte-vector limit.
+/// The check is part of the functional contract, not defensive style: the
+/// extracted `Alloc.Vec` model requires the concatenation length to fit
+/// `usize`, and the inverse theorem rules this branch out from the input\'s
+/// stated total-length bound.
+let push_bytes (input: Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global) (value: t_Slice u8)
+    : Prims.Pure (Core_models.Option.t_Option (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global))
+      Prims.l_True
+      (ensures
+        fun result ->
+          let result:Core_models.Option.t_Option (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global) =
+            result
+          in
+          match result <: Core_models.Option.t_Option (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global) with
+          | Core_models.Option.Option_Some out ->
+            (Core_models.Slice.impl__len #u8 value <: usize) <=.
+            (Core_models.Num.impl_usize__MAX -!
+              (Alloc.Vec.impl_1__len #u8 #Alloc.Alloc.t_Global input <: usize)
+              <:
+              usize) &&
+            (Alloc.Vec.impl_1__len #u8 #Alloc.Alloc.t_Global out <: usize) =.
+            ((Alloc.Vec.impl_1__len #u8 #Alloc.Alloc.t_Global input <: usize) +!
+              (Core_models.Slice.impl__len #u8 value <: usize)
+              <:
+              usize) &&
+            ((Alloc.Vec.impl_1__as_slice #u8 #Alloc.Alloc.t_Global out <: t_Slice u8).[ {
+                  Core_models.Ops.Range.f_end
+                  =
+                  Alloc.Vec.impl_1__len #u8 #Alloc.Alloc.t_Global input <: usize
+                }
+                <:
+                Core_models.Ops.Range.t_RangeTo usize ]
+              <:
+              t_Slice u8) =.
+            (Alloc.Vec.impl_1__as_slice #u8 #Alloc.Alloc.t_Global input <: t_Slice u8) &&
+            ((Alloc.Vec.impl_1__as_slice #u8 #Alloc.Alloc.t_Global out <: t_Slice u8).[ {
+                  Core_models.Ops.Range.f_start
+                  =
+                  Alloc.Vec.impl_1__len #u8 #Alloc.Alloc.t_Global input <: usize
+                }
+                <:
+                Core_models.Ops.Range.t_RangeFrom usize ]
+              <:
+              t_Slice u8) =.
+            value
+          | Core_models.Option.Option_None  ->
+            (Core_models.Slice.impl__len #u8 value <: usize) >.
+            (Core_models.Num.impl_usize__MAX -!
+              (Alloc.Vec.impl_1__len #u8 #Alloc.Alloc.t_Global input <: usize)
+              <:
+              usize)) =
+  if
+    (Core_models.Slice.impl__len #u8 value <: usize) >.
+    (Core_models.Num.impl_usize__MAX -!
+      (Alloc.Vec.impl_1__len #u8 #Alloc.Alloc.t_Global input <: usize)
+      <:
+      usize)
+  then
+    Core_models.Option.Option_None
+    <:
+    Core_models.Option.t_Option (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global)
+  else
+    let input:Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global =
+      Alloc.Vec.impl_2__extend_from_slice #u8 #Alloc.Alloc.t_Global input value
+    in
+    Core_models.Option.Option_Some input
+    <:
+    Core_models.Option.t_Option (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global)
+
+#pop-options
+
+let push_u64 (input: Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global) (value: u64)
+    : Core_models.Option.t_Option (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global) =
+  push_bytes input (Vela_crypto.Wire.encode_u64_be value <: t_Slice u8)
+
+let push_lp_checked (input: Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global) (value: t_Slice u8)
+    : Core_models.Option.t_Option (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global) =
+  match
+    push_u64 input (cast (Core_models.Slice.impl__len #u8 value <: usize) <: u64)
+    <:
+    Core_models.Option.t_Option (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global)
+  with
+  | Core_models.Option.Option_Some input -> push_bytes input value
+  | Core_models.Option.Option_None  ->
+    Core_models.Option.Option_None
+    <:
+    Core_models.Option.t_Option (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global)
+
+/// Append the signed body: every header field, then `lp(item)`.
+let push_share_body
+      (input: Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global)
+      (fields: t_ShareEnvelopeBytes)
+      (item: t_Slice u8)
+    : Core_models.Option.t_Option (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global) =
+  match
+    push_lp_checked input fields.f_sender_user_id
+    <:
+    Core_models.Option.t_Option (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global)
+  with
+  | Core_models.Option.Option_Some input ->
+    (match
+        push_lp_checked input fields.f_sender_device_id
+        <:
+        Core_models.Option.t_Option (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global)
+      with
+      | Core_models.Option.Option_Some input ->
+        (match
+            push_lp_checked input fields.f_sender_vk
+            <:
+            Core_models.Option.t_Option (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global)
+          with
+          | Core_models.Option.Option_Some input ->
+            (match
+                push_lp_checked input fields.f_recipient_user_id
+                <:
+                Core_models.Option.t_Option (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global)
+              with
+              | Core_models.Option.Option_Some input ->
+                (match
+                    push_bytes input
+                      (fields.f_recipient_ek_digest.[ Core_models.Ops.Range.RangeFull
+                          <:
+                          Core_models.Ops.Range.t_RangeFull ]
+                        <:
+                        t_Slice u8)
+                    <:
+                    Core_models.Option.t_Option (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global)
+                  with
+                  | Core_models.Option.Option_Some input ->
+                    (match
+                        push_lp_checked input fields.f_lineage_id
+                        <:
+                        Core_models.Option.t_Option (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global)
+                      with
+                      | Core_models.Option.Option_Some input ->
+                        (match
+                            push_u64 input fields.f_revision
+                            <:
+                            Core_models.Option.t_Option (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global)
+                          with
+                          | Core_models.Option.Option_Some input -> push_lp_checked input item
+                          | Core_models.Option.Option_None  ->
+                            Core_models.Option.Option_None
+                            <:
+                            Core_models.Option.t_Option (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global))
+                      | Core_models.Option.Option_None  ->
+                        Core_models.Option.Option_None
+                        <:
+                        Core_models.Option.t_Option (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global))
+                  | Core_models.Option.Option_None  ->
+                    Core_models.Option.Option_None
+                    <:
+                    Core_models.Option.t_Option (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global))
+              | Core_models.Option.Option_None  ->
+                Core_models.Option.Option_None
+                <:
+                Core_models.Option.t_Option (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global))
+          | Core_models.Option.Option_None  ->
+            Core_models.Option.Option_None
+            <:
+            Core_models.Option.t_Option (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global))
+      | Core_models.Option.Option_None  ->
+        Core_models.Option.Option_None
+        <:
+        Core_models.Option.t_Option (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global))
+  | Core_models.Option.Option_None  ->
+    Core_models.Option.Option_None
+    <:
+    Core_models.Option.t_Option (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global)
+
+/// Append the `VSE2` marker and the signed body.
+let push_share_prefix
+      (input: Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global)
+      (fields: t_ShareEnvelopeBytes)
+      (item: t_Slice u8)
+    : Core_models.Option.t_Option (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global) =
+  match
+    push_bytes input
+      (v_SHARE_ENVELOPE_MAGIC.[ Core_models.Ops.Range.RangeFull <: Core_models.Ops.Range.t_RangeFull
+        ]
+        <:
+        t_Slice u8)
+    <:
+    Core_models.Option.t_Option (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global)
+  with
+  | Core_models.Option.Option_Some input -> push_share_body input fields item
+  | Core_models.Option.Option_None  ->
+    Core_models.Option.Option_None
+    <:
+    Core_models.Option.t_Option (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global)
+
+/// Encode the bytes the sender signs a share item over (after the marker).
+/// Returns `None` only when the concatenation would exceed the addressable
+/// byte-vector length. Field-width checks (2624-byte key, 4691-byte signature)
+/// are separate parser admission checks.
+let encode_share_prefix (fields: t_ShareEnvelopeBytes) (item: t_Slice u8)
+    : Core_models.Option.t_Option (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global) =
+  push_share_prefix (Alloc.Vec.impl__new #u8 () <: Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global)
+    fields
+    item
+
+/// Append `lp(signature)` to an encoded prefix, producing the complete frame.
+let append_share_signature (prefix: Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global) (signature: t_Slice u8)
+    : Core_models.Option.t_Option (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global) =
+  push_lp_checked prefix signature
+
+/// Complete VSE2 frame: marker, header, `lp(item)`, `lp(signature)`.
+/// This is the production encoder for the bytes [`parse_share_frame`] reads.
+/// `signature` is the sender's hybrid signature over
+/// [`signing_transcript`]'s body (or, equivalently, the signed plaintext minus
+/// the marker and signature trailer).
+let encode_share_frame (fields: t_ShareEnvelopeBytes) (item signature: t_Slice u8)
+    : Core_models.Option.t_Option (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global) =
+  match
+    encode_share_prefix fields item
+    <:
+    Core_models.Option.t_Option (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global)
+  with
+  | Core_models.Option.Option_Some prefix -> append_share_signature prefix signature
+  | Core_models.Option.Option_None  ->
+    Core_models.Option.Option_None
+    <:
+    Core_models.Option.t_Option (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global)
+
 /// Pure prefix parser used by the real signed-envelope reader. Under the
 /// trusted slice semantics, success returns exactly the requested prefix and
 /// suffix; failure consumes nothing and never indexes outside the input.
@@ -316,8 +558,8 @@ let parse_share_frame (input: t_Slice u8)
   in
   let rest:t_Slice u8 = tmp0 in
   match out <: Core_models.Option.t_Option (t_Slice u8) with
-  | Core_models.Option.Option_Some hoist4 ->
-    if hoist4 <>. v_SHARE_ENVELOPE_MAGIC
+  | Core_models.Option.Option_Some hoist5 ->
+    if hoist5 <>. v_SHARE_ENVELOPE_MAGIC
     then Core_models.Option.Option_None <: Core_models.Option.t_Option t_ShareFrame
     else
       let
