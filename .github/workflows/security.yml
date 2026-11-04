@@ -728,6 +728,11 @@ jobs:
       - name: Check CI environment pins
         run: python3 -I security/assurance/check-env-pins.py
 
+      # T7: the hax 0.3.7 `ne` and `mul_overflow` bugs and signed `/!` `%!`
+      # must stay out of every tracked F* file.
+      - name: Check std-model guards
+        run: python3 -I security/formal/std-model-diff/check-model-guards.py
+
       - uses: dtolnay/rust-toolchain@d124f86f28ff42855784ff3319f48ac182c248f8 # 1.99.1
 
       - name: Install cargo-audit and cargo-deny
