@@ -37,11 +37,13 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # set minimal and deterministic. Versions are pinned by the immutable snapshot
 # date, not by `=` pins that would break as soon as the archive rotates (see
 # apt-snapshot.conf).
+# http: the base image has no CA certificates yet; apt still checks the
+# archive signature (Signed-By), so the transport needs no TLS.
 # hadolint ignore=DL3008
 RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources \
  && printf '%s\n' \
       'Types: deb' \
-      'URIs: https://snapshot.ubuntu.com/ubuntu/20261104T000000Z/' \
+      'URIs: http://snapshot.ubuntu.com/ubuntu/20261104T000000Z/' \
       'Suites: noble noble-updates noble-security' \
       'Components: main restricted universe multiverse' \
       'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
