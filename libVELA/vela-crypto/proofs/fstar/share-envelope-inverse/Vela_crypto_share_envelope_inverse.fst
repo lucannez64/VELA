@@ -11,10 +11,10 @@ module Vela_crypto_share_envelope_inverse
 ///
 /// The well-formedness precondition (`well_formed`) is explicit:
 ///
-///  * the complete frame length fits `usize` (the `Alloc.Vec` model's exact
-///    concatenation bound, and the only reason a production append can fail);
 ///  * the verifying key is 2624 bytes and the signature is 4691 bytes, because
-///    `share_frame_spec`/`parse_share_frame` reject other widths.
+///    `share_frame_spec`/`parse_share_frame` reject other widths;
+///  * the complete frame length fits `usize` (the `Alloc.Vec` model's exact
+///    concatenation bound, and the only reason a production append can fail).
 ///
 /// Text fields are already bytes here.  Connecting `ShareHeader`'s `String`
 /// fields to these bytes (UTF-8 conversion) is step O14b, not this module.
@@ -35,239 +35,364 @@ let len (s: t_Slice u8) : nat = Seq.length s
 
 let vlen (v: Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global) : nat = Seq.length v._0
 
+let marker_bytes : Seq.seq u8 = v_SHARE_ENVELOPE_MAGIC
+
 /// Big-endian bytes of a `u64` (the production `wire::encode_u64_be`).
 let u8s (n: u64) : Seq.seq u8 = encode_u64_be n
 
 /// The production cast of a slice length to the LP length field.
 let u64_len (s: t_Slice u8) : u64 =
-  cast #USIZE #U64 (Core_models.Slice.impl__len #u8 s)
+  cast (Core_models.Slice.impl__len #u8 s) <: u64
 
 /// One length-prefixed production: `u64_be(len b) || b`.
 let lp (b: t_Slice u8) : Seq.seq u8 =
   Seq.append (u8s (u64_len b)) b
 
-/// The complete `VSE2` marker (`v_SHARE_ENVELOPE_MAGIC`).
-let magic : Seq.seq u8 = v_SHARE_ENVELOPE_MAGIC
+/// The signed body: every header field in wire order, then `lp(item)`.
+let body_spec (f: t_ShareEnvelopeBytes) (item: t_Slice u8) : Seq.seq u8 =
+  Seq.append (lp f.f_sender_user_id)
+    (Seq.append (lp f.f_sender_device_id)
+      (Seq.append (lp f.f_sender_vk)
+        (Seq.append (lp f.f_recipient_user_id)
+          (Seq.append f.f_recipient_ek_digest
+            (Seq.append (lp f.f_lineage_id)
+              (Seq.append (u8s f.f_revision) (lp item)))))))
 
-let rec parts_len (parts: list (Seq.seq u8)) : nat =
-  match parts with
-  | [] -> 0
-  | head :: tail -> Seq.length head + parts_len tail
+/// Marker followed by the signed body: the bytes the encoder builds before
+/// appending the signature trailer.
+let prefix_spec (f: t_ShareEnvelopeBytes) (item: t_Slice u8) : Seq.seq u8 =
+  Seq.append marker_bytes (body_spec f item)
 
-/// Right-nested concatenation: the parser-facing shape.
-let rec concat_right (parts: list (Seq.seq u8)) : Seq.seq u8 =
-  match parts with
-  | [] -> Seq.empty
-  | head :: tail -> Seq.append head (concat_right tail)
+/// Complete frame, in parser order.
+let frame_spec
+      (f: t_ShareEnvelopeBytes)
+      (item sig: t_Slice u8) :
+  Seq.seq u8 =
+  Seq.append marker_bytes (Seq.append (body_spec f item) (lp sig))
 
-/// Left-nested concatenation with an accumulator: the encoder-facing shape.
-let rec concat_left (acc: Seq.seq u8) (parts: list (Seq.seq u8)) : Seq.seq u8 =
-  match parts with
-  | [] -> acc
-  | head :: tail -> concat_left (Seq.append acc head) tail
+let body_len (f: t_ShareEnvelopeBytes) (item: t_Slice u8) : nat =
+  Seq.length (body_spec f item)
+
+let frame_len
+      (f: t_ShareEnvelopeBytes)
+      (item sig: t_Slice u8) :
+  nat =
+  Seq.length (frame_spec f item sig)
+
+/// The explicit precondition of the inverse theorem.
+let well_formed
+      (f: t_ShareEnvelopeBytes)
+      (item sig: t_Slice u8) :
+  prop =
+  Seq.length f.f_sender_vk = v Vela_crypto.Signing.v_HYBRID_VK_LEN /\
+  Seq.length sig = v Vela_crypto.Signing.v_HYBRID_SIG_LEN /\
+  frame_len f item sig <= max_usize
+
+// ── Length facts ────────────────────────────────────────────────────────────
+
+let u8s_len (n: u64) : Lemma (Seq.length (u8s n) = 8) = ()
+
+let u64_len_value (s: t_Slice u8) :
+  Lemma (v (u64_len s) = Seq.length s) =
+  ()
+
+let impl_len_nat (s: t_Slice u8) :
+  Lemma (v (Core_models.Slice.impl__len #u8 s) = Seq.length s) =
+  ()
+
+let lp_len (b: t_Slice u8) :
+  Lemma (Seq.length (lp b) = 8 + Seq.length b) =
+  Seq.lemma_len_append (u8s (u64_len b)) b;
+  u8s_len (u64_len b)
+
+let body_len_unfold (f: t_ShareEnvelopeBytes) (item: t_Slice u8) :
+  Lemma
+    (body_len f item =
+      8 + Seq.length f.f_sender_user_id +
+      (8 + Seq.length f.f_sender_device_id +
+       (8 + Seq.length f.f_sender_vk +
+        (8 + Seq.length f.f_recipient_user_id +
+         (32 + (8 + Seq.length f.f_lineage_id + (8 + (8 + Seq.length item)))))))) =
+  ()
+
+let frame_len_unfold
+      (f: t_ShareEnvelopeBytes)
+      (item sig: t_Slice u8) :
+  Lemma (frame_len f item sig = 4 + (body_len f item + (8 + Seq.length sig))) =
+  lp_len sig
+
+/// `split_envelope_prefix`'s `usize` used for the marker.
+let marker_len : usize = mk_usize 4
+
+/// `split_envelope_prefix`'s `usize` used for the recipient-key digest.
+let digest_len : usize = mk_usize 32
+
+/// Trailer length `8 + 4691` used by `share_frame_spec`.
+let signature_trailer : usize =
+  mk_usize 8 +! Vela_crypto.Signing.v_HYBRID_SIG_LEN
+
+/// The expected parsed frame.  `signed_body` is the exact signed plaintext
+/// without marker and signature trailer.  The unit proof argument records the
+/// frame bound needed to make that body a Rust byte slice.
+let frame_of
+      (f: t_ShareEnvelopeBytes)
+      (item sig: t_Slice u8)
+      (_: unit{frame_len f item sig <= max_usize}) :
+  t_ShareFrame =
+  assert (Seq.length (body_spec f item) <= max_usize);
+  {
+    f_signed_body = body_spec f item;
+    f_sender_user_id = f.f_sender_user_id;
+    f_sender_device_id = f.f_sender_device_id;
+    f_sender_vk = f.f_sender_vk;
+    f_recipient_user_id = f.f_recipient_user_id;
+    f_recipient_ek_digest =
+      Rust_primitives.Slice.array_as_slice (mk_usize 32) f.f_recipient_ek_digest;
+    f_lineage_id = f.f_lineage_id;
+    f_revision = f.f_revision;
+    f_item = item;
+    f_signature = sig;
+  }
 
 // ── Generic sequence lemmas ─────────────────────────────────────────────────
 
 /// The prefix of `a || b` is exactly `a`.
 let slice_append_prefix (a b: Seq.seq u8) :
   Lemma (Seq.slice (Seq.append a b) 0 (Seq.length a) == a) =
-  Seq.lemma_eq_intro (Seq.slice (Seq.append a b) 0 (Seq.length a)) a
+  Seq.lemma_eq_intro (Seq.slice (Seq.append a b) 0 (Seq.length a)) a;
+  Seq.lemma_eq_elim (Seq.slice (Seq.append a b) 0 (Seq.length a)) a
 
 /// The suffix of `a || b` after `a` is exactly `b`.
 let slice_append_suffix (a b: Seq.seq u8) :
   Lemma
     (Seq.slice (Seq.append a b) (Seq.length a) (Seq.length a + Seq.length b) == b) =
   Seq.lemma_eq_intro
-    (Seq.slice (Seq.append a b) (Seq.length a) (Seq.length a + Seq.length b))
-    b
+    (Seq.slice (Seq.append a b) (Seq.length a) (Seq.length a + Seq.length b)) b;
+  Seq.lemma_eq_elim
+    (Seq.slice (Seq.append a b) (Seq.length a) (Seq.length a + Seq.length b)) b
 
-/// Slicing `(a || b)` inside the left component is slicing `a`.
-let slice_append_left (a b: Seq.seq u8) (i j: nat{i <= j /\ j <= Seq.length a}) :
-  Lemma (Seq.slice (Seq.append a b) i j == Seq.slice a i j) =
-  Seq.lemma_eq_intro (Seq.slice (Seq.append a b) i j) (Seq.slice a i j)
-
-/// A slice of a slice collapses to the corresponding outer slice.
-let slice_slice
-      (s: Seq.seq u8)
-      (i j k l: nat)
-      (hi: i <= j)
-      (hj: j <= k)
-      (hk: k <= l)
-      (hl: l <= Seq.length s) :
-  Lemma (Seq.slice (Seq.slice s i l) (j - i) (k - i) == Seq.slice s j k) =
-  Seq.lemma_eq_intro (Seq.slice (Seq.slice s i l) (j - i) (k - i)) (Seq.slice s j k)
-
-/// The first eight bytes of a slice, in the exact shape produced by the
-/// extracted `split_length_prefixed`/`split_u64_prefix`.
-let head8 (s: t_Slice u8) : t_Array u8 (mk_usize 8) =
-  Rust_primitives.Hax.array_of_list 8
-    [ Seq.index s 0;
-      Seq.index s 1;
-      Seq.index s 2;
-      Seq.index s 3;
-      Seq.index s 4;
-      Seq.index s 5;
-      Seq.index s 6;
-      Seq.index s 7 ]
-
-let head8_prefix (p rest: Seq.seq u8) (h: Seq.length p == 8) :
-  Lemma (head8 (Seq.append p rest) == p) =
-  Seq.lemma_eq_intro (head8 (Seq.append p rest)) p
-
-// ── Concatenation length and fold lemmas ────────────────────────────────────
-
-let rec concat_right_len (parts: list (Seq.seq u8)) :
-  Lemma (Seq.length (concat_right parts) == parts_len parts) =
-  match parts with
-  | [] -> ()
-  | head :: tail -> concat_right_len tail
-
-let rec concat_left_len (acc: Seq.seq u8) (parts: list (Seq.seq u8)) :
-  Lemma (Seq.length (concat_left acc parts) == Seq.length acc + parts_len parts) =
-  match parts with
-  | [] -> ()
-  | head :: tail -> concat_left_len (Seq.append acc head) tail
-
-let rec parts_len_append (xs ys: list (Seq.seq u8)) :
-  Lemma (parts_len (L.append xs ys) == parts_len xs + parts_len ys) =
-  match xs with
-  | [] -> ()
-  | head :: tail -> parts_len_append tail ys
-
-/// Splitting a left-nested list concatenation at an append.
-let rec concat_left_append (acc: Seq.seq u8) (xs ys: list (Seq.seq u8)) :
+/// `((a || b) || c)[|a| .. |a|+|b|+|c|] = b || c`.
+let slice_append_left3_full (a b c: Seq.seq u8) :
   Lemma
-    (ensures concat_left acc (L.append xs ys) == concat_left (concat_left acc xs) ys)
-  (decreases xs) =
-  match xs with
-  | [] -> ()
-  | head :: tail -> concat_left_append (Seq.append acc head) tail ys
+    (Seq.slice
+        (Seq.append (Seq.append a b) c)
+        (Seq.length a)
+        (Seq.length a + Seq.length b + Seq.length c) ==
+      Seq.append b c) =
+  let s = Seq.append (Seq.append a b) c in
+  let t = Seq.append b c in
+  let x =
+    Seq.slice s (Seq.length a) (Seq.length a + Seq.length b + Seq.length c)
+  in
+  Seq.lemma_eq_intro x t;
+  Seq.lemma_eq_elim x t
 
-/// Left and right folds agree up to one leading append.
-let rec concat_left_eq_right (acc: Seq.seq u8) (parts: list (Seq.seq u8)) :
-  Lemma (ensures concat_left acc parts == Seq.append acc (concat_right parts))
-  (decreases parts) =
-  match parts with
-  | [] -> Seq.append_empty_l acc
-  | head :: tail ->
-    concat_left_eq_right (Seq.append acc head) tail;
-    Seq.append_assoc acc head (concat_right tail)
-
-/// The encoder's left fold from the empty vector is the parser's right fold.
-let concat_from_empty (parts: list (Seq.seq u8)) :
-  Lemma (concat_left Seq.empty parts == concat_right parts) =
-  concat_left_eq_right Seq.empty parts;
-  Seq.append_empty_l (concat_right parts)
-
-// ── Chunks: the production appends and the parser parts ─────────────────────
-
-/// One encoder step.  `Raw` appends a fixed field once; `Lp` appends the
-/// length and then the payload (two appends in the production code).
-noeq
-type chunk =
-  | Raw : s:Seq.seq u8 -> chunk
-  | Lp : b:t_Slice u8 -> chunk
-
-/// Sequence of appends the encoder performs for one chunk.
-let chunk_appends (c: chunk) : list (Seq.seq u8) =
-  match c with
-  | Raw s -> [s]
-  | Lp b -> [u8s (u64_len b); b]
-
-/// Single value the parser reads for one chunk.
-let chunk_value (c: chunk) : Seq.seq u8 =
-  match c with
-  | Raw s -> s
-  | Lp b -> lp b
-
-let rec expanded (cs: list chunk) : list (Seq.seq u8) =
-  match cs with
-  | [] -> []
-  | c :: rest -> L.append (chunk_appends c) (expanded rest)
-
-let rec compact (cs: list chunk) : list (Seq.seq u8) =
-  match cs with
-  | [] -> []
-  | c :: rest -> chunk_value c :: compact rest
-
-let rec parts_len_expanded (cs: list chunk) :
-  Lemma (parts_len (expanded cs) == parts_len (compact cs)) =
-  match cs with
-  | [] -> ()
-  | Raw s :: rest -> parts_len_expanded rest
-  | Lp b :: rest -> parts_len_expanded rest
-
-/// The encoder's left fold of the expanded appends equals the parser's
-/// right-nested compact parts.
-let rec concat_left_expanded (acc: Seq.seq u8) (cs: list chunk) :
+/// `(a || (b || c))[|a| .. |a|+|b|] = b`.
+let slice_append_right3_mid (a b c: Seq.seq u8) :
   Lemma
+    (Seq.slice
+        (Seq.append a (Seq.append b c))
+        (Seq.length a)
+        (Seq.length a + Seq.length b) ==
+      b) =
+  let s = Seq.append a (Seq.append b c) in
+  let x = Seq.slice s (Seq.length a) (Seq.length a + Seq.length b) in
+  Seq.lemma_eq_intro x b;
+  Seq.lemma_eq_elim x b
+
+// ── `head8`: the byte array the production `split_length_prefixed` decodes ──
+
+/// The eight leading bytes, in the exact shape produced by the extracted
+/// `split_length_prefixed`/`split_u64_prefix` (`array_of_list 8 [...]`).
+let first8_list (s: Seq.seq u8{Seq.length s >= 8}) : list u8 =
+  [
+    Seq.index s 0;
+    Seq.index s 1;
+    Seq.index s 2;
+    Seq.index s 3;
+    Seq.index s 4;
+    Seq.index s 5;
+    Seq.index s 6;
+    Seq.index s 7;
+  ]
+
+let head8 (s: Seq.seq u8{Seq.length s >= 8}) : t_Array u8 (mk_usize 8) =
+  let list = first8_list s in
+  FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 8);
+  Rust_primitives.Hax.array_of_list 8 list
+
+/// Projection out of the eight-element list.
+let rec first8_list_index (s: Seq.seq u8{Seq.length s >= 8}) (i: nat{i < 8}) :
+  Lemma (L.index (first8_list s) i == Seq.index s i) =
+  if i = 0 then ()
+  else if i = 1 then ()
+  else if i = 2 then ()
+  else if i = 3 then ()
+  else if i = 4 then ()
+  else if i = 5 then ()
+  else if i = 6 then ()
+  else if i = 7 then ()
+
+let head8_index (s: Seq.seq u8{Seq.length s >= 8}) (i: nat{i < 8}) :
+  Lemma (Seq.index (head8 s) i == Seq.index s i) =
+  first8_list_index s i
+
+/// `decode(head8 p)` when `p` is eight bytes long.
+let decode_head8 (p: Seq.seq u8) :
+  Lemma (requires Seq.length p = 8)
+        (ensures decode_u64_be (head8 p) == decode_u64_be p) =
+  head8_index p 0;
+  head8_index p 1;
+  head8_index p 2;
+  head8_index p 3;
+  head8_index p 4;
+  head8_index p 5;
+  head8_index p 6;
+  head8_index p 7
+
+/// `decode` sees only the first eight bytes of `((p || b) || c)`.
+let decode_head8_prefixed (p b c: Seq.seq u8) :
+  Lemma (requires Seq.length p = 8)
+        (ensures
+          decode_u64_be (head8 (Seq.append (Seq.append p b) c)) ==
+          decode_u64_be p) =
+  let s = Seq.append (Seq.append p b) c in
+  head8_index s 0;
+  head8_index s 1;
+  head8_index s 2;
+  head8_index s 3;
+  head8_index s 4;
+  head8_index s 5;
+  head8_index s 6;
+  head8_index s 7;
+  decode_head8 p
+
+/// `decode` of `head8 (u8s n || rest)` is `n`.
+let decode_head8_append (n: u64) (rest: Seq.seq u8) :
+  Lemma (decode_u64_be (head8 (Seq.append (u8s n) rest)) == n) =
+  decode_head8_prefixed (u8s n) rest Seq.empty;
+  u8s_len n;
+  Seq.append_empty_r rest;
+  let _ = u64_wire_round_trip n in
+  ()
+
+// ── Splitting appended productions ──────────────────────────────────────────
+
+/// `split_envelope_prefix (prefix || rest) n` when `prefix` has length `n`.
+let split_prefix_append
+      (prefix rest: Seq.seq u8)
+      (n: usize) :
+  Lemma
+    (requires
+      Seq.length prefix = v n /\
+      Seq.length prefix + Seq.length rest <= max_usize)
     (ensures
-      concat_left acc (expanded cs) ==
-      Seq.append acc (concat_right (compact cs)))
-  (decreases cs) =
-  match cs with
-  | [] -> Seq.append_empty_l acc
-  | Raw s :: rest ->
-    concat_left_expanded (Seq.append acc s) rest;
-    Seq.append_assoc acc s (concat_right (compact rest))
-  | Lp b :: rest ->
-    concat_left_expanded
-      (Seq.append (Seq.append acc (u8s (u64_len b))) b)
-      rest;
-    Seq.append_assoc acc (u8s (u64_len b)) b;
-    Seq.append_assoc
-      acc
-      (Seq.append (u8s (u64_len b)) b)
-      (concat_right (compact rest))
+      split_envelope_prefix (Seq.append prefix rest) n ==
+      Core_models.Option.Option_Some (prefix, rest)) =
+  let input = Seq.append prefix rest in
+  Seq.lemma_len_append prefix rest;
+  slice_append_prefix prefix rest;
+  slice_append_suffix prefix rest
 
-// ── Frame chunks ────────────────────────────────────────────────────────────
+/// `split_length_prefixed` on one LP production followed by `rest`.
+let split_lp_append (b: t_Slice u8) (rest: Seq.seq u8) :
+  Lemma
+    (requires Seq.length (lp b) + Seq.length rest <= max_usize)
+    (ensures
+      split_length_prefixed (Seq.append (lp b) rest) == Core_models.Option.Option_Some (b, rest)) =
+  let n = u64_len b in
+  let s = Seq.append (lp b) rest in
+  lp_len b;
+  u8s_len n;
+  Seq.lemma_len_append (u8s n) b;
+  Seq.lemma_len_append (Seq.append (u8s n) b) rest;
+  slice_append_left3_full (u8s n) b rest;
+  slice_append_prefix b rest;
+  slice_append_suffix b rest;
+  decode_head8_prefixed (u8s n) b rest;
+  u64_len_value b;
+  let _ = u64_wire_round_trip n in
+  ()
 
-/// The signed body: every header field in wire order, then `lp(item)`.
-let body_chunks (f: t_ShareEnvelopeBytes) (item: t_Slice u8) : list chunk =
-  [ Lp f.f_sender_user_id;
-    Lp f.f_sender_device_id;
-    Lp f.f_sender_vk;
-    Lp f.f_recipient_user_id;
-    Raw f.f_recipient_ek_digest;
-    Lp f.f_lineage_id;
-    Raw (u8s f.f_revision);
-    Lp item ]
+/// `split_u64_prefix` on the eight-byte revision followed by `rest`.
+let split_u64_append (value: u64) (rest: Seq.seq u8) :
+  Lemma
+    (requires 8 + Seq.length rest <= max_usize)
+    (ensures
+      split_u64_prefix (Seq.append (u8s value) rest) ==
+      Core_models.Option.Option_Some (value, rest)) =
+  let s = Seq.append (u8s value) rest in
+  u8s_len value;
+  Seq.lemma_len_append (u8s value) rest;
+  slice_append_suffix (u8s value) rest;
+  decode_head8_append value rest;
+  let _ = u64_wire_round_trip value in
+  ()
 
-/// The complete frame: marker, signed body, then `lp(signature)`.
-let frame_chunks
-      (f: t_ShareEnvelopeBytes)
-      (item sig: t_Slice u8) :
-  list chunk =
-  Raw magic :: L.append (body_chunks f item) [Lp sig]
+/// `split_lp_pair` on two LP productions followed by `rest`.
+let split_lp_pair_append
+      (a b: t_Slice u8)
+      (rest: Seq.seq u8) :
+  Lemma
+    (requires
+      Seq.length (lp a) + (Seq.length (lp b) + Seq.length rest) <=
+      max_usize)
+    (ensures
+      split_lp_pair (Seq.append (lp a) (Seq.append (lp b) rest)) ==
+      Core_models.Option.Option_Some ((a, b), rest)) =
+  let tail = Seq.append (lp b) rest in
+  lp_len a;
+  lp_len b;
+  Seq.lemma_len_append (lp b) rest;
+  split_lp_append a tail;
+  split_lp_append b rest
 
-let body_parts (f: t_ShareEnvelopeBytes) (item: t_Slice u8) : list (Seq.seq u8) =
-  compact (body_chunks f item)
+/// `split_lp_pair` on the final item/signature pair.
+let split_lp_pair_last (a b: t_Slice u8) :
+  Lemma
+    (requires Seq.length (lp a) + Seq.length (lp b) <= max_usize)
+    (ensures
+      split_lp_pair (Seq.append (lp a) (lp b)) ==
+      Core_models.Option.Option_Some ((a, b), Seq.empty)) =
+  Seq.append_empty_r (lp b);
+  split_lp_pair_append a b Seq.empty
 
-let frame_parts
-      (f: t_ShareEnvelopeBytes)
-      (item sig: t_Slice u8) :
-  list (Seq.seq u8) =
-  compact (frame_chunks f item sig)
+/// `split_lp_four` on four LP productions followed by `rest`.
+let split_lp_four_append
+      (a b c d: t_Slice u8)
+      (rest: Seq.seq u8) :
+  Lemma
+    (requires
+      Seq.length (lp a) +
+      (Seq.length (lp b) +
+       (Seq.length (lp c) + (Seq.length (lp d) + Seq.length rest))) <=
+      max_usize)
+    (ensures
+      split_lp_four
+          (Seq.append (lp a)
+            (Seq.append (lp b)
+              (Seq.append (lp c) (Seq.append (lp d) rest)))) ==
+      Core_models.Option.Option_Some (((a, b), (c, d)), rest)) =
+  let tail = Seq.append (lp c) (Seq.append (lp d) rest) in
+  lp_len a;
+  lp_len b;
+  lp_len c;
+  lp_len d;
+  Seq.lemma_len_append (lp c) (Seq.append (lp d) rest);
+  Seq.lemma_len_append (lp d) rest;
+  split_lp_pair_append a b tail;
+  split_lp_pair_append c d rest
 
-let body_spec (f: t_ShareEnvelopeBytes) (item: t_Slice u8) : Seq.seq u8 =
-  concat_right (body_parts f item)
+// ── Encoder equals the concatenation spec ───────────────────────────────────
 
-let frame_spec
-      (f: t_ShareEnvelopeBytes)
-      (item sig: t_Slice u8) :
-  Seq.seq u8 =
-  concat_right (frame_parts f item sig)
-
-let body_len (f: t_ShareEnvelopeBytes) (item: t_Slice u8) : nat =
-  parts_len (body_parts f item)
-
-let frame_len
-      (f: t_ShareEnvelopeBytes)
-      (item sig: t_Slice u8) :
-  nat =
-  parts_len (frame_parts f item sig)
-
-// ── Vector step contracts ───────────────────────────────────────────────────
+/// Associativity as an SMT rewrite, so the encoder's left-nested appends are
+/// compared with the parser's right-nested specification without repeating the
+/// lemma at every step.  The pattern only fires on left-nested appends.
+let append_assoc_smt (a b c: Seq.seq u8) :
+  Lemma
+    (ensures Seq.append (Seq.append a b) c == Seq.append a (Seq.append b c))
+    [SMTPat (Seq.append (Seq.append a b) c)] =
+  Seq.append_assoc a b c
 
 #push-options "--fuel 2 --ifuel 2"
 
@@ -279,9 +404,10 @@ let push_bytes_spec
     (requires vlen input + len value <= max_usize)
     (ensures
       push_bytes input value ==
-      Some (Alloc.Vec.Vec (Seq.append input._0 value) input._1)) =
+      Core_models.Option.Option_Some (Alloc.Vec.Vec (Seq.append input._0 value) input._1)) =
   ()
 
+/// One checked `u64` append under its exact bound.
 let push_u64_spec
       (input: Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global)
       (value: u64) :
@@ -289,9 +415,10 @@ let push_u64_spec
     (requires vlen input + 8 <= max_usize)
     (ensures
       push_u64 input value ==
-      Some (Alloc.Vec.Vec (Seq.append input._0 (u8s value)) input._1)) =
+      Core_models.Option.Option_Some (Alloc.Vec.Vec (Seq.append input._0 (u8s value)) input._1)) =
   push_bytes_spec input (u8s value)
 
+/// One checked LP append under its exact bound.
 let push_lp_spec
       (input: Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global)
       (value: t_Slice u8) :
@@ -299,7 +426,7 @@ let push_lp_spec
     (requires vlen input + 8 + len value <= max_usize)
     (ensures
       push_lp_checked input value ==
-      Some
+      Core_models.Option.Option_Some
         (Alloc.Vec.Vec
           (Seq.append (Seq.append input._0 (u8s (u64_len value))) value)
           input._1)) =
@@ -308,8 +435,7 @@ let push_lp_spec
     (Alloc.Vec.Vec (Seq.append input._0 (u8s (u64_len value))) input._1)
     value
 
-// ── Encoder equals the concatenation spec ───────────────────────────────────
-
+/// `push_share_body` builds the signed body.
 let push_share_body_spec
       (input: Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global)
       (f: t_ShareEnvelopeBytes)
@@ -318,10 +444,7 @@ let push_share_body_spec
     (requires vlen input + body_len f item <= max_usize)
     (ensures
       push_share_body input f item ==
-      Some
-        (Alloc.Vec.Vec
-          (concat_left input._0 (expanded (body_chunks f item)))
-          input._1)) =
+      Core_models.Option.Option_Some (Alloc.Vec.Vec (Seq.append input._0 (body_spec f item)) input._1)) =
   let a = f.f_sender_user_id in
   let b = f.f_sender_device_id in
   let c = f.f_sender_vk in
@@ -330,32 +453,39 @@ let push_share_body_spec
   let g = f.f_lineage_id in
   let h = f.f_revision in
   let v0 = input in
-  let v1 = Alloc.Vec.Vec (Seq.append v0._0 (u8s (u64_len a))) v0._1 in
-  let v2 = Alloc.Vec.Vec (Seq.append v1._0 a) v1._1 in
-  let v3 = Alloc.Vec.Vec (Seq.append v2._0 (u8s (u64_len b))) v2._1 in
-  let v4 = Alloc.Vec.Vec (Seq.append v3._0 b) v3._1 in
-  let v5 = Alloc.Vec.Vec (Seq.append v4._0 (u8s (u64_len c))) v4._1 in
-  let v6 = Alloc.Vec.Vec (Seq.append v5._0 c) v5._1 in
-  let v7 = Alloc.Vec.Vec (Seq.append v6._0 (u8s (u64_len d))) v6._1 in
-  let v8 = Alloc.Vec.Vec (Seq.append v7._0 d) v7._1 in
-  let v9 = Alloc.Vec.Vec (Seq.append v8._0 e) v8._1 in
-  let v10 = Alloc.Vec.Vec (Seq.append v9._0 (u8s (u64_len g))) v9._1 in
-  let v11 = Alloc.Vec.Vec (Seq.append v10._0 g) v10._1 in
-  let v12 = Alloc.Vec.Vec (Seq.append v11._0 (u8s h)) v11._1 in
-  let v13 = Alloc.Vec.Vec (Seq.append v12._0 (u8s (u64_len item))) v12._1 in
+  body_len_unfold f item;
+  lp_len a;
+  lp_len b;
+  lp_len c;
+  lp_len d;
+  lp_len g;
+  lp_len item;
+  Seq.lemma_len_append (u8s h) (lp item);
+  u8s_len h;
+  Seq.slice_length e;
+  // Each step is the actual `push_*` result, so no intermediate `Vec` is
+  // reconstructed and no extra concatenation-bound obligation is generated.
   push_lp_spec v0 a;
-  push_lp_spec v2 b;
-  push_lp_spec v4 c;
-  push_lp_spec v6 d;
-  push_bytes_spec v8 e;
-  push_lp_spec v9 g;
-  push_u64_spec v11 h;
-  push_lp_spec v13 item
+  let v1 = Core_models.Option.impl__unwrap (push_lp_checked v0 a) in
+  push_lp_spec v1 b;
+  let v2 = Core_models.Option.impl__unwrap (push_lp_checked v1 b) in
+  push_lp_spec v2 c;
+  let v3 = Core_models.Option.impl__unwrap (push_lp_checked v2 c) in
+  push_lp_spec v3 d;
+  let v4 = Core_models.Option.impl__unwrap (push_lp_checked v3 d) in
+  push_bytes_spec v4 e;
+  let v5 = Core_models.Option.impl__unwrap (push_bytes v4 e) in
+  push_lp_spec v5 g;
+  let v6 = Core_models.Option.impl__unwrap (push_lp_checked v5 g) in
+  push_u64_spec v6 h;
+  let v7 = Core_models.Option.impl__unwrap (push_u64 v6 h) in
+  push_lp_spec v7 item;
+  let v8 = Core_models.Option.impl__unwrap (push_lp_checked v7 item) in
+  // The body is the left fold of the same appends; associativity is supplied
+  // by `append_assoc_smt`, and `body_spec`/`lp` unfold definitionally.
+  ()
 
-/// The `VSE2` marker followed by the signed body.
-let prefix_chunks (f: t_ShareEnvelopeBytes) (item: t_Slice u8) : list chunk =
-  Raw magic :: body_chunks f item
-
+/// `push_share_prefix` builds `VSE2 || body`.
 let push_share_prefix_spec
       (input: Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global)
       (f: t_ShareEnvelopeBytes)
@@ -364,14 +494,220 @@ let push_share_prefix_spec
     (requires vlen input + 4 + body_len f item <= max_usize)
     (ensures
       push_share_prefix input f item ==
-      Some
+      Core_models.Option.Option_Some
         (Alloc.Vec.Vec
-          (concat_left input._0 (expanded (prefix_chunks f item)))
+          (Seq.append input._0 (prefix_spec f item))
           input._1)) =
-  push_bytes_spec input magic;
+  body_len_unfold f item;
+  Seq.slice_length v_SHARE_ENVELOPE_MAGIC;
+  push_bytes_spec input marker_bytes;
   push_share_body_spec
-    (Alloc.Vec.Vec (Seq.append input._0 magic) input._1)
+    (Alloc.Vec.Vec (Seq.append input._0 marker_bytes) input._1)
     f
     item
 
+/// The full prefix from the empty vector is exactly `prefix_spec`.
+let encode_share_prefix_spec
+      (f: t_ShareEnvelopeBytes)
+      (item: t_Slice u8) :
+  Lemma
+    (requires 4 + body_len f item <= max_usize)
+    (ensures
+      encode_share_prefix f item ==
+      Core_models.Option.Option_Some
+        (Alloc.Vec.Vec
+          (prefix_spec f item)
+          (Alloc.Vec.impl__new #u8 ())._1)) =
+  let empty = Alloc.Vec.impl__new #u8 () in
+  push_share_prefix_spec empty f item;
+  Seq.append_empty_l (prefix_spec f item)
+
+/// Appending the signature trailer.
+let append_share_signature_spec
+      (prefix: Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global)
+      (signature: t_Slice u8) :
+  Lemma
+    (requires vlen prefix + 8 + len signature <= max_usize)
+    (ensures
+      append_share_signature prefix signature ==
+      Core_models.Option.Option_Some
+        (Alloc.Vec.Vec
+          (Seq.append prefix._0 (lp signature))
+          prefix._1)) =
+  push_lp_spec prefix signature
+
+/// The production encoder returns exactly `frame_spec`.
+let encode_share_frame_spec
+      (f: t_ShareEnvelopeBytes)
+      (item sig: t_Slice u8) :
+  Lemma
+    (requires frame_len f item sig <= max_usize)
+    (ensures
+      encode_share_frame f item sig ==
+      Core_models.Option.Option_Some
+        (Alloc.Vec.Vec
+          (frame_spec f item sig)
+          (Alloc.Vec.impl__new #u8 ())._1)) =
+  frame_len_unfold f item sig;
+  body_len_unfold f item;
+  lp_len sig;
+  encode_share_prefix_spec f item;
+  append_share_signature_spec
+    (Alloc.Vec.Vec
+      (prefix_spec f item)
+      (Alloc.Vec.impl__new #u8 ())._1)
+    sig;
+  ()
+
 #pop-options
+
+// ── The functional parser on an encoded frame ───────────────────────────────
+
+#push-options "--fuel 2 --ifuel 2"
+
+/// `frame_body` on a complete frame is exactly the signed body.
+let frame_body_frame
+      (f: t_ShareEnvelopeBytes)
+      (item sig: t_Slice u8) :
+  Lemma
+    (requires well_formed f item sig)
+    (ensures
+      frame_body (frame_spec f item sig) marker_len signature_trailer ==
+      Core_models.Option.Option_Some (body_spec f item)) =
+  frame_len_unfold f item sig;
+  body_len_unfold f item;
+  lp_len sig;
+  Seq.lemma_len_append marker_bytes (Seq.append (body_spec f item) (lp sig));
+  Seq.lemma_len_append (body_spec f item) (lp sig);
+  slice_append_right3_mid marker_bytes (body_spec f item) (lp sig);
+  assert_norm (v signature_trailer = 8 + v Vela_crypto.Signing.v_HYBRID_SIG_LEN);
+  ()
+
+/// The full `share_frame_spec` on `frame_spec f item sig` returns exactly the
+/// encoded fields.
+let share_frame_spec_frame
+      (f: t_ShareEnvelopeBytes)
+      (item sig: t_Slice u8) :
+  Lemma
+    (requires well_formed f item sig)
+    (ensures
+      share_frame_spec (frame_spec f item sig) ==
+      Core_models.Option.Option_Some (frame_of f item sig ())) =
+  let a = f.f_sender_user_id in
+  let b = f.f_sender_device_id in
+  let c = f.f_sender_vk in
+  let d = f.f_recipient_user_id in
+  let e = f.f_recipient_ek_digest in
+  let g = f.f_lineage_id in
+  let h = f.f_revision in
+  let input = frame_spec f item sig in
+  let rest0 = Seq.append (body_spec f item) (lp sig) in
+  let rest1 =
+    Seq.append e
+      (Seq.append (lp g) (Seq.append (u8s h) (Seq.append (lp item) (lp sig))))
+  in
+  let rest2 = Seq.append (lp g) (Seq.append (u8s h) (Seq.append (lp item) (lp sig))) in
+  let rest3 = Seq.append (u8s h) (Seq.append (lp item) (lp sig)) in
+  let rest4 = Seq.append (lp item) (lp sig) in
+  frame_len_unfold f item sig;
+  body_len_unfold f item;
+  u8s_len h;
+  lp_len g;
+  lp_len item;
+  lp_len sig;
+  Seq.lemma_len_append (u8s h) (lp item);
+  Seq.lemma_len_append (lp item) (lp sig);
+  Seq.lemma_len_append (lp g) (Seq.append (u8s h) rest4);
+  Seq.lemma_len_append e rest2;
+  Seq.lemma_len_append marker_bytes rest0;
+  // The body followed by the signature is the right-nested frame shape.
+  Seq.append_assoc (u8s h) (lp item) (lp sig);
+  // Marker.
+  split_prefix_append marker_bytes rest0 marker_len;
+  // Four LP header fields.
+  split_lp_four_append a b c d rest1;
+  // Recipient-key digest.
+  split_prefix_append e rest2 digest_len;
+  // Lineage.
+  split_lp_append g rest3;
+  // Revision.
+  split_u64_append h rest4;
+  // Item and signature.
+  split_lp_pair_last item sig;
+  // Length admission checks.
+  impl_len_nat c;
+  impl_len_nat sig;
+  frame_body_frame f item sig;
+  ()
+
+#pop-options
+
+// ── Parser composition and injectivity ──────────────────────────────────────
+
+/// Eliminate the explicit structural comparator.
+let frame_results_equal_elim
+      (left right: Core_models.Option.t_Option t_ShareFrame) :
+  Lemma
+    (requires frame_results_equal left right)
+    (ensures left == right) =
+  match left, right with
+  | Core_models.Option.Option_None, Core_models.Option.Option_None -> ()
+  | Core_models.Option.Option_Some l, Core_models.Option.Option_Some r ->
+      assert (l.f_signed_body == r.f_signed_body);
+      assert (l.f_sender_user_id == r.f_sender_user_id);
+      assert (l.f_sender_device_id == r.f_sender_device_id);
+      assert (l.f_sender_vk == r.f_sender_vk);
+      assert (l.f_recipient_user_id == r.f_recipient_user_id);
+      assert (l.f_recipient_ek_digest == r.f_recipient_ek_digest);
+      assert (l.f_lineage_id == r.f_lineage_id);
+      assert (l.f_revision == r.f_revision);
+      assert (l.f_item == r.f_item);
+      assert (l.f_signature == r.f_signature);
+      assert (l == r)
+  | _ -> ()
+
+/// The production parser refines the functional grammar.
+let parse_refines_spec (input: t_Slice u8) :
+  Lemma (parse_share_frame input == share_frame_spec input) =
+  let result = parse_share_frame input in
+  frame_results_equal_elim result (share_frame_spec input)
+
+/// `parse (encode x) = x` for every well-formed `x`.
+let parse_encode_share_frame
+      (f: t_ShareEnvelopeBytes)
+      (item sig: t_Slice u8) :
+  Lemma
+    (requires well_formed f item sig)
+    (ensures
+      (match encode_share_frame f item sig with
+       | Core_models.Option.Option_Some out ->
+         parse_share_frame out._0 == Core_models.Option.Option_Some (frame_of f item sig ())
+       | Core_models.Option.Option_None -> False)) =
+  encode_share_frame_spec f item sig;
+  share_frame_spec_frame f item sig;
+  parse_refines_spec (frame_spec f item sig)
+
+/// The encoder is injective on well-formed values.
+let encode_share_frame_injective
+      (f1 f2: t_ShareEnvelopeBytes)
+      (item1 item2 sig1 sig2: t_Slice u8) :
+  Lemma
+    (requires
+      well_formed f1 item1 sig1 /\
+      well_formed f2 item2 sig2 /\
+      encode_share_frame f1 item1 sig1 == encode_share_frame f2 item2 sig2)
+    (ensures
+      f1.f_sender_user_id == f2.f_sender_user_id /\
+      f1.f_sender_device_id == f2.f_sender_device_id /\
+      f1.f_sender_vk == f2.f_sender_vk /\
+      f1.f_recipient_user_id == f2.f_recipient_user_id /\
+      f1.f_recipient_ek_digest == f2.f_recipient_ek_digest /\
+      f1.f_lineage_id == f2.f_lineage_id /\
+      f1.f_revision = f2.f_revision /\
+      item1 == item2 /\
+      sig1 == sig2) =
+  encode_share_frame_spec f1 item1 sig1;
+  encode_share_frame_spec f2 item2 sig2;
+  parse_encode_share_frame f1 item1 sig1;
+  parse_encode_share_frame f2 item2 sig2;
+  ()

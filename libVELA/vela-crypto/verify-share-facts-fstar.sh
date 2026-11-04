@@ -30,9 +30,11 @@ fstar.exe \
   --include ../vela-client-share-policy/proofs/fstar/extraction \
   --include proofs/fstar/extraction \
   --include proofs/fstar/models \
+  --include proofs/fstar/share-envelope-inverse \
   proofs/fstar/models/Alloc.String.fst \
   proofs/fstar/models/Alloc.Vec.fst \
   ../vela-client-share-policy/proofs/fstar/extraction/Vela_client_share_policy.fst \
   proofs/fstar/extraction/Vela_crypto.Share_envelope.fst \
   proofs/fstar/extraction/Vela_crypto.Signing.fst \
-  proofs/fstar/extraction/Vela_crypto.Wire.fst
+  proofs/fstar/extraction/Vela_crypto.Wire.fst \
+  proofs/fstar/share-envelope-inverse/Vela_crypto_share_envelope_inverse.fst
