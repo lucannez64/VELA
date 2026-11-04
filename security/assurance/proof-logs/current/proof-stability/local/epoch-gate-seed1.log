@@ -1,0 +1,81 @@
+z3-seed: gate=libVELA/vela-sync-policy/verify-fstar-epoch.sh seed=1
+z3-seed: fstar.exe on PATH: /home/hirew/.t3/worktrees/VELA/t3-fc5df465/security/assurance/z3-seed/fstar.exe
+z3-seed: VELA_Z3_SEED=1 VELA_FSTAR_CACHE=0 query_stats=1
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.01s
+     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-fc5df465/target-vela-t8-stability/debug/build/vela-sync-policy/165feaf577ea3e70/out/vela_sync_policy-165feaf577ea3e70)
+
+running 6 tests
+test structural_equality_tests::structural_merge_equality_matches_derived_equality_exhaustively ... ok
+test tests::adoption_ladder_rejects_everything_but_the_next_epoch ... ok
+test tests::chunk_admission_boundary_grid_matches_independent_predicate ... ok
+test tests::chunk_download_rejects_rollback_and_unbound_aad ... ok
+test tests::merge_classification_covers_every_combination ... ok
+test tests::mobile_sync_epoch_requires_exact_positive_agreement ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests vela_sync_policy
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.02s
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-epoch/Vela_sync_policy.fst[0m
+Epoch source guard: 4 extracted postconditions, 6 handwritten lemmas
+z3-seed: not a module check (seed 1 unused); pass-through to /tmp/vela-fstar-prebuilt/fstar/bin/fstar.exe
+F* 2025.10.06
+platform=Linux_x86_64
+compiler=OCaml 4.14.2
+date=2025-10-06 12:00:42 -0700
+commit=7b347386330d0e5a331a220535b6f15288903234
+z3-seed: exec /tmp/vela-fstar-prebuilt/fstar/bin/fstar.exe --version
+F* epoch argv: --cmi --cache_off --warn_error -331 --z3rlimit 500 --z3version 4.13.3 --already_cached +Prims+FStar+LowStar+C+Spec.Loops+TestLib --include /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/core --include /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives --include /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proofs/fstar/extraction --include proofs/fstar/extraction-epoch --include proofs/fstar/epoch-lemmas proofs/fstar/extraction-epoch/Vela_sync_policy.fst proofs/fstar/epoch-lemmas/Vela_sync_policy_epoch_lemmas.fst
+0b7febd0c062d955831133476fba4afc8d9616b83e6be49b63d6ba10fe404393  proofs/fstar/extraction-epoch/Vela_sync_policy.fst
+81843c5aa65b9e1269bcd865ba5fcc957286d72de18311e48a725dfc90ee174b  proofs/fstar/epoch-lemmas/Vela_sync_policy_epoch_lemmas.fst
+proofs/fstar/extraction-epoch/Vela_sync_policy.fst: OK
+proofs/fstar/epoch-lemmas/Vela_sync_policy_epoch_lemmas.fst: OK
+z3-seed: exec /tmp/vela-fstar-prebuilt/fstar/bin/fstar.exe --z3seed 1 --query_stats --cmi --cache_off --warn_error -331 --z3rlimit 500 --z3version 4.13.3 --already_cached +Prims+FStar+LowStar+C+Spec.Loops+TestLib --include /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/core --include /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives --include /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proofs/fstar/extraction --include proofs/fstar/extraction-epoch --include proofs/fstar/epoch-lemmas proofs/fstar/extraction-epoch/Vela_sync_policy.fst proofs/fstar/epoch-lemmas/Vela_sync_policy_epoch_lemmas.fst
+* Warning 271 at /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+Creating new z3proc (cmd=[("/home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/z3-4.13.3/bin/z3", ["-smt2", "-in"])], version=["4.13.3"])
+(Vela_sync_policy.fst(6,0-6,35))	Query-stats (Vela_sync_policy.v_INITIAL_EPOCH, 1)	succeeded in 68 milliseconds with fuel 0 and ifuel 1 and rlimit 500 (used rlimit 0.037)
+(Vela_sync_policy.fst(13,0-16,1))	Query-stats (Vela_sync_policy.t_SyncEpochFacts, 1)	succeeded in 4 milliseconds with fuel 0 and ifuel 1 and rlimit 500 (used rlimit 0.011)
+(Vela_sync_policy.fst(22,2-23,45))	Query-stats (Vela_sync_policy.sync_epochs_agree_for_download, 1)	succeeded in 5 milliseconds with fuel 0 and ifuel 1 and rlimit 500 (used rlimit 0.011)
+(Vela_sync_policy.fst(34,60-34,96))	Query-stats (Vela_sync_policy.plan_sync_epoch_match, 1)	succeeded in 5 milliseconds with fuel 0 and ifuel 1 and rlimit 500 (used rlimit 0.020)
+(Vela_sync_policy.fst(43,2-45,23))	Query-stats (Vela_sync_policy.equal_positive_epoch_admits_download, 1)	succeeded in 16 milliseconds with fuel 0 and ifuel 1 and rlimit 500 (used rlimit 0.064)
+(Vela_sync_policy.fst(54,2-56,23))	Query-stats (Vela_sync_policy.mismatched_positive_epoch_admits_download, 1)	succeeded in 20 milliseconds with fuel 0 and ifuel 1 and rlimit 500 (used rlimit 0.078)
+(Vela_sync_policy.fst(65,2-67,23))	Query-stats (Vela_sync_policy.nonpositive_epoch_admits_download, 1)	succeeded in 14 milliseconds with fuel 0 and ifuel 1 and rlimit 500 (used rlimit 0.056)
+Killing old z3proc (ask_count=6, old_cmd=[("/home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/z3-4.13.3/bin/z3", ["-smt2", "-in"])])
+Creating new z3proc (cmd=[("/home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/z3-4.13.3/bin/z3", ["-smt2", "-in"])], version=["4.13.3"])
+(Vela_sync_policy_epoch_lemmas.fst(23,2-23,51))	Query-stats (Vela_sync_policy_epoch_lemmas.download_epoch_admissible, 1)	succeeded in 65 milliseconds with fuel 2 and ifuel 1 and rlimit 500 (used rlimit 0.013)
+(Vela_sync_policy_epoch_lemmas.fst(33,4-33,6))	Query-stats (Vela_sync_policy_epoch_lemmas.accepted_implies_positive_and_equal, 1)	succeeded in 10 milliseconds with fuel 2 and ifuel 1 and rlimit 500 (used rlimit 0.033)
+(Vela_sync_policy_epoch_lemmas.fst(43,4-43,6))	Query-stats (Vela_sync_policy_epoch_lemmas.positive_and_equal_admits, 1)	succeeded in 7 milliseconds with fuel 2 and ifuel 1 and rlimit 500 (used rlimit 0.025)
+(Vela_sync_policy_epoch_lemmas.fst(51,4-51,6))	Query-stats (Vela_sync_policy_epoch_lemmas.plan_matches_independent_predicate, 1)	succeeded in 8 milliseconds with fuel 2 and ifuel 1 and rlimit 500 (used rlimit 0.033)
+(Vela_sync_policy_epoch_lemmas.fst(63,4-63,6))	Query-stats (Vela_sync_policy_epoch_lemmas.rejected_implies_not_admissible, 1)	succeeded in 6 milliseconds with fuel 2 and ifuel 1 and rlimit 500 (used rlimit 0.028)
+(Vela_sync_policy_epoch_lemmas.fst(73,4-73,6))	Query-stats (Vela_sync_policy_epoch_lemmas.equal_positive_pair_admits, 1)	succeeded in 6 milliseconds with fuel 2 and ifuel 1 and rlimit 500 (used rlimit 0.027)
+(Vela_sync_policy_epoch_lemmas.fst(83,4-83,6))	Query-stats (Vela_sync_policy_epoch_lemmas.mismatched_or_nonpositive_pair_refuses, 1)	succeeded in 11 milliseconds with fuel 2 and ifuel 1 and rlimit 500 (used rlimit 0.035)
+Killing old z3proc (ask_count=6, old_cmd=[("/home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/z3-4.13.3/bin/z3", ["-smt2", "-in"])])
+Verified module: Vela_sync_policy
+Verified module: Vela_sync_policy_epoch_lemmas
+All verification conditions discharged successfully
+TOTAL TIME 24802 ms: /tmp/vela-fstar-prebuilt/fstar/bin/fstar.exe --z3seed 1 --query_stats --cmi --cache_off --warn_error -331 --z3rlimit 500 --z3version 4.13.3 --already_cached +Prims+FStar+LowStar+C+Spec.Loops+TestLib --include /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/core --include /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives --include /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proofs/fstar/extraction --include proofs/fstar/extraction-epoch --include proofs/fstar/epoch-lemmas proofs/fstar/extraction-epoch/Vela_sync_policy.fst proofs/fstar/epoch-lemmas/Vela_sync_policy_epoch_lemmas.fst
+z3-seed: gate=libVELA/vela-sync-policy/verify-fstar-epoch.sh seed=1 seconds=26 exit=0

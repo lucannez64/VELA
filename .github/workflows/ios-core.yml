@@ -33,13 +33,13 @@ jobs:
       run:
         working-directory: libVELA/vela-apple-bridge
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
 
-      - uses: swatinem/rust-cache@v2
+      - uses: swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: libVELA/vela-apple-bridge -> ../../target
           # The repo-root .cargo/config.toml redirects the target dir to
@@ -62,7 +62,7 @@ jobs:
           ./smoke_bin
 
       - name: Upload XCFramework
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: VelaCore-xcframework
           path: libVELA/vela-apple-bridge/VelaCore.xcframework

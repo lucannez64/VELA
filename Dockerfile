@@ -4,7 +4,8 @@
 # Build context is the repository root.
 
 # ---- web build stage: the ephemeral web vault SPA (wasm core + Vite bundle) ----
-FROM rust:1-bookworm AS web
+# rust:1-bookworm, manifest-list digest resolved 2026-11-04.
+FROM rust:1-bookworm@sha256:c9155318d07341301a78b45ecdd81af2e43b8b297d64e8fd4c5e80d7735607c3 AS web
 # Toolchain versions are pinned so upstream install scripts can't silently
 # change what lands in the image.
 ARG BUN_VERSION=1.2.19
@@ -33,7 +34,8 @@ WORKDIR /src/webVELA
 RUN bun install --frozen-lockfile && bun run build:all
 
 # ---- server build stage ----
-FROM rust:1-bookworm AS build
+# rust:1-bookworm, manifest-list digest resolved 2026-11-04.
+FROM rust:1-bookworm@sha256:c9155318d07341301a78b45ecdd81af2e43b8b297d64e8fd4c5e80d7735607c3 AS build
 WORKDIR /src
 # Copy only what the server workspace needs, preserving the relative layout that
 # vela-server's Cargo.toml expects: vela-crypto = { path = "../../libVELA/vela-crypto" }.
@@ -55,7 +57,8 @@ ENV CARGO_PROFILE_RELEASE_LTO=${CARGO_PROFILE_RELEASE_LTO} \
 RUN cargo build --release -p vela-server
 
 # ---- runtime stage ----
-FROM debian:bookworm-slim AS runtime
+# debian:bookworm-slim, manifest-list digest resolved 2026-11-04.
+FROM debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3 AS runtime
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates gosu \
  && rm -rf /var/lib/apt/lists/* \

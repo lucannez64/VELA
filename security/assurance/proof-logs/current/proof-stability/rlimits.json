@@ -1,0 +1,1644 @@
+{
+ "generated_by": "security/formal/list-rlimits.py",
+ "generated_at": "2026-11-04T22:21:18Z",
+ "scope": {
+  "shell_files": 109,
+  "fstar_files": 176,
+  "proof_log_modules_excluded": 85
+ },
+ "counts": {
+  "command_line": 128,
+  "fstar_source": 85,
+  "rlimit_factor": 0,
+  "z3seed_overrides": 0
+ },
+ "values": {
+  "32000": 2,
+  "16000": 12,
+  "8000": 20,
+  "4000": 4,
+  "500": 128,
+  "200": 8,
+  "100": 36,
+  "15": 3
+ },
+ "max": {
+  "value": 32000,
+  "kind": "command-line",
+  "file": "security/formal/cross-driver/verify-fstar-cross-driver-mutations.sh",
+  "line": 52
+ },
+ "max_locations": [
+  {
+   "kind": "command-line",
+   "file": "security/formal/cross-driver/verify-fstar-cross-driver-mutations.sh",
+   "line": 52
+  },
+  {
+   "kind": "command-line",
+   "file": "security/formal/cross-driver/verify.sh",
+   "line": 121
+  }
+ ],
+ "command_line": [
+  {
+   "kind": "command-line",
+   "file": "libVELA/vela-client-recovery-policy/verify-fstar.sh",
+   "line": 18,
+   "value": 100,
+   "text": "fstar --z3rlimit 100"
+  },
+  {
+   "kind": "command-line",
+   "file": "libVELA/vela-client-recovery-policy/verify-fstar.sh",
+   "line": 40,
+   "value": 100,
+   "text": "--z3rlimit 100 \\"
+  },
+  {
+   "kind": "command-line",
+   "file": "libVELA/vela-client-share-journal/verify-fstar-journal.sh",
+   "line": 38,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "libVELA/vela-client-share-journal/verify-fstar-journal.sh",
+   "line": 74,
+   "value": 500,
+   "text": "--z3rlimit 500 \\"
+  },
+  {
+   "kind": "command-line",
+   "file": "libVELA/vela-client-share-policy/verify-fstar.sh",
+   "line": 18,
+   "value": 100,
+   "text": "fstar --z3rlimit 100"
+  },
+  {
+   "kind": "command-line",
+   "file": "libVELA/vela-client-share-policy/verify-fstar.sh",
+   "line": 40,
+   "value": 100,
+   "text": "--z3rlimit 100 \\"
+  },
+  {
+   "kind": "command-line",
+   "file": "libVELA/vela-crypto/verify-share-facts-fstar.sh",
+   "line": 10,
+   "value": 100,
+   "text": "cargo hax into -i '-** +vela_crypto::share_envelope::opened_share_header +vela_crypto::share_envelope::opened_share_item +vela_crypto::share_envelope::into_opened_share_item +vela_crypto::share_envelope::admission_facts +vela_crypto::share_envelope::plan_observed_share +vela_crypto::share_envelope::split_envelope_prefix +vela_crypto::share_envelope::take_frame_prefix +vela_crypto::share_envelope::share_frame_spec +vela_crypto::share_envelope::frame_results_equal +vela_crypto::share_envelope::parse_share_frame +vela_crypto::share_envelope::push_bytes +vela_crypto::share_envelope::push_u64 +vela_crypto::share_envelope::push_lp_checked +vela_crypto::share_envelope::push_share_body +vela_crypto::share_envelope::push_share_prefix +vela_crypto::share_envelope::encode_share_prefix +vela_crypto::share_envelope::append_share_signature +vela_crypto::share_envelope::encode_share_frame +vela_crypto::signing::hybrid_components_verify +vela_crypto::signing::invalid_ml_component_can_authenticate +vela_crypto::signing::invalid_ed_component_can_authenticate +vela_crypto::wire::frame_body +vela_crypto::wire::domain_message +vela_crypto::wire::split_lp_pair +vela_crypto::wire::take_lp_pair +vela_crypto::wire::split_lp_four +vela_crypto::wire::take_lp_four +vela_crypto::wire::split_u64_prefix +vela_crypto::wire::take_u64 +vela_crypto::wire::split_length_prefixed +vela_crypto::wire::take_length_prefixed +vela_crypto::wire::decode_u64_be +vela_crypto::wire::split_low_byte +vela_crypto::wire::encode_u64_be +vela_crypto::wire::u64_wire_round_trip +vela_crypto::wire::u64_wire_encoding_is_injective' fstar --z3rlimit 100"
+  },
+  {
+   "kind": "command-line",
+   "file": "libVELA/vela-crypto/verify-share-facts-fstar.sh",
+   "line": 25,
+   "value": 100,
+   "text": "--z3rlimit 100 \\"
+  },
+  {
+   "kind": "command-line",
+   "file": "libVELA/vela-sync-policy/verify-fstar-chunk.sh",
+   "line": 73,
+   "value": 500,
+   "text": "--z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "libVELA/vela-sync-policy/verify-fstar-epoch.sh",
+   "line": 33,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "libVELA/vela-sync-policy/verify-fstar-epoch.sh",
+   "line": 69,
+   "value": 500,
+   "text": "--z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "libVELA/vela-sync-policy/verify-fstar.sh",
+   "line": 18,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "libVELA/vela-sync-policy/verify-fstar.sh",
+   "line": 36,
+   "value": 500,
+   "text": "--z3rlimit 500 \\"
+  },
+  {
+   "kind": "command-line",
+   "file": "security/formal/cross-driver/verify-fstar-cross-driver-mutations.sh",
+   "line": 52,
+   "value": 32000,
+   "text": "--z3rlimit 32000"
+  },
+  {
+   "kind": "command-line",
+   "file": "security/formal/cross-driver/verify.sh",
+   "line": 51,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "security/formal/cross-driver/verify.sh",
+   "line": 60,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "security/formal/cross-driver/verify.sh",
+   "line": 69,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "security/formal/cross-driver/verify.sh",
+   "line": 121,
+   "value": 32000,
+   "text": "--z3rlimit 32000"
+  },
+  {
+   "kind": "command-line",
+   "file": "security/formal/m28-trace-equivalence/verify.sh",
+   "line": 27,
+   "value": 100,
+   "text": "printf 'argv: --cache_off --z3rlimit 100 --z3version 4.13.3 --include %s %s %s\\n' \\"
+  },
+  {
+   "kind": "command-line",
+   "file": "security/formal/m28-trace-equivalence/verify.sh",
+   "line": 30,
+   "value": 100,
+   "text": "\"$here/../fstar-bounded.sh\" --cache_off --z3rlimit 100 --z3version 4.13.3 \\"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-enrollment-policy/verify-fstar-enroll-driver.sh",
+   "line": 43,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-enrollment-policy/verify-fstar-enroll-driver.sh",
+   "line": 90,
+   "value": 16000,
+   "text": "--z3rlimit 16000"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-enrollment-policy/verify-fstar-enroll-interpreter.sh",
+   "line": 43,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-enrollment-policy/verify-fstar-enroll-interpreter.sh",
+   "line": 75,
+   "value": 8000,
+   "text": "--z3rlimit 8000"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-enrollment-policy/verify-fstar-enrollment-executors-mutations.sh",
+   "line": 230,
+   "value": 100,
+   "text": "out=$(fstar.exe --cmi --cache_off --warn_error -331 --z3rlimit 100 --z3version 4.13.3 \\"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-enrollment-policy/verify-fstar-enrollment-executors.sh",
+   "line": 70,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-enrollment-policy/verify-fstar-enrollment-executors.sh",
+   "line": 109,
+   "value": 100,
+   "text": "--z3rlimit 100"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-enrollment-policy/verify-fstar-pairing-driver.sh",
+   "line": 47,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-enrollment-policy/verify-fstar-pairing-driver.sh",
+   "line": 103,
+   "value": 16000,
+   "text": "--z3rlimit 16000"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-enrollment-policy/verify-fstar-pairing-driver.sh",
+   "line": 109,
+   "value": 500,
+   "text": "--z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-enrollment-policy/verify-fstar-pairing-interpreter.sh",
+   "line": 43,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-enrollment-policy/verify-fstar-pairing-interpreter.sh",
+   "line": 75,
+   "value": 8000,
+   "text": "--z3rlimit 8000"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-enrollment-policy/verify-fstar.sh",
+   "line": 18,
+   "value": 100,
+   "text": "fstar --z3rlimit 100"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-enrollment-policy/verify-fstar.sh",
+   "line": 40,
+   "value": 100,
+   "text": "--z3rlimit 100 \\"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-recovery-policy/verify-fstar-driver.sh",
+   "line": 37,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-recovery-policy/verify-fstar-driver.sh",
+   "line": 79,
+   "value": 4000,
+   "text": "--z3rlimit 4000"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-recovery-policy/verify-fstar-possession-driver.sh",
+   "line": 39,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-recovery-policy/verify-fstar-possession-driver.sh",
+   "line": 81,
+   "value": 4000,
+   "text": "--z3rlimit 4000"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-recovery-policy/verify-fstar-possession-interpreter.sh",
+   "line": 43,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-recovery-policy/verify-fstar-possession-interpreter.sh",
+   "line": 75,
+   "value": 8000,
+   "text": "--z3rlimit 8000"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-recovery-policy/verify-fstar-recovery-executors-mutations.sh",
+   "line": 482,
+   "value": 200,
+   "text": "out=$(fstar.exe --cmi --cache_off --warn_error -331 --z3rlimit 200 --z3version 4.13.3 \\"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-recovery-policy/verify-fstar-recovery-executors.sh",
+   "line": 111,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-recovery-policy/verify-fstar-recovery-executors.sh",
+   "line": 115,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-recovery-policy/verify-fstar-recovery-executors.sh",
+   "line": 119,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-recovery-policy/verify-fstar-recovery-executors.sh",
+   "line": 123,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-recovery-policy/verify-fstar-recovery-executors.sh",
+   "line": 127,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-recovery-policy/verify-fstar-recovery-executors.sh",
+   "line": 190,
+   "value": 200,
+   "text": "--z3rlimit 200"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-recovery-policy/verify-fstar-recovery-share-driver.sh",
+   "line": 39,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-recovery-policy/verify-fstar-recovery-share-driver.sh",
+   "line": 83,
+   "value": 8000,
+   "text": "--z3rlimit 8000"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-recovery-policy/verify-fstar-recovery-share-interpreter.sh",
+   "line": 42,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-recovery-policy/verify-fstar-recovery-share-interpreter.sh",
+   "line": 74,
+   "value": 8000,
+   "text": "--z3rlimit 8000"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-recovery-policy/verify-fstar-redemption-interpreter.sh",
+   "line": 45,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-recovery-policy/verify-fstar-redemption-interpreter.sh",
+   "line": 77,
+   "value": 8000,
+   "text": "--z3rlimit 8000"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-recovery-policy/verify-fstar-webauthn-driver.sh",
+   "line": 40,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-recovery-policy/verify-fstar-webauthn-driver.sh",
+   "line": 82,
+   "value": 4000,
+   "text": "--z3rlimit 4000"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-recovery-policy/verify-fstar-webauthn-interpreter.sh",
+   "line": 49,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-recovery-policy/verify-fstar-webauthn-interpreter.sh",
+   "line": 81,
+   "value": 8000,
+   "text": "--z3rlimit 8000"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-recovery-policy/verify-fstar.sh",
+   "line": 18,
+   "value": 100,
+   "text": "fstar --z3rlimit 100"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-recovery-policy/verify-fstar.sh",
+   "line": 40,
+   "value": 100,
+   "text": "--z3rlimit 100 \\"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-rekey-policy/verify-fstar-rekey-driver-composition-mutations.sh",
+   "line": 63,
+   "value": 100,
+   "text": "--z3rlimit 100"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-rekey-policy/verify-fstar-rekey-driver.sh",
+   "line": 46,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-rekey-policy/verify-fstar-rekey-driver.sh",
+   "line": 100,
+   "value": 16000,
+   "text": "--z3rlimit 16000"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-rekey-policy/verify-fstar-rekey-driver.sh",
+   "line": 126,
+   "value": 100,
+   "text": "--z3rlimit 100"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-rekey-policy/verify-fstar-rekey-interpreter.sh",
+   "line": 55,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-rekey-policy/verify-fstar-rekey-interpreter.sh",
+   "line": 96,
+   "value": 100,
+   "text": "--z3rlimit 100"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-rekey-policy/verify-fstar-vault-executors-mutations.sh",
+   "line": 269,
+   "value": 100,
+   "text": "out=$(fstar.exe --cmi --cache_off --warn_error -331 --z3rlimit 100 --z3version 4.13.3 \\"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-rekey-policy/verify-fstar-vault-executors.sh",
+   "line": 59,
+   "value": 100,
+   "text": "--z3rlimit 100"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-rekey-policy/verify-fstar-vault-executors.sh",
+   "line": 105,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-rekey-policy/verify-fstar-vault-mutation-driver.sh",
+   "line": 36,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-rekey-policy/verify-fstar-vault-mutation-driver.sh",
+   "line": 80,
+   "value": 100,
+   "text": "--z3rlimit 100"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-rekey-policy/verify-fstar-vault-mutation-interpreter.sh",
+   "line": 40,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-rekey-policy/verify-fstar-vault-mutation-interpreter.sh",
+   "line": 74,
+   "value": 100,
+   "text": "--z3rlimit 100"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-rekey-policy/verify-fstar-vault-upload-driver.sh",
+   "line": 46,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-rekey-policy/verify-fstar-vault-upload-driver.sh",
+   "line": 102,
+   "value": 16000,
+   "text": "--z3rlimit 16000"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-rekey-policy/verify-fstar-vault-upload-interpreter.sh",
+   "line": 45,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-rekey-policy/verify-fstar-vault-upload-interpreter.sh",
+   "line": 76,
+   "value": 16000,
+   "text": "--z3rlimit 16000"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-rekey-policy/verify-fstar.sh",
+   "line": 45,
+   "value": 100,
+   "text": "fstar --z3rlimit 100"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-rekey-policy/verify-fstar.sh",
+   "line": 67,
+   "value": 100,
+   "text": "--z3rlimit 100 \\"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-session-policy/verify-fstar-challenge-issue-composition.sh",
+   "line": 62,
+   "value": 16000,
+   "text": "--z3rlimit 16000"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-session-policy/verify-fstar-challenge-issue-driver.sh",
+   "line": 42,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-session-policy/verify-fstar-challenge-issue-driver.sh",
+   "line": 75,
+   "value": 8000,
+   "text": "--z3rlimit 8000"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-session-policy/verify-fstar-challenge-issue-interpreter.sh",
+   "line": 44,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-session-policy/verify-fstar-challenge-issue-interpreter.sh",
+   "line": 76,
+   "value": 8000,
+   "text": "--z3rlimit 8000"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-session-policy/verify-fstar-deletion-driver.sh",
+   "line": 55,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-session-policy/verify-fstar-deletion-driver.sh",
+   "line": 104,
+   "value": 8000,
+   "text": "--z3rlimit 8000"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-session-policy/verify-fstar-deletion-interpreter.sh",
+   "line": 44,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-session-policy/verify-fstar-deletion-interpreter.sh",
+   "line": 74,
+   "value": 8000,
+   "text": "--z3rlimit 8000"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-session-policy/verify-fstar-login-composition.sh",
+   "line": 135,
+   "value": 16000,
+   "text": "--z3rlimit 16000"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-session-policy/verify-fstar-login-driver.sh",
+   "line": 56,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-session-policy/verify-fstar-login-driver.sh",
+   "line": 125,
+   "value": 16000,
+   "text": "--z3rlimit 16000"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-session-policy/verify-fstar-login-interpreter.sh",
+   "line": 43,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-session-policy/verify-fstar-login-interpreter.sh",
+   "line": 75,
+   "value": 8000,
+   "text": "--z3rlimit 8000"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-session-policy/verify-fstar-login-raw-nonce.sh",
+   "line": 173,
+   "value": 16000,
+   "text": "--z3rlimit 16000"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-session-policy/verify-fstar-registration-driver.sh",
+   "line": 42,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-session-policy/verify-fstar-registration-driver.sh",
+   "line": 75,
+   "value": 8000,
+   "text": "--z3rlimit 8000"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-session-policy/verify-fstar-registration-interpreter.sh",
+   "line": 44,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-session-policy/verify-fstar-registration-interpreter.sh",
+   "line": 74,
+   "value": 8000,
+   "text": "--z3rlimit 8000"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-session-policy/verify-fstar-revocation-driver.sh",
+   "line": 49,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-session-policy/verify-fstar-revocation-driver.sh",
+   "line": 91,
+   "value": 16000,
+   "text": "--z3rlimit 16000"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-session-policy/verify-fstar-revocation-interpreter.sh",
+   "line": 44,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-session-policy/verify-fstar-revocation-interpreter.sh",
+   "line": 74,
+   "value": 8000,
+   "text": "--z3rlimit 8000"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-session-policy/verify-fstar-session-executors-mutations.sh",
+   "line": 422,
+   "value": 200,
+   "text": "out=$(fstar.exe --cmi --cache_off --warn_error -331 --z3rlimit 200 --z3version 4.13.3 \\"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-session-policy/verify-fstar-session-executors.sh",
+   "line": 105,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-session-policy/verify-fstar-session-executors.sh",
+   "line": 153,
+   "value": 200,
+   "text": "--z3rlimit 200"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-session-policy/verify-fstar-websession-composition.sh",
+   "line": 55,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-session-policy/verify-fstar-websession-composition.sh",
+   "line": 85,
+   "value": 16000,
+   "text": "--z3rlimit 16000"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-session-policy/verify-fstar-websession-driver.sh",
+   "line": 42,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-session-policy/verify-fstar-websession-driver.sh",
+   "line": 77,
+   "value": 8000,
+   "text": "--z3rlimit 8000"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-session-policy/verify-fstar-websession-interpreter.sh",
+   "line": 42,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-session-policy/verify-fstar-websession-interpreter.sh",
+   "line": 79,
+   "value": 8000,
+   "text": "--z3rlimit 8000"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-session-policy/verify-fstar.sh",
+   "line": 31,
+   "value": 100,
+   "text": "fstar --z3rlimit 100"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-session-policy/verify-fstar.sh",
+   "line": 53,
+   "value": 100,
+   "text": "--z3rlimit 100 \\"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-share-policy/verify-fstar-driver.sh",
+   "line": 38,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-share-policy/verify-fstar-driver.sh",
+   "line": 80,
+   "value": 4000,
+   "text": "--z3rlimit 4000"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-share-policy/verify-fstar-send-driver.sh",
+   "line": 46,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-share-policy/verify-fstar-send-driver.sh",
+   "line": 96,
+   "value": 16000,
+   "text": "--z3rlimit 16000"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-share-policy/verify-fstar-send-driver.sh",
+   "line": 102,
+   "value": 8000,
+   "text": "--z3rlimit 8000"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-share-policy/verify-fstar-send-executors-mutations.sh",
+   "line": 117,
+   "value": 200,
+   "text": "out=$(fstar.exe --cmi --cache_off --warn_error -331 --z3rlimit 200 --z3version 4.13.3 \\"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-share-policy/verify-fstar-send-executors.sh",
+   "line": 76,
+   "value": 200,
+   "text": "--z3rlimit 200"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-share-policy/verify-fstar-send-interpreter.sh",
+   "line": 43,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-share-policy/verify-fstar-send-interpreter.sh",
+   "line": 75,
+   "value": 8000,
+   "text": "--z3rlimit 8000"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-share-policy/verify-fstar-share-executors-mutations.sh",
+   "line": 238,
+   "value": 200,
+   "text": "out=$(fstar.exe --cmi --cache_off --warn_error -331 --z3rlimit 200 --z3version 4.13.3 \\"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-share-policy/verify-fstar-share-executors.sh",
+   "line": 73,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-share-policy/verify-fstar-share-executors.sh",
+   "line": 108,
+   "value": 200,
+   "text": "--z3rlimit 200"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-share-policy/verify-fstar-share-interpreter.sh",
+   "line": 42,
+   "value": 500,
+   "text": "fstar --z3rlimit 500"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-share-policy/verify-fstar-share-interpreter.sh",
+   "line": 74,
+   "value": 8000,
+   "text": "--z3rlimit 8000"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-share-policy/verify-fstar.sh",
+   "line": 18,
+   "value": 100,
+   "text": "fstar --z3rlimit 100"
+  },
+  {
+   "kind": "command-line",
+   "file": "serverVELA/vela-share-policy/verify-fstar.sh",
+   "line": 36,
+   "value": 100,
+   "text": "--z3rlimit 100 \\"
+  }
+ ],
+ "fstar_source": [
+  {
+   "kind": "fstar-source",
+   "file": "libVELA/vela-client-recovery-policy/proofs/fstar/extraction/Vela_client_recovery_policy.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 100,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 100\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "libVELA/vela-client-share-journal/proofs/fstar/extraction/Vela_client_share_journal.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "libVELA/vela-client-share-policy/proofs/fstar/extraction/Vela_client_share_policy.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 100,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 100\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "libVELA/vela-crypto/proofs/fstar/extraction/Vela_crypto.Share_envelope.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 100,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 100\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "libVELA/vela-crypto/proofs/fstar/extraction/Vela_crypto.Signing.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 100,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 100\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "libVELA/vela-crypto/proofs/fstar/extraction/Vela_crypto.Wire.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 100,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 100\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "libVELA/vela-crypto/proofs/fstar/models/Alloc.String.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 15,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 15\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "libVELA/vela-crypto/proofs/fstar/models/Alloc.Vec.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 15,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 15\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "libVELA/vela-sync-policy/proofs/fstar/extraction-epoch/Vela_sync_policy.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "libVELA/vela-sync-policy/proofs/fstar/extraction/Vela_sync_policy.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-enrollment-policy/proofs/fstar/extraction-enroll-driver/Vela_enrollment_policy.Enroll_driver.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-enrollment-policy/proofs/fstar/extraction-enroll-interpreter/Vela_enrollment_policy.Enroll_interpreter.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-enrollment-policy/proofs/fstar/extraction-executor/Vela_enrollment_policy.Executor.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-enrollment-policy/proofs/fstar/extraction-f2-cross/Vela_enrollment_policy.Pairing_driver.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-enrollment-policy/proofs/fstar/extraction-f2-cross/Vela_enrollment_policy.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-enrollment-policy/proofs/fstar/extraction-pairing-driver/Vela_enrollment_policy.Pairing_driver.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-enrollment-policy/proofs/fstar/extraction-pairing-driver/Vela_enrollment_policy.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-enrollment-policy/proofs/fstar/extraction-pairing-interpreter/Vela_enrollment_policy.Pairing_interpreter.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-enrollment-policy/proofs/fstar/extraction/Vela_enrollment_policy.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 100,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 100\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-recovery-policy/proofs/fstar/extraction-driver/Vela_recovery_policy.Driver.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-recovery-policy/proofs/fstar/extraction-driver/Vela_recovery_policy.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-recovery-policy/proofs/fstar/extraction-f2-cross/Vela_recovery_policy.Driver.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-recovery-policy/proofs/fstar/extraction-f2-cross/Vela_recovery_policy.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-recovery-policy/proofs/fstar/extraction-possession-driver/Vela_recovery_policy.Possession_driver.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-recovery-policy/proofs/fstar/extraction-possession-driver/Vela_recovery_policy.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-recovery-policy/proofs/fstar/extraction-possession-interpreter/Vela_recovery_policy.Possession_interpreter.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-recovery-policy/proofs/fstar/extraction-possession/Vela_recovery_policy.Possession_store.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-recovery-policy/proofs/fstar/extraction-rate/Vela_recovery_policy.Rate_store.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-recovery-policy/proofs/fstar/extraction-recovery-share-driver/Vela_recovery_policy.Possession_driver.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-recovery-policy/proofs/fstar/extraction-recovery-share-driver/Vela_recovery_policy.Recovery_share_driver.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-recovery-policy/proofs/fstar/extraction-recovery-share-driver/Vela_recovery_policy.Webauthn_driver.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-recovery-policy/proofs/fstar/extraction-recovery-share-driver/Vela_recovery_policy.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-recovery-policy/proofs/fstar/extraction-recovery-share-interpreter/Vela_recovery_policy.Recovery_share_interpreter.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-recovery-policy/proofs/fstar/extraction-redemption-interpreter/Vela_recovery_policy.Redemption_interpreter.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-recovery-policy/proofs/fstar/extraction-redemption/Vela_recovery_policy.Redemption_store.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-recovery-policy/proofs/fstar/extraction-share/Vela_recovery_policy.Redemption_store.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-recovery-policy/proofs/fstar/extraction-share/Vela_recovery_policy.Share_store.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-recovery-policy/proofs/fstar/extraction-webauthn-driver/Vela_recovery_policy.Webauthn_driver.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-recovery-policy/proofs/fstar/extraction-webauthn-driver/Vela_recovery_policy.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-recovery-policy/proofs/fstar/extraction-webauthn-interpreter/Vela_recovery_policy.Webauthn_interpreter.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-recovery-policy/proofs/fstar/extraction-webauthn/Vela_recovery_policy.Redemption_store.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-recovery-policy/proofs/fstar/extraction-webauthn/Vela_recovery_policy.Webauthn_store.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-recovery-policy/proofs/fstar/extraction/Vela_recovery_policy.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 100,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 100\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-rekey-policy/proofs/fstar/extraction-executor/Vela_rekey_policy.Executor.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-rekey-policy/proofs/fstar/extraction-executor/Vela_rekey_policy.Rekey_driver.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-rekey-policy/proofs/fstar/extraction-executor/Vela_rekey_policy.Vault_mutation_driver.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-rekey-policy/proofs/fstar/extraction-executor/Vela_rekey_policy.Vault_upload_driver.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-rekey-policy/proofs/fstar/extraction-rekey-driver/Vela_rekey_policy.Rekey_driver.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-rekey-policy/proofs/fstar/extraction-rekey-interpreter/Vela_rekey_policy.Rekey_interpreter.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-rekey-policy/proofs/fstar/extraction-vault-mutation-driver/Vela_rekey_policy.Vault_mutation_driver.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-rekey-policy/proofs/fstar/extraction-vault-mutation-interpreter/Vela_rekey_policy.Vault_mutation_interpreter.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-rekey-policy/proofs/fstar/extraction-vault-upload-driver/Vela_rekey_policy.Vault_upload_driver.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-rekey-policy/proofs/fstar/extraction-vault-upload-interpreter/Vela_rekey_policy.Vault_upload_interpreter.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-session-policy/proofs/fstar/extraction-challenge-issue-driver/Vela_session_policy.Challenge.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-session-policy/proofs/fstar/extraction-challenge-issue-driver/Vela_session_policy.Challenge_issue_driver.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-session-policy/proofs/fstar/extraction-challenge-issue-interpreter/Vela_session_policy.Challenge_issue_interpreter.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-session-policy/proofs/fstar/extraction-deletion-driver/Vela_session_policy.Deletion_driver.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-session-policy/proofs/fstar/extraction-deletion-driver/Vela_session_policy.Revocation_driver.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-session-policy/proofs/fstar/extraction-deletion-interpreter/Vela_session_policy.Deletion_interpreter.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-session-policy/proofs/fstar/extraction-f2-cross/Vela_session_policy.Challenge.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-session-policy/proofs/fstar/extraction-f2-cross/Vela_session_policy.Deletion_driver.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-session-policy/proofs/fstar/extraction-f2-cross/Vela_session_policy.Login_driver.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-session-policy/proofs/fstar/extraction-f2-cross/Vela_session_policy.Revocation_driver.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-session-policy/proofs/fstar/extraction-login-driver/Vela_session_policy.Challenge.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-session-policy/proofs/fstar/extraction-login-driver/Vela_session_policy.Login_driver.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-session-policy/proofs/fstar/extraction-login-interpreter/Vela_session_policy.Login_interpreter.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-session-policy/proofs/fstar/extraction-registration-driver/Vela_session_policy.Registration_driver.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-session-policy/proofs/fstar/extraction-registration-interpreter/Vela_session_policy.Registration_interpreter.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-session-policy/proofs/fstar/extraction-revocation-driver/Vela_session_policy.Revocation_driver.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-session-policy/proofs/fstar/extraction-revocation-interpreter/Vela_session_policy.Revocation_interpreter.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-session-policy/proofs/fstar/extraction-store/Vela_session_policy.Store.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-session-policy/proofs/fstar/extraction-websession-driver/Vela_session_policy.Challenge.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-session-policy/proofs/fstar/extraction-websession-driver/Vela_session_policy.Websession_driver.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-session-policy/proofs/fstar/extraction-websession-driver/Vela_session_policy.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-session-policy/proofs/fstar/extraction-websession-interpreter/Vela_session_policy.Websession_interpreter.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-session-policy/proofs/fstar/extraction-websession-revocation/Vela_session_policy.Revocation_driver.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-session-policy/proofs/fstar/extraction/Vela_session_policy.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 100,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 100\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-session-policy/proofs/fstar/models/Alloc.String.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 15,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 15\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-share-policy/proofs/fstar/extraction-driver/Vela_share_policy.Driver.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-share-policy/proofs/fstar/extraction-driver/Vela_share_policy.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-share-policy/proofs/fstar/extraction-interpreter/Vela_share_policy.Interpreter.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-share-policy/proofs/fstar/extraction-send-driver/Vela_share_policy.Send_driver.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-share-policy/proofs/fstar/extraction-send-interpreter/Vela_share_policy.Send_interpreter.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-share-policy/proofs/fstar/extraction-store/Vela_share_policy.Store.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 500,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 500\""
+  },
+  {
+   "kind": "fstar-source",
+   "file": "serverVELA/vela-share-policy/proofs/fstar/extraction/Vela_share_policy.fst",
+   "line": 2,
+   "directive": "#set-options",
+   "value": 100,
+   "text": "#set-options \"--fuel 0 --ifuel 1 --z3rlimit 100\""
+  }
+ ],
+ "rlimit_factor": [],
+ "z3seed_in_fstar": [],
+ "query_stats": {
+  "source": "security/assurance/proof-logs/current/proof-stability/local/epoch-gate-seed1.log",
+  "modules": [
+   {
+    "module": "Vela_sync_policy",
+    "file": "Vela_sync_policy.fst",
+    "queries": 7,
+    "max_rlimit": 500.0,
+    "max_used_rlimit": 0.078
+   },
+   {
+    "module": "Vela_sync_policy_epoch_lemmas",
+    "file": "Vela_sync_policy_epoch_lemmas.fst",
+    "queries": 7,
+    "max_rlimit": 500.0,
+    "max_used_rlimit": 0.035
+   }
+  ]
+ }
+}

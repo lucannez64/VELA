@@ -1,0 +1,266 @@
+name: proof-stability
+
+# Plan step T8: re-check every F* gate under three Z3 random seeds.
+#
+# `security.yml`'s refinement matrix has 18 entries that together run all 64
+# verify-fstar*.sh gates (plus the share-facts and cross-driver scripts). This
+# workflow runs exactly those entries again with VELA_Z3_SEED=1, 2 and 3
+# through security/assurance/z3-seed/fstar.exe, so a proof that depends on
+# particular Z3 search decisions fails here. Seed 0 is the default the normal
+# CI already checks.
+#
+# GitHub-hosted runners only. Never route this workflow to `vela-box`: it
+# triples the whole corpus and the owner's build box is shared.
+#
+# Every job is cold: VELA_FSTAR_CACHE=0, no proof-verdict cache, no reuse of
+# checked F* modules. `security/formal/check-stability-matrix.py` (run by the
+# summary job) fails if the matrix here drifts from security.yml's refinement
+# matrix, if a seed is missing, or if a self-hosted runner appears.
+
+on:
+  schedule:
+    # Weekly, Monday 03:17 UTC.
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+  push:
+    # A push that touches the workflow, the seed shim or its inventory scripts
+    # runs the gate once as evidence.
+    paths:
+      - ".github/workflows/proof-stability.yml"
+      - "security/assurance/z3-seed/**"
+      - "security/formal/list-rlimits.py"
+      - "security/formal/collect-stability.py"
+      - "security/formal/check-stability-matrix.py"
+
+permissions:
+  contents: read
+
+# Weekly runs queue instead of cancelling each other; a push still gets its run.
+concurrency:
+  group: proof-stability-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  stability:
+    name: stability (${{ matrix.name }}, seed ${{ matrix.seed }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 140
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Generated from security.yml's refinement matrix; keep the two in
+          # step (check-stability-matrix.py enforces it).
+          - { name: vela-session-policy-login, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: login, seed: 1 }
+          - { name: vela-session-policy-login, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: login, seed: 2 }
+          - { name: vela-session-policy-login, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: login, seed: 3 }
+          - { name: vela-session-policy-deletion, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: deletion, seed: 1 }
+          - { name: vela-session-policy-deletion, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: deletion, seed: 2 }
+          - { name: vela-session-policy-deletion, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: deletion, seed: 3 }
+          - { name: vela-session-policy-revocation, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: revocation, seed: 1 }
+          - { name: vela-session-policy-revocation, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: revocation, seed: 2 }
+          - { name: vela-session-policy-revocation, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: revocation, seed: 3 }
+          - { name: vela-session-policy-account, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: account, seed: 1 }
+          - { name: vela-session-policy-account, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: account, seed: 2 }
+          - { name: vela-session-policy-account, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: account, seed: 3 }
+          - { name: vela-session-policy-websession, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: websession, seed: 1 }
+          - { name: vela-session-policy-websession, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: websession, seed: 2 }
+          - { name: vela-session-policy-websession, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: websession, seed: 3 }
+          - { name: vela-session-policy-session, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: session, seed: 1 }
+          - { name: vela-session-policy-session, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: session, seed: 2 }
+          - { name: vela-session-policy-session, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: session, seed: 3 }
+          - { name: vela-session-policy-core, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: core, seed: 1 }
+          - { name: vela-session-policy-core, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: core, seed: 2 }
+          - { name: vela-session-policy-core, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: core, seed: 3 }
+          - { name: vela-recovery-policy, dir: serverVELA/vela-recovery-policy, script: verify-fstar.sh, seed: 1 }
+          - { name: vela-recovery-policy, dir: serverVELA/vela-recovery-policy, script: verify-fstar.sh, seed: 2 }
+          - { name: vela-recovery-policy, dir: serverVELA/vela-recovery-policy, script: verify-fstar.sh, seed: 3 }
+          - { name: vela-rekey-policy, dir: serverVELA/vela-rekey-policy, script: verify-fstar.sh, args: core, seed: 1 }
+          - { name: vela-rekey-policy, dir: serverVELA/vela-rekey-policy, script: verify-fstar.sh, args: core, seed: 2 }
+          - { name: vela-rekey-policy, dir: serverVELA/vela-rekey-policy, script: verify-fstar.sh, args: core, seed: 3 }
+          - { name: vela-rekey-policy-executors, dir: serverVELA/vela-rekey-policy, script: verify-fstar.sh, args: executors, seed: 1 }
+          - { name: vela-rekey-policy-executors, dir: serverVELA/vela-rekey-policy, script: verify-fstar.sh, args: executors, seed: 2 }
+          - { name: vela-rekey-policy-executors, dir: serverVELA/vela-rekey-policy, script: verify-fstar.sh, args: executors, seed: 3 }
+          - { name: vela-enrollment-policy, dir: serverVELA/vela-enrollment-policy, script: verify-fstar.sh, seed: 1 }
+          - { name: vela-enrollment-policy, dir: serverVELA/vela-enrollment-policy, script: verify-fstar.sh, seed: 2 }
+          - { name: vela-enrollment-policy, dir: serverVELA/vela-enrollment-policy, script: verify-fstar.sh, seed: 3 }
+          - { name: vela-share-policy, dir: serverVELA/vela-share-policy, script: verify-fstar.sh, seed: 1 }
+          - { name: vela-share-policy, dir: serverVELA/vela-share-policy, script: verify-fstar.sh, seed: 2 }
+          - { name: vela-share-policy, dir: serverVELA/vela-share-policy, script: verify-fstar.sh, seed: 3 }
+          - { name: share-facts, dir: libVELA/vela-crypto, script: verify-share-facts-fstar.sh, seed: 1 }
+          - { name: share-facts, dir: libVELA/vela-crypto, script: verify-share-facts-fstar.sh, seed: 2 }
+          - { name: share-facts, dir: libVELA/vela-crypto, script: verify-share-facts-fstar.sh, seed: 3 }
+          - { name: vela-sync-policy, dir: libVELA/vela-sync-policy, script: verify-fstar.sh, seed: 1 }
+          - { name: vela-sync-policy, dir: libVELA/vela-sync-policy, script: verify-fstar.sh, seed: 2 }
+          - { name: vela-sync-policy, dir: libVELA/vela-sync-policy, script: verify-fstar.sh, seed: 3 }
+          - { name: vela-client-recovery-policy, dir: libVELA/vela-client-recovery-policy, script: verify-fstar.sh, seed: 1 }
+          - { name: vela-client-recovery-policy, dir: libVELA/vela-client-recovery-policy, script: verify-fstar.sh, seed: 2 }
+          - { name: vela-client-recovery-policy, dir: libVELA/vela-client-recovery-policy, script: verify-fstar.sh, seed: 3 }
+          - { name: vela-client-share-policy, dir: libVELA/vela-client-share-policy, script: verify-fstar.sh, seed: 1 }
+          - { name: vela-client-share-policy, dir: libVELA/vela-client-share-policy, script: verify-fstar.sh, seed: 2 }
+          - { name: vela-client-share-policy, dir: libVELA/vela-client-share-policy, script: verify-fstar.sh, seed: 3 }
+          - { name: share-journal, dir: libVELA/vela-client-share-journal, script: verify-fstar-journal.sh, seed: 1 }
+          - { name: share-journal, dir: libVELA/vela-client-share-journal, script: verify-fstar-journal.sh, seed: 2 }
+          - { name: share-journal, dir: libVELA/vela-client-share-journal, script: verify-fstar-journal.sh, seed: 3 }
+          - { name: cross-driver, dir: security/formal/cross-driver, script: verify.sh, seed: 1 }
+          - { name: cross-driver, dir: security/formal/cross-driver, script: verify.sh, seed: 2 }
+          - { name: cross-driver, dir: security/formal/cross-driver, script: verify.sh, seed: 3 }
+          # Not in security.yml's refinement matrix: formal-rekey checks it (share-journal step).
+          - { name: m28-trace-equivalence, dir: security/formal/m28-trace-equivalence, script: verify.sh, seed: 1 }
+          - { name: m28-trace-equivalence, dir: security/formal/m28-trace-equivalence, script: verify.sh, seed: 2 }
+          - { name: m28-trace-equivalence, dir: security/formal/m28-trace-equivalence, script: verify.sh, seed: 3 }
+    env:
+      CARGO_BUILD_JOBS: 1
+      OPAMJOBS: 1
+      MAKEFLAGS: -j1
+      # Two parallel mutants stay within the job's memory cap, as in security.yml.
+      VELA_MUTANT_JOBS: 2
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@d124f86f28ff42855784ff3319f48ac182c248f8 # 1.99.1
+      # ── Proof toolchain ────────────────────────────────────────────────
+      # Reuses the same installer, cache keys and activation checks as
+      # security.yml's refinement job, so these steps can later be replaced by
+      # one proof-container step. Everything here is on ubuntu-24.04.
+      - name: "Proof toolchain: install build prerequisites"
+        timeout-minutes: 15
+        run: |
+          # Fixed Ubuntu snapshot (security/assurance/proof-image/apt-snapshot.conf).
+          sudo rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources
+          # deb822: one line per suite is not supported, Suites takes a list.
+          sudo tee /etc/apt/sources.list.d/vela-snapshot.sources >/dev/null <<'EOF'
+          Types: deb
+          URIs: https://snapshot.ubuntu.com/ubuntu/20261104T000000Z/
+          Suites: noble noble-updates noble-security
+          Components: main restricted universe multiverse
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          EOF
+          sudo apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          # opam builds our pinned OCaml. Its recommended distro OCaml is redundant.
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends opam libgmp-dev pkg-config unzip jq clang nodejs
+
+      - name: "Proof toolchain: restore cached pinned hax/F*/Z3"
+        id: proof-toolchain-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.local/opt/vela-hax-0.3.7
+            ~/.rustup/toolchains/nightly-2025-11-08-x86_64-unknown-linux-gnu
+          key: refinement-toolchain-v1-${{ runner.os }}-${{ runner.arch }}-ubuntu24-${{ hashFiles('security/assurance/install-hax.sh', 'security/assurance/opam-lock/hax-engine.opam.locked') }}
+
+      - name: "Proof toolchain: install pinned hax, F* and Z3"
+        if: steps.proof-toolchain-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/stability-logs"
+          VELA_MEMORY_MAX=6G VELA_STEP_TIMEOUT=5400 security/assurance/bounded.sh security/assurance/install-hax.sh 2>&1 | tee "$RUNNER_TEMP/stability-logs/toolchain-install-${{ matrix.name }}-seed${{ matrix.seed }}.log"
+
+      - name: "Proof toolchain: activate and check pinned proof tools"
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/stability-logs"
+          {
+            # The build box keeps the same pinned tools at VELA_PROOF_TOOLS.
+            proof_tools="${VELA_PROOF_TOOLS:-$HOME/.local/opt/vela-hax-0.3.7}"
+            export CARGO_HOME="$proof_tools/cargo-home" OPAMROOT="$proof_tools/opam"
+            export PATH="$proof_tools/bin:$OPAMROOT/vela-hax/bin:$proof_tools/fstar/bin:$PATH"
+            printf 'CARGO_HOME=%s\nOPAMROOT=%s\n' "$CARGO_HOME" "$OPAMROOT" >> "$GITHUB_ENV"
+            printf '%s\n' "$proof_tools/bin" "$OPAMROOT/vela-hax/bin" "$proof_tools/fstar/bin" >> "$GITHUB_PATH"
+            cargo hax --version | grep -Fx 'version=0.3.7'
+            test -x "$OPAMROOT/vela-hax/bin/hax-engine"
+            test "$(opam list --switch vela-hax --installed --columns=version --short hax-engine)" = 0.3.7
+            test "$(cat "$proof_tools/fstar/version.txt")" = 2025.10.06
+            fstar.exe --version
+            z3-4.13.3 --version
+            rustc +nightly-2025-11-08 --version
+          } 2>&1 | tee "$RUNNER_TEMP/stability-logs/toolchain-activation-${{ matrix.name }}-seed${{ matrix.seed }}.log"
+
+      - name: "Proof toolchain: cache completed toolchain"
+        if: steps.proof-toolchain-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.local/opt/vela-hax-0.3.7
+            ~/.rustup/toolchains/nightly-2025-11-08-x86_64-unknown-linux-gnu
+          key: ${{ steps.proof-toolchain-cache.outputs.cache-primary-key }}
+
+      - name: "Proof toolchain: cache Rust dependencies"
+        # The M28 gate has no Cargo workspace.
+        if: hashFiles(format('{0}/Cargo.toml', matrix.dir)) != ''
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: ${{ matrix.dir }} -> ../../target
+          shared-key: refinement-rust-v2-${{ matrix.name }}
+          key: ${{ hashFiles('security/assurance/install-hax.sh', 'security/assurance/opam-lock/hax-engine.opam.locked') }}
+          cache-bin: false
+
+      # ── The seeded check ───────────────────────────────────────────────
+      - name: Check ${{ matrix.name }} with Z3 seed ${{ matrix.seed }}
+        env:
+          CRATE_DIR: ${{ matrix.dir }}
+          SCRIPT: ${{ matrix.script }}
+          SCRIPT_ARGS: ${{ matrix.args }}
+          NAME: ${{ matrix.name }}
+          SEED: ${{ matrix.seed }}
+          VELA_Z3_SEED: ${{ matrix.seed }}
+          VELA_Z3_SEED_LOG: "1"
+          # Evidence runs are cold: no shared checked modules, no hints store.
+          VELA_FSTAR_CACHE: "0"
+          VELA_STEP_TIMEOUT: "7200"
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/stability-logs" .stability-out
+          out=".stability-out/${NAME}-seed${SEED}"
+          mkdir -p "$out"
+          cp "$RUNNER_TEMP/stability-logs/"*.log "$out/" 2>/dev/null || true
+          log="$RUNNER_TEMP/stability-logs/${NAME}-seed${SEED}.log"
+          start=$(date +%s)
+          status=0
+          # The seed shim first on PATH; it adds --z3seed to every F* module
+          # check and its own log lines stay in the gate log.
+          # shellcheck disable=SC2086 # SCRIPT_ARGS is empty or one word
+          PATH="$GITHUB_WORKSPACE/security/assurance/z3-seed:$PATH" \
+            security/assurance/bounded.sh "$CRATE_DIR/$SCRIPT" $SCRIPT_ARGS > "$log" 2>&1 || status=$?
+          seconds=$(( $(date +%s) - start ))
+          result=PASS
+          [[ $status == 0 ]] || result=FAIL
+          printf '{"gate":"%s","seed":%s,"dir":"%s","script":"%s","args":"%s","result":"%s","exit":%s,"seconds":%s,"commit":"%s"}\n' \
+            "$NAME" "$SEED" "$CRATE_DIR" "$SCRIPT" "$SCRIPT_ARGS" "$result" "$status" "$seconds" "$GITHUB_SHA" \
+            > "$out/result.json"
+          cp "$log" "$out/gate.log"
+          if [[ $status != 0 ]]; then
+            tail -n 100 "$log"
+          fi
+          exit "$status"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: stability-logs-${{ matrix.name }}-seed${{ matrix.seed }}
+          path: .stability-out
+          retention-days: 90
+
+  # Fails unless every (gate, seed) pair reports PASS, and writes the table the
+  # parent copies into proof-logs/current/proof-stability/README.md.
+  stability-summary:
+    name: stability summary
+    needs: stability
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Check this workflow covers every refinement gate
+        run: python3 -I security/formal/check-stability-matrix.py
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: stability-logs-*
+          merge-multiple: true
+          path: stability-artifacts
+
+      - name: Summarize pass/fail per (gate, seed)
+        run: |
+          python3 -I security/formal/collect-stability.py \
+            --artifacts stability-artifacts \
+            --summary "$GITHUB_STEP_SUMMARY" \
+            --require-all-pass
