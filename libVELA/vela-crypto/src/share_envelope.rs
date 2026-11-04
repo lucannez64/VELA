@@ -734,6 +734,43 @@ mod tests {
         );
     }
 
+    /// The capsule layer reports one uniform decryption error (C15); the
+    /// signature/framing checks after a successful open are sender
+    /// authentication, not decryption, and stay distinct for the local user.
+    #[test]
+    fn tampered_capsules_report_the_uniform_decryption_error() {
+        let alice = device();
+        let (bob_pk, bob_sk) = kem::generate_keypair();
+        let capsule =
+            seal_signed_item(&alice.sk, &header(&alice, &bob_pk, 1), &bob_pk, b"x").unwrap();
+        let mut tampered = capsule.clone();
+        let last = tampered.len() - 1;
+        tampered[last] ^= 1;
+
+        match open_signed_item(&bob_sk, &tampered) {
+            Err(VelaError::DecryptionFailed) => {}
+            Err(other) => panic!("non-uniform decryption error: {other}"),
+            Ok(_) => panic!("tampered capsule opened"),
+        }
+        // Truncation, a wrong header, and a wrong recipient key all collapse too.
+        for bad in [Vec::new(), capsule[..1].to_vec(), {
+            let mut wrong_header = capsule.clone();
+            wrong_header[0] ^= 1;
+            wrong_header
+        }] {
+            match open_signed_item(&bob_sk, &bad) {
+                Err(VelaError::DecryptionFailed) => {}
+                Err(other) => panic!("non-uniform decryption error: {other}"),
+                Ok(_) => panic!("attacker-chosen capsule opened"),
+            }
+        }
+        let (_, other_sk) = kem::generate_keypair();
+        assert!(matches!(
+            open_signed_item(&other_sk, &capsule),
+            Err(VelaError::DecryptionFailed)
+        ));
+    }
+
     #[test]
     fn v1_unsigned_capsules_are_rejected() {
         let (bob_pk, bob_sk) = kem::generate_keypair();

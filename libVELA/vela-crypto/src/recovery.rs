@@ -223,6 +223,33 @@ fn open_for_recipient(
     context: &ContactShareContext<'_>,
     blob: &[u8],
 ) -> Result<Share> {
+    // The version byte is public input, so naming the retired v1 format leaks
+    // nothing (the same exception C15 makes for public headers). It must be
+    // checked here: inside `uniform_open` the C17 re-share message would be
+    // collapsed into `DecryptionFailed`.
+    if blob.first() == Some(&CONTACT_ENVELOPE_VERSION_LEGACY_KEM) {
+        return Err(VelaError::InvalidParameter(
+            LEGACY_V1_ENVELOPE_RETIRED.to_string(),
+        ));
+    }
+    crate::error::uniform_open(open_for_recipient_inner(
+        domain,
+        recipient_sk,
+        context,
+        blob,
+    ))
+}
+
+/// The envelope is attacker-supplied (anyone can KEM-seal to a published share
+/// key), so every failure — short blob, unsupported version, low-order point,
+/// wrong recipient, wrong direction, bad tag, malformed inner share, wrong
+/// coordinate — is one [`VelaError::DecryptionFailed`] (C15).
+fn open_for_recipient_inner(
+    domain: &[u8],
+    recipient_sk: &crate::kem::HybridSecretKey,
+    context: &ContactShareContext<'_>,
+    blob: &[u8],
+) -> Result<Share> {
     let header = 1 + crate::kem::HybridCapsule::WIRE_LEN;
     if blob.len() <= header {
         return Err(VelaError::InvalidParameter(
@@ -778,6 +805,67 @@ mod tests {
         assert!(open_contact_share(&contact_sk, &context, &corrupt).is_err());
     }
 
+    /// Every failure to open an attacker-supplied contact envelope is one
+    /// error (C15): too short, unsupported version, wrong recipient, flipped
+    /// tag, relabelled context, direction confusion, or malformed inner share.
+    #[test]
+    fn every_contact_envelope_open_failure_is_the_same_error() {
+        let shares = shamir::split(&[15u8; 32], 2, 3).unwrap();
+        let (pk, sk) = crate::kem::generate_keypair();
+        let (_, other_sk) = crate::kem::generate_keypair();
+        let context = ContactShareContext {
+            account_id: ACCOUNT,
+            key_epoch: 5,
+            split_id: Some(SPLIT),
+            coordinate: shares[2].x,
+        };
+        let valid = seal_contact_share(&pk, &context, &shares[2]).unwrap();
+        let mut wrong_version = valid.clone();
+        wrong_version[0] = 9;
+        let mut flipped_tag = valid.clone();
+        let last = flipped_tag.len() - 1;
+        flipped_tag[last] ^= 1;
+        let relabelled = ContactShareContext {
+            account_id: "99999999-9999-9999-9999-999999999999",
+            ..context.clone()
+        };
+
+        // A well-formed envelope whose authenticated plaintext is not a share:
+        // the attacker owns the KEM shared secret, so this is reachable.
+        let (capsule, secret) = crate::kem::encapsulate(&pk).unwrap();
+        let ciphertext = crate::aead::seal(
+            secret.as_bytes(),
+            b"not a share",
+            &context.to_aad(CONTACT_DELIVERY_DOMAIN),
+        )
+        .unwrap();
+        let mut malformed_inner = vec![CONTACT_ENVELOPE_VERSION];
+        malformed_inner.extend_from_slice(&capsule.to_bytes());
+        malformed_inner.extend_from_slice(&ciphertext);
+
+        let cases: Vec<Result<Share>> = vec![
+            open_contact_share(&sk, &context, b"short"),
+            open_contact_share(&sk, &context, &wrong_version),
+            open_contact_share(&other_sk, &context, &valid),
+            open_contact_share(&sk, &context, &flipped_tag),
+            open_contact_share(&sk, &relabelled, &valid),
+            open_contact_share_response(&sk, &context, &valid),
+            open_contact_share(&sk, &context, &malformed_inner),
+        ];
+
+        for result in cases {
+            match result {
+                Err(VelaError::DecryptionFailed) => {}
+                Err(other) => panic!("non-uniform decryption error: {other}"),
+                Ok(_) => panic!("attacker-chosen envelope opened"),
+            }
+        }
+    }
+
+    /// A contact may hold a delivery envelope written before KEM combiner v2.
+    /// It must still open; a recovery response under the legacy combiner must
+    /// not (responses are always fresh, so there is no legacy to honour).
+
     /// A v1 envelope is detected by its version byte and refused with one
     /// clear error: the retired v1 KEM path no longer exists (plan step C17).
     /// A v2 envelope still opens normally.
@@ -822,13 +910,14 @@ mod tests {
             &retired_response,
         ));
 
-        // Any other version is still reported as unsupported, not accepted.
+        // Any other version is refused with the uniform open error (C15):
+        // only the retired v1 format is named, because naming it tells the
+        // owner to re-share and reveals nothing the sender did not choose.
         let mut unknown = fresh;
         unknown[0] = 3;
         assert!(matches!(
             open_contact_share(&sk, &context, &unknown),
-            Err(VelaError::InvalidParameter(msg))
-                if msg.contains("unsupported contact envelope version 3")
+            Err(VelaError::DecryptionFailed)
         ));
     }
 

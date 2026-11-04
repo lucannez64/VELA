@@ -289,7 +289,18 @@ pub fn seal_share(pk: &HybridPublicKey, plaintext: &[u8]) -> Result<Vec<u8>> {
 /// Blobs without the v2 prefix (written by the v1 combiner) are rejected:
 /// every caller of this function handles short-lived material that a current
 /// client re-creates on demand.
+///
+/// The blob is attacker-supplied — anyone can seal to a published share key —
+/// so every failure (short data, wrong header, malformed capsule, low-order
+/// X25519 point, wrong key, bad tag) is the same
+/// [`VelaError::DecryptionFailed`] (C15). ML-KEM itself never reports failure:
+/// a wrong ciphertext decapsulates to a pseudorandom secret via implicit
+/// rejection, and the AEAD tag is what rejects it.
 pub fn open_share(sk: &HybridSecretKey, data: &[u8]) -> Result<Vec<u8>> {
+    crate::error::uniform_open(open_share_inner(sk, data))
+}
+
+fn open_share_inner(sk: &HybridSecretKey, data: &[u8]) -> Result<Vec<u8>> {
     let header = SEALED_V2_MAGIC.len() + HybridCapsule::WIRE_LEN;
     if data.len() <= header {
         return Err(VelaError::InvalidParameter("share data too short".into()));
@@ -471,5 +482,50 @@ mod tests {
         let mut blob = seal_share(&pk, b"secret").unwrap();
         blob[0] ^= 1;
         assert!(open_share(&sk, &blob).is_err());
+    }
+
+    /// Every failure to open an attacker-sealed capsule is one error (C15).
+    ///
+    /// The causes an attacker who can seal to the published share key controls
+    /// are: a short blob, a wrong header, a corrupt ML-KEM ciphertext, a
+    /// low-order X25519 ephemeral, a flipped tag, and opening with the wrong
+    /// secret key.
+    #[test]
+    fn every_open_share_failure_is_the_same_error() {
+        let (pk, sk) = generate_keypair();
+        let (_, other_sk) = generate_keypair();
+        let valid = seal_share(&pk, b"secret").unwrap();
+        let header = SEALED_V2_MAGIC.len() + HybridCapsule::WIRE_LEN;
+
+        let mut wrong_magic = valid.clone();
+        wrong_magic[0] ^= 1;
+        let mut corrupt_mlkem = valid.clone();
+        corrupt_mlkem[SEALED_V2_MAGIC.len() + 10] ^= 1;
+        let mut low_order_epk = valid.clone();
+        let epk_start = SEALED_V2_MAGIC.len() + HybridCapsule::MLKEM_CT_LEN;
+        for byte in &mut low_order_epk[epk_start..header] {
+            *byte = 0;
+        }
+        let mut flipped_tag = valid.clone();
+        let last = flipped_tag.len() - 1;
+        flipped_tag[last] ^= 1;
+
+        let cases: Vec<Result<Vec<u8>>> = vec![
+            open_share(&sk, &[]),
+            open_share(&sk, &valid[..header]),
+            open_share(&sk, &wrong_magic),
+            open_share(&sk, &corrupt_mlkem),
+            open_share(&sk, &low_order_epk),
+            open_share(&sk, &flipped_tag),
+            open_share(&other_sk, &valid),
+        ];
+
+        for result in cases {
+            match result {
+                Err(VelaError::DecryptionFailed) => {}
+                Err(other) => panic!("non-uniform decryption error: {other}"),
+                Ok(_) => panic!("attacker-chosen capsule opened"),
+            }
+        }
     }
 }

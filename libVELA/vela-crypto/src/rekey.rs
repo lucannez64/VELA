@@ -340,14 +340,13 @@ pub fn open_rekey_capsule(
         ));
     }
     let sk = crate::kem::HybridSecretKey::from_bytes(hybrid_dk_bytes)?;
-    let authenticated_payload =
-        Zeroizing::new(crate::kem::open_share(&sk, capsule).map_err(|_| VelaError::KemError)?);
+    // The capsule is attacker-supplied (a malicious storage server chooses what
+    // it returns), so both cryptographic opens report the one uniform error.
+    // The metadata checks below run only after the payload has authenticated
+    // under the previous RMS, which an attacker without that RMS cannot reach.
+    let authenticated_payload = Zeroizing::new(crate::kem::open_share(&sk, capsule)?);
     let binding_key = kdf::derive(REKEY_CAPSULE_BINDING_CONTEXT, previous_rms);
-    let payload = aead::decrypt(binding_key.as_bytes(), &authenticated_payload).map_err(|_| {
-        VelaError::InvalidParameter(
-            "re-key capsule was not authenticated by the current RMS".into(),
-        )
-    })?;
+    let payload = aead::decrypt(binding_key.as_bytes(), &authenticated_payload)?;
     let fixed_len = REKEY_CAPSULE_V1_MAGIC.len() + 8 + 2 + 32;
     if payload.len() < fixed_len || !payload.starts_with(REKEY_CAPSULE_V1_MAGIC) {
         return Err(VelaError::InvalidParameter(
@@ -542,6 +541,45 @@ mod tests {
         );
     }
 
+    /// Every cryptographic failure opening a sealed fleet chunk is the same
+    /// error (C15). The storage server chooses the blob, its labels, and
+    /// whether the key epoch is right, so these causes must be
+    /// indistinguishable. The unsealed-header refusal is deliberately separate:
+    /// it inspects a public magic value the server already sent.
+    #[test]
+    fn fleet_chunk_cryptographic_failures_are_uniform() {
+        let key = *kdf::derive(kdf::contexts::CHUNK_KEY, &seed(21)).as_bytes();
+        let wrong_key = *kdf::derive(kdf::contexts::CHUNK_KEY, &seed(22)).as_bytes();
+        let plaintext = b"chunk body";
+        let chunk_id = "vault-data-000001";
+        let clock = 17;
+
+        for epoch in 1..=3 {
+            let sealed = seal_fleet_chunk(&key, plaintext, epoch, chunk_id, clock).unwrap();
+            assert_eq!(
+                &open_sealed_fleet_chunk(&key, &sealed, epoch, chunk_id, clock).unwrap()[..],
+                plaintext
+            );
+            let mut tampered = sealed.clone();
+            let last = tampered.len() - 1;
+            tampered[last] ^= 1;
+
+            let cases: Vec<Result<Zeroizing<Vec<u8>>>> = vec![
+                open_sealed_fleet_chunk(&key, &tampered, epoch, chunk_id, clock),
+                open_sealed_fleet_chunk(&wrong_key, &sealed, epoch, chunk_id, clock),
+                open_sealed_fleet_chunk(&key, &sealed, epoch, "vault-data-000002", clock),
+                open_sealed_fleet_chunk(&key, &sealed, epoch, chunk_id, clock + 1),
+            ];
+            for result in cases {
+                match result {
+                    Err(VelaError::DecryptionFailed) => {}
+                    Err(other) => panic!("epoch {epoch}: non-uniform error: {other}"),
+                    Ok(_) => panic!("epoch {epoch}: attacker-chosen chunk opened"),
+                }
+            }
+        }
+    }
+
     /// The production download gate: an unsealed pre-C-2 blob has no chunk id
     /// or revision binding, so it must be refused before opening even though
     /// the migration reader still accepts the same bytes.
@@ -625,6 +663,64 @@ mod tests {
         assert!(!shares_reconstruct_to(&shares[0..2], &new));
         // At threshold: verified.
         assert!(shares_reconstruct_to(&shares[0..3], &new));
+    }
+
+    #[test]
+    fn every_rekey_capsule_cryptographic_failure_is_the_same_error() {
+        let previous = seed(16);
+        let new_rms = seed(17);
+        let (pk, sk) = crate::kem::generate_keypair();
+        let capsule = seal_rekey_capsule(&pk.to_bytes(), &previous, &new_rms, 3, "rotation-1")
+            .expect("seal capsule");
+        let (_, other_sk) = crate::kem::generate_keypair();
+        let mut flipped = capsule.clone();
+        let last = flipped.len() - 1;
+        flipped[last] ^= 1;
+
+        let cases: Vec<Result<Zeroizing<[u8; 32]>>> = vec![
+            open_rekey_capsule(
+                other_sk.to_bytes().as_slice(),
+                &capsule,
+                &previous,
+                3,
+                "rotation-1",
+            ),
+            open_rekey_capsule(
+                sk.to_bytes().as_slice(),
+                &flipped,
+                &previous,
+                3,
+                "rotation-1",
+            ),
+            open_rekey_capsule(
+                sk.to_bytes().as_slice(),
+                &capsule,
+                &seed(18),
+                3,
+                "rotation-1",
+            ),
+        ];
+
+        for result in cases {
+            match result {
+                Err(VelaError::DecryptionFailed) => {}
+                Err(other) => panic!("non-uniform decryption error: {other}"),
+                Ok(_) => panic!("attacker-chosen capsule opened"),
+            }
+        }
+
+        // A replayed *valid* capsule with the wrong expected epoch is a
+        // post-authentication protocol mismatch, not a decryption failure; the
+        // attacker supplied the capsule and already knows its epoch.
+        let err = open_rekey_capsule(
+            sk.to_bytes().as_slice(),
+            &capsule,
+            &previous,
+            4,
+            "rotation-1",
+        )
+        .unwrap_err();
+        assert!(matches!(err, VelaError::InvalidParameter(_)), "{err}");
     }
 
     #[test]
