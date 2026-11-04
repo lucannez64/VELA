@@ -21,6 +21,11 @@ SECURITY = ROOT / ".github/workflows/security.yml"
 STABILITY = ROOT / ".github/workflows/proof-stability.yml"
 EXPECTED_GATES = 18
 EXPECTED_SEEDS = {1, 2, 3}
+# F* gates outside security.yml's refinement matrix that the stability run also
+# covers. M28 trace equivalence is checked by formal-rekey (share-journal step).
+EXTRA_GATES = {
+    ("m28-trace-equivalence", "security/formal/m28-trace-equivalence", "verify.sh", ""),
+}
 REQUIRED_PUSH_PATHS = (
     ".github/workflows/proof-stability.yml",
     "security/assurance/z3-seed/**",
@@ -95,8 +100,8 @@ def check_matrix():
             continue
         by_gate.setdefault(gate_key(entry), set()).add(seed)
 
-    missing = refinement_keys - set(by_gate)
-    extra = set(by_gate) - refinement_keys
+    missing = (refinement_keys | EXTRA_GATES) - set(by_gate)
+    extra = set(by_gate) - refinement_keys - EXTRA_GATES
     for key in sorted(missing):
         fail(f"proof-stability.yml is missing the refinement gate {key}")
     for key in sorted(extra):
@@ -104,9 +109,9 @@ def check_matrix():
     for key, seeds in sorted(by_gate.items()):
         if seeds != EXPECTED_SEEDS:
             fail(f"gate {key[0]!r} has seeds {sorted(seeds)}, expected {sorted(EXPECTED_SEEDS)}")
-    if len(stability) != EXPECTED_GATES * len(EXPECTED_SEEDS):
-        fail(f"proof-stability.yml has {len(stability)} entries, expected"
-             f" {EXPECTED_GATES * len(EXPECTED_SEEDS)}")
+    total = (EXPECTED_GATES + len(EXTRA_GATES)) * len(EXPECTED_SEEDS)
+    if len(stability) != total:
+        fail(f"proof-stability.yml has {len(stability)} entries, expected {total}")
 
 
 def check_workflow_text():
@@ -149,8 +154,8 @@ def check_workflow_text():
         return
     matrix = doc["jobs"]["stability"]["strategy"]["matrix"]["include"]
     loaded = {gate_key(entry) for entry in matrix}
-    if len(loaded) != EXPECTED_GATES:
-        fail(f"parsed YAML has {len(loaded)} distinct gates, expected {EXPECTED_GATES}")
+    if len(loaded) != EXPECTED_GATES + len(EXTRA_GATES):
+        fail(f"parsed YAML has {len(loaded)} distinct gates, expected {EXPECTED_GATES + len(EXTRA_GATES)}")
     sections = doc.get("on", doc.get(True, {}))
     for trigger in ("schedule", "workflow_dispatch", "push"):
         if trigger not in sections:
@@ -176,8 +181,9 @@ def main():
         for problem in problems:
             print(f"FAIL: {problem}")
         return 1
-    print(f"PASS: {EXPECTED_GATES} refinement gates x seeds {sorted(EXPECTED_SEEDS)}"
-          f" = {EXPECTED_GATES * len(EXPECTED_SEEDS)} stability entries match security.yml")
+    total = (EXPECTED_GATES + len(EXTRA_GATES)) * len(EXPECTED_SEEDS)
+    print(f"PASS: {EXPECTED_GATES} refinement gates + {len(EXTRA_GATES)} extra x seeds"
+          f" {sorted(EXPECTED_SEEDS)} = {total} stability entries match security.yml")
     print("PASS: GitHub-hosted ubuntu-24.04 only, cold, seed shim first on PATH,"
           " required triggers present")
     return 0

@@ -105,6 +105,10 @@ jobs:
           - { name: cross-driver, dir: security/formal/cross-driver, script: verify.sh, seed: 1 }
           - { name: cross-driver, dir: security/formal/cross-driver, script: verify.sh, seed: 2 }
           - { name: cross-driver, dir: security/formal/cross-driver, script: verify.sh, seed: 3 }
+          # Not in security.yml's refinement matrix: formal-rekey checks it (share-journal step).
+          - { name: m28-trace-equivalence, dir: security/formal/m28-trace-equivalence, script: verify.sh, seed: 1 }
+          - { name: m28-trace-equivalence, dir: security/formal/m28-trace-equivalence, script: verify.sh, seed: 2 }
+          - { name: m28-trace-equivalence, dir: security/formal/m28-trace-equivalence, script: verify.sh, seed: 3 }
     env:
       CARGO_BUILD_JOBS: 1
       OPAMJOBS: 1
@@ -112,10 +116,8 @@ jobs:
       # Two parallel mutants stay within the job's memory cap, as in security.yml.
       VELA_MUTANT_JOBS: 2
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@1.99.1
-
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@d124f86f28ff42855784ff3319f48ac182c248f8 # 1.99.1
       # ── Proof toolchain ────────────────────────────────────────────────
       # Reuses the same installer, cache keys and activation checks as
       # security.yml's refinement job, so these steps can later be replaced by
@@ -123,18 +125,28 @@ jobs:
       - name: "Proof toolchain: install build prerequisites"
         timeout-minutes: 15
         run: |
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          # Fixed Ubuntu snapshot (security/assurance/proof-image/apt-snapshot.conf).
+          sudo rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources
+          # deb822: one line per suite is not supported, Suites takes a list.
+          sudo tee /etc/apt/sources.list.d/vela-snapshot.sources >/dev/null <<'EOF'
+          Types: deb
+          URIs: https://snapshot.ubuntu.com/ubuntu/20261104T000000Z/
+          Suites: noble noble-updates noble-security
+          Components: main restricted universe multiverse
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          EOF
+          sudo apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
           # opam builds our pinned OCaml. Its recommended distro OCaml is redundant.
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends opam libgmp-dev pkg-config unzip jq clang nodejs
 
       - name: "Proof toolchain: restore cached pinned hax/F*/Z3"
         id: proof-toolchain-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ~/.local/opt/vela-hax-0.3.7
             ~/.rustup/toolchains/nightly-2025-11-08-x86_64-unknown-linux-gnu
-          key: refinement-toolchain-v1-${{ runner.os }}-${{ runner.arch }}-ubuntu24-${{ hashFiles('security/assurance/install-hax.sh') }}
+          key: refinement-toolchain-v1-${{ runner.os }}-${{ runner.arch }}-ubuntu24-${{ hashFiles('security/assurance/install-hax.sh', 'security/assurance/opam-lock/hax-engine.opam.locked') }}
 
       - name: "Proof toolchain: install pinned hax, F* and Z3"
         if: steps.proof-toolchain-cache.outputs.cache-hit != 'true'
@@ -165,7 +177,7 @@ jobs:
 
       - name: "Proof toolchain: cache completed toolchain"
         if: steps.proof-toolchain-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ~/.local/opt/vela-hax-0.3.7
@@ -173,11 +185,13 @@ jobs:
           key: ${{ steps.proof-toolchain-cache.outputs.cache-primary-key }}
 
       - name: "Proof toolchain: cache Rust dependencies"
-        uses: Swatinem/rust-cache@v2
+        # The M28 gate has no Cargo workspace.
+        if: hashFiles(format('{0}/Cargo.toml', matrix.dir)) != ''
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: ${{ matrix.dir }} -> ../../target
           shared-key: refinement-rust-v2-${{ matrix.name }}
-          key: ${{ hashFiles('security/assurance/install-hax.sh') }}
+          key: ${{ hashFiles('security/assurance/install-hax.sh', 'security/assurance/opam-lock/hax-engine.opam.locked') }}
           cache-bin: false
 
       # ── The seeded check ───────────────────────────────────────────────
@@ -219,7 +233,7 @@ jobs:
           fi
           exit "$status"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: stability-logs-${{ matrix.name }}-seed${{ matrix.seed }}
@@ -234,12 +248,11 @@ jobs:
     if: always()
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Check this workflow covers every refinement gate
         run: python3 -I security/formal/check-stability-matrix.py
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: stability-logs-*
           merge-multiple: true
