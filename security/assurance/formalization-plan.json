@@ -1276,7 +1276,7 @@
    "size": "XL",
    "hard": true,
    "title": "Quantum-query composition",
-   "done": "Per C7a decision; skipped if excluded",
+   "done": "In scope (09, 2026-11-04): QROM or random-oracle-free reductions for the hybrid KEM and signature claims, with stated losses",
    "deps": [
     "C7a",
     "C5"
@@ -1408,8 +1408,8 @@
    "area": "C",
    "size": "S",
    "hard": false,
-   "title": "Legacy v1 decision",
-   "done": "decapsulate_legacy_v1 removed or explicitly excluded",
+   "title": "Remove the legacy v1 envelope path",
+   "done": "decapsulate_legacy_v1 and its recovery.rs caller removed (decided 2026-11-04); tests and docs updated",
    "deps": [
     "B0"
    ],

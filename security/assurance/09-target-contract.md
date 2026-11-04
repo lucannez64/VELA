@@ -55,3 +55,21 @@ has not proved the VELA KEM combiner merely because primitive implementations
 are trusted. Likewise a boolean decision proof does not establish its caller's
 observations or side effects. CI runs and independent review supply assurance
 evidence, not substitutes for a missing theorem.
+
+## Scope decisions
+
+- **Quantum attackers are in scope (2026-11-04, plan step C7a).** The
+  construction claims (TC-3) must hold against an adversary with a quantum
+  computer, not only a classical one. For the hybrid KEM and signatures this
+  means the surviving-component argument has to be made with quantum oracle
+  access where a random oracle is used (QROM, or an equivalent reduction that
+  avoids the random oracle), on top of the existing classical CryptoVerif
+  games, which do not cover quantum queries. Plan step C7b carries this work.
+  Until it is done, every post-quantum claim rests on the classical games plus
+  the stated primitive assumptions, and says so.
+- **The legacy v1 trusted-contact envelope path is removed (2026-11-04, plan
+  step C17).** `kem::decapsulate_legacy_v1` and its use for old trusted-contact
+  envelopes in `recovery.rs` go, so no claim needs to cover the v1 combiner,
+  which binds no transcript. Envelopes still in the old format stop opening;
+  their owners have to re-share. The separate v1 possession-commitment check
+  (`allow_legacy_v1`) is a different path and is not part of this decision.

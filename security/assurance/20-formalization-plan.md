@@ -112,7 +112,7 @@ Critical path (by size): B0 -> B3 -> B4 -> O3a -> O3f -> O9 -> O13f -> H8f -> H1
 | 88 | C5 | 5 | L **hard** | Concrete X25519 combiner theorem | One theorem replacing the model-level COMP-5 | C1, C3b, C4 |
 | 89 | C6 | 2 | L **hard** | Multi-user, multi-challenge KEM | Game or hybrid argument with stated loss | C1 |
 | 90 | C7a | 1 | S | Decide quantum-query scope | Choice recorded in 09: QROM proof, paper reduction, or excluded | B0 |
-| 91 | C7b | 6 | XL **hard** | Quantum-query composition | Per C7a decision; skipped if excluded | C7a, C5 |
+| 91 | C7b | 6 | XL **hard** | Quantum-query composition | In scope (09, 2026-11-04): QROM or random-oracle-free reductions for the hybrid KEM and signature claims, with stated losses | C7a, C5 |
 | 92 | C8 | 6 | M | Instantiate KEM-DEM with the combiner | Composition lemma checked, not manual | C5, C6 |
 | 93 | C9 | 7 | M **hard** | AAD and signed share-envelope game | Encryption theorem covers the real envelope with AAD | C8, O14a |
 | 94 | C10 | 1 | L **hard** | HKDF beyond the random oracle | Reductions under named PRF/extractor assumptions | B0 |
@@ -122,7 +122,7 @@ Critical path (by size): B0 -> B3 -> B4 -> O3a -> O3f -> O9 -> O13f -> H8f -> H1
 | 98 | C14 | 3 | M | Application randomness | Keys/nonces drawn from the OS RNG with right lengths; AEAD nonce uniqueness proved | T9 |
 | 99 | C15 | 1 | M | Uniform decryption errors | No error-oracle: all decrypt failures map to one error, proved at the wrapper | B0 |
 | 100 | C16 | 1 | M | Secret erasure | Zeroize gate: secret types implement ZeroizeOnDrop; lint plus review | B0 |
-| 101 | C17 | 1 | S | Legacy v1 decision | decapsulate_legacy_v1 removed or explicitly excluded | B0 |
+| 101 | C17 | 1 | S | Remove the legacy v1 envelope path | decapsulate_legacy_v1 and its recovery.rs caller removed (decided 2026-11-04); tests and docs updated | B0 |
 | 102 | C18 | 9 | S | Close F-4 in 08 | CryptoVerif README open list empty or excluded | C7b, C11, C12, C13, C14, C15, C16, C17 |
 | 103 | N1 | 1 | S | FFI call-site inventory | Every Kotlin/Swift/TS call into the bridges listed | B0 |
 | 104 | N0a | 2 | M | Desktop: refuse unbound legacy chunks (U-28) | Desktop downloads refuse unsealed blobs as the mobile bridges do (or a recorded migration re-seals them first); regression test; U-28 closed | N1 |
@@ -271,7 +271,7 @@ flowchart TB
     C14["C14 Application randomness"]
     C15["C15 Uniform decryption errors"]
     C16["C16 Secret erasure"]
-    C17["C17 Legacy v1 decision"]
+    C17["C17 Remove the legacy v1 envelope path"]
     C18["C18 Close F-4 in 08"]
   end
   subgraph N["F-5 native clients and protocol composition"]

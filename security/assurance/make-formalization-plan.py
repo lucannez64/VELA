@@ -178,7 +178,7 @@ NODES = [
     ("C5", "L", True, "Concrete X25519 combiner theorem", "One theorem replacing the model-level COMP-5", ["C1", "C3b", "C4"]),
     ("C6", "L", True, "Multi-user, multi-challenge KEM", "Game or hybrid argument with stated loss", ["C1"]),
     ("C7a", "S", False, "Decide quantum-query scope", "Choice recorded in 09: QROM proof, paper reduction, or excluded", ["B0"]),
-    ("C7b", "XL", True, "Quantum-query composition", "Per C7a decision; skipped if excluded", ["C7a", "C5"]),
+    ("C7b", "XL", True, "Quantum-query composition", "In scope (09, 2026-11-04): QROM or random-oracle-free reductions for the hybrid KEM and signature claims, with stated losses", ["C7a", "C5"]),
     ("C8", "M", False, "Instantiate KEM-DEM with the combiner", "Composition lemma checked, not manual", ["C5", "C6"]),
     ("C9", "M", True, "AAD and signed share-envelope game", "Encryption theorem covers the real envelope with AAD", ["C8", "O14a"]),
     ("C10", "L", True, "HKDF beyond the random oracle", "Reductions under named PRF/extractor assumptions", ["B0"]),
@@ -188,7 +188,7 @@ NODES = [
     ("C14", "M", False, "Application randomness", "Keys/nonces drawn from the OS RNG with right lengths; AEAD nonce uniqueness proved", ["T9"]),
     ("C15", "M", False, "Uniform decryption errors", "No error-oracle: all decrypt failures map to one error, proved at the wrapper", ["B0"]),
     ("C16", "M", False, "Secret erasure", "Zeroize gate: secret types implement ZeroizeOnDrop; lint plus review", ["B0"]),
-    ("C17", "S", False, "Legacy v1 decision", "decapsulate_legacy_v1 removed or explicitly excluded", ["B0"]),
+    ("C17", "S", False, "Remove the legacy v1 envelope path", "decapsulate_legacy_v1 and its recovery.rs caller removed (decided 2026-11-04); tests and docs updated", ["B0"]),
     ("C18", "S", False, "Close F-4 in 08", "CryptoVerif README open list empty or excluded", ["C7b", "C11", "C12", "C13", "C14", "C15", "C16", "C17"]),
 
     # ---------------- F-5 native ----------------
