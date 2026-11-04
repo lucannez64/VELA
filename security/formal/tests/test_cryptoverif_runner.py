@@ -51,6 +51,23 @@ if mode != 'missing_query_witness':
     elif model == 'kem_v2_mlkem_cca_sha256':
         bound = ('2 * qH / |mlss| + 2 * Penc(time_1, 1, 1, Qd) + '
                  '(8 * Qd + 2 * qH) / |Z| + 4 * PhashCt + 6 * Qd * Pctxtcoll')
+    elif model == 'kem_v2_x25519_gdh_multi_sha256':
+        bound = ('(2 * N + 2 * Qc) * pDistRerandom + 2 * N * Qc * pGDH(time_1, 2 * qH) + '
+                 '(2 * N^2 * Qc^2 + 4 * N^2 + 2 * Qc^2 + 2 * #Odecap * Qc + '
+                 '2 * N^2 * Qc + 2 * qH * Qc) / |Z| + 8 * PhashCt + 6 * PhashEk')
+        if mode == 'sha256_multi_changed_coefficient':
+            bound = bound.replace('2 * N * Qc * pGDH', 'N * Qc * pGDH')
+        elif mode == 'sha256_multi_missing_phashEk':
+            bound = bound.replace(' + 6 * PhashEk', '')
+    elif model == 'kem_v2_x25519_gdh_nonuniform_multi_sha256':
+        bound = ('(2 * N + 2 * Qc) * pDistRerandom + 2 * pGDH(time_1, 2 * qH) + '
+                 '(8 * N^2 + 4 * Qc^2 + 2 * #Odecap * Qc + 2 * Qc * qH) * PCollKey + '
+                 '8 * PhashCt + 6 * PhashEk')
+    elif model == 'kem_v2_mlkem_cca_multi_sha256':
+        bound = ('2 * qH * Qc / |mlss| + 2 * Penc(time_1, N, Qc, #Odecap) + '
+                 '(2 * N^2 * Qc^2 + 3 * N^2 + 8 * #Odecap * Qc + 2 * N^2 * Qc + '
+                 '2 * qH * Qc) / |Z| + (2 * Qc^2 * N^2 + 6 * #Odecap * Qc * N) * Pctxtcoll + '
+                 '6 * PhashCt + 4 * PhashEk + 8 * N^2 * Pkeycoll')
     if mode == 'sha256_changed_coefficient' and model.endswith('_sha256'):
         bound = bound.replace('2 * Qd', 'Qd')
     print('RESULT Proved ' + query + ' up to probability ' + bound)
@@ -91,7 +108,10 @@ class RunnerTests(unittest.TestCase):
         self.assertIn('kem_v2_x25519_gdh_sha256: proved (as expected)', result.stdout)
         self.assertIn('kem_v2_x25519_gdh_nonuniform_sha256: proved (as expected)', result.stdout)
         self.assertIn('kem_v2_mlkem_cca_sha256: proved (as expected)', result.stdout)
-        self.assertEqual(result.stdout.count('(as expected)'), 13)
+        self.assertIn('kem_v2_x25519_gdh_multi_sha256: proved (as expected)', result.stdout)
+        self.assertIn('kem_v2_x25519_gdh_nonuniform_multi_sha256: proved (as expected)', result.stdout)
+        self.assertIn('kem_v2_mlkem_cca_multi_sha256: proved (as expected)', result.stdout)
+        self.assertEqual(result.stdout.count('(as expected)'), 16)
 
     def test_sha256_bridge_bound_drift_is_rejected(self):
         result = self.invoke('sha256_changed_coefficient')
@@ -99,15 +119,32 @@ class RunnerTests(unittest.TestCase):
         self.assertIn('kem_v2_x25519_gdh_sha256: SHA-256 bridge bound changed',
                       result.stderr)
 
+    def test_multi_user_bound_drift_is_rejected(self):
+        result = self.invoke('sha256_multi_changed_coefficient')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('kem_v2_x25519_gdh_multi_sha256: SHA-256 bridge bound changed',
+                      result.stderr)
+
+    def test_missing_multi_user_phash_ek_term_is_rejected(self):
+        result = self.invoke('sha256_multi_missing_phashEk')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('kem_v2_x25519_gdh_multi_sha256: SHA-256 bridge bound changed',
+                      result.stderr)
+
     def test_retained_sha256_bridge_proof_bounds_pass(self):
-        folder = ROOT / 'security/assurance/proof-logs/current/cryptoverif-sha256-bridge'
-        for model in ('kem_v2_x25519_gdh_sha256',
-                      'kem_v2_x25519_gdh_nonuniform_sha256',
-                      'kem_v2_mlkem_cca_sha256'):
+        cases = [
+            ('cryptoverif-sha256-bridge', 'kem_v2_x25519_gdh_sha256'),
+            ('cryptoverif-sha256-bridge', 'kem_v2_x25519_gdh_nonuniform_sha256'),
+            ('cryptoverif-sha256-bridge', 'kem_v2_mlkem_cca_sha256'),
+            ('cryptoverif-multi-user', 'kem_v2_x25519_gdh_multi_sha256'),
+            ('cryptoverif-multi-user', 'kem_v2_x25519_gdh_nonuniform_multi_sha256'),
+            ('cryptoverif-multi-user', 'kem_v2_mlkem_cca_multi_sha256'),
+        ]
+        for folder, model in cases:
             with self.subTest(model=model):
                 result = subprocess.run([
                     'python3', str(ROOT / 'security/formal/check-cryptoverif-sha256-bound.py'),
-                    model, str(folder / f'{model}.log'),
+                    model, str(ROOT / 'security/assurance/proof-logs/current' / folder / f'{model}.log'),
                 ], capture_output=True, text=True, timeout=5)
                 self.assertEqual(result.returncode, 0, result.stderr)
 

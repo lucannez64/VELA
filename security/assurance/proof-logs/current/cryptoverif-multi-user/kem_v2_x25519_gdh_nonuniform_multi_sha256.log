@@ -1,0 +1,1222 @@
+Doing expand get, insert and prove unique annotations... Done.
+Doing simplify (non-expanded game)... No change.
+Doing expand... Done.
+Doing remove assignments of findcond... Done.
+Doing simplify... Doing global dependency analysis on x inside simplify... At 15, returned message exp(g, x) depends on x.
+No change
+Doing global dependency analysis on y inside simplify... At 142, returned message epk depends on y.
+No change
+Doing global dependency analysis on x inside simplify... At 15, returned message exp(g, x) depends on x.
+No change
+Doing global dependency analysis on y inside simplify... At 144, returned message epk depends on y.
+No change
+Run simplify 2 time(s). Fixpoint reached.
+Done.
+Doing move all binders... Done.
+Doing SA rename new without array accesses and remove assignments of findcond... No change.
+Doing merge branches... No change.
+Proof of (one-session) secrecy of b failed:
+  at 110, bad usage(s) of b.
+Trying equivalence rom(H)... Transf. OK Proba. computed Transf. done Succeeded.
+Doing simplify (non-expanded game)... Applied collision x_1 <-R Z; forall Y: G; return((exp(g, x_1) = Y)) <=(PCollKey)=> return(false) if Y independent-of x_1 with x_1 -> y, Y -> exp(g, y[ri_5]) Probability: PCollKey * Qc * Qc
+Applied collision forall x1, y1: mlpk; return((SHAek(x1) = SHAek(y1))) <=(PhashEk)=> return((x1 = y1)) Probability: PhashEk
+Applied collision forall x1, y1: mlct; return((SHAct(x1) = SHAct(y1))) <=(PhashCt)=> return((x1 = y1)) Probability: PhashCt
+Applied collision x_1 <-R Z; forall Y: G; return((exp(g, x_1) = Y)) <=(PCollKey)=> return(false) if Y independent-of x_1 with x_1 -> x, Y -> exp(g, x[i2_35]) Probability: PCollKey * N * N
+Done.
+Doing expand... Applied collision forall x1, y1: mlct; return((SHAct(x1) = SHAct(y1))) <=(PhashCt)=> return((x1 = y1)) Probability: PhashCt
+Applied collision x_1 <-R Z; forall Y: G; return((exp(g, x_1) = Y)) <=(PCollKey)=> return(false) if Y independent-of x_1 with x_1 -> x[i2_86], Y -> exp(g, x[i2_87]) Probability: PCollKey * N * N
+Applied collision x_1 <-R Z; forall Y: G; return((exp(g, x_1) = Y)) <=(PCollKey)=> return(false) if Y independent-of x_1 with x_1 -> y, Y -> epkq[ri_6, ri_7] Probability: PCollKey * #Odecap * Qc
+Done.
+Doing remove assignments of findcond... Done.
+Doing simplify... Doing global dependency analysis on y inside simplify... At 325, returned message epk depends on y.
+No change
+Doing global dependency analysis on x inside simplify... At 14, returned message exp(g, x) depends on x.
+No change
+Applied collision forall x1, y1: mlpk; return((SHAek(x1) = SHAek(y1))) <=(PhashEk)=> return((x1 = y1)) Probability: PhashEk
+Applied collision forall x1, y1: mlct; return((SHAct(x1) = SHAct(y1))) <=(PhashCt)=> return((x1 = y1)) Probability: PhashCt
+Applied collision x_1 <-R Z; forall Y: G; return((exp(g, x_1) = Y)) <=(PCollKey)=> return(false) if Y independent-of x_1 with x_1 -> x, Y -> exp(g, x[ri_11]) Probability: PCollKey * N * N
+Applied collision x_1 <-R Z; forall Y: G; return((exp(g, x_1) = Y)) <=(PCollKey)=> return(false) if Y independent-of x_1 with x_1 -> y, Y -> exp(g, y-indep) Probability: PCollKey * Qc * qH
+Doing global dependency analysis on y inside simplify... At 236, returned message epk depends on y.
+No change
+Doing global dependency analysis on x inside simplify... At 14, returned message exp(g, x) depends on x.
+No change
+Run simplify 2 time(s). Maximum reached.
+Done.
+Doing move all binders... Done.
+Doing SA rename new without array accesses and remove assignments of findcond... Done.
+Doing merge branches... No change.
+Proof of (one-session) secrecy of b failed:
+  at 201, bad usage(s) of b.
+Trying equivalence rom(H)... Failed.
+Trying equivalence gdh(exp)... Failed.
+Doing remove assignments of binder x_O_10... Done.
+Trying equivalence gdh(exp) with y, x... Failed.
+Doing remove assignments of binder x_O_4... Done.
+Trying equivalence gdh(exp) with y, x... Transf. OK Applied collision x_1 <-R Z; forall Y: G; return((exp(g, x_1) = Y)) <=(PCollKey)=> return(false) if Y independent-of x_1 with x_1 -> y[ri_1], Y -> exp(g, y[i2_264]) Probability: PCollKey * Qc * Qc
+Applied collision forall x1, y1: mlct; return((SHAct(x1) = SHAct(y1))) <=(PhashCt)=> return((x1 = y1)) Probability: PhashCt
+Applied collision forall x1, y1: mlpk; return((SHAek(x1) = SHAek(y1))) <=(PhashEk)=> return((x1 = y1)) Probability: PhashEk
+Applied collision x_1 <-R Z; forall Y: G; return((exp(g, x_1) = Y)) <=(PCollKey)=> return(false) if Y independent-of x_1 with x_1 -> x[ri_3], Y -> exp(g, x[i2_259]) Probability: PCollKey * N * N
+Proba. computed Transf. done Succeeded.
+Doing simplify (non-expanded game)... No change.
+Doing expand... Done.
+Doing remove assignments of findcond... Done.
+Doing simplify... Doing global dependency analysis on x inside simplify... At 14, returned message exp(g, x) depends on x.
+No change
+Doing global dependency analysis on y inside simplify... At 201, returned message epk depends on y.
+No change
+Run simplify 1 time(s). Fixpoint reached.
+No change.
+Doing move all binders... No change.
+Doing SA rename new without array accesses and remove assignments of findcond... No change.
+Doing merge branches... Done.
+Proved one-session secrecy of b
+===================== Proof starts =======================
+Initial state
+Game 1 is
+     Ostart() :=
+     hk <-R hashkey;
+     b <-R bool;
+     return();
+     ((
+       foreach i <= N do
+       Osetup() :=
+       skm <-R mlsk;
+       x <-R Z;
+       return(mlpkgen(skm), exp(g, x), skm);
+       foreach id <= Qd do
+       Odecap(ctq: mlct, epkq: G) :=
+       get E(=i, =ctq, =epkq) in
+         yield
+       else
+         return(H(hk, mldecap(ctq, skm), exp(epkq, x), epkq, exp(g, x), SHAct(ctq), SHAek(mlpkgen(skm))))
+     ) | (
+       foreach ie <= Qc do
+       Ochall(pkm: mlpk, epkx: G) :=
+       find i1_1 = i1 <= N suchthat defined(skm[i1], x[i1]) && (pkm = mlpkgen(skm[i1])) && (epkx = exp(g, x[i1])) then
+       s <-R mlseed;
+       y <-R Z;
+       ctm: mlct <- mlencap_ct(pkm, s);
+       ssm: mlss <- mlencap_ss(pkm, s);
+       epk: G <- exp(g, y);
+       k0: key <- H(hk, ssm, exp(epkx, y), epk, epkx, SHAct(ctm), SHAek(pkm));
+       k1 <-R key;
+       insert E(i1_1, ctm, epk);
+       return(ctm, epk, (if b then k0 else k1))
+     ) | (
+       foreach iH <= qH do
+       OH(x1: mlss, x2: G, x3: G, x4: G, x5: hashout, x6: hashout) :=
+       return(H(hk, x1, x2, x3, x4, x5, x6))
+     ))
+
+
+Applying expand get, insert and prove unique annotations
+  - Expand get/insert for table E
+yields
+
+Game 2 is
+     Ostart() :=
+     hk <-R hashkey;
+     b <-R bool;
+     return();
+     ((
+       foreach i <= N do
+       Osetup() :=
+       skm <-R mlsk;
+       x <-R Z;
+       return(mlpkgen(skm), exp(g, x), skm);
+       foreach id <= Qd do
+       Odecap(ctq: mlct, epkq: G) :=
+       find u = u_1 <= Qc suchthat defined(E_1[u_1], E_2[u_1], E_3[u_1]) && (E_1[u_1] = i) && (E_2[u_1] = ctq) && (E_3[u_1] = epkq) then
+         yield
+       else
+         return(H(hk, mldecap(ctq, skm), exp(epkq, x), epkq, exp(g, x), SHAct(ctq), SHAek(mlpkgen(skm))))
+     ) | (
+       foreach ie <= Qc do
+       Ochall(pkm: mlpk, epkx: G) :=
+       find i1_1 = i1 <= N suchthat defined(skm[i1], x[i1]) && (pkm = mlpkgen(skm[i1])) && (epkx = exp(g, x[i1])) then
+       s <-R mlseed;
+       y <-R Z;
+       ctm: mlct <- mlencap_ct(pkm, s);
+       ssm: mlss <- mlencap_ss(pkm, s);
+       epk: G <- exp(g, y);
+       k0: key <- H(hk, ssm, exp(epkx, y), epk, epkx, SHAct(ctm), SHAek(pkm));
+       k1 <-R key;
+       E_1 <= N <- i1_1;
+       E_2: mlct <- ctm;
+       E_3: G <- epk;
+       return(ctm, epk, (if b then k0 else k1))
+     ) | (
+       foreach iH <= qH do
+       OH(x1: mlss, x2: G, x3: G, x4: G, x5: hashout, x6: hashout) :=
+       return(H(hk, x1, x2, x3, x4, x5, x6))
+     ))
+
+
+Applying expand
+  - Expand if/find/let
+yields
+
+Game 3 is
+     Ostart() :=
+     hk <-R hashkey;
+     b <-R bool;
+     return();
+     ((
+       foreach i <= N do
+       Osetup() :=
+       skm <-R mlsk;
+       x <-R Z;
+       return(mlpkgen(skm), exp(g, x), skm);
+       foreach id <= Qd do
+       Odecap(ctq: mlct, epkq: G) :=
+       find u = u_1 <= Qc suchthat defined(E_1[u_1], E_2[u_1], E_3[u_1]) && (E_1[u_1] = i) && (E_2[u_1] = ctq) && (E_3[u_1] = epkq) then
+         yield
+       else
+         return(H(hk, mldecap(ctq, skm), exp(epkq, x), epkq, exp(g, x), SHAct(ctq), SHAek(mlpkgen(skm))))
+     ) | (
+       foreach ie <= Qc do
+       Ochall(pkm: mlpk, epkx: G) :=
+       find i1_1 = i1 <= N suchthat defined(skm[i1], x[i1]) && (pkm = mlpkgen(skm[i1])) && (epkx = exp(g, x[i1])) then
+       s <-R mlseed;
+       y <-R Z;
+       ctm: mlct <- mlencap_ct(pkm, s);
+       ssm: mlss <- mlencap_ss(pkm, s);
+       epk: G <- exp(g, y);
+       k0: key <- H(hk, ssm, exp(epkx, y), epk, epkx, SHAct(ctm), SHAek(pkm));
+       k1 <-R key;
+       E_1 <= N <- i1_1;
+       E_2: mlct <- ctm;
+       E_3: G <- epk;
+       if b then
+         return(ctm, epk, k0)
+       else
+         return(ctm, epk, k1)
+     ) | (
+       foreach iH <= qH do
+       OH(x1: mlss, x2: G, x3: G, x4: G, x5: hashout, x6: hashout) :=
+       return(H(hk, x1, x2, x3, x4, x5, x6))
+     ))
+
+
+Applying remove assignments of findcond
+  - Remove assignments on E_1 (definition removed, all usages removed)
+  - Remove assignments on E_2 (definition removed, all usages removed)
+  - Remove assignments on E_3 (definition removed, all usages removed)
+yields
+
+Game 4 is
+     Ostart() :=
+     hk <-R hashkey;
+     b <-R bool;
+     return();
+     ((
+       foreach i <= N do
+       Osetup() :=
+       skm <-R mlsk;
+       x <-R Z;
+       return(mlpkgen(skm), exp(g, x), skm);
+       foreach id <= Qd do
+       Odecap(ctq: mlct, epkq: G) :=
+ {23}  find u = u_1 <= Qc suchthat defined(i1_1[u_1], ctm[u_1], epk[u_1], k1[u_1]) && (i1_1[u_1] = i) && (ctm[u_1] = ctq) && (epk[u_1] = epkq) then
+         yield
+       else
+         return(H(hk, mldecap(ctq, skm), exp(epkq, x), epkq, exp(g, x), SHAct(ctq), SHAek(mlpkgen(skm))))
+     ) | (
+       foreach ie <= Qc do
+       Ochall(pkm: mlpk, epkx: G) :=
+       find i1_1 = i1 <= N suchthat defined(skm[i1], x[i1]) && (pkm = mlpkgen(skm[i1])) && (epkx = exp(g, x[i1])) then
+       s <-R mlseed;
+       y <-R Z;
+       ctm: mlct <- mlencap_ct(pkm, s);
+       ssm: mlss <- mlencap_ss(pkm, s);
+       epk: G <- exp(g, y);
+       k0: key <- {117}H(hk, ssm, exp(epkx, y), epk, epkx, SHAct(ctm), SHAek(pkm));
+       k1 <-R key;
+       if b then
+         return(ctm, epk, k0)
+       else
+         return(ctm, epk, k1)
+     ) | (
+       foreach iH <= qH do
+       OH(x1: mlss, x2: G, x3: G, x4: G, x5: hashout, x6: hashout) :=
+       return(H(hk, x1, x2, x3, x4, x5, x6))
+     ))
+
+
+Applying simplify
+  - Simplification pass
+    - Replaced H(hk, ssm, exp(epkx, y), epk, epkx, SHAct(ctm), SHAek(pkm)) with H(hk, ssm, exp(g, mult(x[i1_1], y)), epk, epkx, SHAct(ctm), SHAek(pkm)) at 117
+    - Replaced defined condition i1_1[u_1], ctm[u_1], epk[u_1], k1[u_1] with epk[u_1], ctm[u_1], i1_1[u_1] in find at 23
+yields
+
+Game 5 is
+     Ostart() :=
+     hk <-R hashkey;
+     b <-R bool;
+     return();
+     ((
+       foreach i <= N do
+       Osetup() :=
+       skm <-R mlsk;
+       x <-R Z;
+       return(mlpkgen(skm), exp(g, x), skm);
+       foreach id <= Qd do
+       Odecap(ctq: mlct, epkq: G) :=
+       find u = u_1 <= Qc suchthat defined(epk[u_1], ctm[u_1], i1_1[u_1]) && (i1_1[u_1] = i) && (ctm[u_1] = ctq) && (epk[u_1] = epkq) then
+         yield
+       else
+         return(H(hk, mldecap(ctq, skm), exp(epkq, x), epkq, exp(g, x), SHAct(ctq), SHAek(mlpkgen(skm))))
+     ) | (
+       foreach ie <= Qc do
+       Ochall(pkm: mlpk, epkx: G) :=
+       find i1_1 = i1 <= N suchthat defined(skm[i1], x[i1]) && (pkm = mlpkgen(skm[i1])) && (epkx = exp(g, x[i1])) then
+       s <-R mlseed;
+       y <-R Z;
+       ctm: mlct <- mlencap_ct(pkm, s);
+       ssm: mlss <- mlencap_ss(pkm, s);
+       epk: G <- exp(g, y);
+       k0: key <- H(hk, ssm, exp(g, mult(x[i1_1], y)), epk, epkx, SHAct(ctm), SHAek(pkm));
+       k1 <-R key;
+       if b then
+         return(ctm, epk, k0)
+       else
+         return(ctm, epk, k1)
+     ) | (
+       foreach iH <= qH do
+       OH(x1: mlss, x2: G, x3: G, x4: G, x5: hashout, x6: hashout) :=
+       return(H(hk, x1, x2, x3, x4, x5, x6))
+     ))
+
+
+Applying move all binders
+  - Move random number generation k1
+  - Move assignment to k0
+  - Move assignment to ssm
+yields
+
+Game 6 is
+     Ostart() :=
+     hk <-R hashkey;
+     b <-R bool;
+     return();
+     ((
+       foreach i <= N do
+       Osetup() :=
+       skm <-R mlsk;
+       x <-R Z;
+       return(mlpkgen(skm), exp(g, x), skm);
+       foreach id <= Qd do
+       Odecap(ctq: mlct, epkq: G) :=
+       find u = u_1 <= Qc suchthat defined(epk[u_1], ctm[u_1], i1_1[u_1]) && (i1_1[u_1] = i) && (ctm[u_1] = ctq) && (epk[u_1] = epkq) then
+         yield
+       else
+         return(H(hk, mldecap(ctq, skm), exp(epkq, x), epkq, exp(g, x), SHAct(ctq), SHAek(mlpkgen(skm))))
+     ) | (
+       foreach ie <= Qc do
+       Ochall(pkm: mlpk, epkx: G) :=
+       find i1_1 = i1 <= N suchthat defined(skm[i1], x[i1]) && (pkm = mlpkgen(skm[i1])) && (epkx = exp(g, x[i1])) then
+       s <-R mlseed;
+       y <-R Z;
+       ctm: mlct <- mlencap_ct(pkm, s);
+       epk: G <- exp(g, y);
+       if b then
+         ssm: mlss <- mlencap_ss(pkm, s);
+         k0: key <- H(hk, ssm, exp(g, mult(x[i1_1], y)), epk, epkx, SHAct(ctm), SHAek(pkm));
+         return(ctm, epk, k0)
+       else
+         k1 <-R key;
+         return(ctm, epk, k1)
+     ) | (
+       foreach iH <= qH do
+       OH(x1: mlss, x2: G, x3: G, x4: G, x5: hashout, x6: hashout) :=
+       return(H(hk, x1, x2, x3, x4, x5, x6))
+     ))
+
+
+Applying equivalence rom(H)
+  - Equivalence rom(H) with variables: hk -> hk_1
+yields
+
+Game 7 is
+     Ostart() :=
+     b <-R bool;
+     return();
+     ((
+       foreach i <= N do
+       Osetup() :=
+       skm <-R mlsk;
+       x <-R Z;
+       return(mlpkgen(skm), exp(g, x), skm);
+       foreach id <= Qd do
+       Odecap(ctq: mlct, epkq: G) :=
+       find u = u_1 <= Qc suchthat defined(epk[u_1], ctm[u_1], i1_1[u_1]) && (i1_1[u_1] = i) && (ctm[u_1] = ctq) && (epk[u_1] = epkq) then
+         yield
+       else
+         return((x_O_5: mlss <- mldecap(ctq, skm); x_O_4: G <- exp(epkq, x); x_O_3: G <- epkq; x_O_2: G <- exp(g, x); x_O_1: hashout <- SHAct(ctq); x_O: hashout <- SHAek(mlpkgen(skm)); find [unique] u_12 = ri_10 <= Qd, u_13 = ri_11 <= N suchthat defined(x_O_5[ri_10, ri_11], x_O_4[ri_10, ri_11], x_O_3[ri_10, ri_11], x_O_2[ri_10, ri_11], x_O_1[ri_10, ri_11], x_O[ri_10, ri_11], r[ri_10, ri_11]) && (x_O_5 = x_O_5[ri_10, ri_11]) && (x_O_4 = x_O_4[ri_10, ri_11]) && (x_O_3 = x_O_3[ri_10, ri_11]) && (x_O_2 = x_O_2[ri_10, ri_11]) && (x_O_1 = x_O_1[ri_10, ri_11]) && (x_O = x_O[ri_10, ri_11]) then r[u_12, u_13] orfind u_11 = ri_9 <= Qc suchthat defined(x_O_11[ri_9], x_O_10[ri_9], x_O_9[ri_9], x_O_8[ri_9], x_O_7[ri_9], x_O_6[ri_9], r_1[ri_9]) && (x_O_5 = x_O_11[ri_9]) && (x_O_4 = x_O_10[ri_9]) && (x_O_3 = x_O_9[ri_9]) && (x_O_2 = x_O_8[ri_9]) && (x_O_1 = x_O_7[ri_9]) && (x_O = x_O_6[ri_9]) then r_1[u_11] orfind u_10 = ri_8 <= qH suchthat defined(x_O_17[ri_8], x_O_16[ri_8], x_O_15[ri_8], x_O_14[ri_8], x_O_13[ri_8], x_O_12[ri_8], r_2[ri_8]) && (x_O_5 = x_O_17[ri_8]) && (x_O_4 = x_O_16[ri_8]) && (x_O_3 = x_O_15[ri_8]) && (x_O_2 = x_O_14[ri_8]) && (x_O_1 = x_O_13[ri_8]) && (x_O = x_O_12[ri_8]) then r_2[u_10] else r <-R key; r))
+     ) | (
+       foreach ie <= Qc do
+       Ochall(pkm: mlpk, epkx: G) :=
+       find i1_1 = i1 <= N suchthat defined(skm[i1], x[i1]) && (pkm = mlpkgen(skm[i1])) && (epkx = exp(g, x[i1])) then
+       s <-R mlseed;
+       y <-R Z;
+       ctm: mlct <- mlencap_ct(pkm, s);
+       epk: G <- exp(g, y);
+       if b then
+         ssm: mlss <- mlencap_ss(pkm, s);
+         k0: key <- (x_O_11: mlss <- ssm; x_O_10: G <- exp(g, mult(x[i1_1], y)); x_O_9: G <- epk; x_O_8: G <- epkx; x_O_7: hashout <- SHAct(ctm); x_O_6: hashout <- SHAek(pkm); {324}find [unique] u_8 = ri_6 <= Qd, u_9 = ri_7 <= N suchthat defined(x_O_5[ri_6, ri_7], x_O_4[ri_6, ri_7], x_O_3[ri_6, ri_7], x_O_2[ri_6, ri_7], x_O_1[ri_6, ri_7], x_O[ri_6, ri_7], r[ri_6, ri_7]) && (x_O_11 = x_O_5[ri_6, ri_7]) && (x_O_10 = x_O_4[ri_6, ri_7]) && (x_O_9 = x_O_3[ri_6, ri_7]) && (x_O_8 = x_O_2[ri_6, ri_7]) && (x_O_7 = x_O_1[ri_6, ri_7]) && (x_O_6 = x_O[ri_6, ri_7]) then r[u_8, u_9] orfind u_7 = ri_5 <= Qc suchthat defined(x_O_11[ri_5], x_O_10[ri_5], x_O_9[ri_5], x_O_8[ri_5], x_O_7[ri_5], x_O_6[ri_5], r_1[ri_5]) && {392}((x_O_11 = x_O_11[ri_5]) && (x_O_10 = x_O_10[ri_5]) && (x_O_9 = x_O_9[ri_5]) && (x_O_8 = x_O_8[ri_5]) && (x_O_7 = x_O_7[ri_5]) && (x_O_6 = x_O_6[ri_5])) then r_1[u_7] orfind u_6 = ri_4 <= qH suchthat defined(x_O_17[ri_4], x_O_16[ri_4], x_O_15[ri_4], x_O_14[ri_4], x_O_13[ri_4], x_O_12[ri_4], r_2[ri_4]) && (x_O_11 = x_O_17[ri_4]) && (x_O_10 = x_O_16[ri_4]) && (x_O_9 = x_O_15[ri_4]) && (x_O_8 = x_O_14[ri_4]) && (x_O_7 = x_O_13[ri_4]) && (x_O_6 = x_O_12[ri_4]) then r_2[u_6] else r_1 <-R key; r_1);
+         return(ctm, epk, k0)
+       else
+         k1 <-R key;
+         return(ctm, epk, k1)
+     ) | (
+       foreach iH <= qH do
+       OH(x1: mlss, x2: G, x3: G, x4: G, x5: hashout, x6: hashout) :=
+       return((x_O_17: mlss <- x1; x_O_16: G <- x2; x_O_15: G <- x3; x_O_14: G <- x4; x_O_13: hashout <- x5; x_O_12: hashout <- x6; find [unique] u_4 = ri_2 <= Qd, u_5 = ri_3 <= N suchthat defined(x_O_5[ri_2, ri_3], x_O_4[ri_2, ri_3], x_O_3[ri_2, ri_3], x_O_2[ri_2, ri_3], x_O_1[ri_2, ri_3], x_O[ri_2, ri_3], r[ri_2, ri_3]) && (x_O_17 = x_O_5[ri_2, ri_3]) && (x_O_16 = x_O_4[ri_2, ri_3]) && (x_O_15 = x_O_3[ri_2, ri_3]) && (x_O_14 = x_O_2[ri_2, ri_3]) && (x_O_13 = x_O_1[ri_2, ri_3]) && (x_O_12 = x_O[ri_2, ri_3]) then r[u_4, u_5] orfind u_3 = ri_1 <= Qc suchthat defined(x_O_11[ri_1], x_O_10[ri_1], x_O_9[ri_1], x_O_8[ri_1], x_O_7[ri_1], x_O_6[ri_1], r_1[ri_1]) && (x_O_17 = x_O_11[ri_1]) && (x_O_16 = x_O_10[ri_1]) && (x_O_15 = x_O_9[ri_1]) && (x_O_14 = x_O_8[ri_1]) && (x_O_13 = x_O_7[ri_1]) && (x_O_12 = x_O_6[ri_1]) then r_1[u_3] orfind u_2 = ri <= qH suchthat defined(x_O_17[ri], x_O_16[ri], x_O_15[ri], x_O_14[ri], x_O_13[ri], x_O_12[ri], r_2[ri]) && (x_O_17 = x_O_17[ri]) && (x_O_16 = x_O_16[ri]) && (x_O_15 = x_O_15[ri]) && (x_O_14 = x_O_14[ri]) && (x_O_13 = x_O_13[ri]) && (x_O_12 = x_O_12[ri]) then r_2[u_2] else r_2 <-R key; r_2))
+     ))
+
+
+Applying simplify (non-expanded game) [probability (Qc^2 + N^2) * PCollKey + PhashEk + PhashCt]
+  - Simplification pass
+    - Replaced ((x_O_11 = x_O_11[ri_5]) && (x_O_10 = x_O_10[ri_5]) && (x_O_9 = x_O_9[ri_5]) && (x_O_8 = x_O_8[ri_5]) && (x_O_7 = x_O_7[ri_5]) && (x_O_6 = x_O_6[ri_5])) with false at 392
+    - Remove branch 2 in find at 324
+yields
+
+Game 8 is
+     Ostart() :=
+     b <-R bool;
+     return();
+     ((
+       foreach i <= N do
+       Osetup() :=
+       skm <-R mlsk;
+       x <-R Z;
+       return(mlpkgen(skm), exp(g, x), skm);
+       foreach id <= Qd do
+       Odecap(ctq: mlct, epkq: G) :=
+       find u = u_1 <= Qc suchthat defined(epk[u_1], ctm[u_1], i1_1[u_1]) && (i1_1[u_1] = i) && (ctm[u_1] = ctq) && (epk[u_1] = epkq) then
+         yield
+       else
+         return((x_O_5: mlss <- mldecap(ctq, skm); x_O_4: G <- exp(epkq, x); x_O_3: G <- epkq; x_O_2: G <- exp(g, x); x_O_1: hashout <- SHAct(ctq); x_O: hashout <- SHAek(mlpkgen(skm)); {79}find [unique] u_12 = ri_10 <= Qd, u_13 = ri_11 <= N suchthat defined(x_O_5[ri_10, ri_11], x_O_4[ri_10, ri_11], x_O_3[ri_10, ri_11], x_O_2[ri_10, ri_11], x_O_1[ri_10, ri_11], x_O[ri_10, ri_11], r[ri_10, ri_11]) && (x_O_5 = x_O_5[ri_10, ri_11]) && (x_O_4 = x_O_4[ri_10, ri_11]) && (x_O_3 = x_O_3[ri_10, ri_11]) && (x_O_2 = x_O_2[ri_10, ri_11]) && (x_O_1 = x_O_1[ri_10, ri_11]) && (x_O = x_O[ri_10, ri_11]) then r[u_12, u_13] orfind u_11 = ri_9 <= Qc suchthat defined(x_O_11[ri_9], x_O_10[ri_9], x_O_9[ri_9], x_O_8[ri_9], x_O_7[ri_9], x_O_6[ri_9], r_1[ri_9]) && (x_O_5 = x_O_11[ri_9]) && (x_O_4 = x_O_10[ri_9]) && (x_O_3 = x_O_9[ri_9]) && (x_O_2 = x_O_8[ri_9]) && (x_O_1 = x_O_7[ri_9]) && (x_O = x_O_6[ri_9]) then r_1[u_11] orfind u_10 = ri_8 <= qH suchthat defined(x_O_17[ri_8], x_O_16[ri_8], x_O_15[ri_8], x_O_14[ri_8], x_O_13[ri_8], x_O_12[ri_8], r_2[ri_8]) && (x_O_5 = x_O_17[ri_8]) && (x_O_4 = x_O_16[ri_8]) && (x_O_3 = x_O_15[ri_8]) && (x_O_2 = x_O_14[ri_8]) && (x_O_1 = x_O_13[ri_8]) && (x_O = x_O_12[ri_8]) then r_2[u_10] else r <-R key; r))
+     ) | (
+       foreach ie <= Qc do
+       Ochall(pkm: mlpk, epkx: G) :=
+       find i1_1 = i1 <= N suchthat defined(skm[i1], x[i1]) && (pkm = mlpkgen(skm[i1])) && (epkx = exp(g, x[i1])) then
+       s <-R mlseed;
+       y <-R Z;
+       ctm: mlct <- mlencap_ct(pkm, s);
+       epk: G <- exp(g, y);
+       if b then
+         ssm: mlss <- mlencap_ss(pkm, s);
+         k0: key <- (x_O_11: mlss <- ssm; x_O_10: G <- exp(g, mult(x[i1_1], y)); x_O_9: G <- epk; x_O_8: G <- epkx; x_O_7: hashout <- SHAct(ctm); x_O_6: hashout <- SHAek(pkm); {324}find [unique] u_8 = ri_6 <= Qd, u_9 = ri_7 <= N suchthat defined(x_O_5[ri_6, ri_7], x_O_4[ri_6, ri_7], x_O_3[ri_6, ri_7], x_O_2[ri_6, ri_7], x_O_1[ri_6, ri_7], x_O[ri_6, ri_7], r[ri_6, ri_7]) && (x_O_11 = x_O_5[ri_6, ri_7]) && (x_O_10 = x_O_4[ri_6, ri_7]) && (x_O_9 = x_O_3[ri_6, ri_7]) && (x_O_8 = x_O_2[ri_6, ri_7]) && (x_O_7 = x_O_1[ri_6, ri_7]) && (x_O_6 = x_O[ri_6, ri_7]) then r[u_8, u_9] orfind u_6 = ri_4 <= qH suchthat defined(x_O_17[ri_4], x_O_16[ri_4], x_O_15[ri_4], x_O_14[ri_4], x_O_13[ri_4], x_O_12[ri_4], r_2[ri_4]) && (x_O_11 = x_O_17[ri_4]) && (x_O_10 = x_O_16[ri_4]) && (x_O_9 = x_O_15[ri_4]) && (x_O_8 = x_O_14[ri_4]) && (x_O_7 = x_O_13[ri_4]) && (x_O_6 = x_O_12[ri_4]) then r_2[u_6] else r_1 <-R key; r_1);
+         return(ctm, epk, k0)
+       else
+         k1 <-R key;
+         return(ctm, epk, k1)
+     ) | (
+       foreach iH <= qH do
+       OH(x1: mlss, x2: G, x3: G, x4: G, x5: hashout, x6: hashout) :=
+       return((x_O_17: mlss <- x1; x_O_16: G <- x2; x_O_15: G <- x3; x_O_14: G <- x4; x_O_13: hashout <- x5; x_O_12: hashout <- x6; find [unique] u_4 = ri_2 <= Qd, u_5 = ri_3 <= N suchthat defined(x_O_5[ri_2, ri_3], x_O_4[ri_2, ri_3], x_O_3[ri_2, ri_3], x_O_2[ri_2, ri_3], x_O_1[ri_2, ri_3], x_O[ri_2, ri_3], r[ri_2, ri_3]) && (x_O_17 = x_O_5[ri_2, ri_3]) && (x_O_16 = x_O_4[ri_2, ri_3]) && (x_O_15 = x_O_3[ri_2, ri_3]) && (x_O_14 = x_O_2[ri_2, ri_3]) && (x_O_13 = x_O_1[ri_2, ri_3]) && (x_O_12 = x_O[ri_2, ri_3]) then r[u_4, u_5] orfind u_3 = ri_1 <= Qc suchthat defined(x_O_11[ri_1], x_O_10[ri_1], x_O_9[ri_1], x_O_8[ri_1], x_O_7[ri_1], x_O_6[ri_1], r_1[ri_1]) && (x_O_17 = x_O_11[ri_1]) && (x_O_16 = x_O_10[ri_1]) && (x_O_15 = x_O_9[ri_1]) && (x_O_14 = x_O_8[ri_1]) && (x_O_13 = x_O_7[ri_1]) && (x_O_12 = x_O_6[ri_1]) then r_1[u_3] orfind u_2 = ri <= qH suchthat defined(x_O_17[ri], x_O_16[ri], x_O_15[ri], x_O_14[ri], x_O_13[ri], x_O_12[ri], r_2[ri]) && (x_O_17 = x_O_17[ri]) && (x_O_16 = x_O_16[ri]) && (x_O_15 = x_O_15[ri]) && (x_O_14 = x_O_14[ri]) && (x_O_13 = x_O_13[ri]) && (x_O_12 = x_O_12[ri]) then r_2[u_2] else r_2 <-R key; r_2))
+     ))
+
+
+Applying expand [probability PhashCt + (N^2 + #Odecap * Qc) * PCollKey]
+  - Expand if/find/let
+    - Remove branch 1 in find at 324
+    - Remove branch 2 in find at 79
+yields
+
+Game 9 is
+     Ostart() :=
+     b <-R bool;
+     return();
+     ((
+       foreach i <= N do
+       Osetup() :=
+       skm <-R mlsk;
+       x <-R Z;
+       return(mlpkgen(skm), exp(g, x), skm);
+       foreach id <= Qd do
+       Odecap(ctq: mlct, epkq: G) :=
+       find u = u_1 <= Qc suchthat defined(epk[u_1], ctm[u_1], i1_1[u_1]) && (i1_1[u_1] = i) && (ctm[u_1] = ctq) && (epk[u_1] = epkq) then
+         yield
+       else
+         x_O_5: mlss <- mldecap(ctq, skm);
+         x_O_4: G <- exp(epkq, x);
+         x_O_3: G <- epkq;
+         x_O_2: G <- exp(g, x);
+         x_O_1: hashout <- SHAct(ctq);
+         x_O: hashout <- SHAek(mlpkgen(skm));
+         find [unique] u_12 = ri_10 <= Qd, u_13 = ri_11 <= N suchthat defined(x_O_5[ri_10, ri_11], x_O_4[ri_10, ri_11], x_O_3[ri_10, ri_11], x_O_2[ri_10, ri_11], x_O_1[ri_10, ri_11], x_O[ri_10, ri_11], r[ri_10, ri_11]) && (x_O_5 = x_O_5[ri_10, ri_11]) && (x_O_4 = x_O_4[ri_10, ri_11]) && (x_O_3 = x_O_3[ri_10, ri_11]) && (x_O_2 = x_O_2[ri_10, ri_11]) && (x_O_1 = x_O_1[ri_10, ri_11]) && (x_O = x_O[ri_10, ri_11]) then
+           return(r[u_12, u_13])
+         orfind u_10 = ri_8 <= qH suchthat defined(x_O_17[ri_8], x_O_16[ri_8], x_O_15[ri_8], x_O_14[ri_8], x_O_13[ri_8], x_O_12[ri_8], r_2[ri_8]) && (x_O_5 = x_O_17[ri_8]) && (x_O_4 = x_O_16[ri_8]) && (x_O_3 = x_O_15[ri_8]) && (x_O_2 = x_O_14[ri_8]) && (x_O_1 = x_O_13[ri_8]) && (x_O = x_O_12[ri_8]) then
+           return(r_2[u_10])
+         else
+           r <-R key;
+           return(r)
+     ) | (
+       foreach ie <= Qc do
+       Ochall(pkm: mlpk, epkx: G) :=
+       find i1_1 = i1 <= N suchthat defined(skm[i1], x[i1]) && (pkm = mlpkgen(skm[i1])) && (epkx = exp(g, x[i1])) then
+       s <-R mlseed;
+       y <-R Z;
+       ctm: mlct <- mlencap_ct(pkm, s);
+       epk: G <- exp(g, y);
+       if b then
+         ssm: mlss <- mlencap_ss(pkm, s);
+         x_O_11: mlss <- ssm;
+         x_O_10: G <- exp(g, mult(x[i1_1], y));
+         x_O_9: G <- epk;
+         x_O_8: G <- epkx;
+         x_O_7: hashout <- SHAct(ctm);
+         x_O_6: hashout <- SHAek(pkm);
+         find [unique] u_6 = ri_4 <= qH suchthat defined(x_O_17[ri_4], x_O_16[ri_4], x_O_15[ri_4], x_O_14[ri_4], x_O_13[ri_4], x_O_12[ri_4], r_2[ri_4]) && (x_O_11 = x_O_17[ri_4]) && (x_O_10 = x_O_16[ri_4]) && (x_O_9 = x_O_15[ri_4]) && (x_O_8 = x_O_14[ri_4]) && (x_O_7 = x_O_13[ri_4]) && (x_O_6 = x_O_12[ri_4]) then
+           k0: key <- r_2[u_6];
+           return(ctm, epk, k0)
+         else
+           r_1 <-R key;
+           k0: key <- r_1;
+           return(ctm, epk, k0)
+       else
+         k1 <-R key;
+         return(ctm, epk, k1)
+     ) | (
+       foreach iH <= qH do
+       OH(x1: mlss, x2: G, x3: G, x4: G, x5: hashout, x6: hashout) :=
+       x_O_17: mlss <- x1;
+       x_O_16: G <- x2;
+       x_O_15: G <- x3;
+       x_O_14: G <- x4;
+       x_O_13: hashout <- x5;
+       x_O_12: hashout <- x6;
+       find [unique] u_4 = ri_2 <= Qd, u_5 = ri_3 <= N suchthat defined(x_O_5[ri_2, ri_3], x_O_4[ri_2, ri_3], x_O_3[ri_2, ri_3], x_O_2[ri_2, ri_3], x_O_1[ri_2, ri_3], x_O[ri_2, ri_3], r[ri_2, ri_3]) && (x_O_17 = x_O_5[ri_2, ri_3]) && (x_O_16 = x_O_4[ri_2, ri_3]) && (x_O_15 = x_O_3[ri_2, ri_3]) && (x_O_14 = x_O_2[ri_2, ri_3]) && (x_O_13 = x_O_1[ri_2, ri_3]) && (x_O_12 = x_O[ri_2, ri_3]) then
+         return(r[u_4, u_5])
+       orfind u_3 = ri_1 <= Qc suchthat defined(x_O_11[ri_1], x_O_10[ri_1], x_O_9[ri_1], x_O_8[ri_1], x_O_7[ri_1], x_O_6[ri_1], r_1[ri_1]) && (x_O_17 = x_O_11[ri_1]) && (x_O_16 = x_O_10[ri_1]) && (x_O_15 = x_O_9[ri_1]) && (x_O_14 = x_O_8[ri_1]) && (x_O_13 = x_O_7[ri_1]) && (x_O_12 = x_O_6[ri_1]) then
+         return(r_1[u_3])
+       orfind u_2 = ri <= qH suchthat defined(x_O_17[ri], x_O_16[ri], x_O_15[ri], x_O_14[ri], x_O_13[ri], x_O_12[ri], r_2[ri]) && (x_O_17 = x_O_17[ri]) && (x_O_16 = x_O_16[ri]) && (x_O_15 = x_O_15[ri]) && (x_O_14 = x_O_14[ri]) && (x_O_13 = x_O_13[ri]) && (x_O_12 = x_O_12[ri]) then
+         return(r_2[u_2])
+       else
+         r_2 <-R key;
+         return(r_2)
+     ))
+
+
+Applying remove assignments of findcond
+  - Remove assignments on x_O_17 (definition point kept, all usages removed)
+  - Remove assignments on x_O_16 (definition removed, all usages removed)
+  - Remove assignments on x_O_15 (definition removed, all usages removed)
+  - Remove assignments on x_O_14 (definition removed, all usages removed)
+  - Remove assignments on x_O_13 (definition removed, all usages removed)
+  - Remove assignments on x_O_12 (definition removed, all usages removed)
+  - Remove assignments on x_O_11 (definition removed, all usages removed)
+  - Remove assignments on x_O_9 (definition removed, all usages removed)
+  - Remove assignments on x_O_8 (definition removed, all usages removed)
+  - Remove assignments on k0 (definition removed, all usages removed)
+  - Remove assignments on k0 (definition removed, all usages removed)
+  - Remove assignments on x_O_3 (definition removed, all usages removed)
+yields
+
+Game 10 is
+     Ostart() :=
+     b <-R bool;
+     return();
+     ((
+       foreach i <= N do
+       Osetup() :=
+       skm <-R mlsk;
+       x <-R Z;
+       return(mlpkgen(skm), exp(g, x), skm);
+       foreach id <= Qd do
+       Odecap(ctq: mlct, epkq: G) :=
+       find u = u_1 <= Qc suchthat defined(epk[u_1], ctm[u_1], i1_1[u_1]) && (i1_1[u_1] = i) && (ctm[u_1] = ctq) && (epk[u_1] = epkq) then
+         yield
+       else
+         x_O_5: mlss <- mldecap(ctq, skm);
+         x_O_4: G <- exp(epkq, x);
+         x_O_2: G <- exp(g, x);
+         x_O_1: hashout <- SHAct(ctq);
+         x_O: hashout <- SHAek(mlpkgen(skm));
+ {74}    find [unique] u_12 = ri_10 <= Qd, u_13 = ri_11 <= N suchthat defined(epkq[ri_10, ri_11], x_O_5[ri_10, ri_11], x_O_4[ri_10, ri_11], x_O_2[ri_10, ri_11], x_O_1[ri_10, ri_11], x_O[ri_10, ri_11], r[ri_10, ri_11]) && {89}((x_O_5 = x_O_5[ri_10, ri_11]) && (x_O_4 = x_O_4[ri_10, ri_11]) && (epkq = epkq[ri_10, ri_11]) && (x_O_2 = x_O_2[ri_10, ri_11]) && (x_O_1 = x_O_1[ri_10, ri_11]) && (x_O = x_O[ri_10, ri_11])) then
+           return(r[u_12, u_13])
+         orfind u_10 = ri_8 <= qH suchthat defined(x1[ri_8], x2[ri_8], x3[ri_8], x4[ri_8], x5[ri_8], x6[ri_8], x_O_17[ri_8], r_2[ri_8]) && (x_O_5 = x1[ri_8]) && (x_O_4 = x2[ri_8]) && (epkq = x3[ri_8]) && (x_O_2 = x4[ri_8]) && (x_O_1 = x5[ri_8]) && (x_O = x6[ri_8]) then
+           return(r_2[u_10])
+         else
+           r <-R key;
+           return(r)
+     ) | (
+       foreach ie <= Qc do
+       Ochall(pkm: mlpk, epkx: G) :=
+       find i1_1 = i1 <= N suchthat defined(skm[i1], x[i1]) && (pkm = mlpkgen(skm[i1])) && (epkx = exp(g, x[i1])) then
+       s <-R mlseed;
+       y <-R Z;
+       ctm: mlct <- mlencap_ct(pkm, s);
+       epk: G <- exp(g, y);
+       if b then
+         ssm: mlss <- mlencap_ss(pkm, s);
+         x_O_10: G <- exp(g, mult(x[i1_1], y));
+         x_O_7: hashout <- SHAct(ctm);
+         x_O_6: hashout <- SHAek(pkm);
+{268}    find [unique] u_6 = ri_4 <= qH suchthat defined(x1[ri_4], x2[ri_4], x3[ri_4], x4[ri_4], x5[ri_4], x6[ri_4], x_O_17[ri_4], r_2[ri_4]) && {277}((ssm = x1[ri_4]) && (x_O_10 = x2[ri_4]) && (epk = x3[ri_4]) && (epkx = x4[ri_4]) && (x_O_7 = x5[ri_4]) && (x_O_6 = x6[ri_4])) then
+           return(ctm, epk, r_2[u_6])
+         else
+           r_1 <-R key;
+           return(ctm, epk, r_1)
+       else
+         k1 <-R key;
+         return(ctm, epk, k1)
+     ) | (
+       foreach iH <= qH do
+       OH(x1: mlss, x2: G, x3: G, x4: G, x5: hashout, x6: hashout) :=
+       x_O_17: mlss <- cst_mlss;
+{350}  find [unique] u_4 = ri_2 <= Qd, u_5 = ri_3 <= N suchthat defined(epkq[ri_2, ri_3], x_O_5[ri_2, ri_3], x_O_4[ri_2, ri_3], x_O_2[ri_2, ri_3], x_O_1[ri_2, ri_3], x_O[ri_2, ri_3], r[ri_2, ri_3]) && (x1 = x_O_5[ri_2, ri_3]) && (x2 = x_O_4[ri_2, ri_3]) && (x3 = epkq[ri_2, ri_3]) && (x4 = x_O_2[ri_2, ri_3]) && (x5 = x_O_1[ri_2, ri_3]) && (x6 = x_O[ri_2, ri_3]) then
+         return(r[u_4, u_5])
+       orfind u_3 = ri_1 <= Qc suchthat defined(epk[ri_1], epkx[ri_1], ssm[ri_1], x_O_10[ri_1], x_O_7[ri_1], x_O_6[ri_1], r_1[ri_1]) && (x1 = ssm[ri_1]) && (x2 = x_O_10[ri_1]) && (x3 = epk[ri_1]) && (x4 = epkx[ri_1]) && (x5 = x_O_7[ri_1]) && (x6 = x_O_6[ri_1]) then
+         return(r_1[u_3])
+       orfind u_2 = ri <= qH suchthat defined(x1[ri], x2[ri], x3[ri], x4[ri], x5[ri], x6[ri], x_O_17[ri], r_2[ri]) && (x1 = x1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) && (x4 = x4[ri]) && (x5 = x5[ri]) && (x6 = x6[ri]) then
+         return(r_2[u_2])
+       else
+         r_2 <-R key;
+         return(r_2)
+     ))
+
+
+Applying simplify [probability PhashEk + PhashCt + (N^2 + Qc * qH) * PCollKey]
+  - Simplification pass
+    - Replaced defined condition x1[ri], x2[ri], x3[ri], x4[ri], x5[ri], x6[ri], x_O_17[ri], r_2[ri] with r_2[ri], x6[ri], x5[ri], x4[ri], x3[ri], x2[ri], x1[ri] in find at 350
+    - Replaced ((ssm = x1[ri_4]) && (x_O_10 = x2[ri_4]) && (epk = x3[ri_4]) && (epkx = x4[ri_4]) && (x_O_7 = x5[ri_4]) && (x_O_6 = x6[ri_4])) with false at 277
+    - Remove branch 1 in find at 268
+    - Find at 268 removed (else branch kept if any)
+    - Replaced defined condition x1[ri_8], x2[ri_8], x3[ri_8], x4[ri_8], x5[ri_8], x6[ri_8], x_O_17[ri_8], r_2[ri_8] with r_2[ri_8], x6[ri_8], x5[ri_8], x4[ri_8], x3[ri_8], x2[ri_8], x1[ri_8] in find at 74
+    - Replaced ((x_O_5 = x_O_5[ri_10, ri_11]) && (x_O_4 = x_O_4[ri_10, ri_11]) && (epkq = epkq[ri_10, ri_11]) && (x_O_2 = x_O_2[ri_10, ri_11]) && (x_O_1 = x_O_1[ri_10, ri_11]) && (x_O = x_O[ri_10, ri_11])) with ((epkq = epkq[ri_10, ri_11]) && (i = ri_11) && (ctq = ctq[ri_10, ri_11])) at 89
+    - In branch 1 of find at 74, substituting u_13 with i
+    - Replaced defined condition epkq[ri_10, ri_11], x_O_5[ri_10, ri_11], x_O_4[ri_10, ri_11], x_O_2[ri_10, ri_11], x_O_1[ri_10, ri_11], x_O[ri_10, ri_11], r[ri_10, ri_11] with r[ri_10], ctq[ri_10], epkq[ri_10] in find at 74
+yields
+
+Game 11 is
+     Ostart() :=
+     b <-R bool;
+     return();
+     ((
+       foreach i <= N do
+       Osetup() :=
+       skm <-R mlsk;
+       x <-R Z;
+       return(mlpkgen(skm), exp(g, x), skm);
+       foreach id <= Qd do
+       Odecap(ctq: mlct, epkq: G) :=
+       find u = u_1 <= Qc suchthat defined(epk[u_1], ctm[u_1], i1_1[u_1]) && (i1_1[u_1] = i) && (ctm[u_1] = ctq) && (epk[u_1] = epkq) then
+         yield
+       else
+         x_O_5: mlss <- mldecap(ctq, skm);
+         x_O_4: G <- exp(epkq, x);
+         x_O_2: G <- exp(g, x);
+         x_O_1: hashout <- SHAct(ctq);
+         x_O: hashout <- SHAek(mlpkgen(skm));
+         find [unique] u_12 = ri_10 <= Qd suchthat defined(r[ri_10], ctq[ri_10], epkq[ri_10]) && {81}((epkq = epkq[ri_10]) && (i = i) && (ctq = ctq[ri_10])) then
+           u_13 <= N <- i;
+           return(r[u_12])
+         orfind u_10 = ri_8 <= qH suchthat defined(r_2[ri_8], x6[ri_8], x5[ri_8], x4[ri_8], x3[ri_8], x2[ri_8], x1[ri_8]) && (x_O_5 = x1[ri_8]) && (x_O_4 = x2[ri_8]) && (epkq = x3[ri_8]) && (x_O_2 = x4[ri_8]) && (x_O_1 = x5[ri_8]) && (x_O = x6[ri_8]) then
+           return(r_2[u_10])
+         else
+           r <-R key;
+           return(r)
+     ) | (
+       foreach ie <= Qc do
+       Ochall(pkm: mlpk, epkx: G) :=
+       find i1_1 = i1 <= N suchthat defined(skm[i1], x[i1]) && (pkm = mlpkgen(skm[i1])) && (epkx = exp(g, x[i1])) then
+       s <-R mlseed;
+       y <-R Z;
+       ctm: mlct <- mlencap_ct(pkm, s);
+       epk: G <- exp(g, y);
+       if b then
+         ssm: mlss <- mlencap_ss(pkm, s);
+         x_O_10: G <- exp(g, mult(x[i1_1], y));
+         x_O_7: hashout <- SHAct(ctm);
+         x_O_6: hashout <- SHAek(pkm);
+         r_1 <-R key;
+         return(ctm, epk, r_1)
+       else
+         k1 <-R key;
+         return(ctm, epk, k1)
+     ) | (
+       foreach iH <= qH do
+       OH(x1: mlss, x2: G, x3: G, x4: G, x5: hashout, x6: hashout) :=
+       x_O_17: mlss <- cst_mlss;
+       find [unique] u_4 = ri_2 <= Qd, u_5 = ri_3 <= N suchthat defined(epkq[ri_2, ri_3], x_O_5[ri_2, ri_3], x_O_4[ri_2, ri_3], x_O_2[ri_2, ri_3], x_O_1[ri_2, ri_3], x_O[ri_2, ri_3], r[ri_2, ri_3]) && (x1 = x_O_5[ri_2, ri_3]) && (x2 = x_O_4[ri_2, ri_3]) && (x3 = epkq[ri_2, ri_3]) && (x4 = x_O_2[ri_2, ri_3]) && (x5 = x_O_1[ri_2, ri_3]) && (x6 = x_O[ri_2, ri_3]) then
+         return(r[u_4, u_5])
+       orfind u_3 = ri_1 <= Qc suchthat defined(epk[ri_1], epkx[ri_1], ssm[ri_1], x_O_10[ri_1], x_O_7[ri_1], x_O_6[ri_1], r_1[ri_1]) && (x1 = ssm[ri_1]) && (x2 = x_O_10[ri_1]) && (x3 = epk[ri_1]) && (x4 = epkx[ri_1]) && (x5 = x_O_7[ri_1]) && (x6 = x_O_6[ri_1]) then
+         return(r_1[u_3])
+       orfind u_2 = ri <= qH suchthat defined(r_2[ri], x6[ri], x5[ri], x4[ri], x3[ri], x2[ri], x1[ri]) && (x1 = x1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) && (x4 = x4[ri]) && (x5 = x5[ri]) && (x6 = x6[ri]) then
+         return(r_2[u_2])
+       else
+         r_2 <-R key;
+         return(r_2)
+     ))
+
+
+Applying simplify
+  - Simplification pass
+    - Replaced ((epkq = epkq[ri_10]) && (i = i) && (ctq = ctq[ri_10])) with ((epkq = epkq[ri_10]) && (ctq = ctq[ri_10])) at 81
+yields
+
+Game 12 is
+     Ostart() :=
+     b <-R bool;
+     return();
+     ((
+       foreach i <= N do
+       Osetup() :=
+       skm <-R mlsk;
+       x <-R Z;
+       return(mlpkgen(skm), exp(g, x), skm);
+       foreach id <= Qd do
+       Odecap(ctq: mlct, epkq: G) :=
+       find u = u_1 <= Qc suchthat defined(epk[u_1], ctm[u_1], i1_1[u_1]) && (i1_1[u_1] = i) && (ctm[u_1] = ctq) && (epk[u_1] = epkq) then
+         yield
+       else
+         x_O_5: mlss <- mldecap(ctq, skm);
+         x_O_4: G <- exp(epkq, x);
+         x_O_2: G <- exp(g, x);
+         x_O_1: hashout <- SHAct(ctq);
+         x_O: hashout <- SHAek(mlpkgen(skm));
+         find [unique] u_12 = ri_10 <= Qd suchthat defined(r[ri_10], ctq[ri_10], epkq[ri_10]) && (epkq = epkq[ri_10]) && (ctq = ctq[ri_10]) then
+           u_13 <= N <- i;
+           return(r[u_12])
+         orfind u_10 = ri_8 <= qH suchthat defined(r_2[ri_8], x6[ri_8], x5[ri_8], x4[ri_8], x3[ri_8], x2[ri_8], x1[ri_8]) && (x_O_5 = x1[ri_8]) && (x_O_4 = x2[ri_8]) && (epkq = x3[ri_8]) && (x_O_2 = x4[ri_8]) && (x_O_1 = x5[ri_8]) && (x_O = x6[ri_8]) then
+           return(r_2[u_10])
+         else
+           r <-R key;
+           return(r)
+     ) | (
+       foreach ie <= Qc do
+       Ochall(pkm: mlpk, epkx: G) :=
+       find i1_1 = i1 <= N suchthat defined(skm[i1], x[i1]) && (pkm = mlpkgen(skm[i1])) && (epkx = exp(g, x[i1])) then
+       s <-R mlseed;
+       y <-R Z;
+       ctm: mlct <- mlencap_ct(pkm, s);
+       epk: G <- exp(g, y);
+       if b then
+         ssm: mlss <- mlencap_ss(pkm, s);
+         x_O_10: G <- exp(g, mult(x[i1_1], y));
+         x_O_7: hashout <- SHAct(ctm);
+         x_O_6: hashout <- SHAek(pkm);
+         r_1 <-R key;
+         return(ctm, epk, r_1)
+       else
+         k1 <-R key;
+         return(ctm, epk, k1)
+     ) | (
+       foreach iH <= qH do
+       OH(x1: mlss, x2: G, x3: G, x4: G, x5: hashout, x6: hashout) :=
+       x_O_17: mlss <- cst_mlss;
+       find [unique] u_4 = ri_2 <= Qd, u_5 = ri_3 <= N suchthat defined(epkq[ri_2, ri_3], x_O_5[ri_2, ri_3], x_O_4[ri_2, ri_3], x_O_2[ri_2, ri_3], x_O_1[ri_2, ri_3], x_O[ri_2, ri_3], r[ri_2, ri_3]) && (x1 = x_O_5[ri_2, ri_3]) && (x2 = x_O_4[ri_2, ri_3]) && (x3 = epkq[ri_2, ri_3]) && (x4 = x_O_2[ri_2, ri_3]) && (x5 = x_O_1[ri_2, ri_3]) && (x6 = x_O[ri_2, ri_3]) then
+         return(r[u_4, u_5])
+       orfind u_3 = ri_1 <= Qc suchthat defined(epk[ri_1], epkx[ri_1], ssm[ri_1], x_O_10[ri_1], x_O_7[ri_1], x_O_6[ri_1], r_1[ri_1]) && (x1 = ssm[ri_1]) && (x2 = x_O_10[ri_1]) && (x3 = epk[ri_1]) && (x4 = epkx[ri_1]) && (x5 = x_O_7[ri_1]) && (x6 = x_O_6[ri_1]) then
+         return(r_1[u_3])
+       orfind u_2 = ri <= qH suchthat defined(r_2[ri], x6[ri], x5[ri], x4[ri], x3[ri], x2[ri], x1[ri]) && (x1 = x1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) && (x4 = x4[ri]) && (x5 = x5[ri]) && (x6 = x6[ri]) then
+         return(r_2[u_2])
+       else
+         r_2 <-R key;
+         return(r_2)
+     ))
+
+
+Applying move all binders
+  - Move assignment to x_O_17
+yields
+
+Game 13 is
+     Ostart() :=
+     b <-R bool;
+     return();
+     ((
+       foreach i <= N do
+       Osetup() :=
+       skm <-R mlsk;
+       x <-R Z;
+       return(mlpkgen(skm), exp(g, x), skm);
+       foreach id <= Qd do
+       Odecap(ctq: mlct, epkq: G) :=
+       find u = u_1 <= Qc suchthat defined(epk[u_1], ctm[u_1], i1_1[u_1]) && (i1_1[u_1] = i) && (ctm[u_1] = ctq) && (epk[u_1] = epkq) then
+         yield
+       else
+         x_O_5: mlss <- mldecap(ctq, skm);
+         x_O_4: G <- exp(epkq, x);
+         x_O_2: G <- exp(g, x);
+         x_O_1: hashout <- SHAct(ctq);
+         x_O: hashout <- SHAek(mlpkgen(skm));
+         find [unique] u_12 = ri_10 <= Qd suchthat defined(r[ri_10], ctq[ri_10], epkq[ri_10]) && (epkq = epkq[ri_10]) && (ctq = ctq[ri_10]) then
+           u_13 <= N <- i;
+           return(r[u_12])
+         orfind u_10 = ri_8 <= qH suchthat defined(r_2[ri_8], x6[ri_8], x5[ri_8], x4[ri_8], x3[ri_8], x2[ri_8], x1[ri_8]) && (x_O_5 = x1[ri_8]) && (x_O_4 = x2[ri_8]) && (epkq = x3[ri_8]) && (x_O_2 = x4[ri_8]) && (x_O_1 = x5[ri_8]) && (x_O = x6[ri_8]) then
+           return(r_2[u_10])
+         else
+           r <-R key;
+           return(r)
+     ) | (
+       foreach ie <= Qc do
+       Ochall(pkm: mlpk, epkx: G) :=
+       find i1_1 = i1 <= N suchthat defined(skm[i1], x[i1]) && (pkm = mlpkgen(skm[i1])) && (epkx = exp(g, x[i1])) then
+       s <-R mlseed;
+       y <-R Z;
+       ctm: mlct <- mlencap_ct(pkm, s);
+       epk: G <- exp(g, y);
+       if b then
+         ssm: mlss <- mlencap_ss(pkm, s);
+         x_O_10: G <- exp(g, mult(x[i1_1], y));
+         x_O_7: hashout <- SHAct(ctm);
+         x_O_6: hashout <- SHAek(pkm);
+         r_1 <-R key;
+         return(ctm, epk, r_1)
+       else
+         k1 <-R key;
+         return(ctm, epk, k1)
+     ) | (
+       foreach iH <= qH do
+       OH(x1: mlss, x2: G, x3: G, x4: G, x5: hashout, x6: hashout) :=
+       find [unique] u_4 = ri_2 <= Qd, u_5 = ri_3 <= N suchthat defined(epkq[ri_2, ri_3], x_O_5[ri_2, ri_3], x_O_4[ri_2, ri_3], x_O_2[ri_2, ri_3], x_O_1[ri_2, ri_3], x_O[ri_2, ri_3], r[ri_2, ri_3]) && (x1 = x_O_5[ri_2, ri_3]) && (x2 = x_O_4[ri_2, ri_3]) && (x3 = epkq[ri_2, ri_3]) && (x4 = x_O_2[ri_2, ri_3]) && (x5 = x_O_1[ri_2, ri_3]) && (x6 = x_O[ri_2, ri_3]) then
+         return(r[u_4, u_5])
+       orfind u_3 = ri_1 <= Qc suchthat defined(epk[ri_1], epkx[ri_1], ssm[ri_1], x_O_10[ri_1], x_O_7[ri_1], x_O_6[ri_1], r_1[ri_1]) && (x1 = ssm[ri_1]) && (x2 = x_O_10[ri_1]) && (x3 = epk[ri_1]) && (x4 = epkx[ri_1]) && (x5 = x_O_7[ri_1]) && (x6 = x_O_6[ri_1]) then
+         return(r_1[u_3])
+       orfind u_2 = ri <= qH suchthat defined(r_2[ri], x6[ri], x5[ri], x4[ri], x3[ri], x2[ri], x1[ri]) && (x1 = x1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) && (x4 = x4[ri]) && (x5 = x5[ri]) && (x6 = x6[ri]) then
+         return(r_2[u_2])
+       else
+         r_2 <-R key;
+         return(r_2)
+     ))
+
+
+Applying SA rename new without array accesses and remove assignments of findcond
+  - Remove assignments on u_13 (definition removed, all usages removed)
+yields
+
+Game 14 is
+     Ostart() :=
+     b <-R bool;
+     return();
+     ((
+       foreach i <= N do
+       Osetup() :=
+       skm <-R mlsk;
+       x <-R Z;
+       return(mlpkgen(skm), exp(g, x), skm);
+       foreach id <= Qd do
+       Odecap(ctq: mlct, epkq: G) :=
+       find u = u_1 <= Qc suchthat defined(epk[u_1], ctm[u_1], i1_1[u_1]) && (i1_1[u_1] = i) && (ctm[u_1] = ctq) && (epk[u_1] = epkq) then
+         yield
+       else
+         x_O_5: mlss <- mldecap(ctq, skm);
+         x_O_4: G <- exp(epkq, x);
+         x_O_2: G <- exp(g, x);
+         x_O_1: hashout <- SHAct(ctq);
+         x_O: hashout <- SHAek(mlpkgen(skm));
+         find [unique] u_12 = ri_10 <= Qd suchthat defined(r[ri_10], ctq[ri_10], epkq[ri_10]) && (epkq = epkq[ri_10]) && (ctq = ctq[ri_10]) then
+           return(r[u_12])
+         orfind u_10 = ri_8 <= qH suchthat defined(r_2[ri_8], x6[ri_8], x5[ri_8], x4[ri_8], x3[ri_8], x2[ri_8], x1[ri_8]) && (x_O_5 = x1[ri_8]) && (x_O_4 = x2[ri_8]) && (epkq = x3[ri_8]) && (x_O_2 = x4[ri_8]) && (x_O_1 = x5[ri_8]) && (x_O = x6[ri_8]) then
+           return(r_2[u_10])
+         else
+           r <-R key;
+           return(r)
+     ) | (
+       foreach ie <= Qc do
+       Ochall(pkm: mlpk, epkx: G) :=
+       find i1_1 = i1 <= N suchthat defined(skm[i1], x[i1]) && (pkm = mlpkgen(skm[i1])) && (epkx = exp(g, x[i1])) then
+       s <-R mlseed;
+       y <-R Z;
+       ctm: mlct <- mlencap_ct(pkm, s);
+       epk: G <- exp(g, y);
+       if b then
+         ssm: mlss <- mlencap_ss(pkm, s);
+         x_O_10: G <- exp(g, mult(x[i1_1], y));
+         x_O_7: hashout <- SHAct(ctm);
+         x_O_6: hashout <- SHAek(pkm);
+         r_1 <-R key;
+         return(ctm, epk, r_1)
+       else
+         k1 <-R key;
+         return(ctm, epk, k1)
+     ) | (
+       foreach iH <= qH do
+       OH(x1: mlss, x2: G, x3: G, x4: G, x5: hashout, x6: hashout) :=
+       find [unique] u_4 = ri_2 <= Qd, u_5 = ri_3 <= N suchthat defined(epkq[ri_2, ri_3], x_O_5[ri_2, ri_3], x_O_4[ri_2, ri_3], x_O_2[ri_2, ri_3], x_O_1[ri_2, ri_3], x_O[ri_2, ri_3], r[ri_2, ri_3]) && (x1 = x_O_5[ri_2, ri_3]) && (x2 = x_O_4[ri_2, ri_3]) && (x3 = epkq[ri_2, ri_3]) && (x4 = x_O_2[ri_2, ri_3]) && (x5 = x_O_1[ri_2, ri_3]) && (x6 = x_O[ri_2, ri_3]) then
+         return(r[u_4, u_5])
+       orfind u_3 = ri_1 <= Qc suchthat defined(epk[ri_1], epkx[ri_1], ssm[ri_1], x_O_10[ri_1], x_O_7[ri_1], x_O_6[ri_1], r_1[ri_1]) && (x1 = ssm[ri_1]) && (x2 = x_O_10[ri_1]) && (x3 = epk[ri_1]) && (x4 = epkx[ri_1]) && (x5 = x_O_7[ri_1]) && (x6 = x_O_6[ri_1]) then
+         return(r_1[u_3])
+       orfind u_2 = ri <= qH suchthat defined(r_2[ri], x6[ri], x5[ri], x4[ri], x3[ri], x2[ri], x1[ri]) && (x1 = x1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) && (x4 = x4[ri]) && (x5 = x5[ri]) && (x6 = x6[ri]) then
+         return(r_2[u_2])
+       else
+         r_2 <-R key;
+         return(r_2)
+     ))
+
+
+Applying remove assignments of binder x_O_10
+  - Remove assignments on x_O_10 (definition removed, all usages removed)
+yields
+
+Game 15 is
+     Ostart() :=
+     b <-R bool;
+     return();
+     ((
+       foreach i <= N do
+       Osetup() :=
+       skm <-R mlsk;
+       x <-R Z;
+       return(mlpkgen(skm), exp(g, x), skm);
+       foreach id <= Qd do
+       Odecap(ctq: mlct, epkq: G) :=
+       find u = u_1 <= Qc suchthat defined(epk[u_1], ctm[u_1], i1_1[u_1]) && (i1_1[u_1] = i) && (ctm[u_1] = ctq) && (epk[u_1] = epkq) then
+         yield
+       else
+         x_O_5: mlss <- mldecap(ctq, skm);
+         x_O_4: G <- exp(epkq, x);
+         x_O_2: G <- exp(g, x);
+         x_O_1: hashout <- SHAct(ctq);
+         x_O: hashout <- SHAek(mlpkgen(skm));
+         find [unique] u_12 = ri_10 <= Qd suchthat defined(r[ri_10], ctq[ri_10], epkq[ri_10]) && (epkq = epkq[ri_10]) && (ctq = ctq[ri_10]) then
+           return(r[u_12])
+         orfind u_10 = ri_8 <= qH suchthat defined(r_2[ri_8], x6[ri_8], x5[ri_8], x4[ri_8], x3[ri_8], x2[ri_8], x1[ri_8]) && (x_O_5 = x1[ri_8]) && (x_O_4 = x2[ri_8]) && (epkq = x3[ri_8]) && (x_O_2 = x4[ri_8]) && (x_O_1 = x5[ri_8]) && (x_O = x6[ri_8]) then
+           return(r_2[u_10])
+         else
+           r <-R key;
+           return(r)
+     ) | (
+       foreach ie <= Qc do
+       Ochall(pkm: mlpk, epkx: G) :=
+       find i1_1 = i1 <= N suchthat defined(skm[i1], x[i1]) && (pkm = mlpkgen(skm[i1])) && (epkx = exp(g, x[i1])) then
+       s <-R mlseed;
+       y <-R Z;
+       ctm: mlct <- mlencap_ct(pkm, s);
+       epk: G <- exp(g, y);
+       if b then
+         ssm: mlss <- mlencap_ss(pkm, s);
+         x_O_7: hashout <- SHAct(ctm);
+         x_O_6: hashout <- SHAek(pkm);
+         r_1 <-R key;
+         return(ctm, epk, r_1)
+       else
+         k1 <-R key;
+         return(ctm, epk, k1)
+     ) | (
+       foreach iH <= qH do
+       OH(x1: mlss, x2: G, x3: G, x4: G, x5: hashout, x6: hashout) :=
+       find [unique] u_4 = ri_2 <= Qd, u_5 = ri_3 <= N suchthat defined(epkq[ri_2, ri_3], x_O_5[ri_2, ri_3], x_O_4[ri_2, ri_3], x_O_2[ri_2, ri_3], x_O_1[ri_2, ri_3], x_O[ri_2, ri_3], r[ri_2, ri_3]) && (x1 = x_O_5[ri_2, ri_3]) && (x2 = x_O_4[ri_2, ri_3]) && (x3 = epkq[ri_2, ri_3]) && (x4 = x_O_2[ri_2, ri_3]) && (x5 = x_O_1[ri_2, ri_3]) && (x6 = x_O[ri_2, ri_3]) then
+         return(r[u_4, u_5])
+       orfind u_3 = ri_1 <= Qc suchthat defined(y[ri_1], x[i1_1[ri_1]], epk[ri_1], epkx[ri_1], ssm[ri_1], x_O_7[ri_1], x_O_6[ri_1], r_1[ri_1]) && (x1 = ssm[ri_1]) && (x2 = exp(g, mult(x[i1_1[ri_1]], y[ri_1]))) && (x3 = epk[ri_1]) && (x4 = epkx[ri_1]) && (x5 = x_O_7[ri_1]) && (x6 = x_O_6[ri_1]) then
+         return(r_1[u_3])
+       orfind u_2 = ri <= qH suchthat defined(r_2[ri], x6[ri], x5[ri], x4[ri], x3[ri], x2[ri], x1[ri]) && (x1 = x1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) && (x4 = x4[ri]) && (x5 = x5[ri]) && (x6 = x6[ri]) then
+         return(r_2[u_2])
+       else
+         r_2 <-R key;
+         return(r_2)
+     ))
+
+
+Applying remove assignments of binder x_O_4
+  - Remove assignments on x_O_4 (definition removed, all usages removed)
+yields
+
+Game 16 is
+     Ostart() :=
+     b <-R bool;
+     return();
+     ((
+       foreach i <= N do
+       Osetup() :=
+       skm <-R mlsk;
+       x <-R Z;
+       return(mlpkgen(skm), exp(g, x), skm);
+       foreach id <= Qd do
+       Odecap(ctq: mlct, epkq: G) :=
+       find u = u_1 <= Qc suchthat defined(epk[u_1], ctm[u_1], i1_1[u_1]) && (i1_1[u_1] = i) && (ctm[u_1] = ctq) && (epk[u_1] = epkq) then
+         yield
+       else
+         x_O_5: mlss <- mldecap(ctq, skm);
+         x_O_2: G <- exp(g, x);
+         x_O_1: hashout <- SHAct(ctq);
+         x_O: hashout <- SHAek(mlpkgen(skm));
+         find [unique] u_12 = ri_10 <= Qd suchthat defined(r[ri_10], ctq[ri_10], epkq[ri_10]) && (epkq = epkq[ri_10]) && (ctq = ctq[ri_10]) then
+           return(r[u_12])
+         orfind u_10 = ri_8 <= qH suchthat defined(r_2[ri_8], x6[ri_8], x5[ri_8], x4[ri_8], x3[ri_8], x2[ri_8], x1[ri_8]) && (x_O_5 = x1[ri_8]) && (exp(epkq, x) = x2[ri_8]) && (epkq = x3[ri_8]) && (x_O_2 = x4[ri_8]) && (x_O_1 = x5[ri_8]) && (x_O = x6[ri_8]) then
+           return(r_2[u_10])
+         else
+           r <-R key;
+           return(r)
+     ) | (
+       foreach ie <= Qc do
+       Ochall(pkm: mlpk, epkx: G) :=
+       find i1_1 = i1 <= N suchthat defined(skm[i1], x[i1]) && (pkm = mlpkgen(skm[i1])) && (epkx = exp(g, x[i1])) then
+       s <-R mlseed;
+       y <-R Z;
+       ctm: mlct <- mlencap_ct(pkm, s);
+       epk: G <- exp(g, y);
+       if b then
+         ssm: mlss <- mlencap_ss(pkm, s);
+         x_O_7: hashout <- SHAct(ctm);
+         x_O_6: hashout <- SHAek(pkm);
+         r_1 <-R key;
+         return(ctm, epk, r_1)
+       else
+         k1 <-R key;
+         return(ctm, epk, k1)
+     ) | (
+       foreach iH <= qH do
+       OH(x1: mlss, x2: G, x3: G, x4: G, x5: hashout, x6: hashout) :=
+       find [unique] u_4 = ri_2 <= Qd, u_5 = ri_3 <= N suchthat defined(x[ri_3], epkq[ri_2, ri_3], x_O_5[ri_2, ri_3], x_O_2[ri_2, ri_3], x_O_1[ri_2, ri_3], x_O[ri_2, ri_3], r[ri_2, ri_3]) && (x1 = x_O_5[ri_2, ri_3]) && (x2 = exp(epkq[ri_2, ri_3], x[ri_3])) && (x3 = epkq[ri_2, ri_3]) && (x4 = x_O_2[ri_2, ri_3]) && (x5 = x_O_1[ri_2, ri_3]) && (x6 = x_O[ri_2, ri_3]) then
+         return(r[u_4, u_5])
+       orfind u_3 = ri_1 <= Qc suchthat defined(y[ri_1], x[i1_1[ri_1]], epk[ri_1], epkx[ri_1], ssm[ri_1], x_O_7[ri_1], x_O_6[ri_1], r_1[ri_1]) && (x1 = ssm[ri_1]) && (x2 = exp(g, mult(x[i1_1[ri_1]], y[ri_1]))) && (x3 = epk[ri_1]) && (x4 = epkx[ri_1]) && (x5 = x_O_7[ri_1]) && (x6 = x_O_6[ri_1]) then
+         return(r_1[u_3])
+       orfind u_2 = ri <= qH suchthat defined(r_2[ri], x6[ri], x5[ri], x4[ri], x3[ri], x2[ri], x1[ri]) && (x1 = x1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) && (x4 = x4[ri]) && (x5 = x5[ri]) && (x6 = x6[ri]) then
+         return(r_2[u_2])
+       else
+         r_2 <-R key;
+         return(r_2)
+     ))
+
+
+Applying equivalence gdh(exp) with y, x [probability pGDH(time_1, 2 * qH) + (Qc + N) * pDistRerandom + (Qc^2 + N^2) * PCollKey + PhashCt + PhashEk]
+  - Equivalence gdh(exp) with variables: y -> b_1, x -> a
+yields
+
+Game 17 is
+     Ostart() :=
+     b <-R bool;
+     return();
+     ((
+       foreach i <= N do
+       Osetup() :=
+       skm <-R mlsk;
+       x <-R Z;
+       return(mlpkgen(skm), exp(g, x), skm);
+       foreach id <= Qd do
+       Odecap(ctq: mlct, epkq: G) :=
+       find u = u_1 <= Qc suchthat defined(epk[u_1], ctm[u_1], i1_1[u_1]) && (i1_1[u_1] = i) && (ctm[u_1] = ctq) && (epk[u_1] = epkq) then
+         yield
+       else
+         x_O_5: mlss <- mldecap(ctq, skm);
+         x_O_2: G <- exp(g, x);
+         x_O_1: hashout <- SHAct(ctq);
+         x_O: hashout <- SHAek(mlpkgen(skm));
+         find [unique] u_12 = ri_10 <= Qd suchthat defined(r[ri_10], ctq[ri_10], epkq[ri_10]) && (epkq = epkq[ri_10]) && (ctq = ctq[ri_10]) then
+           return(r[u_12])
+         orfind u_10 = ri_8 <= qH suchthat defined(r_2[ri_8], x6[ri_8], x5[ri_8], x4[ri_8], x3[ri_8], x2[ri_8], x1[ri_8]) && (x_O_5 = x1[ri_8]) && (m: G <- x2[ri_8]; m': G <- epkq; (m = exp(m', x))) && (epkq = x3[ri_8]) && (x_O_2 = x4[ri_8]) && (x_O_1 = x5[ri_8]) && (x_O = x6[ri_8]) then
+           return(r_2[u_10])
+         else
+           r <-R key;
+           return(r)
+     ) | (
+       foreach ie <= Qc do
+       Ochall(pkm: mlpk, epkx: G) :=
+       find i1_1 = i1 <= N suchthat defined(skm[i1], x[i1]) && (pkm = mlpkgen(skm[i1])) && (m_1: G <- epkx; (m_1 = exp(g, x[i1]))) then
+       s <-R mlseed;
+       y <-R Z;
+       ctm: mlct <- mlencap_ct(pkm, s);
+       epk: G <- exp(g, y);
+       if b then
+         ssm: mlss <- mlencap_ss(pkm, s);
+         x_O_7: hashout <- SHAct(ctm);
+         x_O_6: hashout <- SHAek(pkm);
+         r_1 <-R key;
+         return(ctm, epk, r_1)
+       else
+         k1 <-R key;
+         return(ctm, epk, k1)
+     ) | (
+       foreach iH <= qH do
+       OH(x1: mlss, x2: G, x3: G, x4: G, x5: hashout, x6: hashout) :=
+{251}  find [unique] u_4 = ri_2 <= Qd, u_5 = ri_3 <= N suchthat defined(x[ri_3], epkq[ri_2, ri_3], x_O_5[ri_2, ri_3], x_O_2[ri_2, ri_3], x_O_1[ri_2, ri_3], x_O[ri_2, ri_3], r[ri_2, ri_3]) && (x1 = x_O_5[ri_2, ri_3]) && (m_2: G <- x2; m'_1: G <- epkq[ri_2, ri_3]; (m_2 = exp(m'_1, x[ri_3]))) && (x3 = epkq[ri_2, ri_3]) && (x4 = x_O_2[ri_2, ri_3]) && (x5 = x_O_1[ri_2, ri_3]) && (x6 = x_O[ri_2, ri_3]) then
+         return(r[u_4, u_5])
+       orfind u_3 = ri_1 <= Qc suchthat defined(r_1[ri_1], x_O_6[ri_1], x_O_7[ri_1], epkx[ri_1], epk[ri_1], ssm[ri_1]) && (x1 = ssm[ri_1]) && (m_4: G <- x2; false) && (x3 = epk[ri_1]) && (x4 = epkx[ri_1]) && (x5 = x_O_7[ri_1]) && (x6 = x_O_6[ri_1]) then
+         return(r_1[u_3])
+       orfind u_2 = ri <= qH suchthat defined(r_2[ri], x6[ri], x5[ri], x4[ri], x3[ri], x2[ri], x1[ri]) && (x1 = x1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) && (x4 = x4[ri]) && (x5 = x5[ri]) && (x6 = x6[ri]) then
+         return(r_2[u_2])
+       else
+         r_2 <-R key;
+         return(r_2)
+     ))
+
+
+Applying expand
+  - Expand if/find/let
+    - Remove branch 2 in find at 251
+yields
+
+Game 18 is
+     Ostart() :=
+     b <-R bool;
+     return();
+     ((
+       foreach i <= N do
+       Osetup() :=
+       skm <-R mlsk;
+       x <-R Z;
+       return(mlpkgen(skm), exp(g, x), skm);
+       foreach id <= Qd do
+       Odecap(ctq: mlct, epkq: G) :=
+       find u = u_1 <= Qc suchthat defined(epk[u_1], ctm[u_1], i1_1[u_1]) && (i1_1[u_1] = i) && (ctm[u_1] = ctq) && (epk[u_1] = epkq) then
+         yield
+       else
+         x_O_5: mlss <- mldecap(ctq, skm);
+         x_O_2: G <- exp(g, x);
+         x_O_1: hashout <- SHAct(ctq);
+         x_O: hashout <- SHAek(mlpkgen(skm));
+         find [unique] u_12 = ri_10 <= Qd suchthat defined(r[ri_10], ctq[ri_10], epkq[ri_10]) && (epkq = epkq[ri_10]) && (ctq = ctq[ri_10]) then
+           return(r[u_12])
+         orfind u_10 = ri_8 <= qH suchthat defined(r_2[ri_8], x6[ri_8], x5[ri_8], x4[ri_8], x3[ri_8], x2[ri_8], x1[ri_8]) && (m: G <- x2[ri_8]; m': G <- epkq; ((x_O_5 = x1[ri_8]) && (m = exp(m', x)) && (epkq = x3[ri_8]) && (x_O_2 = x4[ri_8]) && (x_O_1 = x5[ri_8]) && (x_O = x6[ri_8]))) then
+           return(r_2[u_10])
+         else
+           r <-R key;
+           return(r)
+     ) | (
+       foreach ie <= Qc do
+       Ochall(pkm: mlpk, epkx: G) :=
+       find i1_1 = i1 <= N suchthat defined(skm[i1], x[i1]) && (m_1: G <- epkx; ((pkm = mlpkgen(skm[i1])) && (m_1 = exp(g, x[i1])))) then
+       s <-R mlseed;
+       y <-R Z;
+       ctm: mlct <- mlencap_ct(pkm, s);
+       epk: G <- exp(g, y);
+       if b then
+         ssm: mlss <- mlencap_ss(pkm, s);
+         x_O_7: hashout <- SHAct(ctm);
+         x_O_6: hashout <- SHAek(pkm);
+         r_1 <-R key;
+         return(ctm, epk, r_1)
+       else
+         k1 <-R key;
+         return(ctm, epk, k1)
+     ) | (
+       foreach iH <= qH do
+       OH(x1: mlss, x2: G, x3: G, x4: G, x5: hashout, x6: hashout) :=
+       find [unique] u_4 = ri_2 <= Qd, u_5 = ri_3 <= N suchthat defined(x[ri_3], epkq[ri_2, ri_3], x_O_5[ri_2, ri_3], x_O_2[ri_2, ri_3], x_O_1[ri_2, ri_3], x_O[ri_2, ri_3], r[ri_2, ri_3]) && (m_2: G <- x2; m'_1: G <- epkq[ri_2, ri_3]; ((x1 = x_O_5[ri_2, ri_3]) && (m_2 = exp(m'_1, x[ri_3])) && (x3 = epkq[ri_2, ri_3]) && (x4 = x_O_2[ri_2, ri_3]) && (x5 = x_O_1[ri_2, ri_3]) && (x6 = x_O[ri_2, ri_3]))) then
+         return(r[u_4, u_5])
+       orfind u_2 = ri <= qH suchthat defined(r_2[ri], x6[ri], x5[ri], x4[ri], x3[ri], x2[ri], x1[ri]) && (x1 = x1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) && (x4 = x4[ri]) && (x5 = x5[ri]) && (x6 = x6[ri]) then
+         return(r_2[u_2])
+       else
+         r_2 <-R key;
+         return(r_2)
+     ))
+
+
+Applying remove assignments of findcond
+  - Remove assignments on m_2 (definition removed, all usages removed)
+  - Remove assignments on m'_1 (definition removed, all usages removed)
+  - Remove assignments on ssm (definition removed, all usages removed)
+  - Remove assignments on x_O_7 (definition removed, all usages removed)
+  - Remove assignments on x_O_6 (definition removed, all usages removed)
+  - Remove assignments on m_1 (definition removed, all usages removed)
+  - Remove assignments on m (definition removed, all usages removed)
+  - Remove assignments on m' (definition removed, all usages removed)
+yields
+
+Game 19 is
+     Ostart() :=
+     b <-R bool;
+     return();
+     ((
+       foreach i <= N do
+       Osetup() :=
+       skm <-R mlsk;
+       x <-R Z;
+       return(mlpkgen(skm), exp(g, x), skm);
+       foreach id <= Qd do
+       Odecap(ctq: mlct, epkq: G) :=
+       find u = u_1 <= Qc suchthat defined(epk[u_1], ctm[u_1], i1_1[u_1]) && (i1_1[u_1] = i) && (ctm[u_1] = ctq) && (epk[u_1] = epkq) then
+         yield
+       else
+         x_O_5: mlss <- mldecap(ctq, skm);
+         x_O_2: G <- exp(g, x);
+         x_O_1: hashout <- SHAct(ctq);
+         x_O: hashout <- SHAek(mlpkgen(skm));
+         find [unique] u_12 = ri_10 <= Qd suchthat defined(r[ri_10], ctq[ri_10], epkq[ri_10]) && (epkq = epkq[ri_10]) && (ctq = ctq[ri_10]) then
+           return(r[u_12])
+         orfind u_10 = ri_8 <= qH suchthat defined(r_2[ri_8], x6[ri_8], x5[ri_8], x4[ri_8], x3[ri_8], x2[ri_8], x1[ri_8]) && (x_O_5 = x1[ri_8]) && (x2[ri_8] = exp(epkq, x)) && (epkq = x3[ri_8]) && (x_O_2 = x4[ri_8]) && (x_O_1 = x5[ri_8]) && (x_O = x6[ri_8]) then
+           return(r_2[u_10])
+         else
+           r <-R key;
+           return(r)
+     ) | (
+       foreach ie <= Qc do
+       Ochall(pkm: mlpk, epkx: G) :=
+       find i1_1 = i1 <= N suchthat defined(skm[i1], x[i1]) && (pkm = mlpkgen(skm[i1])) && (epkx = exp(g, x[i1])) then
+       s <-R mlseed;
+       y <-R Z;
+       ctm: mlct <- mlencap_ct(pkm, s);
+       epk: G <- exp(g, y);
+{195}  if b then
+         r_1 <-R key;
+         return(ctm, epk, r_1)
+       else
+         k1 <-R key;
+         return(ctm, epk, k1)
+     ) | (
+       foreach iH <= qH do
+       OH(x1: mlss, x2: G, x3: G, x4: G, x5: hashout, x6: hashout) :=
+       find [unique] u_4 = ri_2 <= Qd, u_5 = ri_3 <= N suchthat defined(x[ri_3], epkq[ri_2, ri_3], x_O_5[ri_2, ri_3], x_O_2[ri_2, ri_3], x_O_1[ri_2, ri_3], x_O[ri_2, ri_3], r[ri_2, ri_3]) && (x1 = x_O_5[ri_2, ri_3]) && (x2 = exp(epkq[ri_2, ri_3], x[ri_3])) && (x3 = epkq[ri_2, ri_3]) && (x4 = x_O_2[ri_2, ri_3]) && (x5 = x_O_1[ri_2, ri_3]) && (x6 = x_O[ri_2, ri_3]) then
+         return(r[u_4, u_5])
+       orfind u_2 = ri <= qH suchthat defined(r_2[ri], x6[ri], x5[ri], x4[ri], x3[ri], x2[ri], x1[ri]) && (x1 = x1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) && (x4 = x4[ri]) && (x5 = x5[ri]) && (x6 = x6[ri]) then
+         return(r_2[u_2])
+       else
+         r_2 <-R key;
+         return(r_2)
+     ))
+
+
+Applying merge branches
+  - Merge branches of test at 195
+yields
+
+Game 20 is
+     Ostart() :=
+     b <-R bool;
+     return();
+     ((
+       foreach i <= N do
+       Osetup() :=
+       skm <-R mlsk;
+       x <-R Z;
+       return(mlpkgen(skm), exp(g, x), skm);
+       foreach id <= Qd do
+       Odecap(ctq: mlct, epkq: G) :=
+       find u = u_1 <= Qc suchthat defined(epk[u_1], ctm[u_1], i1_1[u_1]) && (i1_1[u_1] = i) && (ctm[u_1] = ctq) && (epk[u_1] = epkq) then
+         yield
+       else
+         x_O_5: mlss <- mldecap(ctq, skm);
+         x_O_2: G <- exp(g, x);
+         x_O_1: hashout <- SHAct(ctq);
+         x_O: hashout <- SHAek(mlpkgen(skm));
+         find [unique] u_12 = ri_10 <= Qd suchthat defined(r[ri_10], ctq[ri_10], epkq[ri_10]) && (epkq = epkq[ri_10]) && (ctq = ctq[ri_10]) then
+           return(r[u_12])
+         orfind u_10 = ri_8 <= qH suchthat defined(r_2[ri_8], x6[ri_8], x5[ri_8], x4[ri_8], x3[ri_8], x2[ri_8], x1[ri_8]) && (x_O_5 = x1[ri_8]) && (x2[ri_8] = exp(epkq, x)) && (epkq = x3[ri_8]) && (x_O_2 = x4[ri_8]) && (x_O_1 = x5[ri_8]) && (x_O = x6[ri_8]) then
+           return(r_2[u_10])
+         else
+           r <-R key;
+           return(r)
+     ) | (
+       foreach ie <= Qc do
+       Ochall(pkm: mlpk, epkx: G) :=
+       find i1_1 = i1 <= N suchthat defined(skm[i1], x[i1]) && (pkm = mlpkgen(skm[i1])) && (epkx = exp(g, x[i1])) then
+       s <-R mlseed;
+       y <-R Z;
+       ctm: mlct <- mlencap_ct(pkm, s);
+       epk: G <- exp(g, y);
+       k1 <-R key;
+       return(ctm, epk, k1)
+     ) | (
+       foreach iH <= qH do
+       OH(x1: mlss, x2: G, x3: G, x4: G, x5: hashout, x6: hashout) :=
+       find [unique] u_4 = ri_2 <= Qd, u_5 = ri_3 <= N suchthat defined(x[ri_3], epkq[ri_2, ri_3], x_O_5[ri_2, ri_3], x_O_2[ri_2, ri_3], x_O_1[ri_2, ri_3], x_O[ri_2, ri_3], r[ri_2, ri_3]) && (x1 = x_O_5[ri_2, ri_3]) && (x2 = exp(epkq[ri_2, ri_3], x[ri_3])) && (x3 = epkq[ri_2, ri_3]) && (x4 = x_O_2[ri_2, ri_3]) && (x5 = x_O_1[ri_2, ri_3]) && (x6 = x_O[ri_2, ri_3]) then
+         return(r[u_4, u_5])
+       orfind u_2 = ri <= qH suchthat defined(r_2[ri], x6[ri], x5[ri], x4[ri], x3[ri], x2[ri], x1[ri]) && (x1 = x1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) && (x4 = x4[ri]) && (x5 = x5[ri]) && (x6 = x6[ri]) then
+         return(r_2[u_2])
+       else
+         r_2 <-R key;
+         return(r_2)
+     ))
+
+
+Proved bit secrecy of b in game 20
+Adv[Game 1: bit secrecy of b] <= (2 * Qc + 2 * N) * pDistRerandom + 2 * pGDH(time_1, 2 * qH) + (2 * Qc * qH + 2 * #Odecap * Qc + 4 * Qc^2 + 8 * N^2) * PCollKey + 8 * PhashCt + 6 * PhashEk + Adv[Game 20: bit secrecy of b]
+Adv[Game 20: bit secrecy of b] <= 0
+RESULT Proved bit secrecy of b up to probability (2 * N + 2 * Qc) * pDistRerandom + 2 * pGDH(time_1, 2 * qH) + (8 * N^2 + 4 * Qc^2 + 2 * #Odecap * Qc + 2 * Qc * qH) * PCollKey + 8 * PhashCt + 6 * PhashEk
+RESULT time_1 = (N + #Odecap + Qc * N) * time(mlpkgen) + #Odecap * time(mldecap) + (#Odecap + Qc) * time(SHAct) + (#Odecap + Qc) * time(SHAek) + Qc * time(mlencap_ct) + Qc * time(mlencap_ss) + time + (1 + Qc + N) * time(exp)
+All queries proved.

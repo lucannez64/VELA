@@ -23,6 +23,25 @@ EXPECTED = {
         f'2 * qH / |mlss| + 2 * Penc({TOKEN}, 1, 1, Qd) + '
         f'(8 * Qd + 2 * qH) / |Z| + 4 * PhashCt + 6 * Qd * Pctxtcoll'
     ),
+    # Multi-recipient / multi-challenge variants (N users, Qc challenges,
+    # #Odecap <= N * Qd total decapsulation calls).  The PhashEk term is
+    # charged because distinct recipient public keys meet in the ROM input.
+    'kem_v2_x25519_gdh_multi_sha256': (
+        f'(2 * N + 2 * Qc) * pDistRerandom + 2 * N * Qc * pGDH({TOKEN}, 2 * qH) + '
+        f'(2 * N^2 * Qc^2 + 4 * N^2 + 2 * Qc^2 + 2 * #Odecap * Qc + 2 * N^2 * Qc + '
+        f'2 * qH * Qc) / |Z| + 8 * PhashCt + 6 * PhashEk'
+    ),
+    'kem_v2_x25519_gdh_nonuniform_multi_sha256': (
+        f'(2 * N + 2 * Qc) * pDistRerandom + 2 * pGDH({TOKEN}, 2 * qH) + '
+        f'(8 * N^2 + 4 * Qc^2 + 2 * #Odecap * Qc + 2 * Qc * qH) * PCollKey + '
+        f'8 * PhashCt + 6 * PhashEk'
+    ),
+    'kem_v2_mlkem_cca_multi_sha256': (
+        f'2 * qH * Qc / |mlss| + 2 * Penc({TOKEN}, N, Qc, #Odecap) + '
+        f'(2 * N^2 * Qc^2 + 3 * N^2 + 8 * #Odecap * Qc + 2 * N^2 * Qc + '
+        f'2 * qH * Qc) / |Z| + (2 * Qc^2 * N^2 + 6 * #Odecap * Qc * N) * Pctxtcoll + '
+        f'6 * PhashCt + 4 * PhashEk + 8 * N^2 * Pkeycoll'
+    ),
 }
 
 

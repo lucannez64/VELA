@@ -13,6 +13,9 @@ ss = HKDF-SHA256(ss_mlkem ‖ ss_x25519 ‖ x25519_epk ‖ x25519_pk ‖ SHA-256
 | `kem_v2_x25519_gdh.ocv` | proved | Single-recipient IND-CCA2 in a **uniform prime-order GDH model**, with public ML-KEM functions, a correctness equation and the ML-KEM secret key disclosed. No ML-KEM secrecy assumption. Bound: `4·pDistRerandom + 2·pGDH(t, 2·qH) + (2·Qd + 2·qH)/|Z|` |
 | `kem_v2_x25519_gdh_nonuniform.ocv` | proved | Single-recipient IND-CCA2 in a **nonuniform (clamped-style) exponent GDH model** (`DH_basic` + `DH_proba_collision_minimal` + `GDH_RSR_minimal`), otherwise the same game and disclosures as the uniform model. Bound: `4·pDistRerandom + 2·pGDH(t, 2·qH) + (2·Qd + 2·qH)·PCollKey`; conditional HPKE-constant substitution `4·2^-125 + 2·pGDH(t, 2·qH) + (2·Qd + 2·qH)·2^-250` |
 | `kem_v2_mlkem_cca.ocv` | proved | Single-recipient IND-CCA2 under **ML-KEM IND-CCA2 and the library collision bounds**, with the DH secret exponent disclosed. Bound: `2·Penc(t, 1, 1, Qd) + 6·Qd·Pctxtcoll + 2·qH/|mlss| + (8·Qd + 2·qH)/|Z|` |
+| `kem_v2_x25519_gdh_multi_sha256.ocv` | proved | **Multi-user/multi-challenge** IND-CCA2 (left-or-right) with `N` honest recipients, `Qc` total challenge encapsulations, `Qd` decapsulations per recipient, uniform prime-order GDH, every ML-KEM secret key disclosed, and the SHA-256 bridge. `PhashEk` is charged. Bound: `(2·N + 2·Qc)·pDistRerandom + 2·N·Qc·pGDH(t, 2·qH) + (2·N²·Qc² + 4·N² + 2·Qc² + 2·#Odecap·Qc + 2·N²·Qc + 2·qH·Qc)/|Z| + 8·PhashCt + 6·PhashEk` |
+| `kem_v2_x25519_gdh_nonuniform_multi_sha256.ocv` | proved | Same multi-user/multi-challenge game in the **nonuniform (clamped-style)** GDH model, every ML-KEM secret key disclosed, SHA-256 bridge, `PhashEk` charged. Bound: `(2·N + 2·Qc)·pDistRerandom + 2·pGDH(t, 2·qH) + (8·N² + 4·Qc² + 2·#Odecap·Qc + 2·Qc·qH)·PCollKey + 8·PhashCt + 6·PhashEk` |
+| `kem_v2_mlkem_cca_multi_sha256.ocv` | proved | Same multi-user/multi-challenge game under **ML-KEM IND-CCA2 and the library collision bounds**, every DH exponent disclosed, SHA-256 bridge, `PhashEk` charged. Bound: `2·qH·Qc/|mlss| + 2·Penc(t, N, Qc, #Odecap) + (2·N²·Qc² + 3·N² + 8·#Odecap·Qc + 2·N²·Qc + 2·qH·Qc)/|Z| + (2·Qc²·N² + 6·#Odecap·Qc·N)·Pctxtcoll + 6·PhashCt + 4·PhashEk + 8·N²·Pkeycoll` |
 | `kem_dem_seal_share.ocv` | proved | Modular IND-CCA2 public-key encryption for an abstract IND-CCA2 KEM plus IND-CPA/INT-CTXT AEAD and a fresh random nonce. The bound includes `2·Pkem`, `2·Pencctxt`, two separate `2·Penc` terms and `10·Qd·Pctxtcoll`; full time/message-length arguments are in the log |
 | `hybrid_sig_mldsa_euf.ocv` | proved | AND-signature EUF-CMA under the ML-DSA-87 assumption, with the Ed25519 secret key disclosed. Bound: `Pmldsa(t, Qs)` |
 | `hybrid_sig_ed25519_euf.ocv` | proved | AND-signature EUF-CMA under the Ed25519 assumption, with the ML-DSA secret key disclosed. Bound: `Ped(t, Qs)` |
@@ -76,6 +79,9 @@ that correction and do not establish the strengthened statement. The local
 nonuniform-game transcript, including the full seven-model runner pass and the
 precise bound, is in
 [x25519-nonuniform-gdh](../../assurance/proof-logs/current/x25519-nonuniform-gdh/README.md).
+The multi-user/multi-challenge transcript, including the full 16-model runner
+pass, the exact `PhashEk`-bearing bounds and the model sources, is in
+[cryptoverif-multi-user](../../assurance/proof-logs/current/cryptoverif-multi-user/README.md).
 Hosted reproduction is a separate result; a configured gate is not evidence it
 passed.
 
@@ -83,20 +89,27 @@ passed.
 
 - **HKDF-SHA256 is a random oracle** on the concatenated input, not a proved
   instantiation of that idealization by the concrete HKDF implementation.
-- **SHA-256 collision resistance** for `ct_mlkem` and `pk_mlkem` is now
+- **SHA-256 collision resistance** for `ct_mlkem` and `pk_mlkem` is
   machine-checked by `kem_v2_x25519_gdh_sha256.ocv`,
-  `kem_v2_x25519_gdh_nonuniform_sha256.ocv` and
-  `kem_v2_mlkem_cca_sha256.ocv`. These variants feed
+  `kem_v2_x25519_gdh_nonuniform_sha256.ocv`,
+  `kem_v2_mlkem_cca_sha256.ocv`, and by the three multi-user variants
+  `kem_v2_x25519_gdh_multi_sha256.ocv`,
+  `kem_v2_x25519_gdh_nonuniform_multi_sha256.ocv` and
+  `kem_v2_mlkem_cca_multi_sha256.ocv`. These variants feed
   `SHA-256(ct_mlkem)` and `SHA-256(pk_mlkem)` to the KDF oracle as two
   collision-resistant-hash outputs, as `kem.rs::combine_v2` does, and prove
   the same IND-CCA2 conclusions with explicit `PhashCt` terms. `PhashEk` is
-  declared but not charged: the single-recipient games never relate two
-  distinct recipient public keys. What remains argued: the map from Rust byte
+  declared but not charged in the single-recipient games: they never relate
+  two distinct recipient public keys. The multi-user games do relate them,
+  and their machine-checked bounds contain `6·PhashEk` (GDH games) or
+  `4·PhashEk` (ML-KEM game). What remains argued: the map from Rust byte
   strings to the modelled `mlct`/`mlpk` types, the concrete collision
-  probability `PhashCt` (left symbolic) and that SHA-256 has the assumed
-  fixed collision resistance, and the pk-collision step for multi-recipient
-  games. Local evidence and full bounds are in
-  [cryptoverif-sha256-bridge](../../assurance/proof-logs/current/cryptoverif-sha256-bridge/README.md).
+  probabilities `PhashCt`/`PhashEk` (left symbolic), and that SHA-256 has
+  the assumed fixed collision resistance. Local evidence and full bounds are
+  in
+  [cryptoverif-sha256-bridge](../../assurance/proof-logs/current/cryptoverif-sha256-bridge/README.md)
+  and
+  [cryptoverif-multi-user](../../assurance/proof-logs/current/cryptoverif-multi-user/README.md).
 - **Uniform prime-order DH (cross-check model).** `DH_good_group` with bounded
   `Z` in `kem_v2_x25519_gdh.ocv` models uniform prime-field exponents. It is
   retained as a simpler uniform-group cross-check, not as the clamped-scalar
@@ -128,8 +141,20 @@ passed.
   DH exponent. Keys are still honestly
   and independently generated; malicious key generation and adaptive multi-user
   corruptions are not covered.
-- **One recipient key and one challenge.** Multi-user/multi-challenge and
-  quantum-oracle-query composition are not machine-checked by these games.
+- **Multi-user/multi-challenge is machine-checked; QROM is not.** The
+  `*_multi_sha256.ocv` games prove IND-CCA2 (left-or-right) with `N`
+  honestly generated recipients, `Qc` total challenge encapsulations
+  (take `Qc = N·Qe` for `Qe` per recipient) and `Qd` adaptive decapsulations
+  per recipient, including the multi-user GDH accounting (the uniform model's
+  `N·Qc` factor and the nonuniform model's multi-pair `GDH_RSR_minimal`
+  accounting), the multi-user `Penc(t, N, Qc, #Odecap)` assumption and
+  `PhashEk`. They do not cover
+  malicious key generation or adaptive corruptions, and they are still
+  model-level: concrete X25519/ML-KEM/SHA-256/HKDF instantiation, cofactor
+  and encoding bridges, and the Rust correspondence remain argued.
+  Quantum-oracle-query composition (QROM) is open (plan step C7b). The
+  direct game proves; no single-user-times-`N·Qc` hybrid is needed for the
+  displayed bounds.
 - **KEM-DEM is modular.** The encryption game assumes an abstract IND-CCA2 KEM;
   instantiating it with a combiner theorem is a manual composition step. The
   model uses no AAD. Signed share-envelope and contact-envelope/AAD encodings

@@ -1,0 +1,32 @@
+# Commands used for the recorded multi-user run (2026-11-04).
+#
+# CryptoVerif is a local command, not a vela-heavy gate.  The runner wraps
+# each model in security/assurance/bounded.sh timeout 600.
+
+export CRYPTOVERIF=$HOME/.local/opt/vela-tools/src/cv/x/cryptoverif2.12/cryptoverif
+export CRYPTOVERIF_LIB=$HOME/.local/opt/vela-tools/src/cv/x/cryptoverif2.12/default.ocvl
+export VELA_PROOF_OUT=/tmp/opencode/final-run3
+
+security/formal/run-cryptoverif-proofs.sh \
+  > /tmp/opencode/final-run3-console.log 2>&1
+cp /tmp/opencode/final-run3-console.log \
+   security/assurance/proof-logs/current/cryptoverif-multi-user/runner.log
+
+# Per-model logs were copied from $VELA_PROOF_OUT:
+cp /tmp/opencode/final-run3/kem_v2_x25519_gdh_multi_sha256.log \
+   /tmp/opencode/final-run3/kem_v2_x25519_gdh_nonuniform_multi_sha256.log \
+   /tmp/opencode/final-run3/kem_v2_mlkem_cca_multi_sha256.log \
+   security/assurance/proof-logs/current/cryptoverif-multi-user/
+
+# Bound checks exercised by the runner and the retained-log tests:
+python3 security/formal/check-cryptoverif-sha256-bound.py \
+  kem_v2_x25519_gdh_multi_sha256 \
+  security/assurance/proof-logs/current/cryptoverif-multi-user/kem_v2_x25519_gdh_multi_sha256.log
+python3 security/formal/check-cryptoverif-sha256-bound.py \
+  kem_v2_x25519_gdh_nonuniform_multi_sha256 \
+  security/assurance/proof-logs/current/cryptoverif-multi-user/kem_v2_x25519_gdh_nonuniform_multi_sha256.log
+python3 security/formal/check-cryptoverif-sha256-bound.py \
+  kem_v2_mlkem_cca_multi_sha256 \
+  security/assurance/proof-logs/current/cryptoverif-multi-user/kem_v2_mlkem_cca_multi_sha256.log
+
+python3 -m unittest security/formal/tests/test_cryptoverif_runner.py -v
