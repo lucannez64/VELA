@@ -83,9 +83,20 @@ passed.
 
 - **HKDF-SHA256 is a random oracle** on the concatenated input, not a proved
   instantiation of that idealization by the concrete HKDF implementation.
-- **SHA-256 collision resistance** for `ct_mlkem` and `pk_mlkem` bridges the
-  real hashed fields to the raw fields supplied to the modeled oracle. This
-  bridge is a written argument, not part of these machine-checked games.
+- **SHA-256 collision resistance** for `ct_mlkem` and `pk_mlkem` is now
+  machine-checked by `kem_v2_x25519_gdh_sha256.ocv`,
+  `kem_v2_x25519_gdh_nonuniform_sha256.ocv` and
+  `kem_v2_mlkem_cca_sha256.ocv`. These variants feed
+  `SHA-256(ct_mlkem)` and `SHA-256(pk_mlkem)` to the KDF oracle as two
+  collision-resistant-hash outputs, as `kem.rs::combine_v2` does, and prove
+  the same IND-CCA2 conclusions with explicit `PhashCt` terms. `PhashEk` is
+  declared but not charged: the single-recipient games never relate two
+  distinct recipient public keys. What remains argued: the map from Rust byte
+  strings to the modelled `mlct`/`mlpk` types, the concrete collision
+  probability `PhashCt` (left symbolic) and that SHA-256 has the assumed
+  fixed collision resistance, and the pk-collision step for multi-recipient
+  games. Local evidence and full bounds are in
+  [cryptoverif-sha256-bridge](../../assurance/proof-logs/current/cryptoverif-sha256-bridge/README.md).
 - **Uniform prime-order DH (cross-check model).** `DH_good_group` with bounded
   `Z` in `kem_v2_x25519_gdh.ocv` models uniform prime-field exponents. It is
   retained as a simpler uniform-group cross-check, not as the clamped-scalar

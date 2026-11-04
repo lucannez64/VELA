@@ -42,6 +42,17 @@ if mode != 'missing_query_witness':
             bound = bound.replace('2 * Qd', 'Qd')
         elif mode == 'nonuniform_missing_rerandomization':
             bound = bound.replace('4 * pDistRerandom + ', '')
+    elif model == 'kem_v2_x25519_gdh_sha256':
+        bound = ('4 * pDistRerandom + 2 * pGDH(time_1, 2 * qH) + '
+                 '(2 * Qd + 2 * qH) / |Z| + 6 * PhashCt')
+    elif model == 'kem_v2_x25519_gdh_nonuniform_sha256':
+        bound = ('4 * pDistRerandom + 2 * pGDH(time_1, 2 * qH) + '
+                 '(2 * Qd + 2 * qH) * PCollKey + 6 * PhashCt')
+    elif model == 'kem_v2_mlkem_cca_sha256':
+        bound = ('2 * qH / |mlss| + 2 * Penc(time_1, 1, 1, Qd) + '
+                 '(8 * Qd + 2 * qH) / |Z| + 4 * PhashCt + 6 * Qd * Pctxtcoll')
+    if mode == 'sha256_changed_coefficient' and model.endswith('_sha256'):
+        bound = bound.replace('2 * Qd', 'Qd')
     print('RESULT Proved ' + query + ' up to probability ' + bound)
 print('All queries proved.')
 '''
@@ -77,7 +88,28 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('kem_v1_x25519_baseline: unproved (as expected)', result.stdout)
         self.assertIn('kem_v2_x25519_gdh_nonuniform: proved (as expected)', result.stdout)
-        self.assertEqual(result.stdout.count('(as expected)'), 10)
+        self.assertIn('kem_v2_x25519_gdh_sha256: proved (as expected)', result.stdout)
+        self.assertIn('kem_v2_x25519_gdh_nonuniform_sha256: proved (as expected)', result.stdout)
+        self.assertIn('kem_v2_mlkem_cca_sha256: proved (as expected)', result.stdout)
+        self.assertEqual(result.stdout.count('(as expected)'), 13)
+
+    def test_sha256_bridge_bound_drift_is_rejected(self):
+        result = self.invoke('sha256_changed_coefficient')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('kem_v2_x25519_gdh_sha256: SHA-256 bridge bound changed',
+                      result.stderr)
+
+    def test_retained_sha256_bridge_proof_bounds_pass(self):
+        folder = ROOT / 'security/assurance/proof-logs/current/cryptoverif-sha256-bridge'
+        for model in ('kem_v2_x25519_gdh_sha256',
+                      'kem_v2_x25519_gdh_nonuniform_sha256',
+                      'kem_v2_mlkem_cca_sha256'):
+            with self.subTest(model=model):
+                result = subprocess.run([
+                    'python3', str(ROOT / 'security/formal/check-cryptoverif-sha256-bound.py'),
+                    model, str(folder / f'{model}.log'),
+                ], capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_nonuniform_bound_drift_is_rejected(self):
         for mode in ('nonuniform_zero_bound', 'nonuniform_uniform_bound',

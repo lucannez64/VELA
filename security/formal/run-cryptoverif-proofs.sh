@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Computational proofs of the hybrid KEM combiner (CryptoVerif 2.12).
 #   kem_v2_x25519_gdh     must prove: uniform-group GDH, other KEM key disclosed
+#   kem_v2_x25519_gdh_sha256 same with SHA-256(ct)/SHA-256(pk) in the KDF input
 #   kem_v2_x25519_gdh_nonuniform must prove: nonuniform/clamped-style exponents,
 #                         explicit collision + rerandomization loss
+#   kem_v2_x25519_gdh_nonuniform_sha256 same with SHA-256(ct)/SHA-256(pk) in the KDF input
 #   kem_v2_mlkem_cca      must prove: ML-KEM IND-CCA2/collision bounds, DH key disclosed
+#   kem_v2_mlkem_cca_sha256 same with SHA-256(ct)/SHA-256(pk) in the KDF input
 #   kem_v1_x25519_baseline must remain explicitly unproved (not an attack trace)
 #   kem_dem_seal_share    must prove: seal_share (KEM + XChaCha20-Poly1305) is IND-CCA2 PKE
 #   hybrid_sig_mldsa_euf  must prove: AND signature EUF-CMA from ML-DSA alone (Ed25519 key leaked)
@@ -46,14 +49,19 @@ run() {
   if [[ $got != "$expect" ]]; then echo "$model: expected $expect, got $got; see $log" >&2; exit 1; fi
   if [[ $model == kem_v2_x25519_gdh_nonuniform ]]; then
     python3 "$root/check-cryptoverif-bound.py" "$log"
+  elif [[ $model == kem_v2_x25519_gdh_sha256 || $model == kem_v2_x25519_gdh_nonuniform_sha256 || $model == kem_v2_mlkem_cca_sha256 ]]; then
+    python3 "$root/check-cryptoverif-sha256-bound.py" "$model" "$log"
   fi
   echo "$model: $got (as expected)"
   grep '^RESULT Proved' "$log" | sort -u | sed 's/^/  /' || true
 }
 
 run kem_v2_x25519_gdh proved 'bit secrecy of b'
+run kem_v2_x25519_gdh_sha256 proved 'bit secrecy of b'
 run kem_v2_x25519_gdh_nonuniform proved 'bit secrecy of b'
+run kem_v2_x25519_gdh_nonuniform_sha256 proved 'bit secrecy of b'
 run kem_v2_mlkem_cca proved 'bit secrecy of b'
+run kem_v2_mlkem_cca_sha256 proved 'bit secrecy of b'
 run kem_v1_x25519_baseline unproved 'bit secrecy of b'
 run kem_dem_seal_share proved 'bit secrecy of b'
 run hybrid_sig_mldsa_euf proved 'event(forge) ==> false'
