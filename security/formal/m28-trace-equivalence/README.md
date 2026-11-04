@@ -83,6 +83,78 @@ represented by these unary terms. The pin goal remains available for other
 revision types through the parametric `strict_order` record. No property of
 the concrete order is used to strengthen the equivalence theorems.
 
+## Source terms (P2a)
+
+`M28_source_terms.fst` is the first source-side module. It transcribes the
+term language and rule schemas of `security/formal/m28_share_journal.spthy`
+and relates the revision fragment to the concrete order above. It is a
+handwritten transcription checked by F*, not a parser, a trace embedding or a
+Tamarin proof.
+
+The `.spthy` declares exactly one function symbol, `functions: successor/1`,
+and has no `builtins:` or `equations:` declaration. The only builtin term
+constructor used is Tamarin's pairing `<_,_>` in
+`In(<next_revision, payload>)`. `sterm` therefore has rule variables, public
+names (`'initial'`), fresh names (`~slot`, `~item`, `~tx`), `successor/1`
+applications and pairs; `name` separates public from fresh names. The fact
+inventory has eighteen symbols with their arities (`Fr/1`, `!Profile/1`,
+`!ReadyGeneration/3`, `DiskClean/5`, `Chain/3`, `Out/1`, `Snapshot/4`, `In/1`,
+`DiskPending/7`, `DiskApplied/7`, `Initialized/1`, `SnapshotRead/4`,
+`RevisionIncreases/2`, `JournalDurable/6`, `VaultDurable/5`,
+`JournalCleared/4`, `Crash/1`, `Opened/5`). `m28_rule` returns the premise,
+action and conclusion multisets of `Initialize`, `ReadSnapshot`,
+`PersistJournal`, `PersistVault`, `ClearJournal`, `Crash` and `OpenVault`, and
+`m28_rule_arities` checks every transcribed fact against those arities.
+
+`proper_subterm` is Tamarin's strict subterm `<<`. `proper_subterm_trans`,
+`proper_subterm_irrefl` and `subterm_well_founded` (accessibility by
+`sterm_size`, defined locally so the gate does not load the warning-producing
+`FStar.WellFounded` ulib module) prove it is a strict partial order and
+well-founded. `source_revision` is the unary fragment
+`'initial' | successor(...)`.
+
+| Declaration | Statement within the F* source-term module |
+|---|---|
+| `m28_rule`, `m28_rule_arities` | The seven rule instances and their fact arities are transcribed from the `.spthy`; this is a drift check, not a parser proof |
+| `proper_subterm_trans`, `proper_subterm_irrefl` | Source `<<` is transitive and irreflexive |
+| `subterm_well_founded` | Every source term is accessible under `<<` |
+| `encode_revision`, `decode_revision`, `encode_revision_injective` | The revision fragment embeds injectively into `M28TraceEquivalence.term` |
+| `source_revision_to_term_injective`, `encode_source_term_injective` | The source spelling and the partial translation on all `sterm`s are injective on their domains |
+| `source_order_matches_core`, `source_order_matches_term_order` | Source `<<` on revisions equals the encoded `subterm` / `term_order.lt` on their image |
+| `source_revision_order`, `source_order_wf` | The source revision order is a strict order and well-founded |
+
+`encode_revision` maps `'initial'` to `TInit` and `successor(r)` to
+`TSucc (encode_revision r)`; `source_order_matches_term_order` then shows the
+existing `term_order` strict-order record is exactly the source order on this
+fragment. That discharges the `strict_order` premise for the unary successor
+revisions M28 actually produces, rather than postulating it. This covers the
+generation chain and any pin that is itself a unary successor term (the
+concrete two-commit witness's pins are); a pin supplied by the adversary as a
+pair, name or other term is represented in `sterm` but not mapped.
+
+What is **not** covered:
+
+- The core `term` type has no name, variable or pair constructors, so only the
+  `'initial'`/`successor` fragment is mapped. An adversary-supplied
+  `next_revision` from `In(<next_revision, payload>)` is an arbitrary `sterm`;
+  the partial `encode_source_term` is defined only when it happens to lie in
+  that fragment and returns `None` otherwise (for example for a pair or a
+  fresh name).
+- M28 has no equational theory: no `equations:` block and no `builtins:`
+  declaration, and pairing is syntactic. This module does not prove that a
+  `.spthy` parser produces these terms, nor relate them to any Tamarin
+  equational treatment beyond that free algebra.
+- Facts are transcribed as multisets; no source trace is parsed or embedded.
+  Global `Fr` freshness, `In` derivability, multi-slot projection and the
+  actual trace embedding remain P2b/P2c/P2d.
+
+`verify.sh` now checks both `M28TraceEquivalence.fst` and
+`M28_source_terms.fst`, and runs the repository-wide
+`check-no-proof-escapes.py`; the journal gate runs the same script. Evidence
+for the P2a run is in
+[`proof-logs/current/journal-source-terms/`](../../assurance/proof-logs/current/journal-source-terms/README.md).
+The Tamarin models, rules and guards are unchanged.
+
 ## Reviewed rule/fact mapping
 
 | Tamarin rule | Core / lifted encoding | Encoded event |
