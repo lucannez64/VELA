@@ -36,6 +36,27 @@ let v_REGISTER_RATE_LIMIT: u64 = mk_u64 5
 /// The registration limiter's fixed window.
 let v_REGISTER_RATE_WINDOW_SECS: u64 = mk_u64 60 *! mk_u64 60
 
+/// `prefix + id`: a store key with one identifier.
+/// Keys are built with explicit `String` concatenation rather than `format!`
+/// so hax extracts the bytes into F* instead of an opaque formatting call.
+/// Every caller's key is byte-for-byte what its `format!` produced; the
+/// `key_builders_match_format` test below pins that against `format!` itself.
+let store_key (prefix id: string) : Alloc.String.t_String =
+  let key:Alloc.String.t_String = Alloc.String.impl_String__new () in
+  let key:Alloc.String.t_String = Alloc.String.impl_String__push_str key prefix in
+  let key:Alloc.String.t_String = Alloc.String.impl_String__push_str key id in
+  key
+
+/// `prefix + scope + ":" + id`: the `(ip, device)` / `(ip, session)` keys.
+/// Only the final identifier is colon-free; `scope` (the IP) may be IPv6.
+let store_key_scoped (prefix scope id: string) : Alloc.String.t_String =
+  let key:Alloc.String.t_String = Alloc.String.impl_String__new () in
+  let key:Alloc.String.t_String = Alloc.String.impl_String__push_str key prefix in
+  let key:Alloc.String.t_String = Alloc.String.impl_String__push_str key scope in
+  let key:Alloc.String.t_String = Alloc.String.impl_String__push_str key ":" in
+  let key:Alloc.String.t_String = Alloc.String.impl_String__push_str key id in
+  key
+
 /// One SQL statement an executor may run.
 type t_SqlStmt =
   | SqlStmt_SelectDeviceIdsByUser { f_user:Alloc.String.t_String }: t_SqlStmt
@@ -312,31 +333,13 @@ type t_SessionKeysLookup =
 /// `LogoutJtiIo::revoke_jti`: the caller's JTI marker, with the token
 /// lifetime's TTL.
 let plan_logout (jti: Alloc.String.t_String) : Alloc.Vec.t_Vec t_StoreStmt Alloc.Alloc.t_Global =
-  let args:Alloc.String.t_String = jti <: Alloc.String.t_String in
-  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 1) =
-    let list = [Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args] in
-    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
-    Rust_primitives.Hax.array_of_list 1 list
-  in
   Alloc.Slice.impl__into_vec #t_StoreStmt
     #Alloc.Alloc.t_Global
     ((let list =
           [
             StoreStmt_SetEx
             ({
-                f_key
-                =
-                Core_models.Hint.must_use #Alloc.String.t_String
-                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 1)
-                          (mk_usize 1)
-                          (let list = ["jti:revoked:"] in
-                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
-                            Rust_primitives.Hax.array_of_list 1 list)
-                          args
-                        <:
-                        Core_models.Fmt.t_Arguments)
-                    <:
-                    Alloc.String.t_String);
+                f_key = store_key "jti:revoked:" (Alloc.String.impl_String__as_str jti <: string);
                 f_value = mk_u8 1;
                 f_ttl = v_TOKEN_MAX_LIFETIME_SECS
               })
@@ -353,12 +356,6 @@ let plan_logout (jti: Alloc.String.t_String) : Alloc.Vec.t_Vec t_StoreStmt Alloc
 /// rejected by the middleware for the whole token lifetime.
 let plan_sentinel (device: Alloc.String.t_String) (ttl: u64)
     : Alloc.Vec.t_Vec t_StoreStmt Alloc.Alloc.t_Global =
-  let args:Alloc.String.t_String = device <: Alloc.String.t_String in
-  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 1) =
-    let list = [Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args] in
-    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
-    Rust_primitives.Hax.array_of_list 1 list
-  in
   Alloc.Slice.impl__into_vec #t_StoreStmt
     #Alloc.Alloc.t_Global
     ((let list =
@@ -367,17 +364,7 @@ let plan_sentinel (device: Alloc.String.t_String) (ttl: u64)
             ({
                 f_key
                 =
-                Core_models.Hint.must_use #Alloc.String.t_String
-                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 1)
-                          (mk_usize 1)
-                          (let list = ["device:revoked:"] in
-                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
-                            Rust_primitives.Hax.array_of_list 1 list)
-                          args
-                        <:
-                        Core_models.Fmt.t_Arguments)
-                    <:
-                    Alloc.String.t_String);
+                store_key "device:revoked:" (Alloc.String.impl_String__as_str device <: string);
                 f_value = mk_u8 1;
                 f_ttl = ttl
               })
@@ -394,12 +381,6 @@ let plan_sentinel (device: Alloc.String.t_String) (ttl: u64)
 /// that succeeded — write the sentinel.
 let plan_lockout_device (device: Alloc.String.t_String)
     : Alloc.Vec.t_Vec t_StoreStmt Alloc.Alloc.t_Global =
-  let args:Alloc.String.t_String = device <: Alloc.String.t_String in
-  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 1) =
-    let list = [Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args] in
-    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
-    Rust_primitives.Hax.array_of_list 1 list
-  in
   Alloc.Slice.impl__into_vec #t_StoreStmt
     #Alloc.Alloc.t_Global
     ((let list =
@@ -418,17 +399,7 @@ let plan_lockout_device (device: Alloc.String.t_String)
             ({
                 f_key
                 =
-                Core_models.Hint.must_use #Alloc.String.t_String
-                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 1)
-                          (mk_usize 1)
-                          (let list = ["device:revoked:"] in
-                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
-                            Rust_primitives.Hax.array_of_list 1 list)
-                          args
-                        <:
-                        Core_models.Fmt.t_Arguments)
-                    <:
-                    Alloc.String.t_String);
+                store_key "device:revoked:" (Alloc.String.impl_String__as_str device <: string);
                 f_value = mk_u8 1;
                 f_ttl = v_TOKEN_MAX_LIFETIME_SECS
               })
@@ -445,12 +416,6 @@ let plan_lockout_device (device: Alloc.String.t_String)
 /// then every tracked JTI (the historical order).
 let plan_lockout_web_session (session: Alloc.String.t_String)
     : Alloc.Vec.t_Vec t_StoreStmt Alloc.Alloc.t_Global =
-  let args:Alloc.String.t_String = session <: Alloc.String.t_String in
-  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 1) =
-    let list = [Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args] in
-    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
-    Rust_primitives.Hax.array_of_list 1 list
-  in
   Alloc.Slice.impl__into_vec #t_StoreStmt
     #Alloc.Alloc.t_Global
     ((let list =
@@ -459,17 +424,7 @@ let plan_lockout_web_session (session: Alloc.String.t_String)
             ({
                 f_key
                 =
-                Core_models.Hint.must_use #Alloc.String.t_String
-                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 1)
-                          (mk_usize 1)
-                          (let list = ["device:revoked:"] in
-                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
-                            Rust_primitives.Hax.array_of_list 1 list)
-                          args
-                        <:
-                        Core_models.Fmt.t_Arguments)
-                    <:
-                    Alloc.String.t_String);
+                store_key "device:revoked:" (Alloc.String.impl_String__as_str session <: string);
                 f_value = mk_u8 1;
                 f_ttl = v_WEB_SESSION_MAX_TTL_SECS
               })
@@ -541,12 +496,6 @@ let plan_cascade_update (device_id user: Alloc.String.t_String) : t_SqlStmt =
 /// `VerifyIo::consume_challenge`: remove the one challenge key.
 let plan_take_challenge (challenge: Alloc.String.t_String)
     : Alloc.Vec.t_Vec t_StoreStmt Alloc.Alloc.t_Global =
-  let args:Alloc.String.t_String = challenge <: Alloc.String.t_String in
-  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 1) =
-    let list = [Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args] in
-    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
-    Rust_primitives.Hax.array_of_list 1 list
-  in
   Alloc.Slice.impl__into_vec #t_StoreStmt
     #Alloc.Alloc.t_Global
     ((let list =
@@ -555,17 +504,7 @@ let plan_take_challenge (challenge: Alloc.String.t_String)
             ({
                 f_key
                 =
-                Core_models.Hint.must_use #Alloc.String.t_String
-                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 1)
-                          (mk_usize 1)
-                          (let list = ["challenge:"] in
-                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
-                            Rust_primitives.Hax.array_of_list 1 list)
-                          args
-                        <:
-                        Core_models.Fmt.t_Arguments)
-                    <:
-                    Alloc.String.t_String)
+                store_key "challenge:" (Alloc.String.impl_String__as_str challenge <: string)
               })
             <:
             t_StoreStmt
@@ -584,32 +523,6 @@ let plan_login_device (device_id: Alloc.String.t_String) : t_SqlStmt =
 /// record for the request's `(ip, device)` scope.
 let plan_backoff_record (ip device: Alloc.String.t_String)
     : Alloc.Vec.t_Vec t_StoreStmt Alloc.Alloc.t_Global =
-  let args:(Alloc.String.t_String & Alloc.String.t_String) =
-    ip, device <: (Alloc.String.t_String & Alloc.String.t_String)
-  in
-  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 2) =
-    let list =
-      [
-        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._1;
-        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._2
-      ]
-    in
-    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
-    Rust_primitives.Hax.array_of_list 2 list
-  in
-  let args:(Alloc.String.t_String & Alloc.String.t_String) =
-    ip, device <: (Alloc.String.t_String & Alloc.String.t_String)
-  in
-  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 2) =
-    let list =
-      [
-        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._1;
-        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._2
-      ]
-    in
-    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
-    Rust_primitives.Hax.array_of_list 2 list
-  in
   Alloc.Slice.impl__into_vec #t_StoreStmt
     #Alloc.Alloc.t_Global
     ((let list =
@@ -618,30 +531,14 @@ let plan_backoff_record (ip device: Alloc.String.t_String)
             ({
                 f_streak
                 =
-                Core_models.Hint.must_use #Alloc.String.t_String
-                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 2)
-                          (mk_usize 2)
-                          (let list = ["rl:streak:verify:"; ":"] in
-                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
-                            Rust_primitives.Hax.array_of_list 2 list)
-                          args
-                        <:
-                        Core_models.Fmt.t_Arguments)
-                    <:
-                    Alloc.String.t_String);
+                store_key_scoped "rl:streak:verify:"
+                  (Alloc.String.impl_String__as_str ip <: string)
+                  (Alloc.String.impl_String__as_str device <: string);
                 f_backoff
                 =
-                Core_models.Hint.must_use #Alloc.String.t_String
-                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 2)
-                          (mk_usize 2)
-                          (let list = ["rl:backoff:verify:"; ":"] in
-                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
-                            Rust_primitives.Hax.array_of_list 2 list)
-                          args
-                        <:
-                        Core_models.Fmt.t_Arguments)
-                    <:
-                    Alloc.String.t_String)
+                store_key_scoped "rl:backoff:verify:"
+                  (Alloc.String.impl_String__as_str ip <: string)
+                  (Alloc.String.impl_String__as_str device <: string)
               })
             <:
             t_StoreStmt
@@ -656,19 +553,6 @@ let plan_backoff_record (ip device: Alloc.String.t_String)
 /// counter, whose refusal is the only failure the driver propagates.
 let plan_failure_counter (ip device: Alloc.String.t_String)
     : Alloc.Vec.t_Vec t_StoreStmt Alloc.Alloc.t_Global =
-  let args:(Alloc.String.t_String & Alloc.String.t_String) =
-    ip, device <: (Alloc.String.t_String & Alloc.String.t_String)
-  in
-  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 2) =
-    let list =
-      [
-        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._1;
-        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._2
-      ]
-    in
-    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
-    Rust_primitives.Hax.array_of_list 2 list
-  in
   Alloc.Slice.impl__into_vec #t_StoreStmt
     #Alloc.Alloc.t_Global
     ((let list =
@@ -677,17 +561,9 @@ let plan_failure_counter (ip device: Alloc.String.t_String)
             ({
                 f_key
                 =
-                Core_models.Hint.must_use #Alloc.String.t_String
-                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 2)
-                          (mk_usize 2)
-                          (let list = ["rl:verify:fail:dev:"; ":"] in
-                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
-                            Rust_primitives.Hax.array_of_list 2 list)
-                          args
-                        <:
-                        Core_models.Fmt.t_Arguments)
-                    <:
-                    Alloc.String.t_String);
+                store_key_scoped "rl:verify:fail:dev:"
+                  (Alloc.String.impl_String__as_str ip <: string)
+                  (Alloc.String.impl_String__as_str device <: string);
                 f_limit = v_VERIFY_FAIL_LIMIT;
                 f_ttl = v_VERIFY_FAIL_WINDOW_SECS
               })
@@ -703,32 +579,6 @@ let plan_failure_counter (ip device: Alloc.String.t_String)
 /// `VerifyIo::reset_backoff`: drop the success streak and backoff marker.
 let plan_reset_login_streak (ip device: Alloc.String.t_String)
     : Alloc.Vec.t_Vec t_StoreStmt Alloc.Alloc.t_Global =
-  let args:(Alloc.String.t_String & Alloc.String.t_String) =
-    ip, device <: (Alloc.String.t_String & Alloc.String.t_String)
-  in
-  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 2) =
-    let list =
-      [
-        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._1;
-        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._2
-      ]
-    in
-    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
-    Rust_primitives.Hax.array_of_list 2 list
-  in
-  let args:(Alloc.String.t_String & Alloc.String.t_String) =
-    ip, device <: (Alloc.String.t_String & Alloc.String.t_String)
-  in
-  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 2) =
-    let list =
-      [
-        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._1;
-        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._2
-      ]
-    in
-    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
-    Rust_primitives.Hax.array_of_list 2 list
-  in
   Alloc.Slice.impl__into_vec #t_StoreStmt
     #Alloc.Alloc.t_Global
     ((let list =
@@ -737,30 +587,14 @@ let plan_reset_login_streak (ip device: Alloc.String.t_String)
             ({
                 f_streak
                 =
-                Core_models.Hint.must_use #Alloc.String.t_String
-                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 2)
-                          (mk_usize 2)
-                          (let list = ["rl:streak:verify:"; ":"] in
-                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
-                            Rust_primitives.Hax.array_of_list 2 list)
-                          args
-                        <:
-                        Core_models.Fmt.t_Arguments)
-                    <:
-                    Alloc.String.t_String);
+                store_key_scoped "rl:streak:verify:"
+                  (Alloc.String.impl_String__as_str ip <: string)
+                  (Alloc.String.impl_String__as_str device <: string);
                 f_backoff
                 =
-                Core_models.Hint.must_use #Alloc.String.t_String
-                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 2)
-                          (mk_usize 2)
-                          (let list = ["rl:backoff:verify:"; ":"] in
-                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
-                            Rust_primitives.Hax.array_of_list 2 list)
-                          args
-                        <:
-                        Core_models.Fmt.t_Arguments)
-                    <:
-                    Alloc.String.t_String)
+                store_key_scoped "rl:backoff:verify:"
+                  (Alloc.String.impl_String__as_str ip <: string)
+                  (Alloc.String.impl_String__as_str device <: string)
               })
             <:
             t_StoreStmt
@@ -793,31 +627,13 @@ let plan_login_last_active
 /// `VerifyIo::track_token`: register the issued JTI against the device.
 let plan_track_jti (device jti: Alloc.String.t_String)
     : Alloc.Vec.t_Vec t_StoreStmt Alloc.Alloc.t_Global =
-  let args:Alloc.String.t_String = device <: Alloc.String.t_String in
-  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 1) =
-    let list = [Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args] in
-    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
-    Rust_primitives.Hax.array_of_list 1 list
-  in
   Alloc.Slice.impl__into_vec #t_StoreStmt
     #Alloc.Alloc.t_Global
     ((let list =
           [
             StoreStmt_AddMember
             ({
-                f_key
-                =
-                Core_models.Hint.must_use #Alloc.String.t_String
-                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 1)
-                          (mk_usize 1)
-                          (let list = ["device:jtis:"] in
-                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
-                            Rust_primitives.Hax.array_of_list 1 list)
-                          args
-                        <:
-                        Core_models.Fmt.t_Arguments)
-                    <:
-                    Alloc.String.t_String);
+                f_key = store_key "device:jtis:" (Alloc.String.impl_String__as_str device <: string);
                 f_member = jti;
                 f_ttl = v_JTI_SET_TTL_SECS
               })
@@ -833,31 +649,13 @@ let plan_track_jti (device jti: Alloc.String.t_String)
 /// `ChallengeIssueIo::check_rate_limit`: the per-IP fixed window.
 let plan_challenge_rate_limit (ip: Alloc.String.t_String)
     : Alloc.Vec.t_Vec t_StoreStmt Alloc.Alloc.t_Global =
-  let args:Alloc.String.t_String = ip <: Alloc.String.t_String in
-  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 1) =
-    let list = [Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args] in
-    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
-    Rust_primitives.Hax.array_of_list 1 list
-  in
   Alloc.Slice.impl__into_vec #t_StoreStmt
     #Alloc.Alloc.t_Global
     ((let list =
           [
             StoreStmt_Incr
             ({
-                f_key
-                =
-                Core_models.Hint.must_use #Alloc.String.t_String
-                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 1)
-                          (mk_usize 1)
-                          (let list = ["rl:challenge:ip:"] in
-                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
-                            Rust_primitives.Hax.array_of_list 1 list)
-                          args
-                        <:
-                        Core_models.Fmt.t_Arguments)
-                    <:
-                    Alloc.String.t_String);
+                f_key = store_key "rl:challenge:ip:" (Alloc.String.impl_String__as_str ip <: string);
                 f_limit = v_CHALLENGE_RATE_LIMIT;
                 f_ttl = v_CHALLENGE_RATE_WINDOW_SECS
               })
@@ -874,12 +672,6 @@ let plan_challenge_rate_limit (ip: Alloc.String.t_String)
 /// key, first writer wins.
 let plan_store_nonce (challenge tag: Alloc.String.t_String)
     : Alloc.Vec.t_Vec t_StoreStmt Alloc.Alloc.t_Global =
-  let args:Alloc.String.t_String = challenge <: Alloc.String.t_String in
-  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 1) =
-    let list = [Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args] in
-    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
-    Rust_primitives.Hax.array_of_list 1 list
-  in
   Alloc.Slice.impl__into_vec #t_StoreStmt
     #Alloc.Alloc.t_Global
     ((let list =
@@ -888,17 +680,7 @@ let plan_store_nonce (challenge tag: Alloc.String.t_String)
             ({
                 f_key
                 =
-                Core_models.Hint.must_use #Alloc.String.t_String
-                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 1)
-                          (mk_usize 1)
-                          (let list = ["challenge:"] in
-                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
-                            Rust_primitives.Hax.array_of_list 1 list)
-                          args
-                        <:
-                        Core_models.Fmt.t_Arguments)
-                    <:
-                    Alloc.String.t_String);
+                store_key "challenge:" (Alloc.String.impl_String__as_str challenge <: string);
                 f_value = tag;
                 f_ttl = v_CHALLENGE_TTL_SECS
               })
@@ -914,31 +696,13 @@ let plan_store_nonce (challenge tag: Alloc.String.t_String)
 /// `RegisterIo::check_rate_limit`: the per-IP fixed window.
 let plan_registration_rate_limit (ip: Alloc.String.t_String)
     : Alloc.Vec.t_Vec t_StoreStmt Alloc.Alloc.t_Global =
-  let args:Alloc.String.t_String = ip <: Alloc.String.t_String in
-  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 1) =
-    let list = [Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args] in
-    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
-    Rust_primitives.Hax.array_of_list 1 list
-  in
   Alloc.Slice.impl__into_vec #t_StoreStmt
     #Alloc.Alloc.t_Global
     ((let list =
           [
             StoreStmt_Incr
             ({
-                f_key
-                =
-                Core_models.Hint.must_use #Alloc.String.t_String
-                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 1)
-                          (mk_usize 1)
-                          (let list = ["rl:register:ip:"] in
-                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
-                            Rust_primitives.Hax.array_of_list 1 list)
-                          args
-                        <:
-                        Core_models.Fmt.t_Arguments)
-                    <:
-                    Alloc.String.t_String);
+                f_key = store_key "rl:register:ip:" (Alloc.String.impl_String__as_str ip <: string);
                 f_limit = v_REGISTER_RATE_LIMIT;
                 f_ttl = v_REGISTER_RATE_WINDOW_SECS
               })
@@ -1051,44 +815,13 @@ let plan_cleanup_pending (pending_cutoff: Alloc.String.t_String) (pending_cutoff
 /// precheck, in the historical order.
 let plan_login_limits (ip device: Alloc.String.t_String)
     : Alloc.Vec.t_Vec t_StoreStmt Alloc.Alloc.t_Global =
-  let args:Alloc.String.t_String = ip <: Alloc.String.t_String in
-  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 1) =
-    let list = [Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args] in
-    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
-    Rust_primitives.Hax.array_of_list 1 list
-  in
-  let args:(Alloc.String.t_String & Alloc.String.t_String) =
-    ip, device <: (Alloc.String.t_String & Alloc.String.t_String)
-  in
-  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 2) =
-    let list =
-      [
-        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._1;
-        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._2
-      ]
-    in
-    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
-    Rust_primitives.Hax.array_of_list 2 list
-  in
   Alloc.Slice.impl__into_vec #t_StoreStmt
     #Alloc.Alloc.t_Global
     ((let list =
           [
             StoreStmt_Incr
             ({
-                f_key
-                =
-                Core_models.Hint.must_use #Alloc.String.t_String
-                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 1)
-                          (mk_usize 1)
-                          (let list = ["rl:verify:ip:"] in
-                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
-                            Rust_primitives.Hax.array_of_list 1 list)
-                          args
-                        <:
-                        Core_models.Fmt.t_Arguments)
-                    <:
-                    Alloc.String.t_String);
+                f_key = store_key "rl:verify:ip:" (Alloc.String.impl_String__as_str ip <: string);
                 f_limit = mk_u64 10;
                 f_ttl = mk_u64 60
               })
@@ -1098,17 +831,9 @@ let plan_login_limits (ip device: Alloc.String.t_String)
             ({
                 f_key
                 =
-                Core_models.Hint.must_use #Alloc.String.t_String
-                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 2)
-                          (mk_usize 2)
-                          (let list = ["rl:backoff:verify:"; ":"] in
-                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
-                            Rust_primitives.Hax.array_of_list 2 list)
-                          args
-                        <:
-                        Core_models.Fmt.t_Arguments)
-                    <:
-                    Alloc.String.t_String)
+                store_key_scoped "rl:backoff:verify:"
+                  (Alloc.String.impl_String__as_str ip <: string)
+                  (Alloc.String.impl_String__as_str device <: string)
               })
             <:
             t_StoreStmt
@@ -1121,12 +846,6 @@ let plan_login_limits (ip device: Alloc.String.t_String)
 
 /// `StartIo::check_rate_limit`: 30 starts/hour per IP.
 let plan_start_limit (ip: Alloc.String.t_String) : Alloc.Vec.t_Vec t_StoreStmt Alloc.Alloc.t_Global =
-  let args:Alloc.String.t_String = ip <: Alloc.String.t_String in
-  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 1) =
-    let list = [Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args] in
-    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
-    Rust_primitives.Hax.array_of_list 1 list
-  in
   Alloc.Slice.impl__into_vec #t_StoreStmt
     #Alloc.Alloc.t_Global
     ((let list =
@@ -1135,17 +854,7 @@ let plan_start_limit (ip: Alloc.String.t_String) : Alloc.Vec.t_Vec t_StoreStmt A
             ({
                 f_key
                 =
-                Core_models.Hint.must_use #Alloc.String.t_String
-                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 1)
-                          (mk_usize 1)
-                          (let list = ["rl:websession:start:ip:"] in
-                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
-                            Rust_primitives.Hax.array_of_list 1 list)
-                          args
-                        <:
-                        Core_models.Fmt.t_Arguments)
-                    <:
-                    Alloc.String.t_String);
+                store_key "rl:websession:start:ip:" (Alloc.String.impl_String__as_str ip <: string);
                 f_limit = mk_u64 30;
                 f_ttl = mk_u64 60 *! mk_u64 60
               })
@@ -1163,38 +872,6 @@ let plan_start_limit (ip: Alloc.String.t_String) : Alloc.Vec.t_Vec t_StoreStmt A
 /// historical order.
 let plan_token_limits (ip session: Alloc.String.t_String)
     : Alloc.Vec.t_Vec t_StoreStmt Alloc.Alloc.t_Global =
-  let args:(Alloc.String.t_String & Alloc.String.t_String) =
-    ip, session <: (Alloc.String.t_String & Alloc.String.t_String)
-  in
-  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 2) =
-    let list =
-      [
-        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._1;
-        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._2
-      ]
-    in
-    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
-    Rust_primitives.Hax.array_of_list 2 list
-  in
-  let args:Alloc.String.t_String = session <: Alloc.String.t_String in
-  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 1) =
-    let list = [Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args] in
-    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
-    Rust_primitives.Hax.array_of_list 1 list
-  in
-  let args:(Alloc.String.t_String & Alloc.String.t_String) =
-    ip, session <: (Alloc.String.t_String & Alloc.String.t_String)
-  in
-  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 2) =
-    let list =
-      [
-        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._1;
-        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._2
-      ]
-    in
-    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
-    Rust_primitives.Hax.array_of_list 2 list
-  in
   Alloc.Slice.impl__into_vec #t_StoreStmt
     #Alloc.Alloc.t_Global
     ((let list =
@@ -1203,17 +880,9 @@ let plan_token_limits (ip session: Alloc.String.t_String)
             ({
                 f_key
                 =
-                Core_models.Hint.must_use #Alloc.String.t_String
-                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 2)
-                          (mk_usize 2)
-                          (let list = ["rl:websession:token:ip:"; ":"] in
-                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
-                            Rust_primitives.Hax.array_of_list 2 list)
-                          args
-                        <:
-                        Core_models.Fmt.t_Arguments)
-                    <:
-                    Alloc.String.t_String);
+                store_key_scoped "rl:websession:token:ip:"
+                  (Alloc.String.impl_String__as_str ip <: string)
+                  (Alloc.String.impl_String__as_str session <: string);
                 f_limit = mk_u64 10;
                 f_ttl = mk_u64 60
               })
@@ -1223,17 +892,8 @@ let plan_token_limits (ip session: Alloc.String.t_String)
             ({
                 f_key
                 =
-                Core_models.Hint.must_use #Alloc.String.t_String
-                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 1)
-                          (mk_usize 1)
-                          (let list = ["rl:websession:token:"] in
-                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
-                            Rust_primitives.Hax.array_of_list 1 list)
-                          args
-                        <:
-                        Core_models.Fmt.t_Arguments)
-                    <:
-                    Alloc.String.t_String);
+                store_key "rl:websession:token:"
+                  (Alloc.String.impl_String__as_str session <: string);
                 f_limit = mk_u64 30;
                 f_ttl = mk_u64 60
               })
@@ -1243,17 +903,9 @@ let plan_token_limits (ip session: Alloc.String.t_String)
             ({
                 f_key
                 =
-                Core_models.Hint.must_use #Alloc.String.t_String
-                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 2)
-                          (mk_usize 2)
-                          (let list = ["rl:backoff:websession:token:"; ":"] in
-                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
-                            Rust_primitives.Hax.array_of_list 2 list)
-                          args
-                        <:
-                        Core_models.Fmt.t_Arguments)
-                    <:
-                    Alloc.String.t_String)
+                store_key_scoped "rl:backoff:websession:token:"
+                  (Alloc.String.impl_String__as_str ip <: string)
+                  (Alloc.String.impl_String__as_str session <: string)
               })
             <:
             t_StoreStmt
@@ -1268,32 +920,6 @@ let plan_token_limits (ip session: Alloc.String.t_String)
 /// `(ip, session)` scope.
 let plan_token_backoff_record (ip session: Alloc.String.t_String)
     : Alloc.Vec.t_Vec t_StoreStmt Alloc.Alloc.t_Global =
-  let args:(Alloc.String.t_String & Alloc.String.t_String) =
-    ip, session <: (Alloc.String.t_String & Alloc.String.t_String)
-  in
-  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 2) =
-    let list =
-      [
-        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._1;
-        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._2
-      ]
-    in
-    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
-    Rust_primitives.Hax.array_of_list 2 list
-  in
-  let args:(Alloc.String.t_String & Alloc.String.t_String) =
-    ip, session <: (Alloc.String.t_String & Alloc.String.t_String)
-  in
-  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 2) =
-    let list =
-      [
-        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._1;
-        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._2
-      ]
-    in
-    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
-    Rust_primitives.Hax.array_of_list 2 list
-  in
   Alloc.Slice.impl__into_vec #t_StoreStmt
     #Alloc.Alloc.t_Global
     ((let list =
@@ -1302,30 +928,14 @@ let plan_token_backoff_record (ip session: Alloc.String.t_String)
             ({
                 f_streak
                 =
-                Core_models.Hint.must_use #Alloc.String.t_String
-                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 2)
-                          (mk_usize 2)
-                          (let list = ["rl:streak:websession:token:"; ":"] in
-                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
-                            Rust_primitives.Hax.array_of_list 2 list)
-                          args
-                        <:
-                        Core_models.Fmt.t_Arguments)
-                    <:
-                    Alloc.String.t_String);
+                store_key_scoped "rl:streak:websession:token:"
+                  (Alloc.String.impl_String__as_str ip <: string)
+                  (Alloc.String.impl_String__as_str session <: string);
                 f_backoff
                 =
-                Core_models.Hint.must_use #Alloc.String.t_String
-                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 2)
-                          (mk_usize 2)
-                          (let list = ["rl:backoff:websession:token:"; ":"] in
-                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
-                            Rust_primitives.Hax.array_of_list 2 list)
-                          args
-                        <:
-                        Core_models.Fmt.t_Arguments)
-                    <:
-                    Alloc.String.t_String)
+                store_key_scoped "rl:backoff:websession:token:"
+                  (Alloc.String.impl_String__as_str ip <: string)
+                  (Alloc.String.impl_String__as_str session <: string)
               })
             <:
             t_StoreStmt
@@ -1339,32 +949,6 @@ let plan_token_backoff_record (ip session: Alloc.String.t_String)
 /// `TokenIo::reset_token_backoff`: drop the success streak and backoff marker.
 let plan_token_backoff_reset (ip session: Alloc.String.t_String)
     : Alloc.Vec.t_Vec t_StoreStmt Alloc.Alloc.t_Global =
-  let args:(Alloc.String.t_String & Alloc.String.t_String) =
-    ip, session <: (Alloc.String.t_String & Alloc.String.t_String)
-  in
-  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 2) =
-    let list =
-      [
-        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._1;
-        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._2
-      ]
-    in
-    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
-    Rust_primitives.Hax.array_of_list 2 list
-  in
-  let args:(Alloc.String.t_String & Alloc.String.t_String) =
-    ip, session <: (Alloc.String.t_String & Alloc.String.t_String)
-  in
-  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 2) =
-    let list =
-      [
-        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._1;
-        Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args._2
-      ]
-    in
-    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
-    Rust_primitives.Hax.array_of_list 2 list
-  in
   Alloc.Slice.impl__into_vec #t_StoreStmt
     #Alloc.Alloc.t_Global
     ((let list =
@@ -1373,30 +957,14 @@ let plan_token_backoff_reset (ip session: Alloc.String.t_String)
             ({
                 f_streak
                 =
-                Core_models.Hint.must_use #Alloc.String.t_String
-                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 2)
-                          (mk_usize 2)
-                          (let list = ["rl:streak:websession:token:"; ":"] in
-                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
-                            Rust_primitives.Hax.array_of_list 2 list)
-                          args
-                        <:
-                        Core_models.Fmt.t_Arguments)
-                    <:
-                    Alloc.String.t_String);
+                store_key_scoped "rl:streak:websession:token:"
+                  (Alloc.String.impl_String__as_str ip <: string)
+                  (Alloc.String.impl_String__as_str session <: string);
                 f_backoff
                 =
-                Core_models.Hint.must_use #Alloc.String.t_String
-                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 2)
-                          (mk_usize 2)
-                          (let list = ["rl:backoff:websession:token:"; ":"] in
-                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 2);
-                            Rust_primitives.Hax.array_of_list 2 list)
-                          args
-                        <:
-                        Core_models.Fmt.t_Arguments)
-                    <:
-                    Alloc.String.t_String)
+                store_key_scoped "rl:backoff:websession:token:"
+                  (Alloc.String.impl_String__as_str ip <: string)
+                  (Alloc.String.impl_String__as_str session <: string)
               })
             <:
             t_StoreStmt
@@ -1409,12 +977,6 @@ let plan_token_backoff_reset (ip session: Alloc.String.t_String)
 
 /// `get_session`'s per-IP poll limiter: 120 polls/min per IP.
 let plan_poll_limit (ip: Alloc.String.t_String) : Alloc.Vec.t_Vec t_StoreStmt Alloc.Alloc.t_Global =
-  let args:Alloc.String.t_String = ip <: Alloc.String.t_String in
-  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 1) =
-    let list = [Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args] in
-    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
-    Rust_primitives.Hax.array_of_list 1 list
-  in
   Alloc.Slice.impl__into_vec #t_StoreStmt
     #Alloc.Alloc.t_Global
     ((let list =
@@ -1423,17 +985,7 @@ let plan_poll_limit (ip: Alloc.String.t_String) : Alloc.Vec.t_Vec t_StoreStmt Al
             ({
                 f_key
                 =
-                Core_models.Hint.must_use #Alloc.String.t_String
-                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 1)
-                          (mk_usize 1)
-                          (let list = ["rl:websession:poll:ip:"] in
-                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
-                            Rust_primitives.Hax.array_of_list 1 list)
-                          args
-                        <:
-                        Core_models.Fmt.t_Arguments)
-                    <:
-                    Alloc.String.t_String);
+                store_key "rl:websession:poll:ip:" (Alloc.String.impl_String__as_str ip <: string);
                 f_limit = mk_u64 120;
                 f_ttl = mk_u64 60
               })
@@ -1448,12 +1000,6 @@ let plan_poll_limit (ip: Alloc.String.t_String) : Alloc.Vec.t_Vec t_StoreStmt Al
 
 /// `get_keys`'s per-user key-fetch limiter: 60/min.
 let plan_keys_limit (user: Alloc.String.t_String) : Alloc.Vec.t_Vec t_StoreStmt Alloc.Alloc.t_Global =
-  let args:Alloc.String.t_String = user <: Alloc.String.t_String in
-  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 1) =
-    let list = [Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args] in
-    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
-    Rust_primitives.Hax.array_of_list 1 list
-  in
   Alloc.Slice.impl__into_vec #t_StoreStmt
     #Alloc.Alloc.t_Global
     ((let list =
@@ -1462,17 +1008,8 @@ let plan_keys_limit (user: Alloc.String.t_String) : Alloc.Vec.t_Vec t_StoreStmt 
             ({
                 f_key
                 =
-                Core_models.Hint.must_use #Alloc.String.t_String
-                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 1)
-                          (mk_usize 1)
-                          (let list = ["rl:websession:keys:user:"] in
-                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
-                            Rust_primitives.Hax.array_of_list 1 list)
-                          args
-                        <:
-                        Core_models.Fmt.t_Arguments)
-                    <:
-                    Alloc.String.t_String);
+                store_key "rl:websession:keys:user:"
+                  (Alloc.String.impl_String__as_str user <: string);
                 f_limit = mk_u64 60;
                 f_ttl = mk_u64 60
               })
@@ -1498,12 +1035,6 @@ let plan_session_keys (session user: Alloc.String.t_String) : t_SqlStmt =
 /// writer wins for the session's whole token ceiling.
 let plan_token_claim (session: Alloc.String.t_String)
     : Alloc.Vec.t_Vec t_StoreStmt Alloc.Alloc.t_Global =
-  let args:Alloc.String.t_String = session <: Alloc.String.t_String in
-  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 1) =
-    let list = [Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args] in
-    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
-    Rust_primitives.Hax.array_of_list 1 list
-  in
   Alloc.Slice.impl__into_vec #t_StoreStmt
     #Alloc.Alloc.t_Global
     ((let list =
@@ -1512,17 +1043,8 @@ let plan_token_claim (session: Alloc.String.t_String)
             ({
                 f_key
                 =
-                Core_models.Hint.must_use #Alloc.String.t_String
-                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 1)
-                          (mk_usize 1)
-                          (let list = ["web_session:token_issued:"] in
-                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
-                            Rust_primitives.Hax.array_of_list 1 list)
-                          args
-                        <:
-                        Core_models.Fmt.t_Arguments)
-                    <:
-                    Alloc.String.t_String);
+                store_key "web_session:token_issued:"
+                  (Alloc.String.impl_String__as_str session <: string);
                 f_value = mk_u8 1;
                 f_ttl = v_WEB_SESSION_MAX_TTL_SECS
               })
@@ -1539,12 +1061,6 @@ let plan_token_claim (session: Alloc.String.t_String)
 /// sentinel the delete handler and the revocation cascade write.
 let plan_token_sentinel (session: Alloc.String.t_String)
     : Alloc.Vec.t_Vec t_StoreStmt Alloc.Alloc.t_Global =
-  let args:Alloc.String.t_String = session <: Alloc.String.t_String in
-  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 1) =
-    let list = [Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args] in
-    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
-    Rust_primitives.Hax.array_of_list 1 list
-  in
   Alloc.Slice.impl__into_vec #t_StoreStmt
     #Alloc.Alloc.t_Global
     ((let list =
@@ -1553,17 +1069,7 @@ let plan_token_sentinel (session: Alloc.String.t_String)
             ({
                 f_key
                 =
-                Core_models.Hint.must_use #Alloc.String.t_String
-                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 1)
-                          (mk_usize 1)
-                          (let list = ["device:revoked:"] in
-                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
-                            Rust_primitives.Hax.array_of_list 1 list)
-                          args
-                        <:
-                        Core_models.Fmt.t_Arguments)
-                    <:
-                    Alloc.String.t_String)
+                store_key "device:revoked:" (Alloc.String.impl_String__as_str session <: string)
               })
             <:
             t_StoreStmt
@@ -1579,12 +1085,6 @@ let plan_token_sentinel (session: Alloc.String.t_String)
 /// `plan_token_claim` writes, so a retry can claim again.
 let plan_token_release (session: Alloc.String.t_String)
     : Alloc.Vec.t_Vec t_StoreStmt Alloc.Alloc.t_Global =
-  let args:Alloc.String.t_String = session <: Alloc.String.t_String in
-  let args:t_Array Core_models.Fmt.Rt.t_Argument (mk_usize 1) =
-    let list = [Core_models.Fmt.Rt.impl__new_display #Alloc.String.t_String args] in
-    FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
-    Rust_primitives.Hax.array_of_list 1 list
-  in
   Alloc.Slice.impl__into_vec #t_StoreStmt
     #Alloc.Alloc.t_Global
     ((let list =
@@ -1593,17 +1093,8 @@ let plan_token_release (session: Alloc.String.t_String)
             ({
                 f_key
                 =
-                Core_models.Hint.must_use #Alloc.String.t_String
-                  (Alloc.Fmt.format (Core_models.Fmt.Rt.impl_1__new_v1 (mk_usize 1)
-                          (mk_usize 1)
-                          (let list = ["web_session:token_issued:"] in
-                            FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
-                            Rust_primitives.Hax.array_of_list 1 list)
-                          args
-                        <:
-                        Core_models.Fmt.t_Arguments)
-                    <:
-                    Alloc.String.t_String)
+                store_key "web_session:token_issued:"
+                  (Alloc.String.impl_String__as_str session <: string)
               })
             <:
             t_StoreStmt

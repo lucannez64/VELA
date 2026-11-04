@@ -120,8 +120,15 @@ driver=(proofs/fstar/extraction-deletion-driver/*.fst proofs/fstar/extraction-lo
         proofs/fstar/extraction-challenge-issue-driver/*.fst
         proofs/fstar/extraction-websession-driver/*.fst)
 model=(proofs/fstar/store-lemmas/Vela_session_policy_store_model.fst)
-lemmas=(proofs/fstar/store-lemmas/Vela_session_policy_store_lemmas.fst)
-for f in "${generated[@]}" "${model[@]}" "${lemmas[@]}"; do
+lemmas=(proofs/fstar/store-lemmas/Vela_session_policy_store_lemmas.fst
+        proofs/fstar/store-lemmas/Vela_session_policy_store_keys.fst)
+# Local models of the string operations the extracted key builders use. They
+# replace hax's opaque `Rust_primitives.String` and add `String::as_str` to
+# `Alloc.String`; both are passed on every invocation so F* uses the exposed
+# definitions rather than the hax interfaces.
+string_models=(proofs/fstar/models/Rust_primitives.String.fst
+               proofs/fstar/models/Alloc.String.fst)
+for f in "${generated[@]}" "${model[@]}" "${lemmas[@]}" "${string_models[@]}"; do
   [[ -f $f ]] || { echo "missing $f" >&2; exit 1; }
 done
 
@@ -145,6 +152,7 @@ fstar_args=(
   --warn_error -331
   --z3rlimit 200
   --z3version 4.13.3
+  --expose_interfaces
   --already_cached '+Prims+FStar+LowStar+C+Spec.Loops+TestLib'
   --include "$hax_lib_root/proof-libs/fstar/core"
   --include "$hax_lib_root/proof-libs/fstar/rust_primitives"
@@ -162,15 +170,27 @@ fstar_args=(
   --include proofs/fstar/extraction-challenge-issue-driver
   --include proofs/fstar/extraction-store
   --include proofs/fstar/store-lemmas
+  --include proofs/fstar/models
 )
-# One module at a time, each in its own process, so each stays within its
-# memory budget.
-for module in "${generated[@]}" "${model[@]}" "${lemmas[@]}"; do
+# The two string models are checked once, then passed on every later
+# invocation (`--expose_interfaces` is what makes their definitions, not the
+# hax interfaces, visible to the modules that use them).
+for module in "${string_models[@]}"; do
   echo "checking $module"
   if [[ -x /usr/bin/time ]]; then
     /usr/bin/time -f "$module: %M KB peak, %e s" fstar.exe "${fstar_args[@]}" "$module"
   else
     fstar.exe "${fstar_args[@]}" "$module"
+  fi
+done
+# One module at a time, each in its own process, so each stays within its
+# memory budget.
+for module in "${generated[@]}" "${model[@]}" "${lemmas[@]}"; do
+  echo "checking $module"
+  if [[ -x /usr/bin/time ]]; then
+    /usr/bin/time -f "$module: %M KB peak, %e s" fstar.exe "${fstar_args[@]}" "${string_models[@]}" "$module"
+  else
+    fstar.exe "${fstar_args[@]}" "${string_models[@]}" "$module"
   fi
 done
 

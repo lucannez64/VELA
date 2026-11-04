@@ -72,6 +72,30 @@ pub const REGISTER_RATE_LIMIT: u64 = 5;
 /// The registration limiter's fixed window.
 pub const REGISTER_RATE_WINDOW_SECS: u64 = 60 * 60;
 
+/// `prefix + id`: a store key with one identifier.
+///
+/// Keys are built with explicit `String` concatenation rather than `format!`
+/// so hax extracts the bytes into F* instead of an opaque formatting call.
+/// Every caller's key is byte-for-byte what its `format!` produced; the
+/// `key_builders_match_format` test below pins that against `format!` itself.
+fn store_key(prefix: &str, id: &str) -> String {
+    let mut key = String::new();
+    key.push_str(prefix);
+    key.push_str(id);
+    key
+}
+
+/// `prefix + scope + ":" + id`: the `(ip, device)` / `(ip, session)` keys.
+/// Only the final identifier is colon-free; `scope` (the IP) may be IPv6.
+fn store_key_scoped(prefix: &str, scope: &str, id: &str) -> String {
+    let mut key = String::new();
+    key.push_str(prefix);
+    key.push_str(scope);
+    key.push_str(":");
+    key.push_str(id);
+    key
+}
+
 /// One SQL statement an executor may run.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SqlStmt {
@@ -440,7 +464,7 @@ pub enum SessionKeysLookup {
 /// lifetime's TTL.
 pub fn plan_logout(jti: String) -> Vec<StoreStmt> {
     vec![StoreStmt::SetEx {
-        key: format!("jti:revoked:{}", jti),
+        key: store_key("jti:revoked:", jti.as_str()),
         value: 1,
         ttl: TOKEN_MAX_LIFETIME_SECS,
     }]
@@ -450,7 +474,7 @@ pub fn plan_logout(jti: String) -> Vec<StoreStmt> {
 /// rejected by the middleware for the whole token lifetime.
 pub fn plan_sentinel(device: String, ttl: u64) -> Vec<StoreStmt> {
     vec![StoreStmt::SetEx {
-        key: format!("device:revoked:{}", device),
+        key: store_key("device:revoked:", device.as_str()),
         value: 1,
         ttl,
     }]
@@ -464,7 +488,7 @@ pub fn plan_lockout_device(device: String) -> Vec<StoreStmt> {
             device: device.clone(),
         },
         StoreStmt::SetEx {
-            key: format!("device:revoked:{}", device),
+            key: store_key("device:revoked:", device.as_str()),
             value: 1,
             ttl: TOKEN_MAX_LIFETIME_SECS,
         },
@@ -476,7 +500,7 @@ pub fn plan_lockout_device(device: String) -> Vec<StoreStmt> {
 pub fn plan_lockout_web_session(session: String) -> Vec<StoreStmt> {
     vec![
         StoreStmt::SetEx {
-            key: format!("device:revoked:{}", session),
+            key: store_key("device:revoked:", session.as_str()),
             value: 1,
             ttl: WEB_SESSION_MAX_TTL_SECS,
         },
@@ -556,7 +580,7 @@ pub fn challenge_tag_text(purpose: crate::challenge::ChallengePurpose) -> String
 /// `VerifyIo::consume_challenge`: remove the one challenge key.
 pub fn plan_take_challenge(challenge: String) -> Vec<StoreStmt> {
     vec![StoreStmt::Take {
-        key: format!("challenge:{}", challenge),
+        key: store_key("challenge:", challenge.as_str()),
     }]
 }
 
@@ -569,8 +593,8 @@ pub fn plan_login_device(device_id: String) -> SqlStmt {
 /// record for the request's `(ip, device)` scope.
 pub fn plan_backoff_record(ip: String, device: String) -> Vec<StoreStmt> {
     vec![StoreStmt::BackoffFailure {
-        streak: format!("rl:streak:verify:{}:{}", ip, device),
-        backoff: format!("rl:backoff:verify:{}:{}", ip, device),
+        streak: store_key_scoped("rl:streak:verify:", ip.as_str(), device.as_str()),
+        backoff: store_key_scoped("rl:backoff:verify:", ip.as_str(), device.as_str()),
     }]
 }
 
@@ -578,7 +602,7 @@ pub fn plan_backoff_record(ip: String, device: String) -> Vec<StoreStmt> {
 /// counter, whose refusal is the only failure the driver propagates.
 pub fn plan_failure_counter(ip: String, device: String) -> Vec<StoreStmt> {
     vec![StoreStmt::Incr {
-        key: format!("rl:verify:fail:dev:{}:{}", ip, device),
+        key: store_key_scoped("rl:verify:fail:dev:", ip.as_str(), device.as_str()),
         limit: VERIFY_FAIL_LIMIT,
         ttl: VERIFY_FAIL_WINDOW_SECS,
     }]
@@ -587,8 +611,8 @@ pub fn plan_failure_counter(ip: String, device: String) -> Vec<StoreStmt> {
 /// `VerifyIo::reset_backoff`: drop the success streak and backoff marker.
 pub fn plan_reset_login_streak(ip: String, device: String) -> Vec<StoreStmt> {
     vec![StoreStmt::ResetBackoff {
-        streak: format!("rl:streak:verify:{}:{}", ip, device),
-        backoff: format!("rl:backoff:verify:{}:{}", ip, device),
+        streak: store_key_scoped("rl:streak:verify:", ip.as_str(), device.as_str()),
+        backoff: store_key_scoped("rl:backoff:verify:", ip.as_str(), device.as_str()),
     }]
 }
 
@@ -614,7 +638,7 @@ pub fn plan_login_last_active(
 /// `VerifyIo::track_token`: register the issued JTI against the device.
 pub fn plan_track_jti(device: String, jti: String) -> Vec<StoreStmt> {
     vec![StoreStmt::AddMember {
-        key: format!("device:jtis:{}", device),
+        key: store_key("device:jtis:", device.as_str()),
         member: jti,
         ttl: JTI_SET_TTL_SECS,
     }]
@@ -625,7 +649,7 @@ pub fn plan_track_jti(device: String, jti: String) -> Vec<StoreStmt> {
 /// `ChallengeIssueIo::check_rate_limit`: the per-IP fixed window.
 pub fn plan_challenge_rate_limit(ip: String) -> Vec<StoreStmt> {
     vec![StoreStmt::Incr {
-        key: format!("rl:challenge:ip:{}", ip),
+        key: store_key("rl:challenge:ip:", ip.as_str()),
         limit: CHALLENGE_RATE_LIMIT,
         ttl: CHALLENGE_RATE_WINDOW_SECS,
     }]
@@ -635,7 +659,7 @@ pub fn plan_challenge_rate_limit(ip: String) -> Vec<StoreStmt> {
 /// key, first writer wins.
 pub fn plan_store_nonce(challenge: String, tag: String) -> Vec<StoreStmt> {
     vec![StoreStmt::SetExNx {
-        key: format!("challenge:{}", challenge),
+        key: store_key("challenge:", challenge.as_str()),
         value: tag,
         ttl: CHALLENGE_TTL_SECS,
     }]
@@ -644,7 +668,7 @@ pub fn plan_store_nonce(challenge: String, tag: String) -> Vec<StoreStmt> {
 /// `RegisterIo::check_rate_limit`: the per-IP fixed window.
 pub fn plan_registration_rate_limit(ip: String) -> Vec<StoreStmt> {
     vec![StoreStmt::Incr {
-        key: format!("rl:register:ip:{}", ip),
+        key: store_key("rl:register:ip:", ip.as_str()),
         limit: REGISTER_RATE_LIMIT,
         ttl: REGISTER_RATE_WINDOW_SECS,
     }]
@@ -782,12 +806,12 @@ pub fn plan_cleanup_pending(pending_cutoff: String, pending_cutoff_secs: u64) ->
 pub fn plan_login_limits(ip: String, device: String) -> Vec<StoreStmt> {
     vec![
         StoreStmt::Incr {
-            key: format!("rl:verify:ip:{}", ip),
+            key: store_key("rl:verify:ip:", ip.as_str()),
             limit: 10,
             ttl: 60,
         },
         StoreStmt::Ttl {
-            key: format!("rl:backoff:verify:{}:{}", ip, device),
+            key: store_key_scoped("rl:backoff:verify:", ip.as_str(), device.as_str()),
         },
     ]
 }
@@ -795,7 +819,7 @@ pub fn plan_login_limits(ip: String, device: String) -> Vec<StoreStmt> {
 /// `StartIo::check_rate_limit`: 30 starts/hour per IP.
 pub fn plan_start_limit(ip: String) -> Vec<StoreStmt> {
     vec![StoreStmt::Incr {
-        key: format!("rl:websession:start:ip:{}", ip),
+        key: store_key("rl:websession:start:ip:", ip.as_str()),
         limit: 30,
         ttl: 60 * 60,
     }]
@@ -807,17 +831,17 @@ pub fn plan_start_limit(ip: String) -> Vec<StoreStmt> {
 pub fn plan_token_limits(ip: String, session: String) -> Vec<StoreStmt> {
     vec![
         StoreStmt::Incr {
-            key: format!("rl:websession:token:ip:{}:{}", ip, session),
+            key: store_key_scoped("rl:websession:token:ip:", ip.as_str(), session.as_str()),
             limit: 10,
             ttl: 60,
         },
         StoreStmt::Incr {
-            key: format!("rl:websession:token:{}", session),
+            key: store_key("rl:websession:token:", session.as_str()),
             limit: 30,
             ttl: 60,
         },
         StoreStmt::Ttl {
-            key: format!("rl:backoff:websession:token:{}:{}", ip, session),
+            key: store_key_scoped("rl:backoff:websession:token:", ip.as_str(), session.as_str()),
         },
     ]
 }
@@ -826,23 +850,23 @@ pub fn plan_token_limits(ip: String, session: String) -> Vec<StoreStmt> {
 /// `(ip, session)` scope.
 pub fn plan_token_backoff_record(ip: String, session: String) -> Vec<StoreStmt> {
     vec![StoreStmt::BackoffFailure {
-        streak: format!("rl:streak:websession:token:{}:{}", ip, session),
-        backoff: format!("rl:backoff:websession:token:{}:{}", ip, session),
+        streak: store_key_scoped("rl:streak:websession:token:", ip.as_str(), session.as_str()),
+        backoff: store_key_scoped("rl:backoff:websession:token:", ip.as_str(), session.as_str()),
     }]
 }
 
 /// `TokenIo::reset_token_backoff`: drop the success streak and backoff marker.
 pub fn plan_token_backoff_reset(ip: String, session: String) -> Vec<StoreStmt> {
     vec![StoreStmt::ResetBackoff {
-        streak: format!("rl:streak:websession:token:{}:{}", ip, session),
-        backoff: format!("rl:backoff:websession:token:{}:{}", ip, session),
+        streak: store_key_scoped("rl:streak:websession:token:", ip.as_str(), session.as_str()),
+        backoff: store_key_scoped("rl:backoff:websession:token:", ip.as_str(), session.as_str()),
     }]
 }
 
 /// `get_session`'s per-IP poll limiter: 120 polls/min per IP.
 pub fn plan_poll_limit(ip: String) -> Vec<StoreStmt> {
     vec![StoreStmt::Incr {
-        key: format!("rl:websession:poll:ip:{}", ip),
+        key: store_key("rl:websession:poll:ip:", ip.as_str()),
         limit: 120,
         ttl: 60,
     }]
@@ -851,7 +875,7 @@ pub fn plan_poll_limit(ip: String) -> Vec<StoreStmt> {
 /// `get_keys`'s per-user key-fetch limiter: 60/min.
 pub fn plan_keys_limit(user: String) -> Vec<StoreStmt> {
     vec![StoreStmt::Incr {
-        key: format!("rl:websession:keys:user:{}", user),
+        key: store_key("rl:websession:keys:user:", user.as_str()),
         limit: 60,
         ttl: 60,
     }]
@@ -872,7 +896,7 @@ pub fn plan_session_keys(session: String, user: String) -> SqlStmt {
 /// writer wins for the session's whole token ceiling.
 pub fn plan_token_claim(session: String) -> Vec<StoreStmt> {
     vec![StoreStmt::SetExNxByte {
-        key: format!("web_session:token_issued:{}", session),
+        key: store_key("web_session:token_issued:", session.as_str()),
         value: 1,
         ttl: WEB_SESSION_MAX_TTL_SECS,
     }]
@@ -882,7 +906,7 @@ pub fn plan_token_claim(session: String) -> Vec<StoreStmt> {
 /// sentinel the delete handler and the revocation cascade write.
 pub fn plan_token_sentinel(session: String) -> Vec<StoreStmt> {
     vec![StoreStmt::Exists {
-        key: format!("device:revoked:{}", session),
+        key: store_key("device:revoked:", session.as_str()),
     }]
 }
 
@@ -891,7 +915,7 @@ pub fn plan_token_sentinel(session: String) -> Vec<StoreStmt> {
 /// `plan_token_claim` writes, so a retry can claim again.
 pub fn plan_token_release(session: String) -> Vec<StoreStmt> {
     vec![StoreStmt::Delete {
-        key: format!("web_session:token_issued:{}", session),
+        key: store_key("web_session:token_issued:", session.as_str()),
     }]
 }
 
@@ -2034,6 +2058,178 @@ mod tests {
         assert_eq!(
             classify_lockout_ignored(&[StoreOutcome::Failed]),
             LockoutObservation::Applied
+        );
+    }
+
+    /// Every key builder's explicit concatenation returns exactly the bytes
+    /// its `format!` produced, including IPv6 (the IP is never the final
+    /// argument, and may contain ':').
+    #[test]
+    fn key_builders_match_format() {
+        let uuid = "3f2b6c1e-8a4d-4c2b-9e7f-1a2b3c4d5e6f";
+        let uuid2 = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d";
+        let challenge = "Q2hhbGxlbmdl+VG9rZW4vPT0=";
+        let ipv4 = "203.0.113.7";
+        let ipv6 = "2001:db8::1";
+
+        // 1. `jti:revoked:{jti}`.
+        assert_eq!(
+            render_store(&plan_logout(s(uuid))[0]).key,
+            format!("jti:revoked:{}", uuid)
+        );
+
+        // 2. `device:revoked:{device|session}`.
+        assert_eq!(
+            render_store(&plan_sentinel(s(uuid), 900)[0]).key,
+            format!("device:revoked:{}", uuid)
+        );
+        assert_eq!(
+            render_store(&plan_lockout_device(s(uuid))[1]).key,
+            format!("device:revoked:{}", uuid)
+        );
+        assert_eq!(
+            render_store(&plan_lockout_web_session(s(uuid2))[0]).key,
+            format!("device:revoked:{}", uuid2)
+        );
+        assert_eq!(
+            render_store(&plan_token_sentinel(s(uuid))[0]).key,
+            format!("device:revoked:{}", uuid)
+        );
+
+        // 3. `challenge:{challenge}`.
+        assert_eq!(
+            render_store(&plan_take_challenge(s(challenge))[0]).key,
+            format!("challenge:{}", challenge)
+        );
+        assert_eq!(
+            render_store(&plan_store_nonce(s(challenge), s("login"))[0]).key,
+            format!("challenge:{}", challenge)
+        );
+
+        for ip in [ipv4, ipv6] {
+            // 4/5. `rl:streak:verify:{ip}:{device}` and
+            //      `rl:backoff:verify:{ip}:{device}`.
+            let plan = plan_backoff_record(s(ip), s(uuid));
+            assert_eq!(
+                render_store(&plan[0]).key,
+                format!("rl:streak:verify:{}:{}", ip, uuid)
+            );
+            assert_eq!(
+                render_store(&plan[0]).member,
+                format!("rl:backoff:verify:{}:{}", ip, uuid)
+            );
+            let plan = plan_reset_login_streak(s(ip), s(uuid));
+            assert_eq!(
+                render_store(&plan[0]).key,
+                format!("rl:streak:verify:{}:{}", ip, uuid)
+            );
+            assert_eq!(
+                render_store(&plan[0]).member,
+                format!("rl:backoff:verify:{}:{}", ip, uuid)
+            );
+
+            // 6. `rl:verify:fail:dev:{ip}:{device}`.
+            assert_eq!(
+                render_store(&plan_failure_counter(s(ip), s(uuid))[0]).key,
+                format!("rl:verify:fail:dev:{}:{}", ip, uuid)
+            );
+
+            // 10/5. `rl:verify:ip:{ip}` and
+            //       `rl:backoff:verify:{ip}:{device}`.
+            let plan = plan_login_limits(s(ip), s(uuid));
+            assert_eq!(
+                render_store(&plan[0]).key,
+                format!("rl:verify:ip:{}", ip)
+            );
+            assert_eq!(
+                render_store(&plan[1]).key,
+                format!("rl:backoff:verify:{}:{}", ip, uuid)
+            );
+
+            // 12/13/14. The token limits: `(ip, session)`, `session`, and
+            // the `(ip, session)` backoff precheck.
+            let plan = plan_token_limits(s(ip), s(uuid2));
+            assert_eq!(
+                render_store(&plan[0]).key,
+                format!("rl:websession:token:ip:{}:{}", ip, uuid2)
+            );
+            assert_eq!(
+                render_store(&plan[1]).key,
+                format!("rl:websession:token:{}", uuid2)
+            );
+            assert_eq!(
+                render_store(&plan[2]).key,
+                format!("rl:backoff:websession:token:{}:{}", ip, uuid2)
+            );
+
+            // 15/14. `rl:streak:websession:token:{ip}:{session}` and
+            //        `rl:backoff:websession:token:{ip}:{session}`.
+            let plan = plan_token_backoff_record(s(ip), s(uuid2));
+            assert_eq!(
+                render_store(&plan[0]).key,
+                format!("rl:streak:websession:token:{}:{}", ip, uuid2)
+            );
+            assert_eq!(
+                render_store(&plan[0]).member,
+                format!("rl:backoff:websession:token:{}:{}", ip, uuid2)
+            );
+            let plan = plan_token_backoff_reset(s(ip), s(uuid2));
+            assert_eq!(
+                render_store(&plan[0]).key,
+                format!("rl:streak:websession:token:{}:{}", ip, uuid2)
+            );
+            assert_eq!(
+                render_store(&plan[0]).member,
+                format!("rl:backoff:websession:token:{}:{}", ip, uuid2)
+            );
+        }
+
+        // 7. `device:jtis:{device}`.
+        let plan = plan_track_jti(s(uuid), s(uuid2));
+        assert_eq!(
+            render_store(&plan[0]).key,
+            format!("device:jtis:{}", uuid)
+        );
+        assert_eq!(render_store(&plan[0]).member, uuid2);
+
+        // 8. `rl:challenge:ip:{ip}`.
+        assert_eq!(
+            render_store(&plan_challenge_rate_limit(s(ipv6))[0]).key,
+            format!("rl:challenge:ip:{}", ipv6)
+        );
+
+        // 9. `rl:register:ip:{ip}`.
+        assert_eq!(
+            render_store(&plan_registration_rate_limit(s(ipv6))[0]).key,
+            format!("rl:register:ip:{}", ipv6)
+        );
+
+        // 11. `rl:websession:start:ip:{ip}`.
+        assert_eq!(
+            render_store(&plan_start_limit(s(ipv6))[0]).key,
+            format!("rl:websession:start:ip:{}", ipv6)
+        );
+
+        // 16. `rl:websession:poll:ip:{ip}`.
+        assert_eq!(
+            render_store(&plan_poll_limit(s(ipv6))[0]).key,
+            format!("rl:websession:poll:ip:{}", ipv6)
+        );
+
+        // 17. `rl:websession:keys:user:{user}`.
+        assert_eq!(
+            render_store(&plan_keys_limit(s(uuid))[0]).key,
+            format!("rl:websession:keys:user:{}", uuid)
+        );
+
+        // 18. `web_session:token_issued:{session}`.
+        assert_eq!(
+            render_store(&plan_token_claim(s(uuid2))[0]).key,
+            format!("web_session:token_issued:{}", uuid2)
+        );
+        assert_eq!(
+            render_store(&plan_token_release(s(uuid2))[0]).key,
+            format!("web_session:token_issued:{}", uuid2)
         );
     }
 
