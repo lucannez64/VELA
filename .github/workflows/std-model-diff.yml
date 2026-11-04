@@ -94,6 +94,10 @@ jobs:
             pprint.20230830 stdint.0.7.2 yojson.3.0.0 ppx_deriving.6.2.0 ppx_deriving_yojson.3.10.0
           "$HOME/.opam/vela-t7/bin/ocamlopt" -version
 
+      # Also on a cache hit: ocamlfind runs ocamlopt.opt from the switch.
+      - name: Activate the OCaml switch
+        run: echo "$HOME/.opam/vela-t7/bin" >> "$GITHUB_PATH"
+
       - name: Check the extracted ulib links
         env:
           OCAMLFIND: /home/runner/.opam/vela-t7/bin/ocamlfind
