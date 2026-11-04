@@ -21,6 +21,6 @@ no_escape_gate: 181 F* files: no proof escapes, no unimplemented interfaces.
 transcription_drift_check: m28 transcription matches the .spthy: 7 rules, 18 facts, 10 lemmas
 formal_tests: 111 passed (python3 -m unittest discover -s security/formal/tests)
 tamarin_rules_changed: 0 (.spthy header comment only)
-tamarin_rerun: not run here (box offline); rules, restriction and lemmas unchanged
+tamarin_rerun: build box, Tamarin 1.12.0 / Maude 3.5.1: m28_share_journal 10 verified, m29_signed_share_commit 11 verified, 0 falsified, 0 warnings
 rust_files_changed: 0
 seed_runs: seeds 1,2,3 passed (148s, 130s, 140s) via z3-seed/verify-fstar-seeded.sh

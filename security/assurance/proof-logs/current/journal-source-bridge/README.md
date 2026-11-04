@@ -130,8 +130,10 @@ took 148, 130 and 140 s; see [`verify-seed-1.log`](verify-seed-1.log),
 [`verify-seed-2.log`](verify-seed-2.log) and [`verify-seed-3.log`](verify-seed-3.log).
 Each log shows the `--z3seed` argument reaching F*.
 
-Tamarin was not rerun for this change, because the build box with Tamarin
-was offline. The `.spthy` change is to its header comment only, and the drift
-check strips comments, so the ten M28 verdicts recorded in
-[`journal-all-pairs`](../journal-all-pairs/README.md) still apply to the same
-rules. Rust files are unchanged.
+Tamarin 1.12.0 (Maude 3.5.1) was rerun on the build box once it was
+reachable again, using the journal runner's own Tamarin loop on the committed
+sources: M28 10 verified and M29 11 verified, 0 falsified, 0 warnings
+([`tamarin-runner.log`](tamarin-runner.log), with both summaries). The F★ part
+of the runner ran locally as above, because the box mirror has no `.git` for
+the git-based checks. The `.spthy` change is to its header comment only.
+Rust files are unchanged.

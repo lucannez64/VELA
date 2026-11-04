@@ -1,0 +1,41 @@
+tamarin-prover 1.12.0 (build box), maude 3.5.1
+m28_share_journal: 10 verified, 0 falsified, 0 warnings
+m29_signed_share_commit: 11 verified, 0 falsified, 0 warnings
+
+summary of summaries:
+
+analyzed: /home/hirew/.t3/worktrees/VELA/t3-m28-source-bridge/security/formal/m28_share_journal.spthy
+
+  processing time: 220.30s
+  
+  open_has_matching_content_and_pin (all-traces): verified (8 steps)
+  application_requires_prior_durable_journal (all-traces): verified (3 steps)
+  cleanup_requires_prior_durable_vault (all-traces): verified (3 steps)
+  commit_uses_snapshot_generation (all-traces): verified (16 steps)
+  each_transaction_applies_at_most_once (all-traces): verified (106 steps)
+  pins_advance_on_every_commit (all-traces): verified (2 steps)
+  recovery_is_reachable (exists-trace): verified (15 steps)
+  committed_pins_never_decrease (all-traces): verified (3649 steps)
+  a_generation_commits_at_most_once (all-traces): verified (52 steps)
+  two_successive_commits_advance (exists-trace): verified (28 steps)
+
+==============================================================================
+summary of summaries:
+
+analyzed: /home/hirew/.t3/worktrees/VELA/t3-m28-source-bridge/security/formal/m29_signed_share_commit.spthy
+
+  processing time: 17.71s
+  
+  applied_requires_prior_authenticated_journal (all-traces): verified (5 steps)
+  first_pin_is_unique (all-traces): verified (67 steps)
+  observed_pin_has_first_contact (all-traces): verified (19 steps)
+  admission_records_observed_pin (all-traces): verified (4 steps)
+  journal_preserves_first_pin (all-traces): verified (4 steps)
+  open_has_matching_pin_and_content (all-traces): verified (10 steps)
+  crash_recovery_and_update_are_reachable (exists-trace): verified (27 steps)
+  ml_component_journal_authentication (all-traces): verified (31 steps)
+  ed_component_journal_authentication (all-traces): verified (42 steps)
+  hybrid_journal_authentication (all-traces): verified (10 steps)
+  durable_content_is_sender_authenticated (all-traces): verified (30 steps)
+
+==============================================================================
