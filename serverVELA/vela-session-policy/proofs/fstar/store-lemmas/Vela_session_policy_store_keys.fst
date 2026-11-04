@@ -241,6 +241,20 @@ let rec first_diff_some (l1 l2: list FStar.Char.char) (i: nat)
 let disjointb (p q: string) : bool =
   Some? (first_diff (S.list_of_string p) (S.list_of_string q))
 
+/// `first_diff` finds the same first difference in either argument order, so
+/// `disjointb` is symmetric.
+let rec first_diff_sym (l1 l2: list FStar.Char.char)
+  : Lemma (ensures Some? (first_diff l1 l2) = Some? (first_diff l2 l1))
+          (decreases l1) =
+  match l1, l2 with
+  | [], _ -> ()
+  | _, [] -> ()
+  | c1 :: r1, c2 :: r2 ->
+    if c1 = c2 then first_diff_sym r1 r2 else ()
+
+let disjointb_sym (p q: string) : Lemma (disjointb p q = disjointb q p) =
+  first_diff_sym (S.list_of_string p) (S.list_of_string q)
+
 let disjointb_sound (p q: string) (s t: string)
   : Lemma (requires disjointb p q) (ensures (p ^ s) <> (q ^ t)) =
   match first_diff (S.list_of_string p) (S.list_of_string q) with
@@ -273,7 +287,9 @@ type builder =
   | BWebKeysUser        // rl:websession:keys:user:{user}
   | BTokenIssued        // web_session:token_issued:{session}
 
-/// The arguments a format uses. One-argument formats ignore `ka_scope`.
+/// The arguments a format uses. One-argument formats ignore `ka_scope`,
+/// except `rl:verify:ip:`, whose plan reads the IP from the shared
+/// `(ip, device)` tuple (`plan_login_limits`).
 type key_args = {
   ka_scope: text;
   ka_id: text;
@@ -311,7 +327,7 @@ let key_of (b: builder) (a: key_args) : text =
   | BDeviceJtis -> key1 "device:jtis:" a.ka_id
   | BChallengeIp -> key1 "rl:challenge:ip:" a.ka_id
   | BRegisterIp -> key1 "rl:register:ip:" a.ka_id
-  | BVerifyIp -> key1 "rl:verify:ip:" a.ka_id
+  | BVerifyIp -> key1 "rl:verify:ip:" a.ka_scope
   | BWebStartIp -> key1 "rl:websession:start:ip:" a.ka_id
   | BWebTokenIp -> key2 "rl:websession:token:ip:" a.ka_scope a.ka_id
   | BWebToken -> key1 "rl:websession:token:" a.ka_id
@@ -326,6 +342,7 @@ let suffix_of (b: builder) (a: key_args) : string =
   match b with
   | BStreakVerify | BBackoffVerify | BVerifyFailDev | BWebTokenIp
   | BWebBackoff | BWebStreak -> (a.ka_scope._0 ^ (":" ^ a.ka_id._0))
+  | BVerifyIp -> a.ka_scope._0
   | _ -> a.ka_id._0
 
 let key_of_string (b: builder) (a: key_args) : string =
@@ -349,7 +366,7 @@ let key_of_eq (b: builder) (a: key_args)
   | BDeviceJtis -> key1_eq "device:jtis:" a.ka_id
   | BChallengeIp -> key1_eq "rl:challenge:ip:" a.ka_id
   | BRegisterIp -> key1_eq "rl:register:ip:" a.ka_id
-  | BVerifyIp -> key1_eq "rl:verify:ip:" a.ka_id
+  | BVerifyIp -> key1_eq "rl:verify:ip:" a.ka_scope
   | BWebStartIp -> key1_eq "rl:websession:start:ip:" a.ka_id
   | BWebToken -> key1_eq "rl:websession:token:" a.ka_id
   | BWebPollIp -> key1_eq "rl:websession:poll:ip:" a.ka_id
@@ -635,8 +652,14 @@ let prefix_index_without_token (b: builder) : nat =
   | BTokenIssued -> 16
 
   | BWebToken -> 0
-let prefix_index_without_token_eq (b: builder) : Lemma (prefix_of b == nth_prefix prefixes_without_token (prefix_index_without_token b)) =
+/// The list omits `rl:websession:token:`, so the equation holds for every
+/// builder except `BWebToken`. The excluded branch is vacuous under the
+/// precondition; `prefix_index_without_token BWebToken` is only a dummy.
+let prefix_index_without_token_eq (b: builder)
+  : Lemma (requires b <> BWebToken)
+          (ensures prefix_of b == nth_prefix prefixes_without_token (prefix_index_without_token b)) =
   match b with
+  | BWebToken -> ()
   | BLogout -> assert_norm (prefix_of BLogout == nth_prefix prefixes_without_token (prefix_index_without_token BLogout))
   | BSentinel -> assert_norm (prefix_of BSentinel == nth_prefix prefixes_without_token (prefix_index_without_token BSentinel))
   | BChallenge -> assert_norm (prefix_of BChallenge == nth_prefix prefixes_without_token (prefix_index_without_token BChallenge))
@@ -673,6 +696,7 @@ let prefix_index_without_token_bound (b: builder) : Lemma (prefix_index_without_
   | BWebPollIp -> assert_norm (prefix_index_without_token BWebPollIp < L.length prefixes_without_token)
   | BWebKeysUser -> assert_norm (prefix_index_without_token BWebKeysUser < L.length prefixes_without_token)
   | BTokenIssued -> assert_norm (prefix_index_without_token BTokenIssued < L.length prefixes_without_token)
+  | BWebToken -> assert_norm (prefix_index_without_token BWebToken < L.length prefixes_without_token)
 let prefix_index_without_token_ip (b: builder) : nat =
   match b with
   | BLogout -> 0
@@ -694,8 +718,11 @@ let prefix_index_without_token_ip (b: builder) : nat =
   | BTokenIssued -> 16
 
   | BWebTokenIp -> 0
-let prefix_index_without_token_ip_eq (b: builder) : Lemma (prefix_of b == nth_prefix prefixes_without_token_ip (prefix_index_without_token_ip b)) =
+let prefix_index_without_token_ip_eq (b: builder)
+  : Lemma (requires b <> BWebTokenIp)
+          (ensures prefix_of b == nth_prefix prefixes_without_token_ip (prefix_index_without_token_ip b)) =
   match b with
+  | BWebTokenIp -> ()
   | BLogout -> assert_norm (prefix_of BLogout == nth_prefix prefixes_without_token_ip (prefix_index_without_token_ip BLogout))
   | BSentinel -> assert_norm (prefix_of BSentinel == nth_prefix prefixes_without_token_ip (prefix_index_without_token_ip BSentinel))
   | BChallenge -> assert_norm (prefix_of BChallenge == nth_prefix prefixes_without_token_ip (prefix_index_without_token_ip BChallenge))
@@ -732,19 +759,22 @@ let prefix_index_without_token_ip_bound (b: builder) : Lemma (prefix_index_witho
   | BWebPollIp -> assert_norm (prefix_index_without_token_ip BWebPollIp < L.length prefixes_without_token_ip)
   | BWebKeysUser -> assert_norm (prefix_index_without_token_ip BWebKeysUser < L.length prefixes_without_token_ip)
   | BTokenIssued -> assert_norm (prefix_index_without_token_ip BTokenIssued < L.length prefixes_without_token_ip)
+  | BWebTokenIp -> assert_norm (prefix_index_without_token_ip BWebTokenIp < L.length prefixes_without_token_ip)
 let prefix_mem (b: builder) : Lemma (L.mem (prefix_of b) prefixes) =
   prefix_index_eq b;
   prefix_index_bound b;
   nth_prefix_mem prefixes (prefix_index b)
 
 let prefix_mem_without_token (b: builder)
-  : Lemma (L.mem (prefix_of b) prefixes_without_token) =
+  : Lemma (requires b <> BWebToken)
+          (ensures L.mem (prefix_of b) prefixes_without_token) =
   prefix_index_without_token_eq b;
   prefix_index_without_token_bound b;
   nth_prefix_mem prefixes_without_token (prefix_index_without_token b)
 
 let prefix_mem_without_token_ip (b: builder)
-  : Lemma (L.mem (prefix_of b) prefixes_without_token_ip) =
+  : Lemma (requires b <> BWebTokenIp)
+          (ensures L.mem (prefix_of b) prefixes_without_token_ip) =
   prefix_index_without_token_ip_eq b;
   prefix_index_without_token_ip_bound b;
   nth_prefix_mem prefixes_without_token_ip (prefix_index_without_token_ip b)
@@ -1084,7 +1114,7 @@ let prefix_of_injective (b1 b2: builder)
 let rec all_with (p: string) (qs: list string) : Tot bool (decreases qs) =
   match qs with
   | [] -> true
-  | q :: rest -> (p <> q ==> disjointb p q) && all_with p rest
+  | q :: rest -> (p = q || disjointb p q) && all_with p rest
 
 let rec pairwise (l: list string) : Tot bool (decreases l) =
   match l with
@@ -1099,13 +1129,29 @@ let rec all_with_sound (p: string) (qs: list string) (q: string)
   | [] -> ()
   | h :: rest -> if h = q then () else all_with_sound p rest q
 
+/// A member of a non-empty list that is not the head is a member of the tail.
+let mem_cons_elim (x h: string) (tl: list string)
+  : Lemma (requires L.mem x (h :: tl) /\ x <> h) (ensures L.mem x tl) = ()
+
 let rec pairwise_sound (l: list string) (p q: string)
   : Lemma (requires pairwise l = true /\ L.mem p l /\ L.mem q l /\ p <> q)
           (ensures disjointb p q = true)
           (decreases l) =
   match l with
   | [] -> ()
-  | h :: rest -> if h = p then all_with_sound h rest q else pairwise_sound rest p q
+  | h :: rest ->
+    if h = p then begin
+      mem_cons_elim q h rest;
+      all_with_sound h rest q
+    end else if h = q then begin
+      mem_cons_elim p h rest;
+      all_with_sound h rest p;
+      disjointb_sym h p
+    end else begin
+      mem_cons_elim p h rest;
+      mem_cons_elim q h rest;
+      pairwise_sound rest p q
+    end
 
 /// `rl:websession:token:` and `rl:websession:token:ip:` are the only
 /// prefix-related pair, so the 17-element lists are pairwise separated.
@@ -1162,50 +1208,52 @@ let key_of_disjoint (b1 b2: builder) (a1 a2: key_args)
           (ensures key_of b1 a1 <> key_of b2 a2) =
   key_of_eq b1 a1;
   key_of_eq b2 a2;
-  match b1 with
-  | BWebToken ->
-    (match b2 with
-     | BWebTokenIp -> token_vs_token_ip a1 a2
-     | _ ->
-       prefix_mem_without_token b1;
-       prefix_mem_without_token b2;
-       prefix_of_injective b1 b2;
-       prefixes_ok ();
-       pairwise_sound prefixes_without_token (prefix_of b1) (prefix_of b2);
-       disjointb_sound (prefix_of b1) (prefix_of b2) (suffix_of b1 a1) (suffix_of b2 a2))
-  | BWebTokenIp ->
-    (match b2 with
-     | BWebToken -> token_ip_vs_token a1 a2
-     | _ ->
-       prefix_mem_without_token_ip b1;
-       prefix_mem_without_token_ip b2;
-       prefix_of_injective b1 b2;
-       prefixes_ip_ok ();
-       pairwise_sound prefixes_without_token_ip (prefix_of b1) (prefix_of b2);
-       disjointb_sound (prefix_of b1) (prefix_of b2) (suffix_of b1 a1) (suffix_of b2 a2))
-  | _ ->
-    (match b2 with
-     | BWebToken ->
-       prefix_mem_without_token_ip b1;
-       prefix_mem_without_token_ip b2;
-       prefix_of_injective b1 b2;
-       prefixes_ip_ok ();
-       pairwise_sound prefixes_without_token_ip (prefix_of b1) (prefix_of b2);
-       disjointb_sound (prefix_of b1) (prefix_of b2) (suffix_of b1 a1) (suffix_of b2 a2)
-     | BWebTokenIp ->
-       prefix_mem_without_token b1;
-       prefix_mem_without_token b2;
-       prefix_of_injective b1 b2;
-       prefixes_ok ();
-       pairwise_sound prefixes_without_token (prefix_of b1) (prefix_of b2);
-       disjointb_sound (prefix_of b1) (prefix_of b2) (suffix_of b1 a1) (suffix_of b2 a2)
-     | _ ->
-       prefix_mem_without_token b1;
-       prefix_mem_without_token b2;
-       prefix_of_injective b1 b2;
-       prefixes_ok ();
-       pairwise_sound prefixes_without_token (prefix_of b1) (prefix_of b2);
-       disjointb_sound (prefix_of b1) (prefix_of b2) (suffix_of b1 a1) (suffix_of b2 a2))
+  // `rl:websession:token:` is a prefix of `rl:websession:token:ip:`, so the
+  // two related prefixes are never in the same pairwise list. Every other
+  // pair is handled by `prefixes_without_token` (when neither is
+  // `rl:websession:token:ip:`) or by `prefixes_without_token_ip` (when
+  // neither is `rl:websession:token:`); the related pair itself is
+  // separated by H in `token_vs_token_ip` / `token_ip_vs_token`.
+  if b1 = BWebToken then begin
+    if b2 = BWebTokenIp then token_vs_token_ip a1 a2
+    else begin
+      prefix_mem_without_token_ip b1;
+      prefix_mem_without_token_ip b2;
+      prefixes_ip_ok ();
+      if prefix_of b1 = prefix_of b2 then prefix_of_injective b1 b2;
+      pairwise_sound prefixes_without_token_ip (prefix_of b1) (prefix_of b2);
+      disjointb_sound (prefix_of b1) (prefix_of b2) (suffix_of b1 a1) (suffix_of b2 a2)
+    end
+  end
+  else if b1 = BWebTokenIp then begin
+    if b2 = BWebToken then token_ip_vs_token a1 a2
+    else begin
+      prefix_mem_without_token b1;
+      prefix_mem_without_token b2;
+      prefixes_ok ();
+      if prefix_of b1 = prefix_of b2 then prefix_of_injective b1 b2;
+      pairwise_sound prefixes_without_token (prefix_of b1) (prefix_of b2);
+      disjointb_sound (prefix_of b1) (prefix_of b2) (suffix_of b1 a1) (suffix_of b2 a2)
+    end
+  end
+  else begin
+    if b2 = BWebToken then begin
+      prefix_mem_without_token_ip b1;
+      prefix_mem_without_token_ip b2;
+      prefixes_ip_ok ();
+      if prefix_of b1 = prefix_of b2 then prefix_of_injective b1 b2;
+      pairwise_sound prefixes_without_token_ip (prefix_of b1) (prefix_of b2);
+      disjointb_sound (prefix_of b1) (prefix_of b2) (suffix_of b1 a1) (suffix_of b2 a2)
+    end
+    else begin
+      prefix_mem_without_token b1;
+      prefix_mem_without_token b2;
+      prefixes_ok ();
+      if prefix_of b1 = prefix_of b2 then prefix_of_injective b1 b2;
+      pairwise_sound prefixes_without_token (prefix_of b1) (prefix_of b2);
+      disjointb_sound (prefix_of b1) (prefix_of b2) (suffix_of b1 a1) (suffix_of b2 a2)
+    end
+  end
 
 // ── Non-vacuity witnesses ──────────────────────────────────────────────────
 
@@ -1242,7 +1290,8 @@ let witness_H_token_ip () : Lemma (key_hypothesis BWebTokenIp { ka_scope = Alloc
 let witness_logout_bytes ()
   : Lemma (key1 "jti:revoked:" (Alloc.String.String "abc") ==
            Alloc.String.String "jti:revoked:abc") =
-  key1_eq "jti:revoked:" (Alloc.String.String "abc")
+  assert_norm (key1 "jti:revoked:" (Alloc.String.String "abc") ==
+               Alloc.String.String "jti:revoked:abc")
 
 /// ... and their keys are distinct for distinct ids.
 let witness_logout_distinct ()
