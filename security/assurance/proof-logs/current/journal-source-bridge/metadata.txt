@@ -1,0 +1,25 @@
+branch: t3/m28-source-bridge
+sources_commit: d90085a
+gate: security/formal/m28-trace-equivalence/verify.sh
+gate_command: systemd-run --user -p MemoryMax=3G -p CPUQuota=50% (VELA_BOUNDED=1 VELA_PROOF_TIMEOUT=1500 VELA_FSTAR_BIN=$HOME/.local/opt/vela-formal-fstar-2025.10.06/fstar/bin/fstar.exe) security/formal/m28-trace-equivalence/verify.sh
+reason_local: build box 192.168.1.10 unreachable (No route to host)
+fstar: F* 2025.10.06 (commit 7b347386330d0e5a331a220535b6f15288903234)
+z3: 4.13.3 (--z3version)
+flags: --cache_off --z3rlimit 100 --z3version 4.13.3
+module_sha256 M28TraceEquivalence.fst: 2e049ca0404d910891e88f33a144b3367204cb4b4130214123d01e197ca7b7a1
+module_sha256 M28_source_terms.fst: 694f1f24de0e6cde73dfd35c5b63d01df93285bb27ddd47c062acaa446fdb46f
+module_sha256 M28_source_semantics.fst: f20b40e21ff4592ad9fe3935c263794d92c18287ea2cb4c621f81398ef9ac72e
+module_sha256 M28_slot_projection.fst: 81af6bf9753a184bb3379cae7ff1fde503472b709cd0d02dcfae1389e43112c5
+module_sha256 M28_source_bridge.fst: be813c702beb02a95a6cbae6ddaf19a00f2c8ad4735c6bd33e93adfa14fdab5f
+module_sha256 M28_source_lemmas.fst: b36fe97c655d5a6cdccfe501406d62246bd292468e63f31f59a8187edd077455
+module_sha256 M28_source_witness.fst: 2c0d6e290ce75e6fb25a1848a0f58274aa9472598f67b423f3183caf228d3b9d
+verified_modules: 7
+verification_result: all verification conditions discharged successfully
+warnings: 0
+wall_time: 2m21,941s at 0.5 CPU
+no_escape_gate: 181 F* files: no proof escapes, no unimplemented interfaces.
+transcription_drift_check: m28 transcription matches the .spthy: 7 rules, 18 facts, 10 lemmas
+formal_tests: 111 passed (python3 -m unittest discover -s security/formal/tests)
+tamarin_rules_changed: 0 (.spthy header comment only)
+tamarin_rerun: not run here (box offline); rules, restriction and lemmas unchanged
+rust_files_changed: 0
