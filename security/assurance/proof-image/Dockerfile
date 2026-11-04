@@ -105,14 +105,19 @@ RUN curl -fL --retry 3 --connect-timeout 30 -o /tmp/tamarin.tar.gz \
 # installs are exact versions (1.99.1 and nightly-2025-11-08, the same pins
 # dtolnay/rust-toolchain and install-hax.sh use). The published image digest
 # freezes the result.
+# PATH must hold /opt/cargo/bin before the install step checks rustc.
+# opam runs as root in the image build: OPAMROOTISOK/OPAMYES keep it
+# non-interactive (sandboxing is already disabled by the installers).
 ENV RUSTUP_HOME=/opt/rustup \
     CARGO_HOME=/opt/cargo \
-    CARGO_INCREMENTAL=0
+    CARGO_INCREMENTAL=0 \
+    OPAMROOTISOK=1 \
+    OPAMYES=1 \
+    PATH=/opt/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
       | sh -s -- -y --profile minimal --default-toolchain 1.99.1 --no-modify-path \
  && rustc --version \
  && rustc --version | grep -Eq '^rustc 1\.99\.1 '
-ENV PATH=/opt/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # ── hax 0.3.7 frontend/driver/engine with the frozen opam resolution ────────
 # Only the two files the installer needs are copied; the repository stays out
