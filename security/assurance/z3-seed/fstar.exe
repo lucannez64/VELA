@@ -1,0 +1,102 @@
+#!/usr/bin/env -S python3 -I
+"""Give every F* module check a Z3 random seed (plan step T8).
+
+Put this directory before the real fstar.exe on PATH and set VELA_Z3_SEED to a
+positive integer. Every call that checks modules then runs as
+
+    fstar.exe --z3seed <VELA_Z3_SEED> <original arguments>
+
+so the same proof is replayed against a different set of Z3 search decisions.
+`--z3seed` is F* 2025.10.06's Z3 random seed (default 0); 04-reproducibility.md
+pins the Z3 4.13.3 that F* 2025.10.06 runs.
+
+Without VELA_Z3_SEED the shim is a pure pass-through: it finds the next
+`fstar.exe` on PATH, skipping this directory, and execs it with the arguments
+unchanged. Calls that do not check modules (`--dep`, `--version`, `--print`,
+...) also pass through, and a caller that already passes `--z3seed` keeps its
+own value.
+
+Composition. This shim and security/assurance/fstar-cache/fstar.exe are both
+named `fstar.exe`, so "the next fstar.exe on PATH" can be the other shim. To
+compose in either order without an exec loop, this shim skips both its own
+directory and the sibling fstar-cache directory when it resolves the next
+binary; it also removes those two directories from PATH for the process it
+execs. A cache shim placed first still runs its restore logic, calls this shim,
+and this shim reaches the real binary with the seed; a seed shim placed first
+injects the seed and bypasses the cache, which is what an evidence run wants
+(those runs are cold anyway: VELA_FSTAR_CACHE=0). vela-heavy's PATH prepend
+(the cache shim, then the pinned F* bin) composes the same way.
+
+Optional, for the rlimit inventory only: VELA_FSTAR_QUERY_STATS=1 appends
+`--query_stats` to module-checking calls (F* then prints per-query statistics,
+including the rlimit each query used). It does not change what is checked.
+
+Optional logging: VELA_Z3_SEED_LOG=1 prints one line per call to stderr with
+the exact argv this shim execs, which is the evidence that a gate ran under a
+seed. VELA_Z3_SEED_LOG is unset (silent) by default.
+"""
+
+import os
+import shlex
+import sys
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+# The sibling shared-cache shim; see "Composition" above.
+CACHE_SHIM = os.path.realpath(os.path.join(os.path.dirname(HERE), "fstar-cache"))
+SKIP_DIRS = {HERE, CACHE_SHIM}
+# Calls that do not check modules; same list as the F* cache shim.
+PASS_FLAGS = {"--dep", "--version", "--help", "--print_cache_version", "--ide",
+              "--lsp", "--in", "--print", "--print_in_place"}
+
+
+def real_fstar():
+    for d in os.environ.get("PATH", "").split(os.pathsep):
+        if not d or os.path.realpath(d) in SKIP_DIRS:
+            continue
+        p = os.path.join(d, "fstar.exe")
+        if os.path.isfile(p) and os.access(p, os.X_OK):
+            return p
+    sys.exit("z3-seed: no real fstar.exe on PATH")
+
+
+def log(msg):
+    if os.environ.get("VELA_Z3_SEED_LOG") == "1":
+        print(f"z3-seed: {msg}", file=sys.stderr)
+
+
+def exec_fstar(fstar, args):
+    env = os.environ.copy()
+    env["PATH"] = os.pathsep.join(
+        d for d in env.get("PATH", "").split(os.pathsep)
+        if d and os.path.realpath(d) not in SKIP_DIRS) or os.defpath
+    log("exec " + shlex.join([fstar, *args]))
+    os.execve(fstar, [fstar, *args], env)
+
+
+def main():
+    args = sys.argv[1:]
+    fstar = real_fstar()
+    seed = os.environ.get("VELA_Z3_SEED", "").strip()
+    if not seed:
+        log(f"VELA_Z3_SEED unset; pure pass-through to {fstar}")
+        exec_fstar(fstar, args)
+    try:
+        value = int(seed)
+    except ValueError:
+        value = 0
+    if value <= 0:
+        sys.exit(f"z3-seed: VELA_Z3_SEED must be a positive integer, got {seed!r}")
+    if any(arg in PASS_FLAGS for arg in args):
+        log(f"not a module check (seed {value} unused); pass-through to {fstar}")
+        exec_fstar(fstar, args)
+    if any(arg == "--z3seed" or arg.startswith("--z3seed=") for arg in args):
+        log(f"caller already passes --z3seed; pass-through to {fstar}")
+        exec_fstar(fstar, args)
+    extra = []
+    if os.environ.get("VELA_FSTAR_QUERY_STATS") == "1":
+        extra = ["--query_stats"]
+    exec_fstar(fstar, ["--z3seed", str(value), *extra, *args])
+
+
+if __name__ == "__main__":
+    sys.exit(main())

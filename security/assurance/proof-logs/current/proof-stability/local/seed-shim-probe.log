@@ -1,0 +1,58 @@
+z3-seed probe: work=/tmp/vela-z3-seed-probe.GVSdET
+z3-seed probe: fstar=F* 2025.10.06
+z3-seed probe: z3=Z3 version 4.13.3 - 64 bit
+
+== pass-through: PATH prefix=/home/hirew/.t3/worktrees/VELA/t3-fc5df465/security/assurance/z3-seed: VELA_Z3_SEED=<unset>
+z3-seed: VELA_Z3_SEED unset; pure pass-through to /tmp/vela-fstar-prebuilt/fstar/bin/fstar.exe
+z3-seed: exec /tmp/vela-fstar-prebuilt/fstar/bin/fstar.exe --log_queries --query_stats Seed_probe.fst
+Verified module: Seed_probe
+All verification conditions discharged successfully
+(set-option :smt.random-seed 0)
+smt.random-seed in dumped query: 0 
+query dump digest: 1019cb22a7beca65
+
+== seed-1: PATH prefix=/home/hirew/.t3/worktrees/VELA/t3-fc5df465/security/assurance/z3-seed: VELA_Z3_SEED=1
+z3-seed: exec /tmp/vela-fstar-prebuilt/fstar/bin/fstar.exe --z3seed 1 --log_queries --query_stats Seed_probe.fst
+Verified module: Seed_probe
+All verification conditions discharged successfully
+(set-option :smt.random-seed 1)
+smt.random-seed in dumped query: 1 
+query dump digest: bfb2e0989912ec9b
+
+== seed-1-repeat: PATH prefix=/home/hirew/.t3/worktrees/VELA/t3-fc5df465/security/assurance/z3-seed: VELA_Z3_SEED=1
+z3-seed: exec /tmp/vela-fstar-prebuilt/fstar/bin/fstar.exe --z3seed 1 --log_queries --query_stats Seed_probe.fst
+Verified module: Seed_probe
+All verification conditions discharged successfully
+(set-option :smt.random-seed 1)
+smt.random-seed in dumped query: 1 
+query dump digest: bfb2e0989912ec9b
+
+== seed-2: PATH prefix=/home/hirew/.t3/worktrees/VELA/t3-fc5df465/security/assurance/z3-seed: VELA_Z3_SEED=2
+z3-seed: exec /tmp/vela-fstar-prebuilt/fstar/bin/fstar.exe --z3seed 2 --log_queries --query_stats Seed_probe.fst
+Verified module: Seed_probe
+All verification conditions discharged successfully
+(set-option :smt.random-seed 2)
+smt.random-seed in dumped query: 2 
+query dump digest: 7b6790cf7db20c57
+seeded runs are deterministic and differ across seeds: yes
+tracked cache shim executable: NO in this worktree (composition tested on +x copies)
+
+== cache-first: PATH prefix=/tmp/vela-z3-seed-probe.GVSdET/shimroot/fstar-cache:/tmp/vela-z3-seed-probe.GVSdET/shimroot/z3-seed: VELA_Z3_SEED=3
+z3-seed: exec /tmp/vela-fstar-prebuilt/fstar/bin/fstar.exe --z3seed 3 --log_queries --query_stats --cache_checked_modules --cache_dir /tmp/vela-fstar-run-7_t_c7jv/checked Seed_probe.fst --hint_dir /tmp/vela-fstar-run-7_t_c7jv/hints --use_hints --record_hints
+Verified module: Seed_probe
+All verification conditions discharged successfully
+(set-option :smt.random-seed 3)
+smt.random-seed in dumped query: 3 
+query dump digest: a9b70151533f006b
+cache shim ran with cache-first: yes
+
+== seed-first: PATH prefix=/tmp/vela-z3-seed-probe.GVSdET/shimroot/z3-seed:/tmp/vela-z3-seed-probe.GVSdET/shimroot/fstar-cache: VELA_Z3_SEED=3
+z3-seed: exec /tmp/vela-fstar-prebuilt/fstar/bin/fstar.exe --z3seed 3 --log_queries --query_stats --cache_off Seed_probe.fst
+Verified module: Seed_probe
+All verification conditions discharged successfully
+(set-option :smt.random-seed 3)
+smt.random-seed in dumped query: 3 
+query dump digest: 03e549a1d385b9f6
+seed-first bypasses the cache shim by design: yes (put cache first for cached seeded runs)
+
+z3-seed probe: PASS
