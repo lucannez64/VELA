@@ -42,7 +42,7 @@ jobs:
   differential:
     name: std models vs Rust
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: dtolnay/rust-toolchain@d124f86f28ff42855784ff3319f48ac182c248f8 # 1.99.1
@@ -54,19 +54,21 @@ jobs:
         with:
           path: |
             ${{ runner.temp }}/vela-t7-fstar
-            ~/.opam/vela-t7
-          key: std-model-diff-tools-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('security/assurance/install-formal-fstar.sh', '.github/workflows/std-model-diff.yml') }}
+            ~/.opam
+          key: std-model-diff-tools-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('security/assurance/install-formal-fstar.sh', '.github/workflows/std-model-diff.yml') }}
 
       # One clearly named tool step; the parent can swap it for the proof
-      # container. It reuses security/assurance/install-formal-fstar.sh for F*
-      # (the same prebuilt release and Z3 the symbolic job uses) and creates
-      # only the OCaml runtime the F* release extracted its ulib to.
-      # F* 2025.10.06 ships `lib/fstar/lib/fstar.cmxa` built with OCaml 4.14,
-      # so the switch is pinned to that ABI; anything else fails the smoke
-      # check below with a clear message instead of a confusing link error.
+      # container. It reuses security/assurance/install-formal-fstar.sh for the
+      # F* binary and Z3 (the same prebuilt release the symbolic job uses), and
+      # builds the OCaml switch the evidence run linked against: OCaml 5.1.1
+      # with fstar.2025.10.06's `fstar.lib` built from opam source. Every
+      # package is an exact version (the evidence switch's full set, see
+      # proof-logs/current/std-model-diff/evidence-run.log). The prebuilt
+      # release's own fstar.cmxa is not used: it was compiled against other
+      # ppx_deriving/OCaml builds and does not link with these.
       - name: Install pinned F*, OCaml and Z3
         if: steps.tools.outputs.cache-hit != 'true'
-        timeout-minutes: 30
+        timeout-minutes: 120
         run: |
           set -euo pipefail
           # Fixed Ubuntu snapshot (security/assurance/proof-image/apt-snapshot.conf).
@@ -84,20 +86,26 @@ jobs:
             -o Acquire::https::Timeout=30 install -y --no-install-recommends \
             opam libgmp-dev pkg-config
           security/assurance/install-formal-fstar.sh "$RUNNER_TEMP/vela-t7-fstar"
-          if ! opam switch list --short 2>/dev/null | grep -Fxq vela-t7; then
-            opam init --bare --disable-sandboxing --no-setup --yes
-            opam switch create vela-t7 ocaml-base-compiler.4.14.2 --yes
-          fi
-          # Exact versions: the ones the evidence run linked
-          # (proof-logs/current/std-model-diff/evidence-run.log).
-          opam install --switch vela-t7 --yes ocamlfind.1.9.8 zarith.1.14 batteries.3.11.0 \
-            pprint.20230830 stdint.0.7.2 yojson.3.0.0 ppx_deriving.6.2.0 ppx_deriving_yojson.3.10.0
+          opam init --bare --disable-sandboxing --no-setup --yes
+          opam switch create vela-t7 ocaml-base-compiler.5.1.1 --yes
+          opam install --switch vela-t7 --yes \
+            batteries.3.11.0 camlp-streams.5.0.1 conf-gmp.5 conf-pkg-config.5 cppo.1.8.0 \
+            dune.3.24.2 fstar.2025.10.06 gen.1.1 memtrace.0.2.3 menhir.20260209 \
+            menhirCST.20260209 menhirGLR.20260209 menhirLib.20260209 menhirSdk.20260209 \
+            mtime.2.2.0 num.1.6 ocamlbuild.0.16.1 ocaml-compiler-libs.v0.12.4 ocamlfind.1.9.8 \
+            pprint.20230830 ppx_derivers.1.2.1 ppx_deriving.6.2.0 ppx_deriving_yojson.3.10.0 \
+            ppxlib.0.39.0 process.0.2.1 sedlex.3.8.1 sexplib0.v0.17.0 stdint.0.7.2 \
+            topkg.1.1.1 yojson.3.0.0 zarith.1.14
+          opam clean --switch vela-t7 --yes
           "$HOME/.opam/vela-t7/bin/ocamlopt" -version
+
+      # Also on a cache hit: ocamlfind runs ocamlopt.opt from the switch.
+      - name: Activate the OCaml switch
+        run: echo "$HOME/.opam/vela-t7/bin" >> "$GITHUB_PATH"
 
       - name: Check the extracted ulib links
         env:
           OCAMLFIND: /home/runner/.opam/vela-t7/bin/ocamlfind
-          OCAMLPATH: ${{ runner.temp }}/vela-t7-fstar/fstar/lib
         run: |
           set -euo pipefail
           "$OCAMLFIND" query fstar.lib
