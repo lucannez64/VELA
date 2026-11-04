@@ -44,6 +44,10 @@ zeroize        = { version = "1", features = ["derive"] }
 thiserror      = "1"
 vela-client-recovery-policy = { path = "../vela-client-recovery-policy" }
 vela-client-share-policy = { path = "../vela-client-share-policy" }
+# The production download-admission composition calls the verified epoch and
+# rollback kernels; the decisions stay in that crate, the order lives in
+# `admission.rs`.
+vela-sync-policy = { path = "../vela-sync-policy" }
 
 [dev-dependencies]
 hex            = "0.4"

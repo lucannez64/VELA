@@ -151,6 +151,11 @@ jobs:
           python3 security/formal/check-sql-schema.py
           python3 -m unittest discover -s security/formal/tests -p 'test_sql_schema.py'
 
+      - name: Check every bridge export is a thin core call
+        run: |
+          python3 -I security/formal/check-bridge-thinness.py
+          python3 -I -m unittest discover -s security/formal/tests -p 'test_bridge_thinness.py'
+
       - name: Check the proof jobs' reuse keys cover their inputs
         run: python3 -m unittest discover -s security/formal/tests -p 'test_proof_inputs.py'
 

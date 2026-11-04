@@ -41,6 +41,24 @@ pub enum PublicationAction {
     Reject,
 }
 
+impl PublicationAction {
+    /// The wire name clients persist in their recovery journal.
+    ///
+    /// Bridges used to repeat this seven-arm match, so a renamed action could
+    /// reach one platform differently from another.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::StageServer => "stage_server",
+            Self::UploadCloudCandidate => "upload_cloud_candidate",
+            Self::FinalizeServer => "finalize_server",
+            Self::PromoteCloudActive => "promote_cloud_active",
+            Self::Complete => "complete",
+            Self::Retire => "retire",
+            Self::Reject => "reject",
+        }
+    }
+}
+
 pub fn publication_state_is_well_formed(facts: PublicationFacts) -> bool {
     (!facts.server_finalized || (facts.server_staged && facts.cloud_candidate_durable))
         && (!facts.cloud_active || facts.server_finalized)

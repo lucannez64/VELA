@@ -40,6 +40,21 @@ impl From<RecoveryShareChannel> for RecoveryChannel {
     }
 }
 
+impl RecoveryShareChannel {
+    /// Decode the wire name a client sends in a recovery request.
+    ///
+    /// Keeping the three accepted names here means Android, Apple and desktop
+    /// cannot accept different spellings of the same channel.
+    pub fn from_wire_name(name: &str) -> Option<Self> {
+        match name {
+            "cloud" => Some(Self::Cloud),
+            "server" => Some(Self::Server),
+            "trusted_contact" => Some(Self::TrustedContact),
+            _ => None,
+        }
+    }
+}
+
 pub struct BoundRecoveryShare<'a> {
     pub account_id: &'a str,
     pub key_epoch: i64,
@@ -145,6 +160,145 @@ fn bound_share_facts<'a>(
         recipient_bound: bound.recipient_bound,
         coordinate: bound.share.x,
     }
+}
+
+/// One decoded, channel-tagged share in a recovery request (M18).
+pub struct CombineShareInput<'a> {
+    pub share: &'a Share,
+    pub channel: RecoveryShareChannel,
+    pub account_id: &'a str,
+    pub key_epoch: i64,
+    pub split_id: Option<&'a str>,
+    /// True only when the share was opened out of an authenticated,
+    /// recipient-bound contact envelope.
+    pub recipient_bound: bool,
+}
+
+/// A decoded recovery request.
+///
+/// Both mobile bridges used to carry an identical copy of the path selection
+/// below (which shape of request selects which reconstructor, and the
+/// "exactly two shares" rule). The decision lives here once.
+pub struct CombineRecoveryInput<'a> {
+    pub requested_user_id: Option<&'a str>,
+    /// Legacy positional shares (`shares_b64`).
+    pub shares: &'a [Share],
+    pub cloud_user_id: Option<&'a str>,
+    pub cloud_key_epoch: Option<i64>,
+    pub cloud_split_id: Option<&'a str>,
+    pub server_user_id: Option<&'a str>,
+    pub server_key_epoch: Option<i64>,
+    pub server_split_id: Option<&'a str>,
+    /// Channel-tagged bound shares. When non-empty, exactly these two are
+    /// reconstructed through the verified pair-selection policy.
+    pub bound_shares: &'a [CombineShareInput<'a>],
+}
+
+fn combine_bound<'a>(input: &'a CombineShareInput<'a>) -> BoundRecoveryShare<'a> {
+    BoundRecoveryShare {
+        account_id: input.account_id,
+        key_epoch: input.key_epoch,
+        split_id: input.split_id,
+        channel: input.channel,
+        recipient_bound: input.recipient_bound,
+        share: input.share,
+    }
+}
+
+/// Reconstruct the RMS from a decoded recovery request.
+///
+/// Three shapes are accepted, exactly as the bridges always accepted them:
+///
+/// - channel-tagged `bound_shares` (M18): exactly two, any two distinct
+///   channels, through the verified pair-selection policy;
+/// - the pre-M18 flat cloud+server binding: exactly two positional shares;
+/// - no binding fields at all: the legacy raw `shamir::reconstruct` path.
+///
+/// A partially filled binding is refused rather than guessed at.
+pub fn combine_recovery_shares(input: CombineRecoveryInput<'_>) -> Result<[u8; 32]> {
+    if !input.bound_shares.is_empty() {
+        let requested = input.requested_user_id.ok_or_else(|| {
+            VelaError::InvalidParameter(
+                "requested_user_id is required for bound account recovery".into(),
+            )
+        })?;
+        if input.bound_shares.len() != 2 {
+            return Err(VelaError::InvalidParameter(
+                "bound account recovery requires exactly two shares".into(),
+            ));
+        }
+        let recovered = reconstruct_account_recovery(
+            requested,
+            combine_bound(&input.bound_shares[0]),
+            combine_bound(&input.bound_shares[1]),
+        )?;
+        return Ok(recovered.rms);
+    }
+
+    match (
+        input.requested_user_id,
+        input.cloud_user_id,
+        input.cloud_key_epoch,
+        input.server_user_id,
+        input.server_key_epoch,
+    ) {
+        (Some(requested), Some(cloud_user), Some(cloud_epoch), Some(server_user), Some(server_epoch)) => {
+            if input.shares.len() != 2 {
+                return Err(VelaError::InvalidParameter(
+                    "bound account recovery requires exactly two shares".into(),
+                ));
+            }
+            let recovered = reconstruct_account_recovery(
+                requested,
+                BoundRecoveryShare {
+                    account_id: cloud_user,
+                    key_epoch: cloud_epoch,
+                    split_id: input.cloud_split_id,
+                    channel: RecoveryShareChannel::Cloud,
+                    recipient_bound: false,
+                    share: &input.shares[0],
+                },
+                BoundRecoveryShare {
+                    account_id: server_user,
+                    key_epoch: server_epoch,
+                    split_id: input.server_split_id,
+                    channel: RecoveryShareChannel::Server,
+                    recipient_bound: false,
+                    share: &input.shares[1],
+                },
+            )?;
+            Ok(recovered.rms)
+        }
+        (None, None, None, None, None) => {
+            let secret = shamir::reconstruct(input.shares, 32)?;
+            secret.as_slice().try_into().map_err(|_| {
+                VelaError::InvalidParameter("reconstructed RMS must be exactly 32 bytes".into())
+            })
+        }
+        _ => Err(VelaError::InvalidParameter(
+            "incomplete account/epoch recovery binding".into(),
+        )),
+    }
+}
+
+/// Open a recovery transfer capsule and require exactly a 32-byte RMS.
+///
+/// Android required exactly 32 bytes; Apple accepted `>= 32` and silently
+/// truncated (FFI inventory F11). Truncation turns a longer, differently
+/// shaped payload into a key the caller did not intend, so the stricter rule
+/// now applies to both bridges and lives here once.
+pub fn open_rms_transfer_capsule(
+    transfer_key: &[u8; 32],
+    capsule: &[u8],
+) -> Result<Zeroizing<[u8; 32]>> {
+    let plaintext = crate::aead::decrypt(transfer_key, capsule)?;
+    plaintext
+        .as_slice()
+        .try_into()
+        .map(Zeroizing::new)
+        .map_err(|_| {
+            VelaError::InvalidParameter("decrypted RMS capsule must be exactly 32 bytes".into())
+        })
 }
 
 // ── Authenticated, recipient-bound trusted-contact envelopes ────────────────
@@ -346,6 +500,24 @@ pub fn open_contact_share_response(
     blob: &[u8],
 ) -> Result<Share> {
     open_for_recipient(CONTACT_RESPONSE_DOMAIN, request_sk, context, blob)
+}
+
+/// Open a contact envelope of either direction.
+///
+/// The bridge used to pick the opener from a caller-supplied boolean. Keeping
+/// the choice here means a caller cannot re-implement it differently, and the
+/// two domains stay distinct.
+pub fn open_contact_share_for_direction(
+    recipient_sk: &crate::kem::HybridSecretKey,
+    context: &ContactShareContext<'_>,
+    blob: &[u8],
+    is_response: bool,
+) -> Result<Share> {
+    if is_response {
+        open_contact_share_response(recipient_sk, context, blob)
+    } else {
+        open_contact_share(recipient_sk, context, blob)
+    }
 }
 
 // ── RMS possession proof (server enrollment without WebAuthn) ────────────────

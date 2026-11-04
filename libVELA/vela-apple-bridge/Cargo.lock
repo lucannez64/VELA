@@ -1433,6 +1433,7 @@ dependencies = [
  "thiserror",
  "vela-client-recovery-policy",
  "vela-client-share-policy",
+ "vela-sync-policy",
  "x25519-dalek",
  "zeroize",
 ]

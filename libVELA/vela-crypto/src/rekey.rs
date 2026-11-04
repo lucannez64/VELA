@@ -164,6 +164,30 @@ pub fn seal_fleet_chunk(
     }
 }
 
+/// The fleet's default key epoch: the pre-rotation AAD every client still
+/// reads. A caller that omits the epoch is on this epoch, not on an implicit
+/// "latest".
+pub const DEFAULT_FLEET_EPOCH: i64 = 1;
+
+/// Seal a chunk whose caller may omit the epoch.
+///
+/// The "absent means epoch 1" default used to be re-implemented in every
+/// bridge (Android rejected an absent epoch, Apple and WASM substituted 1).
+/// It lives here once so the three writers cannot disagree, and a nonpositive
+/// epoch is refused by the same message everywhere.
+pub fn seal_fleet_chunk_optional_epoch(
+    key: &[u8; 32],
+    plaintext: &[u8],
+    epoch: Option<i64>,
+    chunk_id: &str,
+    lamport_clock: i64,
+) -> Result<Vec<u8>> {
+    let epoch = u64::try_from(epoch.unwrap_or(DEFAULT_FLEET_EPOCH)).map_err(|_| {
+        VelaError::InvalidParameter("vault key epoch must be positive".into())
+    })?;
+    seal_fleet_chunk(key, plaintext, epoch, chunk_id, lamport_clock)
+}
+
 /// Refusal text for a pre-C-2 blob that carries no sealed header.
 ///
 /// The Android and iOS clients branch on this substring to show their
@@ -207,6 +231,24 @@ pub fn open_fleet_chunk(
             Ok(plaintext)
         }
     }
+}
+
+/// Open a chunk on a migration path whose caller may omit the epoch.
+///
+/// The mirror of [`seal_fleet_chunk_optional_epoch`]: "absent means epoch 1"
+/// lives here once. A sync download must not use this function; it calls
+/// [`open_sealed_fleet_chunk`] (through `vela_crypto::admission`).
+pub fn open_fleet_chunk_optional_epoch(
+    key: &[u8; 32],
+    blob: &[u8],
+    epoch: Option<i64>,
+    chunk_id: &str,
+    lamport_clock: i64,
+) -> Result<Zeroizing<Vec<u8>>> {
+    let epoch = u64::try_from(epoch.unwrap_or(DEFAULT_FLEET_EPOCH)).map_err(|_| {
+        VelaError::InvalidParameter("vault key epoch must be positive".into())
+    })?;
+    open_fleet_chunk(key, blob, epoch, chunk_id, lamport_clock)
 }
 
 /// Open a chunk on a production sync download path.

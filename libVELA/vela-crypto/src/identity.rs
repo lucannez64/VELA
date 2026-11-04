@@ -280,6 +280,18 @@ impl DeviceIdentity {
         kem::open_share(dk, capsule)
     }
 
+    /// Open an enrollment RMS capsule and require exactly a 32-byte root seed.
+    ///
+    /// Both mobile bridges used to check the length after this call; a capsule
+    /// that opens to something else is not an RMS, so the rule belongs next to
+    /// the open.
+    pub fn open_identity_capsule_rms(&self, capsule: &[u8]) -> Result<[u8; 32]> {
+        let plaintext = self.open_identity_capsule(capsule)?;
+        plaintext.as_slice().try_into().map_err(|_| {
+            VelaError::InvalidParameter("capsule did not contain a 32-byte root seed".into())
+        })
+    }
+
     /// Encrypt the private halves under `key` for the app to persist.
     ///
     /// The app stores an opaque blob: it can lose it, but it cannot read a key

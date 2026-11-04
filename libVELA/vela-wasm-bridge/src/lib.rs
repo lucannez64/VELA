@@ -7,14 +7,14 @@
 //! the `#[wasm_bindgen]` wrappers only adapt them to the browser ABI.
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 use vela_core::calculate_password_strength;
-use vela_crypto::{aead, kem, signing};
+use vela_crypto::admission::{AdmittedDownload, DownloadAdmissionState, DownloadRefusal};
+use vela_crypto::{kem, rekey, signing};
 
 // ── Response plumbing ───────────────────────────────────────────────────────────
 
@@ -105,7 +105,7 @@ struct EncryptChunkRequest {
     /// Current account key epoch. Absent callers and explicit epoch 1 both use
     /// the fleet's legacy chunk AAD; epoch binding begins at epoch 2.
     #[serde(default)]
-    epoch: Option<u64>,
+    epoch: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -124,7 +124,7 @@ struct AdmittedDecryptChunkRequest {
     lamport_clock: i64,
     /// Vault key epoch the server's `GET /vault/sync` manifest reports. A
     /// malicious server controls this integer; the tab's own floor is what
-    /// makes it meaningful (see `AdmissionState`).
+    /// makes it meaningful (see `DownloadAdmissionState`).
     key_epoch: i64,
 }
 
@@ -136,55 +136,29 @@ struct AdmittedDecryptChunkResponse {
     lamport_clock: i64,
 }
 
-/// Per-tab admission state.
-///
-/// The web client has **no durable store**: this lives in WASM memory and dies
-/// with the page (a reload needs a fresh grant, and starts a fresh first
-/// contact). The mobile bridges keep the same facts in Keystore/Keychain-backed
-/// settings and pass them in; the browser has no such store, so the state lives
-/// beside the policy instead of in the (server-facing) caller.
-#[derive(Default)]
-struct AdmissionState {
-    /// First positive epoch this tab admitted. Every later download must use
-    /// exactly this epoch (`plan_sync_epoch_match`); there is no adoption path
-    /// on the web, so a rotation forces a re-grant.
-    epoch_floor: Option<i64>,
-    /// Highest revision this tab admitted for each chunk id.
-    last_seen: BTreeMap<String, i64>,
-}
-
+// Per-tab admission state.
+//
+// The web client has **no durable store**: this lives in WASM memory and dies
+// with the page (a reload needs a fresh grant, and starts a fresh first
+// contact). The state machine itself is
+// `vela_crypto::admission::DownloadAdmissionState`, shared with the mobile
+// bridges' facts; the browser only supplies the thread-local storage.
 thread_local! {
-    static ADMISSION: RefCell<AdmissionState> = RefCell::new(AdmissionState::default());
+    static ADMISSION: RefCell<DownloadAdmissionState> =
+        RefCell::new(DownloadAdmissionState::default());
 }
 
-fn admitted_epoch_floor() -> Option<i64> {
-    ADMISSION.with(|state| state.borrow().epoch_floor)
+fn with_admission<T>(f: impl FnOnce(&DownloadAdmissionState) -> T) -> T {
+    ADMISSION.with(|state| f(&state.borrow()))
 }
 
-fn admitted_last_seen(chunk_id: &str) -> Option<i64> {
-    ADMISSION.with(|state| state.borrow().last_seen.get(chunk_id).copied())
-}
-
-/// Record the facts of an admission that already passed every gate. Callers
-/// must only call this after the plaintext was produced and decoded, so a
-/// failed attempt never moves the floor or the per-chunk baseline.
-fn record_admission(epoch: i64, chunk_id: &str, lamport_clock: i64) {
-    ADMISSION.with(|state| {
-        let mut state = state.borrow_mut();
-        if state.epoch_floor.is_none() {
-            state.epoch_floor = Some(epoch);
-        }
-        state
-            .last_seen
-            .entry(chunk_id.to_string())
-            .and_modify(|seen| *seen = (*seen).max(lamport_clock))
-            .or_insert(lamport_clock);
-    });
+fn record_admission(admitted: &AdmittedDownload, chunk_id: &str) {
+    ADMISSION.with(|state| state.borrow_mut().record(admitted, chunk_id));
 }
 
 #[cfg(test)]
 fn reset_admission_state() {
-    ADMISSION.with(|state| *state.borrow_mut() = AdmissionState::default());
+    ADMISSION.with(|state| *state.borrow_mut() = DownloadAdmissionState::default());
 }
 
 #[derive(Deserialize)]
@@ -305,10 +279,10 @@ fn open_link_impl(request_json: &str) -> Result<OpenLinkResponse, String> {
 fn encrypt_vault_chunk_impl(request_json: &str) -> Result<EncryptChunkResponse, String> {
     let req: EncryptChunkRequest = serde_json::from_str(request_json).map_err(|e| e.to_string())?;
     let key = decode_key(&req.chunk_key_b64)?;
-    let ciphertext = vela_crypto::rekey::seal_fleet_chunk(
+    let ciphertext = rekey::seal_fleet_chunk_optional_epoch(
         &key,
         req.vault_json.as_bytes(),
-        req.epoch.unwrap_or(1),
+        req.epoch,
         &req.chunk_id,
         req.lamport_clock,
     )
@@ -318,24 +292,16 @@ fn encrypt_vault_chunk_impl(request_json: &str) -> Result<EncryptChunkResponse, 
     })
 }
 
-/// Production web download admission (U-27, mirroring the mobile bridges).
+/// Production web download admission (U-27).
 ///
-/// The server supplies `lamport_clock`, `key_epoch` and the blob; neither is
-/// trusted on its own. This function:
+/// The pipeline itself is [`vela_crypto::admission::DownloadAdmissionState`],
+/// shared with the mobile bridges: epoch floor pinning and the verified
+/// `plan_sync_epoch_match` / `plan_chunk_download` decisions, then the real
+/// sealed AEAD open. Only after all of them does plaintext leave it.
 ///
-/// 1. refuses any blob without the self-describing sealed header, because the
-///    pre-C-2 unsealed shape binds neither the chunk id nor the revision — an
-///    open would make the rollback decision below meaningless;
-/// 2. pins the first admitted epoch as this tab's floor and thereafter requires
-///    exact agreement through the verified `plan_sync_epoch_match` (a lower
-///    epoch is a downgrade, a higher one an unadopted rotation: both refuse);
-/// 3. performs the real AEAD open, so `aad_binding_verified` below is a fact
-///    about successful Rust decryption, never a JSON boolean; and
-/// 4. runs the verified `plan_chunk_download` rollback decision against the
-///    highest revision this tab already admitted for the chunk.
-///
-/// Only after all four does plaintext leave this function. The floor and the
-/// per-chunk baselines are tab-local (WASM memory); there is no durable state.
+/// The floor and the per-chunk baselines are tab-local (WASM memory); there is
+/// no durable state. This function converts the JSON request into that call and
+/// the typed refusal back into the web client's error envelope.
 fn decrypt_admitted_vault_chunk_impl(
     request_json: &str,
 ) -> Result<AdmittedDecryptChunkResponse, String> {
@@ -346,83 +312,57 @@ fn decrypt_admitted_vault_chunk_impl(
         .map_err(|e| e.to_string())?;
     let key = decode_key(&req.chunk_key_b64)?;
 
-    // A sealed blob is the only shape whose opening checks the labels below.
-    if !aead::is_sealed(&ciphertext) {
-        return Err(format!(
-            "chunk \"{}\" uses the old unsealed format, which does not bind it to its chunk \
-             or revision; open the vault in an app to migrate it",
-            req.chunk_id
-        ));
-    }
-
-    // First contact pins the tab's floor; nothing in a web grant authenticates
-    // the epoch (the approver sends `key_epoch` to the server, not to us, and
-    // the capsule is sealed to a public key the server also holds), so the
-    // first manifest epoch is server-asserted — U-27's residual risk.
-    let floor = admitted_epoch_floor();
-    let local_epoch = floor.unwrap_or(req.key_epoch);
-    if !vela_sync_policy::plan_sync_epoch_match(vela_sync_policy::SyncEpochFacts {
-        server_epoch: req.key_epoch,
-        local_epoch,
-    }) {
-        return Err(match floor {
-            Some(seen) if req.key_epoch < seen => format!(
-                "the server offered vault key epoch {} but this page already used epoch {}; \
-                 refusing the downgrade",
-                req.key_epoch, seen
-            ),
-            Some(seen) => format!(
-                "the vault key epoch changed to {} while this page was open (it was {}); \
-                 reload this page and approve access again from your app",
-                req.key_epoch, seen
-            ),
-            None => format!(
-                "the server offered an invalid vault key epoch {}",
-                req.key_epoch
-            ),
-        });
-    }
-
-    let epoch =
-        u64::try_from(req.key_epoch).map_err(|_| "vault key epoch must be positive".to_string())?;
-    let plaintext = vela_crypto::rekey::open_fleet_chunk(
-        &key,
-        &ciphertext,
-        epoch,
-        &req.chunk_id,
-        req.lamport_clock,
-    )
-    .map_err(|e| {
-        format!(
-            "could not authenticate chunk \"{}\" at epoch {} revision {}: {e}",
-            req.chunk_id, req.key_epoch, req.lamport_clock
-        )
-    })?;
-
-    let last_seen = admitted_last_seen(&req.chunk_id);
-    match vela_sync_policy::plan_chunk_download(vela_sync_policy::ChunkDownloadFacts {
-        server_lamport: req.lamport_clock,
-        last_seen_lamport: last_seen,
-        // Only a sealed blob that opened under its epoch/chunk/revision AAD
-        // reaches this line; the request cannot set this fact.
-        aad_binding_verified: true,
-        key_epoch_positive: req.key_epoch >= vela_sync_policy::INITIAL_EPOCH,
-    }) {
-        vela_sync_policy::ChunkDownloadDecision::Accept(permit) => {
-            let vault_json = String::from_utf8(plaintext.to_vec()).map_err(|e| e.to_string())?;
-            record_admission(req.key_epoch, &req.chunk_id, permit.lamport());
-            Ok(AdmittedDecryptChunkResponse {
-                vault_json,
-                lamport_clock: permit.lamport(),
-            })
-        }
-        vela_sync_policy::ChunkDownloadDecision::Reject => Err(format!(
-            "the server returned revision {} of chunk \"{}\" but this page already admitted \
-             revision {}; refusing the rollback",
+    let admitted = with_admission(|state| {
+        state.admit(
+            &key,
+            &ciphertext,
+            req.key_epoch,
+            &req.chunk_id,
             req.lamport_clock,
-            req.chunk_id,
+        )
+    })
+    .map_err(wasm_refusal_message)?;
+    let vault_json = String::from_utf8(admitted.plaintext.to_vec()).map_err(|e| e.to_string())?;
+    record_admission(&admitted, &req.chunk_id);
+    Ok(AdmittedDecryptChunkResponse {
+        vault_json,
+        lamport_clock: admitted.lamport_clock,
+    })
+}
+
+/// Render a core refusal into the web client's message. Wording only; the
+/// decision and every fact in it came from `vela_crypto::admission`.
+fn wasm_refusal_message(refusal: DownloadRefusal) -> String {
+    match refusal {
+        DownloadRefusal::EpochDowngrade { server, seen } => format!(
+            "the server offered vault key epoch {server} but this page already used epoch \
+             {seen}; refusing the downgrade"
+        ),
+        DownloadRefusal::EpochChanged { server, seen } => format!(
+            "the vault key epoch changed to {server} while this page was open (it was {seen}); \
+             reload this page and approve access again from your app"
+        ),
+        DownloadRefusal::InvalidEpoch { server } => {
+            format!("the server offered an invalid vault key epoch {server}")
+        }
+        DownloadRefusal::OpenFailed {
+            chunk_id,
+            epoch,
+            lamport_clock,
+            reason,
+        } => format!(
+            "could not authenticate chunk \"{chunk_id}\" at epoch {epoch} revision \
+             {lamport_clock}: {reason}"
+        ),
+        DownloadRefusal::Rollback {
+            chunk_id,
+            server,
+            last_seen,
+        } => format!(
+            "the server returned revision {server} of chunk \"{chunk_id}\" but this page \
+             already admitted revision {}; refusing the rollback",
             last_seen.map_or_else(|| "none".to_string(), |seen| seen.to_string())
-        )),
+        ),
     }
 }
 
@@ -511,6 +451,7 @@ pub fn password_strength_json(request_json: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use vela_crypto::aead;
     use vela_crypto::kdf;
 
     fn field(json: &str, key: &str) -> String {
