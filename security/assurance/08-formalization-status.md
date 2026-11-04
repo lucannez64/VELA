@@ -909,7 +909,7 @@ step T7 reviews it.
 |---|---|---|
 | F-1: handler facts | Partial: observation constructors and policy checks hosted on fdee2bc; executor observations proved honest for every planned executor (sharing, one-off share links, enrollment and pairing, all four recovery families, all ten session executors including web sessions, and vault, rotation and device capsules) against a transactional store model with fault injection, and matched on the real database; handler I/O outside the executors likewise planned and proved in every area (sharing, send links, session, enrollment, recovery, vault), including the vault re-key pacing limiter; still open: origins and full handlers | Maintain the sharing contracts reproduced on 5d8c366; verify the observation producers (SQL rows, store lookups, signature verifier, session ids) themselves; complete UTF-8/object and authenticated-open composition after the checked byte-frame parser; prove independent context origins; cover remaining token, epoch, recovery and handler fact construction |
 | F-2: state transitions | Partial: preflight ordering/readiness checked against an independent specification; enrollment-redemption decisions extracted into a driver with unbounded per-request trace lemmas (hosted aaf708f) and a concurrent at-most-one-device-per-grant composition (hosted edaee5a); sharing decisions extracted into a driver with per-request and concurrent composition proofs (hosted e89ebed); possession-proof recovery decisions likewise (hosted 7a6d108); device revocation, logout and revocation admission likewise (hosted bd765ab); WebAuthn recovery registration, initiation and release likewise (hosted a79cba7); device pairing likewise (hosted 54b38b3, found U-19); device enrollment and send links likewise; the recovery-share lifecycle likewise, composed with the WebAuthn and possession drivers over one share; registration and challenge issue likewise, with nonce single use and purpose binding composed across all three consumers (found U-21, U-22); login, revocation, deletion, pairing and recovery redemption composed in one concurrent world over shared accounts, devices, tokens and grants; every interpreter loop proved to leave a sound driver state when its handler is cancelled after any turn (found U-23, closed U-20); web-session start, grant, token and delete per request and under any interleaving with deletes and approver revocation (found U-25, U-26); vault key rotation (start, capsules, commit, abort) per request and under any interleaving over the shared key row (at most one commit per epoch, no commit after abort, starter-only authority, no web-session authority); chunk delete, ORAM path writes, schema floor, capsule ack and rekey-capable per request; account deletion likewise (hosted cdffe46); vault chunk upload and read likewise (hosted cdffe46), including no stale or unauthorized row committed under concurrent rotations against a modelled atomic SQL guard (hosted 727d447); sharing handlers: every sequence up to depth 3 (CI) / 4 (local) matches the M19b/M21 state machine against the real router and database, with mutation checks; possession-proof recovery handlers: every sequence up to depth 4 (CI) matches the M18/M26a chain, with mutation checks (WebAuthn path not driven); device invitation/rendezvous handlers: every sequence up to depth 3 (CI, 5,220 traces) / 4 (local, 88,741) matches the M13 ceremony, with a mutation check ([evidence](proof-logs/current/pairing-conformance/README.md)); challenge consumers (`/auth/verify`, `/device/enroll`, `/web-session/:id/token`): every sequence up to depth 3 (CI, 7,240 traces) / 4 (local, 137,561) keeps each nonce single-use across all three, plus a 16-way concurrent race test and a mutation check ([evidence](proof-logs/current/challenge-single-use/README.md); each nonce is now bound to one purpose, see U-16); account deletion: every sequence up to depth 3 (CI, 2,380 traces) leaves no row in any of the eight tables and no sled key of the deleted account, and its tokens and devices stop working everywhere; this found and fixed two residues (send links and pending web sessions survived deletion) ([evidence](proof-logs/current/account-deletion-conformance/README.md); deletion now runs in one transaction, see U-17); device revocation and logout: every sequence up to depth 3 (CI, 11,155 traces) shows a revoked device loses every token and cannot log in again, logout ends only its own token, revoked devices cannot revoke and no cross-account revocation succeeds, with mutation checks ([evidence](proof-logs/current/device-revocation-conformance/README.md); revoking a device now also ends the web sessions it approved, see U-18) ; every server handler that runs one of these drivers reaches it only through a proved interpreter loop: for every executor the loop performs exactly the driver's effects, stops at its verdict within a budget and ends in a state the per-request theorems cover (hosted 6be552c/36b877e) | Verify the executor methods themselves (each effect's SQL/store I/O and the honesty of its observation) against a store/SQL model; machine-check the remaining handler/database transitions outside the drivers |
-| F-3: persistence/recovery | Partial: M28 and composed M29 | Prove the actual journal implementation refines M28; formalize collection equality and filesystem outcomes; compose local edits/deletions and RMS migration; cover or explicitly exclude independent processes |
+| F-3: persistence/recovery | Partial: M28 and composed M29; the Tamarin↔F★ source bridge for M28 is proved (all ten lemmas on source traces of the original and instrumented rules, under a trusted F★ transcription of Tamarin's semantics) | Prove the actual journal implementation refines M28; formalize collection equality and filesystem outcomes; compose local edits/deletions and RMS migration; cover or explicitly exclude independent processes |
 | F-4: construction security | Partial: CryptoVerif proofs for idealized v2 KEM games, modular KEM-DEM, AND-signature, v2 possession-proof and authenticated-share games under the explicit assumptions | Close the combiner gaps listed in `security/formal/cryptoverif/README.md` (concrete X25519 clamping/cofactor/encoding correspondence after conditional nonuniform distribution accounting, SHA-256 step, quantum-query and multi-user composition; KEM-DEM is proved modularly); computational games and reductions for envelope framing and KDF use beyond the random-oracle model, under named primitive assumptions (share tags and the v2 possession proof are now proved in CryptoVerif with KDFs as random oracles; legacy v1 possession commitments are not covered); verify application randomness/error/erasure handling. Primitive internals and leakage resistance are trusted under the selected boundary |
 | F-5: native clients/composition | [Shared chunk kernel](17-universal-chunk-admission.md) and [integer-epoch kernel](18-mobile-sync-admission.md) checked; mobile runtime fixes internally reviewed and hosted on fdee2bc; bounded Android (millions of traces) and iOS (1,110 traces, passing in macOS CI) conformance of the download gates against the Rust rules; native trace refinement remains open | Verify Kotlin/Swift callers, persistence and FFI; formalize enrollment UI trust; compose recovery, enrollment, sync, sharing and revocation in one argument |
 | F-6: trusted base | Partial | Maintain zero local extraction assumptions and review imported model contracts; verify/review std/hax model correspondence and the String/Vec models; retain extraction/compiler correctness explicitly as trusted under the chosen boundary; review solver/library/OS interface assumptions; reproduce in CI and obtain independent review |
@@ -946,23 +946,36 @@ through cleanup. No guard or security restriction was added.
 
 The [F★ encoding proof](../formal/m28-trace-equivalence/README.md) checks
 step/trace lifting, projection and Chain well-formedness for typed,
-initialized, single-slot machines. It is not an equivalence proof of the
-`.spthy` sources: original Tamarin traces must still embed into the core
-encoding, and their lifts must still yield admissible instrumented Tamarin
-traces. Input derivability, global freshness, term representation and slot
-projection remain source-bridge obligations. The generic F★ transfer theorem
-requires a safety proof argument. New direct encoded inductions now establish
-both all-pairs goals without using that hp argument; lifted results follow by
-projection. Pin increase requires a supplied strict-order record, while journal
-generation uniqueness is order-independent. A checked unary free-term order
-and nine-event two-commit core/lift witness establish encoded non-vacuity.
-This unary instance does not formalize Tamarin's full strict-subterm algebra.
-No source embedding or actual Tamarin theorem is obtained. The handwritten
-proof adds zero Rust postconditions and does not change the ten/eleven Tamarin
-verdicts. The previous [encoding equivalence evidence](proof-logs/current/journal-encoding-equivalence/README.md)
-was reproduced on 368bcc0; the new all-pairs/order/witness check needs its own
-hosted result. See the [new proof](../formal/m28-trace-equivalence/README.md) and
-[parent reproduction](proof-logs/current/journal-encoded-goals/README.md).
+initialized, single-slot machines. New direct encoded inductions establish
+both all-pairs goals there.
+
+The [Tamarin↔F★ source bridge](proof-logs/current/journal-source-bridge/README.md)
+(plan steps P2b-P2d) connects those encodings to the `.spthy`.
+`M28_source_semantics.fst` gives a Tamarin-style source semantics:
+multiset rewriting driven by the transcribed rule schemas; the Fresh, ifresh,
+irecv and isend built-ins; attacker derivability over the free signature
+`fst/1, pair/2, snd/1, successor/1`; and the `Increasing` restriction. It
+proves global freshness of `Fr` names as an invariant. `M28_slot_projection.fst`
+projects multi-slot action traces to single slots, with index maps both ways.
+`M28_source_bridge.fst` then proves the two source obligations:
+
+- every restricted original trace, projected to any slot, embeds into
+  `reach_core` with full source terms and Tamarin's `<<`, and its lift is a
+  `reach_lift` trace;
+- every original trace is an instrumented trace with the same labels and
+  actions, and conversely.
+
+All ten M28 lemmas are proved in F★ on the source traces of both systems; the
+two exists-trace lemmas use one concrete 18-step source witness. The bridge
+corrected a core-encoding bug: removing one Snapshot dropped the Snapshots
+listed before it.
+
+What stays trusted: the F★ semantics is Tamarin's semantics for M28, and the
+reading of each lemma formula. `check-m28-transcription.py` (with mutation
+tests) drift-checks the rule, fact, restriction and lemma inventory against
+the `.spthy` text. The ten Tamarin verdicts are unchanged and are now an
+independent cross-check. See the [parent reproduction](proof-logs/current/journal-encoded-goals/README.md)
+for the earlier encoding-only run.
 
 The journal runner first runs `check-action-atoms.py` on M28 and M29. It strips
 comments and string literals, collects each rule's action name/arity, and
@@ -977,8 +990,8 @@ and single-worker setting are unchanged.
 A matching hash, finite tests, unproved annotation, ideal primitive, new axiom
 or mocked database cannot substitute for these obligations. No unsupported
 computational reduction, full Rust/Kotlin/Swift refinement or whole-system
-completion claim is supplied here. The Tamarin↔F★ source bridge and real
-Rust/filesystem refinement of M28 remain open.
+completion claim is supplied here. Real Rust/filesystem refinement of M28
+remains open.
 
 ## Login driver increment
 

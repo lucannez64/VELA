@@ -12,14 +12,16 @@ begin
 
    Chain(slot, generation, pin) is proof instrumentation. Its pair follows
    the durable phase and advances at PersistJournal. A separate F* development
-   checks equivalence and all-pairs goals in typed, initialized, single-slot
-   encodings, with a concrete encoded order and two-commit witness.
-   It does not prove the Tamarin-to-F* embeddings or discharge its generic
-   transfer predicate from the Tamarin verdicts. See m28-trace-equivalence.
-   The original-rule direct Tamarin proof did not finish within 600 seconds;
-   the all-pairs verdicts here remain for the Chain-instrumented source.
-   No rule, guard or restriction changed beyond the existing Chain thread.
-   Rust/filesystem refinement and the source embeddings remain open.
+   (m28-trace-equivalence) transcribes these rules into a Tamarin-style
+   source semantics. It proves that the original seven rules and this
+   instrumented model have the same traces, and that every slot of every
+   trace embeds into its single-slot encodings. It also proves all ten
+   lemmas below on those source traces. That F* semantics is a trusted
+   transcription of Tamarin's; check-m28-transcription.py checks the rule
+   text against it. The original-rule direct Tamarin proof did not finish
+   within 600 seconds; the Tamarin verdicts here remain for the
+   Chain-instrumented source. No rule, guard or restriction changed beyond
+   the existing Chain thread. Rust/filesystem refinement remains open.
 */
 functions: successor/1
 

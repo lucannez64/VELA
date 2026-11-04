@@ -40,14 +40,24 @@ type name =
 
        functions: successor/1
 
-   `successor` is unary.  Tamarin's builtin pairing is the only other term
-   constructor M28 uses. *)
+   `successor` is unary.  Tamarin always adds the builtin pairing signature
+   `pair/2, fst/1, snd/1` with `fst(<x,y>) = x` and `snd(<x,y>) = y`; Tamarin
+   1.12.0 prints the M28 signature as `fst/1, pair/2, snd/1, successor/1`.
+   `fst` and `snd` are public: the adversary may apply them to a non-pair,
+   giving an irreducible message (checked on Tamarin 1.12.0, see
+   proof-logs/current/journal-source-bridge/fst-probe.spthy).  Pairs are
+   [SPair]; the unary symbols are below.  M28's rules use only successor and
+   pairing. *)
 type fn_symbol =
   | Successor
+  | Fst
+  | Snd
 
 let fn_arity (f:fn_symbol) : Tot nat =
   match f with
   | Successor -> 1
+  | Fst -> 1
+  | Snd -> 1
 
 (* Source terms: rule variables, names, successor applications and pairs. *)
 type sterm =

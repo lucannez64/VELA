@@ -1,11 +1,15 @@
-# M28 typed single-slot encoding equivalence and encoded all-pairs goals
+# M28 encodings and the Tamarin-to-F* source bridge
 
 `M28TraceEquivalence.fst` proves equivalence of two handwritten, typed,
 initialized, single-slot transition encodings, one with Chain and one without,
-and proves the two all-pairs goals on the encoded event traces. **It does not
-machine-check the connection to `.spthy`, prove a Tamarin theorem, or close
-Rust/filesystem refinement.** It supplies a checked kernel within the larger,
-still-partial correspondence argument.
+and proves the two all-pairs goals on the encoded event traces. The source
+bridge (`M28_source_semantics.fst`, `M28_slot_projection.fst`,
+`M28_source_bridge.fst`, `M28_source_lemmas.fst`, `M28_source_witness.fst`;
+plan steps P2b-P2d, below) connects these encodings to a Tamarin-style source
+semantics of `m28_share_journal.spthy` and proves all ten M28 lemmas on its
+traces. **What stays trusted is that F* source semantics: it is a
+transcription of Tamarin's semantics, not Tamarin itself.** Rust/filesystem
+refinement is not addressed here.
 
 ## Checked statements
 
@@ -144,12 +148,14 @@ What is **not** covered:
   declaration, and pairing is syntactic. This module does not prove that a
   `.spthy` parser produces these terms, nor relate them to any Tamarin
   equational treatment beyond that free algebra.
-- Facts are transcribed as multisets; no source trace is parsed or embedded.
-  Global `Fr` freshness, `In` derivability, multi-slot projection and the
-  actual trace embedding remain P2b/P2c/P2d.
+- Facts are transcribed as multisets; this module parses no source trace.
 
-`verify.sh` now checks both `M28TraceEquivalence.fst` and
-`M28_source_terms.fst`, and runs the repository-wide
+These limits are of the P2a module alone. The source bridge below embeds full
+`sterm` values (the core encoding is generic in its revision, transaction and
+payload types) instead of mapping into `term`. It also covers freshness,
+derivability and slot projection.
+
+`verify.sh` checks these modules and the bridge modules, and runs the repository-wide
 `check-no-proof-escapes.py`; the journal gate runs the same script. Evidence
 for the P2a run is in
 [`proof-logs/current/journal-source-terms/`](../../assurance/proof-logs/current/journal-source-terms/README.md).
@@ -176,50 +182,110 @@ within-slot event order; no source action-predicate translation is proved.
 append-only list with duplicates; only membership is read. Chain is the extra
 lifted pair. This table is a reviewed transcription, not a source parser proof.
 
-## Open source embeddings
+## Source bridge (P2b, P2c, P2d)
 
-To transfer a Tamarin verdict to the original source requires both directed
-obligations, not merely equivalence of these two encodings:
+Evidence: [`proof-logs/current/journal-source-bridge/`](../../assurance/proof-logs/current/journal-source-bridge/README.md).
 
-1. Original Tamarin traces projected to the relevant slot embed into
-   `reach_core` with matching event order/fields.
-2. Lifting the image of each such trace produces a trace admissible in the
-   actual instrumented Tamarin system.
+### Source semantics and derivability (P2c, `M28_source_semantics.fst`)
 
-Both are unproved. Specific differences that must be handled:
+A configuration is a multiset of facts, the fresh names drawn so far and the
+attacker knowledge. A protocol step instantiates one P2a schema
+(`M28_source_terms.m28_rule`) with a substitution: message variables map to
+messages, and each fresh variable `~x` maps to a fresh name. Linear premises
+are removed (with multiplicity), persistent premises must be present, and
+conclusions are added. Tamarin's built-in rules are separate steps: Fresh
+(`Fr(~n)` for an unused `n`), ifresh, irecv (`Out(t)` to knowledge) and isend
+(`In(t)` for a derivable `t`). The `Increasing` restriction filters whole
+traces. `Instrumented` is the `.spthy` rule set; `Original` erases every Chain
+fact from it, which gives the seven rules of commit b8221e7.
 
-- A fixed initialized slot omits global interleavings and empty/uninitialized
-  profile traces. Those are benign for the intended implication-shaped goals
-  only after a projection argument; not for arbitrary trace predicates.
-- The local state does **not** represent all global `Fr` facts. `used`
-  enforces transaction non-reuse within one slot and does not model global
-  `Fr(~tx)` freshness against other slots or other message values. The earlier
-  claim that all global `Fr` were represented in local state, and the older
-  header's advocacy of a global projection, are withdrawn.
-- `rev`, `tx` and `msg` are opaque type parameters, and generation is a separate
-  datatype. No erasure/embedding from Tamarin's single term domain is proved.
-- Attacker input derivability and output knowledge are omitted. Arbitrary
-  revision/payload arguments over-approximate `In`: for example the encoded
-  initial item can be supplied as a payload even though the source's fresh
-  initial item was never sent to the attacker.
-- `lt` must be instantiated with the intended strict-subterm relation, and the
-  intended action predicates/all-pairs formulae must be related to the events.
-  The checked concrete `term_order` covers only the unary encoded instance
-  above; it is not the full Tamarin `<<` algebra or a source embedding.
+Messages are ground normal forms over names, `successor/1`, `fst/1`, `snd/1`
+and pairing. P2a's `fn_symbol` now includes `Fst` and `Snd`: Tamarin 1.12.0
+lets the attacker send an irreducible `fst($c)` (probe in the evidence
+directory), so these terms are messages. `derivable know t` is Tamarin's
+message deduction for this signature.
 
-These are scope obligations, not local axioms added to make a theorem pass.
-No Tamarin restriction was weakened. The fixed initialized single-slot types
-are not `.spthy` semantics. Checking a stronger-looking F* theorem does not by
-itself imply the actual Tamarin theorem. A direct Tamarin proof on the seven
-original rules did not finish within 600 seconds. The ten M28 / eleven M29
-verdicts remain separate; their counts are not increased by this module, and
-the Tamarin models, rules and guards are unchanged by this proof work.
+| Declaration | Statement |
+|---|---|
+| `derivable_mono` | Derivations survive knowledge growth |
+| `derivable_message` | Derivable terms are messages when the knowledge is |
+| `derivable_fresh_confined`, `fresh_name_secret` | A derivable term contains only fresh names that occur in the knowledge |
+| `global_freshness` | In every reachable configuration, every drawn name is an unconsumed `Fr` fact or consumed exactly once, and no name is drawn twice |
+| `consumed_at_most_once`, `fr_fact_unconsumed`, `consumed_was_drawn` | The corollaries used by the bridge |
+| `actions_agree`, `increasing_prefix` | Both systems emit the same actions per label; the restriction holds on prefixes |
+
+### Slot projection (P2b, `M28_slot_projection.fst`)
+
+`project s h` maps the timepoints of slot `s` in the action trace to core
+events, in order. `pidx s h i` is the position of timepoint `#i` in that
+projection.
+
+| Declaration | Statement |
+|---|---|
+| `shape_ok` | The generic instance of each schema equals its written-out form (both systems) |
+| `slot_action_forward` | A slot action at `#i` occurs in the projection at `pidx i` with the same fields |
+| `pidx_strict`, `pidx_injective` | Order and equality of slot timepoints are reflected |
+| `slot_event_backward` | Every projected event comes from a source timepoint with a matching action |
+| `other_slot_step`, `attacker_step_views` | Other slots and attacker/Fresh steps leave the slot state unchanged and add no event |
+| `*_same_slot`, `initialize_same_slot`, `uninit_disabled` | A step of slot `s` is the matching core step on `abs_core` |
+
+### Bridge theorem (P2d, `M28_source_bridge.fst`, `M28_source_lemmas.fst`, `M28_source_witness.fst`)
+
+| Declaration | Statement |
+|---|---|
+| `embed`, `embedded_reach` | Every restricted `Original` trace, projected to any slot, is a `reach_core proper_subterm 'initial' item` trace. It uses full source terms for revisions, transactions and payloads; its state is `abs_core` of the source configuration |
+| `embedded_lift` | That trace's lift by `reach_core_lifts` is a `reach_lift` trace |
+| `lift_source` | Every `Original` trace is an `Instrumented` trace with the same labels; the instrumented state is the original plus one Chain fact per durable fact (as multisets) |
+| `erase_source`, `embed_instrumented` | Every `Instrumented` trace is an `Original` trace of its erasure, so it embeds too |
+| `transfer_instrumented_to_original` and the three other transfer theorems | Any action-trace property, all-traces or exists-trace, holds for one system iff for the other. This includes Tamarin's verdicts on the instrumented model |
+| `original_universal_lemmas`, `instrumented_universal_lemmas` | The eight all-traces M28 lemmas hold for every restricted trace of both systems |
+| `original_exists_lemmas`, `instrumented_exists_lemmas` | `recovery_is_reachable` and `two_successive_commits_advance` hold on one concrete 18-step restricted trace of both systems |
+| `witness_item_secret` | On that trace the attacker knows the slot name but cannot derive the initial vault item |
+
+Each lemma is an F* formula over source action traces with the same name as
+the `.spthy` lemma. The two all-pairs goals use Tamarin's `<<` on full source
+terms through `sterm_order`, so the unary `term_order` instance is no longer
+needed for them. The proofs go through the core encoding: the existing
+all-pairs theorems, plus new history and counting invariants in
+`M28_source_lemmas.fst`. Their existential conclusions come back through
+`slot_event_backward`. Generation fields of reachable source states are
+generation terms (`reach_gens`), and `to_gen` is injective on those.
+
+The bridge found a modelling bug in the core encoding. `split`'s
+`SplitThere` case gave `split (x::l) y rest`, so consuming one Snapshot also
+discarded every Snapshot listed before it. It now gives
+`split (x::l) y (x::rest)`, which removes exactly one occurrence, as Tamarin
+does. All earlier theorems re-verify unchanged; none depended on the dropping
+behaviour.
+
+### What stays trusted
+
+- **The F* semantics is Tamarin's semantics for M28.** This covers
+  multiset rewriting modulo the pairing equations, the four built-in rules,
+  message deduction (`derivable`), whole-trace restriction filtering, and the
+  reading of each lemma formula. Modelling choices: the isend `K(x)` action
+  is not recorded (no lemma mentions it); Fresh, ifresh, irecv and isend are
+  explicit steps. Tamarin's multiset state is a list, and every operation
+  respects multiplicity.
+- **The P2a schemas are the `.spthy` rules.**
+  `check-m28-transcription.py` parses both independently. It rejects any
+  difference in rules, premises, actions, conclusions, argument terms,
+  persistence marks, the fact inventory, the function declaration, the
+  restriction, or the lemma names and kinds. It is a syntactic drift check
+  (with mutation tests in `tests/test_m28_transcription.py`), not a parser
+  proof.
+- F*, its standard library, Z3 4.13.3 and the toolchain.
+
+Tamarin's own ten verdicts are now an independent cross-check, not a premise:
+the F* proofs do not use them. No Rust, filesystem or whole-system refinement
+is claimed.
 
 ## Reproduction and trust
 
 Run `vela-heavy security/formal/m28-trace-equivalence/verify.sh` with pinned
 F* 2025.10.06 (or `VELA_FSTAR_BIN` pointing to it). The journal gate calls that
-same command. Verification disables checked-module caching, pins bundled Z3
+same command. It now checks all seven modules in one `--cache_off` run and
+runs `check-m28-transcription.py` first. Verification disables checked-module caching, pins bundled Z3
 4.13.3, and logs version, module hash and arguments. The source guard rejects
 local proof escapes/options and requires the expected equivalence, all-pairs,
 concrete-order and witness definitions; its tests are drift checks, not

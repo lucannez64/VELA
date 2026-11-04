@@ -135,8 +135,9 @@ M28/M29's 21 named journal/composition verdicts via `run-share-journal-proofs.sh
 (ten M28, eleven M29). The M28 all-pairs increment uses documented Chain ghost
 instrumentation. The runner also checks the separate typed single-slot F★
 lifting/projection development, using prebuilt F★ 2025.10.06 and Z3 4.13.3,
-`--cache_off`, version assertion and source/argv logging. The source bridge
-between those encodings and Tamarin remains unproved. The `formal-rekey` job
+`--cache_off`, version assertion and source/argv logging, and the
+Tamarin-to-F★ source bridge modules with `check-m28-transcription.py`. The
+`formal-rekey` job
 caches the checksum-pinned standalone F★ release via
 `install-formal-fstar.sh`; it does not rebuild hax for this step. The runner
 checks emitted-action coverage and uses a 600-second default timeout per model;

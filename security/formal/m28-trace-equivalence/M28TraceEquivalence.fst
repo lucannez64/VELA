@@ -38,9 +38,9 @@ open FStar.Squash
    encoded initial secret can appear as a payload even though the source never
    sends it.  The concrete [term_order] is only the encoded unary free-term
    instance, not the full Tamarin subterm algebra or a source embedding.
-   Applying a Tamarin verdict still needs both directed embeddings described in
-   README.md.  Nothing here implies that checking these F* theorems proves the
-   actual Tamarin model. *)
+   Those directed embeddings are proved separately, against a Tamarin-style
+   source semantics, in M28_source_bridge.fst (see README.md); this module
+   alone does not establish them. *)
 
 type gen =
   | G0
@@ -72,12 +72,16 @@ type core (rev:eqtype) (tx:eqtype) (msg:eqtype) = {
   ph: phase rev tx msg;
 }
 
-(* Split one occurrence out of the linear Snapshot multiset. *)
+(* Split one occurrence out of the linear Snapshot multiset: [rest] is [l]
+   with exactly one occurrence of [y] removed and every other element kept.
+   (Before P2d, SplitThere dropped the skipped head [x] as well, so consuming
+   one Snapshot also discarded every Snapshot listed before it; the source
+   bridge cannot embed into that, and Tamarin removes one occurrence.) *)
 noeq type split (#a:Type) : list a -> a -> list a -> Type =
   | SplitHere : (x:a) -> (rest:list a) -> split (x::rest) x rest
   | SplitThere :
       (x:a) -> (y:a) -> (l:list a) -> (rest:list a) ->
-      split l y rest -> split (x::l) y rest
+      split l y rest -> split (x::l) y (x::rest)
 
 (* The original transition relation, containing exactly the seven rules.
    [lt] is the Increasing restriction's strict-increase predicate. *)

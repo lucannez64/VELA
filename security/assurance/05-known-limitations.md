@@ -43,14 +43,15 @@ remaining work across all six requested areas. New sharing contracts and M28
 reduce selected gaps; the computational model proofs above do not establish a
 full-system theorem.
 
-The M28 all-pairs pin/generation results are checked for rules instrumented
-with linear `Chain` ghost state. F★ now checks lifting/projection between two
-typed single-slot encodings and now directly proves their all-pairs goals,
-with a checked concrete order/two-commit witness. Their [source bridge](../formal/share-journal-correspondence.md#ghost-state-correspondence-manual-source-bridge)
-to actual Tamarin traces remains a manual argument with two unproved embedding
-obligations; the direct encoded safety proofs do not discharge those source
-obligations or instantiate the full Tamarin term algebra.
-Neither source equivalence nor Rust/filesystem refinement is machine-checked.
+Tamarin checks the M28 all-pairs pin/generation results for rules
+instrumented with linear `Chain` ghost state. The F★
+[source bridge](../formal/share-journal-correspondence.md#ghost-state-correspondence-and-source-bridge)
+proves that the original and instrumented rule sets have the same traces, and
+that every slot embeds into the single-slot encodings. It also proves all ten
+M28 lemmas on those traces. The limit is that the bridge's source semantics is
+an F★ transcription of Tamarin's semantics, trusted rather than derived from
+Tamarin. Only the rule text is drift-checked against the `.spthy`.
+Rust/filesystem refinement of M28 is not machine-checked.
 
 New login/revocation refinements retain two explicit limits: a request already
 past the durable lookup can finish after revocation, and token renewal still

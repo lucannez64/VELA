@@ -11,10 +11,11 @@ mkdir -p "$out"
 # regression also checks that the historical DiskClean(...) @ #i shape fails.
 bash "$root/tests/run-action-atom-guard.sh"
 python3 -m unittest discover -s "$root/tests" -p test_m28_semantic_guard.py
+python3 -m unittest discover -s "$root/tests" -p test_m28_transcription.py
 
-# Check lifting/projection, encoded all-pairs goals and a two-commit witness.
-# Their source embeddings to actual Tamarin traces are not checked here.
-# The Tamarin rules are mapped explicitly in
+# Check the encodings and the Tamarin-to-F* source bridge (P2a-P2d): the
+# source semantics, slot projection, embedding, lift/erasure and all ten M28
+# lemmas on source traces.  The F* semantics of Tamarin is trusted; see
 # m28-trace-equivalence/README.md.
 fstar_log="$out/m28-trace-equivalence.log"
 "$root/m28-trace-equivalence/verify.sh" >"$fstar_log" 2>&1

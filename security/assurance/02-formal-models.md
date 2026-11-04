@@ -262,16 +262,20 @@ verdicts. Its transfer theorem takes the encoded trace property as a proof
 argument. Separate direct inductions now prove the all-pairs goals for
 encoded core/lift traces, with an explicit strict-order argument for pins and
 no order requirement for generation uniqueness. A concrete unary order and
-checked two-commit trace establish non-vacuity only for the encoding, not the
-Tamarin source. The full source term/subterm interpretation remains open.
+checked two-commit trace establish non-vacuity for the encoding.
 
-Two source obligations remain unproved: original Tamarin traces must embed
-into the core encoding, and their encoded lifts must correspond to admissible
-instrumented Tamarin traces. Attacker input derivability, global freshness,
-term/sort representation, initialization and multi-slot projection require
-that bridge. Thus the actual all-pairs verdicts remain results about the
-instrumented Tamarin model. The source bridge and Rust/filesystem refinement
-remain open; the handwritten F★ artifact adds no extracted Rust contracts.
+The source bridge (plan steps P2b-P2d, same README) closes the two source
+obligations against an F★ Tamarin-style semantics of the `.spthy`. That
+semantics covers multiset rewriting from the transcribed rules, Fresh/ifresh/
+irecv/isend, attacker derivability, global freshness and the restriction.
+Every slot of every restricted original trace embeds into the core encoding
+with full source terms and Tamarin's `<<`. Every original trace is an
+instrumented trace with the same actions, and conversely. All ten M28 lemmas
+are proved on the source traces of both systems; a concrete 18-step source
+trace witnesses the two exists-trace lemmas. The F★ semantics itself is
+trusted as a transcription of Tamarin's; `check-m28-transcription.py`
+drift-checks the rule text. Rust/filesystem refinement remains open. The
+handwritten F★ artifact adds no extracted Rust contracts.
 
 The product-state facts encode separate writes to the two files. Durable
 single-file replacement is trusted; local edits, native persistence and

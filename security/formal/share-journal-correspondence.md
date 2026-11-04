@@ -33,7 +33,7 @@ increase, generation uniqueness, and a two-successive-commit witness. These
 results use the `Chain` instrumentation described below; see the
 [formalization ledger](../assurance/08-formalization-status.md).
 
-## Ghost-state correspondence (manual source bridge)
+## Ghost-state correspondence and source bridge
 
 The checked model adds one linear `Chain(slot, generation, pin)` fact per
 initialized slot. Its value is determined by the unique durable product-state:
@@ -53,33 +53,33 @@ crashes preserve the invariant. Fresh slots separate independent instances.
 
 The checked F* module
 [`M28TraceEquivalence.fst`](m28-trace-equivalence/M28TraceEquivalence.fst)
-proves step/trace equivalence and the Chain invariant **for two typed,
-initialized single-slot encodings**. It now also proves the two all-pairs
-properties directly on those encodings: earlier clear pins strictly increase
-under a supplied strict order, and a journal generation occurs at one index.
-The lifted results use projection, not the generic hp transfer argument.
-A checked unary proper-subterm instance and nine-event two-commit witness
-establish encoded non-vacuity. That instance is not the full Tamarin term
-algebra. No actual Tamarin verdict is imported into the encoding or transferred
-to the original source by these proofs.
+proves step/trace equivalence and the Chain invariant for two typed,
+initialized single-slot encodings, and the two all-pairs properties directly
+on them.
 
-The [mapping and residual obligations](m28-trace-equivalence/README.md) separate
-the checked kernel from the manual source bridge. In particular, applying an
-instrumented Tamarin theorem to the original Tamarin source still requires:
+The [source bridge](m28-trace-equivalence/README.md#source-bridge-p2b-p2c-p2d)
+connects these encodings to the Tamarin model. It builds a Tamarin-style
+source semantics: multiset rewriting from the transcribed rule schemas,
+Fresh/ifresh/irecv/isend steps, attacker derivability and the `Increasing`
+restriction. It then checks both directed obligations:
 
-1. Every original Tamarin trace, projected to the relevant initialized slot,
-   embeds as a `reach_core` trace with the corresponding events.
-2. The F* lift of each such trace is admissible in the actual instrumented
-   Tamarin system, including attacker input knowledge and global freshness.
+1. Every restricted original source trace, projected to any slot, is a
+   `reach_core` trace. It has the corresponding events, full source terms and
+   Tamarin's `<<` (`embed`). Global freshness gives the per-slot `used`
+   condition and slot uniqueness.
+2. Every original source trace is a trace of the instrumented source system
+   with the same labels and actions. The instrumented state adds the Chain
+   pair of the table above to each durable fact (`lift_source`). Conversely,
+   erasing Chain maps instrumented traces to original ones (`erase_source`).
 
-Neither embedding is machine-checked. Typed terms, the per-slot `used` list,
-omitted `In`/`Out` conditions, persistent-set representation and global
-interleavings remain correspondence obligations. The constructive encoded
-lift preserves its base state/events, but equivalence of those encodings alone
-does not establish safety transfer between the actual source systems.
-A direct Tamarin proof on the original rules did not finish within 600 seconds.
-The ten M28 verdicts therefore remain instrumented-model results, with a
-reviewed manual source argument. Real Rust/filesystem refinement remains open.
+All ten M28 lemmas are proved in F* on the source traces of both systems
+(`original_universal_lemmas`, `instrumented_universal_lemmas` and the two
+witness theorems). They no longer rest on the Tamarin verdicts, which remain
+an independent check. Trusted: the F* source semantics is Tamarin's semantics
+for M28, and the transcribed rules match the `.spthy`. The latter is checked
+syntactically by `check-m28-transcription.py`. The bridge also corrected the
+core encoding's Snapshot removal, which used to discard more than one
+Snapshot. Real Rust/filesystem refinement remains open.
 
 The vault revision in M28 is a provenance label, not a separate serialized
 VaultItem field. Repeated identical physical writes during recovery are
