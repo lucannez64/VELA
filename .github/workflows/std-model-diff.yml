@@ -1,0 +1,129 @@
+# Differential test of the hax 0.3.7 F* std models against real Rust
+# (security/formal/std-model-diff, plan step T7).
+#
+# GitHub-hosted runners only: this job never uses the owner's `vela-box`
+# runners, so a pull request from a fork cannot execute on the build box.
+#
+# The value measured here: every F* model operation the VELA corpus reaches is
+# run through F*'s OCaml extraction on the same seeded inputs as the Rust
+# standard library, and any value difference fails the job. See
+# security/formal/std-model-diff/README.md for the operation table and
+# security/assurance/proof-logs/current/std-model-diff/README.md for the
+# 10^6-case evidence run.
+name: std-model-diff
+
+on:
+  push:
+    paths:
+      - security/formal/std-model-diff/**
+      - .github/workflows/std-model-diff.yml
+      # the hax and F* pins the compared definitions come from
+      - security/assurance/install-hax.sh
+      - security/assurance/install-formal-fstar.sh
+      # the two local models that replace hax's
+      - libVELA/vela-crypto/proofs/fstar/models/**
+  pull_request:
+    paths:
+      - security/formal/std-model-diff/**
+      - .github/workflows/std-model-diff.yml
+      - security/assurance/install-hax.sh
+      - security/assurance/install-formal-fstar.sh
+      - libVELA/vela-crypto/proofs/fstar/models/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: std-model-diff-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  differential:
+    name: std models vs Rust
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@d124f86f28ff42855784ff3319f48ac182c248f8 # 1.99.1
+      # Cache the pinned F* release and the OCaml switch that can link its
+      # shipped `fstar.lib`. Keyed on the F* pin and this file.
+      - name: Restore pinned proof tools
+        id: tools
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ${{ runner.temp }}/vela-t7-fstar
+            ~/.opam/vela-t7
+          key: std-model-diff-tools-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('security/assurance/install-formal-fstar.sh', '.github/workflows/std-model-diff.yml') }}
+
+      # One clearly named tool step; the parent can swap it for the proof
+      # container. It reuses security/assurance/install-formal-fstar.sh for F*
+      # (the same prebuilt release and Z3 the symbolic job uses) and creates
+      # only the OCaml runtime the F* release extracted its ulib to.
+      # F* 2025.10.06 ships `lib/fstar/lib/fstar.cmxa` built with OCaml 4.14,
+      # so the switch is pinned to that ABI; anything else fails the smoke
+      # check below with a clear message instead of a confusing link error.
+      - name: Install pinned F*, OCaml and Z3
+        if: steps.tools.outputs.cache-hit != 'true'
+        timeout-minutes: 30
+        run: |
+          set -euo pipefail
+          # Fixed Ubuntu snapshot (security/assurance/proof-image/apt-snapshot.conf).
+          sudo rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources
+          sudo tee /etc/apt/sources.list.d/vela-snapshot.sources >/dev/null <<'EOF'
+          Types: deb
+          URIs: https://snapshot.ubuntu.com/ubuntu/20261104T000000Z/
+          Suites: noble noble-updates noble-security
+          Components: main restricted universe multiverse
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          EOF
+          sudo apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
+            -o Acquire::https::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
+            -o Acquire::https::Timeout=30 install -y --no-install-recommends \
+            opam libgmp-dev pkg-config
+          security/assurance/install-formal-fstar.sh "$RUNNER_TEMP/vela-t7-fstar"
+          if ! opam switch list --short 2>/dev/null | grep -Fxq vela-t7; then
+            opam init --bare --disable-sandboxing --no-setup --yes
+            opam switch create vela-t7 ocaml-base-compiler.4.14.2 --yes
+          fi
+          # Exact versions: the ones the evidence run linked
+          # (proof-logs/current/std-model-diff/evidence-run.log).
+          opam install --switch vela-t7 --yes ocamlfind.1.9.8 zarith.1.14 batteries.3.11.0 \
+            pprint.20230830 stdint.0.7.2 yojson.3.0.0 ppx_deriving.6.2.0 ppx_deriving_yojson.3.10.0
+          "$HOME/.opam/vela-t7/bin/ocamlopt" -version
+
+      - name: Check the extracted ulib links
+        env:
+          OCAMLFIND: /home/runner/.opam/vela-t7/bin/ocamlfind
+          OCAMLPATH: ${{ runner.temp }}/vela-t7-fstar/fstar/lib
+        run: |
+          set -euo pipefail
+          "$OCAMLFIND" query fstar.lib
+          printf 'let () = print_string (Z.to_string (FStar_Seq_Base.length (FStar_Seq_Base.seq_of_list [1;2;3])))\n' \
+            > "$RUNNER_TEMP/ulib_smoke.ml"
+          "$OCAMLFIND" ocamlopt -package fstar.lib -linkpkg \
+            -o "$RUNNER_TEMP/ulib_smoke" "$RUNNER_TEMP/ulib_smoke.ml"
+          test "$("$RUNNER_TEMP/ulib_smoke")" = 3
+
+      # The harness reads the pinned hax-lib 0.3.7 proof-libs from the cargo
+      # registry (pins.sha256 checks every file); vela-crypto locks that version.
+      - name: Fetch hax-lib 0.3.7 sources
+        run: cargo fetch --locked --manifest-path libVELA/vela-crypto/Cargo.toml
+
+      - name: Differential test (fixed seed, 10^4 cases per operation)
+        env:
+          VELA_FSTAR: ${{ runner.temp }}/vela-t7-fstar/fstar/bin/fstar.exe
+          OCAMLFIND: /home/runner/.opam/vela-t7/bin/ocamlfind
+        run: |
+          security/formal/std-model-diff/run.sh \
+            --cases 10000 --seed 0x5EED1234ABCD0001 \
+            --log "$RUNNER_TEMP/std-model-diff.log"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: std-model-diff-log
+          path: ${{ runner.temp }}/std-model-diff.log
+          if-no-files-found: warn

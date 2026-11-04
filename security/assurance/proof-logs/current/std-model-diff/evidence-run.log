@@ -1,0 +1,203 @@
+pinned models: 21 hax-lib files verified in /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7
+local models:
+  e67ad0f23c2e21d3175dc8cacd62c0496c6c09f53b144ff6e113df669cb34982  /home/hirew/.t3/worktrees/VELA/t3-104a5e81/libVELA/vela-crypto/proofs/fstar/models/Alloc.Vec.fst
+  ebb0c20ed7755594351ea238964573d1c0987427570839bf5a4cf11d5bc3864d  /home/hirew/.t3/worktrees/VELA/t3-104a5e81/libVELA/vela-crypto/proofs/fstar/models/Alloc.String.fst
+178 F* files: no `ne`, no `mul_overflow`, and `/!` `%!` only in 1 reviewed file(s); 5 non-call occurrences of the identifier `ne` allowed
+guard self-test: injected ne -> rejected: security/formal/std-model-diff/.guard-selftest/injected-ne.fst:2: uses `ne` (untracked); it is constant false in hax 0.3.7
+guard self-test: injected mul_overflow -> rejected: security/formal/std-model-diff/.guard-selftest/injected-mul_overflow.fst:2: uses `mul_overflow`; its flag is wrong in hax 0.3.7
+guard self-test: injected signed_div -> rejected: security/formal/std-model-diff/.guard-selftest/injected-signed_div.fst:2: `/!` or `%!` outside the reviewed allowlist; F* and Rust disagree on signed division
+shadow: shadow Rust_primitives: 4 blocks, pin lines 1-7, 420 bytes
+shadow: ADD  Rust_primitives.Integers: 'let size_bits: n:nat{n == 32 \\/ n == 64} = 64' -- size_bits is abstract in the pin (the usize/isize width the proofs leave open).  The harness instantiates the 64-bit target the Rust side runs on.
+shadow: shadow Rust_primitives.Integers: 108 blocks, pin lines 1-473, 7324 bytes
+shadow: shadow Rust_primitives.Arrays: 10 blocks, pin lines 1-67, 1615 bytes
+shadow: shadow Rust_primitives.Slice: 12 blocks, pin lines 1-21, 1287 bytes
+shadow: shadow Rust_primitives.Notations: 6 blocks, pin lines 1-18, 636 bytes
+shadow: shadow Rust_primitives.Char: 2 blocks, pin lines 1-5, 431 bytes
+shadow: shadow Rust_primitives.Sequence: 15 blocks, pin lines 1-29, 1391 bytes
+shadow: shadow Rust_primitives.Hax: 12 blocks, pin lines 1-96, 1961 bytes
+shadow: shadow Rust_primitives.Hax.Folds: 7 blocks, pin lines 1-128, 1465 bytes
+shadow: shadow Core_models.Bundle: 11 blocks, pin lines 1-160, 2648 bytes
+shadow: shadow Core_models.Clone: 5 blocks, pin lines 1-13, 764 bytes
+shadow: shadow Core_models.Cmp: 6 blocks, pin lines 1-688, 1206 bytes
+shadow: shadow Core_models.Marker: 4 blocks, pin lines 1-36, 473 bytes
+shadow: shadow Core_models.Slice: 10 blocks, pin lines 1-178, 3892 bytes
+shadow: shadow Core_models.Ops.Function: 10 blocks, pin lines 1-56, 3138 bytes
+shadow: shadow Core_models.Ops.Index: 4 blocks, pin lines 1-6, 737 bytes
+shadow: shadow Core_models.Ops.Range: 7 blocks, pin lines 1-15, 611 bytes
+shadow: shadow Alloc.Alloc: 4 blocks, pin lines 1-6, 427 bytes
+shadow: shadow Alloc.Slice: 5 blocks, pin lines 1-12, 949 bytes
+shadow: shadow Alloc.Vec: 8 blocks, pin lines 1-27, 2034 bytes
+shadow: shadow Alloc.String: 6 blocks, pin lines 1-49, 555 bytes
+shadow: shadow tree: /tmp/vela-t7-std-model-diff/shadow (21 modules, 1 added line(s))
+shadow: 21 modules, 1 line(s) added to the pins
+fstar: Extracted module Rust_primitives.Notations
+fstar: Extracted module T7_phase
+fstar: All verification conditions discharged successfully
+extracted: 22 modules
+normalizer: 8 integer-division facts verified without --lax
+model driver: /tmp/vela-t7-std-model-diff/ml/t7driver
+
+== differential run: cases=1000000 seed=6840143426475589633 block=1024 ==
+op                                   cases  blocks mismatches
+u8.add_checked                     1000000     977          0
+u8.sub_checked                     1000000     977          0
+u8.mul_checked                     1000000     977          0
+u8.add_mod                         1000000     977          0
+u8.add_sat                         1000000     977          0
+u8.sub_sat                         1000000     977          0
+u8.eq                              1000000     977          0
+u8.lt                              1000000     977          0
+u8.lte                             1000000     977          0
+u8.gt                              1000000     977          0
+u8.gte                             1000000     977          0
+u8.bounds                                1       1          0
+u64.add_checked                    1000000     977          0
+u64.sub_checked                    1000000     977          0
+u64.mul_checked                    1000000     977          0
+u64.add_mod                        1000000     977          0
+u64.add_sat                        1000000     977          0
+u64.sub_sat                        1000000     977          0
+u64.eq                             1000000     977          0
+u64.lt                             1000000     977          0
+u64.lte                            1000000     977          0
+u64.gt                             1000000     977          0
+u64.gte                            1000000     977          0
+u64.bounds                               1       1          0
+u128.add_checked                   1000000     977          0
+u128.sub_checked                   1000000     977          0
+u128.mul_checked                   1000000     977          0
+u128.add_mod                       1000000     977          0
+u128.add_sat                       1000000     977          0
+u128.sub_sat                       1000000     977          0
+u128.eq                            1000000     977          0
+u128.lt                            1000000     977          0
+u128.lte                           1000000     977          0
+u128.gt                            1000000     977          0
+u128.gte                           1000000     977          0
+u128.bounds                              1       1          0
+i64.add_checked                    1000000     977          0
+i64.sub_checked                    1000000     977          0
+i64.mul_checked                    1000000     977          0
+i64.add_mod                        1000000     977          0
+i64.add_sat                        1000000     977          0
+i64.sub_sat                        1000000     977          0
+i64.eq                             1000000     977          0
+i64.lt                             1000000     977          0
+i64.lte                            1000000     977          0
+i64.gt                             1000000     977          0
+i64.gte                            1000000     977          0
+i64.bounds                               1       1          0
+i128.add_checked                   1000000     977          0
+i128.sub_checked                   1000000     977          0
+i128.mul_checked                   1000000     977          0
+i128.add_mod                       1000000     977          0
+i128.add_sat                       1000000     977          0
+i128.sub_sat                       1000000     977          0
+i128.eq                            1000000     977          0
+i128.lt                            1000000     977          0
+i128.lte                           1000000     977          0
+i128.gt                            1000000     977          0
+i128.gte                           1000000     977          0
+i128.bounds                              1       1          0
+usize.add_checked                  1000000     977          0
+usize.sub_checked                  1000000     977          0
+usize.mul_checked                  1000000     977          0
+usize.add_mod                      1000000     977          0
+usize.add_sat                      1000000     977          0
+usize.sub_sat                      1000000     977          0
+usize.eq                           1000000     977          0
+usize.lt                           1000000     977          0
+usize.lte                          1000000     977          0
+usize.gt                           1000000     977          0
+usize.gte                          1000000     977          0
+usize.bounds                             1       1          0
+isize.add_checked                  1000000     977          0
+isize.sub_checked                  1000000     977          0
+isize.mul_checked                  1000000     977          0
+isize.add_mod                      1000000     977          0
+isize.add_sat                      1000000     977          0
+isize.sub_sat                      1000000     977          0
+isize.eq                           1000000     977          0
+isize.lt                           1000000     977          0
+isize.lte                          1000000     977          0
+isize.gt                           1000000     977          0
+isize.gte                          1000000     977          0
+isize.bounds                             1       1          0
+u64.div_checked                    1000000     977          0
+u64.mod_checked                    1000000     977          0
+cast.u8.u64                        1000000     977          0
+cast.u8.u128                       1000000     977          0
+cast.u8.i64                        1000000     977          0
+cast.u64.u128                      1000000     977          0
+cast.usize.u64                     1000000     977          0
+cast.u64.usize                     1000000     977          0
+cast.i64.i128                      1000000     977          0
+cast.isize.i64                     1000000     977          0
+cast.i64.isize                     1000000     977          0
+cast.u64.i64                       1000000     977          0
+cast.i64.u64                       1000000     977          0
+cast.u128.u64                      1000000     977          0
+cast.i128.i64                      1000000     977          0
+option.is_some                     1000000     977          0
+option.is_none                     1000000     977          0
+option.is_some_and                 1000000     977          0
+option.unwrap_or                   1000000     977          0
+option.map                         1000000     977          0
+option.map_or                      1000000     977          0
+option.as_ref                      1000000     977          0
+slice.len                          1000000     977          0
+slice.is_empty                     1000000     977          0
+slice.index                        1000000     977          0
+vec.new                            1000000     977          0
+vec.len                            1000000     977          0
+vec.as_slice                       1000000     977          0
+vec.extend_from_slice              1000000     977          0
+vec.into_vec                       1000000     977          0
+vec.to_vec                         1000000     977          0
+array_of_list                      1000000     977          0
+fold_range.empty                   1000000     977          0
+fold_range.start_eq_end            1000000     977          0
+fold_range.nonempty                1000000     977          0
+string.new                         1000000     977          0
+string.as_str                      1000000     977          0
+string.eq                          1000000     977          0
+string.length_chars                1000000     977          0
+bool.not                           1000000     977          0
+clone.identity                     1000000     977          0
+partialeq.u64                      1000000     977          0
+phase.eq                                 4       1          0
+
+notes (from the Rust reference run):
+  string.bytes.<empty>	chars=0 bytes=0
+  string.bytes.e	chars=1 bytes=1
+  string.bytes.é	chars=1 bytes=2
+  string.bytes.€	chars=1 bytes=3
+  string.bytes.😀	chars=1 bytes=4
+  div.rounding	(-7)/2=-3 (-7)%2=-1 7/(-2)=-3 7%(-2)=1 (-7)/(-2)=3 (-7)%(-2)=-1
+  bit_lemma_samples	1000000 violations=0
+
+127 ops, 119000011 cases, 0 mismatching blocks
+RESULT: OK (0 mismatches)
+
+== documented hax-lib 0.3.7 bugs (ne, mul_overflow) ==
+demo.ne.u64: 10000 cases, model `ne` always false, Rust `!=` true in 9982 cases, 0 unexpected
+demo.mul_overflow.u64: 10000 cases (9191 overflow, 809 in range); model flag == (prod != MAX) in all cases, so it is wrong in 805 of the 809 in-range products; 0 unexpected
+demo.mul_overflow.i64: 10000 cases (9575 overflow, 425 in range); model flag == (prod != MAX) in all cases, so it is wrong in 424 of the 425 in-range products; 0 unexpected
+RESULT: OK (documented bugs reproduce exactly)
+
+== versions ==
+fstar: F* 2025.10.06
+platform=Linux_x86_64
+compiler=OCaml 4.14.2
+date=2025-10-06 12:00:42 -0700
+commit=7b347386330d0e5a331a220535b6f15288903234
+z3: Z3 version 4.13.3 - 64 bit
+ocaml: 5.1.1
+  batteries           (version: 3.11.0)
+  fstar.lib           (version: n/a)
+  zarith              (version: 1.14)
+rustc: rustc 1.101.0-nightly (e9bbadf68 2026-10-12)
+cargo: cargo 1.101.0-nightly (29c5daa1a 2026-10-07)
+hax-lib: 0.3.7 (/home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7)
+work: /tmp/vela-t7-std-model-diff
+RESULT: OK
