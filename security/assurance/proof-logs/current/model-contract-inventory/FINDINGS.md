@@ -23,6 +23,9 @@ Inventory: [README.md](README.md), produced by
      their prefixes happen to coincide. `format'` (an `assume val` reached
      through `Alloc.Fmt.format`) belongs in the trusted list: "no assumed
      symbol used" holds only for symbols the corpus names directly.
+     **Resolved for the session store by plan step O4** (2026-11-04): its
+     key builders no longer use `format!`, and the keys are proved distinct
+     ([evidence](../store-key-injectivity/README.md)).
      **This blocks plan step O4** (store key builders are injective). O4 has
      to replace `format!` in those builders with an extracted byte or string
      concatenation that F* can see through, or model `format!` for the used
