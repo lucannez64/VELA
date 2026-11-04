@@ -6,6 +6,13 @@ set -euo pipefail
 export CARGO_UNSTABLE_CODEGEN_BACKEND=true
 export CARGO_BUILD_JOBS=1 OPAMJOBS=1 MAKEFLAGS=-j1 CARGO_PROFILE_DEV_CODEGEN_BACKEND=llvm
 root=${VELA_HAX_ROOT:-$HOME/.local/opt/vela-hax-0.3.7}
+# Frozen transitive OCaml resolution of the engine (T10): generated in the
+# working switch with `opam lock` and installed with `opam install --locked`.
+# A fresh install resolves exactly these versions instead of opam-repository
+# HEAD.
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+hax_lock="$repo_root/security/assurance/opam-lock/hax-engine.opam.locked"
+test -f "$hax_lock" || { echo "missing opam lock: $hax_lock" >&2; exit 1; }
 mkdir -p "$root/bin" "$root/cargo-home"
 export CARGO_HOME="$root/cargo-home"
 export PATH="$root/bin:$HOME/.cargo/bin:$PATH"
@@ -34,9 +41,12 @@ fi
 git -C "$root/hax" checkout d8b5b3d3b666fee8943a351445d2b680105e8ea3
 (cd "$root/hax" && RUSTFLAGS="--cfg hax" cargo +nightly-2025-11-08 install --locked --path engine/names/extract --root "$root")
 opam switch create vela-hax ocaml-base-compiler.5.1.1 --yes
+# opam install --locked reads the .opam.locked file next to the package, so
+# place the committed freeze in the pinned checkout before installing.
+install -m644 "$hax_lock" "$root/hax/engine/hax-engine.opam.locked"
 # Reduce heap slack for the large generated OCaml AST module. Native engine
 # installation exceeded 3 GiB; the successful local run used a 6 GiB cap.
-OCAMLRUNPARAM="o=10,s=256k" opam install --switch vela-hax --yes "$root/hax/engine"
+OCAMLRUNPARAM="o=10,s=256k" opam install --switch vela-hax --yes --locked "$root/hax/engine"
 # Keep installed libraries/binaries, but omit disposable OCaml build/download
 # directories from the completed-toolchain cache.
 opam clean --all-switches --yes

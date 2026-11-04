@@ -27,9 +27,19 @@ requires an unstable Cargo feature. The pinned hax nightly installer enables
 that feature explicitly for its own LLVM override.
 
 Maude 3.2 and unversioned ProVerif were used in the historical reference CI.
-The new gates use the versions above. OS packages, transitive opam resolution,
-GitHub action tags, semgrep, cargo-audit and cargo-deny are not a hermetic
-pinned environment. No bit-for-bit build reproducibility is claimed.
+The new gates use the versions above. Since T10 the proof/security workflows
+pin every action to a full commit SHA, every installed scanner to an exact
+version (`cargo-audit 0.22.2`, `cargo-deny 0.20.2`, `cargo-fuzz 0.13.2`,
+`semgrep 1.183.0`), every Ubuntu package to one immutable archive snapshot
+(§4.2), and the hax engine's OCaml dependencies to the committed opam lock
+`security/assurance/opam-lock/hax-engine.opam.locked` (`opam install --locked`
+inside `install-hax.sh`). Hosted proof jobs run in the digest-pinned proof
+container described in §4.2.
+
+Remaining non-hermetic inputs: the rustup installer script itself, opam
+package *metadata* (opam-repository HEAD at install time; the lock pins the
+versions and each release's archive hash), and the build box's own toolchain
+for local runs. No bit-for-bit build reproducibility is claimed.
 
 The refinement job restores installed proof tools and the pinned Rust nightly
 from an exact GitHub Actions cache key containing OS, architecture, Ubuntu 24
@@ -51,7 +61,52 @@ a cold cache still compile independently, and cross-target/profile/toolchain
 builds retain separate artifacts. The first run after these cache-key changes
 is expected to be cold. Hosted hit rates and savings require subsequent runs.
 
-## 4.2 Installation
+## 4.2 The proof container
+
+Hosted proof jobs run inside one digest-pinned image,
+`ghcr.io/lucannez64/vela-proof`, instead of installing tools on the runner.
+Its Dockerfile, README and build workflow live in
+[`proof-image/`](proof-image/); the image is built and verified by
+[`.github/workflows/proof-image.yml`](../../.github/workflows/proof-image.yml).
+
+Pins in the image:
+
+| Input | Pin |
+|---|---|
+| Base | `ubuntu:24.04`, manifest-list digest `sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852` |
+| OS packages, Python 3.12.3 | `snapshot.ubuntu.com/ubuntu/20261104T000000Z/` (noble, noble-updates, noble-security) |
+| Rust | 1.99.1 and hax's `nightly-2025-11-08` |
+| hax | 0.3.7 frontend/driver; engine source commit `d8b5b3d3b666fee8943a351445d2b680105e8ea3` with the frozen opam lock |
+| F* / Z3 | 2025.10.06 (`940c187d…59442d`) / 4.13.3 (`32c7377…0a8722f`) |
+| Tamarin / Maude | 1.12.0 (`201be06f…4b469c6`) / 3.5.1 (`72ed1ca8…f8f92c`) |
+| ProVerif / CryptoVerif | 2.05 (switch `vela-proverif`, OCaml 5.1.1) / 2.12 (`77730861…098757`) |
+
+The repository is not baked in; mount the checkout at run time. Pull by the
+digest recorded in `security/assurance/proof-image/IMAGE`:
+
+```bash
+img=$(cat security/assurance/proof-image/IMAGE)   # ghcr.io/…@sha256:…
+docker run --rm -v "$PWD:/workspace" -w /workspace \
+  -e VELA_BOUNDED=1 -e VELA_CARGO_JOBS=4 \
+  "$img" security/assurance/run-all.sh --with-fstar --out /tmp/assurance-logs
+```
+
+`VELA_BOUNDED=1` is required in the container because `bounded.sh` needs a
+systemd user manager; the container/runner memory limit replaces it. This is a
+resource cap, not a check. `security.yml`'s hosted jobs read the one-line
+`IMAGE` file through a small job. While that file holds the bootstrap
+placeholder (`…@sha256:PLACEHOLDER`) and on the self-hosted `vela-box` runners,
+the jobs keep the host installation path described above; with a real digest,
+they run with `container:` by digest and skip the install steps.
+`security/assurance/check-env-pins.py` enforces the workflow pins, the fixed
+runner labels, the apt snapshot stamp (workflow and Dockerfile must match
+`proof-image/apt-snapshot.conf`) and the opam lock. See
+[`proof-logs/current/env-pins/`](proof-logs/current/env-pins/README.md) for
+how each pin was resolved, and
+[`proof-logs/current/proof-container/`](proof-logs/current/proof-container/README.md)
+for the bootstrap state.
+
+## 4.3 Installation
 
 The refinement prerequisites explicitly include the system `nodejs` package:
 the pinned hax engine declares it as an opam external dependency. Apt uses
@@ -113,7 +168,7 @@ successful refinement job passed on `b27dcd6` (see
 [hosted logs](proof-logs/current/hosted-refinement-40002230354/README.md)).
 Default local runners retain the **3 GiB** cap.
 
-## 4.3 Commands and resource limits
+## 4.4 Commands and resource limits
 
 ```bash
 sha256sum -c security/assurance/MANIFEST.sha256
@@ -189,7 +244,7 @@ Individual original family commands remain `security/formal/run-<family>-proofs.
 `composition`, `sync-admission`, `oram-access-hiding`). Direct invocation
 bypasses the default all-run resource wrapper; prefer `run-all.sh`.
 
-## 4.4 Logs and CI evidence
+## 4.5 Logs and CI evidence
 
 [`proof-logs/`](proof-logs/) retains curated excerpts from
 [CI #39864715971](https://github.com/lucannez64/VELA/actions/runs/39864715971)
@@ -220,7 +275,7 @@ These additions require an actual branch CI run before claiming CI success.
 Earlier installation failures are superseded by the successful local engine
 build and eight-crate verification. CI reproduction remains an evidence gap.
 
-## 4.5 Artifact integrity
+## 4.6 Artifact integrity
 
 Regenerate the manifest after reviewed changes and completed log capture:
 

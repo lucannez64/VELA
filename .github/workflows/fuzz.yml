@@ -25,7 +25,7 @@ permissions:
 
 jobs:
   fuzz:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -43,23 +43,23 @@ jobs:
           - credential_key_verify
           - nm_host_protocol
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@2c76c034f9e32a5d6e2c104dc4df23a22476db04 # nightly
 
       # cargo-fuzz builds into fuzz/target (its own dir, unaffected by the
       # repo-root target-dir config), so the default workspace mapping is
       # correct. Nightly builds all 12 ASan targets; without this every run
       # recompiles the whole graph.
-      - uses: swatinem/rust-cache@v2
+      - uses: swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: libVELA/vela-core/fuzz
           cache-on-failure: true
 
       - name: Install cargo-fuzz
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
         with:
-          tool: cargo-fuzz
+          tool: cargo-fuzz@0.13.2
 
       # Pin the GNU host triple explicitly: cargo-fuzz defaults to
       # x86_64-unknown-linux-musl on Linux, where ASan is incompatible with
@@ -69,7 +69,18 @@ jobs:
       # ctap-hid-fido2 (via vela-desktop-core) pulls in hidapi, whose build
       # script links the system libudev through pkg-config.
       - name: Install libudev
-        run: sudo apt-get update && sudo apt-get install -y libudev-dev
+        run: |
+          # Fixed Ubuntu snapshot (security/assurance/proof-image/apt-snapshot.conf).
+          sudo rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources
+          sudo tee /etc/apt/sources.list.d/vela-snapshot.sources >/dev/null <<'EOF2'
+          Types: deb
+          URIs: https://snapshot.ubuntu.com/ubuntu/20261104T000000Z/
+          Suites: noble noble-updates noble-security
+          Components: main restricted universe multiverse
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          EOF2
+          sudo apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=3 update -qq
+          sudo apt-get install -y --no-install-recommends libudev-dev
 
       - name: Fuzz ${{ matrix.target }}
         id: fuzz
@@ -85,7 +96,7 @@ jobs:
 
       - name: Upload crash artifacts
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: fuzz-crash-${{ matrix.target }}
           path: |
