@@ -1,0 +1,220 @@
+(* VELA hybrid KEM, combiner v2 — IND-CCA2 in a GDH model of X25519 with
+   the cofactor-8 group, nonuniform (clamped-style) exponents, the kem.rs
+   low-order reject check, the other KEM's secret key disclosed, public
+   ML-KEM algorithms, and SHA-256 over ct_mlkem / pk_mlkem modelled as a
+   collision-resistant hash.
+
+   Code: libVELA/vela-crypto/src/kem.rs
+     - encapsulate():    lines 129-154; low-order recipient key rejected at
+                         137-141 by !x25519_ss.was_contributory().
+     - decapsulate():    lines 157-169; low-order ephemeral rejected at
+                         160-162 by !x25519_ss.was_contributory().
+     - open_share():     lines 304-322; every decapsulation failure is the
+                         uniform VelaError::DecryptionFailed.
+     - combine_v2():     lines 171-193:
+         ss = HKDF-SHA256(ss_mlkem ‖ ss_x25519 ‖ x25519_epk ‖ x25519_pk
+                          ‖ SHA-256(ct_mlkem) ‖ SHA-256(pk_mlkem))
+
+   Concrete crate: x25519-dalek 2.0.1 (libVELA/vela-crypto/Cargo.lock),
+   curve25519-dalek 4.1.3. StaticSecret::diffie_hellman / EphemeralSecret::
+   diffie_hellman compute their_public.0.mul_clamped(secret) (x25519.rs:81,
+   144, 205); mul_clamped applies clamp_integer (scalar.rs:1386-1391:
+   clear bits 0,1,2; clear bit 255; set bit 254), so the scalar is a
+   multiple of 8. was_contributory() is !shared_secret.is_identity()
+   (x25519.rs:324-326), i.e. the 32-byte shared secret is not all zero.
+   The crate itself does not reject low-order or non-canonical inputs: it
+   reduces the u-coordinate modulo p and ignores the high bit, then returns
+   the possibly-zero shared secret.
+
+   Model of the cofactor.  Write an X25519 point as a pair
+     (eq, et) ∈ G × T
+   where G is the prime-order quotient (the usual GDH group) and T is the
+   small-order component.  Honest points are (exp(g, x), t0) with t0 the
+   identity of T and x drawn from the clamped-scalar distribution:
+     x = 2^254 + 8r = 8·(2^251 + r),  r ∈ [0, 2^251).
+   Because every exponent is a multiple of 8, the small-order component of
+   any shared secret is the identity; the shared secret is exp(eq, x).
+   The decapsulation reject check is the code's zero-shared-secret test:
+     if is_neutral(exp(eq, x)) then reject,
+   and DH_basic_with_is_neutral's equation
+     is_neutral(exp(eq, x)) = is_neutral(eq)
+   machine-rewrites it to a test on the public prime-order component.
+   The adversary submits arbitrary eq (including neutral/low-order values
+   and the public low-order point low) and arbitrary et to decapsulation; a
+   neutral eq is rejected.  Honest challenge values use t0.  The transcript
+   binds both components, as the real wire encoding does.
+
+   The companion x25519_cofactor_projection.ocv machine-checks, with
+   probability 0 in the shipped DH_X25519 (k = 8) structure, that for every
+   full-group element Y and clamped exponent x:
+     exp(Y, x) = subGtoG(exp_div_k(pow_k(Y), x))
+   and
+     is_zero_G(exp(Y, x)) = is_zero_G(subGtoG(pow_k(Y))).
+   Thus only the prime-order projection pow_k(Y) enters the shared secret
+   and the reject test.  This model takes that projection as its G.
+
+   Game: one honest recipient key pair, one challenge encapsulation, Qd
+   decapsulation queries on any capsule other than the challenge capsule,
+   qH random oracle queries.  The challenge pair (ctm, epk) is excluded
+   from decapsulation queries verbatim; the ML-KEM secret key is disclosed.
+   A rejected decapsulation is modelled as no oracle output; the real code
+   returns the same public DecryptionFailed error on every failure (C15),
+   so this is the same observable public event for IND-CCA2.
+
+   Expected: "All queries proved."
+
+   What this model does NOT establish:
+   - It does not prove that Rust samples the clamped distribution or that
+     clamp_integer is correct; Z is an abstract nonuniform type.
+   - It does not model X25519 encoding aliases (non-canonical u-coordinates
+     or the ignored high bit); that is plan step C3a/C3b.
+   - It does not prove the concrete hash functions; HKDF-SHA256 is a random
+     oracle and the SHA-256 bridge is the FixedCollisionResistant_hash_1
+     assumption with symbolic PhashCt/PhashEk.
+   - The map from Rust wire bytes to (eq, et) is an argued correspondence,
+     not a refinement proof.
+ *)
+
+param Qd.
+
+(* ── Prime-order quotient G with nonuniform (clamped-style) exponents ── *)
+type Z [large,bounded,nonuniform].
+type G [large,bounded].
+proba pGDH.
+proba pDistRerandom.
+proba PCollKey.
+expand DH_basic_with_is_neutral(G, Z, g, exp, exp', mult, is_neutral).
+
+(* Key-collision bound, as in DH_proba_collision_minimal but without
+   re-expanding DH_basic (which DH_basic_with_is_neutral already defined). *)
+collision x <-R Z; forall Y: G;
+  return(exp(g, x) = Y) <=(PCollKey)=> return(false) if Y independent-of x.
+
+def GDH_RSR_minimal(G, Z, g, exp, mult, pGDH, pDistRerandom) {
+
+(* The GDH assumption with the rerandomization loss.  Definition copied
+   unchanged from CryptoVerif 2.12 examples/hpke/lib.gdh.ocvl (Alwen,
+   Blanchet, Hauck, Kiltz, Lipp, Riepel, "Analysing the HPKE Standard",
+   Eurocrypt 2021).  The upstream CeCILL-B license is retained in
+   HPKE-LICENSE.txt. *)
+
+param na, naeq, naDDH, naDDH1, naDDH2, naDDH3, naDDH4, naDDH5, naDDH6, naDDH7, naDDH8, naDH9,
+      nb, nbeq, nbDDH, nbDDH1, nbDDH2, nbDDH3, nbDDH4, nbDDH5, nbDDH6, nbDDH7, nbDDH8, nbDH9.
+
+equiv(gdh(exp))
+    foreach ia <= na do a <-R Z; (
+      OA() := return(exp(g,a)) |
+      foreach iaeq <= naeq do OAeq(m:G) := return(m = exp(g,a)) |
+      foreach iaDDH1 <= naDDH1 do ODDHa1(m:G, m':G) := return(m = exp(m', a)) |
+      foreach iaDDH  <= naDDH  do ODDHa(m:G, j<=nb) [useful_change] := return(m = exp(g, mult(b[j], a))) |
+      foreach iaDDH8 <= naDDH8 do ODDHa8(m:G,j<=na) [3] := return(m = exp(g,mult(a[j], a))) |
+      foreach iaDH9 <= naDH9 do ODHa9(x:Z) [2] := return(exp(g, mult(a, x)))
+    ) |
+    foreach ib <= nb do b <-R Z; (
+      OB() := return(exp(g,b)) |
+      foreach ibeq <= nbeq do OBeq(m:G) := return(m = exp(g,b)) |
+      foreach ibDDH1 <= nbDDH1 do ODDHb1(m:G, m':G) := return(m = exp(m', b)) |
+      foreach ibDDH  <= nbDDH  do ODDHb(m:G, j<=na) := return(m = exp(g, mult(a[j], b))) |
+      foreach ibDDH8 <= nbDDH8 do ODDHb8(m:G,j<=nb) [3] := return(m = exp(g,mult(b[j], b))) |
+      foreach ibDH9 <= nbDH9 do ODHb9(x:Z) [2] := return(exp(g, mult(b, x)))
+    )
+<=(pGDH(time + (na + nb + 1 + #ODHa9 + #ODHb9) * time(exp),
+         #ODDHa + #ODDHa1 + #ODDHa8 +
+         #ODDHb + #ODDHb1 + #ODDHb8)
+      + (na + nb) * pDistRerandom)=> [computational]
+    foreach ia <= na do a <-R Z [unchanged]; (
+      OA() := return(exp(g,a)) |
+      foreach iaeq <= naeq do OAeq(m:G) := return(m = exp(g,a)) |
+      foreach iaDDH1 <= naDDH1 do ODDHa1(m:G, m':G) := return(m = exp(m', a)) |
+      foreach iaDDH <= naDDH do ODDHa(m:G, j<=nb) := return(false) |
+      foreach iaDDH8 <= naDDH8 do ODDHa8(m:G,j<=na) [3] := return(m = exp(g,mult(a[j], a))) |
+      foreach iaDH9 <= naDH9 do ODHa9(x:Z) := return(exp(g, mult(a, x)))
+    ) |
+    foreach ib <= nb do b <-R Z [unchanged]; (
+      OB() := return(exp(g,b)) |
+      foreach ibeq <= nbeq do OBeq(m:G) := return(m = exp(g,b)) |
+      foreach ibDDH1 <= nbDDH1 do ODDHb1(m:G, m':G) := return(m = exp(m', b)) |
+      foreach ibDDH <= nbDDH do ODDHb(m:G, j<=na) := return(false) |
+      foreach ibDDH8 <= nbDDH8 do ODDHb8(m:G,j<=nb) [3] := return(m = exp(g,mult(b[j], b))) |
+      foreach ibDH9 <= nbDH9 do ODHb9(x:Z) := return(exp(g, mult(b, x)))
+    ).
+
+}
+
+expand GDH_RSR_minimal(G, Z, g, exp, mult, pGDH, pDistRerandom).
+
+(* ── Small-order component T (the cofactor-8 part) ── *)
+type T [large,fixed].
+(* t0 is the identity small-order component carried by honest points. *)
+const t0: T.
+(* Public low-order point: neutral prime-order component with a non-identity
+   small-order component.  This makes the kem.rs reject branch reachable by
+   the adversary; low is not an honest key. *)
+const low: G.
+equation is_neutral(low) = true.
+const t1: T.
+
+(* ── ML-KEM: arbitrary, adversary-controlled ── *)
+type mlsk [bounded].
+type mlpk [bounded].
+type mlseed [large,fixed].
+type mlct [bounded].
+type mlss [bounded].
+fun mlpkgen(mlsk): mlpk.
+fun mlencap_ct(mlpk, mlseed): mlct.
+fun mlencap_ss(mlpk, mlseed): mlss.
+fun mldecap(mlct, mlsk): mlss.
+
+(* Leaked-key decapsulation must recover the honest challenge secret too.
+   No confidentiality assumption is made about these ML-KEM functions. *)
+equation forall sk: mlsk, seed: mlseed;
+  mldecap(mlencap_ct(mlpkgen(sk), seed), sk) = mlencap_ss(mlpkgen(sk), seed).
+
+(* ── SHA-256 over ct_mlkem and pk_mlkem: collision resistant ── *)
+type hashout [large,fixed].
+proba PhashCt.
+proba PhashEk.
+expand FixedCollisionResistant_hash_1(mlct, hashout, SHAct, PhashCt).
+expand FixedCollisionResistant_hash_1(mlpk, hashout, SHAek, PhashEk).
+
+(* ── The combiner: HKDF-SHA256 as a random oracle ──
+   Inputs: ss_mlkem, ss_x25519, epk_eq, epk_et, pk_eq, pk_et,
+           SHA-256(ct_mlkem), SHA-256(pk_mlkem). *)
+type hashkey [fixed].
+type key [large,fixed].
+expand ROM_hash_8(hashkey, mlss, G, G, T, G, T, hashout, hashout, key, H, Horacle, qH).
+
+query secret b [cv_bit].
+
+process
+  Ostart() :=
+    hk <-R hashkey;
+    b <-R bool;
+    skm <-R mlsk;
+    x <-R Z;
+    pk_eq: G <- exp(g, x);
+    pk_et: T <- t0;
+    return(skm, pk_eq, pk_et);
+    ((
+      Ochall() :=
+        s <-R mlseed;
+        y <-R Z;
+        pkm <- mlpkgen(skm);
+        ctm: mlct <- mlencap_ct(pkm, s);
+        ssm <- mlencap_ss(pkm, s);
+        epk_eq: G <- exp(g, y);
+        epk_et: T <- t0;
+        k0 <- H(hk, ssm, exp(exp(g, x), y), epk_eq, epk_et, pk_eq, pk_et,
+               SHAct(ctm), SHAek(pkm));
+        k1 <-R key;
+        return(ctm, epk_eq, epk_et, if b then k0 else k1)
+    ) | (
+      foreach id <= Qd do
+      Odecap(ctq: mlct, eq: G, et: T) :=
+        find suchthat defined(ctm, epk_eq, epk_et)
+                     && ctq = ctm && eq = epk_eq && et = epk_et then yield else
+        (* kem.rs:160 reject check: shared-secret u-coordinate is zero. *)
+        if is_neutral(exp(eq, x)) then yield else
+        return(H(hk, mldecap(ctq, skm), exp(eq, x), eq, et, pk_eq, pk_et,
+                 SHAct(ctq), SHAek(mlpkgen(skm))))
+    ) | run Horacle(hk))

@@ -12,6 +12,8 @@ ss = HKDF-SHA256(ss_mlkem ‖ ss_x25519 ‖ x25519_epk ‖ x25519_pk ‖ SHA-256
 |---|---|---|
 | `kem_v2_x25519_gdh.ocv` | proved | Single-recipient IND-CCA2 in a **uniform prime-order GDH model**, with public ML-KEM functions, a correctness equation and the ML-KEM secret key disclosed. No ML-KEM secrecy assumption. Bound: `4·pDistRerandom + 2·pGDH(t, 2·qH) + (2·Qd + 2·qH)/|Z|` |
 | `kem_v2_x25519_gdh_nonuniform.ocv` | proved | Single-recipient IND-CCA2 in a **nonuniform (clamped-style) exponent GDH model** (`DH_basic` + `DH_proba_collision_minimal` + `GDH_RSR_minimal`), otherwise the same game and disclosures as the uniform model. Bound: `4·pDistRerandom + 2·pGDH(t, 2·qH) + (2·Qd + 2·qH)·PCollKey`; conditional HPKE-constant substitution `4·2^-125 + 2·pGDH(t, 2·qH) + (2·Qd + 2·qH)·2^-250` |
+| `kem_v2_x25519_cofactor_sha256.ocv` | proved | Single-recipient IND-CCA2 in a **cofactor-8 X25519 model**: a point is `(eq, et)` with `eq` the prime-order quotient and `et` an explicit small-order component, exponents are the nonuniform clamped-style set, decapsulation applies the `kem.rs` low-order reject check, and the adversary may submit arbitrary `eq`/`et` including low-order (neutral) `eq`. SHA-256 over `ct_mlkem`/`pk_mlkem` as in the other `_sha256` games. Bound: `4·pDistRerandom + 2·pGDH(t, 2·qH) + (2·Qd + 2·qH)·PCollKey + 6·PhashCt`; the reject check adds no term. Concrete instance: `4·2^-125 + 2·pGDH(t, 2·qH) + (2·Qd + 2·qH)·2^-250 + 6·PhashCt` |
+| `x25519_cofactor_projection.ocv` | proved | Exact (probability 0) cofactor reduction in CryptoVerif's shipped `DH_X25519` (k = 8) structure: for every full-group `Y` and clamped exponent `x`, `exp(Y,x) = subGtoG(exp_div_k(pow_k(Y),x))` and `is_zero_G(exp(Y,x)) = is_zero_G(subGtoG(pow_k(Y)))`. Only the prime-order projection `pow_k(Y)` enters the shared secret and the reject test |
 | `kem_v2_mlkem_cca.ocv` | proved | Single-recipient IND-CCA2 under **ML-KEM IND-CCA2 and the library collision bounds**, with the DH secret exponent disclosed. Bound: `2·Penc(t, 1, 1, Qd) + 6·Qd·Pctxtcoll + 2·qH/|mlss| + (8·Qd + 2·qH)/|Z|` |
 | `kem_v2_x25519_gdh_multi_sha256.ocv` | proved | **Multi-user/multi-challenge** IND-CCA2 (left-or-right) with `N` honest recipients, `Qc` total challenge encapsulations, `Qd` decapsulations per recipient, uniform prime-order GDH, every ML-KEM secret key disclosed, and the SHA-256 bridge. `PhashEk` is charged. Bound: `(2·N + 2·Qc)·pDistRerandom + 2·N·Qc·pGDH(t, 2·qH) + (2·N²·Qc² + 4·N² + 2·Qc² + 2·#Odecap·Qc + 2·N²·Qc + 2·qH·Qc)/|Z| + 8·PhashCt + 6·PhashEk` |
 | `kem_v2_x25519_gdh_nonuniform_multi_sha256.ocv` | proved | Same multi-user/multi-challenge game in the **nonuniform (clamped-style)** GDH model, every ML-KEM secret key disclosed, SHA-256 bridge, `PhashEk` charged. Bound: `(2·N + 2·Qc)·pDistRerandom + 2·pGDH(t, 2·qH) + (8·N² + 4·Qc² + 2·#Odecap·Qc + 2·Qc·qH)·PCollKey + 8·PhashCt + 6·PhashEk` |
@@ -32,9 +34,11 @@ are not set to zero. `IND_CCA2_KEM` supplies public-key and
 encapsulation-ciphertext collision bounds; the displayed one-recipient result
 contains `Pctxtcoll` even though `Pkeycoll` does not occur in its final bound.
 
-The nonuniform game is the closer abstraction of X25519 key generation. Its
-exponent type is `[nonuniform]`, and the two supplied macro assumptions expose
-the ordinary GDH reduction together with two distribution terms:
+The nonuniform game (and its cofactor-8 companion
+`kem_v2_x25519_cofactor_sha256.ocv`) is the closer abstraction of X25519 key
+generation. Its exponent type is `[nonuniform]`, and the two supplied macro
+assumptions expose the ordinary GDH reduction together with two distribution
+terms:
 
 - `PCollKey` bounds `Pr[exp(g,x) = Y]` for a random exponent `x` and an
   independent group element `Y`; the final bound charges it `2·Qd + 2·qH`
@@ -58,6 +62,8 @@ In the abstract injective group the corresponding point-collision bound is
 `2^-251`; using `2^-250` enlarges that bound conservatively. The factor two
 for Montgomery coordinate aliases is imported as an allowance from the HPKE
 analysis, not established by this model (which has no coordinate encoding).
+The cofactor game reuses the same symbolic `PCollKey` and `pDistRerandom`
+terms; its explicit small-order component changes neither.
 The `pGDH` symbols also have different multi-instance accounting in `GDH`
 and `GDH_RSR_minimal`. Their multiplicity factors reduce to one in this
 single-pair instance; the underlying assumptions must still be read from their
@@ -126,13 +132,35 @@ passed.
   accounting*, not a machine-checked statement that real X25519 scalars are
   clamped, that clamping is correct, or that `Z` is the implementation's
   distribution.
-- **X25519 cofactor and encoding aliases remain open.** Neither X25519 game
-  models the cofactor-8 subgroup, non-contributory/low-order decapsulation
-  inputs, the `kem.rs` reject check, or non-canonical Montgomery
-  `u`-coordinate aliases. The transcript binds `epk`/`pk` as abstract group
-  elements; the map from real wire encodings to those elements is an argued
-  correspondence, not part of the games. Switching macros does not discharge
-  these obligations.
+- **X25519 cofactor-8 and the reject check (C2, modelled).**
+  `x25519_cofactor_projection.ocv` machine-checks, with probability 0 in the
+  shipped `DH_X25519` (k = 8) structure, that for every full-group element `Y`
+  and clamped exponent `x` the shared value is
+  `exp(Y,x) = subGtoG(exp_div_k(pow_k(Y),x))` and the zero/reject test is
+  `is_zero_G(exp(Y,x)) = is_zero_G(subGtoG(pow_k(Y)))`; the small-order
+  component is therefore irrelevant. `kem_v2_x25519_cofactor_sha256.ocv`
+  models a point as `(eq, et)` with `eq` the prime-order projection and `et`
+  an explicit small-order component, keeps the nonuniform clamped-style
+  exponent set, and applies the `kem.rs` reject check
+  (`is_neutral(exp(eq,x))`, equivalently `is_neutral(eq)`). The adversary
+  submits arbitrary `eq`/`et`, including low-order `eq` (a public low-order
+  constant is available, so the reject branch is reachable); the honest
+  challenge and recipient points carry the identity component `t0`. Because
+  the reject condition is a public deterministic test that removes one oracle
+  answer, it adds no probability term: the bound is exactly the nonuniform
+  SHA-256 bound above. What remains argued rather than machine-checked: that
+  Rust samples this clamped set (the abstract `Z` distribution), that
+  `clamp_integer` realizes it, and that wire bytes map to `(eq, et)`. The
+  IND-CCA2 game takes the prime-order projection as its GDH group; the
+  projection identity itself is the machine-checked bridge.
+- **X25519 encoding aliases remain open (C3a/C3b).** Neither X25519 game
+  models non-canonical Montgomery `u`-coordinate aliases, the ignored high bit,
+  or the `u(P) = u(-P)` encoding ambiguity. The transcript binds `epk`/`pk` as
+  abstract group elements; the map from real wire encodings to those elements
+  is an argued correspondence, not part of the games. The factor two for
+  Montgomery coordinate aliases in `PCollKey = 2^-250` is still imported as an
+  allowance from the HPKE analysis; the cofactor model has no coordinate
+  encoding either. Switching macros does not discharge these obligations.
 - **Other-component disclosure, not arbitrary corruption semantics.** The
   GDH game exposes the ML-KEM secret key and gives public algorithms satisfying
   decapsulation correctness for honest encapsulations. It assumes no ML-KEM
@@ -202,6 +230,9 @@ to VELA; only the explicitly instantiated assumptions are used.
 The runner pins the reviewed nonuniform result's coefficients and probability
 terms through `check-cryptoverif-bound.py`. It rejects missing rerandomization
 loss, changed coefficients, a uniform-domain denominator, and additional
-collision terms. This is bound-output drift detection, not validation of the
-collision side conditions or primitive assumptions. The retained golden proof
-log and negative fixtures exercise the checker.
+collision terms. The cofactor model and exact projection bridge are pinned by
+`check-cryptoverif-cofactor.py`, which rejects bound drift (zero, uniform
+denominator, changed coefficient, missing hash or collision term) and a
+missing or reversed projection result. These are output drift detections, not
+validation of the collision side conditions or primitive assumptions. The
+retained golden proof logs and negative fixtures exercise the checkers.

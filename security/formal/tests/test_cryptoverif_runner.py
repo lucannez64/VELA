@@ -22,6 +22,13 @@ if model == 'kem_v1_x25519_baseline':
         print('Error: invalid model')
     print('RESULT Could not prove bit secrecy of b.')
     sys.exit(124 if mode == 'baseline_timeout' else 0)
+if model == 'x25519_cofactor_projection' and mode != 'missing_query_witness':
+    if mode == 'projection_wrong_result':
+        print('RESULT Proved indistinguishability between game 2 and game 1')
+    elif mode != 'projection_missing_result':
+        print('RESULT Proved indistinguishability between game 1 and game 2')
+    print('All queries proved.')
+    sys.exit(0)
 if mode != 'missing_query_witness':
     if model.startswith(('hybrid_sig_', 'possession_proof_')):
         query = 'event(forge) ==> false'
@@ -48,6 +55,19 @@ if mode != 'missing_query_witness':
     elif model == 'kem_v2_x25519_gdh_nonuniform_sha256':
         bound = ('4 * pDistRerandom + 2 * pGDH(time_1, 2 * qH) + '
                  '(2 * Qd + 2 * qH) * PCollKey + 6 * PhashCt')
+    elif model == 'kem_v2_x25519_cofactor_sha256':
+        bound = ('4 * pDistRerandom + 2 * pGDH(time_1, 2 * qH) + '
+                 '(2 * Qd + 2 * qH) * PCollKey + 6 * PhashCt')
+        if mode == 'cofactor_zero_bound':
+            bound = '0'
+        elif mode == 'cofactor_uniform_bound':
+            bound = bound.replace('* PCollKey', '/ |Z|')
+        elif mode == 'cofactor_changed_coefficient':
+            bound = bound.replace('2 * Qd', 'Qd')
+        elif mode == 'cofactor_missing_hash':
+            bound = bound.replace(' + 6 * PhashCt', '')
+        elif mode == 'cofactor_missing_collision':
+            bound = bound.replace(' + (2 * Qd + 2 * qH) * PCollKey', '')
     elif model == 'kem_v2_mlkem_cca_sha256':
         bound = ('2 * qH / |mlss| + 2 * Penc(time_1, 1, 1, Qd) + '
                  '(8 * Qd + 2 * qH) / |Z| + 4 * PhashCt + 6 * Qd * Pctxtcoll')
@@ -111,7 +131,9 @@ class RunnerTests(unittest.TestCase):
         self.assertIn('kem_v2_x25519_gdh_multi_sha256: proved (as expected)', result.stdout)
         self.assertIn('kem_v2_x25519_gdh_nonuniform_multi_sha256: proved (as expected)', result.stdout)
         self.assertIn('kem_v2_mlkem_cca_multi_sha256: proved (as expected)', result.stdout)
-        self.assertEqual(result.stdout.count('(as expected)'), 16)
+        self.assertIn('kem_v2_x25519_cofactor_sha256: proved (as expected)', result.stdout)
+        self.assertIn('x25519_cofactor_projection: proved (as expected)', result.stdout)
+        self.assertEqual(result.stdout.count('(as expected)'), 18)
 
     def test_sha256_bridge_bound_drift_is_rejected(self):
         result = self.invoke('sha256_changed_coefficient')
@@ -163,6 +185,33 @@ class RunnerTests(unittest.TestCase):
             str(ROOT / 'security/assurance/proof-logs/current/x25519-nonuniform-gdh/kem_v2_x25519_gdh_nonuniform.log'),
         ], capture_output=True, text=True, timeout=5)
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_cofactor_bound_drift_is_rejected(self):
+        for mode in ('cofactor_zero_bound', 'cofactor_uniform_bound',
+                     'cofactor_changed_coefficient', 'cofactor_missing_hash',
+                     'cofactor_missing_collision'):
+            with self.subTest(mode=mode):
+                result = self.invoke(mode)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('cofactor IND-CCA2 bound changed', result.stderr)
+
+    def test_cofactor_projection_result_drift_is_rejected(self):
+        for mode in ('projection_missing_result', 'projection_wrong_result'):
+            with self.subTest(mode=mode):
+                result = self.invoke(mode)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('cofactor projection equivalence', result.stderr)
+
+    def test_retained_cofactor_proof_results_pass(self):
+        folder = ROOT / 'security/assurance/proof-logs/current/cryptoverif-x25519-cofactor'
+        for mode, model in (('bound', 'kem_v2_x25519_cofactor_sha256'),
+                            ('projection', 'x25519_cofactor_projection')):
+            with self.subTest(model=model):
+                result = subprocess.run([
+                    'python3', str(ROOT / 'security/formal/check-cryptoverif-cofactor.py'),
+                    mode, str(folder / f'{model}.log'),
+                ], capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_baseline_timeout_is_not_an_expected_nonproof(self):
         result = self.invoke('baseline_timeout')

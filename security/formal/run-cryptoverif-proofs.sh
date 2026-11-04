@@ -8,6 +8,10 @@
 #   kem_v2_x25519_gdh_multi_sha256 must prove: N recipients, Qc challenges,
 #                         multi-user/multi-challenge IND-CCA2 (GDH side)
 #   kem_v2_x25519_gdh_nonuniform_multi_sha256 same for nonuniform exponents
+#   kem_v2_x25519_cofactor_sha256 must prove: cofactor-8 group + kem.rs low-order
+#                         reject check, clamped exponents, SHA-256 bridge
+#   x25519_cofactor_projection must prove: exp(Y,x) and the reject test depend only
+#                         on the prime-order projection pow_8(Y) (exact, cofactor killed)
 #   kem_v2_mlkem_cca      must prove: ML-KEM IND-CCA2/collision bounds, DH key disclosed
 #   kem_v2_mlkem_cca_sha256 same with SHA-256(ct)/SHA-256(pk) in the KDF input
 #   kem_v2_mlkem_cca_multi_sha256 must prove: N recipients, Qc challenges,
@@ -47,15 +51,26 @@ run() {
     echo "$model: no recognized proof verdict; see $log" >&2
     exit 1
   fi
-  if [[ $got == proved ]] && ! grep -Fq "RESULT Proved $query up to probability " "$log"; then
-    echo "$model: missing expected query result ($query); see $log" >&2
-    exit 1
+  if [[ $got == proved ]]; then
+    if [[ $model == x25519_cofactor_projection ]]; then
+      if ! grep -Fq 'RESULT Proved indistinguishability between game 1 and game 2' "$log"; then
+        echo "$model: missing expected query result ($query): cofactor projection equivalence; see $log" >&2
+        exit 1
+      fi
+    elif ! grep -Fq "RESULT Proved $query up to probability " "$log"; then
+      echo "$model: missing expected query result ($query); see $log" >&2
+      exit 1
+    fi
   fi
   if [[ $got != "$expect" ]]; then echo "$model: expected $expect, got $got; see $log" >&2; exit 1; fi
   if [[ $model == kem_v2_x25519_gdh_nonuniform ]]; then
     python3 "$root/check-cryptoverif-bound.py" "$log"
   elif [[ $model == kem_v2_x25519_gdh_sha256 || $model == kem_v2_x25519_gdh_nonuniform_sha256 || $model == kem_v2_mlkem_cca_sha256 || $model == kem_v2_x25519_gdh_multi_sha256 || $model == kem_v2_x25519_gdh_nonuniform_multi_sha256 || $model == kem_v2_mlkem_cca_multi_sha256 ]]; then
     python3 "$root/check-cryptoverif-sha256-bound.py" "$model" "$log"
+  elif [[ $model == kem_v2_x25519_cofactor_sha256 ]]; then
+    python3 "$root/check-cryptoverif-cofactor.py" bound "$log"
+  elif [[ $model == x25519_cofactor_projection ]]; then
+    python3 "$root/check-cryptoverif-cofactor.py" projection "$log"
   fi
   echo "$model: $got (as expected)"
   grep '^RESULT Proved' "$log" | sort -u | sed 's/^/  /' || true
@@ -67,6 +82,8 @@ run kem_v2_x25519_gdh_nonuniform proved 'bit secrecy of b'
 run kem_v2_x25519_gdh_nonuniform_sha256 proved 'bit secrecy of b'
 run kem_v2_x25519_gdh_multi_sha256 proved 'bit secrecy of b'
 run kem_v2_x25519_gdh_nonuniform_multi_sha256 proved 'bit secrecy of b'
+run kem_v2_x25519_cofactor_sha256 proved 'bit secrecy of b'
+run x25519_cofactor_projection proved 'indistinguishability'
 run kem_v2_mlkem_cca proved 'bit secrecy of b'
 run kem_v2_mlkem_cca_sha256 proved 'bit secrecy of b'
 run kem_v2_mlkem_cca_multi_sha256 proved 'bit secrecy of b'
