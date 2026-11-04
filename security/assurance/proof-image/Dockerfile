@@ -37,19 +37,21 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # set minimal and deterministic. Versions are pinned by the immutable snapshot
 # date, not by `=` pins that would break as soon as the archive rotates (see
 # apt-snapshot.conf).
-# http: the base image has no CA certificates yet; apt still checks the
-# archive signature (Signed-By), so the transport needs no TLS.
+# Bootstrap: the bare base image has no CA certificates, and snapshot.ubuntu.com
+# redirects http to https. This one step skips TLS peer checks; apt still
+# verifies the signed InRelease (Signed-By) and every package hash, and it
+# installs ca-certificates from the same snapshot, so later steps verify TLS.
 # hadolint ignore=DL3008
 RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources \
  && printf '%s\n' \
       'Types: deb' \
-      'URIs: http://snapshot.ubuntu.com/ubuntu/20261104T000000Z/' \
+      'URIs: https://snapshot.ubuntu.com/ubuntu/20261104T000000Z/' \
       'Suites: noble noble-updates noble-security' \
       'Components: main restricted universe multiverse' \
       'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
       > /etc/apt/sources.list.d/vela-snapshot.sources \
- && apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=3 update \
- && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+ && apt-get -o Acquire::https::Verify-Peer=false -o Acquire::https::Verify-Host=false -o Acquire::Check-Valid-Until=false -o Acquire::Retries=3 update \
+ && DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::https::Verify-Peer=false -o Acquire::https::Verify-Host=false install -y --no-install-recommends \
       build-essential \
       ca-certificates \
       clang \
