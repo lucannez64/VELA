@@ -138,12 +138,15 @@ pub fn opened_share_item(share: &OpenedShare) -> &[u8] {
 }
 
 #[cfg_attr(hax, hax_lib::ensures(|bytes| bytes.as_slice() == share.item.as_slice()))]
-pub fn into_opened_share_item(mut share: OpenedShare) -> Vec<u8> {
+pub fn into_opened_share_item(share: OpenedShare) -> Vec<u8> {
     // `OpenedShare` has a `Drop` impl (it wipes `item`), so the field cannot be
-    // moved out by value; take it and let the destructor wipe the now-empty
-    // buffer. The returned vector is the caller's plaintext on the existing
-    // API — see the C16 erasure log for the `Zeroizing` follow-up.
-    std::mem::take(&mut share.item)
+    // moved out by value. Return a copy and let the destructor wipe the
+    // original buffer. Not `std::mem::take`: hax models it as an unspecified
+    // function, so the share-facts gate could not prove the postcondition
+    // above; `Clone` is modelled as returning an equal value. The returned
+    // vector is the caller's plaintext on the existing API — see the C16
+    // erasure log for the `Zeroizing` follow-up.
+    share.item.clone()
 }
 
 /// What a recipient remembers about a share it accepted.

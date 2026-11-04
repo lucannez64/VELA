@@ -74,7 +74,9 @@ let into_opened_share_item (share: t_OpenedShare)
           let bytes:Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global = bytes in
           (Alloc.Vec.impl_1__as_slice #u8 #Alloc.Alloc.t_Global bytes <: t_Slice u8) =.
           (Alloc.Vec.impl_1__as_slice #u8 #Alloc.Alloc.t_Global share.f_item <: t_Slice u8)) =
-  share.f_item
+  Core_models.Clone.f_clone #(Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global)
+    #FStar.Tactics.Typeclasses.solve
+    share.f_item
 
 /// What a recipient remembers about a share it accepted.
 type t_SharePin = {
