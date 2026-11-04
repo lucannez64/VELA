@@ -137,11 +137,15 @@ fn bound_share_facts<'a>(
 // ── Authenticated, recipient-bound trusted-contact envelopes ────────────────
 
 /// Envelope version 2 uses the transcript-binding KEM combiner (`kem`
-/// combiner v2). Version 1 used the legacy combiner; contacts may hold such
-/// delivery envelopes for years, so they still open, but nothing writes them
-/// and a recovery *response* (always fresh) must be version 2.
+/// combiner v2). Version 1 used the retired, transcript-unbound legacy
+/// combiner; it is refused by [`open_for_recipient`] and nothing writes it.
+/// The version byte is the only format marker.
 const CONTACT_ENVELOPE_VERSION: u8 = 2;
 const CONTACT_ENVELOPE_VERSION_LEGACY_KEM: u8 = 1;
+/// User-visible error for an envelope in the retired v1 format. Owners must
+/// re-share because the v1 path is deliberately gone (plan step C17).
+const LEGACY_V1_ENVELOPE_RETIRED: &str =
+    "this trusted-contact share uses the retired v1 format; ask the contact to share again";
 /// Setup → contact handoff. Only the recorded recipient can open it.
 const CONTACT_DELIVERY_DOMAIN: &[u8] = b"vela contact-share delivery v1";
 /// Contact → recovering-device response. The direction domains are distinct so
@@ -226,10 +230,15 @@ fn open_for_recipient(
         ));
     }
     let capsule = crate::kem::HybridCapsule::from_bytes(&blob[1..header])?;
+    // The first byte is the format/combiner version. Version 1 is retired:
+    // its combiner binds no transcript, so we refuse it before touching the
+    // capsule or ciphertext.
     let shared_secret = match blob[0] {
         CONTACT_ENVELOPE_VERSION => crate::kem::decapsulate(recipient_sk, &capsule)?,
-        CONTACT_ENVELOPE_VERSION_LEGACY_KEM if domain == CONTACT_DELIVERY_DOMAIN => {
-            crate::kem::decapsulate_legacy_v1(recipient_sk, &capsule)?
+        CONTACT_ENVELOPE_VERSION_LEGACY_KEM => {
+            return Err(VelaError::InvalidParameter(
+                LEGACY_V1_ENVELOPE_RETIRED.to_string(),
+            ))
         }
         version => {
             return Err(VelaError::InvalidParameter(format!(
@@ -769,11 +778,11 @@ mod tests {
         assert!(open_contact_share(&contact_sk, &context, &corrupt).is_err());
     }
 
-    /// A contact may hold a delivery envelope written before KEM combiner v2.
-    /// It must still open; a recovery response under the legacy combiner must
-    /// not (responses are always fresh, so there is no legacy to honour).
+    /// A v1 envelope is detected by its version byte and refused with one
+    /// clear error: the retired v1 KEM path no longer exists (plan step C17).
+    /// A v2 envelope still opens normally.
     #[test]
-    fn legacy_kem_envelopes_open_only_as_held_deliveries() {
+    fn v1_envelopes_are_refused_and_v2_still_opens() {
         let shares = shamir::split(&[13u8; 32], 2, 3).unwrap();
         let (pk, sk) = crate::kem::generate_keypair();
         let context = ContactShareContext {
@@ -782,30 +791,45 @@ mod tests {
             split_id: Some(SPLIT),
             coordinate: shares[2].x,
         };
-        let legacy_envelope = |domain: &[u8]| {
-            let (capsule, secret) = crate::kem::encapsulate_legacy_v1(&pk).unwrap();
-            let ciphertext = crate::aead::seal(
-                secret.as_bytes(),
-                &shares[2].to_bytes(),
-                &context.to_aad(domain),
-            )
-            .unwrap();
-            let mut out = vec![CONTACT_ENVELOPE_VERSION_LEGACY_KEM];
-            out.extend_from_slice(&capsule.to_bytes());
-            out.extend_from_slice(&ciphertext);
-            out
-        };
 
-        let held = legacy_envelope(CONTACT_DELIVERY_DOMAIN);
-        let opened = open_contact_share(&sk, &context, &held).unwrap();
-        assert_eq!(opened.y, shares[2].y);
-
-        let response = legacy_envelope(CONTACT_RESPONSE_DOMAIN);
-        assert!(open_contact_share_response(&sk, &context, &response).is_err());
-
-        // New envelopes are always written as version 2.
+        // v2 envelopes still open and are written with the v2 version byte.
         let fresh = seal_contact_share(&pk, &context, &shares[2]).unwrap();
         assert_eq!(fresh[0], CONTACT_ENVELOPE_VERSION);
+        let opened = open_contact_share(&sk, &context, &fresh).unwrap();
+        assert_eq!(opened.y, shares[2].y);
+
+        let assert_retired = |result: Result<Share>| match result {
+            Err(VelaError::InvalidParameter(msg)) => {
+                assert_eq!(msg, LEGACY_V1_ENVELOPE_RETIRED);
+            }
+            Err(other) => panic!("expected the retired-v1 error, got {other:?}"),
+            Ok(_) => panic!("expected the retired-v1 error, got an opened share"),
+        };
+
+        // The refusal is decided by the version byte alone: even a capsule and
+        // ciphertext that v2 would open are refused once relabelled v1.
+        let mut retired_delivery = fresh.clone();
+        retired_delivery[0] = CONTACT_ENVELOPE_VERSION_LEGACY_KEM;
+        assert_retired(open_contact_share(&sk, &context, &retired_delivery));
+
+        let response = seal_contact_share_response(&pk, &context, &shares[2]).unwrap();
+        assert_eq!(response[0], CONTACT_ENVELOPE_VERSION);
+        let mut retired_response = response;
+        retired_response[0] = CONTACT_ENVELOPE_VERSION_LEGACY_KEM;
+        assert_retired(open_contact_share_response(
+            &sk,
+            &context,
+            &retired_response,
+        ));
+
+        // Any other version is still reported as unsupported, not accepted.
+        let mut unknown = fresh;
+        unknown[0] = 3;
+        assert!(matches!(
+            open_contact_share(&sk, &context, &unknown),
+            Err(VelaError::InvalidParameter(msg))
+                if msg.contains("unsupported contact envelope version 3")
+        ));
     }
 
     #[test]

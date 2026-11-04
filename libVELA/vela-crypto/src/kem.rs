@@ -26,13 +26,6 @@
 //! Giacon, Heuer and Poettering (PKC 2018). Non-contributory X25519 results
 //! (low-order points) are rejected.
 //!
-//! # Combiner v1 (legacy)
-//!
-//! `HKDF-SHA256(salt = b"vela hybrid kem v1", ikm = mlkem_ss ‖ x25519_ss,
-//! info = b"")`. It is only reachable through [`decapsulate_legacy_v1`], for
-//! long-lived ciphertexts written before v2 (trusted-contact envelopes). Nothing
-//! seals under it any more.
-//!
 //! # Sealed blobs
 //!
 //! [`seal_share`] writes `SEALED_V2_MAGIC ‖ capsule (1600 B) ‖ XChaCha20-Poly1305`.
@@ -54,7 +47,6 @@ use zeroize::Zeroizing;
 
 use crate::error::{Result, VelaError};
 
-const HKDF_SALT_V1: &[u8] = b"vela hybrid kem v1";
 const COMBINER_V2_LABEL: &[u8] = b"vela hybrid kem v2";
 
 /// Prefix of every blob [`seal_share`] produces: names the format and the
@@ -171,28 +163,6 @@ pub fn decapsulate(sk: &HybridSecretKey, capsule: &HybridCapsule) -> Result<Shar
     )
 }
 
-/// Decapsulate a capsule produced by the v1 combiner.
-///
-/// Only for long-lived ciphertexts written before combiner v2 existed (the
-/// trusted-contact envelope, version byte 1). Do not use for anything new.
-pub fn decapsulate_legacy_v1(sk: &HybridSecretKey, capsule: &HybridCapsule) -> Result<SharedSecret> {
-    let mlkem_ss = sk.mlkem_dk.decapsulate(&capsule.mlkem_ct);
-    let x25519_ss = sk.x25519_sk.diffie_hellman(&capsule.x25519_epk);
-    combine_v1(AsRef::<[u8]>::as_ref(&mlkem_ss), x25519_ss.as_bytes())
-}
-
-/// Test-only: produce a capsule the way pre-v2 clients did, so legacy-read
-/// paths can be exercised.
-#[cfg(test)]
-pub(crate) fn encapsulate_legacy_v1(pk: &HybridPublicKey) -> Result<(HybridCapsule, SharedSecret)> {
-    let (mlkem_ct, mlkem_ss) = pk.mlkem_ek.encapsulate();
-    let x25519_esk = EphemeralSecret::random_from_rng(OsRng);
-    let x25519_epk = X25519PublicKey::from(&x25519_esk);
-    let x25519_ss = x25519_esk.diffie_hellman(&pk.x25519_pk);
-    let shared = combine_v1(AsRef::<[u8]>::as_ref(&mlkem_ss), x25519_ss.as_bytes())?;
-    Ok((HybridCapsule { mlkem_ct, x25519_epk }, shared))
-}
-
 fn combine_v2(
     mlkem_ss: &[u8],
     x25519_ss: &[u8; 32],
@@ -214,18 +184,6 @@ fn combine_v2(
     let mut okm = [0u8; 32];
     hk.expand(COMBINER_V2_LABEL, &mut okm)
         .map_err(|_| VelaError::KemError)?;
-    Ok(SharedSecret(okm))
-}
-
-fn combine_v1(mlkem_ss: &[u8], x25519_ss: &[u8]) -> Result<SharedSecret> {
-    let mut ikm = Zeroizing::new(Vec::with_capacity(mlkem_ss.len() + 32));
-    ikm.extend_from_slice(mlkem_ss);
-    ikm.extend_from_slice(x25519_ss);
-
-    let hk = Hkdf::<Sha256>::new(Some(HKDF_SALT_V1), &ikm);
-    let mut okm = [0u8; 32];
-    hk.expand(b"", &mut okm).map_err(|_| VelaError::KemError)?;
-
     Ok(SharedSecret(okm))
 }
 
@@ -456,16 +414,6 @@ mod tests {
         // ML-KEM uses implicit rejection — decap succeeds but gives garbage,
         // so AEAD decryption will fail with an authentication error.
         assert!(open_share(&sk2, &blob).is_err());
-    }
-
-    /// A capsule decapsulated under the v1 combiner yields a different key,
-    /// so the two versions can never be confused for one another.
-    #[test]
-    fn v1_and_v2_combiners_disagree() {
-        let (pk, sk) = generate_keypair();
-        let (capsule, ss) = encapsulate(&pk).unwrap();
-        let legacy = decapsulate_legacy_v1(&sk, &capsule).unwrap();
-        assert_ne!(ss.0, legacy.0);
     }
 
     /// The v2 secret is bound to the X25519 ephemeral key: substituting a

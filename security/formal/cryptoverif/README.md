@@ -143,8 +143,14 @@ passed.
   argument is not an exhaustive classification of concrete legacy-wire attacks;
   X25519 encoding aliases and other representation bridges are separate open
   correspondence questions.
-- **Legacy handling remains separate.** `decapsulate_legacy_v1` supports old
-  trusted-contact envelopes in `recovery.rs`; the v2 result does not cover it.
+- **The legacy v1 envelope path is removed from the code.** `kem::decapsulate_legacy_v1`
+  and its `recovery.rs` caller are gone (plan step C17, 2026-11-04); v1
+  trusted-contact envelopes are refused with a distinct error and owners must
+  re-share. The v2 result therefore covers every envelope the code opens. The
+  only remaining legacy path is the separate 32-byte v1 possession-commitment
+  check (`rms_possession_verify_ex`, gated by `allow_legacy_v1`), which the v2
+  possession result does not cover. `kem_v1_x25519_baseline.ocv` stays as the
+  documented unproved-query negative control.
 - Primitive implementations remain trusted under
   [the selected boundary](../../assurance/09-target-contract.md). Concrete
   randomness, errors, encoding, Rust execution and protocol composition still
