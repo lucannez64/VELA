@@ -146,6 +146,11 @@ jobs:
           python3 -I security/formal/check-secret-erasure.py
           python3 -I -m unittest discover -s security/formal/tests -p 'test_secret_erasure.py'
 
+      - name: Check every rendered SQL statement against the schema
+        run: |
+          python3 security/formal/check-sql-schema.py
+          python3 -m unittest discover -s security/formal/tests -p 'test_sql_schema.py'
+
       - name: Check the proof jobs' reuse keys cover their inputs
         run: python3 -m unittest discover -s security/formal/tests -p 'test_proof_inputs.py'
 
