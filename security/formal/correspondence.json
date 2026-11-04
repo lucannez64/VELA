@@ -6,12 +6,12 @@
       "artifacts": {
         "libVELA/vela-crypto/src/share_envelope.rs": "da8715343d9151cf827edd290751b0b161c971ba4c1cd6afcc5709057b23de2d",
         "libVELA/vela-client-share-policy/src/lib.rs": "97a94c6af11d40b6eafa4930940212d62d2cb5393d6940c7457bb9ce12e9a261",
-        "desktopVELA/vela-desktop-core/src/sharing.rs": "2c6b8ac1e82d1858e92937a874fa7c971b0821de22bce368eb17165c9b7db0f3",
+        "desktopVELA/vela-desktop-core/src/sharing.rs": "f9abad7b79de948bdfbdc3453636c3d2162d08880eaf34a132fe753834d3c3ba",
         "security/formal/m19c_share_sender_authentication.spthy": "7cb3e243ec013165a20fa9988ef65f5697cb71e564eb8853e8d6d0113f291935",
         "security/formal/m19c_share_v1_baseline.spthy": "5e42bb07a3c6bfddeb4467736edbab9c8d89d12f8795907dbdefdcf82fed9b57",
         "desktopVELA/vela-desktop-core/src/lib.rs": "fc669ad646ca899e39cff2891e06d2f0d4d47d3332b610464ee9aecff7caa856",
         "desktopVELA/vela-desktop-core/src/store.rs": "74a0e241304e4afd059d9189ef5526462dd2c2918749bd777b175aaaa20e2042",
-        "desktopVELA/Cargo.lock": "fbe64ca8c83b5392c8ab7e21aaa5dccba4dd52c7451bdfaf881580300b0b56bd"
+        "desktopVELA/Cargo.lock": "011fd365cedb93861f3a0232c5db2b283da63567d32a5feff932dc2734bb9610"
       }
     },
     {
@@ -49,11 +49,11 @@
         "libVELA/vela-crypto/src/share_envelope.rs": "da8715343d9151cf827edd290751b0b161c971ba4c1cd6afcc5709057b23de2d",
         "libVELA/vela-crypto/verify-share-facts-fstar.sh": "a34a1d189f72a46f2c34ce5fe97db0a315f5f077ba82579b1c0262b25929756d",
         "libVELA/vela-crypto/proofs/fstar/models/Alloc.String.fst": "ebb0c20ed7755594351ea238964573d1c0987427570839bf5a4cf11d5bc3864d",
-        "desktopVELA/vela-desktop-core/src/sharing.rs": "2c6b8ac1e82d1858e92937a874fa7c971b0821de22bce368eb17165c9b7db0f3",
+        "desktopVELA/vela-desktop-core/src/sharing.rs": "f9abad7b79de948bdfbdc3453636c3d2162d08880eaf34a132fe753834d3c3ba",
         "desktopVELA/vela-desktop-core/src/store.rs": "74a0e241304e4afd059d9189ef5526462dd2c2918749bd777b175aaaa20e2042",
         "desktopVELA/vela-desktop-core/src/lib.rs": "fc669ad646ca899e39cff2891e06d2f0d4d47d3332b610464ee9aecff7caa856",
-        "desktopVELA/vela-desktop-core/Cargo.toml": "f11230efa0ab9356d741a0a73a5ef9962bcce6711177a6cf4ba59f94557109fd",
-        "desktopVELA/Cargo.lock": "fbe64ca8c83b5392c8ab7e21aaa5dccba4dd52c7451bdfaf881580300b0b56bd",
+        "desktopVELA/vela-desktop-core/Cargo.toml": "f213f083ac9a00e39509ebc999d6f122ad8990147e57b3d9a0c18b6dbae3224b",
+        "desktopVELA/Cargo.lock": "011fd365cedb93861f3a0232c5db2b283da63567d32a5feff932dc2734bb9610",
         "security/formal/m28-trace-equivalence/M28TraceEquivalence.fst": "739c530661a3bbbd49051fb8490f81ed0c42b6b49c4809e3e32dd6dcdbc2e16c",
         "security/formal/m28-trace-equivalence/README.md": "a6f3ee81e6bba545954b4350c953472977536d87ccd6878f48621c2b44b99514",
         "security/formal/m28-trace-equivalence/verify.sh": "31cfcc912622f0cb8637dca1e628fbf1ae4604a70ffbf6a889746dd6f8b97947",
