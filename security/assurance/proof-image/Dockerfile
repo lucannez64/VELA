@@ -79,6 +79,7 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources \
       pkg-config \
       python3 \
       python3-pip \
+      python3-yaml \
       ripgrep \
       rsync \
       unzip \
@@ -196,6 +197,7 @@ RUN set -eux; \
     rustc +nightly-2025-11-08 --version; \
     cargo hax --version | grep -Fx 'version=0.3.7'; \
     command -v cargo-hax driver-hax-frontend-exporter hax-engine jq rg python3; \
+    python3 -c 'import yaml'; \
     test -x "$OPAMROOT/vela-hax/bin/hax-engine"; \
     test "$(opam list --switch vela-hax --installed --columns=version --short hax-engine)" = 0.3.7; \
     test "$(cat /opt/vela-formal-fstar-2025.10.06/fstar/version.txt)" = 2025.10.06
