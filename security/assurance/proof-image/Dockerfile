@@ -45,6 +45,9 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # ignores the missing indexes and the install fails on "held broken packages".
 # --error-on=any makes every missing index fatal, and the loop retries; the
 # install retries the same way when a package download answers 5xx.
+# Acquire::Retries::Delay=false: apt 2.7's delayed retries can spin forever
+# ("Tried to start delayed item ... but failed", build 41996015127); the
+# loops sleep between attempts instead.
 # hadolint ignore=DL3008
 RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources \
  && printf '%s\n' \
@@ -55,12 +58,12 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources \
       'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
       > /etc/apt/sources.list.d/vela-snapshot.sources \
  && for try in 1 2 3 4 5 6; do \
-      apt-get -o Acquire::https::Verify-Peer=false -o Acquire::https::Verify-Host=false -o Acquire::Check-Valid-Until=false -o Acquire::Retries=3 --error-on=any update && break; \
+      apt-get -o Acquire::https::Verify-Peer=false -o Acquire::https::Verify-Host=false -o Acquire::Check-Valid-Until=false -o Acquire::Retries=3 -o Acquire::Retries::Delay=false --error-on=any update && break; \
       test "$try" -lt 6 || exit 1; sleep 60; \
     done \
  && pkgs="build-essential bzip2 ca-certificates clang curl diffutils file git jq libgmp-dev libgmp10 libgtk2.0-dev libssl-dev lld m4 nodejs opam patch pkg-config python3 python3-pip python3-yaml ripgrep rsync unzip wget xz-utils" \
  && for try in 1 2 3 4 5 6; do \
-      DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::https::Verify-Peer=false -o Acquire::https::Verify-Host=false -o Acquire::Retries=3 install -y --no-install-recommends $pkgs && break; \
+      DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::https::Verify-Peer=false -o Acquire::https::Verify-Host=false -o Acquire::Retries=3 -o Acquire::Retries::Delay=false install -y --no-install-recommends $pkgs && break; \
       test "$try" -lt 6 || exit 1; sleep 60; \
     done \
  && rm -rf /var/lib/apt/lists/*
