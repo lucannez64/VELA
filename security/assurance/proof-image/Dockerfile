@@ -53,6 +53,7 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources \
  && apt-get -o Acquire::https::Verify-Peer=false -o Acquire::https::Verify-Host=false -o Acquire::Check-Valid-Until=false -o Acquire::Retries=3 update \
  && DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::https::Verify-Peer=false -o Acquire::https::Verify-Host=false install -y --no-install-recommends \
       build-essential \
+      bzip2 \
       ca-certificates \
       clang \
       curl \
@@ -64,12 +65,15 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources \
       libgmp10 \
       libgtk2.0-dev \
       libssl-dev \
+      m4 \
       nodejs \
       opam \
+      patch \
       pkg-config \
       python3 \
       python3-pip \
       ripgrep \
+      rsync \
       unzip \
       wget \
       xz-utils \
