@@ -86,7 +86,7 @@ jobs:
       run:
         shell: bash -e {0}
     container:
-      image: ${{ needs.proof-image.outputs.image }}
+      image: ${{ needs.proof-image.outputs.hosted_image }}
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -95,11 +95,11 @@ jobs:
       RUST_TEST_THREADS: 1
       # "true" when this job runs inside the pinned proof image, whose tools
       # are already installed (the install steps below are then skipped).
-      VELA_IN_PROOF_IMAGE: ${{ needs.proof-image.outputs.in_image }}
+      VELA_IN_PROOF_IMAGE: ${{ needs.proof-image.outputs.hosted_in_image }}
       # bounded.sh needs a systemd user manager, absent from the job container;
       # the hosted runner's own memory bound applies there. On the host the
       # wrapper keeps its 10 GiB cap.
-      VELA_BOUNDED: ${{ needs.proof-image.outputs.in_image == 'true' && '1' || '0' }}
+      VELA_BOUNDED: ${{ needs.proof-image.outputs.hosted_in_image == 'true' && '1' || '0' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -461,6 +461,10 @@ jobs:
     outputs:
       image: ${{ steps.read.outputs.image }}
       in_image: ${{ steps.read.outputs.in_image }}
+      # For jobs that always run GitHub-hosted (formal-rekey): the image
+      # whenever IMAGE holds a digest, whatever runner the matrix picked.
+      hosted_image: ${{ steps.read.outputs.hosted_image }}
+      hosted_in_image: ${{ steps.read.outputs.hosted_in_image }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -471,6 +475,13 @@ jobs:
         run: |
           set -euo pipefail
           ref=$(head -n 1 security/assurance/proof-image/IMAGE | tr -d '[:space:]')
+          if [[ $ref =~ ^ghcr\.io/[a-z0-9./_-]+@sha256:[0-9a-f]{64}$ ]]; then
+            printf 'hosted_image=%s\n' "$ref" >> "$GITHUB_OUTPUT"
+            echo 'hosted_in_image=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'hosted_image=' >> "$GITHUB_OUTPUT"
+            echo 'hosted_in_image=false' >> "$GITHUB_OUTPUT"
+          fi
           if [[ $HOSTED == true && $ref =~ ^ghcr\.io/[a-z0-9./_-]+@sha256:[0-9a-f]{64}$ ]]; then
             printf 'image=%s\n' "$ref" >> "$GITHUB_OUTPUT"
             echo 'in_image=true' >> "$GITHUB_OUTPUT"
