@@ -41,6 +41,9 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # redirects http to https. This one step skips TLS peer checks; apt still
 # verifies the signed InRelease (Signed-By) and every package hash, and it
 # installs ca-certificates from the same snapshot, so later steps verify TLS.
+# snapshot.ubuntu.com sometimes answers 5xx; plain `apt-get update` then
+# ignores the missing indexes and the install fails on "held broken packages".
+# --error-on=any makes every missing index fatal, and the loop retries.
 # hadolint ignore=DL3008
 RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources \
  && printf '%s\n' \
@@ -50,7 +53,10 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources \
       'Components: main restricted universe multiverse' \
       'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
       > /etc/apt/sources.list.d/vela-snapshot.sources \
- && apt-get -o Acquire::https::Verify-Peer=false -o Acquire::https::Verify-Host=false -o Acquire::Check-Valid-Until=false -o Acquire::Retries=3 update \
+ && for try in 1 2 3 4 5 6; do \
+      apt-get -o Acquire::https::Verify-Peer=false -o Acquire::https::Verify-Host=false -o Acquire::Check-Valid-Until=false -o Acquire::Retries=3 --error-on=any update && break; \
+      test "$try" -lt 6 || exit 1; sleep 60; \
+    done \
  && DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::https::Verify-Peer=false -o Acquire::https::Verify-Host=false install -y --no-install-recommends \
       build-essential \
       bzip2 \
