@@ -71,6 +71,7 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources \
       libgmp10 \
       libgtk2.0-dev \
       libssl-dev \
+      lld \
       m4 \
       nodejs \
       opam \
