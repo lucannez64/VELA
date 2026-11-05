@@ -275,6 +275,37 @@ let abort_rollback_restores_active
   | RollbackObservation_Raced -> ()
   | RollbackObservation_Storage -> ()
 
+/// What a successful timeout rollback leaves behind. One lemma per entry
+/// point below: each unfolds only that entry point's branch of
+/// `dispatch_after_timeout`, instead of one query that explores all four.
+let timeout_restored (d: t_RekeyDriver{rekey_state_is_sound d}) : Type0 =
+  let t = rekey_step d (RekeyEvent_Timeout TimeoutObservation_RolledBack) in
+  t.f_driver.f_rolled_back /\
+  t.f_driver.f_timeout_rollback /\
+  t.f_driver.f_active /\
+  t.f_driver.f_epoch = d.f_epoch /\
+  not t.f_driver.f_committed
+
+let timeout_restored_start (d: t_RekeyDriver)
+  : Lemma
+    (requires (rekey_state_is_sound d /\ is_timeout d /\ d.f_op = RekeyOp_Start))
+    (ensures (timeout_restored d)) = ()
+
+let timeout_restored_capsules (d: t_RekeyDriver)
+  : Lemma
+    (requires (rekey_state_is_sound d /\ is_timeout d /\ d.f_op = RekeyOp_Capsules))
+    (ensures (timeout_restored d)) = ()
+
+let timeout_restored_commit (d: t_RekeyDriver)
+  : Lemma
+    (requires (rekey_state_is_sound d /\ is_timeout d /\ d.f_op = RekeyOp_Commit))
+    (ensures (timeout_restored d)) = ()
+
+let timeout_restored_abort (d: t_RekeyDriver)
+  : Lemma
+    (requires (rekey_state_is_sound d /\ is_timeout d /\ d.f_op = RekeyOp_Abort))
+    (ensures (timeout_restored d)) = ()
+
 let timeout_rollback_restores_active
       (d: t_RekeyDriver)
       (observation: t_TimeoutObservation)
@@ -289,7 +320,12 @@ let timeout_rollback_restores_active
        t.f_driver.f_epoch = d.f_epoch /\
        not t.f_driver.f_committed))) =
   match observation <: t_TimeoutObservation with
-  | TimeoutObservation_RolledBack -> ()
+  | TimeoutObservation_RolledBack ->
+      (match d.f_op <: t_RekeyOp with
+       | RekeyOp_Start -> timeout_restored_start d
+       | RekeyOp_Capsules -> timeout_restored_capsules d
+       | RekeyOp_Commit -> timeout_restored_commit d
+       | RekeyOp_Abort -> timeout_restored_abort d)
   | TimeoutObservation_Raced _ -> ()
   | TimeoutObservation_Storage -> ()
 
@@ -415,6 +451,238 @@ let rekey_abort_trace_theorem
 
 #pop-options
 
+// ── One-step facts for the reachability witnesses ──────────────────────────
+//
+// The witnesses below run the extracted driver on concrete event lists. Left
+// to itself, Z3 proves them by unrolling `run` over up to ten events, which
+// fails at the default fuel and only succeeds after the fuel-8 retry; under
+// some Z3 seeds that retry did not finish (plan T8, seed 1). Each witness is
+// instead a chain of the lemmas here: `run_cons` unrolls `run` exactly once,
+// and every `step_*` lemma unfolds one `rekey_step` on an arbitrary driver
+// whose stage fixes the branch. Each step is stated as an equation with the
+// resulting driver, so the chain composes by rewriting, not by search.
+
+let run_cons (d: t_RekeyDriver) (e: t_RekeyEvent) (rest: list t_RekeyEvent)
+  : Lemma
+    (requires (rekey_state_is_sound d))
+    (ensures (run d (e :: rest) == run (rekey_step d e).f_driver rest)) = ()
+
+let run_nil (d: t_RekeyDriver)
+  : Lemma (requires (rekey_state_is_sound d)) (ensures (run d [] == d)) = ()
+
+let begin_device_start (r: t_RekeyRequest)
+  : Lemma
+    (requires (r.f_authenticated /\ r.f_device_scope))
+    (ensures ((begin_start r).f_driver == fresh RekeyOp_Start r)) = ()
+
+let begin_device_commit (r: t_RekeyRequest)
+  : Lemma
+    (requires (r.f_authenticated /\ r.f_device_scope))
+    (ensures ((begin_commit r).f_driver == fresh RekeyOp_Commit r)) = ()
+
+let begin_device_abort (r: t_RekeyRequest)
+  : Lemma
+    (requires (r.f_authenticated /\ r.f_device_scope))
+    (ensures ((begin_abort r).f_driver == fresh RekeyOp_Abort r)) = ()
+
+/// The epoch facts the witnesses use, each in its own small query.
+let epochs_valid ()
+  : Lemma (mk_i64 2 >=. v_INITIAL_EPOCH /\
+           mk_i64 4 >=. v_INITIAL_EPOCH /\
+           mk_i64 5 >=. v_INITIAL_EPOCH) = ()
+
+let next_epoch_two ()
+  : Lemma (next_epoch (mk_i64 2) == Core_models.Option.Option_Some (mk_i64 3)) = ()
+
+/// The driver `after_state` builds from a loaded key-state row, with the
+/// stage it then moves to. This only names a step result; the step lemmas
+/// below check it against the extracted `after_state`.
+let loaded (d: t_RekeyDriver) (s: t_KeyStateObs) (stage: t_RekeyStage) : t_RekeyDriver =
+  { d with
+    f_stage = stage;
+    f_epoch = s.f_epoch;
+    f_active = not s.f_freezing;
+    f_starter_matches = s.f_starter_matches;
+    f_rotation_present = s.f_rotation_id_present;
+    f_header_present = s.f_header_present;
+    f_rotation_matches = s.f_header_matches;
+    f_replay_target = s.f_replay_target;
+    f_replay_recorded = s.f_replay_recorded;
+    f_replay_id_matches = s.f_replay_id_matches;
+    f_capsules_written = mk_i64 0;
+    f_no_oram = false;
+    f_capable = false;
+    f_acknowledged = false;
+    f_from_epoch = mk_i64 0;
+    f_to_epoch = mk_i64 0;
+    f_chunks_complete = false;
+    f_capsules_complete = false;
+    f_committed = false;
+    f_rolled_back = false;
+    f_timeout_rollback = false;
+    f_published = false;
+    f_responded = false;
+    f_failed = false }
+
+let step_rate_limit_allowed (d: t_RekeyDriver)
+  : Lemma
+    (requires (rekey_state_is_sound d /\ d.f_stage = RekeyStage_RateLimit))
+    (ensures (
+      (rekey_step d (RekeyEvent_RateLimit RateLimitObservation_Allowed)).f_driver ==
+      { d with f_stage = RekeyStage_Load })) = ()
+
+let step_load_active_start (d: t_RekeyDriver) (s: t_KeyStateObs)
+  : Lemma
+    (requires (
+      rekey_state_is_sound d /\ d.f_stage = RekeyStage_Load /\ d.f_op = RekeyOp_Start /\
+      not s.f_freezing /\ s.f_epoch >=. v_INITIAL_EPOCH))
+    (ensures (
+      (rekey_step d (RekeyEvent_State (StateObservation_Loaded s))).f_driver ==
+      loaded d s RekeyStage_Oram)) = ()
+
+let step_load_expired_start (d: t_RekeyDriver) (s: t_KeyStateObs)
+  : Lemma
+    (requires (
+      rekey_state_is_sound d /\ d.f_stage = RekeyStage_Load /\ d.f_op = RekeyOp_Start /\
+      not d.f_timeout_done /\ s.f_freezing /\ s.f_expired /\ s.f_rotation_id_present /\
+      s.f_epoch >=. v_INITIAL_EPOCH))
+    (ensures (
+      rekey_step d (RekeyEvent_State (StateObservation_Loaded s)) ==
+      ({ f_driver = loaded d s RekeyStage_Timeout;
+         f_effect = RekeyEffect_TimeoutRollback } <: t_RekeyTransition))) = ()
+
+let step_load_freezing_commit (d: t_RekeyDriver) (s: t_KeyStateObs) (to_epoch: i64)
+  : Lemma
+    (requires (
+      rekey_state_is_sound d /\ d.f_stage = RekeyStage_Load /\ d.f_op = RekeyOp_Commit /\
+      d.f_device_scope /\ not d.f_timeout_done /\
+      s.f_freezing /\ not s.f_expired /\ s.f_starter_matches /\ s.f_rotation_id_present /\
+      s.f_header_present /\ s.f_header_matches /\ s.f_epoch >=. v_INITIAL_EPOCH /\
+      next_epoch s.f_epoch == Core_models.Option.Option_Some to_epoch))
+    (ensures (
+      (rekey_step d (RekeyEvent_State (StateObservation_Loaded s))).f_driver ==
+      loaded d s RekeyStage_Chunks)) = ()
+
+let step_load_freezing_abort (d: t_RekeyDriver) (s: t_KeyStateObs)
+  : Lemma
+    (requires (
+      rekey_state_is_sound d /\ d.f_stage = RekeyStage_Load /\ d.f_op = RekeyOp_Abort /\
+      d.f_device_scope /\ not d.f_timeout_done /\
+      s.f_freezing /\ not s.f_expired /\ s.f_starter_matches /\ s.f_rotation_id_present /\
+      s.f_header_present /\ s.f_header_matches /\ s.f_epoch >=. v_INITIAL_EPOCH))
+    (ensures (
+      (rekey_step d (RekeyEvent_State (StateObservation_Loaded s))).f_driver ==
+      loaded d s RekeyStage_Rollback)) = ()
+
+let step_oram_empty (d: t_RekeyDriver)
+  : Lemma
+    (requires (rekey_state_is_sound d /\ d.f_stage = RekeyStage_Oram))
+    (ensures (
+      (rekey_step d (RekeyEvent_Oram ProbeObservation_Empty)).f_driver ==
+      { d with f_stage = RekeyStage_Capable; f_no_oram = true })) = ()
+
+let step_capable_empty (d: t_RekeyDriver)
+  : Lemma
+    (requires (rekey_state_is_sound d /\ d.f_stage = RekeyStage_Capable))
+    (ensures (
+      (rekey_step d (RekeyEvent_Capable ProbeObservation_Empty)).f_driver ==
+      { d with f_stage = RekeyStage_Acknowledged; f_capable = true })) = ()
+
+let step_acknowledged_empty (d: t_RekeyDriver) (to_epoch: i64)
+  : Lemma
+    (requires (
+      rekey_state_is_sound d /\ d.f_stage = RekeyStage_Acknowledged /\
+      d.f_no_oram /\ d.f_capable /\ d.f_epoch >=. v_INITIAL_EPOCH /\
+      next_epoch d.f_epoch == Core_models.Option.Option_Some to_epoch))
+    (ensures (
+      (rekey_step d (RekeyEvent_Acknowledged ProbeObservation_Empty)).f_driver ==
+      { d with f_acknowledged = true; f_stage = RekeyStage_BeginTx;
+               f_from_epoch = d.f_epoch; f_to_epoch = to_epoch })) = ()
+
+let step_transaction_begun (d: t_RekeyDriver)
+  : Lemma
+    (requires (rekey_state_is_sound d /\ d.f_stage = RekeyStage_BeginTx))
+    (ensures (
+      (rekey_step d (RekeyEvent_Transaction TransactionObservation_Committed)).f_driver ==
+      { d with f_stage = RekeyStage_Inventory })) = ()
+
+let step_inventory_read (d: t_RekeyDriver)
+  : Lemma
+    (requires (rekey_state_is_sound d /\ d.f_stage = RekeyStage_Inventory))
+    (ensures (
+      (rekey_step d (RekeyEvent_Inventory InventoryObservation_Read)).f_driver ==
+      { d with f_stage = RekeyStage_FreezeCas })) = ()
+
+let step_freeze_cas_updated (d: t_RekeyDriver)
+  : Lemma
+    (requires (rekey_state_is_sound d /\ d.f_stage = RekeyStage_FreezeCas))
+    (ensures (
+      (rekey_step d (RekeyEvent_FreezeCas CasObservation_Updated)).f_driver ==
+      { d with f_stage = RekeyStage_Cleanup })) = ()
+
+let step_cleanup_done (d: t_RekeyDriver)
+  : Lemma
+    (requires (rekey_state_is_sound d /\ d.f_stage = RekeyStage_Cleanup))
+    (ensures (
+      (rekey_step d (RekeyEvent_Cleanup CleanupObservation_Done)).f_driver ==
+      { d with f_stage = RekeyStage_TxCommit })) = ()
+
+let step_tx_commit_committed (d: t_RekeyDriver)
+  : Lemma
+    (requires (rekey_state_is_sound d /\ d.f_stage = RekeyStage_TxCommit))
+    (ensures (
+      (rekey_step d (RekeyEvent_TxCommit TransactionObservation_Committed)).f_driver ==
+      { d with f_stage = RekeyStage_Done; f_responded = true })) = ()
+
+let step_chunks_empty (d: t_RekeyDriver)
+  : Lemma
+    (requires (rekey_state_is_sound d /\ d.f_stage = RekeyStage_Chunks))
+    (ensures (
+      (rekey_step d (RekeyEvent_Chunks ProbeObservation_Empty)).f_driver ==
+      { d with f_stage = RekeyStage_Devices; f_chunks_complete = true })) = ()
+
+let step_devices_empty (d: t_RekeyDriver) (to_epoch: i64)
+  : Lemma
+    (requires (
+      rekey_state_is_sound d /\ d.f_stage = RekeyStage_Devices /\
+      d.f_device_scope /\ d.f_starter_matches /\ d.f_rotation_present /\
+      d.f_rotation_matches /\ d.f_chunks_complete /\ d.f_epoch >=. v_INITIAL_EPOCH /\
+      next_epoch d.f_epoch == Core_models.Option.Option_Some to_epoch))
+    (ensures (
+      (rekey_step d (RekeyEvent_Devices ProbeObservation_Empty)).f_driver ==
+      { d with f_capsules_complete = true; f_stage = RekeyStage_CommitCas;
+               f_from_epoch = d.f_epoch; f_to_epoch = to_epoch })) = ()
+
+let step_commit_cas_updated (d: t_RekeyDriver)
+  : Lemma
+    (requires (rekey_state_is_sound d /\ d.f_stage = RekeyStage_CommitCas))
+    (ensures (
+      (rekey_step d (RekeyEvent_CommitCas CasObservation_Updated)).f_driver ==
+      { d with f_stage = RekeyStage_Sweep; f_committed = true;
+               f_epoch = d.f_to_epoch; f_active = true })) = ()
+
+let step_sweep_done (d: t_RekeyDriver)
+  : Lemma
+    (requires (rekey_state_is_sound d /\ d.f_stage = RekeyStage_Sweep))
+    (ensures (
+      (rekey_step d (RekeyEvent_Sweep SweepObservation_Done)).f_driver ==
+      { d with f_stage = RekeyStage_Publish })) = ()
+
+let step_publish_done (d: t_RekeyDriver)
+  : Lemma
+    (requires (rekey_state_is_sound d /\ d.f_stage = RekeyStage_Publish))
+    (ensures (
+      (rekey_step d RekeyEvent_Published).f_driver ==
+      { d with f_stage = RekeyStage_Done; f_published = true; f_responded = true })) = ()
+
+let step_rollback_rolled_back (d: t_RekeyDriver)
+  : Lemma
+    (requires (rekey_state_is_sound d /\ d.f_stage = RekeyStage_Rollback))
+    (ensures (
+      (rekey_step d (RekeyEvent_Rollback RollbackObservation_RolledBack)).f_driver ==
+      { d with f_active = true; f_rolled_back = true;
+               f_stage = RekeyStage_Done; f_responded = true })) = ()
+
 // ── Reachability witnesses ─────────────────────────────────────────────────
 
 let active_state (epoch: i64) : t_KeyStateObs =
@@ -456,7 +724,33 @@ let start_reaches_freeze ()
       (start_run ()).f_stage = RekeyStage_BeginTx /\
       (start_run ()).f_from_epoch = mk_i64 2 /\
       (start_run ()).f_to_epoch = mk_i64 3) =
-  ()
+  let r = device_request (mk_i64 0) in
+  let s = active_state (mk_i64 2) in
+  let e1 = RekeyEvent_RateLimit RateLimitObservation_Allowed in
+  let e2 = RekeyEvent_State (StateObservation_Loaded s) in
+  let e3 = RekeyEvent_Oram ProbeObservation_Empty in
+  let e4 = RekeyEvent_Capable ProbeObservation_Empty in
+  let e5 = RekeyEvent_Acknowledged ProbeObservation_Empty in
+  epochs_valid ();
+  next_epoch_two ();
+  begin_device_start r;
+  let d0 = (begin_start r).f_driver in
+  step_rate_limit_allowed d0;
+  let d1 = (rekey_step d0 e1).f_driver in
+  step_load_active_start d1 s;
+  let d2 = (rekey_step d1 e2).f_driver in
+  step_oram_empty d2;
+  let d3 = (rekey_step d2 e3).f_driver in
+  step_capable_empty d3;
+  let d4 = (rekey_step d3 e4).f_driver in
+  step_acknowledged_empty d4 (mk_i64 3);
+  let d5 = (rekey_step d4 e5).f_driver in
+  run_cons d0 e1 [e2; e3; e4; e5];
+  run_cons d1 e2 [e3; e4; e5];
+  run_cons d2 e3 [e4; e5];
+  run_cons d3 e4 [e5];
+  run_cons d4 e5 [];
+  run_nil d5
 
 let start_tail : list t_RekeyEvent =
   [ RekeyEvent_Transaction TransactionObservation_Committed;
@@ -475,7 +769,33 @@ let start_witness_completes ()
       not start_witness.f_committed /\
       start_witness.f_from_epoch = mk_i64 2 /\
       start_witness.f_to_epoch = mk_i64 3) =
-  ()
+  let r = device_request (mk_i64 0) in
+  let e1 = RekeyEvent_Transaction TransactionObservation_Committed in
+  let e2 = RekeyEvent_Inventory InventoryObservation_Read in
+  let e3 = RekeyEvent_FreezeCas CasObservation_Updated in
+  let e4 = RekeyEvent_Cleanup CleanupObservation_Done in
+  let e5 = RekeyEvent_TxCommit TransactionObservation_Committed in
+  start_reaches_freeze ();
+  begin_device_start r;
+  begin_sound_start r;
+  op_sticky (begin_start r).f_driver start_prefix;
+  let d0 = start_run () in
+  step_transaction_begun d0;
+  let d1 = (rekey_step d0 e1).f_driver in
+  step_inventory_read d1;
+  let d2 = (rekey_step d1 e2).f_driver in
+  step_freeze_cas_updated d2;
+  let d3 = (rekey_step d2 e3).f_driver in
+  step_cleanup_done d3;
+  let d4 = (rekey_step d3 e4).f_driver in
+  step_tx_commit_committed d4;
+  let d5 = (rekey_step d4 e5).f_driver in
+  run_cons d0 e1 [e2; e3; e4; e5];
+  run_cons d1 e2 [e3; e4; e5];
+  run_cons d2 e3 [e4; e5];
+  run_cons d3 e4 [e5];
+  run_cons d4 e5 [];
+  run_nil d5
 
 let commit_prefix : list t_RekeyEvent =
   [ RekeyEvent_RateLimit RateLimitObservation_Allowed;
@@ -498,7 +818,53 @@ let commit_witness_completes ()
       commit_witness.f_chunks_complete = true /\
       commit_witness.f_capsules_complete = true /\
       commit_witness.f_epoch = mk_i64 3) =
-  ()
+  let r = device_request (mk_i64 0) in
+  let s = freezing_state (mk_i64 2) in
+  let e1 = RekeyEvent_RateLimit RateLimitObservation_Allowed in
+  let e2 = RekeyEvent_State (StateObservation_Loaded s) in
+  let e3 = RekeyEvent_Chunks ProbeObservation_Empty in
+  let e4 = RekeyEvent_Devices ProbeObservation_Empty in
+  let e5 = RekeyEvent_CommitCas CasObservation_Updated in
+  let e6 = RekeyEvent_Sweep SweepObservation_Done in
+  let e7 = RekeyEvent_Published in
+  // The normalizer computes the concrete append, so `run` sees a literal list.
+  assert_norm (commit_prefix @
+               [ RekeyEvent_CommitCas CasObservation_Updated;
+                 RekeyEvent_Sweep SweepObservation_Done;
+                 RekeyEvent_Published ] ==
+               [ RekeyEvent_RateLimit RateLimitObservation_Allowed;
+                 RekeyEvent_State (StateObservation_Loaded (freezing_state (mk_i64 2)));
+                 RekeyEvent_Chunks ProbeObservation_Empty;
+                 RekeyEvent_Devices ProbeObservation_Empty;
+                 RekeyEvent_CommitCas CasObservation_Updated;
+                 RekeyEvent_Sweep SweepObservation_Done;
+                 RekeyEvent_Published ]);
+  epochs_valid ();
+  next_epoch_two ();
+  begin_device_commit r;
+  let d0 = (begin_commit r).f_driver in
+  step_rate_limit_allowed d0;
+  let d1 = (rekey_step d0 e1).f_driver in
+  step_load_freezing_commit d1 s (mk_i64 3);
+  let d2 = (rekey_step d1 e2).f_driver in
+  step_chunks_empty d2;
+  let d3 = (rekey_step d2 e3).f_driver in
+  step_devices_empty d3 (mk_i64 3);
+  let d4 = (rekey_step d3 e4).f_driver in
+  step_commit_cas_updated d4;
+  let d5 = (rekey_step d4 e5).f_driver in
+  step_sweep_done d5;
+  let d6 = (rekey_step d5 e6).f_driver in
+  step_publish_done d6;
+  let d7 = (rekey_step d6 e7).f_driver in
+  run_cons d0 e1 [e2; e3; e4; e5; e6; e7];
+  run_cons d1 e2 [e3; e4; e5; e6; e7];
+  run_cons d2 e3 [e4; e5; e6; e7];
+  run_cons d3 e4 [e5; e6; e7];
+  run_cons d4 e5 [e6; e7];
+  run_cons d5 e6 [e7];
+  run_cons d6 e7 [];
+  run_nil d7
 
 let abort_witness : t_RekeyDriver =
   run (begin_abort (device_request (mk_i64 0))).f_driver
@@ -513,7 +879,24 @@ let abort_witness_restores ()
       abort_witness.f_epoch = mk_i64 4 /\
       not abort_witness.f_committed /\
       abort_witness.f_responded = true) =
-  ()
+  let r = device_request (mk_i64 0) in
+  let s = freezing_state (mk_i64 4) in
+  let e1 = RekeyEvent_RateLimit RateLimitObservation_Allowed in
+  let e2 = RekeyEvent_State (StateObservation_Loaded s) in
+  let e3 = RekeyEvent_Rollback RollbackObservation_RolledBack in
+  epochs_valid ();
+  begin_device_abort r;
+  let d0 = (begin_abort r).f_driver in
+  step_rate_limit_allowed d0;
+  let d1 = (rekey_step d0 e1).f_driver in
+  step_load_freezing_abort d1 s;
+  let d2 = (rekey_step d1 e2).f_driver in
+  step_rollback_rolled_back d2;
+  let d3 = (rekey_step d2 e3).f_driver in
+  run_cons d0 e1 [e2; e3];
+  run_cons d1 e2 [e3];
+  run_cons d2 e3 [];
+  run_nil d3
 
 let timeout_witness : t_RekeyTransition =
   let t0 = begin_start (device_request (mk_i64 0)) in
@@ -527,4 +910,10 @@ let timeout_witness_restores ()
       (timeout_witness).f_driver.f_active = false /\
       (timeout_witness).f_driver.f_epoch = mk_i64 5 /\
       not (timeout_witness).f_driver.f_committed) =
-  ()
+  let r = device_request (mk_i64 0) in
+  epochs_valid ();
+  begin_device_start r;
+  let d0 = (begin_start r).f_driver in
+  step_rate_limit_allowed d0;
+  let d1 = (rekey_step d0 (RekeyEvent_RateLimit RateLimitObservation_Allowed)).f_driver in
+  step_load_expired_start d1 (expired_state (mk_i64 5))

@@ -135,7 +135,11 @@ jobs:
           Components: main restricted universe multiverse
           Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
           EOF
-          sudo apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          # snapshot.ubuntu.com can answer 5xx; make a missing index fatal and retry.
+          for try in 1 2 3 4 5 6; do
+            sudo apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 --error-on=any update && break
+            test "$try" -lt 6 || exit 1; sleep 60
+          done
           # opam builds our pinned OCaml. Its recommended distro OCaml is redundant.
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends opam libgmp-dev pkg-config unzip jq clang nodejs
 

@@ -93,11 +93,16 @@ if [[ -z $hax_lib_root || ! -d $hax_lib_root ]]; then
   exit 1
 fi
 
+# The extracted driver sets its own `--z3rlimit 500` header, so this limit
+# applies to the hand-written lemma module only. Every lemma there unfolds at
+# most one `rekey_step` (the witnesses are chains of one-step lemmas, plan
+# T8), and the largest query used rlimit 3.0 under Z3 seeds 0-3; 100 leaves
+# a wide margin. It was 16000 while the witnesses unrolled `run` at fuel 8.
 fstar_args=(
   --cmi
   --cache_off
   --warn_error -331
-  --z3rlimit 16000
+  --z3rlimit 100
   --z3version 4.13.3
   --already_cached '+Prims+FStar+LowStar+C+Spec.Loops+TestLib'
   --include "$hax_lib_root/proof-libs/fstar/core"

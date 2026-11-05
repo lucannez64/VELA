@@ -678,9 +678,9 @@
       "boundary": "vault key-rotation driver (POST /vault/rekey/{start,capsules,commit,abort}): per request, a commit only for an ACTIVE account, a device-scoped request from the starting device with the matching rotation id, after empty chunk-shadow and device-capsule completeness probes, publishing exactly the next epoch; a winning abort restores ACTIVE; at most one success or failure; a web session refused before any effect; SQL text, statement atomicity and executor fidelity remain assumptions",
       "artifacts": {
         "serverVELA/vela-rekey-policy/src/rekey_driver.rs": "64dc3daaf2d158c9fa2f078527e1ce5e5d5acc2f8d687dde97de46f87b15686d",
-        "serverVELA/vela-rekey-policy/verify-fstar-rekey-driver.sh": "e110a6898fb3f70fb106d4d9ef7ad40cbef9cb11eab6e7eaf521a0a196fc8928",
+        "serverVELA/vela-rekey-policy/verify-fstar-rekey-driver.sh": "21d7a4247ec50d1488c1cc61d03019446e488a9841873e1691622a17175de2e3",
         "serverVELA/vela-rekey-policy/proofs/fstar/extraction-rekey-driver/Vela_rekey_policy.Rekey_driver.fst": "1aad2bc777ef1415cb52594d682f8e7ad0e7e587d53cc31987fe95f09c2037d5",
-        "serverVELA/vela-rekey-policy/proofs/fstar/rekey-driver-lemmas/Vela_rekey_policy_rekey_driver_lemmas.fst": "2ba3396d46360467ac7dba0b826417463082de852f09874c9371d336420d86fb",
+        "serverVELA/vela-rekey-policy/proofs/fstar/rekey-driver-lemmas/Vela_rekey_policy_rekey_driver_lemmas.fst": "f58f23b2547ea74b6b34bbaa9e72e5b0d8f27be57e66a662a9176e751559075a",
         "serverVELA/vela-server/src/vault/rekey.rs": "0b19e9dbaad027ca31ef34aad342e525c4d3dd5d0cd925ef84dbee9ff2355c2f"
       }
     },
@@ -703,7 +703,7 @@
       "artifacts": {
         "serverVELA/vela-rekey-policy/proofs/fstar/rekey-driver-composition/Vela_rekey_policy_rekey_driver_composition.fst": "4e2fd17e85d92ee4095a61111c0cc228f220f856eb616d4901d0536733e152ac",
         "serverVELA/vela-rekey-policy/verify-fstar-rekey-driver-composition-mutations.sh": "7b9c02ca37b87ef3c731dbc38bb06527098f8a2a588ff7807e8c45ba8bde0ede",
-        "serverVELA/vela-rekey-policy/verify-fstar-rekey-driver.sh": "e110a6898fb3f70fb106d4d9ef7ad40cbef9cb11eab6e7eaf521a0a196fc8928"
+        "serverVELA/vela-rekey-policy/verify-fstar-rekey-driver.sh": "21d7a4247ec50d1488c1cc61d03019446e488a9841873e1691622a17175de2e3"
       }
     },
     {
