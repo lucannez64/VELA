@@ -294,6 +294,9 @@ jobs:
         with:
           name: stability-logs-${{ matrix.name }}-seed${{ matrix.seed }}
           path: .stability-out
+          # upload-artifact >= 4.4 skips hidden paths by default, and
+          # .stability-out is one: without this no result.json was uploaded.
+          include-hidden-files: true
           retention-days: 90
 
   # Fails unless every (gate, seed) pair reports PASS, and writes the table the
