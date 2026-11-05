@@ -79,7 +79,11 @@ jobs:
           Components: main restricted universe multiverse
           Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
           EOF2
-          sudo apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=3 update -qq
+          # snapshot.ubuntu.com can answer 5xx; make a missing index fatal and retry.
+          for try in 1 2 3 4 5 6; do
+            sudo apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=3 --error-on=any update -qq && break
+            test "$try" -lt 6 || exit 1; sleep 60
+          done
           sudo apt-get install -y --no-install-recommends libudev-dev
 
       - name: Fuzz ${{ matrix.target }}

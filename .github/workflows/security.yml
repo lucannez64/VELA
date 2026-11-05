@@ -123,7 +123,11 @@ jobs:
           Components: main restricted universe multiverse
           Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
           EOF
-          sudo apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=3 update -qq
+          # snapshot.ubuntu.com can answer 5xx; make a missing index fatal and retry.
+          for try in 1 2 3 4 5 6; do
+            sudo apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=3 --error-on=any update -qq && break
+            test "$try" -lt 6 || exit 1; sleep 60
+          done
           sudo apt-get install --yes --no-install-recommends ripgrep unzip libgmp10
           curl -fL -o /tmp/tamarin.tar.gz https://github.com/tamarin-prover/tamarin-prover/releases/download/1.12.0/tamarin-prover-1.12.0-linux64-ubuntu.tar.gz
           echo "201be06f469e47cff554df6ca93db8366fc2c69d70c61fcbd1370a1074b469c6  /tmp/tamarin.tar.gz" | sha256sum -c
@@ -239,7 +243,11 @@ jobs:
           Components: main restricted universe multiverse
           Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
           EOF
-          sudo apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          # snapshot.ubuntu.com can answer 5xx; make a missing index fatal and retry.
+          for try in 1 2 3 4 5 6; do
+            sudo apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 --error-on=any update && break
+            test "$try" -lt 6 || exit 1; sleep 60
+          done
           # Avoid opam's recommended distro OCaml; the pinned switch supplies it.
           # ProVerif's opam package declares the GTK2 development dependency.
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends opam libgtk2.0-dev pkg-config
@@ -367,7 +375,11 @@ jobs:
           Components: main restricted universe multiverse
           Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
           EOF
-          sudo apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=3 update -qq
+          # snapshot.ubuntu.com can answer 5xx; make a missing index fatal and retry.
+          for try in 1 2 3 4 5 6; do
+            sudo apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=3 --error-on=any update -qq && break
+            test "$try" -lt 6 || exit 1; sleep 60
+          done
           sudo apt-get install -y --no-install-recommends clang pkg-config libudev-dev libwayland-dev libssl-dev
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
@@ -563,7 +575,11 @@ jobs:
           Components: main restricted universe multiverse
           Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
           EOF
-          sudo apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          # snapshot.ubuntu.com can answer 5xx; make a missing index fatal and retry.
+          for try in 1 2 3 4 5 6; do
+            sudo apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 --error-on=any update && break
+            test "$try" -lt 6 || exit 1; sleep 60
+          done
           # opam builds our pinned OCaml. Its recommended distro OCaml is redundant.
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends opam libgmp-dev pkg-config unzip jq clang nodejs
       - name: Restore pinned proof toolchain
