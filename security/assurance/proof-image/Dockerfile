@@ -105,15 +105,18 @@ RUN curl -fL --retry 3 --connect-timeout 30 -o /tmp/tamarin.tar.gz \
 # installs are exact versions (1.99.1 and nightly-2025-11-08, the same pins
 # dtolnay/rust-toolchain and install-hax.sh use). The published image digest
 # freezes the result.
-# PATH must hold /opt/cargo/bin before the install step checks rustc.
+# PATH must hold the cargo bin dir before the install step checks rustc.
 # opam runs as root in the image build: OPAMROOTISOK/OPAMYES keep it
 # non-interactive (sandboxing is already disabled by the installers).
+# install-hax.sh sets CARGO_HOME=$VELA_HAX_ROOT/cargo-home and calls
+# `cargo +nightly`; rustup's proxy only works when rustup lives in that same
+# CARGO_HOME, so install it there.
 ENV RUSTUP_HOME=/opt/rustup \
-    CARGO_HOME=/opt/cargo \
+    CARGO_HOME=/opt/vela-hax-0.3.7/cargo-home \
     CARGO_INCREMENTAL=0 \
     OPAMROOTISOK=1 \
     OPAMYES=1 \
-    PATH=/opt/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    PATH=/opt/vela-hax-0.3.7/cargo-home/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
       | sh -s -- -y --profile minimal --default-toolchain 1.99.1 --no-modify-path \
  && rustc --version \
@@ -140,13 +143,14 @@ RUN chmod +x /build/security/assurance/install-formal-fstar.sh \
 # runners read; CRYPTOVERIF_BIN replaces the host build path.
 ENV VELA_HAX_ROOT=/opt/vela-hax-0.3.7 \
     VELA_PROOF_TOOLS=/opt/vela-hax-0.3.7 \
+    CARGO_HOME=/opt/vela-hax-0.3.7/cargo-home \
     OPAMROOT=/opt/vela-hax-0.3.7/opam \
     VELA_FSTAR_BIN=/opt/vela-formal-fstar-2025.10.06/fstar/bin/fstar.exe \
     CRYPTOVERIF_BIN=/opt/cryptoverif/cryptoverif2.12/cryptoverif \
     MAUDE_LIB=/opt/maude-3.5.1 \
     LC_ALL=C.UTF-8 \
     LANG=C.UTF-8
-ENV PATH=/opt/vela-hax-0.3.7/bin:/opt/vela-hax-0.3.7/opam/vela-hax/bin:/opt/vela-hax-0.3.7/opam/vela-proverif/bin:/opt/vela-hax-0.3.7/fstar/bin:/opt/vela-formal-fstar-2025.10.06/fstar/bin:/opt/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ENV PATH=/opt/vela-hax-0.3.7/bin:/opt/vela-hax-0.3.7/opam/vela-hax/bin:/opt/vela-hax-0.3.7/opam/vela-proverif/bin:/opt/vela-hax-0.3.7/fstar/bin:/opt/vela-formal-fstar-2025.10.06/fstar/bin:/opt/vela-hax-0.3.7/cargo-home/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # ── ProVerif 2.05 in its pinned OCaml 5.1.1 switch ──────────────────────────
 RUN opam init --bare --disable-sandboxing --no-setup --yes \
