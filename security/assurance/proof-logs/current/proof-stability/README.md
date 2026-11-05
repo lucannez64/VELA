@@ -129,8 +129,82 @@ To fill this section from a run:
       --readme security/assurance/proof-logs/current/proof-stability/README.md \
       --require-all-pass
 
+Collected from [proof-stability run 41989077099](https://github.com/lucannez64/VELA/actions/runs/41989077099)
+(commit `73e2d5e`, all 57 jobs inside the proof image
+`ghcr.io/lucannez64/vela-proof@sha256:6b2d4dff…`, see
+[proof-container](../proof-container/README.md)). History: the first hosted run
+(41925059881) was 55/57; share-facts seed 2 (`frame_body_frame` used its whole
+rlimit) and vela-rekey-policy seed 1 (rekey-driver witnesses, global rlimit
+16000, killed after 71 min) were seed-dependent. Both proofs were rewritten,
+with no statement changed and no limit raised:
+[share-envelope-inverse](fixes/share-envelope-inverse/README.md),
+[rekey-driver](fixes/rekey-driver/README.md), re-checked on the merged tree
+([merged-tree](fixes/merged-tree.md)). Runs 41925059881 and 41978197414
+uploaded no `result.json` (`upload-artifact` skips the hidden `.stability-out`
+by default; fixed in `73e2d5e`).
+
 <!-- hosted-run:start -->
-_No hosted run collected yet._
+Collected 57 job results (57 PASS, 0 not PASS) on 2026-11-05T08:43:43Z.
+
+| Gate | Seed | Result | Seconds |
+|---|---|---|---|
+| `cross-driver` | 1 | PASS | 216 |
+| `cross-driver` | 2 | PASS | 353 |
+| `cross-driver` | 3 | PASS | 373 |
+| `m28-trace-equivalence` | 1 | PASS | 73 |
+| `m28-trace-equivalence` | 2 | PASS | 78 |
+| `m28-trace-equivalence` | 3 | PASS | 74 |
+| `share-facts` | 1 | PASS | 198 |
+| `share-facts` | 2 | PASS | 143 |
+| `share-facts` | 3 | PASS | 180 |
+| `share-journal` | 1 | PASS | 17 |
+| `share-journal` | 2 | PASS | 16 |
+| `share-journal` | 3 | PASS | 11 |
+| `vela-client-recovery-policy` | 1 | PASS | 14 |
+| `vela-client-recovery-policy` | 2 | PASS | 15 |
+| `vela-client-recovery-policy` | 3 | PASS | 15 |
+| `vela-client-share-policy` | 1 | PASS | 10 |
+| `vela-client-share-policy` | 2 | PASS | 13 |
+| `vela-client-share-policy` | 3 | PASS | 11 |
+| `vela-enrollment-policy` | 1 | PASS | 546 |
+| `vela-enrollment-policy` | 2 | PASS | 827 |
+| `vela-enrollment-policy` | 3 | PASS | 680 |
+| `vela-recovery-policy` | 1 | PASS | 2176 |
+| `vela-recovery-policy` | 2 | PASS | 2100 |
+| `vela-recovery-policy` | 3 | PASS | 1659 |
+| `vela-rekey-policy` | 1 | PASS | 1548 |
+| `vela-rekey-policy` | 2 | PASS | 691 |
+| `vela-rekey-policy` | 3 | PASS | 1168 |
+| `vela-rekey-policy-executors` | 1 | PASS | 851 |
+| `vela-rekey-policy-executors` | 2 | PASS | 1289 |
+| `vela-rekey-policy-executors` | 3 | PASS | 805 |
+| `vela-session-policy-account` | 1 | PASS | 174 |
+| `vela-session-policy-account` | 2 | PASS | 257 |
+| `vela-session-policy-account` | 3 | PASS | 265 |
+| `vela-session-policy-core` | 1 | PASS | 30 |
+| `vela-session-policy-core` | 2 | PASS | 26 |
+| `vela-session-policy-core` | 3 | PASS | 31 |
+| `vela-session-policy-deletion` | 1 | PASS | 176 |
+| `vela-session-policy-deletion` | 2 | PASS | 235 |
+| `vela-session-policy-deletion` | 3 | PASS | 91 |
+| `vela-session-policy-login` | 1 | PASS | 283 |
+| `vela-session-policy-login` | 2 | PASS | 318 |
+| `vela-session-policy-login` | 3 | PASS | 236 |
+| `vela-session-policy-revocation` | 1 | PASS | 925 |
+| `vela-session-policy-revocation` | 2 | PASS | 398 |
+| `vela-session-policy-revocation` | 3 | PASS | 331 |
+| `vela-session-policy-session` | 1 | PASS | 1713 |
+| `vela-session-policy-session` | 2 | PASS | 968 |
+| `vela-session-policy-session` | 3 | PASS | 1713 |
+| `vela-session-policy-websession` | 1 | PASS | 462 |
+| `vela-session-policy-websession` | 2 | PASS | 488 |
+| `vela-session-policy-websession` | 3 | PASS | 351 |
+| `vela-share-policy` | 1 | PASS | 1057 |
+| `vela-share-policy` | 2 | PASS | 1081 |
+| `vela-share-policy` | 3 | PASS | 1059 |
+| `vela-sync-policy` | 1 | PASS | 40 |
+| `vela-sync-policy` | 2 | PASS | 68 |
+| `vela-sync-policy` | 3 | PASS | 39 |
 <!-- hosted-run:end -->
 
 ## What this does not prove
