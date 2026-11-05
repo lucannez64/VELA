@@ -84,7 +84,11 @@ jobs:
             sudo apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=3 --error-on=any update -qq && break
             test "$try" -lt 6 || exit 1; sleep 60
           done
-          sudo apt-get install -y --no-install-recommends libudev-dev
+          # Package downloads from the snapshot can also answer 5xx: retry.
+          for try in 1 2 3 4 5 6; do
+            sudo apt-get install -y --no-install-recommends libudev-dev && break
+            test "$try" -lt 6 || exit 1; sleep 60
+          done
 
       - name: Fuzz ${{ matrix.target }}
         id: fuzz
