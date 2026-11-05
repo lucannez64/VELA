@@ -565,6 +565,46 @@ let encode_share_frame_spec
 
 #push-options "--fuel 2 --ifuel 2"
 
+/// `v` of a `usize` subtraction that does not underflow.
+let usize_sub_value (x y: usize) :
+  Lemma (requires v x >= v y) (ensures v (x -! y) = v x - v y) =
+  ()
+
+/// The marker is four bytes, matching `marker_len`.
+let marker_len_value () :
+  Lemma (v marker_len = 4 /\ Seq.length marker_bytes = 4) =
+  Seq.slice_length v_SHARE_ENVELOPE_MAGIC
+
+/// The signature trailer is exactly `lp sig` long.
+let signature_trailer_value (sig: t_Slice u8) :
+  Lemma
+    (requires Seq.length sig = v Vela_crypto.Signing.v_HYBRID_SIG_LEN)
+    (ensures v signature_trailer = Seq.length (lp sig)) =
+  lp_len sig;
+  assert_norm (v signature_trailer = 8 + v Vela_crypto.Signing.v_HYBRID_SIG_LEN)
+
+/// `frame_body (a || (b || c)) |a| |c|` is `b`.  Generic in the three parts,
+/// so the solver never sees the concrete header and body terms.
+let frame_body_append3
+      (a b c: Seq.seq u8)
+      (prefix_len trailer_len: usize) :
+  Lemma
+    (requires
+      v prefix_len = Seq.length a /\
+      v trailer_len = Seq.length c /\
+      Seq.length a + (Seq.length b + Seq.length c) <= max_usize)
+    (ensures
+      frame_body (Seq.append a (Seq.append b c)) prefix_len trailer_len ==
+      Core_models.Option.Option_Some b) =
+  let input = Seq.append a (Seq.append b c) in
+  Seq.lemma_len_append b c;
+  Seq.lemma_len_append a (Seq.append b c);
+  impl_len_nat input;
+  let n = Core_models.Slice.impl__len #u8 input in
+  usize_sub_value n prefix_len;
+  usize_sub_value n trailer_len;
+  slice_append_right3_mid a b c
+
 /// `frame_body` on a complete frame is exactly the signed body.
 let frame_body_frame
       (f: t_ShareEnvelopeBytes)
@@ -574,14 +614,13 @@ let frame_body_frame
     (ensures
       frame_body (frame_spec f item sig) marker_len signature_trailer ==
       Core_models.Option.Option_Some (body_spec f item)) =
-  frame_len_unfold f item sig;
-  body_len_unfold f item;
-  lp_len sig;
-  Seq.lemma_len_append marker_bytes (Seq.append (body_spec f item) (lp sig));
-  Seq.lemma_len_append (body_spec f item) (lp sig);
-  slice_append_right3_mid marker_bytes (body_spec f item) (lp sig);
-  assert_norm (v signature_trailer = 8 + v Vela_crypto.Signing.v_HYBRID_SIG_LEN);
-  ()
+  let body = body_spec f item in
+  let trailer = lp sig in
+  marker_len_value ();
+  signature_trailer_value sig;
+  Seq.lemma_len_append body trailer;
+  Seq.lemma_len_append marker_bytes (Seq.append body trailer);
+  frame_body_append3 marker_bytes body trailer marker_len signature_trailer
 
 /// The full `share_frame_spec` on `frame_spec f item sig` returns exactly the
 /// encoded fields.
