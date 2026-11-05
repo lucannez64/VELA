@@ -38,18 +38,66 @@ concurrency:
   group: std-model-diff-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  # Job containers check out the workspace as another user; this acts like
+  # `git -c safe.directory=*` for every git call (see security.yml).
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: safe.directory
+  GIT_CONFIG_VALUE_0: "*"
+
 jobs:
+  # Reads security/assurance/proof-image/IMAGE (see security.yml): with a
+  # digest this workflow runs inside the pinned proof image and skips its
+  # host apt installs, so snapshot.ubuntu.com outages cannot fail it.
+  proof-image:
+    runs-on: ubuntu-24.04
+    outputs:
+      image: ${{ steps.read.outputs.image }}
+      in_image: ${{ steps.read.outputs.in_image }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Resolve the pinned proof image
+        id: read
+        run: |
+          set -euo pipefail
+          ref=$(head -n 1 security/assurance/proof-image/IMAGE | tr -d '[:space:]')
+          if [[ $ref =~ ^ghcr\.io/[a-z0-9./_-]+@sha256:[0-9a-f]{64}$ ]]; then
+            printf 'image=%s\n' "$ref" >> "$GITHUB_OUTPUT"
+            echo 'in_image=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'image=' >> "$GITHUB_OUTPUT"
+            echo 'in_image=false' >> "$GITHUB_OUTPUT"
+          fi
+
   differential:
     name: std models vs Rust
+    needs: proof-image
     runs-on: ubuntu-24.04
     timeout-minutes: 150
+    # Job containers default to `sh`; the steps use bash.
+    defaults:
+      run:
+        shell: bash -e {0}
+    # Empty while IMAGE holds the placeholder: the job then runs on the host.
+    container:
+      image: ${{ needs.proof-image.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    env:
+      VELA_IN_PROOF_IMAGE: ${{ needs.proof-image.outputs.in_image }}
+      # The image carries the same F* release and the vela-t7 switch.
+      OCAMLFIND: ${{ needs.proof-image.outputs.in_image == 'true' && '/opt/vela-hax-0.3.7/opam/vela-t7/bin/ocamlfind' || '/home/runner/.opam/vela-t7/bin/ocamlfind' }}
+      OCAML_SWITCH_BIN: ${{ needs.proof-image.outputs.in_image == 'true' && '/opt/vela-hax-0.3.7/opam/vela-t7/bin' || '/home/runner/.opam/vela-t7/bin' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: dtolnay/rust-toolchain@d124f86f28ff42855784ff3319f48ac182c248f8 # 1.99.1
+        if: env.VELA_IN_PROOF_IMAGE != 'true'
       # Cache the pinned F* release and the OCaml switch that can link its
       # shipped `fstar.lib`. Keyed on the F* pin and this file.
       - name: Restore pinned proof tools
         id: tools
+        if: env.VELA_IN_PROOF_IMAGE != 'true'
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
@@ -67,7 +115,7 @@ jobs:
       # release's own fstar.cmxa is not used: it was compiled against other
       # ppx_deriving/OCaml builds and does not link with these.
       - name: Install pinned F*, OCaml and Z3
-        if: steps.tools.outputs.cache-hit != 'true'
+        if: env.VELA_IN_PROOF_IMAGE != 'true' && steps.tools.outputs.cache-hit != 'true'
         timeout-minutes: 120
         run: |
           set -euo pipefail
@@ -109,11 +157,9 @@ jobs:
 
       # Also on a cache hit: ocamlfind runs ocamlopt.opt from the switch.
       - name: Activate the OCaml switch
-        run: echo "$HOME/.opam/vela-t7/bin" >> "$GITHUB_PATH"
+        run: echo "$OCAML_SWITCH_BIN" >> "$GITHUB_PATH"
 
       - name: Check the extracted ulib links
-        env:
-          OCAMLFIND: /home/runner/.opam/vela-t7/bin/ocamlfind
         run: |
           set -euo pipefail
           "$OCAMLFIND" query fstar.lib
@@ -130,9 +176,12 @@ jobs:
 
       - name: Differential test (fixed seed, 10^4 cases per operation)
         env:
-          VELA_FSTAR: ${{ runner.temp }}/vela-t7-fstar/fstar/bin/fstar.exe
-          OCAMLFIND: /home/runner/.opam/vela-t7/bin/ocamlfind
+          VELA_FSTAR: ${{ env.VELA_IN_PROOF_IMAGE == 'true' && '/opt/vela-formal-fstar-2025.10.06/fstar/bin/fstar.exe' || format('{0}/vela-t7-fstar/fstar/bin/fstar.exe', runner.temp) }}
         run: |
+          # In the image cargo's registry lives under CARGO_HOME, not ~/.cargo.
+          if [[ $VELA_IN_PROOF_IMAGE == true ]]; then
+            export VELA_HAX_PROOF_LIBS="$CARGO_HOME/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7"
+          fi
           security/formal/std-model-diff/run.sh \
             --cases 10000 --seed 0x5EED1234ABCD0001 \
             --log "$RUNNER_TEMP/std-model-diff.log"

@@ -373,10 +373,24 @@ jobs:
             ${{ runner.temp }}/network-proofs
 
   sharing-boundaries:
+    needs: proof-image
     runs-on: ubuntu-24.04
     timeout-minutes: 35
+    # Job containers default to `sh`; the steps use bash.
+    defaults:
+      run:
+        shell: bash -e {0}
+    # Empty while IMAGE holds the placeholder: the job then runs on the host.
+    container:
+      image: ${{ needs.proof-image.outputs.hosted_image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
     env:
       RUST_TEST_THREADS: 1
+      VELA_IN_PROOF_IMAGE: ${{ needs.proof-image.outputs.hosted_in_image }}
+      # bounded.sh needs a systemd user manager, absent from job containers.
+      VELA_BOUNDED: ${{ needs.proof-image.outputs.hosted_in_image == 'true' && '1' || '0' }}
       # bounded.sh defaults to one job under 3 GiB (safe on a workstation).
       # The runner is a dedicated 4-core, 16 GiB machine.
       VELA_CARGO_JOBS: 4
@@ -384,7 +398,9 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: dtolnay/rust-toolchain@d124f86f28ff42855784ff3319f48ac182c248f8 # 1.99.1
+        if: env.VELA_IN_PROOF_IMAGE != 'true'
       - name: Install desktop core build prerequisites
+        if: env.VELA_IN_PROOF_IMAGE != 'true'
         run: |
           # Fixed Ubuntu snapshot (security/assurance/proof-image/apt-snapshot.conf).
           sudo rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources

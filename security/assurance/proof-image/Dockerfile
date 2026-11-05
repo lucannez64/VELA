@@ -62,7 +62,7 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources \
       apt-get -o Acquire::https::Verify-Peer=false -o Acquire::https::Verify-Host=false -o Acquire::Check-Valid-Until=false -o Acquire::Retries=10 -o Acquire::Retries::Delay=false --error-on=any update && break; \
       test "$try" -lt 30 || exit 1; sleep 60; \
     done \
- && pkgs="build-essential bzip2 ca-certificates clang curl diffutils file git jq libgmp-dev libgmp10 libgtk2.0-dev libssl-dev lld m4 nodejs opam patch pkg-config python3 python3-pip python3-yaml ripgrep rsync unzip wget xz-utils" \
+ && pkgs="build-essential bzip2 ca-certificates clang curl diffutils file git jq libgmp-dev libgmp10 libgtk2.0-dev libssl-dev libudev-dev libwayland-dev lld m4 nodejs opam patch pkg-config python3 python3-pip python3-yaml ripgrep rsync unzip wget xz-utils" \
  && for try in $(seq 1 30); do \
       DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::https::Verify-Peer=false -o Acquire::https::Verify-Host=false -o Acquire::Retries=10 -o Acquire::Retries::Delay=false install -y --no-install-recommends $pkgs && break; \
       test "$try" -lt 30 || exit 1; sleep 60; \
@@ -153,6 +153,22 @@ RUN opam init --bare --disable-sandboxing --no-setup --yes \
  && opam list --switch vela-proverif --installed proverif \
  && opam clean --all-switches --yes
 
+# ── std-model-diff (T7): OCaml switch that links fstar.2025.10.06's fstar.lib ─
+# The exact package set of the evidence switch
+# (proof-logs/current/std-model-diff/evidence-run.log), as std-model-diff.yml
+# installed it on the host. The prebuilt release's fstar.cmxa does not link.
+RUN opam switch create vela-t7 ocaml-base-compiler.5.1.1 --yes \
+ && opam install --switch vela-t7 --yes \
+      batteries.3.11.0 camlp-streams.5.0.1 conf-gmp.5 conf-pkg-config.5 cppo.1.8.0 \
+      dune.3.24.2 fstar.2025.10.06 gen.1.1 memtrace.0.2.3 menhir.20260209 \
+      menhirCST.20260209 menhirGLR.20260209 menhirLib.20260209 menhirSdk.20260209 \
+      mtime.2.2.0 num.1.6 ocamlbuild.0.16.1 ocaml-compiler-libs.v0.12.4 ocamlfind.1.9.8 \
+      pprint.20230830 ppx_derivers.1.2.1 ppx_deriving.6.2.0 ppx_deriving_yojson.3.10.0 \
+      ppxlib.0.39.0 process.0.2.1 sedlex.3.8.1 sexplib0.v0.17.0 stdint.0.7.2 \
+      topkg.1.1.1 yojson.3.0.0 zarith.1.14 \
+ && opam clean --switch vela-t7 --yes \
+ && "$OPAMROOT/vela-t7/bin/ocamlfind" query fstar.lib
+
 # ── CryptoVerif 2.12 (hybrid KEM computational gate) ────────────────────────
 RUN curl -fL --retry 3 --connect-timeout 30 -o /tmp/cryptoverif.tar.gz \
       https://bblanche.gitlabpages.inria.fr/CryptoVerif/cryptoverif2.12.tar.gz \
@@ -182,7 +198,9 @@ RUN set -eux; \
     python3 -c 'import yaml'; \
     test -x "$OPAMROOT/vela-hax/bin/hax-engine"; \
     test "$(opam list --switch vela-hax --installed --columns=version --short hax-engine)" = 0.3.7; \
-    test "$(cat /opt/vela-formal-fstar-2025.10.06/fstar/version.txt)" = 2025.10.06
+    test "$(cat /opt/vela-formal-fstar-2025.10.06/fstar/version.txt)" = 2025.10.06; \
+    "$OPAMROOT/vela-t7/bin/ocamlfind" query fstar.lib; \
+    pkg-config --exists libudev wayland-client
 
 WORKDIR /workspace
 CMD ["/bin/bash"]
