@@ -66,6 +66,14 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
+env:
+  # Job containers check out the workspace as another user, so git refuses it
+  # ("dubious ownership") and `git ls-files` in the proof gates fails. These
+  # variables act like `git -c safe.directory=*` for every git call.
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: safe.directory
+  GIT_CONFIG_VALUE_0: "*"
+
 jobs:
   formal-rekey:
     needs: proof-image
