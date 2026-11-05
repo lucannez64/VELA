@@ -769,6 +769,9 @@ jobs:
         with:
           name: refinement-extractions-${{ matrix.name }}
           path: .proof-out/extractions
+          # Cross-driver extracts into its three policy dependencies; this
+          # directory only contains files from CRATE_DIR/proofs/fstar.
+          if-no-files-found: ${{ matrix.name == 'cross-driver' && 'warn' || 'error' }}
 
   # Audits the selected postconditions and reviewed assumptions across every
   # crate, over the extractions the matrix jobs just regenerated and checked,

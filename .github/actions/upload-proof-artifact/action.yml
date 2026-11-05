@@ -7,6 +7,9 @@ inputs:
   path:
     description: Evidence path
     required: true
+  if-no-files-found:
+    description: Behavior when the evidence path has no files
+    default: error
 runs:
   using: composite
   steps:
@@ -18,7 +21,7 @@ runs:
       with:
         name: ${{ inputs.name }}
         path: ${{ inputs.path }}
-        if-no-files-found: error
+        if-no-files-found: ${{ inputs.if-no-files-found }}
         overwrite: true
     - name: Retry evidence upload
       if: ${{ always() && steps.first.outcome == 'failure' }}
@@ -26,6 +29,6 @@ runs:
       with:
         name: ${{ inputs.name }}
         path: ${{ inputs.path }}
-        if-no-files-found: error
+        if-no-files-found: ${{ inputs.if-no-files-found }}
         # Finalization may have succeeded remotely despite an invalid response.
         overwrite: true
