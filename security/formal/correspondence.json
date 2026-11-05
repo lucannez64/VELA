@@ -335,7 +335,7 @@
     {
       "boundary": "bounded device revocation/logout plus durable active-device admission and late-issuance/marker-expiry projection; full in-flight/concurrent traces, SQL linearizability, TTL and multi-node stores remain unproved",
       "artifacts": {
-        "serverVELA/vela-server/tests/device_revocation_model.rs": "ca038d6162186296ec385c901456fbbce17c5b4c212400089537964762934880",
+        "serverVELA/vela-server/tests/device_revocation_model.rs": "b2bce25c52076d97df499111746c59dc49000be96b40d1ad596b37472676131c",
         "serverVELA/vela-server/src/device/revoke.rs": "efcbadf0aa9097308430b7f56328ce15791f7969fabde9a9f0b6a1a5112116e9",
         "serverVELA/vela-server/src/auth/logout.rs": "dd1a67af0df08111c82e18ecf53fee8b896bd8352efca22ee422a1d617ccf916",
         "serverVELA/vela-server/src/middleware.rs": "28a8cd7a590fbec494b513a35fb0c14153c48c3afdd2f7beaabcce23a9fe2d05",

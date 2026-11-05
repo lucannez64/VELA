@@ -1111,6 +1111,10 @@ async fn step(
 
 #[tokio::test(flavor = "current_thread")]
 async fn every_bounded_revocation_trace_matches_the_model() {
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::ERROR)
+        .with_test_writer()
+        .try_init();
     let state = helpers::test_state().await;
     let app = vela_server::routes::build(state.clone());
     let keys = Keys::new();

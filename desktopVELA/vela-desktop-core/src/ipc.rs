@@ -2457,10 +2457,7 @@ pub mod server {
         /// encrypted log cannot be written (full disk, broken permissions),
         /// the release is refused — no secret leaves without its record.
         #[tokio::test]
-        #[cfg(unix)]
         async fn a_release_is_refused_when_its_audit_entry_cannot_be_written() {
-            use std::os::unix::fs::PermissionsExt;
-
             let (_dir, mock) = MockHost::new(true);
             {
                 let now = chrono::Utc::now();
@@ -2489,25 +2486,18 @@ pub mod server {
             let peer = test_peer();
             let host: Arc<dyn Host> = mock.clone();
 
-            let store_dir = mock.state.store.store_path();
-            let restore_perms = |mode: u32| {
-                std::fs::set_permissions(
-                    &store_dir,
-                    std::fs::Permissions::from_mode(mode),
-                )
-                .unwrap();
-            };
-            // Read-only store directory: reads still work (the existing log
-            // loads), writes fail. Restore afterwards so the tempdir can be
-            // cleaned up.
-            restore_perms(0o555);
+            // A directory at the audit file path rejects writes even when
+            // tests run as root inside the proof image. Permission bits alone
+            // do not reliably inject a write failure for privileged users.
+            let audit_path = mock.state.store.store_path().join("audit.enc");
+            std::fs::create_dir(&audit_path).unwrap();
             let req = message(
                 IpcMessageType::AutofillRequest,
                 serde_json::json!({ "domain": "https://github.com/login", "user_initiated": true }),
                 "cap",
             );
             let resp = process_message(req, &host, &peer).await;
-            restore_perms(0o755);
+            std::fs::remove_dir(&audit_path).unwrap();
 
             assert_eq!(resp.msg_type, IpcMessageType::Error, "{resp:?}");
             assert!(
