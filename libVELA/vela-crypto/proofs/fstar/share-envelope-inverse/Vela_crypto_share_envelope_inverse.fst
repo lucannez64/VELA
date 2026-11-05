@@ -563,28 +563,32 @@ let encode_share_frame_spec
 
 // ── The functional parser on an encoded frame ───────────────────────────────
 
-#push-options "--fuel 2 --ifuel 2"
+// The `frame_body` facts are proved over abstract byte sequences, in their own
+// option scope: the associativity pattern above is left out (none of these
+// proofs re-associates appends), so the solver never rewrites the concrete
+// header and body terms here.
+#push-options "--fuel 1 --ifuel 1 --using_facts_from '* -Vela_crypto_share_envelope_inverse.append_assoc_smt'"
 
 /// `v` of a `usize` subtraction that does not underflow.
 let usize_sub_value (x y: usize) :
   Lemma (requires v x >= v y) (ensures v (x -! y) = v x - v y) =
   ()
 
-/// The marker is four bytes, matching `marker_len`.
-let marker_len_value () :
-  Lemma (v marker_len = 4 /\ Seq.length marker_bytes = 4) =
-  Seq.slice_length v_SHARE_ENVELOPE_MAGIC
-
-/// The signature trailer is exactly `lp sig` long.
-let signature_trailer_value (sig: t_Slice u8) :
+/// `frame_body` on any input long enough for its prefix and trailer is the
+/// slice between them.
+let frame_body_slice (input: t_Slice u8) (prefix_len trailer_len: usize) :
   Lemma
-    (requires Seq.length sig = v Vela_crypto.Signing.v_HYBRID_SIG_LEN)
-    (ensures v signature_trailer = Seq.length (lp sig)) =
-  lp_len sig;
-  assert_norm (v signature_trailer = 8 + v Vela_crypto.Signing.v_HYBRID_SIG_LEN)
+    (requires v prefix_len + v trailer_len <= Seq.length input)
+    (ensures
+      frame_body input prefix_len trailer_len ==
+      Core_models.Option.Option_Some
+        (Seq.slice input (v prefix_len) (Seq.length input - v trailer_len) <: t_Slice u8)) =
+  let n = Core_models.Slice.impl__len #u8 input in
+  impl_len_nat input;
+  usize_sub_value n prefix_len;
+  usize_sub_value n trailer_len
 
-/// `frame_body (a || (b || c)) |a| |c|` is `b`.  Generic in the three parts,
-/// so the solver never sees the concrete header and body terms.
+/// `frame_body (a || (b || c)) |a| |c|` is `b`.
 let frame_body_append3
       (a b c: Seq.seq u8)
       (prefix_len trailer_len: usize) :
@@ -595,15 +599,35 @@ let frame_body_append3
       Seq.length a + (Seq.length b + Seq.length c) <= max_usize)
     (ensures
       frame_body (Seq.append a (Seq.append b c)) prefix_len trailer_len ==
-      Core_models.Option.Option_Some b) =
+      Core_models.Option.Option_Some (b <: t_Slice u8)) =
   let input = Seq.append a (Seq.append b c) in
   Seq.lemma_len_append b c;
   Seq.lemma_len_append a (Seq.append b c);
-  impl_len_nat input;
-  let n = Core_models.Slice.impl__len #u8 input in
-  usize_sub_value n prefix_len;
-  usize_sub_value n trailer_len;
+  frame_body_slice input prefix_len trailer_len;
   slice_append_right3_mid a b c
+
+/// The signature trailer length is exactly `lp sig`'s length.
+let signature_trailer_value (sig: t_Slice u8) :
+  Lemma
+    (requires Seq.length sig = v Vela_crypto.Signing.v_HYBRID_SIG_LEN)
+    (ensures v signature_trailer = Seq.length (lp sig)) =
+  lp_len sig;
+  assert_norm (v signature_trailer = 8 + v Vela_crypto.Signing.v_HYBRID_SIG_LEN)
+
+/// `frame_body` strips the marker and the signature trailer from any body.
+let frame_body_marker_trailer (body: Seq.seq u8) (sig: t_Slice u8) :
+  Lemma
+    (requires
+      Seq.length sig = v Vela_crypto.Signing.v_HYBRID_SIG_LEN /\
+      4 + (Seq.length body + (8 + Seq.length sig)) <= max_usize)
+    (ensures
+      frame_body (Seq.append marker_bytes (Seq.append body (lp sig)))
+        marker_len signature_trailer ==
+      Core_models.Option.Option_Some (body <: t_Slice u8)) =
+  Seq.slice_length v_SHARE_ENVELOPE_MAGIC;
+  lp_len sig;
+  signature_trailer_value sig;
+  frame_body_append3 marker_bytes body (lp sig) marker_len signature_trailer
 
 /// `frame_body` on a complete frame is exactly the signed body.
 let frame_body_frame
@@ -614,13 +638,12 @@ let frame_body_frame
     (ensures
       frame_body (frame_spec f item sig) marker_len signature_trailer ==
       Core_models.Option.Option_Some (body_spec f item)) =
-  let body = body_spec f item in
-  let trailer = lp sig in
-  marker_len_value ();
-  signature_trailer_value sig;
-  Seq.lemma_len_append body trailer;
-  Seq.lemma_len_append marker_bytes (Seq.append body trailer);
-  frame_body_append3 marker_bytes body trailer marker_len signature_trailer
+  frame_len_unfold f item sig;
+  frame_body_marker_trailer (body_spec f item) sig
+
+#pop-options
+
+#push-options "--fuel 2 --ifuel 2"
 
 /// The full `share_frame_spec` on `frame_spec f item sig` returns exactly the
 /// encoded fields.
