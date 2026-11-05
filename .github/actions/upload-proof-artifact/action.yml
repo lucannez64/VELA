@@ -1,0 +1,31 @@
+name: Upload proof artifact with retry
+description: Retry a transient artifact-service failure; fail if evidence cannot be published.
+inputs:
+  name:
+    description: Artifact name
+    required: true
+  path:
+    description: Evidence path
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Upload evidence
+      id: first
+      if: ${{ always() }}
+      continue-on-error: true
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: ${{ inputs.name }}
+        path: ${{ inputs.path }}
+        if-no-files-found: error
+        overwrite: true
+    - name: Retry evidence upload
+      if: ${{ always() && steps.first.outcome == 'failure' }}
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: ${{ inputs.name }}
+        path: ${{ inputs.path }}
+        if-no-files-found: error
+        # Finalization may have succeeded remotely despite an invalid response.
+        overwrite: true

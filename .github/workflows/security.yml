@@ -86,6 +86,9 @@ jobs:
       run:
         shell: bash -e {0}
     container:
+      # sled temporary databases use /dev/shm; Docker's 64 MiB default
+      # fills during the bounded revocation traces even with free disk space.
+      options: --shm-size=1g
       image: ${{ needs.proof-image.outputs.hosted_image }}
       credentials:
         username: ${{ github.actor }}
@@ -93,6 +96,9 @@ jobs:
     env:
       # Compilation uses all runner cores; tests stay serial.
       RUST_TEST_THREADS: 1
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      CARGO_INCREMENTAL: 0
       # "true" when this job runs inside the pinned proof image, whose tools
       # are already installed (the install steps below are then skipped).
       VELA_IN_PROOF_IMAGE: ${{ needs.proof-image.outputs.hosted_in_image }}
@@ -102,6 +108,9 @@ jobs:
       VELA_BOUNDED: ${{ needs.proof-image.outputs.hosted_in_image == 'true' && '1' || '0' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Report disk and shared-memory capacity
+        run: df -h / /dev/shm "$GITHUB_WORKSPACE" "$RUNNER_TEMP"
 
       - uses: dtolnay/rust-toolchain@d124f86f28ff42855784ff3319f48ac182c248f8 # 1.99.1
         if: env.VELA_IN_PROOF_IMAGE != 'true'
@@ -118,7 +127,7 @@ jobs:
           workspaces: |
             serverVELA -> ../target
             libVELA/vela-android-bridge -> ../../target-lib
-          shared-key: security-formal-v3
+          shared-key: security-formal-v4-small-debug
 
       - name: Install pinned Tamarin 1.12.0 and Maude 3.5.1
         if: env.VELA_IN_PROOF_IMAGE != 'true'
@@ -750,12 +759,12 @@ jobs:
         with:
           path: .proof-out
           key: ${{ steps.inputs.outputs.key }}
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: ./.github/actions/upload-proof-artifact
         if: always()
         with:
           name: refinement-logs-${{ matrix.name }}
           path: .proof-out/logs
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: ./.github/actions/upload-proof-artifact
         if: always()
         with:
           name: refinement-extractions-${{ matrix.name }}
