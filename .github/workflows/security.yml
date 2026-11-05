@@ -72,6 +72,11 @@ jobs:
     runs-on: ubuntu-24.04
     # Digest-pinned proof image from security/assurance/proof-image/IMAGE. An
     # empty image means "no container": the job keeps today's host installs.
+    # Inside the proof image, job containers default to `sh`; keep the
+    # host runner's bash for every step (pipefail, [[ ]]).
+    defaults:
+      run:
+        shell: bash -e {0}
     container:
       image: ${{ needs.proof-image.outputs.image }}
       credentials:
@@ -477,6 +482,11 @@ jobs:
     runs-on: ${{ fromJSON(needs.pick-runner.outputs.runner) }}
     # Empty on the self-hosted box and while IMAGE holds the bootstrap
     # placeholder: the job then runs on the host exactly as before.
+    # Inside the proof image, job containers default to `sh`; keep the
+    # host runner's bash for every step (pipefail, [[ ]]).
+    defaults:
+      run:
+        shell: bash -e {0}
     container:
       image: ${{ needs.proof-image.outputs.image }}
       credentials:

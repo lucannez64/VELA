@@ -1,6 +1,6 @@
 11333976cc28a15d5a7225f23c98744d422412b7b33a01ade721429f7ba8aedd  .cargo/config.toml
 8a875d401a7ff46334e0a68cd4921ead9a1100224ef5fa25647299bab8d0f57c  .gitattributes
-440cd33ceaa519bec1db4714507f8d86c69b4c9caaef92b0d5f036de5272141d  .github/workflows/security.yml
+227ccf1c8d689083350c48929d67d98cd6f06980dc3e47459e177712528cc2f6  .github/workflows/security.yml
 e62893712ac636aa34477f6ed152df04ca3c14305da1f65ed75b1d517123d4ef  .gitignore
 3f439c709a09b4663db49804084bdb125eb8a4737b3ac55c277ab1453c30731d  Dockerfile
 3b4be62f3ee99b4f6a7ed2fcd943bd1975cc2481694ad40e2d3d222072b43bda  SECURITY.md
@@ -871,6 +871,16 @@ b11852fa79fcf664db903a6306ee528907b88cdafe934d3374ee943692eb82b8  security/assur
 f361588bf37920d8be5a4c2904f6ba40fc43e8d8cfcf830e1b8365258f52b5d7  security/assurance/proof-logs/current/prebuilt-fstar/vela-sync-policy.log
 c4b24eae9ace9cc8f183870d7e8e98c4dac21bfdc2f10c71a452a6040afa2326  security/assurance/proof-logs/current/proof-container/README.md
 5be4b4c0b1f8c1819647e171568846319badf0eee9ec66caeb0af292723d8fe9  security/assurance/proof-logs/current/proof-stability/README.md
+8b816d163b4d97971cb503761169e458cda5e6f46350ca77c0bbfcbe15b20df8  security/assurance/proof-logs/current/proof-stability/fixes/share-envelope-inverse/README.md
+700c0ebf0e3d94c0c511c82eeb91368f58be618a2467b2a6cdcf9a4f06900888  security/assurance/proof-logs/current/proof-stability/fixes/share-envelope-inverse/after-seed0.log
+16e6bfe882c72a8834ec792d6b14fffb4e39f5f424defa2d15792b471e2d7387  security/assurance/proof-logs/current/proof-stability/fixes/share-envelope-inverse/after-seed1.log
+ba96d3e58cd4c49fd5ba04a56dfecb62cda1b0299e68985ea517eec37120ce86  security/assurance/proof-logs/current/proof-stability/fixes/share-envelope-inverse/after-seed2.log
+352088b0113414a04b620472f7edaad140b00ccb4f019050c37c62953ccbe94c  security/assurance/proof-logs/current/proof-stability/fixes/share-envelope-inverse/after-seed3.log
+a552936a9320045c3ee1e65cd2d2d0e789c009f8ecf4bddbcc3f8d4812de73e4  security/assurance/proof-logs/current/proof-stability/fixes/share-envelope-inverse/after-seed4.log
+eb3ffe96caba19d51699c68cc03a3112cfd51e926bd689a5bb99dc9913eccdac  security/assurance/proof-logs/current/proof-stability/fixes/share-envelope-inverse/before-module-seed0.log
+8e0efa26f0769d8d38dd7fe67a137d51b3ac1c4cd42e26094d971d854eec2a16  security/assurance/proof-logs/current/proof-stability/fixes/share-envelope-inverse/before-module-seed1.log
+bc05a731d7203daa07116688bde4e32f9144095cfeb783019338a3d8eb986e1a  security/assurance/proof-logs/current/proof-stability/fixes/share-envelope-inverse/before-module-seed3.log
+4343f4e68aa469805253350b41bd226936a90cd1486576e06a54c7cc54283517  security/assurance/proof-logs/current/proof-stability/fixes/share-envelope-inverse/before-seed2.log
 1a459ec387c5108bb760d650a1020530ef65f21e335538c133a66fec2a2d7e2c  security/assurance/proof-logs/current/proof-stability/local/epoch-gate-seed0.log
 9d2393ff66e3e8dbd76dae8b3d2556d155de44421f0a37785f233bb949d55a3a  security/assurance/proof-logs/current/proof-stability/local/epoch-gate-seed1.log
 93709787bb79903afe4b383ec83ef42c9603d44e1df0e4087e160a6766f8c4ab  security/assurance/proof-logs/current/proof-stability/local/epoch-gate-seed2.log
