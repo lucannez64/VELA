@@ -703,6 +703,20 @@ impl Fixture {
                 .unwrap_or_else(|e| panic!("clear {table}: {e}"));
         }
 
+        // Each trace starts from a fresh model. SQL is reset above; reset
+        // sled too, so rate-limit counters, tracked JTIs and revocation markers
+        // from unrelated traces cannot accumulate for the whole exploration.
+        // Login re-arms the pre-issued challenges before using them.
+        for name in state.store.inner().tree_names() {
+            state
+                .store
+                .inner()
+                .open_tree(name)
+                .expect("open fixture store tree")
+                .clear()
+                .expect("clear fixture store tree");
+        }
+
         let alice = Uuid::new_v4();
         let eve = Uuid::new_v4();
         insert_user(&state, alice).await;
@@ -1131,7 +1145,15 @@ async fn every_bounded_revocation_trace_matches_the_model() {
     let mut steps = 0usize;
     let mut coverage = Coverage::default();
 
-    for trace in &traces {
+    let started = std::time::Instant::now();
+    for (trace_index, trace) in traces.iter().enumerate() {
+        if trace_index % 256 == 0 {
+            eprintln!(
+                "revocation model: trace {trace_index}/{}, {steps} steps, {:?} elapsed; next {trace:?}",
+                traces.len(),
+                started.elapsed()
+            );
+        }
         let mut model = Model::default();
         let mut real = Fixture::new(state.clone(), app.clone(), &keys, &challenges).await;
 

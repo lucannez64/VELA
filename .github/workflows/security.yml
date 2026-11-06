@@ -388,7 +388,7 @@ jobs:
 
       - name: Bounded conformance - device_revocation_model
         timeout-minutes: 30
-        run: cargo test --manifest-path serverVELA/Cargo.toml --test device_revocation_model
+        run: cargo test --manifest-path serverVELA/Cargo.toml --test device_revocation_model -- --nocapture
 
       - name: Bounded conformance - redemption_driver
         timeout-minutes: 30
