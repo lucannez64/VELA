@@ -42,6 +42,7 @@ patterns = [
     'libVELA/vela-crypto/SECURITY.md', 'libVELA/vela-crypto/Cargo.toml', 'libVELA/vela-crypto/Cargo.lock',
     'libVELA/vela-crypto/src/oram.rs', 'libVELA/vela-crypto/tests/oram_stash_bounds.rs',
     'serverVELA/vela-server/tests/*_model.rs',
+    'serverVELA/vela-server/src/store.rs',
     'libVELA/vela-client-recovery-policy/tests/*.rs',
     'libVELA/vela-client-share-policy/tests/*.rs', '.github/workflows/security.yml',
 ]

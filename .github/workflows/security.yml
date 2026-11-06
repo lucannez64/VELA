@@ -86,9 +86,6 @@ jobs:
       run:
         shell: bash -e {0}
     container:
-      # sled temporary databases use /dev/shm; Docker's 64 MiB default
-      # fills during the bounded revocation traces even with free disk space.
-      options: --shm-size=1g
       image: ${{ needs.proof-image.outputs.hosted_image }}
       credentials:
         username: ${{ github.actor }}
