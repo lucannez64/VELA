@@ -70,6 +70,9 @@ class VaultSyncManager(
     fun <T> withAuthenticatedClient(block: (AndroidVelaApiClient, String) -> T): T {
         val settings = settingsStore.settings.value
         require(settings.serverUrl.isNotBlank()) { "Server URL is not configured" }
+        // A durable token with no readable pin would otherwise be used against
+        // a fresh empty baseline namespace. Refuse before any request.
+        requireSyncBaselineAccount(settings.bearerToken.isNotBlank(), identityStore.load()?.userId)
         val client = AndroidVelaApiClient(settings.serverUrl, context)
         var token = authenticatedToken(client, settings.bearerToken)
         if (token != settings.bearerToken) {
@@ -79,19 +82,24 @@ class VaultSyncManager(
             token = it
             settingsStore.updateBearerToken(it)
         }
-        return try {
-            block(client, token)
-        } catch (e: ServerUnauthorizedException) {
-            if (!e.isRecoverableTokenFailure() || settings.bearerToken.isBlank()) throw e
-            settingsStore.updateBearerToken("")
-            client.clearLatestSessionToken()
-            val freshToken = authenticatedToken(client, "")
-            settingsStore.updateBearerToken(freshToken)
-            block(client, freshToken)
-        } finally {
-            acceptRefreshedToken(client.latestSessionToken())
+        return authController(client).run(token) { attempt ->
+            block(client, attempt)
         }
     }
+
+    /**
+     * Wire the production retry controller to this manager's live state. It is
+     * constructed per client so a stale collector cannot leak a token from a
+     * previous operation.
+     */
+    private fun authController(client: AndroidVelaApiClient): SyncAuthController =
+        SyncAuthController(
+            currentSettings = { settingsStore.settings.value },
+            commitToken = settingsStore::updateBearerToken,
+            latestResponseToken = client::latestSessionToken,
+            clearResponseToken = client::clearLatestSessionToken,
+            reauthenticate = { authenticateOrRegister(client, IdentityBindingMode.EXISTING) },
+        )
 
     /** Persist a replacement token before a dependent request or early return. */
     fun acceptRefreshedToken(token: String?) {
@@ -118,7 +126,7 @@ class VaultSyncManager(
             hybridVkB64 = payload.hybridVkB64
         )
 
-        val token = authenticateOrRegister(client)
+        val token = authenticateOrRegister(client, IdentityBindingMode.INITIAL)
         val capsule = client.getCapsule(token)
         val rms = NativeVelaCore.decryptRmsCapsule(payload.transferKeyB64, capsule.capsuleB64)
             ?: error("Native VELA bridge could not decrypt enrollment capsule")
@@ -181,11 +189,11 @@ class VaultSyncManager(
     /// Authenticate as the newly enrolled device, open its capsule, and adopt
     /// the RMS together with the server epoch it belongs to.
     fun finishV3Join(session: V3JoinSession, deviceId: String) {
-        val identity = identityStore.load() ?: error("This device has no identity")
-        identityStore.save(identity.copy(deviceId = deviceId))
+        identityStore.update { it.copy(deviceId = deviceId) }
+            ?: error("This device has no identity")
 
         val client = AndroidVelaApiClient(settingsStore.settings.value.serverUrl, context)
-        val token = authenticateOrRegister(client)
+        val token = authenticateOrRegister(client, IdentityBindingMode.INITIAL)
         val capsule = client.getCapsule(token)
 
         val handle = identityStore.handle() ?: error("This device has no identity")
@@ -398,6 +406,7 @@ class VaultSyncManager(
 
     private fun validateCurrentPublicationEpoch(keyEpoch: Long) {
         val settings = settingsStore.settings.value
+        requireBoundAccountForSync(settings)
         val client = AndroidVelaApiClient(settings.serverUrl, context)
         val token = authenticatedToken(client, settings.bearerToken)
         if (token != settings.bearerToken) settingsStore.updateBearerToken(token)
@@ -451,6 +460,11 @@ class VaultSyncManager(
     ) {
         val effectiveServerUrl = serverUrl.ifBlank { settingsStore.settings.value.serverUrl }
         require(effectiveServerUrl.isNotBlank()) { "Recovery requires a server URL" }
+        // Refuse a recovery for a different already-pinned account *before*
+        // changing the stored server/token or making any request. A fresh
+        // device may establish the first pin; an existing different pin needs
+        // an explicit local reset.
+        bindVerifiedUserId(IdentityBindingMode.INITIAL, identityStore.load()?.userId, userId)
         updateServer(effectiveServerUrl, "")
         val client = AndroidVelaApiClient(effectiveServerUrl, context)
 
@@ -484,19 +498,24 @@ class VaultSyncManager(
             ?: error("Native VELA bridge could not reconstruct the vault key")
 
         // Generated behind a handle: only the public halves come back here.
-        val identity = identityStore.getOrCreate()
+        // Validate the caller's account against any existing pin and enroll
+        // the device through the binder: a genuinely different pin must fail
+        // before the enrollment request and before any local write.
+        RecoveryAccountBinder(
+            loadOrCreateIdentity = identityStore::getOrCreate,
+            enrollDevice = { identity, name ->
+                client.enrollDeviceViaRecovery(
+                    userId,
+                    recovered.recoveryGrant,
+                    identity.hybridEkB64,
+                    identity.hybridVkB64,
+                    name
+                )
+            },
+            updateIdentity = identityStore::update,
+        ).bind(userId, deviceName)
 
-        val deviceId = client.enrollDeviceViaRecovery(
-            userId,
-            recovered.recoveryGrant,
-            identity.hybridEkB64,
-            identity.hybridVkB64,
-            deviceName
-        )
-
-        identityStore.save(identity.copy(userId = userId, deviceId = deviceId))
-
-        val token = authenticateOrRegister(client)
+        val token = authenticateOrRegister(client, IdentityBindingMode.INITIAL)
         adoptRmsAtCurrentEpoch(
             client = client,
             token = token,
@@ -522,6 +541,11 @@ class VaultSyncManager(
         if (settings.serverUrl.isBlank()) {
             return publish(error = "Configure server URL before syncing")
         }
+        try {
+            requireBoundAccountForSync(settings)
+        } catch (e: IdentityBindingException) {
+            return publish(error = e.message)
+        }
 
         val rms = security.currentRmsCopy() ?: return publish(error = "No unlocked vault key")
         _state.value = _state.value.copy(syncing = true, error = null, conflict = null)
@@ -542,12 +566,17 @@ class VaultSyncManager(
         if (settings.serverUrl.isBlank()) {
             return publish(error = "Configure server URL before resolving conflict")
         }
+        try {
+            requireBoundAccountForSync(settings)
+        } catch (e: IdentityBindingException) {
+            return publish(error = e.message)
+        }
         val rms = security.currentRmsCopy() ?: return publish(error = "No unlocked vault key")
         _state.value = _state.value.copy(syncing = true, error = null)
         return try {
             val client = AndroidVelaApiClient(settings.serverUrl, context)
             var token = authenticatedToken(client, settings.bearerToken)
-            val manifestResult = getManifestWithTokenRetry(client, token, settings)
+            val manifestResult = getManifestWithTokenRetry(client, token)
             val manifest = manifestResult.manifest
             requireMatchingSyncEpoch(manifest.epoch, settings.keyEpoch)
             token = manifestResult.token
@@ -557,8 +586,15 @@ class VaultSyncManager(
             if (downloadChunkIds.isEmpty()) {
                 publish(error = "Server has no recognized vault data chunk")
             } else {
-                val remoteResult = downloadRemoteVault(client, token, rms, downloadChunkIds, manifest)
-                vault.replaceAll(remoteResult.vault)
+                val scope = baselineScope()
+                val remoteResult = downloadRemoteVault(
+                    client, token, rms, downloadChunkIds, manifest, settings.keyEpoch, scope)
+                // Persist before recording: a lock or storage failure throws
+                // here and leaves the rollback floors unchanged.
+                vault.replaceAllAdmitted(remoteResult.vault) {
+                    settingsStore.recordAdmittedBaselines(
+                        scope, remoteResult.admittedClocks, remoteResult.manifestLamport)
+                }
                 markSynced(remoteResult.token, remoteResult.version, remoteResult.lamportClock, null)
             }
         } catch (e: Exception) {
@@ -576,12 +612,17 @@ class VaultSyncManager(
         if (settings.serverUrl.isBlank()) {
             return publish(error = "Configure server URL before resolving conflict")
         }
+        try {
+            requireBoundAccountForSync(settings)
+        } catch (e: IdentityBindingException) {
+            return publish(error = e.message)
+        }
         val rms = security.currentRmsCopy() ?: return publish(error = "No unlocked vault key")
         _state.value = _state.value.copy(syncing = true, error = null)
         return try {
             val client = AndroidVelaApiClient(settings.serverUrl, context)
             var token = authenticatedToken(client, settings.bearerToken)
-            val manifestResult = getManifestWithTokenRetry(client, token, settings)
+            val manifestResult = getManifestWithTokenRetry(client, token)
             val manifest = manifestResult.manifest
             requireMatchingSyncEpoch(manifest.epoch, settings.keyEpoch)
             token = manifestResult.token
@@ -589,12 +630,14 @@ class VaultSyncManager(
             manifestToken?.let { token = it }
             val remote = manifest.chunks.firstOrNull { it.chunkId == VAULT_DATA_CHUNK_ID }
             val nextLamport = maxOf(settings.lamportClock, remote?.lamportClock ?: 0) + 1
+            val scope = baselineScope()
             val uploaded = uploadVaultChunks(
                 client = client,
                 startToken = token,
                 rms = rms,
                 manifest = manifest,
-                baseLamport = nextLamport
+                baseLamport = nextLamport,
+                scope = scope,
             )
             markSynced(uploaded.token, uploaded.version, uploaded.lamportClock, null)
         } catch (e: Exception) {
@@ -610,7 +653,7 @@ class VaultSyncManager(
         if (token != settings.bearerToken) {
             settingsStore.updateBearerToken(token)
         }
-        val manifestResult = getManifestWithTokenRetry(client, token, settings)
+        val manifestResult = getManifestWithTokenRetry(client, token)
         val manifest = manifestResult.manifest
         requireMatchingSyncEpoch(manifest.epoch, settings.keyEpoch)
         token = manifestResult.token
@@ -619,6 +662,7 @@ class VaultSyncManager(
         val downloadChunkIds = recognizedVaultChunkIds(manifest)
         val uploadChunkId = VAULT_DATA_CHUNK_ID
         val remote = manifest.chunks.firstOrNull { it.chunkId == uploadChunkId }
+        val scope = baselineScope()
 
         if (downloadChunkIds.isEmpty() && manifest.chunks.isNotEmpty()) {
             return publish(conflict = "Server has no recognized vault data chunk. Cross-platform merge is not enabled yet; refusing to upload.")
@@ -628,9 +672,13 @@ class VaultSyncManager(
         if (downloadChunkIds.isNotEmpty() &&
             (settings.localVersion == 0L && localSnapshot.items.isEmpty() || localSnapshot.hasIncompleteCards())
         ) {
-            val remoteResult = downloadRemoteVault(client, token, rms, downloadChunkIds, manifest)
+            val remoteResult = downloadRemoteVault(
+                client, token, rms, downloadChunkIds, manifest, settings.keyEpoch, scope)
             token = remoteResult.token
-            vault.replaceAll(remoteResult.vault)
+            vault.replaceAllAdmitted(remoteResult.vault) {
+                settingsStore.recordAdmittedBaselines(
+                    scope, remoteResult.admittedClocks, remoteResult.manifestLamport)
+            }
             return markSynced(
                 token = token,
                 version = remoteResult.version,
@@ -640,10 +688,14 @@ class VaultSyncManager(
         }
 
         if (remote != null && remote.version > settings.localVersion && settings.localVersion > 0) {
-            val remoteResult = downloadRemoteVault(client, token, rms, downloadChunkIds, manifest)
+            val remoteResult = downloadRemoteVault(
+                client, token, rms, downloadChunkIds, manifest, settings.keyEpoch, scope)
             token = remoteResult.token
             val mergedVault = mergeVaultStores(localSnapshot, remoteResult.vault)
-            vault.replaceAll(mergedVault)
+            vault.replaceAllAdmitted(mergedVault) {
+                settingsStore.recordAdmittedBaselines(
+                    scope, remoteResult.admittedClocks, remoteResult.manifestLamport)
+            }
 
             val nextLamport = maxOf(settings.lamportClock, remoteResult.lamportClock) + 1
             val uploaded = uploadVaultChunks(
@@ -651,23 +703,29 @@ class VaultSyncManager(
                 startToken = token,
                 rms = rms,
                 manifest = manifest,
-                baseLamport = nextLamport
+                baseLamport = nextLamport,
+                scope = scope,
             )
             return markSynced(uploaded.token, uploaded.version, uploaded.lamportClock, null)
         }
 
         if (downloadChunkIds.isNotEmpty() && remote != null && remote.version > settings.localVersion) {
-            val remoteResult = downloadRemoteVault(client, token, rms, downloadChunkIds, manifest)
+            val remoteResult = downloadRemoteVault(
+                client, token, rms, downloadChunkIds, manifest, settings.keyEpoch, scope)
             token = remoteResult.token
             val mergedVault = mergeVaultStores(localSnapshot, remoteResult.vault)
-            vault.replaceAll(mergedVault)
+            vault.replaceAllAdmitted(mergedVault) {
+                settingsStore.recordAdmittedBaselines(
+                    scope, remoteResult.admittedClocks, remoteResult.manifestLamport)
+            }
             val nextLamport = maxOf(settings.lamportClock, remoteResult.lamportClock) + 1
             val uploaded = uploadVaultChunks(
                 client = client,
                 startToken = token,
                 rms = rms,
                 manifest = manifest,
-                baseLamport = nextLamport
+                baseLamport = nextLamport,
+                scope = scope,
             )
             return markSynced(uploaded.token, uploaded.version, uploaded.lamportClock, null)
         }
@@ -684,16 +742,21 @@ class VaultSyncManager(
         if (hasKeylessPasskeys && downloadChunkIds.isNotEmpty() &&
             remote != null && remote.version <= settings.localVersion
         ) {
-            val remoteResult = downloadRemoteVault(client, token, rms, downloadChunkIds, manifest)
+            val remoteResult = downloadRemoteVault(
+                client, token, rms, downloadChunkIds, manifest, settings.keyEpoch, scope)
             token = remoteResult.token
-            vault.replaceAll(mergeVaultStores(localSnapshot, remoteResult.vault))
+            vault.replaceAllAdmitted(mergeVaultStores(localSnapshot, remoteResult.vault)) {
+                settingsStore.recordAdmittedBaselines(
+                    scope, remoteResult.admittedClocks, remoteResult.manifestLamport)
+            }
             val nextLamport = maxOf(settings.lamportClock, remoteResult.lamportClock) + 1
             val uploaded = uploadVaultChunks(
                 client = client,
                 startToken = token,
                 rms = rms,
                 manifest = manifest,
-                baseLamport = nextLamport
+                baseLamport = nextLamport,
+                scope = scope,
             )
             return markSynced(uploaded.token, uploaded.version, uploaded.lamportClock, null)
         }
@@ -704,7 +767,8 @@ class VaultSyncManager(
             startToken = token,
             rms = rms,
             manifest = manifest,
-            baseLamport = nextLamport
+            baseLamport = nextLamport,
+            scope = scope,
         )
         return markSynced(uploaded.token, uploaded.version, uploaded.lamportClock, null)
     }
@@ -712,18 +776,12 @@ class VaultSyncManager(
     private fun getManifestWithTokenRetry(
         client: AndroidVelaApiClient,
         startToken: String,
-        settings: SyncSettings
     ): ManifestDownload {
-        return try {
-            val (manifest, newToken) = client.getSyncManifest(startToken)
-            ManifestDownload(manifest = manifest, token = startToken, newToken = newToken)
-        } catch (e: ServerUnauthorizedException) {
-            if (!e.isRecoverableTokenFailure() || settings.bearerToken.isBlank()) throw e
-            settingsStore.updateBearerToken("")
-            val freshToken = authenticatedToken(client, "")
-            settingsStore.updateBearerToken(freshToken)
-            val (manifest, newToken) = client.getSyncManifest(freshToken)
-            ManifestDownload(manifest = manifest, token = freshToken, newToken = newToken)
+        var token = startToken
+        return authController(client).run(startToken) { attempt ->
+            token = attempt
+            val (manifest, newToken) = client.getSyncManifest(attempt)
+            ManifestDownload(manifest = manifest, token = attempt, newToken = newToken)
         }
     }
 
@@ -773,35 +831,39 @@ class VaultSyncManager(
             registration.getOrNull()
         }
 
-    private fun authenticateOrRegister(client: AndroidVelaApiClient): String {
-        var identity = identityStore.getOrCreate()
-        if (identity.deviceId.isNullOrBlank()) {
-            val registered = client.registerAccount(identity)
-            identity = identity.copy(userId = registered.userId, deviceId = registered.deviceId)
-            identityStore.save(identity)
-            settingsStore.updateKeyEpoch(1)
-            registered.token?.takeIf { it.isNotBlank() }?.let { return it }
-        }
-
-        val deviceId = identity.deviceId ?: error("Server identity has no device id")
-        val challenge = client.getChallenge()
-        // Signed natively through the handle — the signing key never comes back
-        // across the boundary to be signed with here (audit C-1).
-        val identityHandle = identityStore.handle()
-            ?: error("Device identity is unavailable; re-enroll this device")
-        val signature = com.vela.android.core.NativeVelaCore.identitySign(
-            handle = identityHandle,
-            deviceId = deviceId,
-            challengeB64 = challenge.challengeB64
-        ) ?: error("Native VELA bridge cannot create server auth signature")
-        val verified = client.verifySignature(
-            deviceId = deviceId,
-            challengeB64 = challenge.challengeB64,
-            signature = signature
-        )
-        identityStore.save(identity.copy(userId = verified.userId))
-        return verified.token
-    }
+    /**
+     * Register or re-authenticate this device.
+     *
+     * [binding] distinguishes a deliberate first pin (registration, enrollment,
+     * recovery) from automatic re-authentication. [AccountAuthenticator] owns
+     * the real ordering so the production path can be tested against the real
+     * HTTP client; both modes validate the server's user id before persisting
+     * it or returning a token.
+     */
+    private fun authenticateOrRegister(
+        client: AndroidVelaApiClient,
+        binding: IdentityBindingMode,
+    ): String = AccountAuthenticator(
+        loadIdentity = identityStore::load,
+        getOrCreateIdentity = identityStore::getOrCreate,
+        saveIdentity = identityStore::save,
+        updateIdentity = identityStore::update,
+        signChallenge = { deviceId, challengeB64 ->
+            // Signed natively through the handle — the signing key never comes
+            // back across the boundary to be signed with here (audit C-1).
+            val identityHandle = identityStore.handle()
+                ?: error("Device identity is unavailable; re-enroll this device")
+            com.vela.android.core.NativeVelaCore.identitySign(
+                handle = identityHandle,
+                deviceId = deviceId,
+                challengeB64 = challengeB64
+            ) ?: error("Native VELA bridge cannot create server auth signature")
+        },
+        registerAccount = client::registerAccount,
+        getChallenge = client::getChallenge,
+        verifySignature = client::verifySignature,
+        updateKeyEpoch = settingsStore::updateKeyEpoch,
+    ).authenticate(binding)
 
     /** Install the RMS before advancing its epoch marker; the reverse can authorize stale keys. */
     private fun adoptRmsAtCurrentEpoch(
@@ -828,31 +890,69 @@ class VaultSyncManager(
         }
     }
 
-    private fun authenticatedToken(client: AndroidVelaApiClient, cachedToken: String): String =
-        cachedToken.ifBlank { authenticateOrRegister(client) }
+    private fun authenticatedToken(
+        client: AndroidVelaApiClient,
+        cachedToken: String,
+        binding: IdentityBindingMode = IdentityBindingMode.INITIAL,
+    ): String = cachedToken.ifBlank { authenticateOrRegister(client, binding) }
 
     /**
      * Refuse a manifest that puts every chunk behind the revision this device
-     * already synced.
+     * already synced **in this sync context**.
      *
      * The sync server is untrusted, and replaying older ciphertexts used to be
      * invisible: deleted credentials reappear and rotated passwords revert
      * (audit C-2). Lamport clocks only ever increase, so a maximum below what
-     * was last recorded is a rollback rather than a stale read. A vault that was
-     * reset and re-created elsewhere legitimately restarts its clocks — that is
-     * why the message says how to clear the local baseline.
+     * was last recorded is a rollback rather than a stale read. The floor is
+     * per (server, account, epoch): a vault that was reset and re-created
+     * elsewhere — or a rotated epoch whose counters restarted — starts a new
+     * context rather than colliding with the old one. Only a deliberate
+     * sign-out/reset clears a context's baseline.
      */
-    private fun rejectRollback(manifest: SyncManifest) {
-        val lastSeen = settingsStore.settings.value.lamportClock
+    private fun rejectRollback(manifest: SyncManifest, scope: SyncBaselineScope) {
+        val lastSeen = settingsStore.manifestBaselineFor(scope) ?: return
         if (lastSeen <= 0) return
         val serverMax = manifest.chunks.maxOfOrNull { it.lamportClock } ?: return
         if (serverMax < lastSeen) {
             error(
                 "The server returned an older revision of this vault (clock $serverMax, " +
                     "last seen $lastSeen). Refusing to overwrite newer local data. If you " +
-                    "reset this vault on another device, sign out and back in here."
+                    "reset this vault on another device, reset local security here and " +
+                    "sync again from scratch."
             )
         }
+    }
+
+    /** Fail closed when the persisted baseline cannot be parsed. */
+    private fun requireReadableBaseline() {
+        check(!settingsStore.settings.value.baselineCorrupt) {
+            "The local per-chunk sync baseline is unreadable, so rollback protection " +
+                "cannot be checked. Sync is refused. Reset local security in Settings to " +
+                "start a fresh, explicit baseline."
+        }
+    }
+
+    /**
+     * Baseline namespace for this sync: normalized server + authenticated
+     * account + key epoch. Computed after authentication so the account id is
+     * the one the server just confirmed, not a stale pre-login value.
+     *
+     * Fails closed when the pin is missing: an empty account would be a new
+     * namespace and would bypass every previously recorded floor.
+     */
+    private fun baselineScope(): SyncBaselineScope = syncBaselineScope(
+        serverUrl = settingsStore.settings.value.serverUrl,
+        accountId = requireBaselineAccountId(identityStore.load()?.userId),
+        keyEpoch = settingsStore.settings.value.keyEpoch,
+    )
+
+    /**
+     * Refuse a sync flow before its first request when a durable token exists
+     * without a readable account pin (corrupt identity, interrupted write).
+     * A blank token is the deliberate fresh-install registration path.
+     */
+    private fun requireBoundAccountForSync(settings: SyncSettings) {
+        requireSyncBaselineAccount(settings.bearerToken.isNotBlank(), identityStore.load()?.userId)
     }
 
     private suspend fun downloadRemoteVault(
@@ -860,9 +960,17 @@ class VaultSyncManager(
         startToken: String,
         rms: ByteArray,
         chunkIds: List<String>,
-        manifest: SyncManifest
+        manifest: SyncManifest,
+        localEpoch: Long,
+        scope: SyncBaselineScope,
     ): RemoteVaultDownload = coroutineScope {
-        rejectRollback(manifest)
+        requireReadableBaseline()
+        // Keep the stricter whole-manifest rollback check; the per-chunk
+        // decision below is the verified shared policy path.
+        rejectRollback(manifest, scope)
+        // `null` is first contact for this context: pass "no baseline" to the
+        // native gate explicitly rather than letting it invent clock 0.
+        val seenByChunk = settingsStore.baselineFor(scope)
         var tokenRef = startToken
         val tokenMutex = Mutex()
 
@@ -877,14 +985,19 @@ class VaultSyncManager(
                     }
                 }
                 val entry = manifest.chunks.firstOrNull { it.chunkId == chunkId }
-                val json = NativeVelaCore.decryptVaultChunkJson(
-                    rms,
-                    chunkId,
-                    downloaded.ciphertext,
-                    entry?.lamportClock ?: 0,
-                    manifest.epoch,
-                ) ?: error("Native VELA bridge could not decrypt server vault chunk $chunkId")
-                Triple(index, json, Pair(chunkId, entry))
+                val admitted = NativeVelaCore.decryptAdmittedVaultChunkJson(
+                    rms = rms,
+                    chunkId = chunkId,
+                    ciphertext = downloaded.ciphertext,
+                    lamportClock = entry?.lamportClock ?: 0,
+                    keyEpoch = manifest.epoch,
+                    localKeyEpoch = localEpoch,
+                    lastSeenLamport = seenByChunk?.get(chunkId),
+                ) ?: error(
+                    "Native VELA bridge refused server vault chunk $chunkId " +
+                        "(rollback, epoch mismatch, or failed authentication)"
+                )
+                Triple(index, admitted, entry)
             }
         }.awaitAll()
 
@@ -892,13 +1005,17 @@ class VaultSyncManager(
         val decodedJson = StringBuilder()
         var maxVersion = 0L
         var maxLamport = 0L
-        for ((_, json, chunkMeta) in orderedResults) {
-            decodedJson.append(json)
-            val (_, entry) = chunkMeta
+        // Baseline exactly the revision the verified policy admitted.
+        val admittedClocks = mutableMapOf<String, Long>()
+        for ((_, admitted, entry) in orderedResults) {
+            decodedJson.append(admitted.vaultJson)
             if (entry != null) {
                 maxVersion = maxOf(maxVersion, entry.version)
                 maxLamport = maxOf(maxLamport, entry.lamportClock)
             }
+        }
+        for ((index, admitted, _) in orderedResults) {
+            admittedClocks[chunkIds[index]] = admitted.lamportClock
         }
 
         val token = tokenMutex.withLock { tokenRef }
@@ -907,7 +1024,9 @@ class VaultSyncManager(
             vault = remoteVault,
             token = token,
             version = maxVersion,
-            lamportClock = maxLamport
+            lamportClock = maxLamport,
+            admittedClocks = admittedClocks,
+            manifestLamport = maxOf(maxLamport, admittedClocks.values.maxOrNull() ?: 0L),
         )
     }
 
@@ -916,8 +1035,10 @@ class VaultSyncManager(
         startToken: String,
         rms: ByteArray,
         manifest: SyncManifest,
-        baseLamport: Long
+        baseLamport: Long,
+        scope: SyncBaselineScope,
     ): RemoteVaultUpload = coroutineScope {
+        requireReadableBaseline()
         val uploadToken = if (vault.snapshot().schemaVersion == 2) client.activateRichSchema(startToken) ?: startToken else startToken
         val chunks = splitUtf8Chunks(VaultJson.encode(vault.snapshot()).toString(Charsets.UTF_8))
         val manifestById = manifest.chunks.associateBy { it.chunkId }
@@ -957,6 +1078,15 @@ class VaultSyncManager(
                 if (index == 0) uploaded.version else null
             }
         }.awaitAll()
+
+        // Only after every write succeeded, baseline what this device wrote.
+        settingsStore.recordAdmittedBaselines(
+            scope = scope,
+            chunkClocks = chunks.indices.associate { index ->
+                vaultChunkId(index) to lamportAssignments[index]
+            },
+            manifestClock = lamportAssignments.lastOrNull() ?: baseLamport,
+        )
 
         val firstChunkVersion = results.firstOrNull() ?: 0L
 
@@ -1030,7 +1160,11 @@ private data class RemoteVaultDownload(
     val vault: VaultStore,
     val token: String,
     val version: Long,
-    val lamportClock: Long
+    val lamportClock: Long,
+    /** chunk id -> revision the verified policy admitted, for post-persist commit. */
+    val admittedClocks: Map<String, Long>,
+    /** Highest admitted manifest clock, for this context's whole-vault floor. */
+    val manifestLamport: Long,
 )
 
 private data class RemoteVaultUpload(
@@ -1145,14 +1279,6 @@ private fun pruneTombstones(values: List<Tombstone>): List<Tombstone> {
 
 private fun VaultStore.hasIncompleteCards(): Boolean =
     items.any { it is VaultItem.CreditCard && (it.cardNumber.isBlank() || it.expiration.isBlank()) }
-
-private fun ServerUnauthorizedException.isRecoverableTokenFailure(): Boolean {
-    val text = message.orEmpty()
-    return text.contains("token has been revoked", ignoreCase = true) ||
-        text.contains("token verification failed", ignoreCase = true) ||
-        text.contains("malformed token", ignoreCase = true) ||
-        text.contains("session hard cap exceeded", ignoreCase = true)
-}
 
 private data class EnrollmentCodePayload(
     val deviceId: String,

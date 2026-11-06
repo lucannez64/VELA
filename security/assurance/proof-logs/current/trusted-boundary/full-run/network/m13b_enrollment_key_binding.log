@@ -1,0 +1,222 @@
+maude tool: 'maude'
+ checking version: 3.5.1. OK.
+ checking installation: OK.
+[Theory M13b_EnrollmentKeyBinding] Theory loaded
+[Theory M13b_EnrollmentKeyBinding] Theory translated
+[Theory M13b_EnrollmentKeyBinding] Derivation checks started
+[Theory M13b_EnrollmentKeyBinding] Derivation checks ended
+[Theory M13b_EnrollmentKeyBinding] Theory closed
+[Saturating Sources] Step 1 (Max 5)
+[Saturating Sources] Done
+theory M13b_EnrollmentKeyBinding
+
+begin
+
+// Function signature and definition of the equational theory E
+
+functions: adec/2, aenc/2, fst/1, h/1, pair/2, pk/1, sign/2, snd/1,
+           true/0, verify/3
+equations:
+    adec(aenc(x.1, pk(x.2)), x.2) = x.1,
+    fst(<x.1, x.2>) = x.1,
+    snd(<x.1, x.2>) = x.2,
+    verify(sign(x.1, x.2), x.1, pk(x.2)) = true
+
+macros: FP( vk, ek ) =  h(<'vela enrollment device fingerprint v4', vk, 
+                           ek>)
+
+rule (modulo E) Primary:
+   [ Fr( ~skP ), Fr( ~rms ) ]
+  --[ RmsCreated( $A, ~rms ) ]->
+   [ !Primary( $A, ~skP, ~rms ), Out( pk(~skP) ) ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) Start_Ceremony:
+   [ Fr( ~c ) ]
+  --[ CeremonyStarted( ~c ) ]->
+   [ JoinTurn( ~c ), PrimaryTurn( ~c ) ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) Join_Claim:
+   [ JoinTurn( c ), Fr( ~skJ ), Fr( ~dkJ ) ]
+  --[ Claimed( c, pk(~dkJ), pk(~skJ) ) ]->
+   [
+   JoinScreen( c, FP(pk(~skJ), pk(~dkJ)) ), JoinWaiting( c, ~skJ, ~dkJ ),
+   Out( <'claim', pk(~dkJ), pk(~skJ)> )
+   ]
+
+  /*
+  rule (modulo AC) Join_Claim:
+     [ JoinTurn( c ), Fr( ~skJ ), Fr( ~dkJ ) ]
+    --[ Claimed( c, pk(~dkJ), pk(~skJ) ) ]->
+     [
+     JoinScreen( c,
+                 h(<'vela enrollment device fingerprint v4', pk(~skJ), pk(~dkJ)>)
+     ),
+     JoinWaiting( c, ~skJ, ~dkJ ), Out( <'claim', pk(~dkJ), pk(~skJ)> )
+     ]
+  */
+
+rule (modulo E) Primary_Confirm:
+   [
+   PrimaryTurn( c ), !Primary( $A, skP, rms ), In( <'claim', ek, vk> ),
+   JoinScreen( c, FP(vk, ek) )
+   ]
+  --[ Confirmed( c, $A, ek, vk ), RmsSealedTo( rms, ek ) ]->
+   [
+   Out( <aenc(rms, ek), 
+         sign(<'vela device enrollment v1', ek, vk, aenc(rms, ek)>, skP)>
+   )
+   ]
+
+  /*
+  rule (modulo AC) Primary_Confirm:
+     [
+     PrimaryTurn( c ), !Primary( $A, skP, rms ), In( <'claim', ek, vk> ),
+     JoinScreen( c, h(<'vela enrollment device fingerprint v4', vk, ek>) )
+     ]
+    --[ Confirmed( c, $A, ek, vk ), RmsSealedTo( rms, ek ) ]->
+     [
+     Out( <aenc(rms, ek), 
+           sign(<'vela device enrollment v1', ek, vk, aenc(rms, ek)>, skP)>
+     )
+     ]
+  */
+
+rule (modulo E) Join_Adopt:
+   [ JoinWaiting( c, skJ, dkJ ), In( aenc(r, pk(dkJ)) ) ]
+  --[ Adopted( c, r ) ]->
+   [ ]
+
+  /* has exactly the trivial AC variant */
+
+lemma rms_stays_secret:
+  all-traces
+  "∀ A rms #i #k. ((RmsCreated( A, rms ) @ #i) ∧ (K( rms ) @ #k)) ⇒ (⊥)"
+/*
+guarded formula characterizing all counter-examples:
+"∃ A rms #i #k. (RmsCreated( A, rms ) @ #i) ∧ (K( rms ) @ #k)"
+*/
+simplify
+solve( !KU( ~rms ) @ #vk )
+  case Primary_Confirm
+  by solve( !KU( ~dkJ ) @ #vk.6 )
+qed
+
+lemma confirmed_keys_are_the_joining_devices:
+  all-traces
+  "∀ c A ek vk #i.
+    (Confirmed( c, A, ek, vk ) @ #i) ⇒
+    (∃ #j. (Claimed( c, ek, vk ) @ #j) ∧ (#j < #i))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ c A ek vk #i.
+  (Confirmed( c, A, ek, vk ) @ #i)
+ ∧
+  ∀ #j. (Claimed( c, ek, vk ) @ #j) ⇒ ¬(#j < #i)"
+*/
+simplify
+solve( PrimaryTurn( c ) ▶₀ #i )
+  case Start_Ceremony
+  solve( !Primary( $A, skP, rms ) ▶₁ #i )
+    case Primary
+    solve( JoinScreen( ~c,
+                       h(<'vela enrollment device fingerprint v4', vk, ek>)
+           ) ▶₃ #i )
+      case Join_Claim
+      by contradiction /* from formulas */
+    qed
+  qed
+qed
+
+lemma rms_is_sealed_only_to_joining_devices:
+  all-traces
+  "∀ rms ek #i.
+    (RmsSealedTo( rms, ek ) @ #i) ⇒
+    (∃ c vk #j. (Claimed( c, ek, vk ) @ #j) ∧ (#j < #i))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ rms ek #i.
+  (RmsSealedTo( rms, ek ) @ #i)
+ ∧
+  ∀ c vk #j. (Claimed( c, ek, vk ) @ #j) ⇒ ¬(#j < #i)"
+*/
+simplify
+solve( PrimaryTurn( c ) ▶₀ #i )
+  case Start_Ceremony
+  solve( !Primary( $A, skP, rms ) ▶₁ #i )
+    case Primary
+    solve( JoinScreen( ~c,
+                       h(<'vela enrollment device fingerprint v4', vk, ek>)
+           ) ▶₃ #i )
+      case Join_Claim
+      by contradiction /* from formulas */
+    qed
+  qed
+qed
+
+lemma honest_enrollment_is_reachable:
+  exists-trace
+  "∃ c A rms ek vk #a #b #d.
+    ((RmsCreated( A, rms ) @ #a) ∧ (Confirmed( c, A, ek, vk ) @ #b)) ∧
+    (Adopted( c, rms ) @ #d)"
+/*
+guarded formula characterizing all satisfying traces:
+"∃ c A rms ek vk #a #b #d.
+  (RmsCreated( A, rms ) @ #a) ∧
+  (Confirmed( c, A, ek, vk ) @ #b) ∧
+  (Adopted( c, rms ) @ #d)"
+*/
+simplify
+solve( PrimaryTurn( c ) ▶₀ #b )
+  case Start_Ceremony
+  solve( !Primary( $A, skP.1, rms.1 ) ▶₁ #b )
+    case Primary
+    solve( JoinScreen( ~c,
+                       h(<'vela enrollment device fingerprint v4', vk, ek>)
+           ) ▶₃ #b )
+      case Join_Claim
+      solve( JoinWaiting( ~c, skJ.1, dkJ.1 ) ▶₀ #d )
+        case Join_Claim
+        solve( !KU( aenc(~rms, pk(~dkJ)) ) @ #vk.5 )
+          case Primary_Confirm
+          solve( !KU( pk(~dkJ) ) @ #vk.4 )
+            case Join_Claim
+            solve( !KU( pk(~skJ) ) @ #vk.5 )
+              case Join_Claim
+              SOLVED // trace found
+            qed
+          qed
+        qed
+      qed
+    qed
+  qed
+qed
+
+/* All wellformedness checks were successful. */
+
+/*
+Generated from:
+Tamarin version 1.12.0
+Maude version 3.5.1
+Git revision: 82780bbaf3328a45f624ddb41e51bf75425f851c (with uncommited changes), branch: master
+Compiled at: 2026-03-07 14:22:39.174278293 UTC
+*/
+
+end
+
+==============================================================================
+summary of summaries:
+
+analyzed: /home/hirew/.t3/worktrees/VELA/t3-700776df/security/formal/m13b_enrollment_key_binding.spthy
+
+  processing time: 0.48s
+  
+  rms_stays_secret (all-traces): verified (3 steps)
+  confirmed_keys_are_the_joining_devices (all-traces): verified (5 steps)
+  rms_is_sealed_only_to_joining_devices (all-traces): verified (5 steps)
+  honest_enrollment_is_reachable (exists-trace): verified (9 steps)
+
+==============================================================================

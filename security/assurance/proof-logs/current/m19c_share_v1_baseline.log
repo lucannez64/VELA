@@ -1,0 +1,128 @@
+maude tool: 'maude'
+ checking version: 3.5.1. OK.
+ checking installation: OK.
+[Theory M19c_ShareV1Baseline] Theory loaded
+[Theory M19c_ShareV1Baseline] Theory translated
+[Theory M19c_ShareV1Baseline] Derivation checks started
+[Theory M19c_ShareV1Baseline] Derivation checks ended
+[Theory M19c_ShareV1Baseline] Theory closed
+[Saturating Sources] Step 1 (Max 5)
+[Saturating Sources] Done
+theory M19c_ShareV1Baseline
+
+begin
+
+// Function signature and definition of the equational theory E
+
+builtins: natural-numbers
+functions: adec/2, aenc/2, fst/1, pair/2, pk/1, snd/1
+equations:
+    adec(aenc(x.1, pk(x.2)), x.2) = x.1,
+    fst(<x.1, x.2>) = x.1,
+    snd(<x.1, x.2>) = x.2
+
+/* looping facts with injective instances: Held/5 */
+
+rule (modulo E) Recipient_ShareKey:
+   [ Fr( ~dk ) ]
+  --[ ShareKeyCreated( $B, pk(~dk) ) ]->
+   [ !ShareKey( $B, ~dk ), Out( <$B, pk(~dk)> ) ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) Reveal_ShareKey:
+   [ !ShareKey( B, dk ) ] --[ ShareKeyRevealed( B ) ]-> [ Out( dk ) ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) Sender_Send:
+   [ !ShareKey( $B, dk ), Fr( ~item ) ]
+  --[ Sent( $S, $B, ~item ) ]->
+   [ Out( aenc(<~item, %1>, pk(dk)) ) ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) Recipient_Accept:
+   [ !ShareKey( $B, dk ), Fr( ~slot ), In( <S, aenc(<item, t>, pk(dk))> ) ]
+  --[ Accepted( ~slot, $B, S, item ) ]->
+   [ Held( ~slot, $B, dk, S, t ) ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) Recipient_ApplyNewer:
+   [ Held( slot, $B, dk, S, t ), In( <S, aenc(<item, t2>, pk(dk))> ) ]
+  --[ Newer( t, t2 ), Applied( slot, $B, S, item ) ]->
+   [ Held( slot, $B, dk, S, t2 ) ]
+
+  // loop breaker: [0]
+  /* has exactly the trivial AC variant */
+
+restriction NewerTimestamp:
+  "∀ a b #i. (Newer( a, b ) @ #i) ⇒ (a ⊏ b)"
+  // safety formula
+
+  /*
+  expanded formula:
+  "∀ a b #i. (Newer( a, b ) @ #i) ⇒ (a ⊏ b)"
+  */
+
+lemma forged_update_is_applied_without_any_key_compromise:
+  exists-trace
+  "∃ slot B S item0 item #a #b #c.
+    ((((Sent( S, B, item0 ) @ #a) ∧ (Accepted( slot, B, S, item0 ) @ #b)) ∧
+      (Applied( slot, B, S, item ) @ #c)) ∧
+     (¬(∃ #s. Sent( S, B, item ) @ #s))) ∧
+    (¬(∃ b.1 #r. ShareKeyRevealed( b.1 ) @ #r))"
+/*
+guarded formula characterizing all satisfying traces:
+"∃ slot B S item0 item #a #b #c.
+  (Sent( S, B, item0 ) @ #a) ∧
+  (Accepted( slot, B, S, item0 ) @ #b) ∧
+  (Applied( slot, B, S, item ) @ #c)
+ ∧
+  (∀ #s. (Sent( S, B, item ) @ #s) ⇒ ⊥) ∧
+  (∀ b.1 #r. (ShareKeyRevealed( b.1 ) @ #r) ⇒ ⊥)"
+*/
+simplify
+solve( !ShareKey( $B, dk ) ▶₀ #a )
+  case Recipient_ShareKey
+  solve( !ShareKey( $B, dk.1 ) ▶₀ #b )
+    case Recipient_ShareKey
+    solve( !KU( aenc(<~item, t>, pk(~dk.1)) ) @ #vk.3 )
+      case Sender_Send
+      solve( Held( ~slot, $B, dk.1, $S, t ) ▶₀ #c )
+        case Recipient_Accept
+        solve( !KU( aenc(<item.1, t2>, pk(~dk)) ) @ #vk.4 )
+          case c_aenc
+          solve( !KU( pk(~dk) ) @ #vk.6 )
+            case Recipient_ShareKey
+            SOLVED // trace found
+          qed
+        qed
+      qed
+    qed
+  qed
+qed
+
+/* All wellformedness checks were successful. */
+
+/*
+Generated from:
+Tamarin version 1.12.0
+Maude version 3.5.1
+Git revision: 82780bbaf3328a45f624ddb41e51bf75425f851c (with uncommited changes), branch: master
+Compiled at: 2026-03-07 14:22:39.174278293 UTC
+*/
+
+end
+
+==============================================================================
+summary of summaries:
+
+analyzed: /home/hirew/.t3/worktrees/VELA/t3-700776df/security/formal/m19c_share_v1_baseline.spthy
+
+  processing time: 0.52s
+  
+  forged_update_is_applied_without_any_key_compromise (exists-trace): verified (8 steps)
+
+==============================================================================

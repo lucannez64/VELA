@@ -1,0 +1,15 @@
+--- /home/hirew/.t3/worktrees/VELA/t3-04703409/serverVELA/vela-enrollment-policy/proofs/fstar/extraction-pairing-driver/Vela_enrollment_policy.Pairing_driver.fst	2026-10-26 20:03:06.448931954 +0100
++++ /tmp/opencode/mutations/take-claim/Vela_enrollment_policy.Pairing_driver.fst	2026-10-26 20:15:01.734736459 +0100
+@@ -893,11 +893,7 @@
+           let result:t_PairingTransition = result in
+           pairing_effect_is_sound result.f_driver result.f_effect &&
+           (~.(pairing_state_is_sound d <: bool) || pairing_state_is_sound result.f_driver)) =
+-  let claim_present:bool =
+-    ~.(match observation.f_claim <: t_ClaimMaterialObservation with
+-      | ClaimMaterialObservation_Missing  -> true
+-      | _ -> false)
+-  in
++  let claim_present:bool = true in
+   let opener_active:bool =
+     match observation.f_opener <: t_OpenerObservation with
+     | OpenerObservation_Active  -> true

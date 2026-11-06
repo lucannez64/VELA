@@ -1,0 +1,14 @@
+--- vela-enrollment-policy/proofs/fstar/extraction-pairing-interpreter/Vela_enrollment_policy.Pairing_interpreter.fst	2026-10-27 13:30:45.918373740 +0100
++++ /tmp/vela-mut/pairing-b/Vela_enrollment_policy.Pairing_interpreter.fst	2026-10-27 13:32:06.067013306 +0100
+@@ -326,7 +326,10 @@
+             | Vela_enrollment_policy.Pairing_driver.PairingEffect_Fail _
+             | Vela_enrollment_policy.Pairing_driver.PairingEffect_RestoreAndFail _
+             | Vela_enrollment_policy.Pairing_driver.PairingEffect_Idle  ->
+-              io, transition <: (v_Io & Vela_enrollment_policy.Pairing_driver.t_PairingTransition)
++              let (tmp0: v_Io), (out: Vela_enrollment_policy.Pairing_driver.t_StoreObservation) =
++                f_store_package #v_Io #FStar.Tactics.Typeclasses.solve io
++              in
++              tmp0, transition <: (v_Io & Vela_enrollment_policy.Pairing_driver.t_PairingTransition)
+           in
+           let transition:Vela_enrollment_policy.Pairing_driver.t_PairingTransition = hoist26 in
+           io, transition <: (v_Io & Vela_enrollment_policy.Pairing_driver.t_PairingTransition))

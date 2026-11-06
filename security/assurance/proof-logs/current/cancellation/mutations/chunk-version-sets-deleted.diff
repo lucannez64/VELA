@@ -1,0 +1,12 @@
+--- /tmp/vela-f2-cancel-mut2/rekey/pristine.fst
++++ vela-rekey-policy/proofs/fstar/extraction-vault-mutation-driver/Vela_rekey_policy.Vault_mutation_driver.fst
+@@ -357,7 +357,8 @@
+       chunk_transition ({
+             driver with
+             f_stage = ChunkDeleteStage_Delete <: t_ChunkDeleteStage;
+-            f_current_version = version
++            f_current_version = version;
++            f_deleted = true
+           }
+           <:
+           t_ChunkDeleteDriver)

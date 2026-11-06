@@ -1,0 +1,34 @@
+maude tool: 'maude'
+ checking version: 3.5.1. OK.
+ checking installation: OK.
+[Theory M11_RekeyEpochStateMachine] Theory loaded
+[Theory M11_RekeyEpochStateMachine] Theory translated
+[Theory M11_RekeyEpochStateMachine] Derivation checks started
+[Theory M11_RekeyEpochStateMachine] Derivation checks ended
+[Theory M11_RekeyEpochStateMachine] Theory closed
+[Saturating Sources] Step 1 (Max 5)
+[Saturating Sources] Done
+m11_rekey_epoch_state_machine: 15 verified
+maude tool: 'maude'
+ checking version: 3.5.1. OK.
+ checking installation: OK.
+[Theory M11b_RekeyCapsuleBinding] Theory loaded
+[Theory M11b_RekeyCapsuleBinding] Theory translated
+[Theory M11b_RekeyCapsuleBinding] Derivation checks started
+[Theory M11b_RekeyCapsuleBinding] Derivation checks ended
+[Theory M11b_RekeyCapsuleBinding] Theory closed
+[Saturating Sources] Step 1 (Max 5)
+[Saturating Sources] Done
+m11b_rekey_capsule_binding: 4 verified
+maude tool: 'maude'
+ checking version: 3.5.1. OK.
+ checking installation: OK.
+[Theory M11c_RekeyMutationAuthority] Theory loaded
+[Theory M11c_RekeyMutationAuthority] Theory translated
+[Theory M11c_RekeyMutationAuthority] Derivation checks started
+[Theory M11c_RekeyMutationAuthority] Derivation checks ended
+[Theory M11c_RekeyMutationAuthority] Theory closed
+[Saturating Sources] Step 1 (Max 5)
+[Saturating Sources] Done
+m11c_rekey_mutation_authority: 12 verified
+rekey formal proof gate: 31 verified, 0 falsified, 0 warnings

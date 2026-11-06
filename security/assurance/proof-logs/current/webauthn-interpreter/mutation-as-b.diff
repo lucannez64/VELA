@@ -1,0 +1,17 @@
+--- proofs/fstar/extraction-webauthn-interpreter/Vela_recovery_policy.Webauthn_interpreter.fst	2026-10-27 17:13:39.525996169 +0100
++++ /tmp/vela-mut-webauthn/as-b/Vela_recovery_policy.Webauthn_interpreter.fst	2026-10-27 17:15:28.600775396 +0100
+@@ -778,6 +778,14 @@
+               | Vela_recovery_policy.Webauthn_driver.AuthStartEffect_Complete
+               | Vela_recovery_policy.Webauthn_driver.AuthStartEffect_Fail _
+               | Vela_recovery_policy.Webauthn_driver.AuthStartEffect_Idle  ->
++                let
++                (tmp0: v_Io),
++                (out:
++                  Core_models.Option.t_Option
++                  Vela_recovery_policy.Webauthn_driver.t_ChallengeStoreObservation) =
++                  f_auth_start_store #v_Io #FStar.Tactics.Typeclasses.solve io
++                in
++                let io:v_Io = tmp0 in
+                 (aborted, io <: (bool & v_Io)), transition
+                 <:
+                 ((bool & v_Io) & Vela_recovery_policy.Webauthn_driver.t_AuthStartTransition)

@@ -1,0 +1,70 @@
+Doing expand get, insert and prove unique annotations... No change.
+Doing simplify (non-expanded game)... No change.
+Doing expand... No change.
+Doing remove assignments of findcond... No change.
+Doing simplify... Run simplify 2 time(s). Fixpoint reached.
+Done.
+Doing move all binders... No change.
+Doing SA rename new without array accesses and remove assignments of findcond... No change.
+Doing merge branches... No change.
+Doing expand get, insert and prove unique annotations... No change.
+Doing simplify (non-expanded game)... No change.
+Doing expand... No change.
+Doing remove assignments of findcond... No change.
+Doing simplify... Run simplify 2 time(s). Fixpoint reached.
+Done.
+Doing move all binders... No change.
+Doing SA rename new without array accesses and remove assignments of findcond... No change.
+Doing merge branches... No change.
+Proved query indistinguishability from other input game
+===================== Proof starts =======================
+Initial state
+Game 2 is
+     foreach i_1 <= N do
+     O() :=
+     Y_1 <-R G;
+     x_1 <-R Z;
+     return(subGtoG(exp_div_k(pow_k(Y_1), x_1)), {13}is_zero_G(subGtoG(pow_k(Y_1))))
+
+
+Applying simplify
+  - Simplification pass
+    - Replaced is_zero_G(subGtoG(pow_k(Y_1))) with is_zero_subG(pow_k(Y_1)) at 13
+yields
+
+Game 3 is
+     foreach i_1 <= N do
+     O() :=
+     Y_1 <-R G;
+     x_1 <-R Z;
+     return(subGtoG(exp_div_k(pow_k(Y_1), x_1)), is_zero_subG(pow_k(Y_1)))
+
+Initial state
+Game 1 is
+     foreach i <= N do
+     O() :=
+     Y <-R G;
+     x <-R Z;
+     return({6}exp(Y, x), {11}is_zero_G(exp(Y, x)))
+
+
+Applying simplify
+  - Simplification pass
+    - Replaced exp(Y, x) with subGtoG(exp_div_k(pow_k(Y), x)) at 6
+    - Replaced is_zero_G(exp(Y, x)) with is_zero_subG(pow_k(Y)) at 11
+yields
+
+Game 4 is
+     foreach i <= N do
+     O() :=
+     Y <-R G;
+     x <-R Z;
+     return(subGtoG(exp_div_k(pow_k(Y), x)), is_zero_subG(pow_k(Y)))
+
+
+Proved indistinguishability between game 4 and game 2
+Game 4 is the same as game 3.
+Adv[Game 2: indistinguishability from game 3] <= Adv[Game 3: indistinguishability from game 3]
+Adv[Game 1: indistinguishability from game 4] <= Adv[Game 4: indistinguishability from game 4]
+RESULT Proved indistinguishability between game 1 and game 2
+All queries proved.

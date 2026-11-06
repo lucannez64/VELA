@@ -1,0 +1,14 @@
+--- proofs/fstar/extraction-revocation-interpreter/Vela_session_policy.Revocation_interpreter.fst	2026-10-27 13:25:53.068388887 +0100
++++ /tmp/vela-mut-revocation/d/Vela_session_policy.Revocation_interpreter.fst	2026-10-27 13:40:53.471002060 +0100
+@@ -180,7 +180,10 @@
+             | Vela_session_policy.Revocation_driver.RevocationEffect_Complete
+             | Vela_session_policy.Revocation_driver.RevocationEffect_Fail _
+             | Vela_session_policy.Revocation_driver.RevocationEffect_Idle  ->
+-              io, transition
++              let (io_verdict: v_Io), (_extra: Vela_session_policy.Revocation_driver.t_CascadeObservation) =
++                f_cascade_web_sessions #v_Io #FStar.Tactics.Typeclasses.solve io
++              in
++              io_verdict, transition
+               <:
+               (v_Io & Vela_session_policy.Revocation_driver.t_RevocationTransition)
+           in

@@ -5,7 +5,6 @@ use uuid::Uuid;
 use crate::{
     error::{AppError, Result},
     middleware::{maybe_append_new_token, AuthSession},
-    sqldb::{Db as _, TursoValue},
     state::AppState,
 };
 
@@ -34,20 +33,28 @@ pub async fn get_sync(
     // has not yet adopted sees the pre-rotation world; after adopting (and
     // commit), it sees the new one — never a mix of both.
     let read_epoch = crate::vault::rekey::read_epoch(&state, &session.user_id.to_string()).await?;
-    let rows = state
-        .sqldb
-        .query(
-            "SELECT chunk_id, version, lamport_clock, last_writer
-         FROM vault_chunks
-         WHERE user_id = ? AND epoch = ?
-         ORDER BY chunk_id",
-            vec![
-                TursoValue::Text(session.user_id.to_string()),
-                TursoValue::Integer(read_epoch),
-            ],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+    use vela_rekey_policy::executor::{classify_sync, plan_read_sync, ReadOutcome, SyncObservation};
+    let plan = plan_read_sync(session.user_id.to_string(), read_epoch);
+    let mut sql = crate::vault::sql::PoolSql(&state);
+    let mut read_error: Option<anyhow::Error> = None;
+    let rows = match crate::vault::sql::run_read(&mut sql, &plan).await {
+        Ok(rows) => rows,
+        Err(error) => {
+            read_error = Some(error);
+            Vec::new()
+        }
+    };
+    let outcome = if read_error.is_some() {
+        ReadOutcome::Failed
+    } else {
+        ReadOutcome::Rows(crate::vault::sql::sync_rows_view(&rows))
+    };
+    if let SyncObservation::Failed = classify_sync(&outcome) {
+        return Err(AppError::Internal(match read_error {
+            Some(error) => error.to_string(),
+            None => "chunk manifest query failed".into(),
+        }));
+    }
 
     let chunks: Vec<ChunkMeta> = rows
         .iter()

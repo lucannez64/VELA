@@ -1,0 +1,7 @@
+theory FstProbe2
+begin
+functions: successor/1
+rule Recv: [ In(y) ] --[ Got(y), Target(fst($c)) ]-> [ ]
+restriction pin: "All y z #i. Got(y) @ #i & Target(z) @ #i ==> y = z"
+lemma adversary_sends_irreducible_fst: exists-trace "Ex y #i. Got(y) @ #i"
+end

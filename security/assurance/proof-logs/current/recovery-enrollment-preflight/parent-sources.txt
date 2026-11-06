@@ -1,0 +1,6 @@
+Parent integrated working-tree sources after 5361406; see README for run provenance.
+38aed68734aedb0adeabb422dd91e2772d0789d88fa504502264978e1c324141  serverVELA/vela-recovery-policy/src/lib.rs
+67e13dde4afd345b61c44e786598a4fdf3a8f7c088a8cf0d5c29e81402d1f489  serverVELA/vela-recovery-policy/verify-fstar.sh
+c3a4d03995c24ec0739da16f483c458d8714b2666df6e52d1ce0bdad90f7c828  serverVELA/vela-recovery-policy/proofs/fstar/extraction/Vela_recovery_policy.fst
+72a5591c0886128487668dbad48023a16c9150b60c994e714c33537c9ceaca19  serverVELA/vela-server/src/recovery/enroll_device.rs
+491e44c62b30a728d5877aaf657b4da3f7ec86a58435b03d772cc283d31c3d4b  serverVELA/vela-server/tests/integration.rs

@@ -1,0 +1,46 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.12s
+     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-cb05ec5a/target-own/debug/build/vela-recovery-policy/a0457367b9592201/out/vela_recovery_policy-a0457367b9592201)
+
+running 1 test
+test recovery_share_interpreter::tests::every_operation_performs_exactly_the_driver_effects ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.00s
+
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.14s
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-recovery-share-interpreter/Vela_recovery_policy.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-recovery-share-interpreter/Vela_recovery_policy.Recovery_share_driver.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-recovery-share-interpreter/Vela_recovery_policy.Recovery_share_interpreter.fst[0m
+Driver source policy: 5 extracted modules, 2 proof modules; no unreviewed escapes/options
+F* recovery-share-interpreter argv: --cmi --cache_off --warn_error -331 --z3rlimit 8000 --z3version 4.13.3 --already_cached +Prims+FStar+LowStar+C+Spec.Loops+TestLib --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/core --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proofs/fstar/extraction --include proofs/fstar/extraction-recovery-share-driver --include proofs/fstar/recovery-share-driver-lemmas --include proofs/fstar/extraction-recovery-share-interpreter --include proofs/fstar/recovery-share-interpreter-lemmas proofs/fstar/extraction-recovery-share-interpreter/Vela_recovery_policy.Recovery_share_interpreter.fst proofs/fstar/extraction-recovery-share-driver/Vela_recovery_policy.Possession_driver.fst proofs/fstar/extraction-recovery-share-driver/Vela_recovery_policy.Recovery_share_driver.fst proofs/fstar/extraction-recovery-share-driver/Vela_recovery_policy.Webauthn_driver.fst proofs/fstar/extraction-recovery-share-driver/Vela_recovery_policy.fst proofs/fstar/recovery-share-driver-lemmas/Vela_recovery_policy_recovery_share_driver_lemmas.fst proofs/fstar/recovery-share-interpreter-lemmas/Vela_recovery_policy_recovery_share_interpreter_lemmas.fst
+* Warning 271 at /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+Verified module: Vela_recovery_policy
+Verified module: Vela_recovery_policy.Recovery_share_driver
+Verified module: Vela_recovery_policy.Recovery_share_interpreter
+Verified module: Vela_recovery_policy.Possession_driver
+Verified module: Vela_recovery_policy.Webauthn_driver
+Verified module: Vela_recovery_policy_recovery_share_driver_lemmas
+Verified module: Vela_recovery_policy_recovery_share_interpreter_lemmas
+All verification conditions discharged successfully
+recovery-share interpreter: all four handlers' loops call only the executor method for the driver's current effect, stop at a verdict (or abort) within their budget, and end in the driver state the per-request theorems cover
+7f7ce61647e3201b7fe9038565ceca662d46c1b76b4a735bb9bed560c9d2f530  proofs/fstar/extraction-recovery-share-interpreter/Vela_recovery_policy.Recovery_share_interpreter.fst
+4fb8a6fe602e5385563a181eb5335ac7f3260d39fa98d9a4dbf4076c280cbdea  proofs/fstar/recovery-share-interpreter-lemmas/Vela_recovery_policy_recovery_share_interpreter_lemmas.fst
+982425bea66530e6c9b408deae76f9d6cf0e687d6cfb79d822b45f52d1130cbb  src/recovery_share_interpreter.rs

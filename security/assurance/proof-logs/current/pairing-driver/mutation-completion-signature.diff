@@ -1,0 +1,15 @@
+--- /home/hirew/.t3/worktrees/VELA/t3-04703409/serverVELA/vela-enrollment-policy/proofs/fstar/extraction-pairing-driver/Vela_enrollment_policy.Pairing_driver.fst	2026-10-26 20:03:06.448931954 +0100
++++ /tmp/opencode/mutations/completion-signature/Vela_enrollment_policy.Pairing_driver.fst	2026-10-26 20:13:39.841629650 +0100
+@@ -903,11 +903,7 @@
+     | OpenerObservation_Active  -> true
+     | _ -> false
+   in
+-  let signature_verified:bool =
+-    match observation.f_signature <: t_SignatureObservation with
+-    | SignatureObservation_Verified  -> true
+-    | _ -> false
+-  in
++  let signature_verified:bool = true in
+   let facts:Vela_enrollment_policy.t_CompletionFacts =
+     Vela_enrollment_policy.completion_facts ({
+           Vela_enrollment_policy.f_claim_present = claim_present;

@@ -118,7 +118,7 @@ rule Site_Use_Session:
 // happens but what it is worth, and that is the next three rules.
 rule Sandbox_Escape:
     [ !Ran(script), In(<'escape', script>) ]
-  --[ Escaped(script) ]->
+  --[ SandboxEscaped(script) ]->
     [ !Escaped(script) ]
 
 // The edge, in one rule. The interpreter is inside the process that holds the
@@ -148,7 +148,7 @@ lemma credential_never_leaks:
 lemma credential_never_leaks_without_escape:
   "All c O #i.
      Secret(c, O) @ i
-     ==> (Ex s #e. Escaped(s) @ e) | not(Ex #j. K(c) @ j)"
+     ==> (Ex s #e. SandboxEscaped(s) @ e) | not(Ex #j. K(c) @ j)"
 
 // ---- What it costs -----------------------------------------------------------
 

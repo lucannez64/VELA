@@ -1,0 +1,12 @@
+--- /tmp/vela-f2-cancel-mut2/enrollment/pristine.fst
++++ vela-enrollment-policy/proofs/fstar/extraction-enroll-driver/Vela_enrollment_policy.Enroll_driver.fst
+@@ -462,7 +462,8 @@
+           d with
+           f_stage = EnrollStage_Insert <: t_EnrollStage;
+           f_epoch_positive = true;
+-          f_rekey_permitted = true
++          f_rekey_permitted = true;
++          f_inserted = true
+         }
+         <:
+         t_EnrollDriver)

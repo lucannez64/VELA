@@ -1,0 +1,12 @@
+maude tool: 'maude'
+ checking version: 3.5.1. OK.
+ checking installation: OK.
+[Theory M23_SyncAdmission] Theory loaded
+[Theory M23_SyncAdmission] Theory translated
+[Theory M23_SyncAdmission] Derivation checks started
+[Theory M23_SyncAdmission] Derivation checks ended
+[Theory M23_SyncAdmission] Theory closed
+[Saturating Sources] Step 1 (Max 5)
+[Saturating Sources] Done
+m23_sync_admission: 11 verified
+m23 sync-admission formal proof gate: 11 verified, 0 falsified, 0 warnings

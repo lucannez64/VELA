@@ -1,0 +1,78 @@
+# Mutation-check commands (temporary copies only)
+
+The committed raw-nonce module, both extraction directories, and all reviewed
+proof modules were not modified.  Each mutation copies only
+`serverVELA/vela-session-policy/proofs/fstar/login-raw-nonce-lemmas/Vela_session_policy_login_raw_nonce.fst`
+to a fresh directory under `/tmp` and changes only that copy.
+
+All mutation runs used the global heavy wrapper.  They pass the two focused
+extraction modules, the two challenge/producer lemma modules, the login-driver
+lemma module, the abstract composition module, and the mutated raw-nonce module
+to F*, with `--cache_off` and the same includes as the successful run.  The
+mutated directory replaces the checked-in raw-nonce include directory.
+
+## Mutation A: raw purpose mapping loses the actual decision
+
+In `raw_purpose`, replace
+
+```fstar
+      Some (if raw_login_decision b = ChallengeConsumption_Accepted
+            then StoredPurpose_Login
+            else StoredPurpose_Other)
+```
+
+with
+
+```fstar
+      Some StoredPurpose_Login
+```
+
+so every present raw value projects to a login purpose.  Result: F* **rejects**
+the module at `raw_purpose_some_other` (line 121 in the mutant, "Could not
+prove post-condition").  The actual raw classification is therefore
+required for projection consistency; this does not establish literal semantics
+as necessary for the purpose-agnostic cardinality bound.  Log:
+`mutation-A-purpose-always-login.log`; diff: `mutation-A.diff`; exact argv:
+`mutation-A-argv.txt`.
+
+## Mutation B: copy path ignores the raw bytes
+
+In `raw_login_decision`, replace
+
+```fstar
+    (Core_models.Option.Option_Some (stored_tag_from_bytes b))
+```
+
+with
+
+```fstar
+    (Core_models.Option.Option_Some
+       (purpose_stored_tag ChallengePurpose_Login))
+```
+
+so the decision no longer depends on the stored raw slice (a copy path that
+pretends every value is the login literal).  Result: F* **rejects** the module
+at `raw_login_decision_iff_slice` (line 162 in the mutant, "Could not prove
+post-condition"), the theorem that connects the actual decision to the checked
+producer's literal-byte predicate.  Log:
+`mutation-B-copy-path-ignores-bytes.log`; diff: `mutation-B.diff`; exact argv:
+`mutation-B-argv.txt`.
+
+## Why these are meaningful
+
+The two mutations target the two places where this bridge deliberately removes
+the abstract-purpose assumption:
+
+1. the projection's purpose mapping, which must follow the actual extracted
+   decision; and
+2. the take decision's actual byte-to-tag conversion, which must read the
+   stored raw bytes.
+
+In both cases the checked F* proof fails; the unmutated module verifies.  This
+is a mutation check of the model bridge, not a claim that the real store or
+handler was mutated.
+
+Mutation B rejects the literal equivalence and refusal-witness obligations;
+the at-most-one cardinality bound survives a constant classifier. The later
+parent literal-refusal theorem uses that equivalence explicitly. These raw
+mutation logs remain historical and do not claim to replay the added lemmas.

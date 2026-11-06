@@ -1,0 +1,12 @@
+--- /tmp/vela-f2-cancel-mut/deletion/pristine.fst	2026-10-27 22:15:18.257344324 +0100
++++ serverVELA/vela-session-policy/proofs/fstar/extraction-deletion-driver/Vela_session_policy.Deletion_driver.fst	2026-10-27 22:15:18.286223662 +0100
+@@ -450,7 +450,8 @@
+     transition ({
+           driver with
+           f_stage = DeletionStage_LockoutDevices <: t_DeletionStage;
+-          f_devices_locked = true
++          f_devices_locked = true;
++          f_committed = true
+         }
+         <:
+         t_DeletionDriver)

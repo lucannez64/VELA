@@ -1,0 +1,58 @@
+--- proofs/fstar/extraction-revocation-driver/Vela_session_policy.Revocation_driver.fst	2026-10-25 18:52:50.863568408 +0100
++++ /tmp/opencode/vela-revocation-mutant-admission/Vela_session_policy.Revocation_driver.fst	2026-10-25 19:26:25.669292870 +0100
+@@ -702,7 +702,7 @@
+ let admission_decision_matches_spec (o: t_AdmissionObservation) (decision: t_AdmissionDecision)
+     : bool =
+   match decision <: t_AdmissionDecision with
+-  | AdmissionDecision_Admit  -> admission_is_authorized o
++  | AdmissionDecision_Admit  -> true
+   | AdmissionDecision_Reject refusal ->
+     match refusal <: t_AdmissionRefusal with
+     | AdmissionRefusal_JtiRevoked  -> o.f_jti_revoked
+@@ -738,12 +738,7 @@
+         <:
+         t_AdmissionDecision
+       else
+-        if observation.f_device_scoped && ~.observation.f_device_row_active
+-        then
+-          AdmissionDecision_Reject (AdmissionRefusal_DeviceRowRevoked <: t_AdmissionRefusal)
+-          <:
+-          t_AdmissionDecision
+-        else AdmissionDecision_Admit <: t_AdmissionDecision
++        AdmissionDecision_Admit <: t_AdmissionDecision
+
+ /// Direct theorem used by the F* gate: a revoked JTI is never admitted,
+ /// regardless of the other observations.
+@@ -778,32 +773,4 @@
+   in
+   match plan_admission observation <: t_AdmissionDecision with
+   | AdmissionDecision_Admit  -> true
+-  | _ -> false
+-
+-/// Direct theorem used by the F* gate: the durable device-row guard refuses a
+-/// device-scoped token even when both revocation markers are clear.
+-let revoked_device_row_can_be_admitted (observation: t_AdmissionObservation)
+-    : Prims.Pure bool
+-      Prims.l_True
+-      (ensures
+-        fun result ->
+-          let result:bool = result in
+-          result =. false) =
+-  let observation:t_AdmissionObservation =
+-    { observation with f_jti_revoked = false } <: t_AdmissionObservation
+-  in
+-  let observation:t_AdmissionObservation =
+-    { observation with f_device_revoked = false } <: t_AdmissionObservation
+-  in
+-  let observation:t_AdmissionObservation =
+-    { observation with f_account_present = true } <: t_AdmissionObservation
+-  in
+-  let observation:t_AdmissionObservation =
+-    { observation with f_device_scoped = true } <: t_AdmissionObservation
+-  in
+-  let observation:t_AdmissionObservation =
+-    { observation with f_device_row_active = false } <: t_AdmissionObservation
+-  in
+-  match plan_admission observation <: t_AdmissionDecision with
+-  | AdmissionDecision_Admit  -> true
+   | _ -> false

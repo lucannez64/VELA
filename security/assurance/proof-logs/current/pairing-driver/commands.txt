@@ -1,0 +1,54 @@
+# Device pairing driver: commands actually run
+#
+# Repository: VELA (Rust password manager)
+# Worktree:   /home/hirew/.t3/worktrees/VELA/t3-04703409
+# Branch:     t3/04703409
+#
+# Every cargo / hax / fstar command runs through the machine-wide heavy lock
+# and the repo's 3 GiB process-tree cap:
+#
+#   ~/.local/opt/vela-tools/bin/vela-heavy <command>
+#
+# Cargo environment (shared warm target):
+export CARGO_TARGET_DIR=/home/hirew/.t3/worktrees/VELA/t3-700776df/target
+export CARGO_PROFILE_DEV_CODEGEN_BACKEND=llvm
+#
+# hax / F* environment:
+export CARGO_HOME=/tmp/vela-hax-cargo
+export OPAMROOT=$HOME/.local/opt/vela-tools/opam
+export PATH=/tmp/vela-fstar-prebuilt/fstar/bin:$HOME/.local/opt/vela-tools/bin:$HOME/.local/opt/vela-tools/opam/vela-hax/bin:$PATH
+
+# 1. Focused extraction + per-request lemmas + composition (the new gate).
+cd serverVELA/vela-enrollment-policy
+~/.local/opt/vela-tools/bin/vela-heavy ./verify-fstar-pairing-driver.sh
+
+# 2. The crate's full gate: historical 29-selection artifact, then the new
+#    pairing increment in its own fstar.exe invocation.
+~/.local/opt/vela-tools/bin/vela-heavy ./verify-fstar.sh
+
+# 3. Driver unit tests (8 new pairing-driver tests, 11 total in the crate lib).
+~/.local/opt/vela-tools/bin/vela-heavy cargo test -p vela-enrollment-policy
+
+# 4. Bounded handler/store conformance (must keep passing unchanged).
+~/.local/opt/vela-tools/bin/vela-heavy cargo test --manifest-path serverVELA/Cargo.toml \
+  --test pairing_model
+~/.local/opt/vela-tools/bin/vela-heavy cargo test --manifest-path serverVELA/Cargo.toml \
+  --test enrollment_ceremony_model
+~/.local/opt/vela-tools/bin/vela-heavy cargo test --manifest-path serverVELA/Cargo.toml \
+  --test integration
+
+# 5. Source-policy gate for focused drivers.
+~/.local/opt/vela-tools/bin/vela-heavy python3 \
+  security/formal/check-driver-proof-sources.py \
+  --generated serverVELA/vela-enrollment-policy/proofs/fstar/extraction-pairing-driver/*.fst \
+  --proof serverVELA/vela-enrollment-policy/proofs/fstar/pairing-driver-lemmas/*.fst \
+          serverVELA/vela-enrollment-policy/proofs/fstar/pairing-driver-composition/*.fst \
+  --include-dir serverVELA/vela-enrollment-policy
+
+# 6. Proof-boundary count (must stay 249) and the formal unittest suite.
+python3 security/assurance/check-proof-boundary.py
+python3 -m unittest discover -s security/formal/tests -p 'test_*.py'
+
+# 7. Mutations: copies of the regenerated extraction under /tmp/opencode,
+#    never committed. The composition module is checked against each mutant.
+python3 /tmp/opencode/run-mutations.py "$PWD" /tmp/opencode/mutations

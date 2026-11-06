@@ -83,7 +83,7 @@ rule Setup_Passkey:
 // credential-reset policy ('hardened' | 'selfserve').
 rule Setup_Plain:
     [ Fr(~cred) ]
-  --[ Secret(~cred, $O, 'plain'), SiteMode($O, $P) ]->
+  --[ Secret(~cred, $O, 'plain'), SiteModeSelected($O, $P) ]->
     [ !Vault(~cred, $O, 'plain'), !SiteStore(~cred, $O), !SiteMode($O, $P) ]
 
 // JS tier: a reusable password that only the page can consume.
@@ -299,7 +299,7 @@ lemma session_expiry_is_effective:
 lemma no_takeover_at_hardened_sites:
   "All O #i.
      AccountTakenOver(O) @ i
-     ==> Ex #j. SiteMode(O, 'selfserve') @ j"
+     ==> Ex #j. SiteModeSelected(O, 'selfserve') @ j"
 
 // ---- Existence -----------------------------------------------------------------
 

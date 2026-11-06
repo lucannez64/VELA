@@ -1,0 +1,52 @@
+warning: function `same_issue_purpose` is never used
+   --> vela-session-policy/src/challenge_issue_driver.rs:158:4
+    |
+158 | fn same_issue_purpose(a: ChallengePurpose, b: ChallengePurpose) -> bool {
+    |    ^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `vela-session-policy` (lib test) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.15s
+     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-181a0f7c/target-own/debug/build/vela-session-policy/652ed2674f77390e/out/vela_session_policy-652ed2674f77390e)
+
+running 3 tests
+test registration_interpreter::tests::a_device_insert_failure_stops_before_commit_and_token ... ok
+test registration_interpreter::tests::interpreter_performs_exactly_the_driver_effects ... ok
+test registration_interpreter::tests::invalid_keys_never_open_a_transaction ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 70 filtered out; finished in 0.00s
+
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.20s
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-registration-interpreter/Vela_session_policy.Registration_driver.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-registration-interpreter/Vela_session_policy.Registration_interpreter.fst[0m
+Driver source policy: 2 extracted modules, 2 proof modules; no unreviewed escapes/options
+F* registration-interpreter argv: --cmi --cache_off --warn_error -331 --z3rlimit 8000 --z3version 4.13.3 --already_cached +Prims+FStar+LowStar+C+Spec.Loops+TestLib --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/core --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proofs/fstar/extraction --include proofs/fstar/extraction-registration-driver --include proofs/fstar/registration-driver-lemmas --include proofs/fstar/extraction-registration-interpreter --include proofs/fstar/registration-interpreter-lemmas proofs/fstar/extraction-registration-interpreter/Vela_session_policy.Registration_interpreter.fst proofs/fstar/registration-driver-lemmas/Vela_session_policy_registration_driver_lemmas.fst proofs/fstar/registration-interpreter-lemmas/Vela_session_policy_registration_interpreter_lemmas.fst
+* Warning 271 at /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+Verified module: Vela_session_policy.Registration_interpreter
+Verified module: Vela_session_policy_registration_driver_lemmas
+Verified module: Vela_session_policy_registration_interpreter_lemmas
+All verification conditions discharged successfully
+registration interpreter: the handler's loop calls only the executor method for the driver's current effect, stops at the verdict within 8 turns, and ends in the driver state the per-request theorems cover
+9e13907b7129e44f03d15a5feaaabe16b7aee4c6aa85e94f12cd2024364e052f  proofs/fstar/extraction-registration-interpreter/Vela_session_policy.Registration_interpreter.fst
+2b102291ddd8b85b722b31d674ff80069323678f83a34131afaf7cdd37c0edcc  proofs/fstar/registration-interpreter-lemmas/Vela_session_policy_registration_interpreter_lemmas.fst
+1f1673076736a2c6b2ae5a9d3207dcdaa065d01c529a88c23ea8cbbb7617edc7  src/registration_interpreter.rs

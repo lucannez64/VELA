@@ -1,0 +1,2 @@
+12 checked module artifacts: 130 selected postconditions, 0 explicitly reviewed assume val declarations.
+Imported libraries, the String compatibility view, extraction, solvers and the OS remain trusted; this static gate is not a proof.

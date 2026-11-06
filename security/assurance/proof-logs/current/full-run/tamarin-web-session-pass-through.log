@@ -1,0 +1,11 @@
+maude tool: 'maude'
+ checking version: 3.5.1. OK.
+ checking installation: OK.
+[Theory M20_WebSessionPassThrough] Theory loaded
+[Theory M20_WebSessionPassThrough] Theory translated
+[Theory M20_WebSessionPassThrough] Derivation checks started
+[Theory M20_WebSessionPassThrough] Derivation checks ended
+[Theory M20_WebSessionPassThrough] Theory closed
+[Saturating Sources] Done
+m20_web_session_pass_through: 7 verified
+m20 web-session pass-through formal proof gate: 7 verified, 0 falsified, 0 warnings

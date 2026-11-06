@@ -1,0 +1,23 @@
+maude tool: 'maude'
+ checking version: 3.5.1. OK.
+ checking installation: OK.
+[Theory M26_Composition] Theory loaded
+[Theory M26_Composition] Theory translated
+[Theory M26_Composition] Derivation checks started
+[Theory M26_Composition] Derivation checks ended
+[Theory M26_Composition] Theory closed
+[Saturating Sources] Step 1 (Max 5)
+[Saturating Sources] Done
+m26_composition: 4 verified
+maude tool: 'maude'
+ checking version: 3.5.1. OK.
+ checking installation: OK.
+[Theory M26a_RecoveryProvenance] Theory loaded
+[Theory M26a_RecoveryProvenance] Theory translated
+[Theory M26a_RecoveryProvenance] Derivation checks started
+[Theory M26a_RecoveryProvenance] Derivation checks ended
+[Theory M26a_RecoveryProvenance] Theory closed
+[Saturating Sources] Step 1 (Max 5)
+[Saturating Sources] Done
+m26a_recovery_provenance: 6 verified
+m26 composition formal proof gate: all lemmas verified, 0 falsified, 0 warnings

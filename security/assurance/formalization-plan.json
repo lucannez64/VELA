@@ -1,0 +1,1869 @@
+{
+ "areas": {
+  "B": "Baseline and bookkeeping",
+  "T": "F-6 trusted base",
+  "O": "F-1 observation origins",
+  "H": "F-1/F-2 full handlers and server composition",
+  "P": "F-3 client persistence and recovery",
+  "C": "F-4 construction security",
+  "N": "F-5 native clients and protocol composition",
+  "Z": "Closing"
+ },
+ "critical_path": [
+  "B0",
+  "B3",
+  "B4",
+  "O3a",
+  "O3f",
+  "O9",
+  "O13f",
+  "H8f",
+  "H11a",
+  "H11b",
+  "H11c",
+  "H11d",
+  "H11e",
+  "H12",
+  "Z1",
+  "Z2",
+  "Z3",
+  "Z4"
+ ],
+ "nodes": [
+  {
+   "id": "B0",
+   "area": "B",
+   "size": "S",
+   "hard": false,
+   "title": "Get PR #175 green",
+   "done": "Cancelled formal run on 654a0ee rerun; vela-box runners healthy; every PR check passes",
+   "deps": [],
+   "level": 0,
+   "step": 1
+  },
+  {
+   "id": "B1",
+   "area": "B",
+   "size": "S",
+   "hard": false,
+   "title": "Merge PR #175 into main (when approved)",
+   "done": "main contains the work; 08 baseline points at the merge commit. Work proceeds on the PR branch until then",
+   "deps": [
+    "B0"
+   ],
+   "level": 1,
+   "step": 2
+  },
+  {
+   "id": "B2",
+   "area": "B",
+   "size": "S",
+   "hard": false,
+   "title": "Link this plan from 08",
+   "done": "08 'Remaining obligations' rows each list their plan node ids",
+   "deps": [
+    "B0"
+   ],
+   "level": 1,
+   "step": 3
+  },
+  {
+   "id": "B3",
+   "area": "B",
+   "size": "M",
+   "hard": false,
+   "title": "Dedupe the copied Sql/Faulty harnesses",
+   "done": "One shared Rust test harness crate; all executor conformance suites use it and pass",
+   "deps": [
+    "B0"
+   ],
+   "level": 1,
+   "step": 4
+  },
+  {
+   "id": "B4",
+   "area": "B",
+   "size": "M",
+   "hard": true,
+   "title": "One shared F* store/SQL model",
+   "done": "All executor proofs import one Vela.Store.Model module (txn, faults, rows); per-crate copies deleted; all gates green",
+   "deps": [
+    "B3"
+   ],
+   "level": 2,
+   "step": 5
+  },
+  {
+   "id": "B5",
+   "area": "B",
+   "size": "S",
+   "hard": false,
+   "title": "Plan-node check in check-correspondence",
+   "done": "check-correspondence.py fails if a correspondence pair cites an unknown plan node",
+   "deps": [
+    "B2"
+   ],
+   "level": 2,
+   "step": 6
+  },
+  {
+   "id": "T1",
+   "area": "T",
+   "size": "S",
+   "hard": false,
+   "title": "Inventory imported model contracts",
+   "done": "Script lists every hax/std/F* library symbol the corpus relies on, with use counts; output committed",
+   "deps": [
+    "B0"
+   ],
+   "level": 1,
+   "step": 7
+  },
+  {
+   "id": "T2",
+   "area": "T",
+   "size": "S",
+   "hard": false,
+   "title": "Zero-assumption gate over all F*",
+   "done": "check-proof-boundary rejects assume/admit/axiom in extracted AND handwritten modules; mutation fixture rejected",
+   "deps": [
+    "T1"
+   ],
+   "level": 2,
+   "step": 8
+  },
+  {
+   "id": "T3",
+   "area": "T",
+   "size": "M",
+   "hard": false,
+   "title": "Review the Vec model",
+   "done": "Review note maps each used Vec op (len/index/push/extend/slice) to Rust std semantics incl. panics",
+   "deps": [
+    "T1"
+   ],
+   "level": 2,
+   "step": 9
+  },
+  {
+   "id": "T4",
+   "area": "T",
+   "size": "M",
+   "hard": false,
+   "title": "Review the String/UTF-8 model",
+   "done": "Review note for String/str/from_utf8 ops used; gaps listed as nodes or excluded",
+   "deps": [
+    "T1"
+   ],
+   "level": 2,
+   "step": 10
+  },
+  {
+   "id": "T5",
+   "area": "T",
+   "size": "M",
+   "hard": false,
+   "title": "Review integer and overflow models",
+   "done": "Every u8..u128/i64 op used is checked against Rust release-mode semantics (wrapping vs panic)",
+   "deps": [
+    "T1"
+   ],
+   "level": 2,
+   "step": 11
+  },
+  {
+   "id": "T6",
+   "area": "T",
+   "size": "S",
+   "hard": false,
+   "title": "Review Option/Result/slice models",
+   "done": "Review note committed",
+   "deps": [
+    "T1"
+   ],
+   "level": 2,
+   "step": 12
+  },
+  {
+   "id": "T7",
+   "area": "T",
+   "size": "L",
+   "hard": true,
+   "title": "Differential tests of the std models",
+   "done": "Extracted F* model functions run (OCaml extraction) against Rust on random inputs; zero mismatches over 10^6 cases per op",
+   "deps": [
+    "T3",
+    "T4",
+    "T5",
+    "T6"
+   ],
+   "level": 3,
+   "step": 13
+  },
+  {
+   "id": "T8",
+   "area": "T",
+   "size": "M",
+   "hard": false,
+   "title": "Proof stability gate",
+   "done": "Every F* module verifies with 3 Z3 seeds and z3 pinned; rlimits recorded; flaky modules split",
+   "deps": [
+    "T2"
+   ],
+   "level": 3,
+   "step": 14
+  },
+  {
+   "id": "T9",
+   "area": "T",
+   "size": "S",
+   "hard": false,
+   "title": "List OS/library interface assumptions",
+   "done": "09 lists each assumed interface (entropy, clock, fs, locks, DB isolation) with its call sites",
+   "deps": [
+    "T1"
+   ],
+   "level": 2,
+   "step": 15
+  },
+  {
+   "id": "T10",
+   "area": "T",
+   "size": "M",
+   "hard": false,
+   "title": "Pin the rest of the environment (G-3)",
+   "done": "opam lock, action SHAs and OS packages pinned; G-3 closed",
+   "deps": [
+    "B0"
+   ],
+   "level": 1,
+   "step": 16
+  },
+  {
+   "id": "T11",
+   "area": "T",
+   "size": "M",
+   "hard": false,
+   "title": "One proof container",
+   "done": "A pinned image runs run-all.sh end to end; hosted CI uses it",
+   "deps": [
+    "T10"
+   ],
+   "level": 2,
+   "step": 17
+  },
+  {
+   "id": "T12",
+   "area": "T",
+   "size": "S",
+   "hard": false,
+   "title": "Update the trusted-base docs",
+   "done": "07/09 updated from T7-T9; F-6 row reads closed except independent review",
+   "deps": [
+    "T7",
+    "T8",
+    "T9",
+    "T11"
+   ],
+   "level": 4,
+   "step": 18
+  },
+  {
+   "id": "O1",
+   "area": "O",
+   "size": "S",
+   "hard": false,
+   "title": "Inventory observation producers",
+   "done": "Table: every observation field -> producing code (SQL query, store get, verifier, token, clock); committed",
+   "deps": [
+    "B0"
+   ],
+   "level": 1,
+   "step": 19
+  },
+  {
+   "id": "O2",
+   "area": "O",
+   "size": "M",
+   "hard": false,
+   "title": "Schema check for every rendered SQL",
+   "done": "Gate parses migrations into a schema model and checks every byte-pinned statement's tables/columns/types",
+   "deps": [
+    "O1"
+   ],
+   "level": 2,
+   "step": 20
+  },
+  {
+   "id": "O3a",
+   "area": "O",
+   "size": "S",
+   "hard": false,
+   "title": "Row decoders: sharing",
+   "done": "Row->observation decoders extracted and proved against the row model",
+   "deps": [
+    "O1",
+    "B4"
+   ],
+   "level": 3,
+   "step": 21
+  },
+  {
+   "id": "O3b",
+   "area": "O",
+   "size": "S",
+   "hard": false,
+   "title": "Row decoders: send links",
+   "done": "As O3a for send",
+   "deps": [
+    "O3a"
+   ],
+   "level": 4,
+   "step": 22
+  },
+  {
+   "id": "O3c",
+   "area": "O",
+   "size": "M",
+   "hard": false,
+   "title": "Row decoders: session and web sessions",
+   "done": "As O3a for session",
+   "deps": [
+    "O3a"
+   ],
+   "level": 4,
+   "step": 23
+  },
+  {
+   "id": "O3d",
+   "area": "O",
+   "size": "M",
+   "hard": false,
+   "title": "Row decoders: enrollment and pairing",
+   "done": "As O3a for enrollment",
+   "deps": [
+    "O3a"
+   ],
+   "level": 4,
+   "step": 24
+  },
+  {
+   "id": "O3e",
+   "area": "O",
+   "size": "M",
+   "hard": false,
+   "title": "Row decoders: recovery",
+   "done": "As O3a for all four recovery families",
+   "deps": [
+    "O3a"
+   ],
+   "level": 4,
+   "step": 25
+  },
+  {
+   "id": "O3f",
+   "area": "O",
+   "size": "M",
+   "hard": false,
+   "title": "Row decoders: vault, rotation, capsules",
+   "done": "As O3a for vault",
+   "deps": [
+    "O3a"
+   ],
+   "level": 4,
+   "step": 26
+  },
+  {
+   "id": "O4",
+   "area": "O",
+   "size": "M",
+   "hard": false,
+   "title": "Store key builders are injective",
+   "done": "Proof that every store key builder (rl:*, challenge, grant, ...) is injective and namespaces are disjoint",
+   "deps": [
+    "O1"
+   ],
+   "level": 2,
+   "step": 27
+  },
+  {
+   "id": "O5",
+   "area": "O",
+   "size": "M",
+   "hard": true,
+   "title": "Store value codecs round-trip",
+   "done": "decode(encode v) = v and encode injective for every stored value type",
+   "deps": [
+    "O4",
+    "T3"
+   ],
+   "level": 3,
+   "step": 28
+  },
+  {
+   "id": "O6",
+   "area": "O",
+   "size": "S",
+   "hard": false,
+   "title": "Grant store-key user binding",
+   "done": "Proof that a grant key read in a handler is bound to the session user (open item from 15)",
+   "deps": [
+    "O4"
+   ],
+   "level": 3,
+   "step": 29
+  },
+  {
+   "id": "O7",
+   "area": "O",
+   "size": "M",
+   "hard": false,
+   "title": "Signature-verifier wrapper",
+   "done": "Extracted wrapper proved: Ok iff both components verify on the exact signed bytes; components trusted",
+   "deps": [
+    "O1"
+   ],
+   "level": 2,
+   "step": 30
+  },
+  {
+   "id": "O8",
+   "area": "O",
+   "size": "M",
+   "hard": false,
+   "title": "Token and session-id producer",
+   "done": "Claims construction and parse->session observation proved; PASETO crypto trusted",
+   "deps": [
+    "O1"
+   ],
+   "level": 2,
+   "step": 31
+  },
+  {
+   "id": "O9",
+   "area": "O",
+   "size": "M",
+   "hard": true,
+   "title": "Epoch freshness",
+   "done": "Epoch read/normalize composed with the vault row model proves freshness, not just normalization",
+   "deps": [
+    "O3f"
+   ],
+   "level": 5,
+   "step": 32
+  },
+  {
+   "id": "O10",
+   "area": "O",
+   "size": "M",
+   "hard": false,
+   "title": "TTL expiry as adversarial deletion",
+   "done": "Store model lets expiry delete any TTL key at any step; driver and executor theorems still hold",
+   "deps": [
+    "B4"
+   ],
+   "level": 3,
+   "step": 33
+  },
+  {
+   "id": "O11",
+   "area": "O",
+   "size": "S",
+   "hard": false,
+   "title": "Nonce source contract",
+   "done": "Nonce length and single use proved; entropy trusted per T9",
+   "deps": [
+    "T9"
+   ],
+   "level": 3,
+   "step": 34
+  },
+  {
+   "id": "O12",
+   "area": "O",
+   "size": "S",
+   "hard": false,
+   "title": "Prove the EnrollmentAccountView adapter",
+   "done": "Adapter extracted and proved; conformance test kept as backup",
+   "deps": [
+    "O3d"
+   ],
+   "level": 5,
+   "step": 35
+  },
+  {
+   "id": "O13a",
+   "area": "O",
+   "size": "M",
+   "hard": false,
+   "title": "Context origins: sharing",
+   "done": "Every context field used in sharing admission is proved to come from the session or a DB row, never the body",
+   "deps": [
+    "O3a",
+    "O8"
+   ],
+   "level": 4,
+   "step": 36
+  },
+  {
+   "id": "O13b",
+   "area": "O",
+   "size": "S",
+   "hard": false,
+   "title": "Context origins: send links",
+   "done": "As O13a",
+   "deps": [
+    "O3b",
+    "O8"
+   ],
+   "level": 5,
+   "step": 37
+  },
+  {
+   "id": "O13c",
+   "area": "O",
+   "size": "M",
+   "hard": false,
+   "title": "Context origins: session",
+   "done": "As O13a",
+   "deps": [
+    "O3c",
+    "O8"
+   ],
+   "level": 5,
+   "step": 38
+  },
+  {
+   "id": "O13d",
+   "area": "O",
+   "size": "M",
+   "hard": false,
+   "title": "Context origins: enrollment",
+   "done": "As O13a",
+   "deps": [
+    "O3d",
+    "O8",
+    "O12"
+   ],
+   "level": 6,
+   "step": 39
+  },
+  {
+   "id": "O13e",
+   "area": "O",
+   "size": "M",
+   "hard": false,
+   "title": "Context origins: recovery",
+   "done": "As O13a; includes WebAuthn verdict origin",
+   "deps": [
+    "O3e",
+    "O8",
+    "O7",
+    "O6"
+   ],
+   "level": 5,
+   "step": 40
+  },
+  {
+   "id": "O13f",
+   "area": "O",
+   "size": "M",
+   "hard": false,
+   "title": "Context origins: vault",
+   "done": "As O13a",
+   "deps": [
+    "O3f",
+    "O8",
+    "O9"
+   ],
+   "level": 6,
+   "step": 41
+  },
+  {
+   "id": "O14a",
+   "area": "O",
+   "size": "M",
+   "hard": false,
+   "title": "Share-envelope encoder inverse",
+   "done": "parse(encode x) = x over the checked byte-frame grammar",
+   "deps": [
+    "T4"
+   ],
+   "level": 3,
+   "step": 42
+  },
+  {
+   "id": "O14b",
+   "area": "O",
+   "size": "M",
+   "hard": false,
+   "title": "UTF-8/object conversion",
+   "done": "Opened bytes -> object conversion proved against the String model",
+   "deps": [
+    "T4",
+    "O14a"
+   ],
+   "level": 4,
+   "step": 43
+  },
+  {
+   "id": "O14c",
+   "area": "O",
+   "size": "L",
+   "hard": true,
+   "title": "Authenticated-open composition",
+   "done": "frame parse ; signature check ; open ; object decode composed into one theorem for the production opener",
+   "deps": [
+    "O14b",
+    "O7"
+   ],
+   "level": 5,
+   "step": 44
+  },
+  {
+   "id": "O15",
+   "area": "O",
+   "size": "M",
+   "hard": false,
+   "title": "Recovery fact construction leftovers",
+   "done": "Decoders, verifiers, storage effects and restoration for recovery covered (open items from 13/15)",
+   "deps": [
+    "O3e",
+    "O7"
+   ],
+   "level": 5,
+   "step": 45
+  },
+  {
+   "id": "H1",
+   "area": "H",
+   "size": "S",
+   "hard": false,
+   "title": "Handler inventory",
+   "done": "Every route (about 60 route entries) tagged: parse / origins / interpreter / reply, each covered or not",
+   "deps": [
+    "B0"
+   ],
+   "level": 1,
+   "step": 46
+  },
+  {
+   "id": "H2",
+   "area": "H",
+   "size": "M",
+   "hard": false,
+   "title": "Fix U-24 (lost recovery-redemption reply)",
+   "done": "Device row records its grant, replay recovers the device id; proved in the redemption driver; U-24 closed",
+   "deps": [
+    "B0"
+   ],
+   "level": 1,
+   "step": 47
+  },
+  {
+   "id": "H3",
+   "area": "H",
+   "size": "S",
+   "hard": false,
+   "title": "Cancellation lemma for the U-24 fix",
+   "done": "Cancellation README shows no lost-reply case left",
+   "deps": [
+    "H2"
+   ],
+   "level": 2,
+   "step": 48
+  },
+  {
+   "id": "H4",
+   "area": "H",
+   "size": "M",
+   "hard": false,
+   "title": "Request validation",
+   "done": "For each handler, typed request -> validated input proved (JSON decode itself trusted per T9)",
+   "deps": [
+    "H1",
+    "T4"
+   ],
+   "level": 3,
+   "step": 49
+  },
+  {
+   "id": "H5",
+   "area": "H",
+   "size": "M",
+   "hard": false,
+   "title": "Reply construction",
+   "done": "Verdict -> status/body mapping proved total and leak-free for every handler",
+   "deps": [
+    "H1"
+   ],
+   "level": 2,
+   "step": 50
+  },
+  {
+   "id": "H6",
+   "area": "H",
+   "size": "M",
+   "hard": false,
+   "title": "Auth middleware",
+   "done": "Middleware session extraction proved; composed with O8",
+   "deps": [
+    "O8",
+    "H1"
+   ],
+   "level": 3,
+   "step": 51
+  },
+  {
+   "id": "H7",
+   "area": "H",
+   "size": "M",
+   "hard": false,
+   "title": "Read-only and leftover routes",
+   "done": "Routes with no driver (GET /devices, /sends, /vault/events, /health, ...) proved write-free and auth-correct",
+   "deps": [
+    "H1",
+    "B4"
+   ],
+   "level": 3,
+   "step": 52
+  },
+  {
+   "id": "H8a",
+   "area": "H",
+   "size": "L",
+   "hard": false,
+   "title": "Whole-handler theorem: sharing",
+   "done": "parse ; middleware ; origins ; interpreter ; reply refines the M19b/M21 state machine",
+   "deps": [
+    "H4",
+    "H5",
+    "H6",
+    "O13a"
+   ],
+   "level": 5,
+   "step": 53
+  },
+  {
+   "id": "H8b",
+   "area": "H",
+   "size": "M",
+   "hard": false,
+   "title": "Whole-handler theorem: send links",
+   "done": "As H8a",
+   "deps": [
+    "H4",
+    "H5",
+    "H6",
+    "O13b"
+   ],
+   "level": 6,
+   "step": 54
+  },
+  {
+   "id": "H8c",
+   "area": "H",
+   "size": "L",
+   "hard": false,
+   "title": "Whole-handler theorem: session and web sessions",
+   "done": "As H8a",
+   "deps": [
+    "H4",
+    "H5",
+    "H6",
+    "O13c"
+   ],
+   "level": 6,
+   "step": 55
+  },
+  {
+   "id": "H8d",
+   "area": "H",
+   "size": "L",
+   "hard": false,
+   "title": "Whole-handler theorem: enrollment and pairing",
+   "done": "As H8a (M13)",
+   "deps": [
+    "H4",
+    "H5",
+    "H6",
+    "O13d"
+   ],
+   "level": 7,
+   "step": 56
+  },
+  {
+   "id": "H8e",
+   "area": "H",
+   "size": "L",
+   "hard": true,
+   "title": "Whole-handler theorem: recovery",
+   "done": "As H8a (M18/M26a)",
+   "deps": [
+    "H4",
+    "H5",
+    "H6",
+    "O13e",
+    "O15",
+    "H3"
+   ],
+   "level": 6,
+   "step": 57
+  },
+  {
+   "id": "H8f",
+   "area": "H",
+   "size": "L",
+   "hard": true,
+   "title": "Whole-handler theorem: vault and rekey",
+   "done": "As H8a (M11)",
+   "deps": [
+    "H4",
+    "H5",
+    "H6",
+    "O13f",
+    "O10"
+   ],
+   "level": 7,
+   "step": 58
+  },
+  {
+   "id": "H8g",
+   "area": "H",
+   "size": "M",
+   "hard": false,
+   "title": "Whole-handler theorem: account deletion",
+   "done": "As H8a",
+   "deps": [
+    "H4",
+    "H5",
+    "H6",
+    "O13c"
+   ],
+   "level": 6,
+   "step": 59
+  },
+  {
+   "id": "H9",
+   "area": "H",
+   "size": "M",
+   "hard": false,
+   "title": "Early returns and panic freedom",
+   "done": "Every early-return path proved to match the spec's state; deny(unwrap/expect/indexing) in handlers",
+   "deps": [
+    "H8a",
+    "H8b",
+    "H8c",
+    "H8d",
+    "H8e",
+    "H8f",
+    "H8g"
+   ],
+   "level": 8,
+   "step": 60
+  },
+  {
+   "id": "H10",
+   "area": "H",
+   "size": "M",
+   "hard": false,
+   "title": "DB isolation stated and tested",
+   "done": "Turso/sled linearizability kept as a named trusted interface, backed by a concurrency conformance suite",
+   "deps": [
+    "T9"
+   ],
+   "level": 3,
+   "step": 61
+  },
+  {
+   "id": "H11a",
+   "area": "H",
+   "size": "M",
+   "hard": false,
+   "title": "Cross-driver world: add vault and rekey",
+   "done": "Composition theorem re-proved with the new drivers",
+   "deps": [
+    "H8f",
+    "H10"
+   ],
+   "level": 8,
+   "step": 62
+  },
+  {
+   "id": "H11b",
+   "area": "H",
+   "size": "M",
+   "hard": false,
+   "title": "Cross-driver world: add sharing and send",
+   "done": "As H11a",
+   "deps": [
+    "H11a",
+    "H8a",
+    "H8b"
+   ],
+   "level": 9,
+   "step": 63
+  },
+  {
+   "id": "H11c",
+   "area": "H",
+   "size": "M",
+   "hard": false,
+   "title": "Cross-driver world: add web sessions and enrollment",
+   "done": "As H11a",
+   "deps": [
+    "H11b",
+    "H8c",
+    "H8d"
+   ],
+   "level": 10,
+   "step": 64
+  },
+  {
+   "id": "H11d",
+   "area": "H",
+   "size": "L",
+   "hard": true,
+   "title": "Drop the 'four reads are one step' assumption",
+   "done": "Admission reads interleave freely; theorem still holds or a fix lands",
+   "deps": [
+    "H11c"
+   ],
+   "level": 11,
+   "step": 65
+  },
+  {
+   "id": "H11e",
+   "area": "H",
+   "size": "L",
+   "hard": true,
+   "title": "Revocation landing mid-request",
+   "done": "Remove the 'checked at start/decision' assumption for revocation and pairing",
+   "deps": [
+    "H11d"
+   ],
+   "level": 12,
+   "step": 66
+  },
+  {
+   "id": "H12",
+   "area": "H",
+   "size": "S",
+   "hard": false,
+   "title": "Close F-1 and F-2 in 08",
+   "done": "Both rows say closed under the boundary; evidence READMEs and correspondence pairs updated",
+   "deps": [
+    "H9",
+    "H11e",
+    "O2",
+    "O14c"
+   ],
+   "level": 13,
+   "step": 67
+  },
+  {
+   "id": "P1",
+   "area": "P",
+   "size": "S",
+   "hard": false,
+   "title": "Journal implementation inventory",
+   "done": "Map vela-desktop-core store/sharing/sync journal ops to M28 rules",
+   "deps": [
+    "B0"
+   ],
+   "level": 1,
+   "step": 68
+  },
+  {
+   "id": "P2a",
+   "area": "P",
+   "size": "M",
+   "hard": false,
+   "title": "Tamarin bridge: source term representation",
+   "done": "F* type for Tamarin terms used by M28",
+   "deps": [
+    "B0"
+   ],
+   "level": 1,
+   "step": 69
+  },
+  {
+   "id": "P2b",
+   "area": "P",
+   "size": "M",
+   "hard": false,
+   "title": "Tamarin bridge: slot projection",
+   "done": "Proved projection from multi-slot traces to single-slot",
+   "deps": [
+    "P2a"
+   ],
+   "level": 2,
+   "step": 70
+  },
+  {
+   "id": "P2c",
+   "area": "P",
+   "size": "M",
+   "hard": true,
+   "title": "Tamarin bridge: derivability and freshness",
+   "done": "Input derivability and global freshness encoded",
+   "deps": [
+    "P2a"
+   ],
+   "level": 2,
+   "step": 71
+  },
+  {
+   "id": "P2d",
+   "area": "P",
+   "size": "L",
+   "hard": true,
+   "title": "Tamarin bridge theorem",
+   "done": "Source traces embed into the core encoding and lifts are admissible; M28 lemmas transfer",
+   "deps": [
+    "P2b",
+    "P2c"
+   ],
+   "level": 3,
+   "step": 72
+  },
+  {
+   "id": "P3a",
+   "area": "P",
+   "size": "M",
+   "hard": false,
+   "title": "Extract the journal step function",
+   "done": "Pure journal step in Rust, called by the real code, extracted by hax",
+   "deps": [
+    "P1"
+   ],
+   "level": 2,
+   "step": 73
+  },
+  {
+   "id": "P3b",
+   "area": "P",
+   "size": "L",
+   "hard": true,
+   "title": "Journal step refines M28",
+   "done": "Every Rust step maps to an M28 rule or a stutter",
+   "deps": [
+    "P3a",
+    "P2d"
+   ],
+   "level": 4,
+   "step": 74
+  },
+  {
+   "id": "P3c",
+   "area": "P",
+   "size": "M",
+   "hard": true,
+   "title": "Filesystem model",
+   "done": "F* model of write/rename/fsync/crash under the T9 interface",
+   "deps": [
+    "T9"
+   ],
+   "level": 3,
+   "step": 75
+  },
+  {
+   "id": "P3d",
+   "area": "P",
+   "size": "L",
+   "hard": true,
+   "title": "File operations implement durability phases",
+   "done": "Proof that the fs calls realize Persist/Clear phases under any crash point",
+   "deps": [
+    "P3a",
+    "P3c"
+   ],
+   "level": 4,
+   "step": 76
+  },
+  {
+   "id": "P4",
+   "area": "P",
+   "size": "M",
+   "hard": false,
+   "title": "Collection equality",
+   "done": "Formal definition and proof used by sync/journal",
+   "deps": [
+    "P3a"
+   ],
+   "level": 3,
+   "step": 77
+  },
+  {
+   "id": "P5",
+   "area": "P",
+   "size": "M",
+   "hard": false,
+   "title": "Compose local edits and deletions",
+   "done": "Edits/deletions composed with the journal refinement",
+   "deps": [
+    "P3b",
+    "P4"
+   ],
+   "level": 5,
+   "step": 78
+  },
+  {
+   "id": "P6",
+   "area": "P",
+   "size": "M",
+   "hard": false,
+   "title": "Compose RMS migration",
+   "done": "Migration path proved to preserve journal invariants",
+   "deps": [
+    "P3b"
+   ],
+   "level": 5,
+   "step": 79
+  },
+  {
+   "id": "P7",
+   "area": "P",
+   "size": "M",
+   "hard": false,
+   "title": "Independent processes",
+   "done": "Either a lock with a proved mutual-exclusion argument, or an explicit exclusion in 09",
+   "deps": [
+    "P3c"
+   ],
+   "level": 4,
+   "step": 80
+  },
+  {
+   "id": "P8",
+   "area": "P",
+   "size": "M",
+   "hard": false,
+   "title": "Uncertain-write re-arm ordering",
+   "done": "The fixed re-arm ordering proved, regression kept",
+   "deps": [
+    "P3d"
+   ],
+   "level": 5,
+   "step": 81
+  },
+  {
+   "id": "P9",
+   "area": "P",
+   "size": "S",
+   "hard": false,
+   "title": "Close F-3 in 08",
+   "done": "Gate in CI; F-3 row closed",
+   "deps": [
+    "P5",
+    "P6",
+    "P7",
+    "P8"
+   ],
+   "level": 6,
+   "step": 82
+  },
+  {
+   "id": "C1",
+   "area": "C",
+   "size": "M",
+   "hard": false,
+   "title": "SHA-256 bridge as a game",
+   "done": "Collision step for ct_mlkem/pk_mlkem machine-checked in CryptoVerif",
+   "deps": [
+    "B0"
+   ],
+   "level": 1,
+   "step": 83
+  },
+  {
+   "id": "C2",
+   "area": "C",
+   "size": "L",
+   "hard": true,
+   "title": "X25519 cofactor and low-order inputs",
+   "done": "Game models cofactor-8 group and the kem.rs reject check",
+   "deps": [
+    "B0"
+   ],
+   "level": 1,
+   "step": 84
+  },
+  {
+   "id": "C3a",
+   "area": "C",
+   "size": "M",
+   "hard": false,
+   "title": "kem.rs encoding checks in Rust",
+   "done": "hax proof that kem.rs rejects low-order/non-canonical inputs as claimed",
+   "deps": [
+    "T5"
+   ],
+   "level": 3,
+   "step": 85
+  },
+  {
+   "id": "C3b",
+   "area": "C",
+   "size": "M",
+   "hard": false,
+   "title": "Link wire encodings to the game",
+   "done": "Encoding->group-element map proved injective modulo the rejected set",
+   "deps": [
+    "C3a",
+    "C2"
+   ],
+   "level": 4,
+   "step": 86
+  },
+  {
+   "id": "C4",
+   "area": "C",
+   "size": "M",
+   "hard": true,
+   "title": "Clamped scalar distribution",
+   "done": "Machine-checked collision bound for the clamped distribution",
+   "deps": [
+    "B0"
+   ],
+   "level": 1,
+   "step": 87
+  },
+  {
+   "id": "C5",
+   "area": "C",
+   "size": "L",
+   "hard": true,
+   "title": "Concrete X25519 combiner theorem",
+   "done": "One theorem replacing the model-level COMP-5",
+   "deps": [
+    "C1",
+    "C3b",
+    "C4"
+   ],
+   "level": 5,
+   "step": 88
+  },
+  {
+   "id": "C6",
+   "area": "C",
+   "size": "L",
+   "hard": true,
+   "title": "Multi-user, multi-challenge KEM",
+   "done": "Game or hybrid argument with stated loss",
+   "deps": [
+    "C1"
+   ],
+   "level": 2,
+   "step": 89
+  },
+  {
+   "id": "C7a",
+   "area": "C",
+   "size": "S",
+   "hard": false,
+   "title": "Decide quantum-query scope",
+   "done": "Choice recorded in 09: QROM proof, paper reduction, or excluded",
+   "deps": [
+    "B0"
+   ],
+   "level": 1,
+   "step": 90
+  },
+  {
+   "id": "C7b",
+   "area": "C",
+   "size": "XL",
+   "hard": true,
+   "title": "Quantum-query composition",
+   "done": "In scope (09, 2026-11-04): QROM or random-oracle-free reductions for the hybrid KEM and signature claims, with stated losses",
+   "deps": [
+    "C7a",
+    "C5"
+   ],
+   "level": 6,
+   "step": 91
+  },
+  {
+   "id": "C8",
+   "area": "C",
+   "size": "M",
+   "hard": false,
+   "title": "Instantiate KEM-DEM with the combiner",
+   "done": "Composition lemma checked, not manual",
+   "deps": [
+    "C5",
+    "C6"
+   ],
+   "level": 6,
+   "step": 92
+  },
+  {
+   "id": "C9",
+   "area": "C",
+   "size": "M",
+   "hard": true,
+   "title": "AAD and signed share-envelope game",
+   "done": "Encryption theorem covers the real envelope with AAD",
+   "deps": [
+    "C8",
+    "O14a"
+   ],
+   "level": 7,
+   "step": 93
+  },
+  {
+   "id": "C10",
+   "area": "C",
+   "size": "L",
+   "hard": true,
+   "title": "HKDF beyond the random oracle",
+   "done": "Reductions under named PRF/extractor assumptions",
+   "deps": [
+    "B0"
+   ],
+   "level": 1,
+   "step": 94
+  },
+  {
+   "id": "C11",
+   "area": "C",
+   "size": "M",
+   "hard": false,
+   "title": "Envelope framing game",
+   "done": "Framing injectivity (from wire proofs) used in the game",
+   "deps": [
+    "C9"
+   ],
+   "level": 8,
+   "step": 95
+  },
+  {
+   "id": "C12",
+   "area": "C",
+   "size": "M",
+   "hard": false,
+   "title": "Hybrid-signature Rust wrapper correspondence",
+   "done": "Wrapper <-> game composition closed (open item in 10)",
+   "deps": [
+    "O7"
+   ],
+   "level": 3,
+   "step": 96
+  },
+  {
+   "id": "C13",
+   "area": "C",
+   "size": "M",
+   "hard": false,
+   "title": "Recovery KDF and password-hashing constructions",
+   "done": "Game for recovery key derivation",
+   "deps": [
+    "C10"
+   ],
+   "level": 2,
+   "step": 97
+  },
+  {
+   "id": "C14",
+   "area": "C",
+   "size": "M",
+   "hard": false,
+   "title": "Application randomness",
+   "done": "Keys/nonces drawn from the OS RNG with right lengths; AEAD nonce uniqueness proved",
+   "deps": [
+    "T9"
+   ],
+   "level": 3,
+   "step": 98
+  },
+  {
+   "id": "C15",
+   "area": "C",
+   "size": "M",
+   "hard": false,
+   "title": "Uniform decryption errors",
+   "done": "No error-oracle: all decrypt failures map to one error, proved at the wrapper",
+   "deps": [
+    "B0"
+   ],
+   "level": 1,
+   "step": 99
+  },
+  {
+   "id": "C16",
+   "area": "C",
+   "size": "M",
+   "hard": false,
+   "title": "Secret erasure",
+   "done": "Zeroize gate: secret types implement ZeroizeOnDrop; lint plus review",
+   "deps": [
+    "B0"
+   ],
+   "level": 1,
+   "step": 100
+  },
+  {
+   "id": "C17",
+   "area": "C",
+   "size": "S",
+   "hard": false,
+   "title": "Remove the legacy v1 envelope path",
+   "done": "decapsulate_legacy_v1 and its recovery.rs caller removed (decided 2026-11-04); tests and docs updated",
+   "deps": [
+    "B0"
+   ],
+   "level": 1,
+   "step": 101
+  },
+  {
+   "id": "C18",
+   "area": "C",
+   "size": "S",
+   "hard": false,
+   "title": "Close F-4 in 08",
+   "done": "CryptoVerif README open list empty or excluded",
+   "deps": [
+    "C7b",
+    "C11",
+    "C12",
+    "C13",
+    "C14",
+    "C15",
+    "C16",
+    "C17"
+   ],
+   "level": 9,
+   "step": 102
+  },
+  {
+   "id": "N1",
+   "area": "N",
+   "size": "S",
+   "hard": false,
+   "title": "FFI call-site inventory",
+   "done": "Every Kotlin/Swift/TS call into the bridges listed",
+   "deps": [
+    "B0"
+   ],
+   "level": 1,
+   "step": 103
+  },
+  {
+   "id": "N0a",
+   "area": "N",
+   "size": "M",
+   "hard": false,
+   "title": "Desktop: refuse unbound legacy chunks (U-28)",
+   "done": "Desktop downloads refuse unsealed blobs as the mobile bridges do (or a recorded migration re-seals them first); regression test; U-28 closed",
+   "deps": [
+    "N1"
+   ],
+   "level": 2,
+   "step": 104
+  },
+  {
+   "id": "N0b",
+   "area": "N",
+   "size": "S",
+   "hard": false,
+   "title": "Desktop: rollback gate on established facts (U-29)",
+   "done": "plan_chunk_download gets facts the open actually established, not literals; U-29 closed",
+   "deps": [
+    "N0a"
+   ],
+   "level": 3,
+   "step": 105
+  },
+  {
+   "id": "N0c",
+   "area": "N",
+   "size": "M",
+   "hard": false,
+   "title": "Web: admitted downloads (U-27)",
+   "done": "The WASM bridge exports the admitted download path; web refuses unsealed blobs and epochs below a floor it can authenticate; U-27 closed",
+   "deps": [
+    "N1"
+   ],
+   "level": 2,
+   "step": 106
+  },
+  {
+   "id": "N2a",
+   "area": "N",
+   "size": "M",
+   "hard": false,
+   "title": "Android bridge is a thin wrapper",
+   "done": "hax proof: bridge fns call verified policies, no extra logic",
+   "deps": [
+    "N1"
+   ],
+   "level": 2,
+   "step": 107
+  },
+  {
+   "id": "N2b",
+   "area": "N",
+   "size": "M",
+   "hard": false,
+   "title": "Apple bridge is a thin wrapper",
+   "done": "As N2a",
+   "deps": [
+    "N1"
+   ],
+   "level": 2,
+   "step": 108
+  },
+  {
+   "id": "N2c",
+   "area": "N",
+   "size": "M",
+   "hard": false,
+   "title": "WASM bridge is a thin wrapper",
+   "done": "As N2a",
+   "deps": [
+    "N1"
+   ],
+   "level": 2,
+   "step": 109
+  },
+  {
+   "id": "N3",
+   "area": "N",
+   "size": "M",
+   "hard": false,
+   "title": "FFI type mapping",
+   "done": "Bytes, errors and nullability mapping reviewed and tested both ways",
+   "deps": [
+    "N2a",
+    "N2b",
+    "N2c"
+   ],
+   "level": 3,
+   "step": 110
+  },
+  {
+   "id": "N4",
+   "area": "N",
+   "size": "S",
+   "hard": false,
+   "title": "Choose the caller-verification method",
+   "done": "Decided 2026-11-04 (09): thin callers + CI rules + conformance/property tests",
+   "deps": [
+    "N1"
+   ],
+   "level": 2,
+   "step": 111
+  },
+  {
+   "id": "N5a",
+   "area": "N",
+   "size": "M",
+   "hard": false,
+   "title": "Android sync caller",
+   "done": "CI rule rejects any sync download that bypasses the bridge or ignores its error; property tests match the Rust rules",
+   "deps": [
+    "N4",
+    "N3"
+   ],
+   "level": 4,
+   "step": 112
+  },
+  {
+   "id": "N5b",
+   "area": "N",
+   "size": "M",
+   "hard": false,
+   "title": "Android sharing caller",
+   "done": "As N5a (CI rule + property tests)",
+   "deps": [
+    "N5a"
+   ],
+   "level": 5,
+   "step": 113
+  },
+  {
+   "id": "N5c",
+   "area": "N",
+   "size": "M",
+   "hard": false,
+   "title": "Android enrollment/recovery caller",
+   "done": "As N5a (CI rule + property tests)",
+   "deps": [
+    "N5a"
+   ],
+   "level": 5,
+   "step": 114
+  },
+  {
+   "id": "N5d",
+   "area": "N",
+   "size": "L",
+   "hard": true,
+   "title": "Android persistence",
+   "done": "EncryptedVaultStore writes refine the journal contract",
+   "deps": [
+    "N5a",
+    "P3d"
+   ],
+   "level": 5,
+   "step": 115
+  },
+  {
+   "id": "N6a",
+   "area": "N",
+   "size": "M",
+   "hard": false,
+   "title": "iOS sync caller",
+   "done": "As N5a",
+   "deps": [
+    "N4",
+    "N3"
+   ],
+   "level": 4,
+   "step": 116
+  },
+  {
+   "id": "N6b",
+   "area": "N",
+   "size": "M",
+   "hard": false,
+   "title": "iOS sharing caller",
+   "done": "As N5a",
+   "deps": [
+    "N6a"
+   ],
+   "level": 5,
+   "step": 117
+  },
+  {
+   "id": "N6c",
+   "area": "N",
+   "size": "M",
+   "hard": false,
+   "title": "iOS enrollment/recovery caller",
+   "done": "As N5a",
+   "deps": [
+    "N6a"
+   ],
+   "level": 5,
+   "step": 118
+  },
+  {
+   "id": "N6d",
+   "area": "N",
+   "size": "L",
+   "hard": true,
+   "title": "iOS persistence",
+   "done": "As N5d",
+   "deps": [
+    "N6a",
+    "P3d"
+   ],
+   "level": 5,
+   "step": 119
+  },
+  {
+   "id": "N7a",
+   "area": "N",
+   "size": "M",
+   "hard": false,
+   "title": "Desktop callers (gpui and Tauri)",
+   "done": "As N5a",
+   "deps": [
+    "N4",
+    "N3",
+    "N0b"
+   ],
+   "level": 4,
+   "step": 120
+  },
+  {
+   "id": "N7b",
+   "area": "N",
+   "size": "M",
+   "hard": false,
+   "title": "Web and extension callers",
+   "done": "As N5a",
+   "deps": [
+    "N4",
+    "N3",
+    "N0c"
+   ],
+   "level": 4,
+   "step": 121
+  },
+  {
+   "id": "N8",
+   "area": "N",
+   "size": "M",
+   "hard": true,
+   "title": "Native conformance at scale",
+   "done": "Property-based conformance of every native caller flow against the Rust rules runs in CI on Android and iOS (no unbounded proof, per N4)",
+   "deps": [
+    "N5a",
+    "N6a"
+   ],
+   "level": 5,
+   "step": 122
+  },
+  {
+   "id": "N9",
+   "area": "N",
+   "size": "M",
+   "hard": true,
+   "title": "Enrollment UI trust",
+   "done": "Tamarin model of the human code comparison (extends M13)",
+   "deps": [
+    "B0"
+   ],
+   "level": 1,
+   "step": 123
+  },
+  {
+   "id": "N10a",
+   "area": "N",
+   "size": "M",
+   "hard": false,
+   "title": "Joint model skeleton",
+   "done": "One Tamarin theory with shared accounts/devices/keys",
+   "deps": [
+    "B0"
+   ],
+   "level": 1,
+   "step": 124
+  },
+  {
+   "id": "N10b",
+   "area": "N",
+   "size": "M",
+   "hard": false,
+   "title": "Joint model: enrollment and recovery",
+   "done": "Rules imported, lemmas re-proved",
+   "deps": [
+    "N10a",
+    "N9"
+   ],
+   "level": 2,
+   "step": 125
+  },
+  {
+   "id": "N10c",
+   "area": "N",
+   "size": "M",
+   "hard": false,
+   "title": "Joint model: sync",
+   "done": "As N10b",
+   "deps": [
+    "N10b"
+   ],
+   "level": 3,
+   "step": 126
+  },
+  {
+   "id": "N10d",
+   "area": "N",
+   "size": "M",
+   "hard": false,
+   "title": "Joint model: sharing",
+   "done": "As N10b",
+   "deps": [
+    "N10c"
+   ],
+   "level": 4,
+   "step": 127
+  },
+  {
+   "id": "N10e",
+   "area": "N",
+   "size": "L",
+   "hard": true,
+   "title": "Joint model: revocation and claims",
+   "done": "TC-6 claims proved in the joint model",
+   "deps": [
+    "N10d"
+   ],
+   "level": 5,
+   "step": 128
+  },
+  {
+   "id": "N11",
+   "area": "N",
+   "size": "S",
+   "hard": false,
+   "title": "Close F-5 in 08",
+   "done": "F-5 row closed; U-8 closed",
+   "deps": [
+    "N5b",
+    "N5c",
+    "N5d",
+    "N6b",
+    "N6c",
+    "N6d",
+    "N7a",
+    "N7b",
+    "N8",
+    "N10e"
+   ],
+   "level": 6,
+   "step": 129
+  },
+  {
+   "id": "Z1",
+   "area": "Z",
+   "size": "M",
+   "hard": false,
+   "title": "Automate model<->policy correspondence (G-5)",
+   "done": "Drift gate covers every family and mobile call site",
+   "deps": [
+    "H12",
+    "N11"
+   ],
+   "level": 14,
+   "step": 130
+  },
+  {
+   "id": "Z2",
+   "area": "Z",
+   "size": "S",
+   "hard": false,
+   "title": "Whole-system claim in 08",
+   "done": "08 header replaced by a scoped completion claim with its boundary",
+   "deps": [
+    "Z1",
+    "T12",
+    "P9",
+    "C18",
+    "B1"
+   ],
+   "level": 15,
+   "step": 131
+  },
+  {
+   "id": "Z3",
+   "area": "Z",
+   "size": "S",
+   "hard": false,
+   "title": "Hosted full run",
+   "done": "run-all.sh green in the proof container on the claim commit",
+   "deps": [
+    "Z2"
+   ],
+   "level": 16,
+   "step": 132
+  },
+  {
+   "id": "Z4",
+   "area": "Z",
+   "size": "L",
+   "hard": false,
+   "title": "Independent review (G-6)",
+   "done": "Third party reproduces Z3 and reviews models; G-6 closed",
+   "deps": [
+    "Z3"
+   ],
+   "level": 17,
+   "step": 133
+  }
+ ]
+}

@@ -1,0 +1,15 @@
+--- proofs/fstar/extraction-vault-upload-driver-root/Vela_rekey_policy.fst	2026-10-26 21:32:29.911274860 +0100
++++ /tmp/opencode/mut-guard/extraction-vault-upload-driver-root/Vela_rekey_policy.fst	2026-10-26 21:34:45.558328929 +0100
+@@ -260,10 +260,5 @@
+       (ensures
+         fun decision ->
+           let decision:t_ShadowDecision = decision in
+-          (match decision <: t_ShadowDecision with
+-            | ShadowDecision_Allow  -> true
+-            | _ -> false) =.
+-          (active_mutation_is_authorized state permit <: bool)) =
+-  if active_mutation_is_authorized state permit
+-  then ShadowDecision_Allow <: t_ShadowDecision
+-  else ShadowDecision_Reject <: t_ShadowDecision
++          true) =
++  ShadowDecision_Allow <: t_ShadowDecision

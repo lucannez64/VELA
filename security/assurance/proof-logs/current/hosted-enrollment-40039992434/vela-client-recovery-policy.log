@@ -1,0 +1,46 @@
+[1m[92m   Compiling[0m vela-client-recovery-policy v0.1.0 (/home/runner/work/VELA/VELA/libVELA/vela-client-recovery-policy)
+[1m[33mwarning[0m[1m: unused import: `ReconstructionFacts`[0m
+ [1m[94m--> [0mtests/bounded_refinement.rs:5:66
+  [1m[94m|[0m
+[1m[94m5[0m [1m[94m|[0m     PublicationAction, PublicationFacts, ReconstructionDecision, ReconstructionFacts,
+  [1m[94m|[0m                                                                  [1m[33m^^^^^^^^^^^^^^^^^^^[0m
+  [1m[94m|[0m
+  [1m[94m= [0m[1mnote[0m: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+[1m[33mwarning[0m: `vela-client-recovery-policy` (test "bounded_refinement") generated 1 warning (run `cargo fix --test "bounded_refinement" -p vela-client-recovery-policy` to apply 1 suggestion)
+[1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 0.30s
+[1m[92m     Running[0m unittests src/lib.rs (/home/runner/work/VELA/VELA/target/debug/deps/vela_client_recovery_policy-e947c0776845ac24)
+
+running 5 tests
+test structural_equality_tests::structural_channel_equality_matches_derived_equality_exhaustively ... ok
+test tests::contact_delivery_seals_only_current_bound_setups ... ok
+test tests::every_pair_dimension_is_mandatory ... ok
+test tests::exact_context_reconstructs_and_adopts ... ok
+test tests::negative_theorems_hold ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests/bounded_refinement.rs (/home/runner/work/VELA/VELA/target/debug/deps/bounded_refinement-d550173f713c7c58)
+
+running 3 tests
+test every_bounded_adoption_decision_matches_the_policy ... ok
+test every_bounded_publication_plan_matches_the_policy ... ok
+test every_bounded_reconstruction_decision_matches_the_policy ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+[1m[92m   Doc-tests[0m vela_client_recovery_policy
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m    Checking[0m vela-client-recovery-policy v0.1.0 (/home/runner/work/VELA/VELA/libVELA/vela-client-recovery-policy)
+[1m[92m    Finished[0m `dev` profile [unoptimized + debuginfo] target(s) in 0.30s
+[1m[94minfo[0m: [1mhax: wrote file ./proofs/fstar/extraction/Vela_client_recovery_policy.fst[0m
+::warning file=Rust_primitives.Char.fsti,line=0,endLine=0::(241) * Warning 241 at /home/runner/.local/opt/vela-hax-0.3.7/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti(0,0-0,0):%0A  - Unable to load%0A    /home/runner/.local/opt/vela-hax-0.3.7/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti.checked%0A    since checked file%0A    /home/runner/.local/opt/vela-hax-0.3.7/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti.checked%0A    does not exist; will recheck%0A    /home/runner/.local/opt/vela-hax-0.3.7/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti%0A    (suppressing this warning for further modules)%0A
+::warning file=Rust_primitives.Float.fsti,line=5,endLine=5::(239) * Warning 239 at /home/runner/.local/opt/vela-hax-0.3.7/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):%0A  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float%0A
+::warning file=dummy,line=0,endLine=0::(242) * Warning 242 at /home/runner/.local/opt/vela-hax-0.3.7/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):%0A  - Definitions of inner let-rec while_loop_internal and its enclosing top-level%0A    letbinding are not encoded to the solver, you will only be able to reason%0A    with their types%0A  - Also see: /home/runner/.local/opt/vela-hax-0.3.7/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)%0A
+::warning file=dummy,line=0,endLine=0::(242) * Warning 242 at /home/runner/.local/opt/vela-hax-0.3.7/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):%0A  - Definitions of inner let-rec while_loop_internal and its enclosing top-level%0A    letbinding are not encoded to the solver, you will only be able to reason%0A    with their types%0A  - Also see: /home/runner/.local/opt/vela-hax-0.3.7/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)%0A
+Verified module: Vela_client_recovery_policy
+All verification conditions discharged successfully

@@ -1,0 +1,27 @@
+diff -u /home/hirew/.t3/worktrees/VELA/t3-ff5cd786/serverVELA/vela-session-policy/proofs/fstar/extraction-websession-driver/Vela_session_policy.Websession_driver.fst /tmp/vela-wsc-mut/token-claim/extraction-websession-driver/Vela_session_policy.Websession_driver.fst
+--- /home/hirew/.t3/worktrees/VELA/t3-ff5cd786/serverVELA/vela-session-policy/proofs/fstar/extraction-websession-driver/Vela_session_policy.Websession_driver.fst	2026-10-28 17:08:17.253092512 +0100
++++ /tmp/vela-wsc-mut/token-claim/extraction-websession-driver/Vela_session_policy.Websession_driver.fst	2026-10-28 17:20:24.632830435 +0100
+@@ -1389,7 +1389,22 @@
+         | Vela_session_policy.TokenDecision_Reject  ->
+           token_terminal driver (TokenFailure_InconsistentFacts <: t_TokenFailure))
+   | TokenClaimObservation_AlreadyClaimed  ->
+-    token_terminal driver (TokenFailure_AlreadyIssued <: t_TokenFailure)
++    token_transition ({
++          driver with
++          f_stage = TokenStage_Issue <: t_TokenStage;
++          f_token_claimed = true;
++          f_plan_authorized = true
++        }
++        <:
++        t_TokenDriver)
++      (TokenEffect_IssueToken ({
++          f_scope = Vela_session_policy.CapabilityScope_WebSession;
++          f_key_epoch = Core_models.Option.Option_Some driver.f_key_epoch;
++          f_expires_at = driver.f_hard_cap;
++          f_hard_cap = driver.f_hard_cap
++        }
++        <:
++        Vela_session_policy.t_TokenPlan) <: t_TokenEffect)
+   | TokenClaimObservation_StorageFailed  ->
+     token_terminal driver (TokenFailure_ClaimStorage <: t_TokenFailure)
+ 

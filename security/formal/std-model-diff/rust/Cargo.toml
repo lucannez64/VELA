@@ -1,0 +1,13 @@
+[package]
+name = "std-model-diff"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Own workspace: this crate is not a member of any VELA workspace.
+[workspace]
+
+[dependencies]
+
+[profile.release]
+debug = 0

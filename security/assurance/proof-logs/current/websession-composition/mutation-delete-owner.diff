@@ -1,0 +1,14 @@
+diff -u /home/hirew/.t3/worktrees/VELA/t3-ff5cd786/serverVELA/vela-session-policy/proofs/fstar/extraction-websession-driver/Vela_session_policy.Websession_driver.fst /tmp/vela-wsc-mut/delete-owner/extraction-websession-driver/Vela_session_policy.Websession_driver.fst
+--- /home/hirew/.t3/worktrees/VELA/t3-ff5cd786/serverVELA/vela-session-policy/proofs/fstar/extraction-websession-driver/Vela_session_policy.Websession_driver.fst	2026-10-28 17:08:17.253092512 +0100
++++ /tmp/vela-wsc-mut/delete-owner/extraction-websession-driver/Vela_session_policy.Websession_driver.fst	2026-10-28 17:20:24.633059972 +0100
+@@ -1712,9 +1712,7 @@
+   | DeleteLookupObservation_QueryFailed  ->
+     delete_terminal driver (DeleteFailure_LookupStorage <: t_DeleteFailure)
+   | DeleteLookupObservation_Present facts ->
+-    if
+-      (delete_owner facts <: Core_models.Option.t_Option u128) =.
+-      (Core_models.Option.Option_Some actor_user <: Core_models.Option.t_Option u128)
++    if true
+     then
+       delete_transition ({
+             driver with

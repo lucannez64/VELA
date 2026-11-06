@@ -154,4 +154,37 @@ mod tests {
         assert!(open_link(&key, Some(b"pw"), &[2u8; LINK_SALT_LEN], &sealed_a).is_err());
         assert!(open_link(&key, Some(b"pw"), &[1u8; LINK_SALT_LEN], &sealed_b).is_err());
     }
+
+    /// A share link's ciphertext is served by the storage server and its key
+    /// arrives in the URL fragment, so the server can tamper with the blob but
+    /// must not learn why an open failed. Every cause is one error (C15).
+    #[test]
+    fn every_link_open_failure_is_the_same_error() {
+        use crate::error::VelaError;
+
+        let key = generate_link_key();
+        let other_key = generate_link_key();
+        let salt = [3u8; LINK_SALT_LEN];
+        let other_salt = [4u8; LINK_SALT_LEN];
+        let plain = seal_link(&key, None, &salt, b"s3cret").unwrap();
+        let with_pass = seal_link(&key, Some(b"right"), &salt, b"s3cret").unwrap();
+        let mut tampered = plain.clone();
+        let last = tampered.len() - 1;
+        tampered[last] ^= 1;
+
+        let cases: Vec<Result<Zeroizing<Vec<u8>>>> = vec![
+            open_link(&other_key, None, &salt, &plain),
+            open_link(&key, None, &salt, &tampered),
+            open_link(&key, Some(b"right"), &other_salt, &with_pass),
+            open_link(&key, Some(b"wrong"), &salt, &with_pass),
+            open_link(&key, None, &salt, &with_pass),
+        ];
+        for result in cases {
+            match result {
+                Err(VelaError::DecryptionFailed) => {}
+                Err(other) => panic!("non-uniform decryption error: {other}"),
+                Ok(_) => panic!("attacker-chosen link opened"),
+            }
+        }
+    }
 }

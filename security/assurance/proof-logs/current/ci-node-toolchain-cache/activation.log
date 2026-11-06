@@ -1,0 +1,8 @@
+version=0.3.7
+F* 2025.10.06~dev
+platform=Linux_x86_64
+compiler=OCaml 5.1.1
+date=unset
+commit=unset
+Z3 version 4.13.3 - 64 bit
+rustc 1.93.0-nightly (843f8ce2e 2025-11-07)

@@ -97,7 +97,15 @@ pub fn seal(key: &[u8; 32], plaintext: &[u8], aad: &[u8]) -> Result<Vec<u8>> {
 }
 
 /// Decrypt a blob produced by [`seal`], verifying `aad`.
+///
+/// Every failure — missing header, short blob, wrong key, wrong `aad`, bad tag —
+/// is the same [`VelaError::DecryptionFailed`] (C15), so this function cannot be
+/// used as an error oracle even when the blob is attacker-chosen.
 pub fn open(key: &[u8; 32], blob: &[u8], aad: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
+    crate::error::uniform_open(open_inner(key, blob, aad))
+}
+
+fn open_inner(key: &[u8; 32], blob: &[u8], aad: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
     if !is_sealed(blob) {
         return Err(VelaError::AeadError);
     }
@@ -143,8 +151,13 @@ pub fn encrypt(key: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>> {
 
 /// Decrypt a blob produced by [`encrypt`].
 ///
-/// Expects `nonce || ciphertext || tag` as produced by `encrypt`.
+/// Expects `nonce || ciphertext || tag` as produced by `encrypt`. Like [`open`],
+/// every failure is the uniform [`VelaError::DecryptionFailed`].
 pub fn decrypt(key: &[u8; 32], blob: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
+    crate::error::uniform_open(decrypt_inner(key, blob))
+}
+
+fn decrypt_inner(key: &[u8; 32], blob: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
     if blob.len() < OVERHEAD {
         return Err(VelaError::AeadError);
     }
@@ -299,5 +312,51 @@ mod tests {
     #[test]
     fn blob_too_short_returns_error() {
         assert!(decrypt(KEY, &[0u8; 10]).is_err());
+    }
+
+    /// Every open failure reports one indistinguishable error (C15).
+    ///
+    /// The failure causes are exactly the ones an attacker who supplies the
+    /// blob can choose: too short, no sealed header, wrong key, a flipped tag,
+    /// and a relabelled chunk/revision (wrong AAD).
+    #[test]
+    fn every_open_failure_is_the_same_error() {
+        let aad = vault_chunk_aad("vault-data-000001", 7);
+        let legacy = encrypt(KEY, b"secret").unwrap();
+        let sealed = seal(&AAD_KEY, b"secret", &aad).unwrap();
+        let mut flipped_tag = sealed.clone();
+        let last = flipped_tag.len() - 1;
+        flipped_tag[last] ^= 1;
+        let short_sealed = &sealed[..SEALED_MAGIC.len() + 10];
+        let other_aad = vault_chunk_aad("vault-data-000002", 7);
+
+        let cases: Vec<Result<Zeroizing<Vec<u8>>>> = vec![
+            decrypt(KEY, &[0u8; 10]),
+            decrypt(KEY, &[0u8; OVERHEAD]),
+            decrypt(KEY, &{
+                let mut blob = encrypt(KEY, b"data").unwrap();
+                let last = blob.len() - 1;
+                blob[last] ^= 0xff;
+                blob
+            }),
+            decrypt(b"a different very very secret key", &legacy),
+            open(&AAD_KEY, &legacy, &aad),
+            open(&AAD_KEY, short_sealed, &aad),
+            open(&AAD_KEY, &flipped_tag, &aad),
+            open(&AAD_KEY, &sealed, &other_aad),
+            open(&[9u8; 32], &sealed, &aad),
+        ];
+
+        for result in cases {
+            assert_uniform_decryption_failure(result);
+        }
+    }
+
+    fn assert_uniform_decryption_failure<T>(result: Result<T>) {
+        match result {
+            Err(VelaError::DecryptionFailed) => {}
+            Err(other) => panic!("non-uniform decryption error: {other}"),
+            Ok(_) => panic!("attacker-chosen blob opened"),
+        }
     }
 }

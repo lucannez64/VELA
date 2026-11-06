@@ -1,0 +1,350 @@
+module Vela_recovery_policy.Redemption_store
+#set-options "--fuel 0 --ifuel 1 --z3rlimit 500"
+open FStar.Mul
+open Core_models
+
+/// Which live authority the guarded insert requires.
+type t_GrantGuard =
+  | GrantGuard_Credential { f_credential_id:Alloc.String.t_String }: t_GrantGuard
+  | GrantGuard_Commitment : t_GrantGuard
+
+/// One enrollment grant as the key-value store holds it.
+type t_GrantView = {
+  f_key_epoch:i64;
+  f_credential_id:Alloc.String.t_String;
+  f_possession:bool
+}
+
+let impl_5: Core_models.Clone.t_Clone t_GrantView =
+  { f_clone = (fun x -> x); f_clone_pre = (fun _ -> True); f_clone_post = (fun _ _ -> True) }
+
+/// What the atomic `get_del` of one grant observed. A store error aborts the
+/// request before classification, so it is not a variant here.
+type t_GrantTake =
+  | GrantTake_Missing : t_GrantTake
+  | GrantTake_Taken : t_GrantView -> t_GrantTake
+
+/// One statement an executor method runs.
+type t_RedemptionStmt =
+  | RedemptionStmt_TakeGrant { f_key:Alloc.String.t_String }: t_RedemptionStmt
+  | RedemptionStmt_PeekGrant { f_key:Alloc.String.t_String }: t_RedemptionStmt
+  | RedemptionStmt_InsertDevice {
+    f_device_id:Alloc.String.t_String;
+    f_user:Alloc.String.t_String;
+    f_device_name:Alloc.String.t_String;
+    f_device_type:Alloc.String.t_String;
+    f_hybrid_ek:Alloc.String.t_String;
+    f_hybrid_vk:Alloc.String.t_String;
+    f_created_at:Alloc.String.t_String;
+    f_epoch:i64;
+    f_guard:t_GrantGuard;
+    f_grant:Alloc.String.t_String
+  }: t_RedemptionStmt
+  | RedemptionStmt_SelectEnrolledDevice {
+    f_user:Alloc.String.t_String;
+    f_grant:Alloc.String.t_String
+  }: t_RedemptionStmt
+  | RedemptionStmt_SelectAuthority { f_user:Alloc.String.t_String }: t_RedemptionStmt
+  | RedemptionStmt_SelectEnrollmentAccount { f_user:Alloc.String.t_String }: t_RedemptionStmt
+  | RedemptionStmt_PutGrant {
+    f_key:Alloc.String.t_String;
+    f_value:Alloc.String.t_String;
+    f_grant:t_GrantView
+  }: t_RedemptionStmt
+
+/// What one write statement returned.
+type t_WriteOutcome =
+  | WriteOutcome_Applied : u64 -> t_WriteOutcome
+  | WriteOutcome_Failed : t_WriteOutcome
+
+/// What one read statement returned: its first row, or an error.
+type t_ReadOutcome (v_R: Type0) =
+  | ReadOutcome_Row : Core_models.Option.t_Option v_R -> t_ReadOutcome v_R
+  | ReadOutcome_Failed : t_ReadOutcome v_R
+
+/// The cells of a `SelectAuthority` row: `recovery_webauthn_cred_id` and
+/// `recovery_auth_hash`.
+type t_AuthorityRowView = {
+  f_credential_id:Core_models.Option.t_Option Alloc.String.t_String;
+  f_auth_hash:Core_models.Option.t_Option Alloc.String.t_String
+}
+
+/// The cells of a `SelectEnrollmentAccount` row: `key_epoch`,
+/// `rekey_state`, `recovery_webauthn_cred_id` and the decoded length of the
+/// staged possession commitment.
+type t_EnrollmentAccountRowView = {
+  f_stored_epoch:Core_models.Option.t_Option i64;
+  f_rotation_active:bool;
+  f_credential_id:Core_models.Option.t_Option Alloc.String.t_String;
+  f_commitment_len:usize
+}
+
+/// The non-consuming grant read's observation.
+type t_GrantPeekObservation =
+  | GrantPeekObservation_Absent : t_GrantPeekObservation
+  | GrantPeekObservation_Present : t_GrantView -> t_GrantPeekObservation
+
+/// The cells of a `SelectEnrolledDevice` row: the device id and the stored
+/// base64 key material. `hybrid_ek`/`hybrid_vk` are the exact text the insert
+/// wrote, so the key equality the replay check makes is byte equality of the
+/// decoded keys.
+type t_EnrolledDeviceRowView = {
+  f_device_id:Alloc.String.t_String;
+  f_hybrid_ek:Alloc.String.t_String;
+  f_hybrid_vk:Alloc.String.t_String
+}
+
+/// `consume_grant`: the single-use `get_del` of the exact grant key.
+let plan_take_grant (key: Alloc.String.t_String) : t_RedemptionStmt =
+  RedemptionStmt_TakeGrant ({ f_key = key }) <: t_RedemptionStmt
+
+/// `insert_device`: exactly one guarded device insert with the driver's
+/// permit and the grant's guard. The row records the grant that authorized it.
+let plan_insert_device
+      (device_id user device_name device_type hybrid_ek hybrid_vk created_at: Alloc.String.t_String)
+      (epoch: i64)
+      (guard: t_GrantGuard)
+      (grant: Alloc.String.t_String)
+    : Alloc.Vec.t_Vec t_RedemptionStmt Alloc.Alloc.t_Global =
+  Alloc.Slice.impl__into_vec #t_RedemptionStmt
+    #Alloc.Alloc.t_Global
+    ((let list =
+          [
+            RedemptionStmt_InsertDevice
+            ({
+                f_device_id = device_id;
+                f_user = user;
+                f_device_name = device_name;
+                f_device_type = device_type;
+                f_hybrid_ek = hybrid_ek;
+                f_hybrid_vk = hybrid_vk;
+                f_created_at = created_at;
+                f_epoch = epoch;
+                f_guard = guard;
+                f_grant = grant
+              })
+            <:
+            t_RedemptionStmt
+          ]
+        in
+        FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+        Rust_primitives.Hax.array_of_list 1 list)
+      <:
+      t_Slice t_RedemptionStmt)
+
+/// The U-24 replay lookup: the device row (if any) that this exact recovery
+/// grant created for this user. The `recovery_grant_id` column is UNIQUE, so
+/// at most one row can carry a grant.
+let plan_enrolled_device (user grant: Alloc.String.t_String) : t_RedemptionStmt =
+  RedemptionStmt_SelectEnrolledDevice ({ f_user = user; f_grant = grant }) <: t_RedemptionStmt
+
+/// `recheck_authority`: read the live credential and commitment columns.
+let plan_authority_read (user: Alloc.String.t_String) : t_RedemptionStmt =
+  RedemptionStmt_SelectAuthority ({ f_user = user }) <: t_RedemptionStmt
+
+/// The non-consuming grant read (`observe_enroll_grant`).
+let plan_peek_grant (key: Alloc.String.t_String) : t_RedemptionStmt =
+  RedemptionStmt_PeekGrant ({ f_key = key }) <: t_RedemptionStmt
+
+/// `post_enroll_device`'s preflight account read: the live epoch, rotation
+/// flag, credential id and staged commitment.
+let plan_enrollment_account (user: Alloc.String.t_String) : t_RedemptionStmt =
+  RedemptionStmt_SelectEnrollmentAccount ({ f_user = user }) <: t_RedemptionStmt
+
+/// `restore_grant`: overwrite the exact grant key with the consumed grant.
+let plan_restore_grant (key value: Alloc.String.t_String) (grant: t_GrantView)
+    : Alloc.Vec.t_Vec t_RedemptionStmt Alloc.Alloc.t_Global =
+  Alloc.Slice.impl__into_vec #t_RedemptionStmt
+    #Alloc.Alloc.t_Global
+    ((let list =
+          [
+            RedemptionStmt_PutGrant ({ f_key = key; f_value = value; f_grant = grant })
+            <:
+            t_RedemptionStmt
+          ]
+        in
+        FStar.Pervasives.assert_norm (Prims.eq2 (List.Tot.length list) 1);
+        Rust_primitives.Hax.array_of_list 1 list)
+      <:
+      t_Slice t_RedemptionStmt)
+
+/// The single-use consumption: a missing grant is `Missing`; a removed grant
+/// is `Present` with the value's own fields and the full-value equality with
+/// the preflight permit.
+let classify_take (taken: t_GrantTake) (preflight: t_GrantView)
+    : Vela_recovery_policy.Driver.t_ConsumptionObservation =
+  match taken <: t_GrantTake with
+  | GrantTake_Missing  ->
+    Vela_recovery_policy.Driver.ConsumptionObservation_Missing
+    <:
+    Vela_recovery_policy.Driver.t_ConsumptionObservation
+  | GrantTake_Taken grant ->
+    Vela_recovery_policy.Driver.ConsumptionObservation_Present
+    ({
+        Vela_recovery_policy.Driver.f_key_epoch = grant.f_key_epoch;
+        Vela_recovery_policy.Driver.f_possession = grant.f_possession;
+        Vela_recovery_policy.Driver.f_matches_observed_grant
+        =
+        grant.f_key_epoch =. preflight.f_key_epoch && grant.f_possession =. preflight.f_possession &&
+        grant.f_credential_id =. preflight.f_credential_id
+      }
+      <:
+      Vela_recovery_policy.Driver.t_ConsumedGrantObservation)
+    <:
+    Vela_recovery_policy.Driver.t_ConsumptionObservation
+
+/// The guarded insert: a positive row count is `Inserted`, zero is `Skipped`,
+/// an error is `Failed`.
+let classify_insert (outcomes: t_Slice t_WriteOutcome)
+    : Vela_recovery_policy.Driver.t_InsertObservation =
+  if (Core_models.Slice.impl__len #t_WriteOutcome outcomes <: usize) =. mk_usize 1
+  then
+    match outcomes.[ mk_usize 0 ] <: t_WriteOutcome with
+    | WriteOutcome_Applied rows ->
+      if rows >. mk_u64 0
+      then
+        Vela_recovery_policy.Driver.InsertObservation_Inserted
+        <:
+        Vela_recovery_policy.Driver.t_InsertObservation
+      else
+        Vela_recovery_policy.Driver.InsertObservation_Skipped
+        <:
+        Vela_recovery_policy.Driver.t_InsertObservation
+    | WriteOutcome_Failed  ->
+      Vela_recovery_policy.Driver.InsertObservation_Failed
+      <:
+      Vela_recovery_policy.Driver.t_InsertObservation
+  else
+    Vela_recovery_policy.Driver.InsertObservation_Failed
+    <:
+    Vela_recovery_policy.Driver.t_InsertObservation
+
+/// The live authority recheck, in the handler's historical precedence.
+let classify_authority
+      (outcome: t_ReadOutcome t_AuthorityRowView)
+      (possession: bool)
+      (credential_id: Alloc.String.t_String)
+    : Vela_recovery_policy.Driver.t_AuthorityRecheckObservation =
+  match outcome <: t_ReadOutcome t_AuthorityRowView with
+  | ReadOutcome_Failed  ->
+    Vela_recovery_policy.Driver.AuthorityRecheckObservation_QueryFailed
+    <:
+    Vela_recovery_policy.Driver.t_AuthorityRecheckObservation
+  | ReadOutcome_Row (Core_models.Option.Option_None ) ->
+    Vela_recovery_policy.Driver.AuthorityRecheckObservation_AccountAbsent
+    <:
+    Vela_recovery_policy.Driver.t_AuthorityRecheckObservation
+  | ReadOutcome_Row (Core_models.Option.Option_Some row) ->
+    if possession
+    then
+      match row.f_auth_hash <: Core_models.Option.t_Option Alloc.String.t_String with
+      | Core_models.Option.Option_Some _ ->
+        Vela_recovery_policy.Driver.AuthorityRecheckObservation_StillRotating
+        <:
+        Vela_recovery_policy.Driver.t_AuthorityRecheckObservation
+      | Core_models.Option.Option_None  ->
+        Vela_recovery_policy.Driver.AuthorityRecheckObservation_CommitmentRevoked
+        <:
+        Vela_recovery_policy.Driver.t_AuthorityRecheckObservation
+    else
+      match row.f_credential_id <: Core_models.Option.t_Option Alloc.String.t_String with
+      | Core_models.Option.Option_Some current ->
+        if current =. credential_id
+        then
+          Vela_recovery_policy.Driver.AuthorityRecheckObservation_StillRotating
+          <:
+          Vela_recovery_policy.Driver.t_AuthorityRecheckObservation
+        else
+          Vela_recovery_policy.Driver.AuthorityRecheckObservation_CredentialReplaced
+          <:
+          Vela_recovery_policy.Driver.t_AuthorityRecheckObservation
+      | Core_models.Option.Option_None  ->
+        Vela_recovery_policy.Driver.AuthorityRecheckObservation_CredentialReplaced
+        <:
+        Vela_recovery_policy.Driver.t_AuthorityRecheckObservation
+
+/// The non-consuming grant read's classification: the stored grant, or absence.
+let classify_peek_grant (stored: Core_models.Option.t_Option t_GrantView) : t_GrantPeekObservation =
+  match stored <: Core_models.Option.t_Option t_GrantView with
+  | Core_models.Option.Option_Some grant ->
+    GrantPeekObservation_Present
+    (Core_models.Clone.f_clone #t_GrantView #FStar.Tactics.Typeclasses.solve grant)
+    <:
+    t_GrantPeekObservation
+  | Core_models.Option.Option_None  -> GrantPeekObservation_Absent <: t_GrantPeekObservation
+
+/// The U-24 replay decision. A present row is `Enrolled`; `key_matches` is the
+/// exact equality of the request's encoded key material with the row's stored
+/// text. A missing row is `Absent`. Only `Enrolled { key_matches: true }` may
+/// answer with the device, so a retry presenting a different key is refused
+/// exactly like a missing grant.
+let classify_replay
+      (row: Core_models.Option.t_Option t_EnrolledDeviceRowView)
+      (hybrid_ek hybrid_vk: Alloc.String.t_String)
+    : Vela_recovery_policy.Driver.t_ReplayObservation =
+  match row <: Core_models.Option.t_Option t_EnrolledDeviceRowView with
+  | Core_models.Option.Option_Some row ->
+    Vela_recovery_policy.Driver.ReplayObservation_Enrolled
+    ({
+        Vela_recovery_policy.Driver.f_key_matches
+        =
+        row.f_hybrid_ek =. hybrid_ek && row.f_hybrid_vk =. hybrid_vk
+      })
+    <:
+    Vela_recovery_policy.Driver.t_ReplayObservation
+  | Core_models.Option.Option_None  ->
+    Vela_recovery_policy.Driver.ReplayObservation_Absent
+    <:
+    Vela_recovery_policy.Driver.t_ReplayObservation
+
+/// The preflight account view: the live row's facts as the classifier decides
+/// them. `None` is an absent row.
+type t_EnrollmentAccountView = {
+  f_stored_epoch:Core_models.Option.t_Option i64;
+  f_epoch_active:bool;
+  f_credential_id_matches:bool;
+  f_commitment_len:usize
+}
+
+/// The epoch the preflight compares with the grant's: `observed_recovery_epoch`
+/// with a missing or non-positive stored epoch normalized to the first epoch.
+/// Pinned against the policy function by the unit tests below.
+let observed_epoch (stored: Core_models.Option.t_Option i64) : i64 =
+  match stored <: Core_models.Option.t_Option i64 with
+  | Core_models.Option.Option_None  -> mk_i64 1
+  | Core_models.Option.Option_Some value -> if value <. mk_i64 1 then mk_i64 1 else value
+
+/// The preflight account observation, in the handler's historical precedence.
+/// The commitment's decoded length is reported only when the historical
+/// preflight would have decoded it: the normalized epoch matches the grant's
+/// and the account is not rotating.
+let classify_enrollment_account
+      (row: Core_models.Option.t_Option t_EnrollmentAccountRowView)
+      (grant_epoch: i64)
+      (grant_credential_id: Alloc.String.t_String)
+    : Core_models.Option.t_Option t_EnrollmentAccountView =
+  Core_models.Option.impl__map #t_EnrollmentAccountRowView
+    #t_EnrollmentAccountView
+    #(t_EnrollmentAccountRowView -> t_EnrollmentAccountView)
+    row
+    (fun row ->
+        let row:t_EnrollmentAccountRowView = row in
+        let epoch_active:bool = ~.row.f_rotation_active in
+        let gate_open:bool =
+          (observed_epoch row.f_stored_epoch <: i64) =. grant_epoch && epoch_active
+        in
+        {
+          f_stored_epoch = row.f_stored_epoch;
+          f_epoch_active = epoch_active;
+          f_credential_id_matches
+          =
+          (Core_models.Option.impl__as_ref #Alloc.String.t_String row.f_credential_id
+            <:
+            Core_models.Option.t_Option Alloc.String.t_String) =.
+          (Core_models.Option.Option_Some grant_credential_id
+            <:
+            Core_models.Option.t_Option Alloc.String.t_String);
+          f_commitment_len = if gate_open then row.f_commitment_len else mk_usize 0
+        }
+        <:
+        t_EnrollmentAccountView)

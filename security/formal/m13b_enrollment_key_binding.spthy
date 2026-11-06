@@ -1,0 +1,104 @@
+theory M13b_EnrollmentKeyBinding
+begin
+
+/*
+  Enrollment v3 ceremony with the server as the adversary, fingerprint v4.
+
+  Code: desktopVELA/vela-desktop-core/src/commands/enrollment_v3.rs
+        (poll_enrollment_claim, confirm_enrollment, begin_enrollment_join),
+        libVELA/vela-crypto/src/verification.rs (enrollment_fingerprint),
+        serverVELA/vela-server/src/device/rendezvous.rs (relay; adversarial here).
+
+  Adversary: full Dolev-Yao. Every claim, inspection, capsule and result goes
+  through the server, which may read, drop, replay or rewrite it. The only
+  authentic channel is the person looking at both screens (JoinScreen ->
+  Primary_Confirm), as in the real ceremony where the user picks the joining
+  device's fingerprint on the primary.
+
+  Correspondence:
+    claim              = <hybrid_ek, hybrid_vk>                 (ClaimRequest)
+    fingerprint v4     = FP(hybrid_vk, hybrid_ek)                (enrollment_fingerprint)
+    rms_capsule        = aenc(rms, hybrid_ek)                    (seal_rms_to_device)
+    enrollment sig     = sign(<'vela device enrollment v1', ek, vk, capsule>, sk)
+  FP is a hash (collision resistant). The real fingerprint is 18 digits
+  (~60 bits); the model assumes no second preimage is found during the
+  ceremony.
+
+  m13b_enrollment_v3_baseline.spthy is the same ceremony with the v3
+  fingerprint (signing key only) and exhibits the RMS leak.
+
+  Expected verdict: all lemmas VERIFIED.
+*/
+
+
+builtins: signing, asymmetric-encryption, hashing
+macros: FP(vk, ek) = h(<'vela enrollment device fingerprint v4', vk, ek>)
+
+/* ── Parties ─────────────────────────────────────────────────────────────── */
+
+// An enrolled primary device of account $A, holding the RMS.
+rule Primary:
+    [ Fr(~skP), Fr(~rms) ]
+  --[ RmsCreated($A, ~rms) ]->
+    [ !Primary($A, ~skP, ~rms), Out(pk(~skP)) ]
+
+// One person holds both devices for one ceremony. The two screens are an
+// authentic local channel to that person; nothing else is.
+rule Start_Ceremony:
+    [ Fr(~c) ]
+  --[ CeremonyStarted(~c) ]->
+    [ JoinTurn(~c), PrimaryTurn(~c) ]
+
+// Joining device: generates its own signing and KEM keys, claims the grant
+// through the server (adversary), and shows its fingerprint locally.
+rule Join_Claim:
+    [ JoinTurn(c), Fr(~skJ), Fr(~dkJ) ]
+  --[ Claimed(c, pk(~dkJ), pk(~skJ)) ]->
+    [ JoinScreen(c, FP(pk(~skJ), pk(~dkJ))),
+      JoinWaiting(c, ~skJ, ~dkJ),
+      Out(<'claim', pk(~dkJ), pk(~skJ)>) ]
+
+// Primary: the server returns *a* claim (adversary-chosen ek, vk). The primary
+// shows the fingerprint computed from what it received. The person confirms
+// only when it equals the joining screen (pattern match on fp).
+rule Primary_Confirm:
+    let capsule = aenc(rms, ek)
+        sig     = sign(<'vela device enrollment v1', ek, vk, capsule>, skP)
+    in
+    [ PrimaryTurn(c), !Primary($A, skP, rms),
+      In(<'claim', ek, vk>),
+      JoinScreen(c, FP(vk, ek)) ]
+  --[ Confirmed(c, $A, ek, vk), RmsSealedTo(rms, ek) ]->
+    [ Out(<capsule, sig>) ]
+
+// The joining device collects the capsule (relayed by the server) and adopts.
+rule Join_Adopt:
+    [ JoinWaiting(c, skJ, dkJ), In(aenc(r, pk(dkJ))) ]
+  --[ Adopted(c, r) ]->
+    [ ]
+
+/* ── Lemmas ──────────────────────────────────────────────────────────────── */
+
+// The RMS never reaches the adversary, even though the server sees and may
+// rewrite every claim and capsule.
+lemma rms_stays_secret:
+  "All A rms #i #k. RmsCreated(A, rms) @ #i & K(rms) @ #k ==> F"
+
+// Whatever the person confirms is exactly the key pair the joining device in
+// their hand generated: the server cannot substitute the KEM key or the
+// signing key.
+lemma confirmed_keys_are_the_joining_devices:
+  "All c A ek vk #i. Confirmed(c, A, ek, vk) @ #i
+   ==> Ex #j. Claimed(c, ek, vk) @ #j & #j < #i"
+
+// The RMS is only ever sealed to a KEM key some joining device generated.
+lemma rms_is_sealed_only_to_joining_devices:
+  "All rms ek #i. RmsSealedTo(rms, ek) @ #i
+   ==> Ex c vk #j. Claimed(c, ek, vk) @ #j & #j < #i"
+
+lemma honest_enrollment_is_reachable:
+  exists-trace
+  "Ex c A rms ek vk #a #b #d.
+     RmsCreated(A, rms) @ #a & Confirmed(c, A, ek, vk) @ #b & Adopted(c, rms) @ #d"
+
+end

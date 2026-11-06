@@ -4,7 +4,8 @@
 # Build context is the repository root.
 
 # ---- web build stage: the ephemeral web vault SPA (wasm core + Vite bundle) ----
-FROM rust:1-bookworm AS web
+# rust:1-bookworm, manifest-list digest resolved 2026-11-04.
+FROM rust:1-bookworm@sha256:c9155318d07341301a78b45ecdd81af2e43b8b297d64e8fd4c5e80d7735607c3 AS web
 # Toolchain versions are pinned so upstream install scripts can't silently
 # change what lands in the image.
 ARG BUN_VERSION=1.2.19
@@ -20,9 +21,12 @@ RUN apt-get update \
  && rustup target add wasm32-unknown-unknown
 ENV PATH="/root/.bun/bin:${PATH}"
 WORKDIR /src
-# vela-wasm-bridge depends on vela-crypto + vela-core.
+# vela-wasm-bridge depends on vela-crypto, vela-core and vela-sync-policy
+# (the verified download admission, U-27).
 COPY libVELA/vela-crypto/ libVELA/vela-crypto/
+COPY libVELA/vela-sync-policy/ libVELA/vela-sync-policy/
 COPY libVELA/vela-client-recovery-policy/ libVELA/vela-client-recovery-policy/
+COPY libVELA/vela-client-share-policy/ libVELA/vela-client-share-policy/
 COPY libVELA/vela-core/ libVELA/vela-core/
 COPY libVELA/vela-wasm-bridge/ libVELA/vela-wasm-bridge/
 COPY webVELA/ webVELA/
@@ -30,13 +34,17 @@ WORKDIR /src/webVELA
 RUN bun install --frozen-lockfile && bun run build:all
 
 # ---- server build stage ----
-FROM rust:1-bookworm AS build
+# rust:1-bookworm, manifest-list digest resolved 2026-11-04.
+FROM rust:1-bookworm@sha256:c9155318d07341301a78b45ecdd81af2e43b8b297d64e8fd4c5e80d7735607c3 AS build
 WORKDIR /src
 # Copy only what the server workspace needs, preserving the relative layout that
 # vela-server's Cargo.toml expects: vela-crypto = { path = "../../libVELA/vela-crypto" }.
 COPY serverVELA/ serverVELA/
 COPY libVELA/vela-crypto/ libVELA/vela-crypto/
+# vela-crypto depends on vela-sync-policy (shared download admission, N2).
+COPY libVELA/vela-sync-policy/ libVELA/vela-sync-policy/
 COPY libVELA/vela-client-recovery-policy/ libVELA/vela-client-recovery-policy/
+COPY libVELA/vela-client-share-policy/ libVELA/vela-client-share-policy/
 WORKDIR /src/serverVELA
 # The workspace release profile uses fat LTO + codegen-units=1, whose final link
 # can need >2 GB — too much for small home servers. Relax it for the container
@@ -49,7 +57,8 @@ ENV CARGO_PROFILE_RELEASE_LTO=${CARGO_PROFILE_RELEASE_LTO} \
 RUN cargo build --release -p vela-server
 
 # ---- runtime stage ----
-FROM debian:bookworm-slim AS runtime
+# debian:bookworm-slim, manifest-list digest resolved 2026-11-04.
+FROM debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3 AS runtime
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates gosu \
  && rm -rf /var/lib/apt/lists/* \

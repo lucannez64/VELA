@@ -1,0 +1,11 @@
+--- proofs/fstar/extraction-vault-upload-driver/Vela_rekey_policy.Vault_upload_driver.fst	2026-10-26 21:32:29.911274860 +0100
++++ /tmp/opencode/mut-stale/extraction-vault-upload-driver/Vela_rekey_policy.Vault_upload_driver.fst	2026-10-26 21:34:45.529020740 +0100
+@@ -460,7 +460,7 @@
+     with
+     | Vela_rekey_policy.WriteDecision_Accept route ->
+       let shadow:bool =
+-        route.Vela_rekey_policy.f_write_epoch <>. route.Vela_rekey_policy.f_read_epoch
++        false
+       in
+       let resolved:t_UploadDriver =
+         {

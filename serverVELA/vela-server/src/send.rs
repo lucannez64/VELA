@@ -30,35 +30,26 @@ use crate::{
     error::{AppError, Result},
     middleware::{maybe_append_new_token, DeviceSession},
     net, rate_limit,
-    sqldb::{Db as _, TursoDb, TursoValue},
+    sqldb::TursoDb,
     state::AppState,
 };
+use vela_share_policy::send_driver::SendFailure;
+use vela_share_policy::store::{self, ReadOutcome, SendCell};
+
+#[cfg(test)]
+mod conformance;
+mod sql;
+
+use sql::SendSql;
 
 /// A link carries one item (or note); generous for a large secure note, far
 /// below inbox-sized payloads.
 const MAX_SEND_BYTES: usize = 256 * 1024;
-const MAX_TTL_SECS: i64 = 30 * 24 * 60 * 60; // 30 days
-const MIN_TTL_SECS: i64 = 5 * 60; // 5 minutes
-const DEFAULT_TTL_SECS: i64 = 24 * 60 * 60; // 24 hours
-const MAX_VIEWS_CEILING: i64 = 1000;
+/// The owner listing's page size, the number its SQL has always used.
+const OWN_SENDS_LIMIT: usize = 200;
 /// Same message for missing, expired, revoked and exhausted, so a `404` never
 /// confirms that a link id is (or was) live.
 const SEND_NOT_FOUND: &str = "send not found";
-
-fn clamp_ttl(ttl: Option<i64>) -> i64 {
-    match ttl {
-        Some(value) => value.clamp(MIN_TTL_SECS, MAX_TTL_SECS),
-        None => DEFAULT_TTL_SECS,
-    }
-}
-
-/// `view_once` pins the count to exactly one; otherwise clamp to a sane ceiling.
-fn resolve_max_views(max_views: Option<i64>, view_once: bool) -> Option<i64> {
-    if view_once {
-        return Some(1);
-    }
-    max_views.map(|value| value.clamp(1, MAX_VIEWS_CEILING))
-}
 
 // ── POST /send (owner, authenticated) ────────────────────────────────────────
 
@@ -88,6 +79,93 @@ pub struct CreateSendResponse {
     pub expires_at: DateTime<Utc>,
 }
 
+/// The I/O behind one create request. Decoding is a request observation (the
+/// driver decides whether it is admissible); the insert uses only the driver's
+/// permit, so the clamped TTL/view bounds cannot drift from the proof.
+struct CreateSendIo<S> {
+    sql: S,
+    owner_user_id: Uuid,
+    ciphertext: Vec<u8>,
+    has_passphrase: bool,
+    kdf_salt: Option<String>,
+    label: Option<String>,
+    id: Uuid,
+    now: DateTime<Utc>,
+    expires_at: DateTime<Utc>,
+    error: Option<AppError>,
+}
+
+impl<S: SendSql> CreateSendIo<S> {
+    async fn insert_send(
+        &mut self,
+        permit: vela_share_policy::send_driver::CreatePermit,
+    ) -> vela_share_policy::send_driver::RowsObservation {
+        self.expires_at = self.now + chrono::Duration::seconds(permit.ttl_secs());
+        let max_views = if permit.max_views_present() {
+            Some(permit.max_views())
+        } else {
+            None
+        };
+        let plan = store::plan_send_create(
+            self.id.to_string(),
+            self.owner_user_id.to_string(),
+            db::encode_b64(&self.ciphertext),
+            self.has_passphrase,
+            self.kdf_salt.clone(),
+            self.label.clone(),
+            permit.view_once(),
+            max_views,
+            self.now.to_rfc3339(),
+            self.expires_at.to_rfc3339(),
+        );
+        let (outcomes, error) = sql::run_writes(&mut self.sql, &plan).await;
+        let observation = store::classify_send_create(&outcomes);
+        if let Some(error) = error {
+            self.error = Some(AppError::Internal(error.to_string()));
+        }
+        observation
+    }
+
+    /// Unreachable for a create request: the driver's request kind never emits
+    /// a fetch/delete effect. Reported as a storage failure rather than a panic.
+    async fn consume_view(&mut self) -> vela_share_policy::send_driver::ConsumeObservation {
+        self.error = Some(AppError::Internal(
+            "send create driver emitted a fetch effect".into(),
+        ));
+        vela_share_policy::send_driver::ConsumeObservation::Error
+    }
+
+    async fn read_send(&mut self) -> vela_share_policy::send_driver::ReadObservation {
+        self.error = Some(AppError::Internal(
+            "send create driver emitted a read effect".into(),
+        ));
+        vela_share_policy::send_driver::ReadObservation::Unreadable
+    }
+
+    async fn remove_fetched(&mut self) -> vela_share_policy::send_driver::RemoveObservation {
+        self.error = Some(AppError::Internal(
+            "send create driver emitted a cleanup effect".into(),
+        ));
+        vela_share_policy::send_driver::RemoveObservation {
+            removed: false,
+            failed: true,
+        }
+    }
+
+    async fn delete_link(
+        &mut self,
+        _permit: vela_share_policy::send_driver::DeletePermit,
+    ) -> vela_share_policy::send_driver::RowsObservation {
+        self.error = Some(AppError::Internal(
+            "send create driver emitted a delete effect".into(),
+        ));
+        vela_share_policy::send_driver::RowsObservation {
+            rows: 0,
+            failed: true,
+        }
+    }
+}
+
 pub async fn post_share_link(
     State(state): State<AppState>,
     session: DeviceSession,
@@ -95,40 +173,22 @@ pub async fn post_share_link(
 ) -> Result<(HeaderMap, Json<CreateSendResponse>)> {
     rate_limit::send_create_by_user(&state.store, &session.user_id.to_string())?;
 
-    let ciphertext = B64
-        .decode(&body.ciphertext)
-        .map_err(|_| AppError::BadRequest("ciphertext is not valid base64".into()))?;
-    if ciphertext.is_empty() {
-        return Err(AppError::BadRequest("ciphertext is empty".into()));
-    }
-    if ciphertext.len() > MAX_SEND_BYTES {
-        return Err(AppError::PayloadTooLarge(format!(
-            "ciphertext exceeds maximum size of {MAX_SEND_BYTES} bytes"
-        )));
-    }
-
-    let kdf_salt = match (body.has_passphrase, body.kdf_salt.as_deref()) {
-        (true, Some(salt)) => {
-            let bytes = B64
-                .decode(salt.as_bytes())
-                .map_err(|_| AppError::BadRequest("kdf_salt is not valid base64".into()))?;
-            if bytes.len() < 8 {
-                return Err(AppError::BadRequest("kdf_salt is too short".into()));
-            }
-            Some(db::encode_b64(&bytes))
-        }
-        (true, None) => {
-            return Err(AppError::BadRequest(
-                "has_passphrase requires kdf_salt".into(),
-            ))
-        }
-        (false, _) => None,
+    let (ciphertext_decode_failed, ciphertext) = match B64.decode(&body.ciphertext) {
+        Ok(bytes) => (false, bytes),
+        Err(_) => (true, Vec::new()),
     };
+    let (kdf_salt_present, kdf_salt_decode_failed, kdf_salt_len, kdf_salt) =
+        match (body.has_passphrase, body.kdf_salt.as_deref()) {
+            (true, Some(salt)) => match B64.decode(salt.as_bytes()) {
+                Ok(bytes) => (true, false, bytes.len() as i64, Some(db::encode_b64(&bytes))),
+                Err(_) => (true, true, 0, None),
+            },
+            (true, None) => (false, false, 0, None),
+            (false, _) => (false, false, 0, None),
+        };
 
     let id = Uuid::new_v4();
     let now = Utc::now();
-    let expires_at = now + chrono::Duration::seconds(clamp_ttl(body.ttl_secs));
-    let max_views = resolve_max_views(body.max_views, body.view_once);
     let label = body
         .label
         .as_deref()
@@ -136,42 +196,65 @@ pub async fn post_share_link(
         .filter(|value| !value.is_empty())
         .map(str::to_string);
 
-    state
-        .sqldb
-        .execute(
-            "INSERT INTO sends
-                (id, owner_user_id, ciphertext, has_passphrase, kdf_salt, label,
-                 view_once, max_views, view_count, created_at, expires_at, revoked)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 0)",
-            vec![
-                TursoValue::Text(id.to_string()),
-                TursoValue::Text(session.user_id.to_string()),
-                TursoValue::Text(db::encode_b64(&ciphertext)),
-                TursoValue::Integer(if body.has_passphrase { 1 } else { 0 }),
-                kdf_salt.map(TursoValue::Text).unwrap_or(TursoValue::Null),
-                label.map(TursoValue::Text).unwrap_or(TursoValue::Null),
-                TursoValue::Integer(if body.view_once { 1 } else { 0 }),
-                max_views.map(TursoValue::Integer).unwrap_or(TursoValue::Null),
-                TursoValue::Text(now.to_rfc3339()),
-                TursoValue::Text(expires_at.to_rfc3339()),
-            ],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let start = vela_share_policy::send_interpreter::start_create(
+        vela_share_policy::send_driver::CreateObservation {
+            owner_present: !session.user_id.is_nil(),
+            ciphertext_decode_failed,
+            ciphertext_len: ciphertext.len() as i64,
+            has_passphrase: body.has_passphrase,
+            kdf_salt_present,
+            kdf_salt_decode_failed,
+            kdf_salt_len,
+            has_ttl: body.ttl_secs.is_some(),
+            ttl_secs: body.ttl_secs.unwrap_or(0),
+            has_max_views: body.max_views.is_some(),
+            max_views: body.max_views.unwrap_or(0),
+            view_once: body.view_once,
+        },
+    );
+    let mut io = CreateSendIo {
+        sql: sql::PoolSql(&state.sqldb),
+        owner_user_id: session.user_id,
+        ciphertext,
+        has_passphrase: body.has_passphrase,
+        kdf_salt,
+        label,
+        id,
+        now,
+        expires_at: now,
+        error: None,
+    };
+    let transition = vela_share_policy::send_interpreter!(io, start, await);
+
+    match transition.effect {
+        vela_share_policy::send_driver::SendEffect::CompleteCreate => {}
+        vela_share_policy::send_driver::SendEffect::Fail(failure) => {
+            return Err(send_failure_error(failure, io.error.take()));
+        }
+        _ => {
+            return Err(AppError::Internal(
+                "send create driver produced an unexpected completion effect".into(),
+            ))
+        }
+    }
 
     tracing::info!(
         send_id = %id,
         owner = %session.user_id,
-        bytes = ciphertext.len(),
+        bytes = io.ciphertext.len(),
         "share link created"
     );
 
     let mut headers = HeaderMap::new();
     maybe_append_new_token(&mut headers, &session);
-    Ok((headers, Json(CreateSendResponse { id, expires_at })))
+    Ok((
+        headers,
+        Json(CreateSendResponse {
+            id,
+            expires_at: io.expires_at,
+        }),
+    ))
 }
-
-// ── GET /send/:id (anonymous recipient) ──────────────────────────────────────
 
 #[derive(Serialize)]
 pub struct FetchSendResponse {
@@ -187,6 +270,103 @@ pub struct FetchSendResponse {
     pub expires_at: DateTime<Utc>,
 }
 
+/// The I/O behind one anonymous fetch. The atomic consume, the row read and the
+/// view-once cleanup are the driver's effects; the response data is what the
+/// read returned.
+struct FetchSendIo<S> {
+    sql: S,
+    id: Uuid,
+    ciphertext: Option<String>,
+    has_passphrase: bool,
+    kdf_salt: Option<String>,
+    view_once: bool,
+    max_views: Option<i64>,
+    view_count: i64,
+    expires_at: Option<DateTime<Utc>>,
+    error: Option<AppError>,
+}
+
+impl<S: SendSql> FetchSendIo<S> {
+    async fn consume_view(&mut self) -> vela_share_policy::send_driver::ConsumeObservation {
+        let now = Utc::now().to_rfc3339();
+        let plan = store::plan_send_consume(self.id.to_string(), now);
+        let (outcomes, error) = sql::run_writes(&mut self.sql, &plan).await;
+        let observation = store::classify_send_consume(&outcomes);
+        if let Some(error) = error {
+            self.error = Some(AppError::Internal(error.to_string()));
+        }
+        observation
+    }
+
+    async fn read_send(&mut self) -> vela_share_policy::send_driver::ReadObservation {
+        let plan = store::plan_send_read(self.id.to_string());
+        let outcome = match sql::run_read(&mut self.sql, &plan).await {
+            Ok(rows) => ReadOutcome::Row(sql::send_row_view(&rows)),
+            Err(error) => {
+                self.error = Some(AppError::Internal(error.to_string()));
+                ReadOutcome::Failed
+            }
+        };
+        let observation = store::classify_send_read(&outcome);
+        if let Some(cell) = observation.missing_cell {
+            let message = match cell {
+                SendCell::Ciphertext => "send row missing ciphertext",
+                SendCell::ExpiresAt => "send row missing expires_at",
+            };
+            self.error = Some(AppError::Internal(message.into()));
+        }
+        self.ciphertext = observation.ciphertext;
+        self.has_passphrase = observation.has_passphrase;
+        self.kdf_salt = observation.kdf_salt;
+        self.view_once = observation.view_once;
+        self.max_views = observation.max_views;
+        self.view_count = observation.view_count;
+        self.expires_at = observation
+            .expires_at
+            .as_deref()
+            .and_then(|text| DateTime::parse_from_rfc3339(text).ok())
+            .map(|at| at.with_timezone(&Utc));
+        observation.read
+    }
+
+    async fn remove_fetched(&mut self) -> vela_share_policy::send_driver::RemoveObservation {
+        // A view-once link is deleted the moment it is served; the conditional
+        // update above guarantees only one caller ever reaches this point. The
+        // handler ignores the cleanup outcome.
+        let plan = store::plan_send_remove(self.id.to_string());
+        let (outcomes, _error) = sql::run_writes(&mut self.sql, &plan).await;
+        store::classify_send_remove(&outcomes)
+    }
+
+    /// Unreachable for a fetch request: the driver's request kind never emits
+    /// an insert/delete-owner effect.
+    async fn insert_send(
+        &mut self,
+        _permit: vela_share_policy::send_driver::CreatePermit,
+    ) -> vela_share_policy::send_driver::RowsObservation {
+        self.error = Some(AppError::Internal(
+            "send fetch driver emitted an insert effect".into(),
+        ));
+        vela_share_policy::send_driver::RowsObservation {
+            rows: 0,
+            failed: true,
+        }
+    }
+
+    async fn delete_link(
+        &mut self,
+        _permit: vela_share_policy::send_driver::DeletePermit,
+    ) -> vela_share_policy::send_driver::RowsObservation {
+        self.error = Some(AppError::Internal(
+            "send fetch driver emitted a delete effect".into(),
+        ));
+        vela_share_policy::send_driver::RowsObservation {
+            rows: 0,
+            failed: true,
+        }
+    }
+}
+
 pub async fn get_share_link(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
@@ -196,79 +376,53 @@ pub async fn get_share_link(
     let ip = net::client_ip(&headers, addr.map(|ConnectInfo(a)| a.ip()), &state.config);
     rate_limit::send_fetch_by_ip(&state.store, &ip)?;
 
-    let now = Utc::now().to_rfc3339();
+    let start = vela_share_policy::send_interpreter::start_fetch();
+    let mut io = FetchSendIo {
+        sql: sql::PoolSql(&state.sqldb),
+        id,
+        ciphertext: None,
+        has_passphrase: false,
+        kdf_salt: None,
+        view_once: false,
+        max_views: None,
+        view_count: 0,
+        expires_at: None,
+        error: None,
+    };
+    let transition = vela_share_policy::send_interpreter!(io, start, await);
 
-    // Consume one view atomically. Revoked, expired and exhausted links all
-    // match zero rows, so they are indistinguishable from a missing id.
-    let affected = state
-        .sqldb
-        .execute(
-            "UPDATE sends SET view_count = view_count + 1
-             WHERE id = ? AND revoked = 0 AND expires_at > ?
-               AND (max_views IS NULL OR view_count < max_views)",
-            vec![
-                TursoValue::Text(id.to_string()),
-                TursoValue::Text(now),
-            ],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    if affected == 0 {
-        return Err(AppError::NotFound(SEND_NOT_FOUND.into()));
+    match transition.effect {
+        vela_share_policy::send_driver::SendEffect::CompleteFetch => {}
+        vela_share_policy::send_driver::SendEffect::Fail(failure) => {
+            return Err(send_failure_error(failure, io.error.take()));
+        }
+        _ => {
+            return Err(AppError::Internal(
+                "send fetch driver produced an unexpected completion effect".into(),
+            ))
+        }
     }
 
-    let rows = state
-        .sqldb
-        .query(
-            "SELECT ciphertext, has_passphrase, kdf_salt, view_once, max_views, view_count, expires_at
-             FROM sends WHERE id = ?",
-            vec![TursoValue::Text(id.to_string())],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    let row = rows
-        .first()
-        .ok_or_else(|| AppError::NotFound(SEND_NOT_FOUND.into()))?;
-
-    let ciphertext = row
-        .text(0)
-        .ok_or_else(|| AppError::Internal("send row missing ciphertext".into()))?
-        .to_string();
-    let has_passphrase = row.bool_int(1).unwrap_or(false);
-    let kdf_salt = row.text(2).map(String::from);
-    let view_once = row.bool_int(3).unwrap_or(false);
-    let max_views = row.i64(4);
-    let view_count = row.i64(5).unwrap_or(0);
-    let expires_at = row
-        .timestamp(6)
-        .ok_or_else(|| AppError::Internal("send row missing expires_at".into()))?;
-
-    // A view-once link is deleted the moment it is served; the conditional
-    // update above guarantees only one caller ever reaches this point.
-    if view_once {
-        let _ = state
-            .sqldb
-            .execute(
-                "DELETE FROM sends WHERE id = ?",
-                vec![TursoValue::Text(id.to_string())],
-            )
-            .await;
-    }
-
-    let views_remaining = max_views.map(|max| (max - view_count).max(0));
+    let Some(ciphertext) = io.ciphertext.take() else {
+        return Err(AppError::Internal("send row missing ciphertext".into()));
+    };
+    let Some(expires_at) = io.expires_at else {
+        return Err(AppError::Internal("send row missing expires_at".into()));
+    };
+    let views_remaining = io.max_views.map(|max| (max - io.view_count).max(0));
 
     Ok(Json(FetchSendResponse {
         ciphertext,
-        has_passphrase,
-        kdf_salt,
-        view_once,
-        max_views,
+        has_passphrase: io.has_passphrase,
+        kdf_salt: io.kdf_salt,
+        view_once: io.view_once,
+        max_views: io.max_views,
         views_remaining,
         expires_at,
     }))
 }
 
-// ── GET /sends (owner, authenticated) ────────────────────────────────────────
+// ── GET /sends (owner, authenticated, read-only) ─────────────────────────────
 
 #[derive(Serialize)]
 pub struct SendMeta {
@@ -290,22 +444,18 @@ pub async fn list_share_links(
 ) -> Result<(HeaderMap, Json<serde_json::Value>)> {
     rate_limit::send_list_by_user(&state.store, &session.user_id.to_string())?;
 
-    let rows = state
-        .sqldb
-        .query(
-            "SELECT id, label, has_passphrase, view_once, max_views, view_count, created_at, expires_at
-             FROM sends
-             WHERE owner_user_id = ? AND revoked = 0 AND expires_at > ?
-             ORDER BY created_at DESC LIMIT 200",
-            vec![
-                TursoValue::Text(session.user_id.to_string()),
-                TursoValue::Text(Utc::now().to_rfc3339()),
-            ],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let stmt = store::plan_own_sends(
+        session.user_id.to_string(),
+        Utc::now().to_rfc3339(),
+        OWN_SENDS_LIMIT,
+    );
+    let rows = match sql::run_handler_read(&mut sql::PoolSql(&state.sqldb), &stmt).await {
+        Ok(rows) => rows,
+        Err(error) => return Err(AppError::Internal(error.to_string())),
+    };
+    let page = store::classify_listing(rows.len(), false, OWN_SENDS_LIMIT);
 
-    let items: Vec<SendMeta> = rows
+    let items: Vec<SendMeta> = rows[..page.keep]
         .iter()
         .filter_map(|row| {
             Some(SendMeta {
@@ -326,28 +476,135 @@ pub async fn list_share_links(
     Ok((headers, Json(serde_json::json!({ "sends": items }))))
 }
 
-// ── DELETE /send/:id (owner, authenticated) ──────────────────────────────────
+/// The I/O behind one owner delete.
+struct DeleteSendIo<S> {
+    sql: S,
+    id: Uuid,
+    owner_user_id: Uuid,
+    error: Option<AppError>,
+}
+
+impl<S: SendSql> DeleteSendIo<S> {
+    async fn delete_link(
+        &mut self,
+        _permit: vela_share_policy::send_driver::DeletePermit,
+    ) -> vela_share_policy::send_driver::RowsObservation {
+        let plan =
+            store::plan_send_delete(self.id.to_string(), self.owner_user_id.to_string());
+        let (outcomes, error) = sql::run_writes(&mut self.sql, &plan).await;
+        let observation = store::classify_send_delete(&outcomes);
+        if let Some(error) = error {
+            self.error = Some(AppError::Internal(error.to_string()));
+        }
+        observation
+    }
+
+    /// Unreachable for a delete request: the driver's request kind never emits
+    /// a create/fetch effect.
+    async fn insert_send(
+        &mut self,
+        _permit: vela_share_policy::send_driver::CreatePermit,
+    ) -> vela_share_policy::send_driver::RowsObservation {
+        self.error = Some(AppError::Internal(
+            "send delete driver emitted an insert effect".into(),
+        ));
+        vela_share_policy::send_driver::RowsObservation {
+            rows: 0,
+            failed: true,
+        }
+    }
+
+    async fn consume_view(&mut self) -> vela_share_policy::send_driver::ConsumeObservation {
+        self.error = Some(AppError::Internal(
+            "send delete driver emitted a consume effect".into(),
+        ));
+        vela_share_policy::send_driver::ConsumeObservation::Error
+    }
+
+    async fn read_send(&mut self) -> vela_share_policy::send_driver::ReadObservation {
+        self.error = Some(AppError::Internal(
+            "send delete driver emitted a read effect".into(),
+        ));
+        vela_share_policy::send_driver::ReadObservation::Unreadable
+    }
+
+    async fn remove_fetched(&mut self) -> vela_share_policy::send_driver::RemoveObservation {
+        self.error = Some(AppError::Internal(
+            "send delete driver emitted a cleanup effect".into(),
+        ));
+        vela_share_policy::send_driver::RemoveObservation {
+            removed: false,
+            failed: true,
+        }
+    }
+}
 
 pub async fn delete_share_link(
     State(state): State<AppState>,
     session: DeviceSession,
     Path(id): Path<Uuid>,
 ) -> Result<(HeaderMap, Json<serde_json::Value>)> {
-    let affected = state
-        .sqldb
-        .execute(
-            "DELETE FROM sends WHERE id = ? AND owner_user_id = ?",
-            vec![
-                TursoValue::Text(id.to_string()),
-                TursoValue::Text(session.user_id.to_string()),
-            ],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let start =
+        vela_share_policy::send_interpreter::start_delete(!session.user_id.is_nil());
+    let mut io = DeleteSendIo {
+        sql: sql::PoolSql(&state.sqldb),
+        id,
+        owner_user_id: session.user_id,
+        error: None,
+    };
+    let transition = vela_share_policy::send_interpreter!(io, start, await);
+
+    let deleted = match transition.effect {
+        vela_share_policy::send_driver::SendEffect::CompleteDelete { deleted } => deleted,
+        vela_share_policy::send_driver::SendEffect::Fail(failure) => {
+            return Err(send_failure_error(failure, io.error.take()));
+        }
+        _ => {
+            return Err(AppError::Internal(
+                "send delete driver produced an unexpected completion effect".into(),
+            ))
+        }
+    };
 
     let mut headers = HeaderMap::new();
     maybe_append_new_token(&mut headers, &session);
-    Ok((headers, Json(serde_json::json!({ "deleted": affected > 0 }))))
+    Ok((headers, Json(serde_json::json!({ "deleted": deleted }))))
+}
+
+/// Render a driver failure with the handler's historical status and message.
+/// Branches whose original error is request-dependent return the stored error.
+fn send_failure_error(failure: SendFailure, error: Option<AppError>) -> AppError {
+    let stored = |fallback: AppError| error.unwrap_or(fallback);
+    match failure {
+        SendFailure::Unauthenticated => AppError::Unauthorized("authentication required".into()),
+        SendFailure::MalformedCiphertext => {
+            AppError::BadRequest("ciphertext is not valid base64".into())
+        }
+        SendFailure::EmptyCiphertext => AppError::BadRequest("ciphertext is empty".into()),
+        SendFailure::CiphertextTooLarge => AppError::PayloadTooLarge(format!(
+            "ciphertext exceeds maximum size of {MAX_SEND_BYTES} bytes"
+        )),
+        SendFailure::MissingKdfSalt => {
+            AppError::BadRequest("has_passphrase requires kdf_salt".into())
+        }
+        SendFailure::MalformedKdfSalt => {
+            AppError::BadRequest("kdf_salt is not valid base64".into())
+        }
+        SendFailure::KdfSaltTooShort => AppError::BadRequest("kdf_salt is too short".into()),
+        SendFailure::InsertStorage => {
+            stored(AppError::Internal("send link insert failure".into()))
+        }
+        SendFailure::NotFound => AppError::NotFound(SEND_NOT_FOUND.into()),
+        SendFailure::ConsumeStorage => {
+            stored(AppError::Internal("send view consume failure".into()))
+        }
+        SendFailure::RowUnreadable => {
+            stored(AppError::Internal("send row unreadable".into()))
+        }
+        SendFailure::DeleteStorage => {
+            stored(AppError::Internal("send link delete failure".into()))
+        }
+    }
 }
 
 /// Periodically delete expired links so ciphertext does not outlive its TTL.
@@ -355,44 +612,17 @@ pub async fn cleanup_task(db: Arc<TursoDb>) {
     let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(10 * 60));
     loop {
         interval.tick().await;
-        match db
-            .execute(
-                "DELETE FROM sends WHERE expires_at < ?",
-                vec![TursoValue::Text(Utc::now().to_rfc3339())],
-            )
-            .await
-        {
-            Ok(n) => {
-                if n > 0 {
-                    tracing::info!(purged = n, "send-link cleanup");
-                }
-            }
+        let stmt = store::plan_expired_sends_cleanup(Utc::now().to_rfc3339());
+        let outcome = match sql::run_handler_write(&mut sql::PoolSql(&db), &stmt).await {
+            Ok(purged) => store::HandlerOutcome::Written(purged),
             Err(e) => {
                 tracing::error!(error = %e, "send cleanup task failed");
+                store::HandlerOutcome::Failed
             }
+        };
+        let sweep = store::classify_sweep(&[outcome]);
+        if !sweep.failed && sweep.purged > 0 {
+            tracing::info!(purged = sweep.purged, "send-link cleanup");
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn ttl_clamps_to_bounds() {
-        assert_eq!(clamp_ttl(None), DEFAULT_TTL_SECS);
-        assert_eq!(clamp_ttl(Some(1)), MIN_TTL_SECS);
-        assert_eq!(clamp_ttl(Some(i64::MAX)), MAX_TTL_SECS);
-        assert_eq!(clamp_ttl(Some(3600)), 3600);
-    }
-
-    #[test]
-    fn view_once_pins_one_view_and_others_clamp() {
-        assert_eq!(resolve_max_views(None, true), Some(1));
-        assert_eq!(resolve_max_views(Some(5), true), Some(1));
-        assert_eq!(resolve_max_views(None, false), None);
-        assert_eq!(resolve_max_views(Some(0), false), Some(1));
-        assert_eq!(resolve_max_views(Some(i64::MAX), false), Some(MAX_VIEWS_CEILING));
-        assert_eq!(resolve_max_views(Some(7), false), Some(7));
     }
 }

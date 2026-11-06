@@ -1,0 +1,38 @@
+   Compiling vela-enrollment-policy v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-04703409/serverVELA/vela-enrollment-policy)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.45s
+     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-enrollment-policy/4867041615cc08d8/out/vela_enrollment_policy-4867041615cc08d8)
+
+running 13 tests
+test pairing_driver::tests::a_completion_is_signed_bound_and_taken_once ... ok
+test pairing_driver::tests::a_completion_needs_the_stored_claim_and_the_opener_signature ... ok
+test pairing_driver::tests::a_replayed_package_fetch_returns_nothing ... ok
+test pairing_driver::tests::a_take_mismatch_restores_and_never_inserts ... ok
+test pairing_driver::tests::an_ambiguous_insert_error_consumes_the_ceremony ... ok
+test pairing_driver::tests::an_insert_failure_never_claims_a_recorded_result ... ok
+test pairing_driver::tests::bfs_reachable_states_preserve_the_invariant ... ok
+test pairing_driver::tests::claim_rejection_is_exactly_the_policy_refusal ... ok
+test pairing_driver::tests::claim_rejection_precedence_is_historical ... ok
+test pairing_driver::tests::every_sound_state_times_event_is_total_and_sound ... ok
+test pairing_driver::tests::out_of_order_events_are_inert ... ok
+test tests::completion_requires_every_binding ... ok
+test tests::result_requires_the_claimed_private_key ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/fact_construction.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-enrollment-policy/46dffc16dc02f030/out/fact_construction-46dffc16dc02f030)
+
+running 5 tests
+test claim_facts_are_exactly_the_grant_store_and_lengths ... ok
+test completion_facts_are_exactly_the_store_sql_epoch_and_signature_observations ... ok
+test inspect_facts_are_exactly_the_claim_and_session_bindings ... ok
+test open_facts_are_exactly_the_session_observations ... ok
+test result_facts_are_exactly_the_store_key_and_signature_observations ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests vela_enrollment_policy
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

@@ -1,0 +1,11 @@
+--- /tmp/vela-f2-cancel-mut/u20/pristine.fst	2026-10-27 22:53:12.174423461 +0100
++++ serverVELA/vela-enrollment-policy/proofs/fstar/extraction-pairing-driver/Vela_enrollment_policy.Pairing_driver.fst	2026-10-27 22:53:12.219712282 +0100
+@@ -1217,7 +1217,7 @@
+                   <:
+                   Vela_enrollment_policy.t_ResultSource;
+                   Vela_enrollment_policy.f_claimed_key_len = claimed_key_len;
+-                  Vela_enrollment_policy.f_signature_verified = signature_verified
++                  Vela_enrollment_policy.f_signature_verified = true
+                 }
+                 <:
+                 Vela_enrollment_policy.t_ResultObservation)

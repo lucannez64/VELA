@@ -1,0 +1,35 @@
+# Source artifact hashes for the raw-byte nonce bridge
+# Generated from the post-verification working tree; base commit and script mode included.
+base_commit 1902ecd30ce7b41fa400cdfbebf387f49144ffd1
+script_index_mode 100755
+
+# Proof inputs
+f558711ac3d165952846d03d1d7b2b91186fa3ff1925a0780b35fdf824f2dd1d  serverVELA/vela-session-policy/proofs/fstar/extraction/Vela_session_policy.fst
+49f7d740311506bbf346a272da5840f729acd905c1cdb0b05a32ac37b3d68806  serverVELA/vela-session-policy/proofs/fstar/extraction-login-driver/Vela_session_policy.Challenge.fst
+ab5f233536bd6e98fe5b34433b4b7665f89906fac0ac900588926723bac72bb5  serverVELA/vela-session-policy/proofs/fstar/extraction-login-driver/Vela_session_policy.Login_driver.fst
+a92351ddbe6692cbb14704f048af4ab2f0b97157532984c00351ccba39d96776  serverVELA/vela-session-policy/proofs/fstar/challenge-lemmas/Vela_session_policy_challenge_lemmas.fst
+aa62c89bbe13110f249f6244dd68fee871a4fc108471eedd90ee72fd7f5a8238  serverVELA/vela-session-policy/proofs/fstar/challenge-lemmas/Vela_session_policy_tag_producer_lemmas.fst
+52ce34104cc4617b05be04aa0f8cd5d951eb9737e0b4ecee69192828ae06c4dc  serverVELA/vela-session-policy/proofs/fstar/login-driver-lemmas/Vela_session_policy_login_driver_lemmas.fst
+166295e6617ed0029c33fd9bac8aec4e483f2055508e2bec32a2450ee2febfba  serverVELA/vela-session-policy/proofs/fstar/login-driver-composition/Vela_session_policy_login_driver_composition.fst
+
+# New artifacts
+617ea150e18b56b8dd46c556b631c994ca0fb55f25da0aa82ff1965f2ede8f7e  serverVELA/vela-session-policy/proofs/fstar/login-raw-nonce-lemmas/Vela_session_policy_login_raw_nonce.fst
+5cb1859a1f428a03268350c097850d6ffd22570115651b7375197f665890ca03  serverVELA/vela-session-policy/proofs/fstar/login-raw-nonce-lemmas/README.md
+b067344e2c5d0a8a32b9f2e44992f53fb43aeeb4e4f640562510d56a9d1219b2  serverVELA/vela-session-policy/verify-fstar-login-raw-nonce.sh
+
+# Rust sources (unchanged inputs)
+6ddb8af59d99aff1dfaa7b51f89becde9b5a39bb9e73d69c60fbf0461f2f8c11  serverVELA/vela-session-policy/src/challenge.rs
+455602a9035d8766c5cd30b9b901ef9cbaab3cb48da685aa832f6408a8b1e441  serverVELA/vela-session-policy/src/login_driver.rs
+
+# Evidence files
+3edf5a3fe03b9ca8661a6d9d1203739edfcb27387c5ea07053621d36bb45423e  security/assurance/proof-logs/current/login-raw-nonce-bridge/README.md
+f85669dc0bc2c82813ae20681c641e3955368f997ef5cb76b4991222a2a09ede  security/assurance/proof-logs/current/login-raw-nonce-bridge/fstar-verify.log
+595d254dcbead51f9a1b8e54b5564d16e6b28acc087321590f7ec6b6d32b2acd  security/assurance/proof-logs/current/login-raw-nonce-bridge/mutation-A-purpose-always-login.log
+6d877de8b4f7eb9167417d740bb59593a48a43e7ce482b361df4d3231462f879  security/assurance/proof-logs/current/login-raw-nonce-bridge/mutation-B-copy-path-ignores-bytes.log
+be72ce6efc82b9ec4c480245b240ec93dcd0a9c8d486129f13b5d3e10e1cac38  security/assurance/proof-logs/current/login-raw-nonce-bridge/mutation-A.diff
+5085df93e21831fd1d8719757093d7b3abb1da0ca17edd65f6c50d611ce7646a  security/assurance/proof-logs/current/login-raw-nonce-bridge/mutation-B.diff
+f3b1f5b94611195f481fa7a34bab6a528a80ec43251238ffd583a5e7fac70f4c  security/assurance/proof-logs/current/login-raw-nonce-bridge/mutation-A-argv.txt
+3b59c915fbde8fda766da3e3dee5177df295d3e82675b46f1dce41a077c37fad  security/assurance/proof-logs/current/login-raw-nonce-bridge/mutation-B-argv.txt
+8665de3eefadd662727ff58fa0496ed4a646989f40c9f2139568af88c52979a2  security/assurance/proof-logs/current/login-raw-nonce-bridge/commands.txt
+2a637e943aa968bba729d4e3efcfe6ce69c6649aeba14a36f671dfb6de9e8588  security/assurance/proof-logs/current/login-raw-nonce-bridge/counts.txt
+f86225cd640e869edd11942797711954e8dca7c1512dfdc97fd3bfd5b051d31d  security/assurance/proof-logs/current/login-raw-nonce-bridge/mutation-commands.txt

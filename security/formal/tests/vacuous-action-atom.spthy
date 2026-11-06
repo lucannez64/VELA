@@ -1,0 +1,27 @@
+theory VacuousActionAtom
+begin
+
+/* Negative fixture for check-action-atoms.py.
+
+   DiskClean is a state fact produced by a rule, but it is never an action in
+   a rule's --[ ... ]-> list.  A lemma that writes DiskClean(...) @ #i is
+   therefore unreachable, not a proof.  The guard must reject this file.
+*/
+
+functions: f/1
+
+rule Emits:
+    [ Fr(~x) ]
+  --[ RealAction(~x) ]->
+    []
+
+lemma vacuous_action_atom:
+    "All s g p v w #i. DiskClean(s, g, p, v, w) @ #i ==> F"
+
+lemma declared_action_atom:
+    "All x #i. RealAction(x) @ #i ==> F"
+
+lemma wrong_arity_action_atom:
+    "All x y #i. RealAction(x, y) @ #i ==> F"
+
+end

@@ -67,6 +67,14 @@ internal fun eventRequestsSync(payload: String, deviceId: String): Boolean =
     }.getOrDefault(true)
 
 /**
+ * A stream response's `X-New-Token`, but only from a successful response.
+ * Failed responses are not an authenticated session and may carry an
+ * attacker-chosen value.
+ */
+internal fun eventStreamNewToken(code: Int, header: String?): String? =
+    if (code in 200..299) header?.takeIf { it.isNotBlank() } else null
+
+/**
  * Foreground-only `GET /vault/events` client.
  *
  * Blocking by design: callers run it on `Dispatchers.IO` and cancel its
@@ -101,8 +109,10 @@ internal object VaultEventStream {
         }
         try {
             val code = connection.responseCode
-            connection.getHeaderField("X-New-Token")
-                ?.takeIf { it.isNotBlank() }
+            // A failed stream response is not an authenticated session. Read
+            // the rotation header only on success, so a hostile 401/403 cannot
+            // smuggle an unaccepted token into the app's token store.
+            eventStreamNewToken(code, connection.getHeaderField("X-New-Token"))
                 ?.let(onNewToken)
             if (code !in 200..299) error("Event stream refused with HTTP $code")
 

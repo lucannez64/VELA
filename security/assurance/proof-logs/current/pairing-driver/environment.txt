@@ -1,0 +1,18 @@
+Repository: VELA
+Worktree:   /home/hirew/.t3/worktrees/VELA/t3-04703409
+Branch:     t3/04703409
+Base:       5dda745329aa56991759102a7536fdb34d54ff2d
+
+F*:    2025.10.06
+Z3:    4.13.3
+hax:   0.3.7
+rustc: 1.101.0-nightly (e9bbadf68 2026-10-12)
+
+Heavy-command wrapper: ~/.local/opt/vela-tools/bin/vela-heavy
+  -> flock ~/.local/opt/vela-tools/.heavy.lock
+     security/assurance/bounded.sh (VELA_MEMORY_MAX=3G, one cargo job, one test thread)
+
+Every cargo / hax / fstar command in this increment ran through that wrapper.
+No admit, assume, axiom, --lax or unreviewed source option appears in the
+hand-written F* modules; the source guard checks the generated modules too.
+The generated extraction has no `assume val` declarations.

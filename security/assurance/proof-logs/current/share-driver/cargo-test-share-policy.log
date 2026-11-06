@@ -1,0 +1,46 @@
+   Compiling vela-share-policy v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-3b1a2c14/serverVELA/vela-share-policy)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.75s
+     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-share-policy/1e0507d2426f7e67/out/vela_share_policy-1e0507d2426f7e67)
+
+running 4 tests
+test tests::ek_registration_requires_every_binding_condition ... ok
+test tests::link_mutations_require_sender_authority_over_live_items ... ok
+test tests::send_requires_recipient_capacity_and_authentication ... ok
+test tests::timestamp_freshness_is_strict_and_first_registration_always_fresh ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/driver.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-share-policy/8bbe40cffac35e4e/out/driver-8bbe40cffac35e4e)
+
+running 13 tests
+test a_done_driver_is_inert_for_every_event ... ok
+test ek_registration_keeps_the_handlers_error_precedence ... ok
+test every_reachable_transition_preserves_soundness_and_effect_authority ... ok
+test every_stage_ignores_every_out_of_order_event ... ok
+test inbox_delete_is_recipient_scoped_and_classifies_rows ... ok
+test link_mutation_effects_are_never_emitted_for_a_revoked_observation ... ok
+test link_mutation_length_checks_precede_the_row_observation ... ok
+test link_mutations_require_the_sender_and_a_live_item ... ok
+test revoke_commits_then_requests_the_inbox_cleanup_before_success ... ok
+test send_and_ek_results_are_classified_without_extra_effects ... ok
+test send_quota_checks_keep_the_handlers_historical_order ... ok
+test send_requires_an_authenticated_session_and_the_real_plan ... ok
+test update_and_revoke_are_distinguished_by_the_observed_plan ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/fact_construction.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-share-policy/ff01a0ab69cbac44/out/fact_construction-ff01a0ab69cbac44)
+
+running 3 tests
+test ek_registration_facts_are_exactly_the_request_device_row_and_store ... ok
+test link_mutation_facts_are_exactly_the_linked_row_observations ... ok
+test send_facts_are_exactly_the_session_recipient_capsule_and_inbox ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests vela_share_policy
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

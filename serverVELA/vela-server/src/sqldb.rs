@@ -89,9 +89,21 @@ pub struct TursoDb {
     tx: Vec<Arc<tokio::sync::Mutex<turso::Connection>>>,
     idx: AtomicUsize,
     tx_idx: AtomicUsize,
+    // Keep the directory alive until after all connections have been dropped.
+    temp_dir: Option<tempfile::TempDir>,
 }
 
 impl TursoDb {
+    /// Open a database in a fresh temporary directory. The database, including
+    /// its WAL and SHM files, is removed when the last `TursoDb` owner drops.
+    pub async fn open_temp(pool: usize) -> anyhow::Result<Self> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("vela-test.db");
+        let mut this = Self::open(&path.to_string_lossy(), pool).await?;
+        this.temp_dir = Some(dir);
+        Ok(this)
+    }
+
     /// Open (or create) a local turso database file at `path`, connect a pool
     /// of `pool` connections, and ensure the schema exists.
     pub async fn open(path: &str, pool: usize) -> anyhow::Result<Self> {
@@ -108,6 +120,7 @@ impl TursoDb {
             tx,
             idx: AtomicUsize::new(0),
             tx_idx: AtomicUsize::new(0),
+            temp_dir: None,
         };
         this.execute_batch(SCHEMA).await?;
         this.backfill_rekey_columns().await?;
@@ -139,6 +152,13 @@ impl TursoDb {
             "ALTER TABLE oram_buckets ADD COLUMN epoch INTEGER NOT NULL DEFAULT 1",
             "ALTER TABLE devices ADD COLUMN rms_capsule_epoch INTEGER",
             "ALTER TABLE devices ADD COLUMN rekey_capable INTEGER NOT NULL DEFAULT 0",
+            // U-20: a committed enrollment row records the grant that created
+            // it, so a lost result record can still be recovered.
+            "ALTER TABLE devices ADD COLUMN enrollment_grant_id TEXT",
+            // U-24: a device enrolled from a recovery grant records that
+            // grant, so a retry after a lost reply can find the device it
+            // created instead of failing on the consumed grant.
+            "ALTER TABLE devices ADD COLUMN recovery_grant_id TEXT",
             "ALTER TABLE web_sessions ADD COLUMN key_epoch INTEGER",
         ];
         for sql in ALTERS {
@@ -303,6 +323,8 @@ CREATE TABLE IF NOT EXISTS devices (
     id TEXT UNIQUE NOT NULL, user_id TEXT NOT NULL,
     device_name TEXT NOT NULL DEFAULT 'Desktop Device', device_type TEXT NOT NULL DEFAULT 'desktop',
     last_active TEXT, hybrid_ek TEXT NOT NULL, hybrid_vk TEXT NOT NULL, enrolled_by TEXT,
+    enrollment_grant_id TEXT,
+    recovery_grant_id TEXT,
     rms_capsule TEXT, rms_capsule_epoch INTEGER, rekey_capable INTEGER NOT NULL DEFAULT 0,
     revoked INTEGER NOT NULL DEFAULT 0, revoked_at TEXT, revoked_by TEXT,
     created_at TEXT NOT NULL);
@@ -356,27 +378,37 @@ CREATE INDEX IF NOT EXISTS idx_vault_chunks_user_epoch
 DROP INDEX IF EXISTS idx_oram_buckets_user_tree_bucket;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_oram_buckets_user_tree_bucket_epoch
     ON oram_buckets(user_id, tree_id, bucket_index, epoch);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_enrollment_grant_id
+    ON devices(enrollment_grant_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_recovery_grant_id
+    ON devices(recovery_grant_id);
 ";
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn temp_path() -> String {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static N: AtomicU64 = AtomicU64::new(0);
-        format!(
-            "{}/vela-sqldb-test-{}-{}.db",
-            std::env::temp_dir().display(),
-            std::process::id(),
-            N.fetch_add(1, Ordering::Relaxed)
-        )
+    fn temp_path() -> (tempfile::TempDir, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir
+            .path()
+            .join("vela-test.db")
+            .to_string_lossy()
+            .into_owned();
+        (dir, path)
     }
 
     async fn temp_db() -> TursoDb {
-        let path = temp_path();
-        let _ = std::fs::remove_file(&path);
-        TursoDb::open(&path, 2).await.unwrap()
+        TursoDb::open_temp(2).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn temporary_database_is_removed_on_drop() {
+        let db = temp_db().await;
+        let dir = db.temp_dir.as_ref().unwrap().path().to_owned();
+        assert!(dir.join("vela-test.db").exists());
+        drop(db);
+        assert!(!dir.exists());
     }
 
     #[tokio::test]
@@ -430,8 +462,7 @@ mod tests {
 
     #[tokio::test]
     async fn opens_and_upgrades_a_pre_rekey_database() {
-        let path = temp_path();
-        let _ = std::fs::remove_file(&path);
+        let (_dir, path) = temp_path();
 
         // Build the relevant part of the pre-rekey schema without going
         // through TursoDb::open, then prove open performs the ALTERs before
@@ -501,7 +532,6 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(indexes.len(), 1);
-        let _ = std::fs::remove_file(&path);
     }
 
     #[tokio::test]

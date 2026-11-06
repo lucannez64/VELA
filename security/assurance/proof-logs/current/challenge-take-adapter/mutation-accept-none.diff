@@ -1,0 +1,11 @@
+--- serverVELA/vela-session-policy/proofs/fstar/extraction-login-driver/Vela_session_policy.Challenge.fst	2026-10-25 16:38:49.347543790 +0100
++++ /tmp/opencode/vela-take-mutant-accept-none/Vela_session_policy.Challenge.fst	2026-10-25 16:40:48.089535915 +0100
+@@ -352,7 +352,7 @@
+       (expected: t_ChallengePurpose)
+     : t_ChallengeConsumption =
+   match consumed <: Core_models.Option.t_Option (Alloc.Vec.t_Vec u8 Alloc.Alloc.t_Global) with
+-  | Core_models.Option.Option_None  -> ChallengeConsumption_Missing <: t_ChallengeConsumption
++  | Core_models.Option.Option_None  -> ChallengeConsumption_Accepted <: t_ChallengeConsumption
+   | Core_models.Option.Option_Some bytes ->
+     classify_consumption (Core_models.Option.Option_Some
+         (stored_tag_from_bytes (Alloc.Vec.impl_1__as_slice #u8 #Alloc.Alloc.t_Global bytes

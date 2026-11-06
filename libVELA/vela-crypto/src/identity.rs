@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use rand_core::{OsRng, RngCore};
-use zeroize::Zeroizing;
+use zeroize::{ZeroizeOnDrop, Zeroizing};
 
 use crate::error::{Result, VelaError};
 use crate::{aead, kem, signing};
@@ -58,6 +58,10 @@ pub struct DeviceIdentity {
     hybrid_dk: Option<kem::HybridSecretKey>,
     publics: IdentityPublics,
 }
+
+// Marker only: both key fields wipe themselves on drop. Do not add a manual
+// `Drop` that would short-circuit their destructors.
+impl ZeroizeOnDrop for DeviceIdentity {}
 
 impl std::fmt::Debug for DeviceIdentity {
     /// Never print key material — `VaultItem`'s derived `Debug` leaking secrets
@@ -192,7 +196,45 @@ impl DeviceIdentity {
         kem::open_share(&self.share_dk, capsule)
     }
 
-    /// This device's enrollment fingerprint (v3), over its *own* signing key.
+    /// Sign and seal a shared item for one recipient (share envelope v2).
+    ///
+    /// The header's `sender_vk` is filled in from this identity, so the
+    /// signature always names the key that made it.
+    #[allow(clippy::too_many_arguments)]
+    pub fn seal_signed_share(
+        &self,
+        sender_user_id: &str,
+        sender_device_id: &str,
+        recipient_user_id: &str,
+        recipient_share_ek: &[u8],
+        lineage_id: &str,
+        revision: u64,
+        item: &[u8],
+    ) -> Result<Vec<u8>> {
+        let recipient = kem::HybridPublicKey::from_bytes(recipient_share_ek)?;
+        let header = crate::share_envelope::ShareHeader {
+            sender_user_id: sender_user_id.to_owned(),
+            sender_device_id: sender_device_id.to_owned(),
+            sender_vk: self.publics.hybrid_vk.clone(),
+            recipient_user_id: recipient_user_id.to_owned(),
+            recipient_ek_digest: crate::share_envelope::recipient_ek_digest(recipient_share_ek),
+            lineage_id: lineage_id.to_owned(),
+            revision,
+        };
+        crate::share_envelope::seal_signed_item(&self.signing_sk, &header, &recipient, item)
+    }
+
+    /// Open a received share envelope and run the verified admission policy.
+    pub fn admit_share(
+        &self,
+        capsule: &[u8],
+        context: crate::share_envelope::AdmissionContext<'_>,
+    ) -> Result<crate::share_envelope::AdmittedShare> {
+        crate::share_envelope::admit(&self.share_dk, capsule, context)
+    }
+
+    /// This device's enrollment fingerprint (v4), over its *own* signing and
+    /// KEM keys.
     ///
     /// Deliberately takes no argument. The value a joining device shows its
     /// user has to be derived from the key it holds, and an API that accepted
@@ -201,7 +243,7 @@ impl DeviceIdentity {
     /// about a key, and every binding behind it stops meaning anything
     /// (audit P-1).
     pub fn enrollment_fingerprint(&self) -> String {
-        crate::verification::enrollment_fingerprint(&self.publics.hybrid_vk)
+        crate::verification::enrollment_fingerprint(&self.publics.hybrid_vk, &self.publics.hybrid_ek)
     }
 
     /// Sign a grant id, to collect the outcome of this device's own enrollment.
@@ -236,6 +278,18 @@ impl DeviceIdentity {
             )
         })?;
         kem::open_share(dk, capsule)
+    }
+
+    /// Open an enrollment RMS capsule and require exactly a 32-byte root seed.
+    ///
+    /// Both mobile bridges used to check the length after this call; a capsule
+    /// that opens to something else is not an RMS, so the rule belongs next to
+    /// the open.
+    pub fn open_identity_capsule_rms(&self, capsule: &[u8]) -> Result<[u8; 32]> {
+        let plaintext = self.open_identity_capsule(capsule)?;
+        plaintext.as_slice().try_into().map_err(|_| {
+            VelaError::InvalidParameter("capsule did not contain a 32-byte root seed".into())
+        })
     }
 
     /// Encrypt the private halves under `key` for the app to persist.

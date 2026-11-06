@@ -404,14 +404,17 @@ async fn adopt_server_epoch(
     let (old_crypto, hybrid_dk) = {
         let guard = state.crypto.read();
         let crypto = guard.as_ref().ok_or("Vault is locked")?;
-        let identity = state
+        let mut identity = state
             .store
             .load_identity_keys(crypto)
             .map_err(|e| format!("Failed to load identity keys for epoch adoption: {e}"))?
             .ok_or("No identity keys available for epoch adoption")?;
+        // `IdentityKeysStore` wipes its key fields on drop, so the field cannot
+        // be moved out by value; taking it leaves an empty vector that the
+        // destructor wipes.
         (
             crate::crypto::Crypto::new(&crypto.rms()),
-            identity.hybrid_dk,
+            std::mem::take(&mut identity.hybrid_dk),
         )
     };
     if hybrid_dk.is_empty() {
@@ -506,6 +509,30 @@ async fn adopt_server_epoch(
     Ok(server_epoch)
 }
 
+/// Facts for the verified chunk-download gate, taken only from what this
+/// download run actually established.
+///
+/// `aad_binding_verified` is the result of
+/// [`vela_crypto::rekey::open_sealed_fleet_chunk`]: only a sealed blob that
+/// opened under its AAD yields `true`, and the sealed-header check excludes
+/// pre-C-2 blobs that authenticated neither the chunk id nor the revision
+/// (U-28). `key_epoch_positive` is computed from the epoch the chunk key was
+/// derived under, not from a server claim; the kernel's own positivity
+/// conjunct still runs (U-29). Nothing the server sends can set either value.
+fn established_chunk_download_facts(
+    server_lamport: i64,
+    last_seen_lamport: Option<i64>,
+    sealed_open_succeeded: bool,
+    key_epoch: i64,
+) -> vela_sync_policy::ChunkDownloadFacts {
+    vela_sync_policy::ChunkDownloadFacts {
+        server_lamport,
+        last_seen_lamport,
+        aad_binding_verified: sealed_open_succeeded,
+        key_epoch_positive: key_epoch >= vela_sync_policy::INITIAL_EPOCH,
+    }
+}
+
 /// Refuse a chunk the server hands back at an older revision than we last saw.
 ///
 /// The sync server is untrusted by design, and nothing in the protocol stopped
@@ -515,32 +542,22 @@ async fn adopt_server_epoch(
 /// `max(previous, local) + 1` — so a value below what this device already
 /// recorded is not a stale cache, it is a rollback.
 ///
-/// This is the half that needs no format change. The other half, binding the
-/// revision into the ciphertext so a *relabelled* blob also fails, needs every
-/// client to seal and open with the same associated data; see
-/// `vela_crypto::aead::vault_chunk_aad`.
 /// M23: the rollback decision is a verified permit
-/// (`vela-sync-policy::plan_chunk_download`). `aad_binding_verified` is
-/// supplied by the caller once the chunk has decrypted under the epoch-bound
-/// AAD; a chunk that fails AEAD never reaches admission at all.
+/// (`vela-sync-policy::plan_chunk_download`). Callers pass facts they observed,
+/// never constants: a chunk that failed to open contributes
+/// `aad_binding_verified: false`, and a nonpositive epoch contributes
+/// `key_epoch_positive: false`, so the same kernel refuses both before any
+/// plaintext is merged or any baseline is written.
 pub(crate) fn reject_rollback(
     chunk_id: &str,
-    server_lamport: i64,
-    last_seen: Option<i64>,
+    facts: vela_sync_policy::ChunkDownloadFacts,
 ) -> Result<(), String> {
-    match vela_sync_policy::plan_chunk_download(vela_sync_policy::ChunkDownloadFacts {
-        server_lamport,
-        last_seen_lamport: last_seen,
-        // The download gate runs before decryption; AAD binding is enforced
-        // by the decryption step that follows and again at merge time.
-        aad_binding_verified: true,
-        key_epoch_positive: true,
-    }) {
+    match vela_sync_policy::plan_chunk_download(facts) {
         vela_sync_policy::ChunkDownloadDecision::Accept(_) => Ok(()),
         vela_sync_policy::ChunkDownloadDecision::Reject => Err(format!(
-            "Server returned an older revision of {chunk_id} (clock {server_lamport}, \
+            "Server returned an older revision of {chunk_id} (clock {}, \
              last seen {:?}). Refusing to overwrite newer local data.",
-            last_seen
+            facts.server_lamport, facts.last_seen_lamport
         )),
     }
 }
@@ -744,7 +761,10 @@ async fn ensure_share_key(state: &AppState, client: &ApiClient, token: &str) {
     let updated = crate::store::IdentityKeysStore {
         share_ek: share_ek.clone(),
         share_dk: share_dk.clone(),
-        ..keys.clone()
+        hybrid_ek: keys.hybrid_ek.clone(),
+        hybrid_vk: keys.hybrid_vk.clone(),
+        hybrid_sk: keys.hybrid_sk.clone(),
+        hybrid_dk: keys.hybrid_dk.clone(),
     };
     if let Err(e) = state.store.save_identity_keys_full(&updated, crypto) {
         tracing::warn!("Share key backfill: failed to persist keys: {}", e);
@@ -1083,21 +1103,51 @@ async fn download_vault_from_manifest(
             if let Some(new_t) = new_tok {
                 *token.lock().await = new_t;
             }
-            reject_rollback(&chunk_id, lamport, seen_lamport)?;
-            // A chunk this account's key cannot open is corruption (or a
-            // foreign chunk). Report it distinctly, but never turn an
-            // authentication failure into permission to overwrite the server.
-            match vela_crypto::rekey::open_fleet_chunk(
+            // Open before deciding. `open_sealed_fleet_chunk` refuses the
+            // pre-C-2 unsealed shape, which authenticates neither the chunk id
+            // nor the revision, and otherwise verifies the AAD binding (U-28).
+            // Only its success makes `aad_binding_verified` true, and the
+            // epoch used here is the real one the key was derived under
+            // (U-29) — both are observations, not literals.
+            let epoch = match u64::try_from(key_epoch) {
+                Ok(epoch) => epoch,
+                Err(_) => {
+                    return Ok::<_, String>(ChunkOutcome::Corrupt(
+                        idx,
+                        format!("chunk {chunk_id}: vault key epoch must be positive"),
+                    ));
+                }
+            };
+            let opened = vela_crypto::rekey::open_sealed_fleet_chunk(
                 &key,
                 &ciphertext,
-                key_epoch as u64,
+                epoch,
                 &chunk_id,
                 lamport,
-            ) {
-                Ok(chunk) => Ok::<_, String>(ChunkOutcome::Decrypted(idx, chunk, lamport)),
-                Err(e) => {
-                    Ok::<_, String>(ChunkOutcome::Corrupt(idx, format!("chunk {chunk_id}: {e}")))
+            );
+            let facts = established_chunk_download_facts(
+                lamport,
+                seen_lamport,
+                opened.is_ok(),
+                key_epoch,
+            );
+            // The verified gate runs over those facts before any plaintext can
+            // reach the merge path or a local baseline write. It runs even when
+            // the open failed — that is simply a false AAD fact — but the open
+            // error is reported because it names the failure more precisely.
+            let admission = reject_rollback(&chunk_id, facts);
+            match opened {
+                Ok(chunk) => {
+                    admission?;
+                    Ok::<_, String>(ChunkOutcome::Decrypted(idx, chunk, lamport))
                 }
+                // A chunk this account's key cannot open is corruption (or a
+                // foreign chunk). Report it distinctly, but never turn an
+                // authentication failure into permission to overwrite the server.
+                Err(e) => Ok::<_, String>(ChunkOutcome::Corrupt(
+                    idx,
+                    format!("chunk {chunk_id}: {e}"),
+                )),
             }
         }));
     }
@@ -2508,19 +2558,62 @@ mod tests {
     /// reappear, rotated passwords revert.
     #[test]
     fn a_server_serving_an_older_revision_is_refused() {
+        let observed = |server_lamport, last_seen| {
+            established_chunk_download_facts(server_lamport, last_seen, true, 1)
+        };
         // Same or newer is normal: another device wrote, or nothing changed.
-        assert!(reject_rollback("vault-data-000000", 7, Some(7)).is_ok());
-        assert!(reject_rollback("vault-data-000000", 8, Some(7)).is_ok());
+        assert!(reject_rollback("vault-data-000000", observed(7, Some(7))).is_ok());
+        assert!(reject_rollback("vault-data-000000", observed(8, Some(7))).is_ok());
 
         // Lower than what this device already accepted is a rollback, not a
         // stale cache: per-chunk lamport clocks only ever increase.
-        let error = reject_rollback("vault-data-000000", 6, Some(7))
+        let error = reject_rollback("vault-data-000000", observed(6, Some(7)))
             .expect_err("must refuse to overwrite newer local data");
         assert!(error.contains("older revision"), "{error}");
         assert!(error.contains("vault-data-000000"), "{error}");
 
         // A chunk this device has never synced has nothing to compare against.
-        assert!(reject_rollback("vault-data-000009", 1, None).is_ok());
+        assert!(reject_rollback("vault-data-000009", observed(1, None)).is_ok());
+    }
+
+    /// U-29: the verified gate must consume facts this code observed, not
+    /// constants. A failed sealed open contributes `aad_binding_verified:
+    /// false`; a zero (or negative) epoch contributes `key_epoch_positive:
+    /// false`. Each rejects even at a clock that passes the rollback check.
+    #[test]
+    fn download_gate_receives_false_facts_when_the_open_fails_or_the_epoch_is_zero() {
+        let admitted = established_chunk_download_facts(9_000, Some(1), true, 7);
+        assert!(admitted.aad_binding_verified);
+        assert!(admitted.key_epoch_positive);
+        assert!(reject_rollback("vault-data-000000", admitted).is_ok());
+
+        let open_failed = established_chunk_download_facts(9_000, Some(1), false, 7);
+        assert!(
+            !open_failed.aad_binding_verified,
+            "a failed open must not assert AAD binding"
+        );
+        assert!(open_failed.key_epoch_positive);
+        assert!(
+            reject_rollback("vault-data-000000", open_failed).is_err(),
+            "a false AAD fact must reject even when the clock passes"
+        );
+
+        let zero_epoch = established_chunk_download_facts(9_000, Some(1), true, 0);
+        assert!(zero_epoch.aad_binding_verified);
+        assert!(
+            !zero_epoch.key_epoch_positive,
+            "epoch 0 must not be asserted positive"
+        );
+        assert!(reject_rollback("vault-data-000000", zero_epoch).is_err());
+
+        let negative_epoch = established_chunk_download_facts(9_000, Some(1), true, -1);
+        assert!(!negative_epoch.key_epoch_positive);
+        assert!(reject_rollback("vault-data-000000", negative_epoch).is_err());
+
+        // The kernel's own positive-clock floor is still load-bearing.
+        let zero_clock = established_chunk_download_facts(0, None, true, 7);
+        assert!(zero_clock.aad_binding_verified && zero_clock.key_epoch_positive);
+        assert!(reject_rollback("vault-data-000000", zero_clock).is_err());
     }
     use super::*;
     use crate::vault::{VaultMeta, VaultStore};
@@ -2898,5 +2991,235 @@ mod tests {
             .await
             .expect("a good chunk must download");
         assert!(matches!(result, ServerVault::Available(_, 1)));
+    }
+
+    /// U-28 regression: a pre-C-2 blob is `aead::encrypt` output. It has no
+    /// sealed header and no AAD, so `open_fleet_chunk` decrypts it at any
+    /// claimed clock. The download path must refuse it before the rollback
+    /// gate, exactly as the Android and iOS bridges do. The blob here is
+    /// encrypted under *this* device's chunk key, so only the sealed gate can
+    /// stop it.
+    #[tokio::test]
+    async fn a_legacy_unsealed_chunk_is_refused_on_download() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::AppState::for_test(dir.path());
+        state.unlock_for_test(&crate::crypto::Crypto::generate_rms());
+
+        let key = {
+            let crypto = state.crypto.read();
+            let crypto = crypto.as_ref().unwrap();
+            *crypto.chunk_key(b"vault-data-000000").as_bytes()
+        };
+        let plaintext = serde_json::to_vec(&crate::vault::VaultStore::new()).unwrap();
+        let legacy = vela_crypto::aead::encrypt(&key, &plaintext).unwrap();
+        assert!(!vela_crypto::aead::is_sealed(&legacy));
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/vault/sync"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "chunks": [{
+                    "chunk_id": "vault-data-000000",
+                    "version": 1,
+                    "lamport_clock": 9,
+                    "last_writer": null,
+                }]
+            })))
+            .mount(&server)
+            .await;
+        // Inflated clock with no recorded baseline: the rollback gate alone
+        // would accept this shape.
+        Mock::given(method("GET"))
+            .and(path("/vault/chunk/vault-data-000000"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .append_header("X-Chunk-Version", "1")
+                    .append_header("X-Lamport-Clock", "9")
+                    .set_body_raw(legacy, "application/octet-stream"),
+            )
+            .mount(&server)
+            .await;
+
+        let client = ApiClient::with_url(server.uri());
+        let manifest: crate::api::SyncManifest = serde_json::from_value(serde_json::json!({
+            "chunks": [{
+                "chunk_id": "vault-data-000000",
+                "version": 1,
+                "lamport_clock": 9,
+                "last_writer": null,
+            }]
+        }))
+        .unwrap();
+        let mut token = "tok".to_string();
+
+        let result = download_vault_from_manifest(&state, &client, &mut token, &manifest, 1)
+            .await
+            .expect("a refused chunk is surfaced, not an I/O failure");
+        assert!(
+            matches!(
+                &result,
+                ServerVault::Unreadable(why)
+                    if why.contains("legacy unsealed chunk ciphertext cannot be admitted")
+            ),
+            "an unsealed legacy chunk must be refused by the shared gate, got {result:?}"
+        );
+    }
+
+    /// U-28 regression, relabelled revision: the server replays an older
+    /// unsealed blob and inflates its Lamport clock above the recorded
+    /// baseline. Before the sealed gate the desktop opened the blob (it binds
+    /// neither revision nor id) and the rollback gate compared only the
+    /// claimed clock, so the stale revision was admitted.
+    #[tokio::test]
+    async fn a_legacy_chunk_relabelled_to_a_newer_revision_is_refused() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::AppState::for_test(dir.path());
+        state.unlock_for_test(&crate::crypto::Crypto::generate_rms());
+
+        // This device already accepted revision 7 of the chunk; the server
+        // now serves the old unsealed bytes labelled revision 9.
+        crate::store::write_secret_file(
+            &state.store.store_path().join("sync_meta.json"),
+            serde_json::json!({
+                "key_epoch": 1,
+                "chunks": {
+                    "vault-data-000000": { "version": 2, "lamport_clock": 7 }
+                }
+            })
+            .to_string()
+            .as_bytes(),
+        )
+        .unwrap();
+
+        let key = {
+            let crypto = state.crypto.read();
+            let crypto = crypto.as_ref().unwrap();
+            *crypto.chunk_key(b"vault-data-000000").as_bytes()
+        };
+        let stale_plaintext = serde_json::to_vec(&crate::vault::VaultStore::new()).unwrap();
+        let legacy = vela_crypto::aead::encrypt(&key, &stale_plaintext).unwrap();
+        assert!(!vela_crypto::aead::is_sealed(&legacy));
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/vault/sync"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "chunks": [{
+                    "chunk_id": "vault-data-000000",
+                    "version": 3,
+                    "lamport_clock": 9,
+                    "last_writer": null,
+                }]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/vault/chunk/vault-data-000000"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .append_header("X-Chunk-Version", "3")
+                    .append_header("X-Lamport-Clock", "9")
+                    .set_body_raw(legacy, "application/octet-stream"),
+            )
+            .mount(&server)
+            .await;
+
+        let client = ApiClient::with_url(server.uri());
+        let manifest: crate::api::SyncManifest = serde_json::from_value(serde_json::json!({
+            "chunks": [{
+                "chunk_id": "vault-data-000000",
+                "version": 3,
+                "lamport_clock": 9,
+                "last_writer": null,
+            }]
+        }))
+        .unwrap();
+        let mut token = "tok".to_string();
+
+        let result = download_vault_from_manifest(&state, &client, &mut token, &manifest, 1)
+            .await
+            .expect("a refused chunk is surfaced, not an I/O failure");
+        assert!(
+            matches!(
+                &result,
+                ServerVault::Unreadable(why)
+                    if why.contains("legacy unsealed chunk ciphertext cannot be admitted")
+            ),
+            "a relabelled legacy revision must be refused, got {result:?}"
+        );
+    }
+
+    /// Companion to the two regressions: the sealed shape already binds the
+    /// revision, so a blob sealed for clock 2 cannot be served as clock 9.
+    /// This pins the binding the legacy shape lacks and must hold before and
+    /// after the shared gate.
+    #[tokio::test]
+    async fn a_sealed_chunk_relabelled_to_another_revision_is_refused() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::AppState::for_test(dir.path());
+        state.unlock_for_test(&crate::crypto::Crypto::generate_rms());
+
+        let key = {
+            let crypto = state.crypto.read();
+            let crypto = crypto.as_ref().unwrap();
+            *crypto.chunk_key(b"vault-data-000000").as_bytes()
+        };
+        let plaintext = serde_json::to_vec(&crate::vault::VaultStore::new()).unwrap();
+        let sealed =
+            vela_crypto::rekey::seal_fleet_chunk(&key, &plaintext, 1, "vault-data-000000", 2)
+                .unwrap();
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/vault/sync"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "chunks": [{
+                    "chunk_id": "vault-data-000000",
+                    "version": 3,
+                    "lamport_clock": 9,
+                    "last_writer": null,
+                }]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/vault/chunk/vault-data-000000"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .append_header("X-Chunk-Version", "3")
+                    .append_header("X-Lamport-Clock", "9")
+                    .set_body_raw(sealed, "application/octet-stream"),
+            )
+            .mount(&server)
+            .await;
+
+        let client = ApiClient::with_url(server.uri());
+        let manifest: crate::api::SyncManifest = serde_json::from_value(serde_json::json!({
+            "chunks": [{
+                "chunk_id": "vault-data-000000",
+                "version": 3,
+                "lamport_clock": 9,
+                "last_writer": null,
+            }]
+        }))
+        .unwrap();
+        let mut token = "tok".to_string();
+
+        let result = download_vault_from_manifest(&state, &client, &mut token, &manifest, 1)
+            .await
+            .expect("a refused chunk is surfaced, not an I/O failure");
+        assert!(
+            matches!(&result, ServerVault::Unreadable(why) if why.contains("vault-data-000000")),
+            "a sealed chunk relabelled to another revision must not open, got {result:?}"
+        );
     }
 }

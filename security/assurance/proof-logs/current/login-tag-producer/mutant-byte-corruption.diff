@@ -1,0 +1,11 @@
+--- serverVELA/vela-session-policy/proofs/fstar/extraction-login-driver/Vela_session_policy.Challenge.fst	2026-10-25 14:28:44.974286575 +0100
++++ /tmp/opencode/mutant-byte/Vela_session_policy.Challenge.fst	2026-10-25 14:24:16.932534811 +0100
+@@ -194,7 +194,7 @@
+     =
+     let list =
+       [
+-        byte_or_zero bytes (mk_usize 0);
++        byte_or_zero bytes (mk_usize 4);
+         byte_or_zero bytes (mk_usize 1);
+         byte_or_zero bytes (mk_usize 2);
+         byte_or_zero bytes (mk_usize 3);

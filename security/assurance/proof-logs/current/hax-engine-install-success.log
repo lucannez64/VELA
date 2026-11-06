@@ -1,0 +1,11 @@
+[hax-engine.0.3.7] synchronised (file:///home/hirew/.local/opt/vela-tools/src/hax-0.3.7/engine)
+The following actions will be performed:
+=== install 1 package
+  ∗ hax-engine 0.3.7 (pinned)
+
+<><> Processing actions <><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+∗ installed hax-engine.0.3.7
+Done.
+# To update the current shell environment, run: eval $(opam env)
+elapsed_seconds=670
+memory_peak_bytes=cat: '/sys/fs/cgroup/'$'\n''/user.slice/user-1000.slice/user@1000.service/app.slice/run-p29557-i6006.scope/memory.peak': No such file or directory

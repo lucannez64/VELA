@@ -16,7 +16,8 @@ use serde::{Deserialize, Serialize};
 use std::ffi::{c_char, c_uchar, CStr, CString};
 
 use vela_core::{calculate_password_strength, PasswordStrength, VaultStore};
-use vela_crypto::{aead, kdf, kem, shamir};
+use vela_crypto::admission::{self, DownloadRefusal};
+use vela_crypto::{aead, kdf, kem, recovery, rekey, shamir};
 
 const VAULT_KEY_CONTEXT: &str = "vela vault encryption v1";
 
@@ -176,9 +177,10 @@ struct EncryptChunkRequest {
     chunk_id: String,
     vault_json: String,
     /// Epoch 1 keeps the legacy AAD for Android/web compatibility. Rotated
-    /// epochs are bound explicitly and reject legacy ciphertext.
-    #[serde(default = "default_key_epoch")]
-    key_epoch: i64,
+    /// epochs are bound explicitly and reject legacy ciphertext. Absent means
+    /// epoch 1, decided by `vela_crypto::rekey`.
+    #[serde(default)]
+    key_epoch: Option<i64>,
     /// The clock this chunk will be stored under, bound into the ciphertext so
     /// the server cannot replay an older revision (audit C-2). Not defaulted:
     /// a caller that forgets it would seal against clock 0 and write something
@@ -188,8 +190,8 @@ struct EncryptChunkRequest {
 #[derive(Deserialize)]
 struct DecryptChunkRequest {
     chunk_id: String,
-    #[serde(default = "default_key_epoch")]
-    key_epoch: i64,
+    #[serde(default)]
+    key_epoch: Option<i64>,
     /// Revision the server claimed for this chunk. Verified for sealed
     /// ciphertexts, ignored for legacy ones (audit C-2, rollout step 2).
     #[serde(default)]
@@ -197,8 +199,25 @@ struct DecryptChunkRequest {
     ciphertext_b64: String,
 }
 
-fn default_key_epoch() -> i64 {
-    1
+/// Production Apple download admission (M23/F-5). As on Android, the caller
+/// supplies raw epochs/clocks; the bridge derives the AAD-binding fact from a
+/// real AEAD open and then runs the verified shared policy.
+#[derive(Deserialize)]
+struct AdmittedChunkRequest {
+    chunk_id: String,
+    ciphertext_b64: String,
+    lamport_clock: i64,
+    key_epoch: i64,
+    /// Epoch authenticated by this device's `key_epoch.enc`.
+    local_key_epoch: i64,
+    #[serde(default)]
+    last_seen_lamport: Option<i64>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct AdmittedChunkResponse {
+    vault_json: String,
+    lamport_clock: i64,
 }
 
 #[derive(Deserialize)]
@@ -469,6 +488,28 @@ pub unsafe extern "C" fn vela_ffi_identity_open_share_json(
     json_result(|| identity_open_share_impl(c_str(request_json)?))
 }
 
+/// Sign and seal a shared item (share envelope v2).
+///
+/// # Safety
+/// `request_json` must be a valid NUL-terminated UTF-8 C string or null.
+#[no_mangle]
+pub unsafe extern "C" fn vela_ffi_identity_seal_signed_share_json(
+    request_json: *const c_char,
+) -> *mut c_char {
+    json_result(|| identity_seal_signed_share_impl(c_str(request_json)?))
+}
+
+/// Open a received share envelope and run the verified admission policy.
+///
+/// # Safety
+/// `request_json` must be a valid NUL-terminated UTF-8 C string or null.
+#[no_mangle]
+pub unsafe extern "C" fn vela_ffi_identity_admit_share_json(
+    request_json: *const c_char,
+) -> *mut c_char {
+    json_result(|| identity_admit_share_impl(c_str(request_json)?))
+}
+
 // ── Enrollment v3 (audit P-1) ───────────────────────────────────────────────
 
 /// # Safety
@@ -559,6 +600,25 @@ pub unsafe extern "C" fn vela_ffi_decrypt_vault_chunk_json(
     json_result(|| {
         let rms = rms_from(raw_slice(rms, rms_len)?)?;
         decrypt_vault_chunk_json(&rms, c_str(request_json)?)
+    })
+}
+
+/// Production download admission: decrypts/authenticates the chunk and then
+/// applies the verified shared admission policy. Returns `{vault_json,
+/// lamport_clock}` only when admitted.
+///
+/// # Safety
+/// `rms` must point to `rms_len` readable bytes; `request_json` must be a valid
+/// NUL-terminated UTF-8 C string or null.
+#[no_mangle]
+pub unsafe extern "C" fn vela_ffi_decrypt_admitted_vault_chunk_json(
+    rms: *const c_uchar,
+    rms_len: usize,
+    request_json: *const c_char,
+) -> *mut c_char {
+    json_result(|| {
+        let rms = rms_from(raw_slice(rms, rms_len)?)?;
+        decrypt_admitted_vault_chunk_json(&rms, c_str(request_json)?)
     })
 }
 
@@ -659,7 +719,7 @@ pub unsafe extern "C" fn vela_ffi_rms_possession_hash_json(
         let rms = rms_from(raw_slice(rms, rms_len)?)?;
         // v2: this is now the *public* verifying-key commitment (same 32-byte
         // wire shape); it cannot itself produce proofs.
-        let hash_b64 = vela_crypto::recovery::rms_possession_commitment(&rms);
+        let hash_b64 = recovery::rms_possession_commitment(&rms);
         Ok(serde_json::json!({ "hash_b64": B64.encode(hash_b64) }))
     })
 }
@@ -772,6 +832,14 @@ fn seal_key_from(bytes: &[u8]) -> FfiResult<[u8; 32]> {
         })
 }
 
+/// The wire encoding of an absent optional key: an empty string.
+fn decode_optional_b64(value: &str) -> FfiResult<Option<Vec<u8>>> {
+    Ok(value
+        .is_empty()
+        .then(|| B64.decode(value.as_bytes()))
+        .transpose()?)
+}
+
 fn identity_create_impl(seal_key: &[u8]) -> FfiResult<IdentityHandleResponse> {
     identity_response(vela_crypto::identity::DeviceIdentity::generate()?, seal_key)
 }
@@ -779,16 +847,8 @@ fn identity_create_impl(seal_key: &[u8]) -> FfiResult<IdentityHandleResponse> {
 fn identity_import_impl(seal_key: &[u8], request_json: &str) -> FfiResult<IdentityHandleResponse> {
     let req: IdentityImportRequest = serde_json::from_str(request_json)?;
     let signing_sk = B64.decode(req.hybrid_sk_b64.as_bytes())?;
-    let share_dk = if req.share_dk_b64.is_empty() {
-        None
-    } else {
-        Some(B64.decode(req.share_dk_b64.as_bytes())?)
-    };
-    let hybrid_ek = if req.hybrid_ek_b64.is_empty() {
-        None
-    } else {
-        Some(B64.decode(req.hybrid_ek_b64.as_bytes())?)
-    };
+    let share_dk = decode_optional_b64(&req.share_dk_b64)?;
+    let hybrid_ek = decode_optional_b64(&req.hybrid_ek_b64)?;
     let identity = vela_crypto::identity::DeviceIdentity::import(
         &signing_sk,
         share_dk.as_deref(),
@@ -842,7 +902,7 @@ fn open_rekey_capsule_impl(request_json: &str) -> FfiResult<OpenRekeyCapsuleResp
     let previous_rms: [u8; 32] = prev
         .try_into()
         .map_err(|_| "previous_rms must be 32 bytes".to_string())?;
-    let rms = vela_crypto::rekey::open_rekey_capsule(
+    let rms = rekey::open_rekey_capsule(
         &dk,
         &capsule,
         &previous_rms,
@@ -869,6 +929,101 @@ fn identity_sign_share_ek_impl(request_json: &str) -> FfiResult<AuthSignatureRes
     })?;
     Ok(AuthSignatureResponse {
         signature_b64: B64.encode(signature),
+    })
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct SharePinJson {
+    sender_user_id: String,
+    sender_vk_b64: String,
+    lineage_id: String,
+    revision: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct AdmitShareResponse {
+    item_json: String,
+    first_contact: bool,
+    pin: SharePinJson,
+    /// Fingerprint of the sending device's key, for out-of-band comparison.
+    sender_fingerprint: String,
+}
+
+fn identity_seal_signed_share_impl(request_json: &str) -> FfiResult<SealShareResponse> {
+    #[derive(Deserialize)]
+    struct Request {
+        handle: u64,
+        sender_user_id: String,
+        sender_device_id: String,
+        recipient_user_id: String,
+        recipient_share_ek_b64: String,
+        lineage_id: String,
+        revision: u64,
+        item_json: String,
+    }
+    let req: Request = serde_json::from_str(request_json)?;
+    let recipient_ek = B64.decode(req.recipient_share_ek_b64.as_bytes())?;
+    let capsule = vela_crypto::identity::with_identity(req.handle, |identity| {
+        identity.seal_signed_share(
+            &req.sender_user_id,
+            &req.sender_device_id,
+            &req.recipient_user_id,
+            &recipient_ek,
+            &req.lineage_id,
+            req.revision,
+            req.item_json.as_bytes(),
+        )
+    })?;
+    Ok(SealShareResponse {
+        capsule_b64: B64.encode(capsule),
+    })
+}
+
+fn identity_admit_share_impl(request_json: &str) -> FfiResult<AdmitShareResponse> {
+    use vela_crypto::share_envelope::{AdmissionContext, SharePin};
+    #[derive(Deserialize)]
+    struct Request {
+        handle: u64,
+        capsule_b64: String,
+        recipient_user_id: String,
+        attributed_sender_user_id: String,
+        #[serde(default)]
+        pin: Option<SharePinJson>,
+    }
+    let req: Request = serde_json::from_str(request_json)?;
+    let capsule = B64.decode(req.capsule_b64.as_bytes())?;
+    let pin = req
+        .pin
+        .as_ref()
+        .map(|p| -> FfiResult<SharePin> {
+            Ok(SharePin {
+                sender_user_id: p.sender_user_id.clone(),
+                sender_vk: B64.decode(p.sender_vk_b64.as_bytes())?,
+                lineage_id: p.lineage_id.clone(),
+                revision: p.revision,
+            })
+        })
+        .transpose()?;
+    let admitted = vela_crypto::identity::with_identity(req.handle, |identity| {
+        identity.admit_share(
+            &capsule,
+            AdmissionContext {
+                recipient_user_id: &req.recipient_user_id,
+                attributed_sender_user_id: &req.attributed_sender_user_id,
+                pin: pin.as_ref(),
+            },
+        )
+    })?;
+    Ok(AdmitShareResponse {
+        item_json: String::from_utf8(admitted.opened.into_item())?,
+        first_contact: admitted.first_contact,
+        sender_fingerprint: vela_crypto::verification::signing_key_fingerprint(&admitted.pin.sender_vk),
+        pin: SharePinJson {
+            sender_user_id: admitted.pin.sender_user_id,
+            sender_vk_b64: B64.encode(&admitted.pin.sender_vk),
+            lineage_id: admitted.pin.lineage_id,
+            revision: admitted.pin.revision,
+        },
     })
 }
 
@@ -909,11 +1064,8 @@ fn identity_open_enrollment_capsule_impl(request_json: &str) -> FfiResult<Identi
     let req: IdentityCapsuleRequest = serde_json::from_str(request_json)?;
     let capsule = B64.decode(req.capsule_b64.as_bytes())?;
     let plaintext = vela_crypto::identity::with_identity(req.handle, |identity| {
-        identity.open_identity_capsule(&capsule)
+        identity.open_identity_capsule_rms(&capsule)
     })?;
-    if plaintext.len() != 32 {
-        return Err("capsule did not contain a 32-byte root seed".into());
-    }
     Ok(IdentityCapsuleResponse {
         rms_b64: B64.encode(&plaintext),
     })
@@ -950,11 +1102,10 @@ fn encrypt_vault_chunk_json(
     let rms = rms_from(rms_bytes)?;
     let _: VaultStore = serde_json::from_str(&req.vault_json)?;
     let key = chunk_key(&rms, &req.chunk_id);
-    let epoch = u64::try_from(req.key_epoch).map_err(|_| "key_epoch must be positive")?;
-    let ciphertext = vela_crypto::rekey::seal_fleet_chunk(
+    let ciphertext = rekey::seal_fleet_chunk_optional_epoch(
         &key,
         req.vault_json.as_bytes(),
-        epoch,
+        req.key_epoch,
         &req.chunk_id,
         req.lamport_clock,
     )?;
@@ -971,11 +1122,10 @@ fn decrypt_vault_chunk_json(
     let rms = rms_from(rms_bytes)?;
     let ciphertext = B64.decode(req.ciphertext_b64.as_bytes())?;
     let key = chunk_key(&rms, &req.chunk_id);
-    let epoch = u64::try_from(req.key_epoch).map_err(|_| "key_epoch must be positive")?;
-    let plaintext = vela_crypto::rekey::open_fleet_chunk(
+    let plaintext = rekey::open_fleet_chunk_optional_epoch(
         &key,
         &ciphertext,
-        epoch,
+        req.key_epoch,
         &req.chunk_id,
         req.lamport_clock,
     )?;
@@ -984,26 +1134,81 @@ fn decrypt_vault_chunk_json(
     })
 }
 
+// The production download path opens through
+// `rekey::open_sealed_fleet_chunk`, the shared gate that refuses pre-C-2
+// unsealed blobs (no chunk id / revision binding) and only then performs the
+// AAD-bound AEAD open. The lower-level [`decrypt_vault_chunk_json`] keeps
+// reading the unsealed shape for the explicit migration path and makes no
+// admission claim.
+
+/// Production Apple download admission (M23/F-5).
+///
+/// The pipeline itself is [`admission::admit_download`], shared with the
+/// Android and WASM bridges: exact epoch agreement from the two integers
+/// through the verified shared policy, the sealed AEAD open, then the verified
+/// rollback decision. The bridge only decodes the request, supplies the facts
+/// this device authenticated, and renders the typed refusal.
+fn decrypt_admitted_vault_chunk_json(
+    rms_bytes: &[u8],
+    request_json: &str,
+) -> FfiResult<AdmittedChunkResponse> {
+    let req: AdmittedChunkRequest = serde_json::from_str(request_json)?;
+    let rms = rms_from(rms_bytes)?;
+    let ciphertext = B64.decode(req.ciphertext_b64.as_bytes())?;
+    let key = chunk_key(&rms, &req.chunk_id);
+    let admitted = admission::admit_download(admission::DownloadRequest {
+        key: &key,
+        ciphertext: &ciphertext,
+        epoch: req.key_epoch,
+        local_epoch: Some(req.local_key_epoch),
+        chunk_id: &req.chunk_id,
+        lamport_clock: req.lamport_clock,
+        last_seen_lamport: req.last_seen_lamport,
+    })
+    .map_err(apple_refusal_message)?;
+    Ok(AdmittedChunkResponse {
+        vault_json: String::from_utf8(admitted.plaintext.to_vec())?,
+        lamport_clock: admitted.lamport_clock,
+    })
+}
+
+/// Render a core refusal into the Apple error envelope. Wording only; the
+/// decision and every fact in it came from `vela_crypto::admission`.
+fn apple_refusal_message(refusal: DownloadRefusal) -> Box<dyn std::error::Error + Send + Sync> {
+    match refusal {
+        DownloadRefusal::EpochDowngrade { .. }
+        | DownloadRefusal::EpochChanged { .. }
+        | DownloadRefusal::InvalidEpoch { .. } => {
+            "sync manifest epoch does not match this device's authenticated epoch".into()
+        }
+        DownloadRefusal::OpenFailed { reason, .. } => reason.into(),
+        DownloadRefusal::Rollback {
+            chunk_id,
+            server,
+            last_seen,
+        } => format!(
+            "server returned an older revision of {chunk_id} (clock {server}, last seen \
+             {last_seen:?}); refusing to admit it"
+        )
+        .into(),
+    }
+}
+
 fn decode_key32(b64: &str, what: &str) -> FfiResult<[u8; 32]> {
     let bytes = B64.decode(b64.as_bytes())?;
-    if bytes.len() != 32 {
-        return Err(format!("{what} must be 32 bytes").into());
-    }
-    let mut key = [0u8; 32];
-    key.copy_from_slice(&bytes);
-    Ok(key)
+    bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| format!("{what} must be 32 bytes").into())
 }
 
 fn decrypt_rms_capsule_json(request_json: &str) -> FfiResult<DecryptRmsCapsuleResponse> {
     let req: DecryptRmsCapsuleRequest = serde_json::from_str(request_json)?;
     let transfer_key = decode_key32(&req.transfer_key_b64, "transfer_key")?;
     let capsule = B64.decode(req.capsule_b64.as_bytes())?;
-    let plaintext = aead::decrypt(&transfer_key, &capsule)?;
-    if plaintext.len() < 32 {
-        return Err("decrypted RMS capsule too short".into());
-    }
+    let rms = recovery::open_rms_transfer_capsule(&transfer_key, &capsule)?;
     Ok(DecryptRmsCapsuleResponse {
-        rms_b64: B64.encode(&plaintext[..32]),
+        rms_b64: B64.encode(rms.as_slice()),
     })
 }
 
@@ -1034,106 +1239,50 @@ fn combine_recovery_json(request_json: &str) -> FfiResult<CombineRecoveryRespons
         .shares_b64
         .iter()
         .map(|s| -> FfiResult<shamir::Share> {
-            let bytes = B64.decode(s.as_bytes())?;
-            Ok(shamir::Share::from_bytes(&bytes)?)
+            Ok(shamir::Share::from_bytes(&B64.decode(s.as_bytes())?)?)
         })
         .collect::<FfiResult<_>>()?;
-    let binding = (
-        req.requested_user_id.as_deref(),
-        req.cloud_user_id.as_deref(),
-        req.cloud_key_epoch,
-        req.server_user_id.as_deref(),
-        req.server_key_epoch,
-    );
-    // M18: channel-tagged bound shares go through the verified pair-selection
-    // policy, which admits every distinct-channel pair (cloud + server,
-    // cloud + trusted contact, server + trusted contact).
-    if !req.bound_shares.is_empty() {
-        let requested = req
-            .requested_user_id
-            .as_deref()
-            .ok_or("requested_user_id is required for bound account recovery")?;
-        if req.bound_shares.len() != 2 {
-            return Err("bound account recovery requires exactly two shares".into());
-        }
-        let channel = |name: &str| match name {
-            "cloud" => Ok(vela_crypto::recovery::RecoveryShareChannel::Cloud),
-            "server" => Ok(vela_crypto::recovery::RecoveryShareChannel::Server),
-            "trusted_contact" => Ok(vela_crypto::recovery::RecoveryShareChannel::TrustedContact),
-            other => Err(format!("unknown recovery share channel {other:?}")),
-        };
-        // Decode each bound share from its own metadata entry — pairing
-        // `bound_shares[i]` metadata with a positionally-coupled element of
-        // the separate `shares_b64` array let metadata and key material go
-        // out of sync.
-        let decode_bound = |entry: &CombineShareInput| -> FfiResult<shamir::Share> {
+    // Decode each bound share from its own metadata entry — pairing
+    // `bound_shares[i]` metadata with a positionally-coupled element of the
+    // separate `shares_b64` array let metadata and key material go out of sync.
+    let bound_share_bytes: Vec<shamir::Share> = req
+        .bound_shares
+        .iter()
+        .map(|entry| -> FfiResult<shamir::Share> {
             Ok(shamir::Share::from_bytes(
                 &B64.decode(entry.share_b64.as_bytes())?,
             )?)
-        };
-        let first = &req.bound_shares[0];
-        let second = &req.bound_shares[1];
-        let recovered = vela_crypto::recovery::reconstruct_account_recovery(
-            requested,
-            vela_crypto::recovery::BoundRecoveryShare {
-                account_id: first.account_id.as_str(),
-                key_epoch: first.key_epoch,
-                split_id: first.split_id.as_deref(),
-                channel: channel(&first.channel)?,
-                recipient_bound: first.recipient_bound,
-                share: &decode_bound(first)?,
-            },
-            vela_crypto::recovery::BoundRecoveryShare {
-                account_id: second.account_id.as_str(),
-                key_epoch: second.key_epoch,
-                split_id: second.split_id.as_deref(),
-                channel: channel(&second.channel)?,
-                recipient_bound: second.recipient_bound,
-                share: &decode_bound(second)?,
-            },
-        )?;
-        return Ok(CombineRecoveryResponse {
-            rms_b64: B64.encode(recovered.rms),
-        });
-    }
-    let secret = match binding {
-        (
-            Some(requested),
-            Some(cloud_user),
-            Some(cloud_epoch),
-            Some(server_user),
-            Some(server_epoch),
-        ) => {
-            if shares.len() != 2 {
-                return Err("bound account recovery requires exactly two shares".into());
-            }
-            vela_crypto::recovery::reconstruct_account_recovery(
-                requested,
-                vela_crypto::recovery::BoundRecoveryShare {
-                    account_id: cloud_user,
-                    key_epoch: cloud_epoch,
-                    split_id: req.cloud_split_id.as_deref(),
-                    channel: vela_crypto::recovery::RecoveryShareChannel::Cloud,
-                    recipient_bound: false,
-                    share: &shares[0],
-                },
-                vela_crypto::recovery::BoundRecoveryShare {
-                    account_id: server_user,
-                    key_epoch: server_epoch,
-                    split_id: req.server_split_id.as_deref(),
-                    channel: vela_crypto::recovery::RecoveryShareChannel::Server,
-                    recipient_bound: false,
-                    share: &shares[1],
-                },
-            )?
-            .rms
-            .to_vec()
-        }
-        (None, None, None, None, None) => shamir::reconstruct(&shares, 32)?,
-        _ => return Err("incomplete account/epoch recovery binding".into()),
-    };
+        })
+        .collect::<FfiResult<_>>()?;
+    let bound_shares: Vec<recovery::CombineShareInput<'_>> = req
+        .bound_shares
+        .iter()
+        .zip(bound_share_bytes.iter())
+        .map(|(entry, share)| -> FfiResult<recovery::CombineShareInput<'_>> {
+            Ok(recovery::CombineShareInput {
+                share,
+                channel: recovery::RecoveryShareChannel::from_wire_name(&entry.channel)
+                    .ok_or_else(|| format!("unknown recovery share channel {:?}", entry.channel))?,
+                account_id: &entry.account_id,
+                key_epoch: entry.key_epoch,
+                split_id: entry.split_id.as_deref(),
+                recipient_bound: entry.recipient_bound,
+            })
+        })
+        .collect::<FfiResult<_>>()?;
+    let rms = recovery::combine_recovery_shares(recovery::CombineRecoveryInput {
+        requested_user_id: req.requested_user_id.as_deref(),
+        shares: &shares,
+        cloud_user_id: req.cloud_user_id.as_deref(),
+        cloud_key_epoch: req.cloud_key_epoch,
+        cloud_split_id: req.cloud_split_id.as_deref(),
+        server_user_id: req.server_user_id.as_deref(),
+        server_key_epoch: req.server_key_epoch,
+        server_split_id: req.server_split_id.as_deref(),
+        bound_shares: &bound_shares,
+    })?;
     Ok(CombineRecoveryResponse {
-        rms_b64: B64.encode(secret),
+        rms_b64: B64.encode(rms),
     })
 }
 
@@ -1152,13 +1301,13 @@ fn seal_contact_share_json(request_json: &str) -> FfiResult<serde_json::Value> {
     let pk =
         kem::HybridPublicKey::from_bytes(&B64.decode(req.recipient_public_key_b64.as_bytes())?)?;
     let share = shamir::Share::from_bytes(&B64.decode(req.share_b64.as_bytes())?)?;
-    let context = vela_crypto::recovery::ContactShareContext {
+    let context = recovery::ContactShareContext {
         account_id: req.account_id.as_str(),
         key_epoch: req.key_epoch,
         split_id: req.split_id.as_deref(),
         coordinate: share.x,
     };
-    let envelope = vela_crypto::recovery::seal_contact_share(&pk, &context, &share)?;
+    let envelope = recovery::seal_contact_share(&pk, &context, &share)?;
     Ok(serde_json::json!({
         "version": 1u32,
         "account_id": req.account_id,
@@ -1183,18 +1332,14 @@ fn open_contact_share_json(request_json: &str) -> FfiResult<serde_json::Value> {
     let req: Request = serde_json::from_str(request_json)?;
     let sk =
         kem::HybridSecretKey::from_bytes(&B64.decode(req.recipient_secret_key_b64.as_bytes())?)?;
-    let context = vela_crypto::recovery::ContactShareContext {
+    let context = recovery::ContactShareContext {
         account_id: req.account_id.as_str(),
         key_epoch: req.key_epoch,
         split_id: req.split_id.as_deref(),
         coordinate: req.coordinate,
     };
     let blob = B64.decode(req.envelope_b64.as_bytes())?;
-    let share = if req.response {
-        vela_crypto::recovery::open_contact_share_response(&sk, &context, &blob)?
-    } else {
-        vela_crypto::recovery::open_contact_share(&sk, &context, &blob)?
-    };
+    let share = recovery::open_contact_share_for_direction(&sk, &context, &blob, req.response)?;
     Ok(serde_json::json!({ "share_b64": B64.encode(share.to_bytes()), "x": share.x }))
 }
 
@@ -1213,13 +1358,13 @@ fn seal_contact_share_response_json(request_json: &str) -> FfiResult<serde_json:
     let pk =
         kem::HybridPublicKey::from_bytes(&B64.decode(req.requester_public_key_b64.as_bytes())?)?;
     let share = shamir::Share::from_bytes(&B64.decode(req.share_b64.as_bytes())?)?;
-    let context = vela_crypto::recovery::ContactShareContext {
+    let context = recovery::ContactShareContext {
         account_id: req.account_id.as_str(),
         key_epoch: req.key_epoch,
         split_id: req.split_id.as_deref(),
         coordinate: req.coordinate,
     };
-    let envelope = vela_crypto::recovery::seal_contact_share_response(&pk, &context, &share)?;
+    let envelope = recovery::seal_contact_share_response(&pk, &context, &share)?;
     Ok(serde_json::json!({
         "account_id": req.account_id,
         "key_epoch": req.key_epoch,
@@ -1248,7 +1393,7 @@ fn possession_proof_json(request_json: &str) -> FfiResult<serde_json::Value> {
     let challenge = B64.decode(req.challenge_b64.as_bytes())?;
     // v2: sign under the RMS-derived private key; the server verifies against
     // the public commitment alone, so the stored value cannot forge proofs.
-    let proof = vela_crypto::recovery::rms_possession_sign(
+    let proof = recovery::rms_possession_sign(
         &rms,
         &req.user_id,
         &req.recovery_id,
@@ -1256,7 +1401,7 @@ fn possession_proof_json(request_json: &str) -> FfiResult<serde_json::Value> {
         req.key_epoch,
     );
     Ok(serde_json::json!({
-        "possession_hash_b64": B64.encode(vela_crypto::recovery::rms_possession_commitment(&rms)),
+        "possession_hash_b64": B64.encode(recovery::rms_possession_commitment(&rms)),
         "proof_b64": B64.encode(proof),
     }))
 }
@@ -1288,20 +1433,7 @@ fn plan_recovery_publication_json(request_json: &str) -> FfiResult<PublicationPl
         },
     );
     Ok(PublicationPlanResponse {
-        action: match action {
-            vela_client_recovery_policy::PublicationAction::StageServer => "stage_server",
-            vela_client_recovery_policy::PublicationAction::UploadCloudCandidate => {
-                "upload_cloud_candidate"
-            }
-            vela_client_recovery_policy::PublicationAction::FinalizeServer => "finalize_server",
-            vela_client_recovery_policy::PublicationAction::PromoteCloudActive => {
-                "promote_cloud_active"
-            }
-            vela_client_recovery_policy::PublicationAction::Complete => "complete",
-            vela_client_recovery_policy::PublicationAction::Retire => "retire",
-            vela_client_recovery_policy::PublicationAction::Reject => "reject",
-        }
-        .to_string(),
+        action: action.as_str().to_string(),
     })
 }
 
@@ -1515,8 +1647,8 @@ mod tests {
         let fp: IdentityFingerprintResponse = serde_json::from_str(&fp).unwrap();
         assert_eq!(
             fp.fingerprint,
-            vela_crypto::verification::enrollment_fingerprint(&hybrid_vk),
-            "the two sides must agree about the same key"
+            vela_crypto::verification::enrollment_fingerprint(&hybrid_vk, &hybrid_ek),
+            "the two sides must agree about the same keys"
         );
 
         // The result signature proves possession of the claimed key.
@@ -1589,6 +1721,49 @@ mod tests {
 
     /// Audit C-1: the identity is created behind a handle. The response carries
     /// public halves and a sealed blob; nothing the app can read is a key.
+    /// Share envelope v2 through the C FFI JSON surface.
+    #[test]
+    fn signed_shares_round_trip_and_forged_updates_are_refused() {
+        let alice = identity_create_impl(&[1u8; 32]).unwrap();
+        let mallory = identity_create_impl(&[2u8; 32]).unwrap();
+        let bob = identity_create_impl(&[3u8; 32]).unwrap();
+        let seal = |sender: u64, revision: u64, item: &str| {
+            identity_seal_signed_share_impl(
+                &serde_json::json!({
+                    "handle": sender,
+                    "sender_user_id": "alice",
+                    "sender_device_id": "alice-iphone",
+                    "recipient_user_id": "bob",
+                    "recipient_share_ek_b64": bob.share_ek_b64,
+                    "lineage_id": "lineage-1",
+                    "revision": revision,
+                    "item_json": item,
+                })
+                .to_string(),
+            )
+            .unwrap()
+            .capsule_b64
+        };
+        let admit = |capsule: &str, pin: Option<&SharePinJson>| {
+            identity_admit_share_impl(
+                &serde_json::json!({
+                    "handle": bob.handle,
+                    "capsule_b64": capsule,
+                    "recipient_user_id": "bob",
+                    "attributed_sender_user_id": "alice",
+                    "pin": pin,
+                })
+                .to_string(),
+            )
+        };
+        let first = admit(&seal(alice.handle, 1, "{}"), None).unwrap();
+        assert!(first.first_contact);
+        let update = admit(&seal(alice.handle, 2, "{}"), Some(&first.pin)).unwrap();
+        assert!(!update.first_contact);
+        assert!(admit(&seal(mallory.handle, 3, "{}"), Some(&update.pin)).is_err());
+        assert!(admit(&seal(alice.handle, 2, "{}"), Some(&update.pin)).is_err());
+    }
+
     #[test]
     fn identity_handle_signs_and_reveals_no_private_key() {
         let seal_key = [4u8; 32];
@@ -1768,6 +1943,152 @@ mod tests {
     }
 
     #[test]
+    fn admitted_download_enforces_epoch_and_rollback_after_real_open() {
+        let rms = [23u8; 32];
+        let chunk_id = "vault-data-000000";
+        let vault_json = r#"{"items":[],"tombstones":[]}"#;
+        let seal = |clock: i64, epoch: i64| {
+            let enc = call_rms(
+                vela_ffi_encrypt_vault_chunk_json,
+                &rms,
+                &serde_json::json!({
+                    "chunk_id": chunk_id, "vault_json": vault_json,
+                    "lamport_clock": clock, "key_epoch": epoch,
+                })
+                .to_string(),
+            );
+            let enc: EncryptVaultResponse = serde_json::from_str(&enc).unwrap();
+            enc.ciphertext_b64
+        };
+        let admit =
+            |clock: i64, epoch: i64, local_epoch: i64, last_seen: Option<i64>, ciphertext: &str| {
+                call_rms(
+                    vela_ffi_decrypt_admitted_vault_chunk_json,
+                    &rms,
+                    &serde_json::json!({
+                        "chunk_id": chunk_id, "ciphertext_b64": ciphertext,
+                        "lamport_clock": clock, "key_epoch": epoch,
+                        "local_key_epoch": local_epoch,
+                        "last_seen_lamport": last_seen,
+                    })
+                    .to_string(),
+                )
+            };
+
+        let at_four = seal(4, 2);
+        let admitted: AdmittedChunkResponse =
+            serde_json::from_str(&admit(4, 2, 2, Some(3), &at_four)).unwrap();
+        assert_eq!(admitted.vault_json, vault_json);
+        assert_eq!(admitted.lamport_clock, 4);
+        assert!(!admit(4, 2, 2, Some(4), &at_four).contains("error"));
+
+        // Authenticates at clock 3, but the device recorded 7: reject.
+        assert!(admit(3, 2, 2, Some(7), &seal(3, 2)).contains("error"));
+        // Relabelled clock fails the AEAD, regardless of any JSON boolean.
+        assert!(call_rms(
+            vela_ffi_decrypt_admitted_vault_chunk_json,
+            &rms,
+            &serde_json::json!({
+                "chunk_id": chunk_id, "ciphertext_b64": at_four,
+                "lamport_clock": 5, "key_epoch": 2, "local_key_epoch": 2,
+                "last_seen_lamport": 4, "aad_binding_verified": true,
+            })
+            .to_string(),
+        )
+        .contains("error"));
+        // Nonpositive clocks/epochs and mismatched epochs are refused.
+        assert!(admit(0, 2, 2, None, &seal(0, 2)).contains("error"));
+        assert!(admit(-1, 2, 2, None, &seal(-1, 2)).contains("error"));
+        for (epoch, local) in [(0, 0), (2, 3), (3, 2), (-1, -1)] {
+            assert!(admit(4, epoch, local, None, &at_four).contains("error"));
+        }
+    }
+
+    #[test]
+    fn admitted_download_reads_android_sealed_wire_ciphertext() {
+        let rms = [24u8; 32];
+        let chunk_id = "vault-data-000002";
+        let plaintext = br#"{"items":[],"tombstones":[]}"#;
+        let key = chunk_key(&rms, chunk_id);
+        for epoch in 1..=3 {
+            let ciphertext =
+                rekey::seal_fleet_chunk(&key, plaintext, epoch, chunk_id, 12)
+                    .expect("android-style seal");
+            let admitted = call_rms(
+                vela_ffi_decrypt_admitted_vault_chunk_json,
+                &rms,
+                &serde_json::json!({
+                    "chunk_id": chunk_id,
+                    "ciphertext_b64": B64.encode(&ciphertext),
+                    "lamport_clock": 12,
+                    "key_epoch": epoch,
+                    "local_key_epoch": epoch,
+                    "last_seen_lamport": 11,
+                })
+                .to_string(),
+            );
+            let admitted: AdmittedChunkResponse = serde_json::from_str(&admitted)
+                .unwrap_or_else(|e| panic!("epoch {epoch} cross-client read failed: {e}"));
+            assert_eq!(admitted.vault_json, String::from_utf8_lossy(plaintext));
+            assert_eq!(admitted.lamport_clock, 12);
+        }
+    }
+
+    /// Pre-C-2 blobs are `aead::encrypt` output with no sealed header and no
+    /// AAD: the fleet reader still opens them at epoch 1 for migration, so the
+    /// admission path must refuse them explicitly or a server could relabel an
+    /// old blob with any clock and pass the rollback decision.
+    #[test]
+    fn admitted_download_refuses_legacy_unsealed_blobs_at_any_epoch() {
+        let rms = [27u8; 32];
+        let chunk_id = "vault-data-000000";
+        let key = chunk_key(&rms, chunk_id);
+        let legacy = aead::encrypt(&key, br#"{"items":[],"tombstones":[]}"#).unwrap();
+        assert!(!aead::is_sealed(&legacy));
+        let request = |epoch: i64, clock: i64, last_seen: Option<i64>| {
+            serde_json::json!({
+                "chunk_id": chunk_id,
+                "ciphertext_b64": B64.encode(&legacy),
+                "lamport_clock": clock,
+                "key_epoch": epoch,
+                "local_key_epoch": epoch,
+                "last_seen_lamport": last_seen,
+            })
+            .to_string()
+        };
+
+        for epoch in [1, 2] {
+            let inflated = call_rms(
+                vela_ffi_decrypt_admitted_vault_chunk_json,
+                &rms,
+                &request(epoch, 9_000, Some(1)),
+            );
+            assert!(
+                inflated.contains("error") && inflated.contains("unsealed"),
+                "epoch {epoch} must fail on the sealed-header gate, got: {inflated}"
+            );
+        }
+
+        // The low-level reader still returns the plaintext bytes (migration
+        // path); admission is the layer that refuses them.
+        let low_level = call_rms(
+            vela_ffi_decrypt_vault_chunk_json,
+            &rms,
+            &serde_json::json!({
+                "chunk_id": chunk_id,
+                "ciphertext_b64": B64.encode(&legacy),
+                "lamport_clock": 9_000,
+                "key_epoch": 1,
+            })
+            .to_string(),
+        );
+        assert!(
+            !low_level.contains("error"),
+            "the legacy reader is expected to stay usable for migration: {low_level}"
+        );
+    }
+
+    #[test]
     fn rms_capsule_round_trips() {
         let transfer_key = [3u8; 32];
         let rms = [9u8; 32];
@@ -1928,7 +2249,7 @@ mod tests {
         let proof_b64 = response["proof_b64"].as_str().unwrap();
         assert_eq!(
             B64.decode(proof_b64).unwrap().len(),
-            vela_crypto::recovery::POSSESSION_PROOF_LEN
+            recovery::POSSESSION_PROOF_LEN
         );
         // Deterministic and attempt-bound.
         let again = call(
@@ -1949,7 +2270,7 @@ mod tests {
         let commitment = B64.decode(response["possession_hash_b64"].as_str().unwrap()).unwrap();
         assert_ne!(proof_b64, again["proof_b64"]);
         let message_user = "account-a";
-        assert!(vela_crypto::recovery::rms_possession_verify(
+        assert!(recovery::rms_possession_verify(
             &commitment,
             message_user,
             "22222222-2222-2222-2222-222222222222",
@@ -1957,7 +2278,7 @@ mod tests {
             3,
             &B64.decode(proof_b64).unwrap()
         ));
-        assert!(vela_crypto::recovery::rms_possession_verify(
+        assert!(recovery::rms_possession_verify(
             &commitment,
             message_user,
             "22222222-2222-2222-2222-222222222222",

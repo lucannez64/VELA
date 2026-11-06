@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VELA formalization plan</title>
+<style>
+.viz-root {
+  color-scheme: light;
+  --surface-0: #f4f3f0; --surface-1: #fcfcfb; --surface-2: #efeee9; --border: #d9d8d2;
+  --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #77766f;
+  --edge: #b9b8b0; --edge-hi: #2a78d6; --edge-lo: #eb6834;
+  --done-fill: #e3f1e3; --done-ink: #1d6b1d; --ready-fill: #e4eefb; --ready-ink: #1f5fae;
+  --prog-fill: #fdf0d2; --prog-ink: #8a5a00; --block-fill: #fbe4e3; --block-ink: #b03231;
+  --wait-fill: #f1f0ec; --hard: #c23b3a; --crit: #6250d6;
+  --a-B: #2a78d6; --a-T: #eb6834; --a-O: #1baf7a; --a-H: #eda100;
+  --a-P: #e87ba4; --a-C: #008300; --a-N: #6250d6; --a-Z: #e34948;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .viz-root {
+    color-scheme: dark;
+    --surface-0: #121211; --surface-1: #1a1a19; --surface-2: #242422; --border: #3a3a37;
+    --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8f8e86;
+    --edge: #4a4a46; --edge-hi: #3987e5; --edge-lo: #d95926;
+    --done-fill: #183218; --done-ink: #8fd18f; --ready-fill: #16263b; --ready-ink: #8db8ef;
+    --prog-fill: #3a2c0c; --prog-ink: #f2c25c; --block-fill: #3d1a1a; --block-ink: #f09090;
+    --wait-fill: #222220; --hard: #e66767; --crit: #9085e9;
+    --a-B: #3987e5; --a-T: #d95926; --a-O: #199e70; --a-H: #c98500;
+    --a-P: #d55181; --a-C: #008300; --a-N: #9085e9; --a-Z: #e66767;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+.viz-root { display: grid; grid-template-rows: auto auto minmax(0, 1fr); grid-template-columns: minmax(0, 1fr) 400px;
+  height: 100vh; background: var(--surface-0); color: var(--text-primary); }
+header { grid-column: 1 / 3; display: flex; flex-wrap: wrap; align-items: center; gap: 16px;
+  padding: 10px 16px; background: var(--surface-1); border-bottom: 1px solid var(--border); }
+header h1 { font-size: 17px; margin: 0 4px 0 0; }
+.stat b { display: block; font-size: 15px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.stat span { color: var(--text-muted); font-size: 11px; white-space: nowrap; }
+.bar { width: 120px; height: 8px; border-radius: 4px; background: var(--surface-2); overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--done-ink); }
+.live { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); }
+.live i { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); }
+.live.on i { background: var(--done-ink); box-shadow: 0 0 0 3px color-mix(in srgb, var(--done-ink) 25%, transparent); }
+.live.err i { background: var(--block-ink); }
+input[type=search] { width: 200px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--surface-0); color: inherit; font: inherit; }
+button { padding: 5px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-1);
+  color: inherit; font: inherit; cursor: pointer; }
+button:hover { background: var(--surface-2); }
+button[aria-pressed=true] { border-color: var(--edge-hi); color: var(--edge-hi); }
+.chips { grid-column: 1 / 3; display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 16px;
+  background: var(--surface-1); border-bottom: 1px solid var(--border); align-items: center; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 12px;
+  border: 1px solid var(--border); background: var(--surface-0); cursor: pointer; font-size: 12px; user-select: none; }
+.chip .sw { width: 10px; height: 10px; border-radius: 3px; }
+.chip.off { opacity: .4; }
+.chips .sep { width: 1px; height: 18px; background: var(--border); margin: 0 6px; }
+.key { font-size: 12px; color: var(--text-secondary); display: inline-flex; gap: 5px; align-items: center; }
+.key .sw { width: 14px; height: 10px; border-radius: 3px; border: 1px solid var(--border); }
+#stage { position: relative; overflow: hidden; cursor: grab; background: var(--surface-0); }
+#stage.drag { cursor: grabbing; }
+svg { display: block; width: 100%; height: 100%; }
+.edge { fill: none; stroke: var(--edge); stroke-width: 1.2; }
+.edge.up { stroke: var(--edge-hi); stroke-width: 2.2; }
+.edge.down { stroke: var(--edge-lo); stroke-width: 2.2; }
+.edge.crit { stroke: var(--crit); stroke-width: 2.4; }
+.edge.dim { opacity: .12; }
+.node { cursor: pointer; }
+.node rect.box { stroke: var(--border); stroke-width: 1; }
+.node.waiting rect.box { fill: var(--wait-fill); }
+.node.ready rect.box { fill: var(--ready-fill); stroke: var(--ready-ink); }
+.node.done rect.box { fill: var(--done-fill); stroke: var(--done-ink); }
+.node.unpushed rect.box { stroke-dasharray: 4 3; }
+.node.progress rect.box { fill: var(--prog-fill); stroke: var(--prog-ink); stroke-width: 2; }
+.node.blocked rect.box { fill: var(--block-fill); stroke: var(--block-ink); stroke-width: 2; }
+.node.progress .pulse { stroke: var(--prog-ink); fill: none; animation: pulse 1.6s ease-out infinite; }
+@keyframes pulse { from { opacity: .7; stroke-width: 1; } to { opacity: 0; stroke-width: 9; } }
+@media (prefers-reduced-motion: reduce) { .node.progress .pulse { animation: none; opacity: 0; } }
+.node.sel rect.box { stroke: var(--text-primary); stroke-width: 2.5; }
+.node.match rect.box { stroke: var(--edge-hi); stroke-width: 2.5; }
+.node.dim { opacity: .2; }
+.node text { font-size: 11px; fill: var(--text-secondary); }
+.node text.id { font: 600 11.5px ui-monospace, "SF Mono", Menlo, monospace; fill: var(--text-primary); }
+.node text.tag { font-size: 9.5px; fill: var(--text-muted); }
+.node text.hard { font-size: 9.5px; fill: var(--hard); font-weight: 600; }
+.node text.st { font-weight: 600; font-size: 9.5px; }
+.st-done { fill: var(--done-ink); } .st-ready { fill: var(--ready-ink); }
+.st-progress { fill: var(--prog-ink); } .st-blocked { fill: var(--block-ink); }
+.lvl { font-size: 11px; fill: var(--text-muted); }
+aside { grid-row: 3; grid-column: 2; display: flex; flex-direction: column; min-height: 0;
+  background: var(--surface-1); border-left: 1px solid var(--border); }
+#panel { flex: 1 1 60%; overflow: auto; padding: 14px 16px; min-height: 0; }
+#logbox { flex: 1 1 40%; overflow: auto; padding: 10px 16px; border-top: 1px solid var(--border); min-height: 0; }
+aside h2 { font-size: 15px; margin: 0 0 4px; }
+aside h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); margin: 14px 0 6px; }
+#logbox h3 { margin-top: 2px; }
+aside .meta { display: grid; grid-template-columns: repeat(4, auto); gap: 2px 14px; margin: 10px 0; }
+aside .meta b { font-size: 14px; } aside .meta span { color: var(--text-muted); font-size: 11px; }
+aside ul { margin: 0; padding: 0; list-style: none; }
+aside li { padding: 3px 0; border-bottom: 1px solid var(--surface-2); display: flex; gap: 8px; }
+aside li a, .logrow a { font-family: ui-monospace, Menlo, monospace; color: var(--edge-hi); cursor: pointer; min-width: 42px; }
+aside li .s { margin-left: auto; font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+.logrow { display: grid; grid-template-columns: 62px 56px 1fr; gap: 8px; padding: 5px 0;
+  border-bottom: 1px solid var(--surface-2); font-size: 12px; }
+.logrow .t { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.logrow .k { font-size: 11px; color: var(--text-muted); }
+.logrow .m { grid-column: 3; word-break: break-word; }
+.logrow.fresh { animation: fresh 2.5s ease-out; }
+@keyframes fresh { from { background: var(--prog-fill); } to { background: transparent; } }
+.btns { display: flex; gap: 6px; flex-wrap: wrap; }
+.muted { color: var(--text-muted); }
+.done-ink { color: var(--done-ink); } .ready-ink { color: var(--ready-ink); } .hard-ink { color: var(--hard); }
+.progress-ink { color: var(--prog-ink); } .blocked-ink { color: var(--block-ink); } .waiting-ink { color: var(--text-muted); }
+#tip { position: fixed; pointer-events: none; max-width: 340px; padding: 7px 9px; border-radius: 6px;
+  background: var(--surface-1); border: 1px solid var(--border); box-shadow: 0 4px 14px rgb(0 0 0 / .15);
+  font-size: 12px; display: none; z-index: 5; color: var(--text-primary); }
+#table { position: absolute; inset: 0; overflow: auto; background: var(--surface-1); display: none; padding: 12px 16px; }
+#table table { border-collapse: collapse; width: 100%; font-size: 12px; }
+#table th, #table td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--surface-2); vertical-align: top; }
+#table th { position: sticky; top: 0; background: var(--surface-1); color: var(--text-muted); font-weight: 600; }
+#table tr { cursor: pointer; } #table tr:hover td { background: var(--surface-2); }
+@media (max-width: 900px) {
+  .viz-root { grid-template-columns: 1fr; grid-template-rows: auto auto 520px auto; height: auto; }
+  header, .chips { grid-column: 1; } aside { grid-row: 4; grid-column: 1; border-left: 0; border-top: 1px solid var(--border); height: 560px; }
+  input[type=search] { width: 160px; } header { gap: 10px; }
+}
+</style>
+</head>
+<body>
+<div class="viz-root">
+  <header>
+    <h1>VELA formalization plan</h1>
+    <div class="stat"><b id="sDone"></b><span>done</span></div>
+    <div class="stat"><b id="sProg"></b><span>in progress</span></div>
+    <div class="stat"><b id="sReady"></b><span>ready</span></div>
+    <div class="stat"><b id="sWait"></b><span>waiting</span></div>
+    <div class="stat liveonly"><b id="sUnpushed"></b><span>not pushed</span></div>
+    <div><div class="bar"><i id="sBar"></i></div><span class="muted" id="sPct"></span></div>
+    <input type="search" id="q" placeholder="Find a step (id or words)" aria-label="Find a step">
+    <button id="bFit">Fit all</button>
+    <button id="bProg" aria-pressed="false">In progress</button>
+    <button id="bReady" aria-pressed="false">Ready</button>
+    <button id="bCrit" aria-pressed="false">Critical path</button>
+    <button id="bTable" aria-pressed="false">Table</button>
+    <div class="stat liveonly"><b id="sLoad">–</b><span>load here</span></div>
+    <div class="stat liveonly"><b id="sBox">–</b><span>load build box</span></div>
+    <div class="stat liveonly"><b id="sGit">–</b><span id="sGitL">head / origin</span></div>
+    <div class="stat liveonly"><b id="sAhead">–</b><span>commits ahead</span></div>
+    <span class="live" id="live"><i></i><span id="liveT">static file</span></span>
+  </header>
+  <div class="chips" id="chips"></div>
+  <div id="stage">
+    <svg id="svg"><g id="vp"><g id="edges"></g><g id="nodes"></g></g></svg>
+    <div id="table"></div>
+  </div>
+  <aside><div id="panel"></div><div id="logbox"></div></aside>
+</div>
+<div id="tip"></div>
+<script>
+const PLAN = {"areas": {"B": "Baseline and bookkeeping", "T": "F-6 trusted base", "O": "F-1 observation origins", "H": "F-1/F-2 full handlers and server composition", "P": "F-3 client persistence and recovery", "C": "F-4 construction security", "N": "F-5 native clients and protocol composition", "Z": "Closing"}, "critical_path": ["B0", "B3", "B4", "O3a", "O3f", "O9", "O13f", "H8f", "H11a", "H11b", "H11c", "H11d", "H11e", "H12", "Z1", "Z2", "Z3", "Z4"], "nodes": [{"id": "B0", "area": "B", "size": "S", "hard": false, "title": "Get PR #175 green", "done": "Cancelled formal run on 654a0ee rerun; vela-box runners healthy; every PR check passes", "deps": [], "level": 0, "step": 1}, {"id": "B1", "area": "B", "size": "S", "hard": false, "title": "Merge PR #175 into main (when approved)", "done": "main contains the work; 08 baseline points at the merge commit. Work proceeds on the PR branch until then", "deps": ["B0"], "level": 1, "step": 2}, {"id": "B2", "area": "B", "size": "S", "hard": false, "title": "Link this plan from 08", "done": "08 'Remaining obligations' rows each list their plan node ids", "deps": ["B0"], "level": 1, "step": 3}, {"id": "B3", "area": "B", "size": "M", "hard": false, "title": "Dedupe the copied Sql/Faulty harnesses", "done": "One shared Rust test harness crate; all executor conformance suites use it and pass", "deps": ["B0"], "level": 1, "step": 4}, {"id": "B4", "area": "B", "size": "M", "hard": true, "title": "One shared F* store/SQL model", "done": "All executor proofs import one Vela.Store.Model module (txn, faults, rows); per-crate copies deleted; all gates green", "deps": ["B3"], "level": 2, "step": 5}, {"id": "B5", "area": "B", "size": "S", "hard": false, "title": "Plan-node check in check-correspondence", "done": "check-correspondence.py fails if a correspondence pair cites an unknown plan node", "deps": ["B2"], "level": 2, "step": 6}, {"id": "T1", "area": "T", "size": "S", "hard": false, "title": "Inventory imported model contracts", "done": "Script lists every hax/std/F* library symbol the corpus relies on, with use counts; output committed", "deps": ["B0"], "level": 1, "step": 7}, {"id": "T2", "area": "T", "size": "S", "hard": false, "title": "Zero-assumption gate over all F*", "done": "check-proof-boundary rejects assume/admit/axiom in extracted AND handwritten modules; mutation fixture rejected", "deps": ["T1"], "level": 2, "step": 8}, {"id": "T3", "area": "T", "size": "M", "hard": false, "title": "Review the Vec model", "done": "Review note maps each used Vec op (len/index/push/extend/slice) to Rust std semantics incl. panics", "deps": ["T1"], "level": 2, "step": 9}, {"id": "T4", "area": "T", "size": "M", "hard": false, "title": "Review the String/UTF-8 model", "done": "Review note for String/str/from_utf8 ops used; gaps listed as nodes or excluded", "deps": ["T1"], "level": 2, "step": 10}, {"id": "T5", "area": "T", "size": "M", "hard": false, "title": "Review integer and overflow models", "done": "Every u8..u128/i64 op used is checked against Rust release-mode semantics (wrapping vs panic)", "deps": ["T1"], "level": 2, "step": 11}, {"id": "T6", "area": "T", "size": "S", "hard": false, "title": "Review Option/Result/slice models", "done": "Review note committed", "deps": ["T1"], "level": 2, "step": 12}, {"id": "T7", "area": "T", "size": "L", "hard": true, "title": "Differential tests of the std models", "done": "Extracted F* model functions run (OCaml extraction) against Rust on random inputs; zero mismatches over 10^6 cases per op", "deps": ["T3", "T4", "T5", "T6"], "level": 3, "step": 13}, {"id": "T8", "area": "T", "size": "M", "hard": false, "title": "Proof stability gate", "done": "Every F* module verifies with 3 Z3 seeds and z3 pinned; rlimits recorded; flaky modules split", "deps": ["T2"], "level": 3, "step": 14}, {"id": "T9", "area": "T", "size": "S", "hard": false, "title": "List OS/library interface assumptions", "done": "09 lists each assumed interface (entropy, clock, fs, locks, DB isolation) with its call sites", "deps": ["T1"], "level": 2, "step": 15}, {"id": "T10", "area": "T", "size": "M", "hard": false, "title": "Pin the rest of the environment (G-3)", "done": "opam lock, action SHAs and OS packages pinned; G-3 closed", "deps": ["B0"], "level": 1, "step": 16}, {"id": "T11", "area": "T", "size": "M", "hard": false, "title": "One proof container", "done": "A pinned image runs run-all.sh end to end; hosted CI uses it", "deps": ["T10"], "level": 2, "step": 17}, {"id": "T12", "area": "T", "size": "S", "hard": false, "title": "Update the trusted-base docs", "done": "07/09 updated from T7-T9; F-6 row reads closed except independent review", "deps": ["T7", "T8", "T9", "T11"], "level": 4, "step": 18}, {"id": "O1", "area": "O", "size": "S", "hard": false, "title": "Inventory observation producers", "done": "Table: every observation field -> producing code (SQL query, store get, verifier, token, clock); committed", "deps": ["B0"], "level": 1, "step": 19}, {"id": "O2", "area": "O", "size": "M", "hard": false, "title": "Schema check for every rendered SQL", "done": "Gate parses migrations into a schema model and checks every byte-pinned statement's tables/columns/types", "deps": ["O1"], "level": 2, "step": 20}, {"id": "O3a", "area": "O", "size": "S", "hard": false, "title": "Row decoders: sharing", "done": "Row->observation decoders extracted and proved against the row model", "deps": ["O1", "B4"], "level": 3, "step": 21}, {"id": "O3b", "area": "O", "size": "S", "hard": false, "title": "Row decoders: send links", "done": "As O3a for send", "deps": ["O3a"], "level": 4, "step": 22}, {"id": "O3c", "area": "O", "size": "M", "hard": false, "title": "Row decoders: session and web sessions", "done": "As O3a for session", "deps": ["O3a"], "level": 4, "step": 23}, {"id": "O3d", "area": "O", "size": "M", "hard": false, "title": "Row decoders: enrollment and pairing", "done": "As O3a for enrollment", "deps": ["O3a"], "level": 4, "step": 24}, {"id": "O3e", "area": "O", "size": "M", "hard": false, "title": "Row decoders: recovery", "done": "As O3a for all four recovery families", "deps": ["O3a"], "level": 4, "step": 25}, {"id": "O3f", "area": "O", "size": "M", "hard": false, "title": "Row decoders: vault, rotation, capsules", "done": "As O3a for vault", "deps": ["O3a"], "level": 4, "step": 26}, {"id": "O4", "area": "O", "size": "M", "hard": false, "title": "Store key builders are injective", "done": "Proof that every store key builder (rl:*, challenge, grant, ...) is injective and namespaces are disjoint", "deps": ["O1"], "level": 2, "step": 27}, {"id": "O5", "area": "O", "size": "M", "hard": true, "title": "Store value codecs round-trip", "done": "decode(encode v) = v and encode injective for every stored value type", "deps": ["O4", "T3"], "level": 3, "step": 28}, {"id": "O6", "area": "O", "size": "S", "hard": false, "title": "Grant store-key user binding", "done": "Proof that a grant key read in a handler is bound to the session user (open item from 15)", "deps": ["O4"], "level": 3, "step": 29}, {"id": "O7", "area": "O", "size": "M", "hard": false, "title": "Signature-verifier wrapper", "done": "Extracted wrapper proved: Ok iff both components verify on the exact signed bytes; components trusted", "deps": ["O1"], "level": 2, "step": 30}, {"id": "O8", "area": "O", "size": "M", "hard": false, "title": "Token and session-id producer", "done": "Claims construction and parse->session observation proved; PASETO crypto trusted", "deps": ["O1"], "level": 2, "step": 31}, {"id": "O9", "area": "O", "size": "M", "hard": true, "title": "Epoch freshness", "done": "Epoch read/normalize composed with the vault row model proves freshness, not just normalization", "deps": ["O3f"], "level": 5, "step": 32}, {"id": "O10", "area": "O", "size": "M", "hard": false, "title": "TTL expiry as adversarial deletion", "done": "Store model lets expiry delete any TTL key at any step; driver and executor theorems still hold", "deps": ["B4"], "level": 3, "step": 33}, {"id": "O11", "area": "O", "size": "S", "hard": false, "title": "Nonce source contract", "done": "Nonce length and single use proved; entropy trusted per T9", "deps": ["T9"], "level": 3, "step": 34}, {"id": "O12", "area": "O", "size": "S", "hard": false, "title": "Prove the EnrollmentAccountView adapter", "done": "Adapter extracted and proved; conformance test kept as backup", "deps": ["O3d"], "level": 5, "step": 35}, {"id": "O13a", "area": "O", "size": "M", "hard": false, "title": "Context origins: sharing", "done": "Every context field used in sharing admission is proved to come from the session or a DB row, never the body", "deps": ["O3a", "O8"], "level": 4, "step": 36}, {"id": "O13b", "area": "O", "size": "S", "hard": false, "title": "Context origins: send links", "done": "As O13a", "deps": ["O3b", "O8"], "level": 5, "step": 37}, {"id": "O13c", "area": "O", "size": "M", "hard": false, "title": "Context origins: session", "done": "As O13a", "deps": ["O3c", "O8"], "level": 5, "step": 38}, {"id": "O13d", "area": "O", "size": "M", "hard": false, "title": "Context origins: enrollment", "done": "As O13a", "deps": ["O3d", "O8", "O12"], "level": 6, "step": 39}, {"id": "O13e", "area": "O", "size": "M", "hard": false, "title": "Context origins: recovery", "done": "As O13a; includes WebAuthn verdict origin", "deps": ["O3e", "O8", "O7", "O6"], "level": 5, "step": 40}, {"id": "O13f", "area": "O", "size": "M", "hard": false, "title": "Context origins: vault", "done": "As O13a", "deps": ["O3f", "O8", "O9"], "level": 6, "step": 41}, {"id": "O14a", "area": "O", "size": "M", "hard": false, "title": "Share-envelope encoder inverse", "done": "parse(encode x) = x over the checked byte-frame grammar", "deps": ["T4"], "level": 3, "step": 42}, {"id": "O14b", "area": "O", "size": "M", "hard": false, "title": "UTF-8/object conversion", "done": "Opened bytes -> object conversion proved against the String model", "deps": ["T4", "O14a"], "level": 4, "step": 43}, {"id": "O14c", "area": "O", "size": "L", "hard": true, "title": "Authenticated-open composition", "done": "frame parse ; signature check ; open ; object decode composed into one theorem for the production opener", "deps": ["O14b", "O7"], "level": 5, "step": 44}, {"id": "O15", "area": "O", "size": "M", "hard": false, "title": "Recovery fact construction leftovers", "done": "Decoders, verifiers, storage effects and restoration for recovery covered (open items from 13/15)", "deps": ["O3e", "O7"], "level": 5, "step": 45}, {"id": "H1", "area": "H", "size": "S", "hard": false, "title": "Handler inventory", "done": "Every route (about 60 route entries) tagged: parse / origins / interpreter / reply, each covered or not", "deps": ["B0"], "level": 1, "step": 46}, {"id": "H2", "area": "H", "size": "M", "hard": false, "title": "Fix U-24 (lost recovery-redemption reply)", "done": "Device row records its grant, replay recovers the device id; proved in the redemption driver; U-24 closed", "deps": ["B0"], "level": 1, "step": 47}, {"id": "H3", "area": "H", "size": "S", "hard": false, "title": "Cancellation lemma for the U-24 fix", "done": "Cancellation README shows no lost-reply case left", "deps": ["H2"], "level": 2, "step": 48}, {"id": "H4", "area": "H", "size": "M", "hard": false, "title": "Request validation", "done": "For each handler, typed request -> validated input proved (JSON decode itself trusted per T9)", "deps": ["H1", "T4"], "level": 3, "step": 49}, {"id": "H5", "area": "H", "size": "M", "hard": false, "title": "Reply construction", "done": "Verdict -> status/body mapping proved total and leak-free for every handler", "deps": ["H1"], "level": 2, "step": 50}, {"id": "H6", "area": "H", "size": "M", "hard": false, "title": "Auth middleware", "done": "Middleware session extraction proved; composed with O8", "deps": ["O8", "H1"], "level": 3, "step": 51}, {"id": "H7", "area": "H", "size": "M", "hard": false, "title": "Read-only and leftover routes", "done": "Routes with no driver (GET /devices, /sends, /vault/events, /health, ...) proved write-free and auth-correct", "deps": ["H1", "B4"], "level": 3, "step": 52}, {"id": "H8a", "area": "H", "size": "L", "hard": false, "title": "Whole-handler theorem: sharing", "done": "parse ; middleware ; origins ; interpreter ; reply refines the M19b/M21 state machine", "deps": ["H4", "H5", "H6", "O13a"], "level": 5, "step": 53}, {"id": "H8b", "area": "H", "size": "M", "hard": false, "title": "Whole-handler theorem: send links", "done": "As H8a", "deps": ["H4", "H5", "H6", "O13b"], "level": 6, "step": 54}, {"id": "H8c", "area": "H", "size": "L", "hard": false, "title": "Whole-handler theorem: session and web sessions", "done": "As H8a", "deps": ["H4", "H5", "H6", "O13c"], "level": 6, "step": 55}, {"id": "H8d", "area": "H", "size": "L", "hard": false, "title": "Whole-handler theorem: enrollment and pairing", "done": "As H8a (M13)", "deps": ["H4", "H5", "H6", "O13d"], "level": 7, "step": 56}, {"id": "H8e", "area": "H", "size": "L", "hard": true, "title": "Whole-handler theorem: recovery", "done": "As H8a (M18/M26a)", "deps": ["H4", "H5", "H6", "O13e", "O15", "H3"], "level": 6, "step": 57}, {"id": "H8f", "area": "H", "size": "L", "hard": true, "title": "Whole-handler theorem: vault and rekey", "done": "As H8a (M11)", "deps": ["H4", "H5", "H6", "O13f", "O10"], "level": 7, "step": 58}, {"id": "H8g", "area": "H", "size": "M", "hard": false, "title": "Whole-handler theorem: account deletion", "done": "As H8a", "deps": ["H4", "H5", "H6", "O13c"], "level": 6, "step": 59}, {"id": "H9", "area": "H", "size": "M", "hard": false, "title": "Early returns and panic freedom", "done": "Every early-return path proved to match the spec's state; deny(unwrap/expect/indexing) in handlers", "deps": ["H8a", "H8b", "H8c", "H8d", "H8e", "H8f", "H8g"], "level": 8, "step": 60}, {"id": "H10", "area": "H", "size": "M", "hard": false, "title": "DB isolation stated and tested", "done": "Turso/sled linearizability kept as a named trusted interface, backed by a concurrency conformance suite", "deps": ["T9"], "level": 3, "step": 61}, {"id": "H11a", "area": "H", "size": "M", "hard": false, "title": "Cross-driver world: add vault and rekey", "done": "Composition theorem re-proved with the new drivers", "deps": ["H8f", "H10"], "level": 8, "step": 62}, {"id": "H11b", "area": "H", "size": "M", "hard": false, "title": "Cross-driver world: add sharing and send", "done": "As H11a", "deps": ["H11a", "H8a", "H8b"], "level": 9, "step": 63}, {"id": "H11c", "area": "H", "size": "M", "hard": false, "title": "Cross-driver world: add web sessions and enrollment", "done": "As H11a", "deps": ["H11b", "H8c", "H8d"], "level": 10, "step": 64}, {"id": "H11d", "area": "H", "size": "L", "hard": true, "title": "Drop the 'four reads are one step' assumption", "done": "Admission reads interleave freely; theorem still holds or a fix lands", "deps": ["H11c"], "level": 11, "step": 65}, {"id": "H11e", "area": "H", "size": "L", "hard": true, "title": "Revocation landing mid-request", "done": "Remove the 'checked at start/decision' assumption for revocation and pairing", "deps": ["H11d"], "level": 12, "step": 66}, {"id": "H12", "area": "H", "size": "S", "hard": false, "title": "Close F-1 and F-2 in 08", "done": "Both rows say closed under the boundary; evidence READMEs and correspondence pairs updated", "deps": ["H9", "H11e", "O2", "O14c"], "level": 13, "step": 67}, {"id": "P1", "area": "P", "size": "S", "hard": false, "title": "Journal implementation inventory", "done": "Map vela-desktop-core store/sharing/sync journal ops to M28 rules", "deps": ["B0"], "level": 1, "step": 68}, {"id": "P2a", "area": "P", "size": "M", "hard": false, "title": "Tamarin bridge: source term representation", "done": "F* type for Tamarin terms used by M28", "deps": ["B0"], "level": 1, "step": 69}, {"id": "P2b", "area": "P", "size": "M", "hard": false, "title": "Tamarin bridge: slot projection", "done": "Proved projection from multi-slot traces to single-slot", "deps": ["P2a"], "level": 2, "step": 70}, {"id": "P2c", "area": "P", "size": "M", "hard": true, "title": "Tamarin bridge: derivability and freshness", "done": "Input derivability and global freshness encoded", "deps": ["P2a"], "level": 2, "step": 71}, {"id": "P2d", "area": "P", "size": "L", "hard": true, "title": "Tamarin bridge theorem", "done": "Source traces embed into the core encoding and lifts are admissible; M28 lemmas transfer", "deps": ["P2b", "P2c"], "level": 3, "step": 72}, {"id": "P3a", "area": "P", "size": "M", "hard": false, "title": "Extract the journal step function", "done": "Pure journal step in Rust, called by the real code, extracted by hax", "deps": ["P1"], "level": 2, "step": 73}, {"id": "P3b", "area": "P", "size": "L", "hard": true, "title": "Journal step refines M28", "done": "Every Rust step maps to an M28 rule or a stutter", "deps": ["P3a", "P2d"], "level": 4, "step": 74}, {"id": "P3c", "area": "P", "size": "M", "hard": true, "title": "Filesystem model", "done": "F* model of write/rename/fsync/crash under the T9 interface", "deps": ["T9"], "level": 3, "step": 75}, {"id": "P3d", "area": "P", "size": "L", "hard": true, "title": "File operations implement durability phases", "done": "Proof that the fs calls realize Persist/Clear phases under any crash point", "deps": ["P3a", "P3c"], "level": 4, "step": 76}, {"id": "P4", "area": "P", "size": "M", "hard": false, "title": "Collection equality", "done": "Formal definition and proof used by sync/journal", "deps": ["P3a"], "level": 3, "step": 77}, {"id": "P5", "area": "P", "size": "M", "hard": false, "title": "Compose local edits and deletions", "done": "Edits/deletions composed with the journal refinement", "deps": ["P3b", "P4"], "level": 5, "step": 78}, {"id": "P6", "area": "P", "size": "M", "hard": false, "title": "Compose RMS migration", "done": "Migration path proved to preserve journal invariants", "deps": ["P3b"], "level": 5, "step": 79}, {"id": "P7", "area": "P", "size": "M", "hard": false, "title": "Independent processes", "done": "Either a lock with a proved mutual-exclusion argument, or an explicit exclusion in 09", "deps": ["P3c"], "level": 4, "step": 80}, {"id": "P8", "area": "P", "size": "M", "hard": false, "title": "Uncertain-write re-arm ordering", "done": "The fixed re-arm ordering proved, regression kept", "deps": ["P3d"], "level": 5, "step": 81}, {"id": "P9", "area": "P", "size": "S", "hard": false, "title": "Close F-3 in 08", "done": "Gate in CI; F-3 row closed", "deps": ["P5", "P6", "P7", "P8"], "level": 6, "step": 82}, {"id": "C1", "area": "C", "size": "M", "hard": false, "title": "SHA-256 bridge as a game", "done": "Collision step for ct_mlkem/pk_mlkem machine-checked in CryptoVerif", "deps": ["B0"], "level": 1, "step": 83}, {"id": "C2", "area": "C", "size": "L", "hard": true, "title": "X25519 cofactor and low-order inputs", "done": "Game models cofactor-8 group and the kem.rs reject check", "deps": ["B0"], "level": 1, "step": 84}, {"id": "C3a", "area": "C", "size": "M", "hard": false, "title": "kem.rs encoding checks in Rust", "done": "hax proof that kem.rs rejects low-order/non-canonical inputs as claimed", "deps": ["T5"], "level": 3, "step": 85}, {"id": "C3b", "area": "C", "size": "M", "hard": false, "title": "Link wire encodings to the game", "done": "Encoding->group-element map proved injective modulo the rejected set", "deps": ["C3a", "C2"], "level": 4, "step": 86}, {"id": "C4", "area": "C", "size": "M", "hard": true, "title": "Clamped scalar distribution", "done": "Machine-checked collision bound for the clamped distribution", "deps": ["B0"], "level": 1, "step": 87}, {"id": "C5", "area": "C", "size": "L", "hard": true, "title": "Concrete X25519 combiner theorem", "done": "One theorem replacing the model-level COMP-5", "deps": ["C1", "C3b", "C4"], "level": 5, "step": 88}, {"id": "C6", "area": "C", "size": "L", "hard": true, "title": "Multi-user, multi-challenge KEM", "done": "Game or hybrid argument with stated loss", "deps": ["C1"], "level": 2, "step": 89}, {"id": "C7a", "area": "C", "size": "S", "hard": false, "title": "Decide quantum-query scope", "done": "Choice recorded in 09: QROM proof, paper reduction, or excluded", "deps": ["B0"], "level": 1, "step": 90}, {"id": "C7b", "area": "C", "size": "XL", "hard": true, "title": "Quantum-query composition", "done": "In scope (09, 2026-11-04): QROM or random-oracle-free reductions for the hybrid KEM and signature claims, with stated losses", "deps": ["C7a", "C5"], "level": 6, "step": 91}, {"id": "C8", "area": "C", "size": "M", "hard": false, "title": "Instantiate KEM-DEM with the combiner", "done": "Composition lemma checked, not manual", "deps": ["C5", "C6"], "level": 6, "step": 92}, {"id": "C9", "area": "C", "size": "M", "hard": true, "title": "AAD and signed share-envelope game", "done": "Encryption theorem covers the real envelope with AAD", "deps": ["C8", "O14a"], "level": 7, "step": 93}, {"id": "C10", "area": "C", "size": "L", "hard": true, "title": "HKDF beyond the random oracle", "done": "Reductions under named PRF/extractor assumptions", "deps": ["B0"], "level": 1, "step": 94}, {"id": "C11", "area": "C", "size": "M", "hard": false, "title": "Envelope framing game", "done": "Framing injectivity (from wire proofs) used in the game", "deps": ["C9"], "level": 8, "step": 95}, {"id": "C12", "area": "C", "size": "M", "hard": false, "title": "Hybrid-signature Rust wrapper correspondence", "done": "Wrapper <-> game composition closed (open item in 10)", "deps": ["O7"], "level": 3, "step": 96}, {"id": "C13", "area": "C", "size": "M", "hard": false, "title": "Recovery KDF and password-hashing constructions", "done": "Game for recovery key derivation", "deps": ["C10"], "level": 2, "step": 97}, {"id": "C14", "area": "C", "size": "M", "hard": false, "title": "Application randomness", "done": "Keys/nonces drawn from the OS RNG with right lengths; AEAD nonce uniqueness proved", "deps": ["T9"], "level": 3, "step": 98}, {"id": "C15", "area": "C", "size": "M", "hard": false, "title": "Uniform decryption errors", "done": "No error-oracle: all decrypt failures map to one error, proved at the wrapper", "deps": ["B0"], "level": 1, "step": 99}, {"id": "C16", "area": "C", "size": "M", "hard": false, "title": "Secret erasure", "done": "Zeroize gate: secret types implement ZeroizeOnDrop; lint plus review", "deps": ["B0"], "level": 1, "step": 100}, {"id": "C17", "area": "C", "size": "S", "hard": false, "title": "Remove the legacy v1 envelope path", "done": "decapsulate_legacy_v1 and its recovery.rs caller removed (decided 2026-11-04); tests and docs updated", "deps": ["B0"], "level": 1, "step": 101}, {"id": "C18", "area": "C", "size": "S", "hard": false, "title": "Close F-4 in 08", "done": "CryptoVerif README open list empty or excluded", "deps": ["C7b", "C11", "C12", "C13", "C14", "C15", "C16", "C17"], "level": 9, "step": 102}, {"id": "N1", "area": "N", "size": "S", "hard": false, "title": "FFI call-site inventory", "done": "Every Kotlin/Swift/TS call into the bridges listed", "deps": ["B0"], "level": 1, "step": 103}, {"id": "N0a", "area": "N", "size": "M", "hard": false, "title": "Desktop: refuse unbound legacy chunks (U-28)", "done": "Desktop downloads refuse unsealed blobs as the mobile bridges do (or a recorded migration re-seals them first); regression test; U-28 closed", "deps": ["N1"], "level": 2, "step": 104}, {"id": "N0b", "area": "N", "size": "S", "hard": false, "title": "Desktop: rollback gate on established facts (U-29)", "done": "plan_chunk_download gets facts the open actually established, not literals; U-29 closed", "deps": ["N0a"], "level": 3, "step": 105}, {"id": "N0c", "area": "N", "size": "M", "hard": false, "title": "Web: admitted downloads (U-27)", "done": "The WASM bridge exports the admitted download path; web refuses unsealed blobs and epochs below a floor it can authenticate; U-27 closed", "deps": ["N1"], "level": 2, "step": 106}, {"id": "N2a", "area": "N", "size": "M", "hard": false, "title": "Android bridge is a thin wrapper", "done": "hax proof: bridge fns call verified policies, no extra logic", "deps": ["N1"], "level": 2, "step": 107}, {"id": "N2b", "area": "N", "size": "M", "hard": false, "title": "Apple bridge is a thin wrapper", "done": "As N2a", "deps": ["N1"], "level": 2, "step": 108}, {"id": "N2c", "area": "N", "size": "M", "hard": false, "title": "WASM bridge is a thin wrapper", "done": "As N2a", "deps": ["N1"], "level": 2, "step": 109}, {"id": "N3", "area": "N", "size": "M", "hard": false, "title": "FFI type mapping", "done": "Bytes, errors and nullability mapping reviewed and tested both ways", "deps": ["N2a", "N2b", "N2c"], "level": 3, "step": 110}, {"id": "N4", "area": "N", "size": "S", "hard": false, "title": "Choose the caller-verification method", "done": "Decided 2026-11-04 (09): thin callers + CI rules + conformance/property tests", "deps": ["N1"], "level": 2, "step": 111}, {"id": "N5a", "area": "N", "size": "M", "hard": false, "title": "Android sync caller", "done": "CI rule rejects any sync download that bypasses the bridge or ignores its error; property tests match the Rust rules", "deps": ["N4", "N3"], "level": 4, "step": 112}, {"id": "N5b", "area": "N", "size": "M", "hard": false, "title": "Android sharing caller", "done": "As N5a (CI rule + property tests)", "deps": ["N5a"], "level": 5, "step": 113}, {"id": "N5c", "area": "N", "size": "M", "hard": false, "title": "Android enrollment/recovery caller", "done": "As N5a (CI rule + property tests)", "deps": ["N5a"], "level": 5, "step": 114}, {"id": "N5d", "area": "N", "size": "L", "hard": true, "title": "Android persistence", "done": "EncryptedVaultStore writes refine the journal contract", "deps": ["N5a", "P3d"], "level": 5, "step": 115}, {"id": "N6a", "area": "N", "size": "M", "hard": false, "title": "iOS sync caller", "done": "As N5a", "deps": ["N4", "N3"], "level": 4, "step": 116}, {"id": "N6b", "area": "N", "size": "M", "hard": false, "title": "iOS sharing caller", "done": "As N5a", "deps": ["N6a"], "level": 5, "step": 117}, {"id": "N6c", "area": "N", "size": "M", "hard": false, "title": "iOS enrollment/recovery caller", "done": "As N5a", "deps": ["N6a"], "level": 5, "step": 118}, {"id": "N6d", "area": "N", "size": "L", "hard": true, "title": "iOS persistence", "done": "As N5d", "deps": ["N6a", "P3d"], "level": 5, "step": 119}, {"id": "N7a", "area": "N", "size": "M", "hard": false, "title": "Desktop callers (gpui and Tauri)", "done": "As N5a", "deps": ["N4", "N3", "N0b"], "level": 4, "step": 120}, {"id": "N7b", "area": "N", "size": "M", "hard": false, "title": "Web and extension callers", "done": "As N5a", "deps": ["N4", "N3", "N0c"], "level": 4, "step": 121}, {"id": "N8", "area": "N", "size": "M", "hard": true, "title": "Native conformance at scale", "done": "Property-based conformance of every native caller flow against the Rust rules runs in CI on Android and iOS (no unbounded proof, per N4)", "deps": ["N5a", "N6a"], "level": 5, "step": 122}, {"id": "N9", "area": "N", "size": "M", "hard": true, "title": "Enrollment UI trust", "done": "Tamarin model of the human code comparison (extends M13)", "deps": ["B0"], "level": 1, "step": 123}, {"id": "N10a", "area": "N", "size": "M", "hard": false, "title": "Joint model skeleton", "done": "One Tamarin theory with shared accounts/devices/keys", "deps": ["B0"], "level": 1, "step": 124}, {"id": "N10b", "area": "N", "size": "M", "hard": false, "title": "Joint model: enrollment and recovery", "done": "Rules imported, lemmas re-proved", "deps": ["N10a", "N9"], "level": 2, "step": 125}, {"id": "N10c", "area": "N", "size": "M", "hard": false, "title": "Joint model: sync", "done": "As N10b", "deps": ["N10b"], "level": 3, "step": 126}, {"id": "N10d", "area": "N", "size": "M", "hard": false, "title": "Joint model: sharing", "done": "As N10b", "deps": ["N10c"], "level": 4, "step": 127}, {"id": "N10e", "area": "N", "size": "L", "hard": true, "title": "Joint model: revocation and claims", "done": "TC-6 claims proved in the joint model", "deps": ["N10d"], "level": 5, "step": 128}, {"id": "N11", "area": "N", "size": "S", "hard": false, "title": "Close F-5 in 08", "done": "F-5 row closed; U-8 closed", "deps": ["N5b", "N5c", "N5d", "N6b", "N6c", "N6d", "N7a", "N7b", "N8", "N10e"], "level": 6, "step": 129}, {"id": "Z1", "area": "Z", "size": "M", "hard": false, "title": "Automate model<->policy correspondence (G-5)", "done": "Drift gate covers every family and mobile call site", "deps": ["H12", "N11"], "level": 14, "step": 130}, {"id": "Z2", "area": "Z", "size": "S", "hard": false, "title": "Whole-system claim in 08", "done": "08 header replaced by a scoped completion claim with its boundary", "deps": ["Z1", "T12", "P9", "C18", "B1"], "level": 15, "step": 131}, {"id": "Z3", "area": "Z", "size": "S", "hard": false, "title": "Hosted full run", "done": "run-all.sh green in the proof container on the claim commit", "deps": ["Z2"], "level": 16, "step": 132}, {"id": "Z4", "area": "Z", "size": "L", "hard": false, "title": "Independent review (G-6)", "done": "Third party reproduces Z3 and reviews models; G-6 closed", "deps": ["Z3"], "level": 17, "step": 133}]};
+const KEY = "vela-formalization-plan-done";
+const W = 196, H = 52, COL = 250, GAP = 12;
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const nodes = PLAN.nodes, byId = Object.fromEntries(nodes.map(n => [n.id, n]));
+nodes.forEach(n => n.users = []);
+nodes.forEach(n => n.deps.forEach(d => byId[d].users.push(n.id)));
+const crit = new Set(PLAN.critical_path);
+const critEdges = new Set(PLAN.critical_path.slice(1).map((id, i) => PLAN.critical_path[i] + ">" + id));
+
+// Progress source: the plan-live.py server when present, else this browser's storage.
+let LIVE = false, live = { steps: {}, log: [], facts: {} }, lastLive = 0, lastSig = "", seenLog = 0;
+const store = { get() { try { return JSON.parse(localStorage.getItem(KEY) || "[]"); } catch { return []; } },
+  set(v) { try { localStorage.setItem(KEY, JSON.stringify(v)); } catch {} } };
+let localDone = new Set(store.get().filter(id => byId[id]));
+const entry = id => LIVE ? live.steps[id] : (localDone.has(id) ? { state: "done" } : undefined);
+const isDone = id => entry(id)?.state === "done";
+let sel = null, areasOff = new Set(), filter = null, critOn = false, query = "";
+
+// ---------- layout: columns by level, rows ordered by barycenter sweeps ----------
+const levels = [];
+nodes.forEach(n => (levels[n.level] ||= []).push(n));
+const areaOrder = Object.keys(PLAN.areas);
+levels.forEach(l => l.sort((a, b) => areaOrder.indexOf(a.area) - areaOrder.indexOf(b.area) || a.step - b.step));
+levels.forEach(l => l.forEach((n, i) => n.r = i));
+const bary = (n, list) => list.length ? list.reduce((s, id) => s + byId[id].r, 0) / list.length : n.r;
+for (let it = 0; it < 12; it++) {
+  const down = it % 2 === 0;
+  for (const l of (down ? levels.slice(1) : levels.slice(0, -1).reverse())) {
+    l.forEach(n => n.b = bary(n, down ? n.deps : n.users));
+    l.sort((a, b) => a.b - b.b);
+    l.forEach((n, i) => n.r = i);
+  }
+}
+const maxRows = Math.max(...levels.map(l => l.length));
+levels.forEach(l => {
+  const off = (maxRows - l.length) * (H + GAP) / 2;
+  l.forEach((n, i) => { n.x = 40 + n.level * COL; n.y = 40 + off + i * (H + GAP); });
+});
+const WORLD_W = 80 + levels.length * COL, WORLD_H = 80 + maxRows * (H + GAP);
+
+// ---------- drawing ----------
+const NS = "http://www.w3.org/2000/svg";
+const el = (t, a = {}, p) => { const e = document.createElementNS(NS, t); for (const k in a) e.setAttribute(k, a[k]); p && p.appendChild(e); return e; };
+const gE = $("edges"), gN = $("nodes");
+levels.forEach((l, i) => { el("text", { x: 40 + i * COL, y: 24, class: "lvl" }, gN).textContent = "Level " + i; });
+const edges = [];
+nodes.forEach(n => n.deps.forEach(d => {
+  const a = byId[d], x1 = a.x + W, y1 = a.y + H / 2, x2 = n.x, y2 = n.y + H / 2, c = Math.max(40, (x2 - x1) / 2);
+  edges.push({ from: d, to: n.id, p: el("path", { class: "edge", d: `M${x1},${y1} C${x1 + c},${y1} ${x2 - c},${y2} ${x2},${y2}` }, gE) });
+}));
+const clip = (s, k) => s.length > k ? s.slice(0, k - 1) + "…" : s;
+nodes.forEach(n => {
+  const g = el("g", { class: "node", transform: `translate(${n.x},${n.y})`, tabindex: 0, role: "button", "aria-label": `${n.id} ${n.title}` }, gN);
+  el("rect", { class: "pulse", width: W, height: H, rx: 6 }, g);
+  el("rect", { class: "box", width: W, height: H, rx: 6 }, g);
+  el("rect", { width: 4, height: H - 8, x: 3, y: 4, rx: 2, fill: `var(--a-${n.area})` }, g);
+  el("text", { class: "id", x: 13, y: 16 }, g).textContent = n.id;
+  const x0 = 13 + n.id.length * 7.3 + 6;
+  el("text", { class: "tag", x: x0, y: 16 }, g).textContent = n.size;
+  if (n.hard) el("text", { class: "hard", x: x0 + n.size.length * 7 + 4, y: 16 }, g).textContent = "hard";
+  n.stEl = el("text", { x: W - 8, y: 16, "text-anchor": "end" }, g);
+  const t1 = el("text", { x: 13, y: 31 }, g), t2 = el("text", { x: 13, y: 44 }, g);
+  let a = "", b = "";
+  for (const w of n.title.split(" ")) { if (!b && (a + " " + w).trim().length <= 30) a = (a + " " + w).trim(); else b = (b + " " + w).trim(); }
+  t1.textContent = a; t2.textContent = clip(b, 31);
+  n.g = g;
+  g.addEventListener("click", e => { e.stopPropagation(); select(n.id); });
+  g.addEventListener("keydown", e => { if (e.key === "Enter") select(n.id); });
+  g.addEventListener("mousemove", e => showTip(n, e));
+  g.addEventListener("mouseleave", () => tip.style.display = "none");
+});
+
+// ---------- status ----------
+function status(n) {
+  const s = entry(n.id)?.state;
+  if (s === "done") return "done";
+  if (s === "in_progress") return "progress";
+  if (s === "blocked") return "blocked";
+  return n.deps.every(isDone) ? "ready" : "waiting";
+}
+const label = { done: "done", progress: "in progress", blocked: "blocked", ready: "ready", waiting: "waiting" };
+const unpushed = id => LIVE && isDone(id) && live.facts?.pushed?.[id] === false;
+const ancestors = id => { const s = new Set(), st = [id]; while (st.length) for (const d of byId[st.pop()].deps) if (!s.has(d)) { s.add(d); st.push(d); } return s; };
+const descendants = id => { const s = new Set(), st = [id]; while (st.length) for (const u of byId[st.pop()].users) if (!s.has(u)) { s.add(u); st.push(u); } return s; };
+const dur = ms => { if (!(ms >= 0)) return "–"; const m = Math.floor(ms / 60000), h = Math.floor(m / 60), d = Math.floor(h / 24);
+  return d ? `${d}d ${h % 24}h` : h ? `${h}h ${String(m % 60).padStart(2, "0")}m` : `${m}m`; };
+const ago = iso => iso ? dur(Date.now() - Date.parse(iso)) + " ago" : "–";
+const hhmm = iso => { const d = new Date(iso); return isNaN(d) ? "" : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }); };
+const runtime = e => e?.started ? dur((e.finished ? Date.parse(e.finished) : Date.now()) - Date.parse(e.started)) : "–";
+
+function render() {
+  if (!LIVE) store.set([...localDone]);
+  const c = { done: 0, progress: 0, blocked: 0, ready: 0, waiting: 0 };
+  let unp = 0;
+  const up = sel ? ancestors(sel) : null, down = sel ? descendants(sel) : null;
+  const q = query.toLowerCase();
+  nodes.forEach(n => {
+    const s = status(n); c[s]++; if (unpushed(n.id)) unp++;
+    n.stEl.textContent = { done: unpushed(n.id) ? "✓ not pushed" : "✓ done", progress: "◐ in progress", blocked: "✕ blocked", ready: "○ ready", waiting: "" }[s];
+    n.stEl.setAttribute("class", "st st-" + s);
+    const match = q && (n.id.toLowerCase().includes(q) || n.title.toLowerCase().includes(q) || n.done.toLowerCase().includes(q));
+    const dim = areasOff.has(n.area) || (filter && s !== filter) || (critOn && !crit.has(n.id))
+      || (sel && n.id !== sel && !up.has(n.id) && !down.has(n.id)) || (q && !match);
+    n.dim = dim;
+    n.g.setAttribute("class", `node ${s}${unpushed(n.id) ? " unpushed" : ""}${n.id === sel ? " sel" : ""}${match ? " match" : ""}${dim ? " dim" : ""}`);
+  });
+  edges.forEach(e => {
+    let cls = "edge";
+    if (sel) {
+      if ((e.to === sel || up.has(e.to)) && up.has(e.from)) cls += " up";
+      else if ((e.from === sel || down.has(e.from)) && down.has(e.to)) cls += " down";
+      else cls += " dim";
+    } else if (critOn) cls += critEdges.has(e.from + ">" + e.to) ? " crit" : " dim";
+    else if (byId[e.from].dim || byId[e.to].dim) cls += " dim";
+    e.p.setAttribute("class", cls);
+  });
+  $("sDone").textContent = `${c.done} / ${nodes.length}`; $("sProg").textContent = c.progress + (c.blocked ? ` +${c.blocked} blocked` : "");
+  $("sReady").textContent = c.ready; $("sWait").textContent = c.waiting; $("sUnpushed").textContent = unp;
+  const pct = Math.round(100 * c.done / nodes.length); $("sBar").style.width = pct + "%"; $("sPct").textContent = pct + "% of steps";
+  const keep = $("panel").scrollTop;
+  $("panel").innerHTML = sel ? detail(byId[sel], up, down) : overview();
+  $("panel").scrollTop = keep;
+  renderLog();
+  if (tableOn) drawTable();
+}
+const link = id => `<li><a data-go="${id}">${id}</a><span>${esc(byId[id].title)}</span><span class="s ${status(byId[id])}-ink">${label[status(byId[id])]}</span></li>`;
+function detail(n, up, down) {
+  const s = status(n), e = entry(n.id), blocking = n.deps.filter(d => !isDone(d));
+  const liveMeta = LIVE && e ? `<div class="meta"><b>${runtime(e)}</b><b>${e.retries ?? 0}</b><b>${ago(e.updated)}</b><b>${esc(e.who || "–")}</b>
+    <span>runtime</span><span>retries</span><span>last update</span><span>by</span></div>
+    ${e.note ? `<p>${esc(e.note)}</p>` : ""}${e.commit ? `<p class="muted">commit ${esc(e.commit.slice(0, 10))} · ${unpushed(n.id) ? "not pushed" : "pushed"}</p>` : ""}` : "";
+  const acts = LIVE
+    ? `<div class="btns">${s !== "progress" && s !== "done" ? `<button data-act="start">Mark in progress</button>` : ""}
+       ${s !== "done" ? `<button data-act="done">Mark done</button>` : ""}${e ? `<button data-act="undo">Reset step</button>` : ""}</div>`
+    : `<button data-act="local">${localDone.has(n.id) ? "Mark not done" : "Mark done"}</button>`;
+  return `<h2>${n.id} · ${esc(n.title)}</h2>
+  <div class="muted">${esc(PLAN.areas[n.area])}</div>
+  <div class="meta"><b class="${s}-ink">${label[s]}</b><b>${n.size}</b><b>${n.step}</b><b>${n.level}</b>
+   <span>state</span><span>size</span><span>order</span><span>level</span></div>
+  ${liveMeta}
+  ${n.hard ? `<p class="hard-ink">Hard: this proof may need a redesign.</p>` : ""}
+  ${crit.has(n.id) ? `<p class="muted">On the critical path.</p>` : ""}
+  <h3>Done when</h3><p>${esc(n.done)}</p>${acts}
+  <h3>Needs first (${n.deps.length})</h3><ul>${n.deps.map(link).join("") || '<li class="muted">Nothing, can start any time</li>'}</ul>
+  ${blocking.length && s !== "done" ? `<p class="muted">Blocked by ${blocking.length}; ${up.size} steps upstream in total.</p>` : ""}
+  <h3>Unblocks (${n.users.length})</h3><ul>${n.users.map(link).join("") || '<li class="muted">Nothing</li>'}</ul>
+  <p class="muted">${down.size} steps depend on this one, directly or not.</p>`;
+}
+function overview() {
+  const byState = st => nodes.filter(n => status(n) === st).sort((a, b) => a.step - b.step);
+  const prog = byState("progress").concat(byState("blocked"));
+  return `${prog.length ? `<h2>In progress</h2><ul>${prog.map(n => `<li><a data-go="${n.id}">${n.id}</a><span>${esc(n.title)}</span><span class="s ${status(n)}-ink">${status(n) === "blocked" ? "blocked" : runtime(entry(n.id))}</span></li>`).join("")}</ul><h3>Ready next</h3>` : "<h2>Ready next</h2>"}
+  <ul>${byState("ready").map(n => link(n.id)).join("") || '<li class="muted">Nothing ready</li>'}</ul>
+  <h3>Critical path</h3><ul>${PLAN.critical_path.map(link).join("")}</ul>
+  <p class="muted">${LIVE ? "Live: progress comes from formalization-status.json via plan-live.py." : "Static file: done marks are saved in this browser only. Run <code>plan-live.py serve</code> for live progress."}</p>`;
+}
+function renderLog() {
+  const box = $("logbox");
+  if (!LIVE) { box.innerHTML = `<h3>Running log</h3><p class="muted">Available when served by plan-live.py.</p>`; return; }
+  const rows = live.log.map((r, i) => ({ ...r, i })).filter(r => !sel || r.step === sel).slice(-200).reverse();
+  box.innerHTML = `<h3>${sel ? `Log · ${sel}` : "Running log"}</h3>` + (rows.map(r =>
+    `<div class="logrow${r.i >= seenLog ? " fresh" : ""}"><span class="t">${hhmm(r.t)}</span><span><a data-go="${esc(r.step)}">${esc(r.step)}</a><br><span class="k">${esc(r.kind)}${r.who ? " · " + esc(r.who) : ""}</span></span><span class="m">${esc(r.msg)}</span></div>`).join("")
+    || '<p class="muted">No entries yet.</p>');
+}
+async function act(a) {
+  if (a === "local") { localDone.has(sel) ? localDone.delete(sel) : localDone.add(sel); return render(); }
+  if (a === "undo" && !confirm(`Reset ${sel}? Its progress record is removed (the log keeps the history).`)) return;
+  await fetch("api/step", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: sel, action: a }) });
+  poll();
+}
+$("panel").addEventListener("click", e => {
+  const go = e.target.closest("[data-go]"); if (go) return select(go.dataset.go, true);
+  const b = e.target.closest("[data-act]"); if (b) act(b.dataset.act);
+});
+$("logbox").addEventListener("click", e => { const go = e.target.closest("[data-go]"); if (go && byId[go.dataset.go]) select(go.dataset.go, true); });
+function select(id, center) { sel = id; render(); if (center && id) focusNode(byId[id]); }
+
+// ---------- live polling ----------
+function headerFacts() {
+  const f = live.facts || {};
+  const ld = a => a ? `${a.slice(0, 3).map(x => x.toFixed(2)).join(" ")}` : "offline";
+  $("sLoad").textContent = ld(f.load); $("sBox").textContent = ld(f.box);
+  $("sLoad").title = f.load ? `${f.load[3]} cores` : ""; $("sBox").title = f.box ? `${f.box_host}, ${f.box[3]} cores` : "build box unreachable";
+  $("sGit").textContent = f.head ? `${f.head} / ${f.origin || "–"}` : "–";
+  $("sGitL").textContent = f.branch ? `${f.branch}: head / origin` : "head / origin";
+  $("sAhead").textContent = f.ahead ?? "–";
+}
+async function poll() {
+  try {
+    const r = await fetch("api/state", { cache: "no-store" });
+    if (!r.ok) throw new Error(r.status);
+    const d = await r.json();
+    const first = !LIVE;
+    LIVE = true; lastLive = Date.now();
+    const sig = JSON.stringify([d.steps, d.log.length, d.facts?.pushed]);
+    live = d; headerFacts();
+    if (first) document.querySelectorAll(".liveonly").forEach(x => x.style.display = "");
+    if (sig !== lastSig) { lastSig = sig; render(); seenLog = d.log.length; }
+  } catch {
+    if (LIVE) { $("live").className = "live err"; $("liveT").textContent = "server lost, retrying"; }
+  }
+  tickLive();
+}
+function tickLive() {
+  if (!LIVE) return;
+  const s = Math.round((Date.now() - lastLive) / 1000);
+  if (s < 10) { $("live").className = "live on"; $("liveT").textContent = `live · ${s}s ago`; }
+}
+if (location.protocol.startsWith("http")) { poll(); setInterval(poll, 3000); setInterval(tickLive, 1000); }
+else document.querySelectorAll(".liveonly").forEach(x => x.style.display = "none");
+// Runtimes keep ticking between changes.
+setInterval(() => { if (LIVE && nodes.some(n => status(n) === "progress")) { lastSig = ""; } }, 60000);
+
+// ---------- chips ----------
+for (const [a, name] of Object.entries(PLAN.areas)) {
+  const ch = document.createElement("span"); ch.className = "chip"; ch.tabIndex = 0;
+  ch.innerHTML = `<span class="sw" style="background:var(--a-${a})"></span>${a} · ${esc(name)} <span class="muted">${nodes.filter(x => x.area === a).length}</span>`;
+  ch.onclick = () => { areasOff.has(a) ? areasOff.delete(a) : areasOff.add(a); ch.classList.toggle("off"); render(); };
+  $("chips").appendChild(ch);
+}
+$("chips").insertAdjacentHTML("beforeend", `<span class="sep"></span>
+ <span class="key"><span class="sw" style="background:var(--done-fill);border-color:var(--done-ink)"></span>done</span>
+ <span class="key"><span class="sw" style="background:var(--done-fill);border:1px dashed var(--done-ink)"></span>done, not pushed</span>
+ <span class="key"><span class="sw" style="background:var(--prog-fill);border-color:var(--prog-ink)"></span>in progress</span>
+ <span class="key"><span class="sw" style="background:var(--block-fill);border-color:var(--block-ink)"></span>blocked</span>
+ <span class="key"><span class="sw" style="background:var(--ready-fill);border-color:var(--ready-ink)"></span>ready</span>
+ <span class="key"><span class="sw" style="background:var(--wait-fill)"></span>waiting</span>
+ <span class="key"><span class="sw" style="background:var(--edge-hi)"></span>needs</span>
+ <span class="key"><span class="sw" style="background:var(--edge-lo)"></span>unblocks</span>`);
+
+// ---------- pan / zoom ----------
+const stage = $("stage"), vp = $("vp");
+let tx = 0, ty = 0, k = 1;
+const apply = () => vp.setAttribute("transform", `translate(${tx},${ty}) scale(${k})`);
+function fit() { const r = stage.getBoundingClientRect(); k = Math.min(r.width / WORLD_W, r.height / WORLD_H); tx = (r.width - WORLD_W * k) / 2; ty = (r.height - WORLD_H * k) / 2; apply(); }
+function fitHeight() { const r = stage.getBoundingClientRect(); k = Math.min(1, Math.max(0.45, r.height / WORLD_H)); tx = 10; ty = (r.height - WORLD_H * k) / 2; apply(); }
+function focusNode(n) { const r = stage.getBoundingClientRect(); k = Math.max(k, 0.9); tx = r.width / 2 - (n.x + W / 2) * k; ty = r.height / 2 - (n.y + H / 2) * k; apply(); }
+stage.addEventListener("wheel", e => {
+  e.preventDefault(); const r = stage.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+  const nk = Math.min(3, Math.max(0.08, k * Math.exp(-e.deltaY * 0.0015)));
+  tx = mx - (mx - tx) * nk / k; ty = my - (my - ty) * nk / k; k = nk; apply();
+}, { passive: false });
+let drag = null;
+stage.addEventListener("pointerdown", e => { if (e.target.closest(".node") || tableOn) return; drag = { x: e.clientX, y: e.clientY, tx, ty, moved: false }; stage.classList.add("drag"); });
+addEventListener("pointermove", e => { if (!drag) return; const dx = e.clientX - drag.x, dy = e.clientY - drag.y; if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true; tx = drag.tx + dx; ty = drag.ty + dy; apply(); });
+addEventListener("pointerup", () => { if (drag && !drag.moved && sel) { sel = null; render(); } drag = null; stage.classList.remove("drag"); });
+
+// ---------- tooltip ----------
+const tip = $("tip");
+function showTip(n, e) {
+  const en = entry(n.id), s = status(n);
+  tip.innerHTML = `<b>${n.id}</b> · ${esc(n.title)}<br><span class="muted">${n.size}${n.hard ? ' · <span class="hard-ink">hard</span>' : ""} · <span class="${s}-ink">${label[s]}</span> · order ${n.step}${LIVE && en?.started ? " · " + runtime(en) : ""}</span><br>${esc(LIVE && en?.note ? en.note : n.done)}`;
+  tip.style.display = "block";
+  tip.style.left = Math.min(e.clientX + 14, innerWidth - 360) + "px"; tip.style.top = (e.clientY + 14) + "px";
+}
+
+// ---------- controls ----------
+const qEl = $("q");
+qEl.addEventListener("input", () => { query = qEl.value.trim(); render(); });
+qEl.addEventListener("keydown", e => {
+  if (e.key !== "Enter" || !query) return; const q = query.toLowerCase();
+  const m = nodes.find(n => n.id.toLowerCase() === q) || nodes.find(n => n.id.toLowerCase().includes(q) || n.title.toLowerCase().includes(q));
+  if (m) select(m.id, true);
+});
+const setFilter = f => { filter = filter === f ? null : f; $("bProg").setAttribute("aria-pressed", filter === "progress"); $("bReady").setAttribute("aria-pressed", filter === "ready"); render(); };
+$("bProg").onclick = () => setFilter("progress");
+$("bReady").onclick = () => setFilter("ready");
+$("bCrit").onclick = () => { critOn = !critOn; $("bCrit").setAttribute("aria-pressed", critOn); render(); };
+let tableOn = false;
+$("bTable").onclick = () => { tableOn = !tableOn; $("table").style.display = tableOn ? "block" : "none"; $("bTable").setAttribute("aria-pressed", tableOn); render(); };
+$("bFit").onclick = fit;
+function drawTable() {
+  $("table").innerHTML = `<table><thead><tr><th>#</th><th>Id</th><th>Level</th><th>Size</th><th>State</th><th>Step</th><th>Done when</th><th>After</th></tr></thead><tbody>${
+    nodes.slice().sort((a, b) => a.step - b.step).map(n => `<tr data-go="${n.id}"><td>${n.step}</td><td><b>${n.id}</b></td><td>${n.level}</td><td>${n.size}${n.hard ? ' <span class="hard-ink">hard</span>' : ""}</td><td class="${status(n)}-ink">${label[status(n)]}</td><td>${esc(n.title)}</td><td>${esc(n.done)}</td><td>${n.deps.join(", ") || "-"}</td></tr>`).join("")}</tbody></table>`;
+}
+$("table").addEventListener("click", e => { const r = e.target.closest("[data-go]"); if (r) { sel = r.dataset.go; render(); } });
+addEventListener("keydown", e => { if (e.key === "Escape" && document.activeElement !== qEl) { sel = null; render(); } else if (e.key === "Escape") { qEl.value = query = ""; render(); } });
+fitHeight(); render();
+</script>
+</body>
+</html>

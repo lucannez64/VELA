@@ -1,0 +1,8 @@
+# Preserve raw proof-tool output verbatim; its bytes are integrity-checked.
+security/assurance/proof-logs/**/*.log -whitespace
+security/assurance/proof-logs/**/*.out -whitespace
+security/assurance/proof-logs/**/*.txt -whitespace
+security/assurance/*.patch -whitespace
+# Retain the reused verifier model's upstream license bytes unchanged.
+security/formal/cryptoverif/HPKE-LICENSE.txt -whitespace
+*/vela-*-policy/proofs/logs/*.log -whitespace

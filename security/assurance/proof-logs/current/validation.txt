@@ -1,0 +1,68 @@
+2026-10-23T00:43:08.346234+00:00
+git diff --check: PASS
+Workflow YAML and embedded Bash syntax: PASS
+Local documentation file links: PASS (section anchors not checked)
+Reviewed source/model drift gate: PASS
+Source/model altered-digest rejection: PASS (tested in-memory copies of the record)
+Network gate missing-lemma rejection: PASS (fake prover, exit 1)
+Network gate timeout rejection: PASS (fake slow prover, exit 124)
+Earlier hax/F* attempt: INCOMPLETE at 3 GiB (superseded below)
+
+2026-10-23T10:05:50.618474+00:00
+Fresh hax/F* verification: PASS, all 8 crates, fresh empty extraction directories, without --lax
+8 logs contain successful verification conditions and exit_status=0
+Workflow YAML and embedded Bash syntax: PASS
+23 assurance/formal shell scripts: bash -n PASS
+Assurance local documentation file links: PASS (anchors not checked)
+8 checked extraction snapshots: PASS; 18 documented assume val declarations
+Reviewed source/model drift gate: PASS
+git diff --check: PASS
+Current GitHub Actions run: PENDING
+
+Boundary review, 2026-10-23:
+3 diagnostic sharing witnesses: PASS (unsafe behavior reproduced, not security regression passes)
+Crypto unit tests: 121 PASS
+Temporary sharing.rs test patch removed; source/model drift gate: PASS
+Diagnostic patch git apply --check: PASS
+git diff --check: PASS
+
+Sharing remediation, 2026-10-23:
+Desktop-core full unit suite: 464 PASS, 0 failed, 8 existing ignored
+Sharing regressions: 13 new plus 3 existing PASS
+Intermediate identity-file first-byte test failure: corrected probabilistic assertion; full rerun PASS
+Resource limits: 3 GiB cgroup, no swap, one build/test worker
+Policy Rust sources and symbolic models unchanged by remediation; hax/F* proof scope unchanged
+
+Extended formalization, 2026-10-23:
+Client-share policy: 18 explicit postconditions verified without --lax
+Actual share-envelope admission_facts: 1 explicit postcondition verified without --lax
+M28 journal: 7 exact named verdicts verified, 0 warnings, 0 falsifications
+Stronger all-pairs M28 goals: UNPROVED (exploratory search stopped without verdicts)
+Desktop-core locked suite: 464 PASS, 0 failed, 8 existing ignored
+Crypto locked suite: 121 PASS, 0 failed
+Extraction inventory: 111 selected functions / 108 explicit postconditions; 18 reviewed assume val declarations
+Full-system formalization: INCOMPLETE; see 08-formalization-status.md
+
+Additional validation:
+Runner selector inventory: 110 policy functions + 1 constructor confirmed
+Negative extraction fixtures: added assumption, admit body, missing postcondition all rejected
+Workflow YAML and embedded Bash: PASS
+Formal/assurance shell scripts and Python syntax: PASS
+Local documentation links: PASS
+Theory inventory: 36 theories / 288 lemmas confirmed
+Reviewed source/model hashes: PASS
+
+Selected trust boundary, 2026-10-23:
+OS/compiler and primitive security trusted; VELA constructions/application behavior remain proof targets
+All eight policy crates freshly extracted and checked after structural equality refactor
+All 18 local derived-enum equality assumptions removed; current local declarations: 0
+Inventory: 117 selected functions / 114 explicit postconditions, all with trivial preconditions
+Actual decoded-field -> policy composition, prefix reader, AND gate and permit revision getter: VERIFIED
+M28: 7 verified; composed M29 (chosen sender payloads, independent component reveals): 11 verified
+Complete integrated local runner: all 29 stages PASS; affected checks rerun after final changes
+Desktop core after uncertain-write re-arm: 465 PASS, 0 failed, 8 existing ignored
+Crypto: 122 PASS; Apple Rust bridge: 15 PASS; Android Rust bridge: 25 PASS
+Uncertain-write regression: fails before re-arm, passes after; a counterexample patch is supplied
+Current source/model drift gate and local assumption/precondition gate: PASS
+Full-system concrete refinement and computational construction reductions: STILL OPEN
+Hosted CI and independent review: PENDING

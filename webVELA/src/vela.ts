@@ -7,7 +7,7 @@ import init, {
   open_share_json,
   open_link_json,
   encrypt_vault_chunk_json,
-  decrypt_vault_chunk_json,
+  decrypt_admitted_vault_chunk_json,
 } from './wasm/vela_wasm_bridge.js';
 
 let ready: Promise<void> | null = null;
@@ -73,31 +73,37 @@ export function openLink(
 // browser never holds the RMS the keys are derived from (audit D-2).
 
 /**
- * Decrypt a vault chunk → its `VaultStore` JSON (RW live read).
+ * Admit and decrypt a vault chunk → its `VaultStore` JSON (RW live read).
  *
- * `chunkId` and `lamportClock` are the labels the server put on this chunk.
- * They are verified for ciphertexts sealed with associated data and ignored for
- * the older unbound ones, so this reads both while the fleet upgrades
- * (audit C-2, rollout step 2).
+ * This is the only download entry point: the Rust bridge refuses unsealed
+ * legacy blobs (they bind neither chunk nor revision), pins the first vault key
+ * epoch this tab admits and refuses any other epoch, and refuses a revision
+ * below the highest one it already admitted for this chunk. `chunkId`,
+ * `lamportClock` and `epoch` are the labels the server put on the chunk; the
+ * AAD check and the verified policies are what make them trustworthy.
+ *
+ * The epoch pin and the per-chunk floors live in WASM memory only — the web
+ * client has no durable store, so a reload is a new first contact.
  */
-export function decryptVaultChunk(
+export function admitVaultChunk(
   chunkKeyB64: string,
   ciphertextB64: string,
   chunkId: string,
   lamportClock: number,
   epoch: number,
-): string {
-  return parse<{ vault_json: string }>(
-    decrypt_vault_chunk_json(
+): { vaultJson: string; lamportClock: number } {
+  const admitted = parse<{ vault_json: string; lamport_clock: number }>(
+    decrypt_admitted_vault_chunk_json(
       JSON.stringify({
         chunk_key_b64: chunkKeyB64,
         ciphertext_b64: ciphertextB64,
         chunk_id: chunkId,
         lamport_clock: lamportClock,
-        epoch,
+        key_epoch: epoch,
       }),
     ),
-  ).vault_json;
+  );
+  return { vaultJson: admitted.vault_json, lamportClock: admitted.lamport_clock };
 }
 
 /**

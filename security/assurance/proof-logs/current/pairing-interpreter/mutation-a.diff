@@ -1,0 +1,11 @@
+--- vela-enrollment-policy/proofs/fstar/extraction-pairing-interpreter/Vela_enrollment_policy.Pairing_interpreter.fst	2026-10-27 13:30:45.918373740 +0100
++++ /tmp/vela-mut/pairing-a/Vela_enrollment_policy.Pairing_interpreter.fst	2026-10-27 13:32:06.066928706 +0100
+@@ -159,7 +159,7 @@
+             with
+             | Vela_enrollment_policy.Pairing_driver.PairingEffect_StorePackage  ->
+               let (tmp0: v_Io), (out: Vela_enrollment_policy.Pairing_driver.t_StoreObservation) =
+-                f_store_package #v_Io #FStar.Tactics.Typeclasses.solve io
++                f_store_grant #v_Io #FStar.Tactics.Typeclasses.solve io
+               in
+               let io:v_Io = tmp0 in
+               io,

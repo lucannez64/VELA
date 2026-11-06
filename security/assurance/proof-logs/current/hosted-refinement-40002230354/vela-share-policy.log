@@ -1,0 +1,27 @@
+[1m[92m   Compiling[0m vela-share-policy v0.1.0 (/home/runner/work/VELA/VELA/serverVELA/vela-share-policy)
+[1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 0.18s
+[1m[92m     Running[0m unittests src/lib.rs (/home/runner/work/VELA/VELA/target/debug/deps/vela_share_policy-0b9a5aaed2fe99ff)
+
+running 4 tests
+test tests::ek_registration_requires_every_binding_condition ... ok
+test tests::link_mutations_require_sender_authority_over_live_items ... ok
+test tests::send_requires_recipient_capacity_and_authentication ... ok
+test tests::timestamp_freshness_is_strict_and_first_registration_always_fresh ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m   Doc-tests[0m vela_share_policy
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m    Checking[0m vela-share-policy v0.1.0 (/home/runner/work/VELA/VELA/serverVELA/vela-share-policy)
+[1m[92m    Finished[0m `dev` profile [unoptimized + debuginfo] target(s) in 0.21s
+[1m[94minfo[0m: [1mhax: wrote file ./proofs/fstar/extraction/Vela_share_policy.fst[0m
+::warning file=Rust_primitives.Char.fsti,line=0,endLine=0::(241) * Warning 241 at /home/runner/.local/opt/vela-hax-0.3.7/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti(0,0-0,0):%0A  - Unable to load%0A    /home/runner/.local/opt/vela-hax-0.3.7/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti.checked%0A    since checked file%0A    /home/runner/.local/opt/vela-hax-0.3.7/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti.checked%0A    does not exist; will recheck%0A    /home/runner/.local/opt/vela-hax-0.3.7/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti%0A    (suppressing this warning for further modules)%0A
+::warning file=Rust_primitives.Float.fsti,line=5,endLine=5::(239) * Warning 239 at /home/runner/.local/opt/vela-hax-0.3.7/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):%0A  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float%0A
+::warning file=dummy,line=0,endLine=0::(242) * Warning 242 at /home/runner/.local/opt/vela-hax-0.3.7/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):%0A  - Definitions of inner let-rec while_loop_internal and its enclosing top-level%0A    letbinding are not encoded to the solver, you will only be able to reason%0A    with their types%0A  - Also see: /home/runner/.local/opt/vela-hax-0.3.7/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)%0A
+::warning file=dummy,line=0,endLine=0::(242) * Warning 242 at /home/runner/.local/opt/vela-hax-0.3.7/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):%0A  - Definitions of inner let-rec while_loop_internal and its enclosing top-level%0A    letbinding are not encoded to the solver, you will only be able to reason%0A    with their types%0A  - Also see: /home/runner/.local/opt/vela-hax-0.3.7/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)%0A
+Verified module: Vela_share_policy
+All verification conditions discharged successfully

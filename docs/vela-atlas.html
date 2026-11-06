@@ -363,9 +363,9 @@ const NODES = [
 { id:"KEM", key:"G", label:"Hybrid KEM", group:"identity", gx:11, gy:13, w:2, d:2, h:3.0,
   files:["libVELA/vela-crypto/src/kem.rs"],
   what:["How a secret reaches a device that has never held it — the new-device capsule, every share, every web session. **If either the lattice assumption or the discrete-log assumption survives, the shared secret is still indistinguishable from random.**"],
-  built:["ML-KEM-1024 + X25519, combined with HKDF-SHA256 over `mlkem_ss ‖ x25519_ss` with salt `\"vela hybrid kem v1\"`. Encapsulation key is 1,568 + 32 bytes."],
+  built:["ML-KEM-1024 + X25519, combined with HKDF-SHA256 over `mlkem_ss ‖ x25519_ss ‖ x25519_epk ‖ x25519_pk ‖ SHA-256(ct_mlkem) ‖ SHA-256(ek_mlkem)` with salt and info `\"vela hybrid kem v2\"` (the transcript-binding v2 combiner; the unbound v1 combiner was removed in November 2026). Encapsulation key is 1,568 + 32 bytes."],
   cond:[],
-  inside:[["generate_keypair","(HybridPublicKey, HybridSecretKey)"],["encapsulate","→ (capsule, shared_secret)"],["hkdf","ikm = mlkem_ss ‖ x25519_ss"],["decapsulate","both halves or nothing"]] },
+  inside:[["generate_keypair","(HybridPublicKey, HybridSecretKey)"],["encapsulate","→ (capsule, shared_secret)"],["hkdf","ikm = mlkem_ss ‖ x25519_ss ‖ epk ‖ pk ‖ H(ct) ‖ H(ek)"],["decapsulate","both halves or nothing"]] },
 
 { id:"ENR", key:"N", label:"Enrollment v3", group:"identity", gx:15, gy:13, w:3, d:2, h:3.6,
   files:["desktopVELA/vela-desktop-core/src/commands/enrollment_v3.rs","serverVELA/vela-server/src/device/rendezvous.rs"],

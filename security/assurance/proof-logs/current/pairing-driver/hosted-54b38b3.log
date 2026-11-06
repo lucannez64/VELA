@@ -1,0 +1,60 @@
+# security workflow 40402764401 on 54b38b3 (all 15 PR checks passed)
+# vela-enrollment-policy refinement log (pairing lines)
+test pairing_driver::tests::a_completion_is_signed_bound_and_taken_once ... ok
+test pairing_driver::tests::a_completion_needs_the_stored_claim_and_the_opener_signature ... ok
+test pairing_driver::tests::a_replayed_package_fetch_returns_nothing ... ok
+test pairing_driver::tests::a_take_mismatch_restores_and_never_inserts ... ok
+test pairing_driver::tests::an_ambiguous_insert_error_consumes_the_ceremony ... ok
+test pairing_driver::tests::an_insert_failure_never_claims_a_recorded_result ... ok
+test pairing_driver::tests::bfs_reachable_states_preserve_the_invariant ... ok
+test pairing_driver::tests::claim_rejection_is_exactly_the_policy_refusal ... ok
+test pairing_driver::tests::claim_rejection_precedence_is_historical ... ok
+test pairing_driver::tests::every_sound_state_times_event_is_total_and_sound ... ok
+test pairing_driver::tests::out_of_order_events_are_inert ... ok
+Verified module: Vela_enrollment_policy
+All verification conditions discharged successfully
+test pairing_driver::tests::a_completion_is_signed_bound_and_taken_once ... ok
+test pairing_driver::tests::a_completion_needs_the_stored_claim_and_the_opener_signature ... ok
+test pairing_driver::tests::a_replayed_package_fetch_returns_nothing ... ok
+test pairing_driver::tests::a_take_mismatch_restores_and_never_inserts ... ok
+test pairing_driver::tests::an_ambiguous_insert_error_consumes_the_ceremony ... ok
+test pairing_driver::tests::an_insert_failure_never_claims_a_recorded_result ... ok
+test pairing_driver::tests::bfs_reachable_states_preserve_the_invariant ... ok
+test pairing_driver::tests::claim_rejection_is_exactly_the_policy_refusal ... ok
+test pairing_driver::tests::claim_rejection_precedence_is_historical ... ok
+test pairing_driver::tests::every_sound_state_times_event_is_total_and_sound ... ok
+test pairing_driver::tests::out_of_order_events_are_inert ... ok
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-pairing-driver/Vela_enrollment_policy.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-pairing-driver/Vela_enrollment_policy.Pairing_driver.fst[0m
+F* pairing-driver lemma argv: --cmi --cache_off --warn_error -331 --z3version 4.13.3 --already_cached +Prims+FStar+LowStar+C+Spec.Loops+TestLib --include /home/runner/.local/opt/vela-hax-0.3.7/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/core --include /home/runner/.local/opt/vela-hax-0.3.7/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives --include /home/runner/.local/opt/vela-hax-0.3.7/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proofs/fstar/extraction --include proofs/fstar/extraction-pairing-driver --z3rlimit 16000 --include proofs/fstar/pairing-driver-lemmas proofs/fstar/extraction-pairing-driver/Vela_enrollment_policy.Pairing_driver.fst proofs/fstar/extraction-pairing-driver/Vela_enrollment_policy.fst proofs/fstar/pairing-driver-lemmas/Vela_enrollment_policy_pairing_driver_lemmas.fst
+Verified module: Vela_enrollment_policy
+Verified module: Vela_enrollment_policy.Pairing_driver
+Verified module: Vela_enrollment_policy_pairing_driver_lemmas
+All verification conditions discharged successfully
+F* pairing-driver composition argv: --cmi --cache_off --warn_error -331 --z3version 4.13.3 --already_cached +Prims+FStar+LowStar+C+Spec.Loops+TestLib --include /home/runner/.local/opt/vela-hax-0.3.7/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/core --include /home/runner/.local/opt/vela-hax-0.3.7/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives --include /home/runner/.local/opt/vela-hax-0.3.7/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proofs/fstar/extraction --include proofs/fstar/extraction-pairing-driver --z3rlimit 500 --include proofs/fstar/pairing-driver-composition proofs/fstar/extraction-pairing-driver/Vela_enrollment_policy.Pairing_driver.fst proofs/fstar/extraction-pairing-driver/Vela_enrollment_policy.fst proofs/fstar/pairing-driver-composition/Vela_enrollment_policy_pairing_driver_composition.fst
+Verified module: Vela_enrollment_policy
+Verified module: Vela_enrollment_policy.Pairing_driver
+Verified module: Vela_enrollment_policy_pairing_driver_composition
+All verification conditions discharged successfully
+pairing driver: 30 extracted Rust functions (19 selected + 11 private decisions), 30 effect/state postconditions, 24 preconditions
+pairing composition: arbitrary interleavings authorize at most one claim, one take, one insert and one redemption per stored version, never a cross-account, unsigned or already-enrolled completion
+b2b0dbfd26ec67a061bcbe52eb641f894db8916c6ee4be96b123abcfbae348a3  proofs/fstar/extraction-pairing-driver/Vela_enrollment_policy.Pairing_driver.fst
+440ee7acf8d6482280a0651680c69492808849490baec7069416439a8c51f1f7  proofs/fstar/extraction-pairing-driver/Vela_enrollment_policy.fst
+ab768e5db288deda9cb47ab3060c6d66dfe4da0fa6f09feeb1b6dd5b54982f4a  proofs/fstar/pairing-driver-lemmas/Vela_enrollment_policy_pairing_driver_lemmas.fst
+52d2dda82eabcac2992b976d3d17faa0655945d46d80f3767fa8470e953b2ea4  proofs/fstar/pairing-driver-composition/Vela_enrollment_policy_pairing_driver_composition.fst
+e2ad6ba6ae701868d35e1ad63828c9c783f36660199e57cfcda82f16f42b1a42  src/pairing_driver.rs
+# cargo test -p vela-enrollment-policy and full integration suite
+     Running tests/integration.rs (target/debug/deps/integration-b25ff1f0e87b5bb0)
+test result: ok. 68 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.23s
+     Running unittests src/lib.rs (target/debug/deps/vela_enrollment_policy-70aa54528fb788e0)
+test pairing_driver::tests::a_completion_is_signed_bound_and_taken_once ... ok
+test pairing_driver::tests::a_completion_needs_the_stored_claim_and_the_opener_signature ... ok
+test pairing_driver::tests::a_replayed_package_fetch_returns_nothing ... ok
+test pairing_driver::tests::a_take_mismatch_restores_and_never_inserts ... ok
+test pairing_driver::tests::an_ambiguous_insert_error_consumes_the_ceremony ... ok
+test pairing_driver::tests::an_insert_failure_never_claims_a_recorded_result ... ok
+test pairing_driver::tests::bfs_reachable_states_preserve_the_invariant ... ok
+test pairing_driver::tests::claim_rejection_is_exactly_the_policy_refusal ... ok
+test pairing_driver::tests::claim_rejection_precedence_is_historical ... ok
+test pairing_driver::tests::every_sound_state_times_event_is_total_and_sound ... ok
+test pairing_driver::tests::out_of_order_events_are_inert ... ok

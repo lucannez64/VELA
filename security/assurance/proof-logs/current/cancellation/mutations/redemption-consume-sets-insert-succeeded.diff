@@ -1,0 +1,12 @@
+--- /tmp/vela-f2-cancel-mut/recovery/pristine.fst	2026-10-27 22:19:01.405112796 +0100
++++ serverVELA/vela-recovery-policy/proofs/fstar/extraction-driver/Vela_recovery_policy.Driver.fst	2026-10-27 22:19:01.416825014 +0100
+@@ -288,7 +288,8 @@
+       transition ({
+             driver with
+             f_stage = RedemptionStage_FinalPolicy <: t_RedemptionStage;
+-            f_consumed_matched = true
++            f_consumed_matched = true;
++            f_insert_succeeded = true
+           }
+           <:
+           t_RedemptionDriver)

@@ -1,0 +1,26 @@
+gate-verify-fstar-session-executors.sh -> exit 0
+mutant plan-start-limit-budget: rejected at lockout_device_is_honest plan_start_limit_shape revocation_completes_only_locked_out
+mutant plan-token-limit-budget: rejected at lockout_device_is_honest plan_token_limits_shape revocation_completes_only_locked_out
+mutant plan-poll-limit-budget: rejected at lockout_device_is_honest plan_poll_limit_shape revocation_completes_only_locked_out
+mutant plan-keys-limit-budget: rejected at lockout_device_is_honest plan_keys_limit_shape revocation_completes_only_locked_out
+mutant plan-share-token-prefix: rejected at last_colon_unique list_of_scoped plan_key_eq rec
+session executor mutations: every mutant rejected at its theorem
+mutations -> exit 0
+mutant plan-start-limit-budget: rejected at lockout_device_is_honest plan_start_limit_shape revocation_completes_only_locked_out
+mutant plan-token-limit-budget: rejected at lockout_device_is_honest plan_token_limits_shape revocation_completes_only_locked_out
+mutant plan-poll-limit-budget: rejected at lockout_device_is_honest plan_poll_limit_shape revocation_completes_only_locked_out
+mutant plan-keys-limit-budget: rejected at lockout_device_is_honest plan_keys_limit_shape revocation_completes_only_locked_out
+mutant plan-share-token-prefix: rejected at last_colon_unique list_of_scoped plan_key_eq rec
+session executor mutations: every mutant rejected at its theorem
+cargo-policy -> exit 0
+test result: ok. 116 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+cargo-server -> exit 0
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 60.48s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.33s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 25.55s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+ALL-DONE fail=0

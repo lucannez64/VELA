@@ -1,0 +1,167 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/deps/vela_session_policy-652ed2674f77390e)
+
+running 15 tests
+test challenge::tests::absent_tag_is_missing_not_wrong_purpose ... ok
+test challenge::tests::bytes_roundtrip_matches_the_issued_tag ... ok
+test challenge::tests::every_cross_purpose_presentation_is_wrong_and_spends ... ok
+test challenge::tests::exact_issued_tags_are_recognized ... ok
+test challenge::tests::one_byte_or_length_mutation_is_unknown ... ok
+test challenge::tests::padding_past_the_stored_length_is_not_significant ... ok
+test challenge::tests::unknown_and_cross_purpose_tags_never_accept ... ok
+test structural_equality_tests::structural_comparisons_match_derived_equality_exhaustively ... ok
+test tests::grant_binds_pending_approver_nonce_mode_and_epoch ... ok
+test tests::invalid_and_overflowing_times_fail_closed ... ok
+test tests::permanent_routes_are_device_only ... ok
+test tests::renewal_preserves_scope_epoch_and_cap ... ok
+test tests::scope_parser_rejects_unknown_claims ... ok
+test tests::terminal_sessions_never_issue ... ok
+test tests::web_issue_requires_every_lifecycle_fact ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/login_driver.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/deps/login_driver-b24c847c6df3c843)
+
+running 13 tests
+test a_wrong_purpose_cannot_be_mutated_into_a_success ... ok
+test absent_or_undecodable_devices_are_terminal_refusals ... ok
+test an_invalid_verifier_cannot_be_mutated_into_a_success ... ok
+test backoff_reset_and_token_issue_failures_are_terminal_refusals ... ok
+test begin_requests_the_challenge_take ... ok
+test challenge_decode_failure_does_not_touch_the_failure_counter ... ok
+test every_stage_is_sound_and_every_event_is_classified ... ok
+test failure_counter_storage_error_is_terminal_and_keeps_precedence ... ok
+test out_of_order_events_are_ignored_and_do_not_change_the_driver ... ok
+test successful_login_reaches_exactly_one_response ... ok
+test tracking_failure_never_responds_even_though_the_token_was_issued ... ok
+test verifier_rejection_requires_the_failure_side_effects_and_never_responds ... ok
+test wrong_purpose_and_missing_challenges_are_terminal_refusals ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests vela_session_policy
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+[1m[94minfo[0m: [1mhax: unchanged file ./proofs/fstar/extraction/Vela_session_policy.fst[0m
+* Warning 241 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti(0,0-0,0):
+  - Unable to load
+    /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti.checked
+    since checked file
+    /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti.checked
+    does not exist; will recheck
+    /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti
+    (suppressing this warning for further modules)
+
+* Warning 239 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+Verified module: Vela_session_policy
+All verification conditions discharged successfully
+F* 2025.10.06
+platform=Linux_x86_64
+compiler=OCaml 4.14.2
+date=2025-10-06 12:00:42 -0700
+commit=7b347386330d0e5a331a220535b6f15288903234
+rustc: rustc 1.93.0-nightly (843f8ce2e 2025-11-07)
+cargo hax: hax  version=0.3.7 commit=unknown 
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.08s
+     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/deps/vela_session_policy-652ed2674f77390e)
+
+running 15 tests
+test challenge::tests::absent_tag_is_missing_not_wrong_purpose ... ok
+test challenge::tests::bytes_roundtrip_matches_the_issued_tag ... ok
+test challenge::tests::every_cross_purpose_presentation_is_wrong_and_spends ... ok
+test challenge::tests::exact_issued_tags_are_recognized ... ok
+test challenge::tests::one_byte_or_length_mutation_is_unknown ... ok
+test challenge::tests::padding_past_the_stored_length_is_not_significant ... ok
+test challenge::tests::unknown_and_cross_purpose_tags_never_accept ... ok
+test structural_equality_tests::structural_comparisons_match_derived_equality_exhaustively ... ok
+test tests::grant_binds_pending_approver_nonce_mode_and_epoch ... ok
+test tests::invalid_and_overflowing_times_fail_closed ... ok
+test tests::permanent_routes_are_device_only ... ok
+test tests::renewal_preserves_scope_epoch_and_cap ... ok
+test tests::scope_parser_rejects_unknown_claims ... ok
+test tests::terminal_sessions_never_issue ... ok
+test tests::web_issue_requires_every_lifecycle_fact ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/login_driver.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/deps/login_driver-b24c847c6df3c843)
+
+running 13 tests
+test a_wrong_purpose_cannot_be_mutated_into_a_success ... ok
+test absent_or_undecodable_devices_are_terminal_refusals ... ok
+test an_invalid_verifier_cannot_be_mutated_into_a_success ... ok
+test backoff_reset_and_token_issue_failures_are_terminal_refusals ... ok
+test begin_requests_the_challenge_take ... ok
+test challenge_decode_failure_does_not_touch_the_failure_counter ... ok
+test every_stage_is_sound_and_every_event_is_classified ... ok
+test failure_counter_storage_error_is_terminal_and_keeps_precedence ... ok
+test out_of_order_events_are_ignored_and_do_not_change_the_driver ... ok
+test successful_login_reaches_exactly_one_response ... ok
+test tracking_failure_never_responds_even_though_the_token_was_issued ... ok
+test verifier_rejection_requires_the_failure_side_effects_and_never_responds ... ok
+test wrong_purpose_and_missing_challenges_are_terminal_refusals ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests vela_session_policy
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-login-driver/Vela_session_policy.Challenge.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-login-driver/Vela_session_policy.Login_driver.fst[0m
+F* login-driver argv: --cmi --cache_off --warn_error -331 --z3rlimit 16000 --z3version 4.13.3 --already_cached +Prims+FStar+LowStar+C+Spec.Loops+TestLib --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/core --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proofs/fstar/extraction --include proofs/fstar/extraction-login-driver --include proofs/fstar/challenge-lemmas --include proofs/fstar/login-driver-lemmas proofs/fstar/extraction-login-driver/Vela_session_policy.Challenge.fst proofs/fstar/extraction-login-driver/Vela_session_policy.Login_driver.fst proofs/fstar/challenge-lemmas/Vela_session_policy_challenge_lemmas.fst proofs/fstar/login-driver-lemmas/Vela_session_policy_login_driver_lemmas.fst
+* Warning 271 at /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+Verified module: Vela_session_policy.Challenge
+Verified module: Vela_session_policy.Login_driver
+Verified module: Vela_session_policy_challenge_lemmas
+Verified module: Vela_session_policy_login_driver_lemmas
+All verification conditions discharged successfully
+login driver proof: 11 focused production entry points checked (3 challenge + 8 login)
+challenge refinement: exact literal-byte recognition for every bounded stored tag
+login trace: one response at most, response implies accepted login + valid verifier + tracked token, failure terminal
+8f3b4b14169000ab51d4c3f0572e8d72d0551214810cbdbe05fef8a2564d59f7  proofs/fstar/extraction-login-driver/Vela_session_policy.Challenge.fst
+ab5f233536bd6e98fe5b34433b4b7665f89906fac0ac900588926723bac72bb5  proofs/fstar/extraction-login-driver/Vela_session_policy.Login_driver.fst
+a92351ddbe6692cbb14704f048af4ab2f0b97157532984c00351ccba39d96776  proofs/fstar/challenge-lemmas/Vela_session_policy_challenge_lemmas.fst
+52ce34104cc4617b05be04aa0f8cd5d951eb9737e0b4ecee69192828ae06c4dc  proofs/fstar/login-driver-lemmas/Vela_session_policy_login_driver_lemmas.fst
+bae624c98f31b0b7f98c4cc863a39090b31b3bfbc92db7304e3d1487f9ac50f6  src/challenge.rs
+455602a9035d8766c5cd30b9b901ef9cbaab3cb48da685aa832f6408a8b1e441  src/login_driver.rs

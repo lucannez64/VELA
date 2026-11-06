@@ -19,7 +19,7 @@ on:
       - "security/**"
       - "serverVELA/**"
       - "libVELA/vela-crypto/**"
-      - "libVELA/vela-client-recovery-policy/**"
+      - "libVELA/vela-*-policy/**"
       - "libVELA/vela-core/**"
       - "libVELA/vela-android-bridge/**"
       - "libVELA/vela-apple-bridge/**"
@@ -37,7 +37,7 @@ on:
       - "security/**"
       - "serverVELA/**"
       - "libVELA/vela-crypto/**"
-      - "libVELA/vela-client-recovery-policy/**"
+      - "libVELA/vela-*-policy/**"
       - "libVELA/vela-core/**"
       - "libVELA/vela-android-bridge/**"
       - "libVELA/vela-apple-bridge/**"
@@ -50,182 +50,877 @@ on:
       - "**/Cargo.lock"
       - ".github/workflows/security.yml"
   workflow_dispatch:
+    inputs:
+      cold:
+        description: "Check every proof without the shared F* cache"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
+  # Pull the pinned proof image (ghcr.io/lucannez64/vela-proof) in hosted jobs.
+  packages: read
+
+# PR and manual runs for the same branch share a slot; retain main's queued runs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  # Job containers check out the workspace as another user, so git refuses it
+  # ("dubious ownership") and `git ls-files` in the proof gates fails. These
+  # variables act like `git -c safe.directory=*` for every git call.
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: safe.directory
+  GIT_CONFIG_VALUE_0: "*"
 
 jobs:
   formal-rekey:
-    runs-on: ubuntu-latest
+    needs: proof-image
+    runs-on: ubuntu-24.04
+    # Digest-pinned proof image from security/assurance/proof-image/IMAGE. An
+    # empty image means "no container": the job keeps today's host installs.
+    # Inside the proof image, job containers default to `sh`; keep the
+    # host runner's bash for every step (pipefail, [[ ]]).
+    defaults:
+      run:
+        shell: bash -e {0}
+    container:
+      image: ${{ needs.proof-image.outputs.hosted_image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    env:
+      # Compilation uses all runner cores; tests stay serial.
+      RUST_TEST_THREADS: 1
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      CARGO_INCREMENTAL: 0
+      # "true" when this job runs inside the pinned proof image, whose tools
+      # are already installed (the install steps below are then skipped).
+      VELA_IN_PROOF_IMAGE: ${{ needs.proof-image.outputs.hosted_in_image }}
+      # bounded.sh needs a systemd user manager, absent from the job container;
+      # the hosted runner's own memory bound applies there. On the host the
+      # wrapper keeps its 10 GiB cap.
+      VELA_BOUNDED: ${{ needs.proof-image.outputs.hosted_in_image == 'true' && '1' || '0' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      # All Rust compilation in this job (server model tests, crypto, bridges)
-      # shares the repo-root target dir, so one cache entry covers it. The
-      # same shared-key is used by the regression job below: whichever job
-      # finishes first saves, the other restores, and neither repeats the
-      # dependency compilation the next run.
-      - uses: swatinem/rust-cache@v2
+      - name: Report disk and shared-memory capacity
+        run: df -h / /dev/shm "$GITHUB_WORKSPACE" "$RUNNER_TEMP"
+
+      - uses: dtolnay/rust-toolchain@d124f86f28ff42855784ff3319f48ac182c248f8 # 1.99.1
+        if: env.VELA_IN_PROOF_IMAGE != 'true'
+
+      # One workspace entry per cached target directory. On save, rust-cache
+      # prunes each listed target down to that workspace's dependencies; listing
+      # several workspaces that share one target keeps only the crates common
+      # to all of them, which threw away the server's dependency tree and made
+      # every run rebuild from scratch. The server builds into target/, the
+      # libVELA crates into target-lib/ (CARGO_TARGET_DIR on those steps); the
+      # Android bridge's dependency tree covers vela-crypto and the policies.
+      - uses: swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: |
-            serverVELA -> target
-            libVELA/vela-crypto -> target
-            libVELA/vela-client-recovery-policy -> target
-            libVELA/vela-android-bridge -> target
-            libVELA/vela-apple-bridge -> target
-            libVELA/vela-wasm-bridge -> target
-          shared-key: security-rust
-          cache-on-failure: true
+            serverVELA -> ../target
+            libVELA/vela-android-bridge -> ../../target-lib
+          shared-key: security-formal-v4-small-debug
 
-      - name: Cache Tamarin 1.12.0 and Maude
-        uses: actions/cache@v4
-        with:
-          path: |
-            /usr/local/bin/tamarin-prover
-            /usr/local/bin/maude
-          key: tamarin-1.12.0-maude
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - name: Install Tamarin 1.12.0 and Maude
+      - name: Install pinned Tamarin 1.12.0 and Maude 3.5.1
+        if: env.VELA_IN_PROOF_IMAGE != 'true'
         run: |
-          if command -v tamarin-prover >/dev/null && command -v maude >/dev/null; then
-            echo "Tamarin and Maude restored from cache"
-            tamarin-prover --version
-            maude --version
-            exit 0
+          # Host fallback only (the image already carries these tools). Ubuntu
+          # packages come from the fixed snapshot in
+          # security/assurance/proof-image/apt-snapshot.conf so a rerun
+          # resolves the same package set.
+          sudo rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources
+          # deb822: one line per suite is not supported, Suites takes a list.
+          sudo tee /etc/apt/sources.list.d/vela-snapshot.sources >/dev/null <<'EOF'
+          Types: deb
+          URIs: https://snapshot.ubuntu.com/ubuntu/20261104T000000Z/
+          Suites: noble noble-updates noble-security
+          Components: main restricted universe multiverse
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          EOF
+          # snapshot.ubuntu.com can answer 5xx; make a missing index fatal and retry.
+          for try in 1 2 3 4 5 6; do
+            sudo apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=3 --error-on=any update -qq && break
+            test "$try" -lt 6 || exit 1; sleep 60
+          done
+          # Package downloads from the snapshot can also answer 5xx: retry.
+          for try in 1 2 3 4 5 6; do
+            sudo apt-get install --yes --no-install-recommends ripgrep unzip libgmp10 && break
+            test "$try" -lt 6 || exit 1; sleep 60
+          done
+          curl -fL -o /tmp/tamarin.tar.gz https://github.com/tamarin-prover/tamarin-prover/releases/download/1.12.0/tamarin-prover-1.12.0-linux64-ubuntu.tar.gz
+          echo "201be06f469e47cff554df6ca93db8366fc2c69d70c61fcbd1370a1074b469c6  /tmp/tamarin.tar.gz" | sha256sum -c
+          sudo tar -xzf /tmp/tamarin.tar.gz -C /usr/local/bin
+          curl -fL -o /tmp/maude.zip https://github.com/maude-lang/Maude/releases/download/Maude3.5.1/Maude-3.5.1-linux-x86_64.zip
+          echo "72ed1ca87e3b3d0dfc6ee1436baf154bf04c45ff97d521bec040c5e8dfc8f92c  /tmp/maude.zip" | sha256sum -c
+          sudo mkdir -p /opt/maude-3.5.1
+          sudo unzip -oq /tmp/maude.zip -d /opt/maude-3.5.1
+          sudo chmod +x /opt/maude-3.5.1/maude
+          # Maude locates its prelude through MAUDE_LIB; a symlink alone loses
+          # that location when called from a repository/proof directory.
+          cat > /tmp/vela-maude <<'SH'
+          #!/bin/sh
+          export MAUDE_LIB=/opt/maude-3.5.1
+          exec "$MAUDE_LIB/maude" "$@"
+          SH
+          sudo install -m755 /tmp/vela-maude /usr/local/bin/maude
+          tamarin-prover --version 2>&1 | tee /tmp/vela-tamarin-version.txt
+          if rg -q 'WARNING:|unsupported' /tmp/vela-tamarin-version.txt; then
+            echo 'Tamarin/Maude installation self-check failed' >&2
+            exit 1
           fi
-          sudo apt-get update
-          sudo apt-get install --yes maude ripgrep
-          curl --fail --silent --show-error --location \
-            --output /tmp/tamarin-prover.tar.gz \
-            https://github.com/tamarin-prover/tamarin-prover/releases/download/1.12.0/tamarin-prover-1.12.0-linux64-ubuntu.tar.gz
-          echo "201be06f469e47cff554df6ca93db8366fc2c69d70c61fcbd1370a1074b469c6  /tmp/tamarin-prover.tar.gz" \
-            | sha256sum --check
-          sudo tar --extract --gzip --file /tmp/tamarin-prover.tar.gz --directory /usr/local/bin
-          tamarin-prover --version
           maude --version
 
-      - name: Prove rekey state, capsule, and mutation invariants
-        run: ./security/formal/run-rekey-proofs.sh
+      - name: Cache standalone pinned F* for journal correspondence
+        if: env.VELA_IN_PROOF_IMAGE != 'true'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.local/opt/vela-formal-fstar-2025.10.06
+          key: formal-fstar-2025.10.06-${{ runner.os }}-${{ runner.arch }}-940c187d
 
-      - name: Prove web-session capability lifecycle
-        run: ./security/formal/run-session-proofs.sh
+      - name: Activate prebuilt F* and bundled Z3 for journal correspondence
+        if: env.VELA_IN_PROOF_IMAGE != 'true'
+        run: |
+          set -euo pipefail
+          proof_root="$HOME/.local/opt/vela-formal-fstar-2025.10.06"
+          security/assurance/install-formal-fstar.sh "$proof_root"
+          printf 'VELA_FSTAR_BIN=%s/fstar/bin/fstar.exe\n' "$proof_root" >> "$GITHUB_ENV"
+          printf '%s/fstar/bin\n' "$proof_root" >> "$GITHUB_PATH"
 
-      - name: Prove permanent-device enrollment ceremony
-        run: ./security/formal/run-enrollment-proofs.sh
+      - name: Check the pinned proof image's symbolic toolchain
+        if: env.VELA_IN_PROOF_IMAGE == 'true'
+        run: |
+          set -euo pipefail
+          # Same pins as the host install: fail loudly if the published image
+          # ever drifts from the versions the gates are written against.
+          tamarin-prover --version 2>&1 | tee /tmp/vela-tamarin-version.txt
+          if rg -q 'WARNING:|unsupported' /tmp/vela-tamarin-version.txt; then
+            echo 'Tamarin/Maude self-check failed' >&2
+            exit 1
+          fi
+          maude --version
+          proverif -help 2>&1 | head -1
+          fstar.exe --version
+          z3-4.13.3 --version
+          python3 --version
+          jq --version
+          cargo --version
+          cargo hax --version | grep -Fx 'version=0.3.7'
 
-      - name: Prove account-recovery lifecycle
-        run: ./security/formal/run-recovery-proofs.sh
+      - name: Check reviewed model correspondence
+        run: python3 security/formal/check-correspondence.py
 
-      - name: Prove client recovery reconstruction boundary
-        run: ./security/formal/run-client-recovery-proofs.sh
+      - name: Check driver proof source-policy regressions
+        run: python3 -m unittest discover -s security/formal/tests -p 'test_driver_proof_sources.py'
 
-      - name: Prove recovery setup publication consistency
-        run: ./security/formal/run-recovery-publication-proofs.sh
+      - name: Check no tracked F* file contains a proof escape
+        run: |
+          python3 security/formal/check-no-proof-escapes.py
+          python3 -m unittest discover -s security/formal/tests -p 'test_no_proof_escapes.py'
 
-      - name: Prove crash-consistent recovery publication
-        run: ./security/formal/run-recovery-publication-recovery-proofs.sh
+      - name: Check secret-bearing Rust types erase on drop
+        run: |
+          python3 -I security/formal/check-secret-erasure.py
+          python3 -I -m unittest discover -s security/formal/tests -p 'test_secret_erasure.py'
 
-      - name: Prove the full 2-of-3 pair-selection threshold
-        run: ./security/formal/run-pair-selection-proofs.sh
+      - name: Check every rendered SQL statement against the schema
+        run: |
+          python3 security/formal/check-sql-schema.py
+          python3 -m unittest discover -s security/formal/tests -p 'test_sql_schema.py'
 
-      - name: Prove the cross-user share-channel binding integrity
-        run: ./security/formal/run-share-channel-proofs.sh
+      - name: Check every bridge export is a thin core call
+        run: |
+          python3 -I security/formal/check-bridge-thinness.py
+          python3 -I -m unittest discover -s security/formal/tests -p 'test_bridge_thinness.py'
 
-      - name: Prove the web-session vault pass-through gating
-        run: ./security/formal/run-web-session-pass-through-proofs.sh
+      - name: Check the proof jobs' reuse keys cover their inputs
+        run: python3 -m unittest discover -s security/formal/tests -p 'test_proof_inputs.py'
 
-      - name: Prove linked-item revocation finality
-        run: ./security/formal/run-link-revocation-finality-proofs.sh
+      - name: Prove malicious-server enrollment, shares, and device authentication
+        run: VELA_PROOF_OUT="$RUNNER_TEMP/network-proofs" security/formal/run-network-boundary-proofs.sh
 
-      - name: Prove cross-milestone rotation-stranding composition
-        run: ./security/formal/run-composition-proofs.sh
-
-      - name: Prove the client sync-admission policy
-        run: ./security/formal/run-sync-admission-proofs.sh
-
-      - name: Statistical stash-bounds verification over the real ORAM
-        run: ./security/formal/run-oram-stash-bounds-tests.sh
-
-      # The opam switch with ProVerif is the slowest toolchain step (ocaml +
-      # proverif build ~5 min); the install below is already idempotent, so a
-      # cache hit just skips straight to the proof.
-      - name: Cache opam/ProVerif toolchain
-        uses: actions/cache@v4
+      # Keep installation separate from the later run-all.sh proof execution.
+      - name: Restore pinned ProVerif toolchain
+        id: proverif-toolchain-cache
+        if: env.VELA_IN_PROOF_IMAGE != 'true'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: /home/runner/.opam
-          key: opam-proverif-ocaml5.1.1-v1
+          key: opam-proverif-2.05-ocaml5.1.1-v2
+
+      - name: Install pinned ProVerif 2.05 (setup only)
+        if: env.VELA_IN_PROOF_IMAGE != 'true'
+        timeout-minutes: 25
+        run: |
+          set -euo pipefail
+          sudo rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources
+          # deb822: one line per suite is not supported, Suites takes a list.
+          sudo tee /etc/apt/sources.list.d/vela-snapshot.sources >/dev/null <<'EOF'
+          Types: deb
+          URIs: https://snapshot.ubuntu.com/ubuntu/20261104T000000Z/
+          Suites: noble noble-updates noble-security
+          Components: main restricted universe multiverse
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          EOF
+          # snapshot.ubuntu.com can answer 5xx; make a missing index fatal and retry.
+          for try in 1 2 3 4 5 6; do
+            sudo apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 --error-on=any update && break
+            test "$try" -lt 6 || exit 1; sleep 60
+          done
+          # Avoid opam's recommended distro OCaml; the pinned switch supplies it.
+          # ProVerif's opam package declares the GTK2 development dependency.
+          # Package downloads from the snapshot can also answer 5xx: retry.
+          for try in 1 2 3 4 5 6; do
+            sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends opam libgtk2.0-dev pkg-config && break
+            test "$try" -lt 6 || exit 1; sleep 60
+          done
+          opam init --no-setup --bare --yes
+          if ! opam switch list --short | grep -Fxq 'vela-proverif'; then
+            opam switch create vela-proverif ocaml-base-compiler.5.1.1 --yes
+          fi
+          opam install --switch vela-proverif --yes proverif.2.05
+          opam list --switch vela-proverif --installed proverif
+          echo "$(opam var bin --switch vela-proverif)" >> "$GITHUB_PATH"
+
+      - name: Cache completed ProVerif toolchain
+        if: env.VELA_IN_PROOF_IMAGE != 'true' && steps.proverif-toolchain-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: /home/runner/.opam
+          key: ${{ steps.proverif-toolchain-cache.outputs.cache-primary-key }}
 
       - name: Prove Path-ORAM access-pattern hiding (ProVerif)
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq opam libgtk2.0-dev pkg-config
-          opam init --auto-setup --bare -y
-          if ! opam switch list | grep -q 'vela-proverif'; then
-            opam switch create vela-proverif ocaml-base-compiler.5.1.1
-          fi
-          # proverif's opam depext pulls GUI libs the headless runner lacks;
-          # they are optional for the CLI solver, so skip depext handling.
-          if ! opam list --switch vela-proverif --installed 2>/dev/null | grep -q 'proverif'; then
-            opam install --switch vela-proverif --yes proverif
-          fi
-          eval "$(opam env --switch vela-proverif)"
-          ./security/formal/run-oram-access-hiding-proofs.sh
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/assurance-logs"
+          security/assurance/bounded.sh security/formal/run-oram-access-hiding-proofs.sh 2>&1 | tee "$RUNNER_TEMP/assurance-logs/oram-precheck.log"
 
-      - name: Exhaust the bounded model against real handlers and Turso
+      - name: Check computational proof runner failure handling
+        run: python3 -m unittest discover -s security/formal/tests -p 'test_cryptoverif_runner.py'
+
+      # Computational (not symbolic) proofs of the hybrid KEM combiner. Built
+      # with the pinned OCaml switch the ProVerif step put on PATH.
+      - name: Build pinned CryptoVerif 2.12 (host fallback)
+        if: env.VELA_IN_PROOF_IMAGE != 'true'
+        timeout-minutes: 20
         run: |
-          cargo test --manifest-path serverVELA/Cargo.toml --test rekey_state_model
-          cargo test --manifest-path serverVELA/Cargo.toml --test session_capability_model
-          cargo test --manifest-path serverVELA/Cargo.toml --test enrollment_ceremony_model
-          cargo test --manifest-path serverVELA/Cargo.toml --test recovery_lifecycle_model
-          cargo test --manifest-path serverVELA/Cargo.toml --test integration \
-            recovery_publication_finalizes_exactly_the_current_staged_split
-          cargo test --manifest-path libVELA/vela-client-recovery-policy/Cargo.toml --test bounded_refinement
+          set -euo pipefail
+          curl -fL --retry 3 -o /tmp/cryptoverif.tar.gz https://bblanche.gitlabpages.inria.fr/CryptoVerif/cryptoverif2.12.tar.gz
+          echo "77730861be7bfbde5b078f7785db478869d33aba2761a428d50aaad537098757  /tmp/cryptoverif.tar.gz" | sha256sum -c
+          mkdir -p /tmp/cryptoverif && tar -xzf /tmp/cryptoverif.tar.gz -C /tmp/cryptoverif
+          (cd /tmp/cryptoverif/cryptoverif2.12 && ./build)
+
+      - name: Prove the hybrid KEM combiner in the computational model (CryptoVerif 2.12)
+        timeout-minutes: 20
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/assurance-logs"
+          CRYPTOVERIF="${CRYPTOVERIF_BIN:-/tmp/cryptoverif/cryptoverif2.12/cryptoverif}" \
+            VELA_PROOF_OUT="$RUNNER_TEMP/assurance-logs/cryptoverif" \
+            security/formal/run-cryptoverif-proofs.sh
+
+      - name: Bounded conformance - rekey_state_model
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml --test rekey_state_model
+
+      - name: Bounded conformance - session_capability_model
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml --test session_capability_model
+
+      - name: Bounded conformance - enrollment_ceremony_model
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml --test enrollment_ceremony_model
+
+      - name: Bounded conformance - recovery_lifecycle_model
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml --test recovery_lifecycle_model
+
+      - name: Bounded conformance - share_channel_model
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml --test share_channel_model
+
+      - name: Bounded conformance - recovery_possession_model
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml --test recovery_possession_model
+
+      - name: Bounded conformance - pairing_model
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml --test pairing_model
+
+      - name: Bounded conformance - challenge_single_use_model
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml --test challenge_single_use_model
+
+      - name: Bounded conformance - login_driver_handler
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml --test login_driver_handler
+
+      - name: Bounded conformance - login_driver
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-session-policy --test login_driver
+
+      - name: Bounded conformance - vela-session-policy revocation_driver
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-session-policy --lib revocation_driver
+
+      - name: Bounded conformance - vela-session-policy deletion_driver
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-session-policy --lib deletion_driver
+
+      - name: Bounded conformance - vela-session-policy deletion_interpreter
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-session-policy --lib deletion_interpreter
+
+      - name: Bounded conformance - vela-session-policy library
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-session-policy --lib
+
+      - name: Bounded conformance - account_deletion_model
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml --test account_deletion_model
+
+      - name: Bounded conformance - device_revocation_model
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml --test device_revocation_model -- --nocapture
+
+      - name: Bounded conformance - redemption_driver
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-recovery-policy --test redemption_driver
+
+      - name: Bounded conformance - driver
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-share-policy --test driver
+
+      - name: Bounded conformance - vela-share-policy library
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-share-policy --lib
+
+      - name: Bounded conformance - possession_driver
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-recovery-policy --test possession_driver
+
+      - name: Bounded conformance - webauthn_driver
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-recovery-policy --test webauthn_driver
+
+      - name: Bounded conformance - integration
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml --test integration
+
+      - name: Bounded conformance - vela-enrollment-policy vela-enrollment-policy
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-enrollment-policy
+
+      - name: Bounded conformance - vela-rekey-policy library
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-rekey-policy --lib
+
+      - name: Bounded conformance - bounded_refinement
+        timeout-minutes: 30
+        run: cargo test --manifest-path libVELA/vela-client-recovery-policy/Cargo.toml --test bounded_refinement
 
       - name: Verify the desktop, Android, Apple, and web epoch wire contract
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target-lib
         run: |
-          cargo test --manifest-path libVELA/vela-crypto/Cargo.toml recovery::tests
+          cargo test --manifest-path libVELA/vela-client-share-policy/Cargo.toml
+          cargo test --manifest-path libVELA/vela-crypto/Cargo.toml --lib
           cargo test --manifest-path libVELA/vela-crypto/Cargo.toml \
             rekey::tests::fleet_wire_matrix_is_cross_client_and_epoch_compatible
           cargo test --manifest-path libVELA/vela-android-bridge/Cargo.toml --lib
           cargo test --manifest-path libVELA/vela-apple-bridge/Cargo.toml --lib
           cargo test --manifest-path libVELA/vela-wasm-bridge/Cargo.toml --lib
 
-  static-scan:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+      - name: Run every assurance model, including the credential-release ladder
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target-lib
+          VELA_CARGO_JOBS: 4
+          VELA_MEMORY_MAX: 10G
+        run: security/assurance/run-all.sh --out "$RUNNER_TEMP/assurance-logs"
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: assurance-symbolic-logs
+          path: |
+            ${{ runner.temp }}/assurance-logs
+            ${{ runner.temp }}/network-proofs
+
+  sharing-boundaries:
+    needs: proof-image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    # Job containers default to `sh`; the steps use bash.
+    defaults:
+      run:
+        shell: bash -e {0}
+    # Empty while IMAGE holds the placeholder: the job then runs on the host.
+    container:
+      image: ${{ needs.proof-image.outputs.hosted_image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    env:
+      RUST_TEST_THREADS: 1
+      VELA_IN_PROOF_IMAGE: ${{ needs.proof-image.outputs.hosted_in_image }}
+      # bounded.sh needs a systemd user manager, absent from job containers.
+      VELA_BOUNDED: ${{ needs.proof-image.outputs.hosted_in_image == 'true' && '1' || '0' }}
+      # bounded.sh defaults to one job under 3 GiB (safe on a workstation).
+      # The runner is a dedicated 4-core, 16 GiB machine.
+      VELA_CARGO_JOBS: 4
+      VELA_MEMORY_MAX: 10G
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@d124f86f28ff42855784ff3319f48ac182c248f8 # 1.99.1
+        if: env.VELA_IN_PROOF_IMAGE != 'true'
+      - name: Install desktop core build prerequisites
+        if: env.VELA_IN_PROOF_IMAGE != 'true'
+        run: |
+          # Fixed Ubuntu snapshot (security/assurance/proof-image/apt-snapshot.conf).
+          sudo rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources
+          # deb822: one line per suite is not supported, Suites takes a list.
+          sudo tee /etc/apt/sources.list.d/vela-snapshot.sources >/dev/null <<'EOF'
+          Types: deb
+          URIs: https://snapshot.ubuntu.com/ubuntu/20261104T000000Z/
+          Suites: noble noble-updates noble-security
+          Components: main restricted universe multiverse
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          EOF
+          # snapshot.ubuntu.com can answer 5xx; make a missing index fatal and retry.
+          for try in 1 2 3 4 5 6; do
+            sudo apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=3 --error-on=any update -qq && break
+            test "$try" -lt 6 || exit 1; sleep 60
+          done
+          # Package downloads from the snapshot can also answer 5xx: retry.
+          for try in 1 2 3 4 5 6; do
+            sudo apt-get install -y --no-install-recommends clang pkg-config libudev-dev libwayland-dev libssl-dev && break
+            test "$try" -lt 6 || exit 1; sleep 60
+          done
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: desktopVELA -> ../target
+          shared-key: security-desktop-core-v3
+      - name: Check desktop policy callers and recoverable share commits
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/sharing-logs"
+          security/assurance/bounded.sh cargo test --manifest-path desktopVELA/Cargo.toml -p vela-desktop-core --locked --lib 2>&1 | tee "$RUNNER_TEMP/sharing-logs/desktop-core-tests.log"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: assurance-sharing-logs
+          path: ${{ runner.temp }}/sharing-logs
+
+  # The owner's build box (self-hosted runners labelled `vela-box`) takes the
+  # proof matrix only when it is up (its heartbeat variable is under five
+  # minutes old) and only for the owner's own runs on this repository's
+  # branches. Everything else, including any pull request from a fork, uses
+  # GitHub-hosted runners. The box enforces the same rule itself in a
+  # job-started hook, so editing this job cannot route a fork's code there.
+  pick-runner:
+    runs-on: ubuntu-24.04
+    outputs:
+      runner: ${{ steps.pick.outputs.runner }}
+      # "true" only for GitHub-hosted runners, which can pull the proof image.
+      hosted: ${{ steps.pick.outputs.hosted }}
+    steps:
+      - id: pick
+        env:
+          ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          OWNER: ${{ github.repository_owner }}
+          EVENT: ${{ github.event_name }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REPO: ${{ github.repository }}
+          HEARTBEAT: ${{ vars.VELA_BOX_HEARTBEAT }}
+          DISABLED: ${{ vars.VELA_BOX_DISABLED }}
+        run: |
+          runner='"ubuntu-24.04"'
+          hosted=true
+          now=$(date +%s)
+          if [[ $ACTOR == "$OWNER" && $TRIGGERING_ACTOR == "$OWNER" && $DISABLED != true ]] \
+             && [[ $EVENT != pull_request || $HEAD_REPO == "$REPO" ]] \
+             && [[ $HEARTBEAT =~ ^[0-9]+$ ]] && (( now - HEARTBEAT < 300 )); then
+            runner='["self-hosted","vela-box"]'
+            # The box has no docker-container support assumption: keep its
+            # host toolchain path (no pinned proof image).
+            hosted=false
+          fi
+          echo "runner=$runner" >> "$GITHUB_OUTPUT"
+          echo "hosted=$hosted" >> "$GITHUB_OUTPUT"
+          echo "proof matrix runs on: $runner"
+
+  # Reads security/assurance/proof-image/IMAGE, the single digest-pinned image
+  # reference used by the hosted proof jobs. Two-phase bootstrap: until the
+  # first image build publishes a digest the file holds a placeholder, this job
+  # outputs an empty image, and the hosted jobs fall back to today's host tool
+  # install. An empty container image means "no job container"
+  # (actions/runner#2235). Self-hosted runners always take that path: the box
+  # is not assumed to provide docker containers, so it keeps its host tools.
+  proof-image:
+    needs: pick-runner
+    runs-on: ubuntu-24.04
+    outputs:
+      image: ${{ steps.read.outputs.image }}
+      in_image: ${{ steps.read.outputs.in_image }}
+      # For jobs that always run GitHub-hosted (formal-rekey): the image
+      # whenever IMAGE holds a digest, whatever runner the matrix picked.
+      hosted_image: ${{ steps.read.outputs.hosted_image }}
+      hosted_in_image: ${{ steps.read.outputs.hosted_in_image }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Resolve the pinned proof image
+        id: read
+        env:
+          HOSTED: ${{ needs.pick-runner.outputs.hosted }}
+        run: |
+          set -euo pipefail
+          ref=$(head -n 1 security/assurance/proof-image/IMAGE | tr -d '[:space:]')
+          if [[ $ref =~ ^ghcr\.io/[a-z0-9./_-]+@sha256:[0-9a-f]{64}$ ]]; then
+            printf 'hosted_image=%s\n' "$ref" >> "$GITHUB_OUTPUT"
+            echo 'hosted_in_image=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'hosted_image=' >> "$GITHUB_OUTPUT"
+            echo 'hosted_in_image=false' >> "$GITHUB_OUTPUT"
+          fi
+          if [[ $HOSTED == true && $ref =~ ^ghcr\.io/[a-z0-9./_-]+@sha256:[0-9a-f]{64}$ ]]; then
+            printf 'image=%s\n' "$ref" >> "$GITHUB_OUTPUT"
+            echo 'in_image=true' >> "$GITHUB_OUTPUT"
+            echo "hosted proof jobs run inside $ref"
+          else
+            echo 'image=' >> "$GITHUB_OUTPUT"
+            echo 'in_image=false' >> "$GITHUB_OUTPUT"
+            echo 'hosted proof jobs use host tool installs (placeholder digest or self-hosted runner)'
+          fi
+
+  # One job per policy crate, in parallel: each regenerates and checks its own
+  # extractions, interpreter and driver proofs. `refinement-boundary` then
+  # audits the freshly regenerated extractions of all of them together.
+  refinement:
+    name: refinement (${{ matrix.name }})
+    needs: [pick-runner, proof-image]
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.runner) }}
+    # Empty on the self-hosted box and while IMAGE holds the bootstrap
+    # placeholder: the job then runs on the host exactly as before.
+    # Inside the proof image, job containers default to `sh`; keep the
+    # host runner's bash for every step (pipefail, [[ ]]).
+    defaults:
+      run:
+        shell: bash -e {0}
+    container:
+      image: ${{ needs.proof-image.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    timeout-minutes: 140
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Slowest first, so they start before the runners fill up.
+          # vela-session-policy is split into its independent gate groups.
+          - { name: vela-session-policy-login, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: login, fresh: false, ships: false, deps: 'serverVELA/vela-server/src/auth/challenge.rs' }
+          - { name: vela-session-policy-deletion, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: deletion, fresh: false, ships: false, deps: 'serverVELA/vela-server/src/auth/challenge.rs' }
+          - { name: vela-session-policy-revocation, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: revocation, fresh: false, ships: false, deps: 'serverVELA/vela-server/src/auth/challenge.rs' }
+          - { name: vela-session-policy-account, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: account, fresh: false, ships: false, deps: 'serverVELA/vela-server/src/auth/challenge.rs' }
+          - { name: vela-session-policy-websession, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: websession, fresh: false, ships: false, deps: 'serverVELA/vela-server/src/auth/challenge.rs' }
+          - { name: vela-session-policy-session, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: session, fresh: false, ships: false, deps: 'serverVELA/vela-server/src/auth/challenge.rs' }
+          - { name: vela-session-policy-core, dir: serverVELA/vela-session-policy, script: verify-fstar.sh, args: core, fresh: true, ships: true, deps: 'serverVELA/vela-server/src/auth/challenge.rs' }
+          - { name: vela-recovery-policy, dir: serverVELA/vela-recovery-policy, script: verify-fstar.sh, fresh: true, ships: true, deps: '' }
+          - { name: vela-rekey-policy, dir: serverVELA/vela-rekey-policy, script: verify-fstar.sh, args: core, fresh: true, ships: true, deps: '' }
+          - { name: vela-rekey-policy-executors, dir: serverVELA/vela-rekey-policy, script: verify-fstar.sh, args: executors, fresh: false, ships: false, deps: '' }
+          - { name: vela-enrollment-policy, dir: serverVELA/vela-enrollment-policy, script: verify-fstar.sh, fresh: true, ships: true, deps: '' }
+          - { name: vela-share-policy, dir: serverVELA/vela-share-policy, script: verify-fstar.sh, fresh: true, ships: true, deps: 'serverVELA/vela-rekey-policy/README.md' }
+          - { name: share-facts, dir: libVELA/vela-crypto, script: verify-share-facts-fstar.sh, fresh: false, ships: true, deps: 'libVELA/vela-client-recovery-policy libVELA/vela-client-share-policy libVELA/vela-sync-policy' }
+          - { name: vela-sync-policy, dir: libVELA/vela-sync-policy, script: verify-fstar.sh, fresh: true, ships: true, deps: 'libVELA/vela-client-recovery-policy/README.md security/formal/tests' }
+          - { name: vela-client-recovery-policy, dir: libVELA/vela-client-recovery-policy, script: verify-fstar.sh, fresh: true, ships: true, deps: '' }
+          - { name: vela-client-share-policy, dir: libVELA/vela-client-share-policy, script: verify-fstar.sh, fresh: true, ships: true, deps: '' }
+          - { name: share-journal, dir: libVELA/vela-client-share-journal, script: verify-fstar-journal.sh, fresh: true, ships: true, deps: 'libVELA/vela-client-share-policy security/formal/m28_share_journal.spthy' }
+          - { name: cross-driver, dir: security/formal/cross-driver, script: verify.sh, fresh: false, ships: false, deps: 'serverVELA/vela-session-policy serverVELA/vela-enrollment-policy serverVELA/vela-recovery-policy serverVELA/Cargo.toml serverVELA/Cargo.lock' }
+    env:
+      CARGO_BUILD_JOBS: 1
+      OPAMJOBS: 1
+      MAKEFLAGS: -j1
+      # Two parallel mutants stay within the job's 3 GiB memory cap.
+      VELA_MUTANT_JOBS: 2
+      VELA_IN_PROOF_IMAGE: ${{ needs.proof-image.outputs.in_image }}
+      # bounded.sh needs a systemd user manager, absent from the job container.
+      VELA_BOUNDED: ${{ needs.proof-image.outputs.in_image == 'true' && '1' || '0' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # A proof whose inputs are byte-identical to a run that already passed is
+      # not rerun: the key is the git object id of every input (the crate, the
+      # outside files its scripts read, the workspace lockfile, the two shared
+      # source checkers, the tool pins, and this workflow), and a hit restores that
+      # run's logs and checked extractions for the boundary job.
+      # test_proof_inputs.py fails if a script reads an outside path the key
+      # does not cover.
+      # Pull requests and manual runs on the build box reuse checked F* modules
+      # from its shared store (security/assurance/fstar-cache). Pushes to main,
+      # hosted runners and manual runs with `cold` check everything from source;
+      # their verdicts are kept apart from cached ones.
+      - name: Compute proof input key
+        id: inputs
+        env:
+          CRATE_DIR: ${{ matrix.dir }}
+          DEPS: ${{ matrix.deps }}
+          NAME: ${{ matrix.name }}
+          MODE: ${{ (runner.environment == 'self-hosted' && github.event_name != 'push' && !inputs.cold) && 'cached' || 'cold' }}
+        run: |
+          set -euo pipefail
+          root=${CRATE_DIR%%/*}
+          # shellcheck disable=SC2206 # DEPS is a space-separated path list
+          paths=("$CRATE_DIR" $DEPS security/formal/check-driver-proof-sources.py security/formal/check-sync-chunk-proof.py \
+                 security/assurance/bounded.sh security/assurance/install-hax.sh \
+                 security/assurance/opam-lock/hax-engine.opam.locked \
+                 security/assurance/check-proof-boundary.py security/assurance/fstar-cache .github/workflows/security.yml)
+          for f in "$root/Cargo.toml" "$root/Cargo.lock"; do [[ -e $f ]] && paths+=("$f"); done
+          key=$(for p in "${paths[@]}"; do printf '%s %s\n' "$p" "$(git rev-parse --verify "HEAD:$p")"; done | sha256sum | cut -c1-40)
+          echo "key=proof-verdict-v1-$MODE-$NAME-$key" >> "$GITHUB_OUTPUT"
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "proof input key for $NAME ($MODE): $key"
+      - name: Reuse a passing proof with the same inputs
+        id: verdict
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .proof-out
+          key: ${{ steps.inputs.outputs.key }}
+      - name: Note the reused proof
+        if: steps.verdict.outputs.cache-hit == 'true'
+        run: |
+          echo "Inputs unchanged since a passing run; proof not rerun (key ${{ steps.inputs.outputs.key }})." | tee -a .proof-out/logs/reused.txt
+      - uses: dtolnay/rust-toolchain@d124f86f28ff42855784ff3319f48ac182c248f8 # 1.99.1
+        if: env.VELA_IN_PROOF_IMAGE != 'true' && steps.verdict.outputs.cache-hit != 'true'
+      - name: Install build prerequisites
+        if: runner.environment == 'github-hosted' && env.VELA_IN_PROOF_IMAGE != 'true' && steps.verdict.outputs.cache-hit != 'true'
+        timeout-minutes: 15
+        run: |
+          # Fixed Ubuntu snapshot (security/assurance/proof-image/apt-snapshot.conf).
+          sudo rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources
+          # deb822: one line per suite is not supported, Suites takes a list.
+          sudo tee /etc/apt/sources.list.d/vela-snapshot.sources >/dev/null <<'EOF'
+          Types: deb
+          URIs: https://snapshot.ubuntu.com/ubuntu/20261104T000000Z/
+          Suites: noble noble-updates noble-security
+          Components: main restricted universe multiverse
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          EOF
+          # snapshot.ubuntu.com can answer 5xx; make a missing index fatal and retry.
+          for try in 1 2 3 4 5 6; do
+            sudo apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 --error-on=any update && break
+            test "$try" -lt 6 || exit 1; sleep 60
+          done
+          # opam builds our pinned OCaml. Its recommended distro OCaml is redundant.
+          # Package downloads from the snapshot can also answer 5xx: retry.
+          for try in 1 2 3 4 5 6; do
+            sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends opam libgmp-dev pkg-config unzip jq clang nodejs && break
+            test "$try" -lt 6 || exit 1; sleep 60
+          done
+      - name: Restore pinned proof toolchain
+        id: refinement-toolchain-cache
+        if: runner.environment == 'github-hosted' && env.VELA_IN_PROOF_IMAGE != 'true' && steps.verdict.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.local/opt/vela-hax-0.3.7
+            ~/.rustup/toolchains/nightly-2025-11-08-x86_64-unknown-linux-gnu
+          key: refinement-toolchain-v1-${{ runner.os }}-${{ runner.arch }}-ubuntu24-${{ hashFiles('security/assurance/install-hax.sh', 'security/assurance/opam-lock/hax-engine.opam.locked') }}
+      - name: Install pinned hax, F* and Z3
+        if: runner.environment == 'github-hosted' && env.VELA_IN_PROOF_IMAGE != 'true' && steps.verdict.outputs.cache-hit != 'true' && steps.refinement-toolchain-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/refinement-logs"
+          VELA_MEMORY_MAX=6G VELA_STEP_TIMEOUT=5400 security/assurance/bounded.sh security/assurance/install-hax.sh 2>&1 | tee "$RUNNER_TEMP/refinement-logs/toolchain-install-${{ matrix.name }}.log"
+      - name: Activate and check pinned proof tools
+        if: steps.verdict.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/refinement-logs"
+          {
+            # The build box keeps the same pinned tools at VELA_PROOF_TOOLS.
+            proof_tools="${VELA_PROOF_TOOLS:-$HOME/.local/opt/vela-hax-0.3.7}"
+            export CARGO_HOME="$proof_tools/cargo-home" OPAMROOT="$proof_tools/opam"
+            export PATH="$proof_tools/bin:$OPAMROOT/vela-hax/bin:$proof_tools/fstar/bin:$PATH"
+            printf 'CARGO_HOME=%s\nOPAMROOT=%s\n' "$CARGO_HOME" "$OPAMROOT" >> "$GITHUB_ENV"
+            printf '%s\n' "$proof_tools/bin" "$OPAMROOT/vela-hax/bin" "$proof_tools/fstar/bin" >> "$GITHUB_PATH"
+            cargo hax --version | grep -Fx 'version=0.3.7'
+            test -x "$OPAMROOT/vela-hax/bin/hax-engine"
+            test "$(opam list --switch vela-hax --installed --columns=version --short hax-engine)" = 0.3.7
+            test "$(cat "$proof_tools/fstar/version.txt")" = 2025.10.06
+            fstar.exe --version
+            z3-4.13.3 --version
+            rustc +nightly-2025-11-08 --version
+          } 2>&1 | tee "$RUNNER_TEMP/refinement-logs/toolchain-activation-${{ matrix.name }}.log"
+      - name: Cache completed proof toolchain
+        if: runner.environment == 'github-hosted' && env.VELA_IN_PROOF_IMAGE != 'true' && steps.verdict.outputs.cache-hit != 'true' && steps.refinement-toolchain-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.local/opt/vela-hax-0.3.7
+            ~/.rustup/toolchains/nightly-2025-11-08-x86_64-unknown-linux-gnu
+          key: ${{ steps.refinement-toolchain-cache.outputs.cache-primary-key }}
+      # Installed tools are immutable above; application dependencies need their
+      # own evolving cache. Activate CARGO_HOME before restoring this cache.
+      # This action caches dependency build artifacts only; reused verdicts
+      # come from the exact-input key above.
+      - name: Cache refinement Rust dependencies
+        if: runner.environment == 'github-hosted' && steps.verdict.outputs.cache-hit != 'true'
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: ${{ matrix.dir }} -> ../../target
+          shared-key: refinement-rust-v2-${{ matrix.name }}
+          key: ${{ hashFiles('security/assurance/install-hax.sh', 'security/assurance/opam-lock/hax-engine.opam.locked') }}
+          cache-bin: false
+      - name: Use the shared F* cache
+        if: steps.verdict.outputs.cache-hit != 'true' && steps.inputs.outputs.mode == 'cached'
+        run: |
+          echo "$GITHUB_WORKSPACE/security/assurance/fstar-cache" >> "$GITHUB_PATH"
+          echo "VELA_FSTAR_CACHE=$HOME/.cache/vela-fstar" >> "$GITHUB_ENV"
+          echo "F* cache: $HOME/.cache/vela-fstar" | tee -a "$RUNNER_TEMP/refinement-logs/toolchain-activation-${{ matrix.name }}.log"
+      - name: Extract and check ${{ matrix.name }}
+        if: steps.verdict.outputs.cache-hit != 'true'
+        env:
+          CRATE_DIR: ${{ matrix.dir }}
+          SCRIPT: ${{ matrix.script }}
+          SCRIPT_ARGS: ${{ matrix.args }}
+          FRESH: ${{ matrix.fresh }}
+          LOG_NAME: ${{ matrix.name }}
+          # The box is shared with local proof work, which can roughly double
+          # proof times; the job keeps a 140-minute cap.
+          VELA_STEP_TIMEOUT: "7200"
+        run: |
+          mkdir -p "$RUNNER_TEMP/refinement-logs"
+          # Require fresh output even when the repository contains extractions.
+          if [[ $FRESH == true && -d "$CRATE_DIR/proofs/fstar/extraction" ]]; then
+            find "$CRATE_DIR/proofs/fstar/extraction" -maxdepth 1 -type f \( -name '*.fst' -o -name '*.fsti' \) -delete
+          fi
+          log="$RUNNER_TEMP/refinement-logs/$LOG_NAME.log"
+          # shellcheck disable=SC2086 # SCRIPT_ARGS is empty or one word
+          if ! security/assurance/bounded.sh "$CRATE_DIR/$SCRIPT" $SCRIPT_ARGS > "$log" 2>&1; then
+            tail -n 100 "$log"
+            exit 1
+          fi
+      # Keep repository-relative paths so the boundary job can lay them back.
+      - name: Collect checked extractions
+        if: always() && steps.verdict.outputs.cache-hit != 'true'
+        env:
+          CRATE_DIR: ${{ matrix.dir }}
+          SHIPS: ${{ matrix.ships }}
+        run: |
+          out="$GITHUB_WORKSPACE/.proof-out/extractions"
+          mkdir -p "$out" .proof-out/logs
+          cp -r "$RUNNER_TEMP/refinement-logs/." .proof-out/logs/ 2>/dev/null || true
+          # Only the job that regenerated a crate's historical extraction ships
+          # it, so a committed copy never overwrites the checked one.
+          skip=()
+          [[ $SHIPS == true ]] || skip=(-not -path '*/extraction/*')
+          find "$CRATE_DIR/proofs/fstar" -type f -name '*.fst' "${skip[@]}" \
+            \( -path '*/extraction/*' -o -path '*/extraction-*' -o -path '*-lemmas/*' -o -path '*-composition/*' -o -path '*/models/*' \) \
+            -exec cp --parents {} "$out" \; 2>/dev/null || true
+      - name: Remember this passing proof
+        if: success() && steps.verdict.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .proof-out
+          key: ${{ steps.inputs.outputs.key }}
+      - uses: ./.github/actions/upload-proof-artifact
+        if: always()
+        with:
+          name: refinement-logs-${{ matrix.name }}
+          path: .proof-out/logs
+      - uses: ./.github/actions/upload-proof-artifact
+        if: always()
+        with:
+          name: refinement-extractions-${{ matrix.name }}
+          path: .proof-out/extractions
+          # Cross-driver extracts into its three policy dependencies; this
+          # directory only contains files from CRATE_DIR/proofs/fstar.
+          if-no-files-found: ${{ matrix.name == 'cross-driver' && 'warn' || 'error' }}
+
+  # Audits the selected postconditions and reviewed assumptions across every
+  # crate, over the extractions the matrix jobs just regenerated and checked,
+  # and republishes the combined evidence under the historical artifact names.
+  refinement-boundary:
+    needs: refinement
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Require every crate job to pass
+        env:
+          RESULT: ${{ needs.refinement.result }}
+        run: test "$RESULT" = success
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: refinement-extractions-*
+          merge-multiple: true
+          path: .
+      - name: Audit extraction assumptions
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/refinement-logs"
+          python3 security/assurance/check-proof-boundary.py | tee "$RUNNER_TEMP/refinement-logs/proof-boundary.log"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: refinement-logs-proof-boundary
+          path: ${{ runner.temp }}/refinement-logs
+      - uses: actions/upload-artifact/merge@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: assurance-refinement-logs
+          pattern: refinement-logs-*
+      - uses: actions/upload-artifact/merge@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: assurance-refinement-extractions
+          pattern: refinement-extractions-*
+
+  static-scan:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Check CI environment pins
+        run: python3 -I security/assurance/check-env-pins.py
+
+      # T7: the hax 0.3.7 `ne` and `mul_overflow` bugs and signed `/!` `%!`
+      # must stay out of every tracked F* file.
+      - name: Check std-model guards
+        run: python3 -I security/formal/std-model-diff/check-model-guards.py
+
+      - uses: dtolnay/rust-toolchain@d124f86f28ff42855784ff3319f48ac182c248f8 # 1.99.1
 
       - name: Install cargo-audit and cargo-deny
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
         with:
-          tool: cargo-audit,cargo-deny
+          tool: cargo-audit@0.22.2,cargo-deny@0.20.2
 
       - name: Install semgrep
         run: |
-          python3 -m pip install --quiet semgrep
+          python3 -m pip install --quiet 'semgrep==1.183.0'
           semgrep --version
 
       - name: Run static scan (hard gate)
         run: ./security/run-scan.sh
 
   regression:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    env:
+      RUST_TEST_THREADS: 1
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      # Same shared-key as formal-rekey above: the server dependencies that
-      # job compiled are reused here instead of a second full compile.
-      - uses: swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@d124f86f28ff42855784ff3319f48ac182c248f8 # 1.99.1
+
+      # Its own cache: `cargo build` of the server resolves features differently
+      # from formal-rekey's `cargo test`, so sharing that cache only partly helps.
+      - uses: swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          workspaces: serverVELA -> target
-          shared-key: security-rust
-          cache-on-failure: true
-
-      - uses: dtolnay/rust-toolchain@stable
+          workspaces: serverVELA -> ../target
+          shared-key: security-regression-v3
 
       - name: Build server
         run: cargo build --manifest-path serverVELA/Cargo.toml

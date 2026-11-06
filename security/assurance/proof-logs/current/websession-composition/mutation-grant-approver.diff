@@ -1,0 +1,12 @@
+diff -u /home/hirew/.t3/worktrees/VELA/t3-ff5cd786/serverVELA/vela-session-policy/proofs/fstar/extraction-websession-driver/Vela_session_policy.fst /tmp/vela-wsc-mut/grant-approver/extraction-websession-driver/Vela_session_policy.fst
+--- /home/hirew/.t3/worktrees/VELA/t3-ff5cd786/serverVELA/vela-session-policy/proofs/fstar/extraction-websession-driver/Vela_session_policy.fst	2026-10-28 17:08:17.250916017 +0100
++++ /tmp/vela-wsc-mut/grant-approver/extraction-websession-driver/Vela_session_policy.fst	2026-10-28 17:20:24.633147288 +0100
+@@ -47,7 +47,7 @@
+   (match facts.f_phase <: t_SessionPhase with
+     | SessionPhase_Pending  -> true
+     | _ -> false) &&
+-  facts.f_approver_matches &&
++  true &&
+   facts.f_nonce_matches &&
+   facts.f_declared_epoch >=. v_INITIAL_EPOCH &&
+   ((match facts.f_mode <: t_SessionMode with

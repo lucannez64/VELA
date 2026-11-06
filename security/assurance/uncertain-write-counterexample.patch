@@ -1,0 +1,13 @@
+--- a/desktopVELA/vela-desktop-core/src/sharing.rs
++++ b/desktopVELA/vela-desktop-core/src/sharing.rs
+@@ -185,10 +185,6 @@
+     if snapshot.pending_items.is_empty() {
+         return Ok(());
+     }
+-    // A prior replacement may be visible even though its directory sync
+-    // reported failure. Reading it is not a durability acknowledgment. Re-arm
+-    // the journal before touching the vault, including on in-process retries.
+-    write_share_store(store, crypto, snapshot)?;
+     for change in &snapshot.pending_items {
+         let current = vault.get_item(change.after.id());
+         let deleted = vault.tombstones.iter().any(|t| t.id == change.after.id());

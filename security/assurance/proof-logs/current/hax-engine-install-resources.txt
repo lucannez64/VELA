@@ -1,0 +1,8 @@
+Engine build started with MemoryMax=5G; increased live to 6G for headroom.
+MemorySwapMax=0; one opam/make worker; OCAMLRUNPARAM=o=10,s=256k.
+Observed live memory.peak=5123719168 bytes (4.77 GiB).
+Final exact metric collection failed due to hybrid cgroup parsing; journal below reports a rounded peak.
+Dependencies were already installed; this is not a cold full-toolchain measurement.
+
+Oct 23 11:44:13 TSAR-BOMBA systemd[1209]: Started [systemd-run] /usr/bin/env VELA_BOUNDED=1 CARGO_BUILD_JOBS=1 OPAMJOBS=1 MAKEFLAGS=-j1 RUST_TEST_THREADS=1 timeout --kill-after=10 1800 env OCAMLRUNPARAM=o=10,s=256k OPAMROOT=/home/hirew/.local/opt/vela-tools/opam PATH=/home/hirew/.local/opt/vela-tools/bin:/home/hirew/.codex/packages/standalone/releases/0.163.0-x86_64-unknown-linux-musl/codex-path:/home/hirew/.codex/tmp/arg0-linux/codex-arg0wWCxEC:/home/hirew/.codex/packages/standalone/releases/0.163.0-x86_64-unknown-linux-musl/codex-path:/home/hirew/.cargo/bin:/home/hirew/.opencode/bin:/home/hirew/.local/bin:/opt/t3code-nightly-bin:/opt/t3code-nightly-bin/usr/sbin:/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/lib/jvm/default/bin:/usr/bin/site_perl:/usr/bin/vendor_perl:/usr/bin/core_perl:/home/hirew/.local/share/bin bash -c "vela_started=\$EPOCHSECONDS; opam install --switch vela-hax --yes /home/hirew/.local/opt/vela-tools/src/hax-0.3.7/engine; vela_result=\$?; vela_cgroup=\$(cut -d: -f3 /proc/self/cgroup); printf \"elapsed_seconds=%s\\nmemory_peak_bytes=\" \"\$((EPOCHSECONDS-vela_started))\"; cat \"/sys/fs/cgroup\$vela_cgroup/memory.peak\"; exit \"\$vela_result\"".
+Oct 23 11:55:23 TSAR-BOMBA systemd[1209]: run-p29557-i6006.scope: Consumed 10min 43.611s CPU time over 11min 9.978s wall clock time, 4.7G memory peak.

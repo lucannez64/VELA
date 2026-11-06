@@ -1,0 +1,100 @@
+F-5 universal chunk-admission evidence — environment and provenance
+====================================================================
+
+Recorded: 2026-10-24 (Europe/Paris), on the implementation worktree
+
+  /home/hirew/.t3/worktrees/VELA/t3-a5712ddd
+
+Base commit (57d8bf6 cherry-picked, unmodified by this increment)
+  commit  988759389a39997abc75bc8f89808d8ab58f7da4
+  subject Admit mobile sync downloads through verified policy
+
+Source patch under test (everything this increment changes outside this
+evidence directory), computed before adding this evidence:
+
+  git diff --cached -- libVELA/vela-sync-policy | sha256sum
+  3812c2405234e81887c0289a53e6f7ebc41c8e919972e458f682be28f8644d27
+
+The FIX commit that adds the evidence is the single child of the base commit;
+the patch hash above pins its exact content independently of the commit id.
+
+Host / toolchain
+  uname      Linux TSAR-BOMBA 7.3.0-3-cachyos #1 SMP PREEMPT_DYNAMIC Thu, 22 Oct 2026 17:29:42 +0000 x86_64 GNU/Linux
+  nproc      12
+  fstar.exe  F* 2025.10.06, platform=Linux_x86_64, compiler=OCaml 4.14.2, commit=7b347386330d0e5a331a220535b6f15288903234
+  z3         Z3 version 4.13.3 - 64 bit
+  hax        version=0.3.7 (cargo hax)
+  rustc      1.101.0-nightly (e9bbadf68 2026-10-12)
+  cargo      1.101.0-nightly (29c5daa1a 2026-10-07)
+
+Tool paths
+  /tmp/vela-fstar-prebuilt/fstar/bin/fstar.exe
+  /home/hirew/.local/opt/vela-tools/bin/z3-4.13.3
+  /home/hirew/.local/opt/vela-tools/bin/cargo-hax
+
+Resource cap
+  Every heavy command ran through
+  /home/hirew/.local/opt/vela-tools/bin/vela-heavy, i.e.
+  security/assurance/bounded.sh under the shared heavy lock:
+  MemoryMax=3G, MemorySwapMax=0, CARGO_BUILD_JOBS=1, RUST_TEST_THREADS=1.
+
+Environment used for the F*/hax runs
+  PATH=/tmp/vela-fstar-prebuilt/fstar/bin:$HOME/.local/opt/vela-tools/bin:$HOME/.local/opt/vela-tools/opam/vela-hax/bin:$PATH
+  CARGO_HOME=/tmp/vela-hax-cargo
+  OPAMROOT=$HOME/.local/opt/vela-tools/opam
+  CARGO_TARGET_DIR=/home/hirew/.t3/worktrees/VELA/t3-700776df/target   (parent worktree target reused)
+
+The standalone policy-test log (policy-tests.log) was produced with the
+default CARGO_HOME and the same shared target directory:
+
+  cd libVELA/vela-sync-policy
+  CARGO_TARGET_DIR=/home/hirew/.t3/worktrees/VELA/t3-700776df/target cargo test
+
+Commands / argv (cwd = libVELA/vela-sync-policy)
+  # fresh chunk-lemma check against the historical artifact only
+  vela-heavy ./verify-fstar-chunk.sh
+
+  # full wiring: cargo test, historical hax extraction, extraction F* check,
+  # focused epoch script, chunk-lemma script
+  vela-heavy ./verify-fstar.sh
+
+Expanded fstar argv used by verify-fstar-chunk.sh (separate invocation from
+verify-fstar-epoch.sh; note: extraction only, never extraction-epoch):
+
+  fstar.exe --cmi --cache_off --warn_error -331 --z3rlimit 500 \
+    --already_cached '+Prims+FStar+LowStar+C+Spec.Loops+TestLib' \
+    --include <hax-lib>/proof-libs/fstar/core \
+    --include <hax-lib>/proof-libs/fstar/rust_primitives \
+    --include <hax-lib>/proofs/fstar/extraction \
+    --include proofs/fstar/extraction \
+    --include proofs/fstar/chunk-lemmas \
+    proofs/fstar/extraction/Vela_sync_policy.fst \
+    proofs/fstar/chunk-lemmas/Vela_sync_policy_chunk_lemmas.fst
+
+  <hax-lib> = /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7
+
+Proof counts
+  historical extraction postconditions (proofs/fstar/extraction/Vela_sync_policy.fst)   11
+  Rust postconditions changed by this increment                                          0
+  hand-written F* lemmas (proofs/fstar/chunk-lemmas/...chunk_lemmas.fst)                 20
+  focused F-4/F-5 epoch extraction postconditions (unchanged, for context)                4
+  hand-written epoch lemmas (unchanged, for context)                                      6
+
+Freshness checks
+  `cargo hax into` printed:
+    hax: unchanged file ./proofs/fstar/extraction/Vela_sync_policy.fst
+  `git status --porcelain libVELA/vela-sync-policy/proofs` after the full run:
+    (clean; neither extraction nor extraction-epoch changed)
+  The chunk invocation passes --cache_off, so Vela_sync_policy and
+  Vela_sync_policy_chunk_lemmas were both checked from source in that run.
+
+Script modes
+  verify-fstar.sh        100755
+  verify-fstar-epoch.sh  100755
+  verify-fstar-chunk.sh  100755
+
+Logs in this directory
+  policy-tests.log       6 policy tests (including the new boundary grid), doc-tests
+  fstar-chunk.log        fresh chunk-lemma invocation, counts and sha256 output
+  fstar-full-verify.log  full verify-fstar.sh wiring run
+  artifact-hashes.txt    artifact/script/source hashes, patch hash and file modes

@@ -23,9 +23,52 @@ on:
 permissions:
   contents: read
 
+env:
+  # Job containers check out the workspace as another user; this acts like
+  # `git -c safe.directory=*` for every git call (see security.yml).
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: safe.directory
+  GIT_CONFIG_VALUE_0: "*"
+
 jobs:
+  # Reads security/assurance/proof-image/IMAGE (see security.yml): with a
+  # digest this workflow runs inside the pinned proof image and skips its
+  # host apt installs, so snapshot.ubuntu.com outages cannot fail it.
+  proof-image:
+    runs-on: ubuntu-24.04
+    outputs:
+      image: ${{ steps.read.outputs.image }}
+      in_image: ${{ steps.read.outputs.in_image }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Resolve the pinned proof image
+        id: read
+        run: |
+          set -euo pipefail
+          ref=$(head -n 1 security/assurance/proof-image/IMAGE | tr -d '[:space:]')
+          if [[ $ref =~ ^ghcr\.io/[a-z0-9./_-]+@sha256:[0-9a-f]{64}$ ]]; then
+            printf 'image=%s\n' "$ref" >> "$GITHUB_OUTPUT"
+            echo 'in_image=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'image=' >> "$GITHUB_OUTPUT"
+            echo 'in_image=false' >> "$GITHUB_OUTPUT"
+          fi
+
   fuzz:
-    runs-on: ubuntu-latest
+    needs: proof-image
+    runs-on: ubuntu-24.04
+    # Job containers default to `sh`; the steps use bash.
+    defaults:
+      run:
+        shell: bash -e {0}
+    # Empty while IMAGE holds the placeholder: the job then runs on the host.
+    container:
+      image: ${{ needs.proof-image.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    env:
+      VELA_IN_PROOF_IMAGE: ${{ needs.proof-image.outputs.in_image }}
     strategy:
       fail-fast: false
       matrix:
@@ -43,23 +86,23 @@ jobs:
           - credential_key_verify
           - nm_host_protocol
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@2c76c034f9e32a5d6e2c104dc4df23a22476db04 # nightly
 
       # cargo-fuzz builds into fuzz/target (its own dir, unaffected by the
       # repo-root target-dir config), so the default workspace mapping is
       # correct. Nightly builds all 12 ASan targets; without this every run
       # recompiles the whole graph.
-      - uses: swatinem/rust-cache@v2
+      - uses: swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: libVELA/vela-core/fuzz
           cache-on-failure: true
 
       - name: Install cargo-fuzz
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
         with:
-          tool: cargo-fuzz
+          tool: cargo-fuzz@0.13.2
 
       # Pin the GNU host triple explicitly: cargo-fuzz defaults to
       # x86_64-unknown-linux-musl on Linux, where ASan is incompatible with
@@ -69,7 +112,27 @@ jobs:
       # ctap-hid-fido2 (via vela-desktop-core) pulls in hidapi, whose build
       # script links the system libudev through pkg-config.
       - name: Install libudev
-        run: sudo apt-get update && sudo apt-get install -y libudev-dev
+        if: env.VELA_IN_PROOF_IMAGE != 'true'
+        run: |
+          # Fixed Ubuntu snapshot (security/assurance/proof-image/apt-snapshot.conf).
+          sudo rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources
+          sudo tee /etc/apt/sources.list.d/vela-snapshot.sources >/dev/null <<'EOF2'
+          Types: deb
+          URIs: https://snapshot.ubuntu.com/ubuntu/20261104T000000Z/
+          Suites: noble noble-updates noble-security
+          Components: main restricted universe multiverse
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          EOF2
+          # snapshot.ubuntu.com can answer 5xx; make a missing index fatal and retry.
+          for try in 1 2 3 4 5 6; do
+            sudo apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=3 --error-on=any update -qq && break
+            test "$try" -lt 6 || exit 1; sleep 60
+          done
+          # Package downloads from the snapshot can also answer 5xx: retry.
+          for try in 1 2 3 4 5 6; do
+            sudo apt-get install -y --no-install-recommends libudev-dev && break
+            test "$try" -lt 6 || exit 1; sleep 60
+          done
 
       - name: Fuzz ${{ matrix.target }}
         id: fuzz
@@ -85,7 +148,7 @@ jobs:
 
       - name: Upload crash artifacts
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: fuzz-crash-${{ matrix.target }}
           path: |

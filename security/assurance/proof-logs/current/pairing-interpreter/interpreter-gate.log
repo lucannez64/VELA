@@ -1,0 +1,44 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.08s
+     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-d13f61d9/target-own/debug/build/vela-enrollment-policy/4867041615cc08d8/out/vela_enrollment_policy-4867041615cc08d8)
+
+running 4 tests
+test pairing_interpreter::tests::a_completion_take_mismatch_restores_and_stops ... ok
+test pairing_interpreter::tests::a_terminal_begin_performs_nothing ... ok
+test pairing_interpreter::tests::an_ambiguous_insert_error_consumes_the_ceremony ... ok
+test pairing_interpreter::tests::interpreter_performs_exactly_the_driver_effects_for_every_outcome ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 13 filtered out; finished in 0.00s
+
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-pairing-interpreter/Vela_enrollment_policy.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-pairing-interpreter/Vela_enrollment_policy.Pairing_driver.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-pairing-interpreter/Vela_enrollment_policy.Pairing_interpreter.fst[0m
+Driver source policy: 3 extracted modules, 2 proof modules; no unreviewed escapes/options
+* Warning 271 at /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+Verified module: Vela_enrollment_policy.Pairing_interpreter
+Verified module: Vela_enrollment_policy_pairing_interpreter_lemmas
+All verification conditions discharged successfully
+pairing interpreter: the handler's loop calls only the executor method for the driver's current effect, stops at the verdict within 5 turns, and ends in the driver state the per-request pairing theorems cover
+3209cf14dc55f969b0f9a12c50bb0d5e96b1de0e64f11b2f0ef456dc82e72772  proofs/fstar/extraction-pairing-interpreter/Vela_enrollment_policy.Pairing_interpreter.fst
+7de896af302d2115fa80142cc3cc92b7b1b311e8b8be3832a776958b4936fbd5  proofs/fstar/pairing-interpreter-lemmas/Vela_enrollment_policy_pairing_interpreter_lemmas.fst
+8d8586c9579a6531f7fe53edad233f37e844d4621fda2afac55cddcc9960dc1d  src/pairing_interpreter.rs
+EXIT:0

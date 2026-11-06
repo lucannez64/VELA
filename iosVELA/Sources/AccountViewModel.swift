@@ -169,7 +169,7 @@ final class AccountViewModel: ObservableObject {
         }
         run("Syncing") { [self] in
             guard let rms = vault.currentRMS else { throw Failure("unlock the vault first") }
-            guard account != nil else { throw Failure("register first") }
+            guard let account = account else { throw Failure("register first") }
             let client = client()
             let localEpoch = try authenticatedLocalEpoch(rms: rms)
             let epoch = try await client.vaultEpoch()
@@ -181,7 +181,8 @@ final class AccountViewModel: ObservableObject {
             }
             await ensureShareKey(client: client)
             let engine = SyncEngine(
-                client: client, repo: VaultRepository(), keyEpoch: localEpoch)
+                client: client, repo: VaultRepository(), keyEpoch: localEpoch,
+                accountID: account.userID)
             // Checked and read in one synchronous step on the main actor.
             guard vault.hasLoadedVault else { throw Failure("open VELA to sync") }
             let localStore = vault.currentStore
@@ -223,21 +224,29 @@ final class AccountViewModel: ObservableObject {
     /// Share a vault item with another user using real KEM-sealed encryption.
     func share(item: VaultItem, recipientUserID: String) {
         run("Sharing") { [self] in
-            guard account != nil else { throw Failure("register first") }
+            guard let state = account else { throw Failure("register first") }
+            guard let handle = identityHandle() else { throw Failure("no identity key — re-register the device") }
             let itemJSON = String(decoding: try JSONEncoder().encode(item), as: UTF8.self)
             let client = client()
             // Fetch recipient's share public key.
             let recipientShareEK = try await client.getRecipientShareEK(userID: recipientUserID)
-            // Seal the item with the recipient's KEM key — server never sees plaintext.
-            guard let capsuleB64 = VelaCoreFFI.sealShare(recipientShareEKBase64: recipientShareEK, itemJSON: itemJSON) else {
-                throw Failure("KEM sealing failed")
+            // Sign with this device's identity key and seal to the recipient
+            // (share envelope v2) — the server never sees plaintext and cannot
+            // forge an item or an update in this device's name.
+            let lineageID = UUID().uuidString.lowercased()
+            guard let capsuleB64 = VelaCoreFFI.identitySealSignedShare(
+                handle: handle, senderUserID: state.userID, senderDeviceID: state.deviceID,
+                recipientUserID: recipientUserID, recipientShareEKBase64: recipientShareEK,
+                lineageID: lineageID, revision: 1, itemJSON: itemJSON) else {
+                throw Failure("Signing or sealing the share failed")
             }
             let resp = try await client.sendShare(recipientUserID: recipientUserID, capsuleBase64: capsuleB64)
             await persistRenewedToken(from: client)
             // Persist share record so we can re-seal on update.
             shareManifest.add(ShareRecord(
                 shareID: resp.share_id, vaultItemID: item.id,
-                recipientUserID: recipientUserID, recipientShareEK: recipientShareEK
+                recipientUserID: recipientUserID, recipientShareEK: recipientShareEK,
+                lineageID: lineageID, revision: 1
             ))
             AuditLog.shared.record("share_sent", String(recipientUserID.prefix(8)))
             return "Shared (inbox \(resp.inbox_id.prefix(8))…)"
@@ -346,15 +355,27 @@ final class AccountViewModel: ObservableObject {
 
     /// Re-seal and push updated capsules to all recipients who have linked shares for `item`.
     func pushShareUpdates(for item: VaultItem) async {
-        guard account != nil else { return }
+        guard let state = account, let handle = identityHandle() else { return }
         let records = shareManifest.records(for: item.id)
         guard !records.isEmpty else { return }
         let itemJSON = (try? String(decoding: JSONEncoder().encode(item), as: UTF8.self)) ?? ""
         let client = client()
-        for record in records {
-            guard let newCapsule = VelaCoreFFI.sealShare(
-                recipientShareEKBase64: record.recipientShareEK, itemJSON: itemJSON) else { continue }
-            try? await client.updateLinkedShare(id: record.shareID, capsuleBase64: newCapsule)
+        for var record in records {
+            // Shares sent before envelope v2 have no lineage; recipients refuse
+            // unsigned updates, so there is nothing to push.
+            guard !record.lineageID.isEmpty else { continue }
+            let revision = record.revision + 1
+            guard let newCapsule = VelaCoreFFI.identitySealSignedShare(
+                handle: handle, senderUserID: state.userID, senderDeviceID: state.deviceID,
+                recipientUserID: record.recipientUserID, recipientShareEKBase64: record.recipientShareEK,
+                lineageID: record.lineageID, revision: revision, itemJSON: itemJSON) else { continue }
+            do {
+                try await client.updateLinkedShare(id: record.shareID, capsuleBase64: newCapsule)
+                record.revision = revision
+                shareManifest.add(record)
+            } catch {
+                continue
+            }
         }
         await persistRenewedToken(from: client)
     }
@@ -649,7 +670,8 @@ final class AccountViewModel: ObservableObject {
             guard vault.hasLoadedVault else { throw Failure("open VELA to finish syncing") }
             let localStore = vault.currentStore
             let merged = try await SyncEngine(
-                client: client, repo: VaultRepository(), keyEpoch: recoverResp.keyEpoch
+                client: client, repo: VaultRepository(), keyEpoch: recoverResp.keyEpoch,
+                accountID: verified.user_id
             ).sync(rms: rms, localStore: localStore)
             await persistRenewedToken(from: client)
             vault.applyMergedStore(merged)
@@ -719,7 +741,8 @@ final class AccountViewModel: ObservableObject {
             guard vault.hasLoadedVault else { throw Failure("open VELA to finish syncing") }
             let localStore = vault.currentStore
             let merged = try await SyncEngine(
-                client: client, repo: VaultRepository(), keyEpoch: epochAfterCapsule.epoch
+                client: client, repo: VaultRepository(), keyEpoch: epochAfterCapsule.epoch,
+                accountID: verified.user_id
             ).sync(rms: rms, localStore: localStore)
             await persistRenewedToken(from: client)
             vault.applyMergedStore(merged)
@@ -944,6 +967,11 @@ final class AccountViewModel: ObservableObject {
         recoveryJournal.clear()
         status = "Signed out"
         store.clear()
+        // Sign-out is a deliberate context transition: drop this device's
+        // rollback baselines so a vault re-created elsewhere does not collide
+        // with the previous account's counters. Switching back after signing
+        // in again starts from an explicit first contact.
+        SyncEngine.clearBaselines()
         if let loggingOut = loggingOut {
             Task { try? await loggingOut.logout() }
         }

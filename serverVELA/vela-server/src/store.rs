@@ -76,11 +76,27 @@ impl Store {
         })
     }
 
-    /// Open a temporary in-memory database (for tests).
+    /// Open a temporary database (for tests), removed after its last handle drops.
     pub fn open_temp() -> Result<Self> {
-        let db = sled::Config::new().temporary(true).open().map_err(|e| {
-            AppError::Internal(format!("failed to open temporary sled database: {e}"))
-        })?;
+        // sled otherwise chooses /dev/shm on Linux, which Docker caps at
+        // 64 MiB. Its append-only log can exhaust that filesystem even when
+        // tests delete old keys. Use the ordinary temporary directory instead.
+        let path = tempfile::Builder::new()
+            .prefix("vela-test-sled-")
+            .tempdir()
+            .map_err(|e| {
+                AppError::Internal(format!("failed to create temporary sled directory: {e}"))
+            })?
+            .keep();
+        // Transfer directory cleanup to sled: temporary(true) removes this
+        // explicit path only after all database/tree handles have dropped.
+        let db = sled::Config::new()
+            .path(path)
+            .temporary(true)
+            .open()
+            .map_err(|e| {
+                AppError::Internal(format!("failed to open temporary sled database: {e}"))
+            })?;
         let ttl = db
             .open_tree(TTL_TREE)
             .map_err(|e| AppError::Internal(format!("failed to open ttl tree: {e}")))?;

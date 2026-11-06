@@ -1,0 +1,13 @@
+deep
+  alphabet=30 depth=4 initialStates=3
+  traces=2430000 steps=2513790
+  verdicts={(AccountSwitch, ACCEPTED)=68295, (AccountSwitch, REFUSED)=15498, (Chunk, ACCEPTED)=188634, (Chunk, REFUSED)=1235847, (EpochOffer, ACCEPTED)=152088, (EpochOffer, REFUSED)=183084, (LosePin, APPLIED)=83793, (Manifest, ACCEPTED)=189970, (Manifest, REFUSED)=61409, (Replay, ACCEPTED)=29554, (Replay, REFUSED)=66661, (Replay, APPLIED)=71371, (Reset, APPLIED)=83793, (StaleRecord, APPLIED)=83793}
+  sealedAccepted=218188 vaultWrites=218188
+  refusedUnchanged=1562499 missingPinRefused=138791
+  epochEqualAccepted=218188
+  epochRollbackRefused=106904 epochJumpRefused=213808
+  chunkRollbackRefused=36687 equalClockAccepted=68896
+  manifestRollbackRefused=85033
+  replayAccepted=29554 replayRefused=66661
+  accountSwitchAccepted=68295 accountSwitchRefused=15498 crossAccountRefused=7749
+  acceptedEpochs=[1, 2]

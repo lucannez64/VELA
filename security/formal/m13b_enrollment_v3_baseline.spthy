@@ -1,0 +1,69 @@
+theory M13b_EnrollmentV3Baseline
+begin
+
+/*
+  Baseline: enrollment v3 with the v3 fingerprint, which covers only the
+  joining device's signing key (hybrid_vk). The RMS is sealed to the KEM key
+  (hybrid_ek), which the person never compares.
+
+  The exists-trace lemma is VERIFIED: it exhibits the attack. A server keeps
+  the honest hybrid_vk, substitutes its own hybrid_ek, the fingerprints match,
+  the primary seals the RMS to the server's key, and the adversary learns the
+  RMS. No key is compromised. m13b_enrollment_key_binding.spthy is the fix.
+
+  Expected verdict: all lemmas VERIFIED (the lemma demonstrates the attack).
+*/
+
+
+builtins: signing, asymmetric-encryption, hashing
+macros: FP(vk, ek) = h(<'vela enrollment device fingerprint v3', vk>)
+
+/* ── Parties ─────────────────────────────────────────────────────────────── */
+
+// An enrolled primary device of account $A, holding the RMS.
+rule Primary:
+    [ Fr(~skP), Fr(~rms) ]
+  --[ RmsCreated($A, ~rms) ]->
+    [ !Primary($A, ~skP, ~rms), Out(pk(~skP)) ]
+
+// One person holds both devices for one ceremony. The two screens are an
+// authentic local channel to that person; nothing else is.
+rule Start_Ceremony:
+    [ Fr(~c) ]
+  --[ CeremonyStarted(~c) ]->
+    [ JoinTurn(~c), PrimaryTurn(~c) ]
+
+// Joining device: generates its own signing and KEM keys, claims the grant
+// through the server (adversary), and shows its fingerprint locally.
+rule Join_Claim:
+    [ JoinTurn(c), Fr(~skJ), Fr(~dkJ) ]
+  --[ Claimed(c, pk(~dkJ), pk(~skJ)) ]->
+    [ JoinScreen(c, FP(pk(~skJ), pk(~dkJ))),
+      JoinWaiting(c, ~skJ, ~dkJ),
+      Out(<'claim', pk(~dkJ), pk(~skJ)>) ]
+
+// Primary: the server returns *a* claim (adversary-chosen ek, vk). The primary
+// shows the fingerprint computed from what it received. The person confirms
+// only when it equals the joining screen (pattern match on fp).
+rule Primary_Confirm:
+    let capsule = aenc(rms, ek)
+        sig     = sign(<'vela device enrollment v1', ek, vk, capsule>, skP)
+    in
+    [ PrimaryTurn(c), !Primary($A, skP, rms),
+      In(<'claim', ek, vk>),
+      JoinScreen(c, FP(vk, ek)) ]
+  --[ Confirmed(c, $A, ek, vk), RmsSealedTo(rms, ek) ]->
+    [ Out(<capsule, sig>) ]
+
+// The joining device collects the capsule (relayed by the server) and adopts.
+rule Join_Adopt:
+    [ JoinWaiting(c, skJ, dkJ), In(aenc(r, pk(dkJ))) ]
+  --[ Adopted(c, r) ]->
+    [ ]
+
+lemma rms_leaks_through_a_substituted_kem_key:
+  exists-trace
+  "Ex c A rms ek vk #a #b #k.
+     RmsCreated(A, rms) @ #a & Confirmed(c, A, ek, vk) @ #b & K(rms) @ #k"
+
+end

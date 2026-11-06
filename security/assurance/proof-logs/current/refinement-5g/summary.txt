@@ -1,0 +1,17 @@
+Previous extraction backup: /tmp/vela-fstar-before.ttt031
+Checking vela-client-share-policy
+vela-client-share-policy exit_status=0
+Checking vela-rekey-policy
+vela-rekey-policy exit_status=0
+Checking vela-session-policy
+vela-session-policy exit_status=0
+Checking vela-enrollment-policy
+vela-enrollment-policy exit_status=0
+Checking vela-recovery-policy
+vela-recovery-policy exit_status=0
+Checking vela-share-policy
+vela-share-policy exit_status=0
+Checking vela-client-recovery-policy
+vela-client-recovery-policy exit_status=0
+Checking vela-sync-policy
+vela-sync-policy exit_status=0

@@ -1,0 +1,11 @@
+semantic proof source guard passed
+F* 2025.10.06
+platform=Linux_x86_64
+compiler=OCaml 4.14.2
+date=2025-10-06 12:00:42 -0700
+commit=7b347386330d0e5a331a220535b6f15288903234
+463e9107143b232a9f18aeebccecdd76d114f22491b9dc84163719de26690dbb  /home/hirew/.t3/worktrees/VELA/t3-700776df/security/formal/m28-trace-equivalence/M28TraceEquivalence.fst
+argv: --cache_off --z3rlimit 100 --z3version 4.13.3 /home/hirew/.t3/worktrees/VELA/t3-700776df/security/formal/m28-trace-equivalence/M28TraceEquivalence.fst
+Verified module: M28TraceEquivalence
+All verification conditions discharged successfully
+m28-trace-equivalence: F* module verified

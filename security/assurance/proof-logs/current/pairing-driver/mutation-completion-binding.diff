@@ -1,0 +1,26 @@
+--- /home/hirew/.t3/worktrees/VELA/t3-04703409/serverVELA/vela-enrollment-policy/proofs/fstar/extraction-pairing-driver/Vela_enrollment_policy.Pairing_driver.fst	2026-10-26 20:03:06.448931954 +0100
++++ /tmp/opencode/mutations/completion-binding/Vela_enrollment_policy.Pairing_driver.fst	2026-10-26 20:12:08.416487429 +0100
+@@ -860,16 +860,13 @@
+   | GrantObservation_Absent  -> terminal base (PairingFailure_GrantUnavailable <: t_PairingFailure)
+   | GrantObservation_Error  -> terminal base (PairingFailure_GrantError <: t_PairingFailure)
+   | GrantObservation_Present { f_user_matches = user_matches ; f_opener_matches = opener_matches } ->
+-    if ~.user_matches || ~.opener_matches
+-    then terminal base (PairingFailure_GrantUnavailable <: t_PairingFailure)
+-    else
+-      transition ({
+-            base with
+-            f_authorized = true;
+-            f_grant_present = true;
+-            f_user_matches = user_matches;
+-            f_opener_matches = opener_matches
+-          }
++    transition ({
++          base with
++          f_authorized = true;
++          f_grant_present = true;
++          f_user_matches = true;
++          f_opener_matches = true
++        }
+           <:
+           t_PairingDriver)
+         (PairingEffect_CheckAccount <: t_PairingEffect)

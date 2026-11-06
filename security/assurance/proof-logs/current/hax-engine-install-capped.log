@@ -1,0 +1,316 @@
+
+<><> Installing new switch packages <><><><><><><><><><><><><><><><><><><><><><>
+Switch invariant: ["ocaml-base-compiler" {= "5.1.1"}]
+
+<><> Processing actions <><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+⬇ retrieved ocaml-config.3  (cached)
+∗ installed base-bigarray.base
+∗ installed base-threads.base
+∗ installed base-unix.base
+∗ installed ocaml-options-vanilla.1
+⬇ retrieved ocaml-base-compiler.5.1.1  (cached)
+∗ installed ocaml-base-compiler.5.1.1
+∗ installed ocaml-config.3
+∗ installed ocaml.5.1.1
+∗ installed base-domains.base
+∗ installed base-nnp.base
+Done.
+# To update the current shell environment, run: eval $(opam env --switch=vela-hax)
+[NOTE] Package hax-engine does not exist in opam repositories registered in the current switch.
+hax-engine is now pinned to file:///home/hirew/.local/opt/vela-tools/src/hax-0.3.7/engine (version 0.3.7)
+The following actions will be performed:
+=== install 100 packages
+  ∗ angstrom                    0.16.1         [required by hax-engine]
+  ∗ base                        v0.17.3        [required by hax-engine]
+  ∗ base_bigstring              v0.17.0        [required by core]
+  ∗ base_quickcheck             v0.17.0        [required by core]
+  ∗ batteries                   3.11.0         [required by hax-engine]
+  ∗ bigstringaf                 0.10.0         [required by angstrom]
+  ∗ bin_prot                    v0.17.0-1      [required by core]
+  ∗ camlp-streams               5.0.1          [required by batteries]
+  ∗ capitalization              v0.17.0        [required by ppx_string_conv]
+  ∗ cmdliner                    2.1.1          [required by hax-engine]
+  ∗ core                        v0.17.2        [required by hax-engine]
+  ∗ cppo                        1.8.0          [required by ppx_deriving]
+  ∗ csexp                       1.5.2          [required by dune-configurator]
+  ∗ dune                        3.24.2         [required by hax-engine]
+  ∗ dune-configurator           3.24.2         [required by base]
+  ∗ fieldslib                   v0.17.0        [required by core]
+  ∗ gel                         v0.17.0        [required by ppx_diff]
+  ∗ gen                         1.1            [required by sedlex]
+  ∗ hax-engine                  0.3.7 (pinned)
+  ∗ int_repr                    v0.17.0        [required by base_bigstring]
+  ∗ jane-street-headers         v0.17.0        [required by core]
+  ∗ js_of_ocaml                 6.4.1          [required by hax-engine]
+  ∗ js_of_ocaml-compiler        6.4.1          [required by hax-engine]
+  ∗ js_of_ocaml-ppx             6.4.1          [required by hax-engine]
+  ∗ jst-config                  v0.17.0        [required by core]
+  ∗ logs                        0.10.0         [required by hax-engine]
+  ∗ menhir                      20260209       [required by js_of_ocaml-compiler]
+  ∗ menhirCST                   20260209       [required by menhir]
+  ∗ menhirGLR                   20260209       [required by menhir]
+  ∗ menhirLib                   20260209       [required by hax-engine]
+  ∗ menhirSdk                   20260209       [required by js_of_ocaml-compiler]
+  ∗ non_empty_list              0.1            [required by hax-engine]
+  ∗ num                         1.6            [required by batteries]
+  ∗ ocaml-compiler-libs         v0.12.4        [required by js_of_ocaml-compiler]
+  ∗ ocaml-syntax-shims          1.0.0          [required by angstrom]
+  ∗ ocaml_intrinsics_kernel     v0.17.2        [required by base]
+  ∗ ocamlbuild                  0.16.1         [required by logs]
+  ∗ ocamlfind                   1.9.8          [required by batteries, logs]
+  ∗ ocamlgraph                  2.2.0          [required by hax-engine]
+  ∗ octavius                    1.2.2          [required by ppx_js_style]
+  ∗ parsexp                     v0.17.0        [required by sexplib]
+  ∗ pprint                      20230830       [required by hax-engine]
+  ∗ ppx_assert                  v0.17.0        [required by core]
+  ∗ ppx_base                    v0.17.0        [required by core]
+  ∗ ppx_bench                   v0.17.0        [required by ppx_jane]
+  ∗ ppx_bin_prot                v0.17.0        [required by ppx_jane]
+  ∗ ppx_cold                    v0.17.0        [required by ppx_base]
+  ∗ ppx_compare                 v0.17.0        [required by hax-engine]
+  ∗ ppx_custom_printf           v0.17.0        [required by ppx_jane]
+  ∗ ppx_derivers                1.2.1          [required by ppx_deriving]
+  ∗ ppx_deriving                6.0.3          [required by hax-engine]
+  ∗ ppx_deriving_yojson         3.9.1          [required by hax-engine]
+  ∗ ppx_diff                    v0.17.0        [required by core]
+  ∗ ppx_disable_unused_warnings v0.17.0        [required by ppx_jane]
+  ∗ ppx_enumerate               v0.17.0        [required by ppx_diff]
+  ∗ ppx_expect                  v0.17.2        [required by ppx_jane]
+  ∗ ppx_fields_conv             v0.17.0        [required by ppx_jane]
+  ∗ ppx_fixed_literal           v0.17.0        [required by ppx_jane]
+  ∗ ppx_globalize               v0.17.0        [required by ppx_base]
+  ∗ ppx_hash                    v0.17.0        [required by hax-engine]
+  ∗ ppx_here                    v0.17.0        [required by ppx_jane]
+  ∗ ppx_ignore_instrumentation  v0.17.0        [required by ppx_jane]
+  ∗ ppx_inline_test             v0.17.0        [required by core]
+  ∗ ppx_jane                    v0.17.0        [required by core]
+  ∗ ppx_js_style                v0.17.0        [required by ppx_yojson_conv]
+  ∗ ppx_let                     v0.17.0        [required by ppx_jane]
+  ∗ ppx_log                     v0.17.0        [required by ppx_jane]
+  ∗ ppx_matches                 0.2.0          [required by hax-engine]
+  ∗ ppx_module_timer            v0.17.0        [required by ppx_jane]
+  ∗ ppx_optcomp                 v0.17.0        [required by core]
+  ∗ ppx_optional                v0.17.0        [required by ppx_jane]
+  ∗ ppx_pipebang                v0.17.0        [required by ppx_jane]
+  ∗ ppx_sexp_conv               v0.17.0        [required by hax-engine]
+  ∗ ppx_sexp_message            v0.17.0        [required by core]
+  ∗ ppx_sexp_value              v0.17.0        [required by ppx_jane]
+  ∗ ppx_stable                  v0.17.0        [required by ppx_jane]
+  ∗ ppx_stable_witness          v0.17.0        [required by ppx_jane]
+  ∗ ppx_string                  v0.17.0        [required by hax-engine]
+  ∗ ppx_string_conv             v0.17.0        [required by ppx_jane]
+  ∗ ppx_tydi                    v0.17.0        [required by ppx_jane]
+  ∗ ppx_typerep_conv            v0.17.0        [required by ppx_jane]
+  ∗ ppx_variants_conv           v0.17.0        [required by ppx_jane]
+  ∗ ppx_yojson_conv             v0.17.0        [required by hax-engine]
+  ∗ ppx_yojson_conv_lib         v0.17.0        [required by ppx_yojson_conv]
+  ∗ ppxlib                      0.35.0         [required by hax-engine]
+  ∗ ppxlib_jane                 v0.17.0        [required by ppx_diff]
+  ∗ re                          1.14.0         [required by hax-engine]
+  ∗ sedlex                      3.8.1          [required by hax-engine]
+  ∗ seq                         base           [required by gen]
+  ∗ sexplib                     v0.17.0        [required by core]
+  ∗ sexplib0                    v0.17.0        [required by base]
+  ∗ splittable_random           v0.17.0        [required by core]
+  ∗ stdint                      0.7.2          [required by hax-engine]
+  ∗ stdio                       v0.17.0        [required by core]
+  ∗ stdlib-shims                0.3.0          [required by ppxlib]
+  ∗ time_now                    v0.17.0        [required by core]
+  ∗ topkg                       1.1.1          [required by logs]
+  ∗ typerep                     v0.17.1        [required by core]
+  ∗ variantslib                 v0.17.0        [required by core]
+  ∗ yojson                      3.0.0          [required by hax-engine]
+
+<><> Processing actions <><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+⬇ retrieved base_bigstring.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved angstrom.0.16.1  (https://opam.ocaml.org/cache)
+⬇ retrieved base.v0.17.3  (https://opam.ocaml.org/cache)
+⬇ retrieved batteries.3.11.0  (cached)
+⬇ retrieved base_quickcheck.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved camlp-streams.5.0.1  (cached)
+⬇ retrieved bigstringaf.0.10.0  (https://opam.ocaml.org/cache)
+⬇ retrieved capitalization.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved bin_prot.v0.17.0-1  (https://opam.ocaml.org/cache)
+⬇ retrieved cmdliner.2.1.1  (https://opam.ocaml.org/cache)
+⬇ retrieved cppo.1.8.0  (cached)
+⬇ retrieved core.v0.17.2  (https://opam.ocaml.org/cache)
+⬇ retrieved csexp.1.5.2  (https://opam.ocaml.org/cache)
+⬇ retrieved gel.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved fieldslib.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved gen.1.1  (cached)
+⬇ retrieved int_repr.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved jane-street-headers.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved dune.3.24.2, dune-configurator.3.24.2  (cached)
+⬇ retrieved hax-engine.0.3.7  (file:///home/hirew/.local/opt/vela-tools/src/hax-0.3.7/engine)
+⬇ retrieved jst-config.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved logs.0.10.0  (https://opam.ocaml.org/cache)
+⬇ retrieved menhir.20260209, menhirCST.20260209, menhirGLR.20260209, menhirLib.20260209, menhirSdk.20260209  (cached)
+⬇ retrieved js_of_ocaml.6.4.1, js_of_ocaml-compiler.6.4.1, js_of_ocaml-ppx.6.4.1  (https://opam.ocaml.org/cache)
+⬇ retrieved num.1.6  (cached)
+⬇ retrieved ocaml-compiler-libs.v0.12.4  (cached)
+⬇ retrieved non_empty_list.0.1  (https://opam.ocaml.org/cache)
+⬇ retrieved ocamlbuild.0.16.1  (cached)
+∗ installed cmdliner.2.1.1
+⬇ retrieved ocaml-syntax-shims.1.0.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ocaml_intrinsics_kernel.v0.17.2  (https://opam.ocaml.org/cache)
+⬇ retrieved ocamlfind.1.9.8  (cached)
+⬇ retrieved octavius.1.2.2  (https://opam.ocaml.org/cache)
+⬇ retrieved pprint.20230830  (cached)
+⬇ retrieved parsexp.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_assert.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ocamlgraph.2.2.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_base.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_bench.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_cold.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_bin_prot.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_derivers.1.2.1  (cached)
+⬇ retrieved ppx_compare.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_custom_printf.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_deriving_yojson.3.9.1  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_deriving.6.0.3  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_disable_unused_warnings.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_enumerate.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_diff.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_fixed_literal.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_expect.v0.17.2  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_fields_conv.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_globalize.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_here.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_hash.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_ignore_instrumentation.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_jane.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_inline_test.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_js_style.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_matches.0.2.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_let.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_log.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_module_timer.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_optcomp.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_optional.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_pipebang.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_sexp_message.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_sexp_conv.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_sexp_value.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_stable.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_stable_witness.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_string.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_string_conv.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_tydi.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_typerep_conv.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_variants_conv.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_yojson_conv.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppx_yojson_conv_lib.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved ppxlib_jane.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved re.1.14.0  (https://opam.ocaml.org/cache)
+⬇ retrieved seq.base  (cached)
+⬇ retrieved sedlex.3.8.1  (cached)
+⬇ retrieved sexplib0.v0.17.0  (cached)
+⬇ retrieved ppxlib.0.35.0  (https://opam.ocaml.org/cache)
+⬇ retrieved splittable_random.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved sexplib.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved stdint.0.7.2  (cached)
+⬇ retrieved stdio.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved stdlib-shims.0.3.0  (https://opam.ocaml.org/cache)
+⬇ retrieved time_now.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved topkg.1.1.1  (cached)
+⬇ retrieved yojson.3.0.0  (cached)
+⬇ retrieved variantslib.v0.17.0  (https://opam.ocaml.org/cache)
+⬇ retrieved typerep.v0.17.1  (https://opam.ocaml.org/cache)
+∗ installed dune.3.24.2
+∗ installed num.1.6
+∗ installed camlp-streams.5.0.1
+∗ installed cppo.1.8.0
+∗ installed csexp.1.5.2
+∗ installed jane-street-headers.v0.17.0
+∗ installed dune-configurator.3.24.2
+∗ installed menhirCST.20260209
+∗ installed bigstringaf.0.10.0
+∗ installed menhirGLR.20260209
+∗ installed menhirLib.20260209
+∗ installed menhirSdk.20260209
+∗ installed ocaml-compiler-libs.v0.12.4
+∗ installed menhir.20260209
+∗ installed ocaml-syntax-shims.1.0.0
+∗ installed ocaml_intrinsics_kernel.v0.17.2
+∗ installed angstrom.0.16.1
+∗ installed ocamlbuild.0.16.1
+∗ installed ocamlfind.1.9.8
+∗ installed ocamlgraph.2.2.0
+∗ installed batteries.3.11.0
+∗ installed octavius.1.2.2
+∗ installed pprint.20230830
+∗ installed ppx_derivers.1.2.1
+∗ installed re.1.14.0
+∗ installed seq.base
+∗ installed sexplib0.v0.17.0
+∗ installed gen.1.1
+∗ installed base.v0.17.3
+∗ installed parsexp.v0.17.0
+∗ installed fieldslib.v0.17.0
+∗ installed sexplib.v0.17.0
+∗ installed stdint.0.7.2
+∗ installed stdio.v0.17.0
+∗ installed stdlib-shims.0.3.0
+∗ installed topkg.1.1.1
+∗ installed ppxlib.0.35.0
+∗ installed typerep.v0.17.1
+∗ installed ppx_cold.v0.17.0
+∗ installed ppx_deriving.6.0.3
+∗ installed ppx_disable_unused_warnings.v0.17.0
+∗ installed non_empty_list.0.1
+∗ installed ppx_fields_conv.v0.17.0
+∗ installed ppx_fixed_literal.v0.17.0
+∗ installed ppx_here.v0.17.0
+∗ installed ppx_ignore_instrumentation.v0.17.0
+∗ installed ppx_js_style.v0.17.0
+∗ installed ppx_let.v0.17.0
+∗ installed ppx_matches.0.2.0
+∗ installed ppx_optcomp.v0.17.0
+∗ installed ppx_pipebang.v0.17.0
+∗ installed ppx_stable.v0.17.0
+∗ installed ppx_stable_witness.v0.17.0
+∗ installed ppx_tydi.v0.17.0
+∗ installed ppx_typerep_conv.v0.17.0
+∗ installed ppxlib_jane.v0.17.0
+∗ installed sedlex.3.8.1
+∗ installed ppx_compare.v0.17.0
+∗ installed ppx_enumerate.v0.17.0
+∗ installed ppx_globalize.v0.17.0
+∗ installed ppx_optional.v0.17.0
+∗ installed ppx_sexp_conv.v0.17.0
+∗ installed variantslib.v0.17.0
+∗ installed ppx_assert.v0.17.0
+∗ installed ppx_custom_printf.v0.17.0
+∗ installed jst-config.v0.17.0
+∗ installed ppx_hash.v0.17.0
+∗ installed ppx_sexp_message.v0.17.0
+∗ installed ppx_base.v0.17.0
+∗ installed ppx_sexp_value.v0.17.0
+∗ installed capitalization.v0.17.0
+∗ installed ppx_string.v0.17.0
+∗ installed ppx_variants_conv.v0.17.0
+∗ installed ppx_string_conv.v0.17.0
+∗ installed bin_prot.v0.17.0-1
+∗ installed time_now.v0.17.0
+∗ installed ppx_bin_prot.v0.17.0
+∗ installed ppx_inline_test.v0.17.0
+∗ installed ppx_module_timer.v0.17.0
+∗ installed ppx_bench.v0.17.0
+∗ installed ppx_expect.v0.17.2
+∗ installed splittable_random.v0.17.0
+∗ installed ppx_log.v0.17.0
+∗ installed base_quickcheck.v0.17.0
+∗ installed yojson.3.0.0
+∗ installed ppx_jane.v0.17.0
+∗ installed js_of_ocaml-compiler.6.4.1
+∗ installed gel.v0.17.0
+∗ installed int_repr.v0.17.0
+∗ installed js_of_ocaml.6.4.1
+∗ installed base_bigstring.v0.17.0
+∗ installed js_of_ocaml-ppx.6.4.1
+∗ installed logs.0.10.0
+∗ installed ppx_deriving_yojson.3.9.1
+∗ installed ppx_diff.v0.17.0
+∗ installed ppx_yojson_conv_lib.v0.17.0
+∗ installed core.v0.17.2
+∗ installed ppx_yojson_conv.v0.17.0

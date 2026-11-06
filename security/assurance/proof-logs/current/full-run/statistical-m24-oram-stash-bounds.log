@@ -1,0 +1,24 @@
+warning: method `expected_len` is never used
+  --> tests/oram_stash_bounds.rs:92:8
+   |
+72 | impl Workload {
+   | ------------- method in this implementation
+...
+92 |     fn expected_len(&self, idx: usize, writes: usize) -> usize {
+   |        ^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `vela-crypto` (test "oram_stash_bounds") generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running tests/oram_stash_bounds.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-crypto/7b780baa35b49e11/out/oram_stash_bounds-7b780baa35b49e11)
+
+running 4 tests
+test integrity_survives_long_random_workload ... ok
+test stash_stays_bounded_over_five_thousand_accesses ... ok
+test trivial_mode_pattern_is_independent_of_target ... ok
+test unregister_removes_every_trace ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s
+
+m24 oram-stash-bounds gate: 4/4 statistical + invariant tests passed

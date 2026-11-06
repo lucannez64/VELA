@@ -1,0 +1,187 @@
+   Compiling vela-recovery-policy v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-700776df/serverVELA/vela-recovery-policy)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.51s
+     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-recovery-policy/a0457367b9592201/out/vela_recovery_policy-a0457367b9592201)
+
+running 7 tests
+test tests::enrollment_requires_an_exact_live_epoch_grant ... ok
+test tests::observation_constructors_cover_decoded_possession_and_enrollment_state ... ok
+test tests::possession_initiation_requires_share_and_commitment ... ok
+test tests::possession_recovery_requires_a_verified_bound_proof ... ok
+test tests::preflight_decides_redemption_without_claiming_consumption ... ok
+test tests::publication_requires_exact_epoch_split_and_staged_share ... ok
+test tests::recovery_requires_the_current_credential_and_one_shot_challenge ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/fact_construction.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-recovery-policy/6539ca1396ad42f7/out/fact_construction-6539ca1396ad42f7)
+
+running 8 tests
+test credential_update_facts_are_exactly_the_assertion_and_metadata_observations ... ok
+test enrollment_checks_each_decoded_key_length ... ok
+test enrollment_facts_are_exactly_the_grant_consumption_credential_commitment_and_epoch_observations ... ok
+test initiate_facts_are_exactly_the_account_share_credential_and_store_observations ... ok
+test possession_recover_facts_are_exactly_the_attempt_identity_commitment_and_epoch_observations ... ok
+test preflight_decides_each_rejection_reason_in_handler_precedence_order ... ok
+test proof_initiate_facts_are_exactly_the_decoded_account_share_commitment_and_store_observations ... ok
+test recover_facts_are_exactly_the_attempt_assertion_and_row_observations ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/possession_driver.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-recovery-policy/a6027923ec7a2c6d/out/possession_driver-a6027923ec7a2c6d)
+
+running 17 tests
+test a_failed_grant_store_is_terminal_and_issues_no_second_grant ... ok
+test a_live_commitment_only_asks_for_verification ... ok
+test a_lost_store_race_is_terminal_and_does_not_claim_success ... ok
+test a_matched_attempt_only_asks_for_the_live_account_observation ... ok
+test a_stored_grant_is_the_only_success_and_is_terminal ... ok
+test a_verified_current_epoch_proof_issues_exactly_one_grant_authority ... ok
+test an_admitted_attempt_is_required_before_the_single_use_consume ... ok
+test an_unverified_or_stale_epoch_proof_is_rejected_without_a_grant ... ok
+test complete_initiation_observation_authorizes_exactly_one_store ... ok
+test every_stage_ignores_every_out_of_order_event ... ok
+test freezing_revocation_and_absence_are_terminal_before_verification ... ok
+test initiation_begins_by_observing_and_carries_no_authority ... ok
+test initiation_rejections_preserve_historical_precedence ... ok
+test initiation_stages_ignore_every_out_of_order_event ... ok
+test missing_corrupt_and_mismatched_attempts_are_terminal_without_a_grant ... ok
+test no_reachable_transition_issues_a_grant_without_a_verified_current_epoch_proof ... ok
+test proof_recover_begins_by_counting_the_attempt ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/redemption_driver.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-recovery-policy/eaab74a13f6ffda6/out/redemption_driver-eaab74a13f6ffda6)
+
+running 12 tests
+test begin_requests_consumption_and_carries_the_preflight_epoch_and_type ... ok
+test every_stage_ignores_every_out_of_order_event ... ok
+test final_policy_denial_is_terminal_and_does_not_restore ... ok
+test insert_error_is_terminal_and_never_restores_the_grant ... ok
+test insert_success_is_terminal_and_no_later_event_restores_or_succeeds_again ... ok
+test matched_consumption_alone_does_not_authorize_an_insert ... ok
+test matching_enrollment_and_rekey_permits_issue_the_exact_insert_authority ... ok
+test missing_consumption_is_terminal_without_restoration ... ok
+test no_reachable_transition_authorizes_an_insert_without_both_permits ... ok
+test rekey_rejection_or_epoch_mismatch_restores ... ok
+test replaced_or_mismatched_consumption_restores_the_grant ... ok
+test zero_row_insert_requires_the_live_recheck_in_historical_precedence ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests vela_recovery_policy
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Checking vela-recovery-policy v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-700776df/serverVELA/vela-recovery-policy)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.81s
+[1m[94minfo[0m: [1mhax: unchanged file ./proofs/fstar/extraction/Vela_recovery_policy.fst[0m
+* Warning 241 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti(0,0-0,0):
+  - Unable to load
+    /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti.checked
+    since checked file
+    /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti.checked
+    does not exist; will recheck
+    /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti
+    (suppressing this warning for further modules)
+
+* Warning 239 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+Verified module: Vela_recovery_policy
+All verification conditions discharged successfully
+F* 2025.10.06
+platform=Linux_x86_64
+compiler=OCaml 4.14.2
+date=2025-10-06 12:00:42 -0700
+commit=7b347386330d0e5a331a220535b6f15288903234
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-driver/Vela_recovery_policy.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-driver/Vela_recovery_policy.Driver.fst[0m
+F* driver argv: --cmi --cache_off --warn_error -331 --z3rlimit 4000 --z3version 4.13.3 --already_cached +Prims+FStar+LowStar+C+Spec.Loops+TestLib --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/core --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proofs/fstar/extraction --include proofs/fstar/extraction-driver --include proofs/fstar/driver-lemmas --include proofs/fstar/driver-composition proofs/fstar/extraction-driver/Vela_recovery_policy.Driver.fst proofs/fstar/extraction-driver/Vela_recovery_policy.fst proofs/fstar/driver-lemmas/Vela_recovery_policy_driver_lemmas.fst proofs/fstar/driver-composition/Vela_recovery_policy_driver_composition.fst
+* Warning 271 at /tmp/vela-fstar-prebuilt/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+Verified module: Vela_recovery_policy
+Verified module: Vela_recovery_policy.Driver
+Verified module: Vela_recovery_policy_driver_lemmas
+Verified module: Vela_recovery_policy_driver_composition
+All verification conditions discharged successfully
+driver proof: 6 focused Rust contracts, 23 hand-written trace lemmas/witnesses checked
+driver composition: any number of interleaved requests write at most one device row per grant
+1fe6d317eb20bba515092dc7d3181900968b5c64b65387195d58904db4fd1fe1  proofs/fstar/extraction-driver/Vela_recovery_policy.Driver.fst
+fe2380cc9ccb38178ccd064abc79c0a5e3e33d2df2ef3670b5a07813feaac545  proofs/fstar/extraction-driver/Vela_recovery_policy.fst
+074776c05b07a71af48c3fa39048f6e8220f8169ec3ab702b81a270a0aedb022  proofs/fstar/driver-lemmas/Vela_recovery_policy_driver_lemmas.fst
+6297a30d6f26365ee50dbd6d8f922387b4079de0958524aec1cf7644a89f1697  proofs/fstar/driver-composition/Vela_recovery_policy_driver_composition.fst
+42078d422125fb26e77098cc0cd7cd29c3e1c316727ef8786774777761babcfe  src/driver.rs
+F* 2025.10.06
+platform=Linux_x86_64
+compiler=OCaml 4.14.2
+date=2025-10-06 12:00:42 -0700
+commit=7b347386330d0e5a331a220535b6f15288903234
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.09s
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-possession-driver/Vela_recovery_policy.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-possession-driver/Vela_recovery_policy.Possession_driver.fst[0m
+F* possession-driver argv: --cmi --cache_off --warn_error -331 --z3rlimit 4000 --z3version 4.13.3 --already_cached +Prims+FStar+LowStar+C+Spec.Loops+TestLib --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/core --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proofs/fstar/extraction --include proofs/fstar/extraction-possession-driver --include proofs/fstar/possession-driver-lemmas --include proofs/fstar/possession-driver-composition proofs/fstar/extraction-possession-driver/Vela_recovery_policy.fst proofs/fstar/extraction-possession-driver/Vela_recovery_policy.Possession_driver.fst proofs/fstar/possession-driver-lemmas/Vela_recovery_policy_possession_driver_lemmas.fst proofs/fstar/possession-driver-composition/Vela_recovery_policy_possession_driver_composition.fst
+* Warning 271 at /tmp/vela-fstar-prebuilt/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+Verified module: Vela_recovery_policy
+Verified module: Vela_recovery_policy.Possession_driver
+Verified module: Vela_recovery_policy_possession_driver_lemmas
+Verified module: Vela_recovery_policy_possession_driver_composition
+All verification conditions discharged successfully
+possession driver proof: 11 focused Rust contracts checked
+possession driver composition: any number of interleaved attempts issue at most one grant per proof state
+15bd3f1c408a996cbbf5cf4426f0a3534327d9bf793a52703e84387349005e4a  proofs/fstar/extraction-possession-driver/Vela_recovery_policy.fst
+1a27d6ce899b88695edbab8b2c57fcb8bf46fb5a7cbba436f11380b6dc159654  proofs/fstar/extraction-possession-driver/Vela_recovery_policy.Possession_driver.fst
+44e8305aa5e13ab87f43e7380d9f3961bdeb3d41649ba159955e2aaacd27b097  proofs/fstar/possession-driver-lemmas/Vela_recovery_policy_possession_driver_lemmas.fst
+e3543ecd1aae96da19a6f950e8692c59b9ca6a8f60a3a31e74390a6aa6d0557e  proofs/fstar/possession-driver-composition/Vela_recovery_policy_possession_driver_composition.fst
+ac2c0a37154c3997be494f76c5e212bfad449ed3b8f302e76df9064b235b4b55  src/possession_driver.rs

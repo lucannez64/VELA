@@ -1,0 +1,18 @@
+--- /home/hirew/.t3/worktrees/VELA/t3-e2171f5c/serverVELA/vela-recovery-policy/proofs/fstar/extraction-webauthn-driver/Vela_recovery_policy.Webauthn_driver.fst	2026-10-26 15:49:44.139984749 +0100
++++ /tmp/webauthn-mutation-budget/extraction-webauthn-driver/Vela_recovery_policy.Webauthn_driver.fst	2026-10-26 16:58:56.787992489 +0100
+@@ -1695,7 +1695,14 @@
+         t_AuthFinishDriver)
+       (AuthFinishEffect_ObserveContext <: t_AuthFinishEffect)
+   | AttemptBudgetObservation_Limited  ->
+-    auth_finish_terminal driver (AuthFinishFailure_AttemptLimited <: t_AuthFinishFailure)
++    auth_finish_transition ({
++          driver with
++          f_stage = AuthFinishStage_Context <: t_AuthFinishStage;
++          f_budget_counted = true
++        }
++        <:
++        t_AuthFinishDriver)
++      (AuthFinishEffect_ObserveContext <: t_AuthFinishEffect)
+ 
+ let apply_auth_finish_context_observed
+       (driver: t_AuthFinishDriver)

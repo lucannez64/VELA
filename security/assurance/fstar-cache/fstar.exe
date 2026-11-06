@@ -1,0 +1,286 @@
+#!/usr/bin/env -S python3 -I
+"""Shared cache of checked F* modules and solver hints for local proof runs.
+
+Put this directory first on PATH and set VELA_FSTAR_CACHE to a store directory.
+Every `fstar.exe ... --cache_off ...` call then runs as:
+
+  1. `fstar.exe --dep full` lists every module the call loads. Each module gets
+     a key: the F* and z3 builds, the flags (without paths and file names), the
+     module's source bytes and its dependencies' keys. A change anywhere below a
+     module gives it a new key, so a mutant never reuses the original's result.
+  2. Stored `.checked` files with matching keys are copied into a fresh cache
+     directory for this call, and `--cache_off` becomes
+     `--cache_checked_modules --cache_dir <that directory>`.
+  3. F* runs. It still compares each `.checked` file's recorded source and
+     dependency hashes and re-checks any that do not match.
+  4. Every module F* checked in this call is stored under its key.
+
+F* verifies only the modules named on its command line; every other module it
+loads from source has its proof obligations assumed, with or without this
+cache. So a missing dependency is built the same way (--admit_smt_queries true)
+and stored as "admitted"; a named module is restored only from a "verified"
+entry, written after F* verified it under the same key.
+
+Solver hints (--record_hints/--use_hints) are shared by module name. A hint
+only guides z3: every query is still proved, and a stale hint is retried
+without it, so hints cannot make a proof pass.
+
+What this adds to the trusted base: F* trusts a `.checked` file without
+re-verifying it, so the store must only be written by your own runs. Evidence
+runs (CI `fresh` jobs, published proof logs) do not use this shim.
+
+Without VELA_FSTAR_CACHE (or with it set to 0), and for calls that do not pass
+--cache_off, the real fstar.exe runs with the arguments unchanged. Set
+VELA_FSTAR_HINTS=0 to skip hints, VELA_FSTAR_CACHE_LOG=1 for hit/miss counts.
+"""
+
+import hashlib
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+# Flags whose value names a path or a file; they do not change what a module
+# means (the module's own bytes and its dependencies' keys already do).
+PATH_FLAGS = {"--include", "--cache_dir", "--hint_dir", "--hint_file", "--odir"}
+# Calls that do not check modules.
+PASS_FLAGS = {"--dep", "--version", "--help", "--print_cache_version", "--ide",
+              "--lsp", "--in", "--print", "--print_in_place"}
+
+
+def real_fstar():
+    for d in os.environ.get("PATH", "").split(os.pathsep):
+        if not d or os.path.realpath(d) == HERE:
+            continue
+        p = os.path.join(d, "fstar.exe")
+        if os.path.isfile(p) and os.access(p, os.X_OK):
+            return p
+    sys.exit("fstar-cache: no real fstar.exe on PATH")
+
+
+def log(msg):
+    if os.environ.get("VELA_FSTAR_CACHE_LOG") == "1":
+        print(f"fstar-cache: {msg}", file=sys.stderr)
+
+
+def is_source(a):
+    return a.endswith(".fst") or a.endswith(".fsti")
+
+
+def split_args(args):
+    """Return (flags without paths/files/--cache_off, source files)."""
+    flags, files, i = [], [], 0
+    while i < len(args):
+        a = args[i]
+        if a in PATH_FLAGS:
+            i += 2
+            continue
+        if a == "--cache_off":
+            i += 1
+            continue
+        if a.startswith("--"):
+            flags.append(a)
+            if i + 1 < len(args) and not args[i + 1].startswith("--") and not is_source(args[i + 1]):
+                flags.append(args[i + 1])
+                i += 1
+        elif is_source(a):
+            files.append(a)
+        else:
+            flags.append(a)
+        i += 1
+    return flags, files
+
+
+def binary_id(path, version_args):
+    st = os.stat(path)
+    out = subprocess.run([path, *version_args], capture_output=True, text=True).stdout
+    return f"{os.path.realpath(path)}|{st.st_size}|{st.st_mtime_ns}|{out}"
+
+
+def config_key(fstar, flags):
+    z3 = "z3"
+    if "--z3version" in flags:
+        z3 = "z3-" + flags[flags.index("--z3version") + 1]
+    z3_path = shutil.which(z3)
+    h = hashlib.sha256()
+    h.update(b"vela-fstar-cache v1\0")
+    h.update(binary_id(fstar, ["--version"]).encode() + b"\0")
+    h.update((binary_id(z3_path, ["--version"]) if z3_path else "no-z3").encode() + b"\0")
+    h.update("\0".join(flags).encode())
+    return h.hexdigest()
+
+
+RULE = re.compile(r"^(\S+\.checked):\s*\\?$")
+
+
+def dep_graph(fstar, dep_args):
+    """Map each checked-file path to (source path, dependency checked paths)."""
+    out = subprocess.run([fstar, *dep_args, "--dep", "full"], capture_output=True, text=True)
+    if out.returncode != 0:
+        return None
+    graph, lines, i = {}, out.stdout.splitlines(), 0
+    while i < len(lines):
+        m = RULE.match(lines[i])
+        i += 1
+        if not m:
+            continue
+        prereqs = []
+        while i < len(lines) and lines[i].startswith("\t"):
+            prereqs.append(lines[i].strip().rstrip("\\").strip())
+            i += 1
+        if not prereqs:
+            continue
+        graph[m.group(1)] = (prereqs[0], [p for p in prereqs[1:] if p.endswith(".checked")])
+    return graph
+
+
+def module_keys(graph, cfg):
+    keys, src_hash = {}, {}
+
+    def key(t, seen=()):
+        if t in keys:
+            return keys[t]
+        if t not in graph or t in seen:
+            # F*'s own library (already checked): covered by the F* build id.
+            return "ext:" + os.path.basename(t)
+        src, deps = graph[t]
+        if src not in src_hash:
+            with open(src, "rb") as f:
+                src_hash[src] = hashlib.sha256(f.read()).hexdigest()
+        h = hashlib.sha256(f"{cfg}\0{os.path.basename(t)}\0{src_hash[src]}\0".encode())
+        for d in sorted(set(deps)):
+            h.update(key(d, seen + (t,)).encode() + b"\0")
+        keys[t] = h.hexdigest()
+        return keys[t]
+
+    for t in graph:
+        key(t)
+    return keys
+
+
+def store_put(src, dst):
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(dst), prefix=".tmp-")
+    os.close(fd)
+    shutil.copyfile(src, tmp)
+    os.replace(tmp, dst)
+
+
+def topo(graph):
+    order, seen = [], set()
+
+    def visit(t):
+        if t in seen or t not in graph:
+            return
+        seen.add(t)
+        for d in graph[t][1]:
+            visit(d)
+        order.append(t)
+
+    for t in graph:
+        visit(t)
+    return order
+
+
+def main():
+    args = sys.argv[1:]
+    fstar = real_fstar()
+    store = os.environ.get("VELA_FSTAR_CACHE", "")
+    if (not store or store == "0" or "--cache_off" not in args
+            or any(a in PASS_FLAGS for a in args)):
+        os.execv(fstar, [fstar, *args])
+
+    flags, files = split_args(args)
+    cfg = config_key(fstar, flags)
+    run = tempfile.mkdtemp(prefix="vela-fstar-run-")
+    try:
+        return cached_run(fstar, args, files, cfg, store, run)
+    finally:
+        shutil.rmtree(run, ignore_errors=True)
+
+
+def cached_run(fstar, args, files, cfg, store, run):
+    checked_dir = os.path.join(run, "checked")
+    hint_dir = os.path.join(run, "hints")
+    os.makedirs(checked_dir)
+    os.makedirs(hint_dir)
+    i = args.index("--cache_off")
+    base = args[:i] + ["--cache_checked_modules", "--cache_dir", checked_dir] + args[i + 1:]
+    hints = os.environ.get("VELA_FSTAR_HINTS", "1") != "0"
+
+    graph = dep_graph(fstar, base)
+    if graph is None:
+        log("dependency scan failed; running uncached")
+        return subprocess.run([fstar, *args]).returncode
+    # Only modules this call would load from source; F*'s own library keeps
+    # its prebuilt .checked files.
+    ours = {t: v for t, v in graph.items() if os.path.dirname(t) == checked_dir}
+    keys = module_keys(ours, cfg)
+    named = {os.path.realpath(f) for f in files}
+    verify = {t for t, (src, _) in ours.items() if os.path.realpath(src) in named}
+
+    def entry(mode, t):
+        k = keys[t]
+        return os.path.join(store, "checked", mode, k[:2], k)
+
+    # F* verifies only the modules named on its command line. Every other
+    # module it loads from source has its proof obligations assumed, exactly
+    # as an uncached run does, so those are stored as "admitted" and are never
+    # used where a module must be verified.
+    restored, prebuilt, failed = {}, 0, 0
+    for t in topo(ours):
+        modes = ["verified"] if t in verify else ["verified", "admitted"]
+        hit = next((entry(m, t) for m in modes if os.path.isfile(entry(m, t))), None)
+        if hit:
+            shutil.copyfile(hit, t)
+            os.utime(hit)
+            restored[t] = os.stat(t).st_mtime_ns
+            continue
+        if t in verify:
+            continue
+        # Build the missing dependency the way F* would load it: admitted.
+        dep_args = [a for a in base if os.path.realpath(a) not in named]
+        out = subprocess.run([fstar, *dep_args, "--admit_smt_queries", "true", ours[t][0]],
+                             capture_output=True, text=True)
+        if out.returncode == 0 and os.path.isfile(t):
+            store_put(t, entry("admitted", t))
+            restored[t] = os.stat(t).st_mtime_ns
+            prebuilt += 1
+        else:
+            failed += 1
+
+    # --record_hints makes F* re-verify even a valid checked module, so hints
+    # are only used when a named module actually needs checking.
+    hints = hints and any(t not in restored for t in verify)
+    main_args = base + (["--hint_dir", hint_dir, "--use_hints", "--record_hints"] if hints else [])
+    hdir = os.path.join(store, "hints", cfg[:16])
+    if hints and os.path.isdir(hdir):
+        for t in verify:
+            hp = os.path.join(hdir, os.path.basename(t)[: -len(".checked")] + ".hints")
+            if os.path.isfile(hp):
+                shutil.copyfile(hp, os.path.join(hint_dir, os.path.basename(hp)))
+    log(f"{len(restored) - prebuilt}/{len(ours)} modules restored, {prebuilt} dependencies built"
+        + (f", {failed} could not be built" if failed else ""))
+
+    status = subprocess.run([fstar, *main_args]).returncode
+
+    saved = 0
+    for t in ours:
+        if not os.path.isfile(t) or restored.get(t) == os.stat(t).st_mtime_ns:
+            continue
+        store_put(t, entry("verified" if t in verify else "admitted", t))
+        saved += 1
+    # A failing run (a mutant) records hints only for the queries that passed;
+    # keep the last complete set instead.
+    if hints and status == 0:
+        for h in os.listdir(hint_dir):
+            store_put(os.path.join(hint_dir, h), os.path.join(hdir, h))
+    log(f"{saved} modules stored, exit {status}")
+    return status
+
+
+if __name__ == "__main__":
+    sys.exit(main())

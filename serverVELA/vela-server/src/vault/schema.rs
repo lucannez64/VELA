@@ -33,10 +33,35 @@ pub async fn lock(user: &str) -> tokio::sync::OwnedMutexGuard<()> {
 }
 
 pub fn minimum(state: &AppState, user: &str) -> Result<u32> {
-    match state.store.get(&format!("vault-schema:{user}"))? {
-        None => Ok(1),
-        Some(bytes) if bytes == b"2" => Ok(2),
-        _ => Err(AppError::Internal("Invalid vault schema floor".into())),
+    use vela_rekey_policy::executor::{
+        classify_schema_floor, plan_read_schema_floor, ReadOutcome, SchemaFloorObservation,
+    };
+    let plan = plan_read_schema_floor(format!("vault-schema:{user}"));
+    let mut sql = crate::vault::sql::PoolSql(state);
+    let mut read_error: Option<crate::vault::sql::RunError> = None;
+    let outcome = match crate::vault::sql::kv_read(&mut sql, &plan) {
+        Ok(value) => ReadOutcome::Rows(crate::vault::sql::kv_text(value)),
+        Err(error) => {
+            read_error = Some(error);
+            ReadOutcome::Failed
+        }
+    };
+    match classify_schema_floor(outcome) {
+        SchemaFloorObservation::Stored(None) => Ok(1),
+        SchemaFloorObservation::Stored(Some(value)) => {
+            if value == "2" {
+                Ok(2)
+            } else {
+                Err(AppError::Internal("Invalid vault schema floor".into()))
+            }
+        }
+        SchemaFloorObservation::Storage => Err(match read_error {
+            Some(crate::vault::sql::RunError::Store(error)) => error,
+            Some(crate::vault::sql::RunError::Sql(error)) => {
+                AppError::Internal(error.to_string())
+            }
+            None => AppError::Internal("vault schema floor lookup failed".into()),
+        }),
     }
 }
 
@@ -68,17 +93,78 @@ pub async fn get_schema(
     }))
 }
 
+/// The I/O behind `POST /vault/schema`. The extracted driver decides that the
+/// one durable write runs; the method only performs it and reports the
+/// observation, keeping the original error for the response.
+struct ActivateIo<'a> {
+    state: &'a AppState,
+    user: String,
+    error: Option<AppError>,
+}
+
+impl ActivateIo<'_> {
+    async fn write_floor(
+        &mut self,
+    ) -> vela_rekey_policy::vault_mutation_driver::SchemaWriteObservation {
+        use vela_rekey_policy::executor::{classify_schema_write, plan_schema_floor};
+        let plan = plan_schema_floor(format!("vault-schema:{}", self.user));
+        let mut sql = crate::vault::sql::PoolSql(self.state);
+        let (outcomes, error) = crate::vault::sql::run_writes(&mut sql, &plan).await;
+        if let Some(error) = error {
+            match error {
+                crate::vault::sql::RunError::Store(error) => self.error = Some(error),
+                crate::vault::sql::RunError::Sql(error) => {
+                    self.error = Some(AppError::Internal(error.to_string()))
+                }
+            }
+        }
+        classify_schema_write(&outcomes)
+    }
+}
+
 pub async fn activate(
     State(state): State<AppState>,
     session: DeviceSession,
 ) -> Result<Json<SchemaStatus>> {
+    use vela_rekey_policy::vault_mutation_driver::{
+        SchemaEffect, SchemaFailure, SchemaRequest,
+    };
     let user = session.0.user_id.to_string();
     let _guard = lock(&user).await;
-    state
-        .store
-        .set_durable(&format!("vault-schema:{user}"), b"2")?;
-    Ok(Json(SchemaStatus {
-        minimum_write_schema: 2,
-        supported_schema: 2,
-    }))
+    let mut io = ActivateIo {
+        state: &state,
+        user: user.clone(),
+        error: None,
+    };
+    let transition = vela_rekey_policy::schema_interpreter!(
+        io,
+        SchemaRequest {
+            authenticated: true,
+            device_scope: true,
+        },
+        await
+    );
+    match transition.effect {
+        SchemaEffect::Complete => Ok(Json(SchemaStatus {
+            minimum_write_schema: 2,
+            supported_schema: 2,
+        })),
+        SchemaEffect::Fail(failure) => {
+            let recorded = io.error.take();
+            Err(recorded.unwrap_or_else(|| match failure {
+                SchemaFailure::Unauthenticated => {
+                    AppError::Unauthorized("not authenticated".into())
+                }
+                SchemaFailure::WebSessionForbidden => {
+                    AppError::Forbidden("a temporary web session cannot activate the vault schema".into())
+                }
+                SchemaFailure::WriteStorage => {
+                    AppError::Internal("vault schema write failed".into())
+                }
+            }))
+        }
+        _ => Err(AppError::Internal(
+            "schema activation did not reach a terminal decision".into(),
+        )),
+    }
 }

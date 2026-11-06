@@ -67,6 +67,10 @@ final class VELAUITests: XCTestCase {
         XCTAssertTrue(unlockButton.waitForExistence(timeout: 15), "lock screen")
         sleep(2)
         unlockButton.tap()
+        // Unlock recreates InstrumentRootView on its default Overview tab.
+        // Open the Vault tab before asserting persisted list contents.
+        XCTAssertTrue(vaultTab.waitForExistence(timeout: 15), "unlocked dock")
+        vaultTab.tap()
         XCTAssertTrue(app.staticTexts["Proton Mail"].waitForExistence(timeout: 15), "unlocked vault")
         sleep(2)
     }

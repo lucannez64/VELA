@@ -277,9 +277,12 @@ impl AndroidClient {
             signing::generate_keypair().map_err(|e| format!("generate signing keypair: {e}"))?;
         let (hybrid_ek, hybrid_dk) = kem::generate_keypair();
 
-        // Over this device's own key, computed locally — never a value read
+        // Over this device's own keys, computed locally — never a value read
         // back from the server.
-        let fingerprint = vela_crypto::verification::enrollment_fingerprint(&hybrid_vk.to_bytes());
+        let fingerprint = vela_crypto::verification::enrollment_fingerprint(
+            &hybrid_vk.to_bytes(),
+            &hybrid_ek.to_bytes(),
+        );
 
         let http = Client::new();
         let claim = serde_json::json!({

@@ -7,9 +7,46 @@
 //! and can only act from the private permits constructed here. hax extracts
 //! these exact decisions to F*.
 
+pub mod driver;
+pub mod interpreter;
+pub mod send_driver;
+pub mod send_interpreter;
+pub mod store;
+#[cfg(not(hax))]
+pub mod store_model;
+
 pub const INITIAL_SEQ: i64 = 1;
 
+/// Decoded length of a hybrid share encapsulation key (`ML-KEM` + `X25519`).
+pub const SHARE_EK_LEN: usize = 1568 + 32;
+
+/// Largest capsule the send handler accepts, in decoded bytes.
+pub const MAX_CAPSULE_BYTES: i64 = 1024 * 1024;
+
+/// Largest total pending capsule payload a recipient inbox may hold.
+pub const MAX_RECIPIENT_INBOX_BYTES: i64 = 32 * 1024 * 1024;
+
 // ── Share-EK registration ───────────────────────────────────────────────────
+
+/// Raw observations from the share-EK registration request, the device row
+/// and the store.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EkRegistrationObservation {
+    /// Decoded byte length of the presented share EK.
+    pub ek_len: usize,
+    /// The binding signature verified under the row's identity key.
+    pub signature_verified: bool,
+    /// A `devices` row came back for this device id and caller id.
+    pub device_row_present: bool,
+    /// That row's `user_id` equals the authenticated caller.
+    pub device_user_matches: bool,
+    /// The row's `revoked` column is clear.
+    pub device_active: bool,
+    /// The candidate instant is strictly fresher than the stored binding.
+    pub signed_at_is_fresher: bool,
+    /// The account already has a registered share-EK binding instant.
+    pub binding_exists: bool,
+}
 
 /// Facts observed when a device registers or updates its share encapsulation
 /// key. The cryptographic signature check itself stays outside this crate;
@@ -57,6 +94,27 @@ pub fn ek_registration_is_authorized(facts: EkRegistrationFacts) -> bool {
         && facts.device_active
         && facts.signed_at_is_fresher
         && facts.seq >= INITIAL_SEQ
+}
+
+/// Turn raw request/device-row/store observations into the registration facts.
+#[cfg_attr(hax, hax_lib::ensures(|facts| {
+    facts.ek_size_valid == (obs.ek_len == SHARE_EK_LEN)
+        && facts.signature_verified == obs.signature_verified
+        && facts.device_owned_by_caller
+            == (obs.device_row_present && obs.device_user_matches)
+        && facts.device_active == obs.device_active
+        && facts.signed_at_is_fresher == obs.signed_at_is_fresher
+        && facts.seq == (if obs.binding_exists { 2 } else { 1 })
+}))]
+pub fn ek_registration_facts(obs: EkRegistrationObservation) -> EkRegistrationFacts {
+    EkRegistrationFacts {
+        ek_size_valid: obs.ek_len == SHARE_EK_LEN,
+        signature_verified: obs.signature_verified,
+        device_owned_by_caller: obs.device_row_present && obs.device_user_matches,
+        device_active: obs.device_active,
+        signed_at_is_fresher: obs.signed_at_is_fresher,
+        seq: if obs.binding_exists { 2 } else { 1 },
+    }
 }
 
 pub fn ek_registration_decision_matches_spec(
@@ -141,6 +199,20 @@ pub fn identical_timestamp_can_be_fresher(candidate: &[u8]) -> bool {
 
 // ── Capsule send ─────────────────────────────────────────────────────────────
 
+/// Raw observations from the send request, the recipient row and the inbox
+/// quota queries.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SendObservation {
+    /// The authenticated session names a user id.
+    pub session_user_id_present: bool,
+    /// The recipient's `users` row carries a non-empty share EK.
+    pub recipient_has_share_ek: bool,
+    /// Decoded capsule length in bytes.
+    pub capsule_len: i64,
+    /// Pending capsule bytes in the recipient's inbox before this send.
+    pub existing_inbox_bytes: i64,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SendCapsuleFacts {
     pub sender_authenticated: bool,
@@ -162,6 +234,32 @@ pub fn send_is_authorized(facts: SendCapsuleFacts) -> bool {
         && facts.inbox_has_capacity
 }
 
+/// Turn raw session/recipient/capsule/inbox observations into the send facts.
+#[cfg_attr(hax, hax_lib::ensures(|facts| {
+    facts.sender_authenticated == obs.session_user_id_present
+        && facts.recipient_registered == obs.recipient_has_share_ek
+        && facts.capsule_size_valid
+            == (obs.capsule_len > 0 && obs.capsule_len <= MAX_CAPSULE_BYTES)
+        && facts.inbox_has_capacity
+            == (obs.existing_inbox_bytes >= 0
+                && obs.capsule_len >= 0
+                && (obs.existing_inbox_bytes as i128) + (obs.capsule_len as i128)
+                    <= MAX_RECIPIENT_INBOX_BYTES as i128)
+}))]
+pub fn send_facts(obs: SendObservation) -> SendCapsuleFacts {
+    SendCapsuleFacts {
+        sender_authenticated: obs.session_user_id_present,
+        recipient_registered: obs.recipient_has_share_ek,
+        capsule_size_valid: obs.capsule_len > 0 && obs.capsule_len <= MAX_CAPSULE_BYTES,
+        // Bound the subtrahend first, so every i64 observation is safe.
+        // Negative database counters fail closed rather than adding capacity.
+        inbox_has_capacity: obs.existing_inbox_bytes >= 0
+            && obs.capsule_len >= 0
+            && obs.capsule_len <= MAX_RECIPIENT_INBOX_BYTES
+            && obs.existing_inbox_bytes <= MAX_RECIPIENT_INBOX_BYTES - obs.capsule_len,
+    }
+}
+
 #[cfg_attr(hax, hax_lib::ensures(|decision| {
     matches!(decision, SendDecision::Deliver) == send_is_authorized(facts)
 }))]
@@ -174,6 +272,17 @@ pub fn plan_send(facts: SendCapsuleFacts) -> SendDecision {
 }
 
 // ── Linked-item update / revocation ─────────────────────────────────────────
+
+/// Raw observations from the linked-share row.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LinkMutationObservation {
+    /// A `shared_items` row with the requested id exists.
+    pub item_present: bool,
+    /// The row's `sender_user_id` equals the authenticated caller.
+    pub caller_matches_sender: bool,
+    /// The row's `revoked` column is clear.
+    pub item_not_revoked: bool,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct LinkMutationFacts {
@@ -192,6 +301,20 @@ pub enum LinkMutationDecision {
 
 pub fn link_mutation_is_authorized(facts: LinkMutationFacts) -> bool {
     facts.caller_is_sender && facts.item_exists && facts.not_already_revoked
+}
+
+/// Turn raw linked-row observations into the mutation facts.
+#[cfg_attr(hax, hax_lib::ensures(|facts| {
+    facts.caller_is_sender == (obs.item_present && obs.caller_matches_sender)
+        && facts.item_exists == obs.item_present
+        && facts.not_already_revoked == (obs.item_present && obs.item_not_revoked)
+}))]
+pub fn link_mutation_facts(obs: LinkMutationObservation) -> LinkMutationFacts {
+    LinkMutationFacts {
+        caller_is_sender: obs.item_present && obs.caller_matches_sender,
+        item_exists: obs.item_present,
+        not_already_revoked: obs.item_present && obs.item_not_revoked,
+    }
 }
 
 #[cfg_attr(hax, hax_lib::ensures(|decision| {
@@ -215,6 +338,74 @@ pub fn non_sender_can_mutate_link(mut facts: LinkMutationFacts) -> bool {
 pub fn revoked_link_can_mutate(mut facts: LinkMutationFacts) -> bool {
     facts.not_already_revoked = false;
     link_mutation_is_authorized(facts)
+}
+
+// ── Negative theorems over the real observation constructors ───────────────
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn unauthenticated_sender_can_send_observed(mut obs: SendObservation) -> bool {
+    obs.session_user_id_present = false;
+    send_is_authorized(send_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn unregistered_recipient_can_receive_observed(mut obs: SendObservation) -> bool {
+    obs.recipient_has_share_ek = false;
+    send_is_authorized(send_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn empty_capsule_can_be_sent_observed(mut obs: SendObservation) -> bool {
+    obs.capsule_len = 0;
+    send_is_authorized(send_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn full_inbox_can_receive_observed(mut obs: SendObservation) -> bool {
+    obs.existing_inbox_bytes = MAX_RECIPIENT_INBOX_BYTES;
+    send_is_authorized(send_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn unverified_signature_can_register_observed(mut obs: EkRegistrationObservation) -> bool {
+    obs.signature_verified = false;
+    ek_registration_is_authorized(ek_registration_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn foreign_device_ek_can_register_observed(mut obs: EkRegistrationObservation) -> bool {
+    obs.device_user_matches = false;
+    ek_registration_is_authorized(ek_registration_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn revoked_device_ek_can_register_observed(mut obs: EkRegistrationObservation) -> bool {
+    obs.device_active = false;
+    ek_registration_is_authorized(ek_registration_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn replayed_ek_binding_can_register_observed(mut obs: EkRegistrationObservation) -> bool {
+    obs.signed_at_is_fresher = false;
+    ek_registration_is_authorized(ek_registration_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn non_sender_can_mutate_observed_link(mut obs: LinkMutationObservation) -> bool {
+    obs.caller_matches_sender = false;
+    link_mutation_is_authorized(link_mutation_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn revoked_link_can_mutate_observed(mut obs: LinkMutationObservation) -> bool {
+    obs.item_not_revoked = false;
+    link_mutation_is_authorized(link_mutation_facts(obs))
+}
+
+#[cfg_attr(hax, hax_lib::ensures(|result| result == false))]
+pub fn missing_link_can_mutate_observed(mut obs: LinkMutationObservation) -> bool {
+    obs.item_present = false;
+    link_mutation_is_authorized(link_mutation_facts(obs))
 }
 
 #[cfg(test)]
@@ -305,9 +496,6 @@ mod tests {
 
         let mut missing = valid;
         missing.item_exists = false;
-        assert_eq!(
-            plan_link_mutation(missing),
-            LinkMutationDecision::Reject
-        );
+        assert_eq!(plan_link_mutation(missing), LinkMutationDecision::Reject);
     }
 }

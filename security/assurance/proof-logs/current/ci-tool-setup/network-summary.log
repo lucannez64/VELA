@@ -1,0 +1,6 @@
+m13b_enrollment_v3_baseline: 1 verified, 0 falsified, 0 warnings
+m13b_enrollment_key_binding: 4 verified, 0 falsified, 0 warnings
+m19c_share_v1_baseline: 1 verified, 0 falsified, 0 warnings
+m19c_share_sender_authentication: 5 verified, 0 falsified, 0 warnings
+m27_device_authentication: 6 verified, 0 falsified, 0 warnings
+Full proof logs: /tmp/vela-ci2-network-proofs

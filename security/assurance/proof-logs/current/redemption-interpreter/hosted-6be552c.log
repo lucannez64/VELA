@@ -1,0 +1,10 @@
+# security workflow 40538488807 on 6be552c (all 15 PR checks passed)
+test redemption_interpreter::tests::a_failed_effect_stops_the_loop_and_a_terminal_effect_performs_nothing ... ok
+test redemption_interpreter::tests::interpreter_performs_exactly_the_driver_effects_for_every_outcome ... ok
+test redemption_interpreter::tests::a_failed_effect_stops_the_loop_and_a_terminal_effect_performs_nothing ... ok
+test redemption_interpreter::tests::interpreter_performs_exactly_the_driver_effects_for_every_outcome ... ok
+Verified module: Vela_recovery_policy_redemption_interpreter_lemmas
+redemption interpreter: the handler's loop calls only the executor method for the driver's current effect, restores once for RestoreAndFail, stops at the verdict (or abort) within 5 turns, and ends in the driver state the per-request theorems cover
+68f6912be5baa06572afd2be1cba994fbce03f75e8697fcfbc299a298ff510c6  proofs/fstar/extraction-redemption-interpreter/Vela_recovery_policy.Redemption_interpreter.fst
+6313e6431c0fe4b663cf880d4ad0a5bc3df9a2dc7010c8f1a4521bfb1e223c77  proofs/fstar/redemption-interpreter-lemmas/Vela_recovery_policy_redemption_interpreter_lemmas.fst
+86bd5338d0eab17c00bd063f67072a3dc2136e82d3da225dcbe17c99fe1f9b22  src/redemption_interpreter.rs

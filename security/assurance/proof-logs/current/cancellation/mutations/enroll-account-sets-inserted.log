@@ -1,0 +1,7 @@
+$ fstar.exe <enrollment interpreter gate args; mutated driver passed explicitly>
+* Error 19 at proofs/fstar/extraction-enroll-driver/Vela_enrollment_policy.Enroll_driver.fst(459,2-473,98):
+  - Could not prove post-condition
+  - The SMT solver could not prove the query. Use --query_stats for more
+    details.
+1 error was reported (see above)
+exit=1

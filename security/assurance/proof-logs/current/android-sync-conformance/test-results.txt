@@ -1,0 +1,31 @@
+com.vela.android.autofill.AssetLinksVerifierTest: tests=9 failures=0 errors=0 skipped=0 time=0.046s
+com.vela.android.autofill.AutofillMatcherTest: tests=29 failures=0 errors=0 skipped=0 time=0.039s
+com.vela.android.autofill.AutofillUnlockTokensTest: tests=5 failures=0 errors=0 skipped=0 time=0.004s
+com.vela.android.autofill.BrowserAllowlistTest: tests=11 failures=0 errors=0 skipped=0 time=0.023s
+com.vela.android.autofill.CardFieldDetectionTest: tests=5 failures=0 errors=0 skipped=0 time=0.003s
+com.vela.android.autofill.TrustedBrowserPinningTest: tests=5 failures=0 errors=0 skipped=0 time=0.002s
+com.vela.android.core.AdmittedChunkFailureTest: tests=2 failures=0 errors=0 skipped=0 time=0.0s
+com.vela.android.core.LocalVaultAdmissionTest: tests=3 failures=0 errors=0 skipped=0 time=0.003s
+com.vela.android.core.SyncAdmissionModelTest: tests=10 failures=0 errors=0 skipped=1 time=10.251s
+com.vela.android.core.VaultJsonTest: tests=6 failures=0 errors=0 skipped=0 time=0.004s
+com.vela.android.security.EncryptedVaultStoreTest: tests=5 failures=0 errors=0 skipped=0 time=0.034s
+com.vela.android.security.PasswordRmsProtectorTest: tests=2 failures=0 errors=0 skipped=0 time=0.278s
+com.vela.android.security.RmsHolderTest: tests=2 failures=0 errors=0 skipped=0 time=0.004s
+com.vela.android.security.passkey.PrivilegedAllowlistsTest: tests=4 failures=0 errors=0 skipped=0 time=0.001s
+com.vela.android.security.passkey.WebAuthnJsonTest: tests=19 failures=0 errors=0 skipped=0 time=0.003s
+com.vela.android.sync.AuthenticationReplacementTest: tests=3 failures=0 errors=0 skipped=0 time=0.005s
+com.vela.android.sync.BlankTokenRefusalTest: tests=2 failures=0 errors=0 skipped=0 time=0.007s
+com.vela.android.sync.EpochSyncContractTest: tests=7 failures=0 errors=0 skipped=0 time=0.009s
+com.vela.android.sync.IdentityBindingTest: tests=5 failures=0 errors=0 skipped=0 time=0.001s
+com.vela.android.sync.IdentityFailClosedTest: tests=7 failures=0 errors=0 skipped=0 time=0.015s
+com.vela.android.sync.IdentityRegistrationSuccessTest: tests=3 failures=0 errors=0 skipped=0 time=0.003s
+com.vela.android.sync.IdentityRotationFieldIsolationTest: tests=2 failures=0 errors=0 skipped=0 time=0.001s
+com.vela.android.sync.RecoveryAccountBindingTest: tests=4 failures=0 errors=0 skipped=0 time=0.003s
+com.vela.android.sync.RecoveryPublicationJournalTest: tests=4 failures=0 errors=0 skipped=0 time=0.001s
+com.vela.android.sync.ServerUrlValidationTest: tests=5 failures=0 errors=0 skipped=0 time=0.001s
+com.vela.android.sync.SyncAuthControllerTest: tests=6 failures=0 errors=0 skipped=0 time=0.008s
+com.vela.android.sync.SyncSettingsPublicationTest: tests=3 failures=0 errors=0 skipped=0 time=0.257s
+com.vela.android.sync.VaultEventStreamParserTest: tests=6 failures=0 errors=0 skipped=0 time=0.002s
+com.vela.android.sync.VaultSyncMergeTest: tests=5 failures=0 errors=0 skipped=0 time=0.001s
+
+TOTAL classes=29 tests=179 failures/errors=0 skipped=1

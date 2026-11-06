@@ -1,0 +1,31 @@
+
+VELA assurance run — logs in /home/hirew/.t3/worktrees/VELA/t3-700776df/security/assurance/proof-logs/current/trusted-boundary/full-run
+  correspondence                               PASS
+  share-journal                                PASS
+  network-boundaries                           PASS
+  tamarin-m1-m10-credential-release            PASS
+  tamarin-rekey                                PASS
+  tamarin-session                              PASS
+  tamarin-enrollment                           PASS
+  tamarin-recovery                             PASS
+  tamarin-client-recovery                      PASS
+  tamarin-recovery-publication                 PASS
+  tamarin-recovery-publication-recovery        PASS
+  tamarin-pair-selection                       PASS
+  tamarin-share-channel                        PASS
+  tamarin-web-session-pass-through             PASS
+  tamarin-link-revocation-finality             PASS
+  tamarin-composition                          PASS
+  tamarin-sync-admission                       PASS
+  proverif-m22-oram-access-hiding              PASS
+  statistical-m24-oram-stash-bounds            PASS
+  fstar-vela-rekey-policy                      PASS
+  fstar-vela-session-policy                    PASS
+  fstar-vela-enrollment-policy                 PASS
+  fstar-vela-recovery-policy                   PASS
+  fstar-vela-share-policy                      PASS
+  fstar-vela-client-recovery-policy            PASS
+  fstar-vela-sync-policy                       PASS
+  fstar-vela-client-share-policy               PASS
+  share-facts-fstar                            PASS
+  proof-boundary                               PASS

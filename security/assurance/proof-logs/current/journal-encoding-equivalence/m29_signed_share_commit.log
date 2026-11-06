@@ -1,0 +1,1616 @@
+maude tool: 'maude'
+ checking version: 3.5.1. OK.
+ checking installation: OK.
+[Theory M29_SignedShareCommit] Theory loaded
+[Theory M29_SignedShareCommit] Theory translated
+[Theory M29_SignedShareCommit] Derivation checks started
+[Open Chains] Too many chain constraints, stopping precomputation. Open Chains limits (can be changed with -c=): 10
+[Open Chains] Too many chain constraints, stopping precomputation. Open Chains limits (can be changed with -c=): 10
+[Theory M29_SignedShareCommit] Derivation checks ended
+[Theory M29_SignedShareCommit] Theory closed
+[Saturating Sources] Step 1 (Max 5)
+[Saturating Sources] Done
+theory M29_SignedShareCommit
+
+begin
+
+// Function signature and definition of the equational theory E
+
+builtins: natural-numbers
+functions: fst/1, h/1, pair/2, pk/1, sign/2, snd/1, successor/1, true/0,
+           verify/3
+equations:
+    fst(<x.1, x.2>) = x.1,
+    snd(<x.1, x.2>) = x.2,
+    verify(sign(x.1, x.2), x.1, pk(x.2)) = true
+
+rule (modulo E) SenderIdentity:
+   [ Fr( ~ml ), Fr( ~ed ), Fr( ~device ) ]
+  --[ HonestHybridKey( $S, pk(~ml), pk(~ed) ) ]->
+   [
+   !SigningKeys( $S, ~device, ~ml, ~ed ),
+   Out( <$S, ~device, pk(~ml), pk(~ed)> )
+   ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) RecipientIdentity:
+   [ Fr( ~dk ) ] --> [ !RecipientKey( $B, ~dk ), Out( <$B, pk(~dk)> ) ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) RevealMlComponent:
+   [ !SigningKeys( S, device, ml, ed ) ]
+  --[ MlRevealed( pk(ml) ) ]->
+   [ Out( ml ) ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) RevealEdComponent:
+   [ !SigningKeys( S, device, ml, ed ) ]
+  --[ EdRevealed( pk(ed) ) ]->
+   [ Out( ed ) ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) RevealRecipientKey:
+   [ !RecipientKey( B, dk ) ]
+  --[ RecipientRevealed( B, pk(dk) ) ]->
+   [ Out( dk ) ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) SenderSend:
+   [
+   !SigningKeys( $S, device, ml, ed ), !RecipientKey( $B, dk ),
+   In( <lineage, revision, item> )
+   ]
+  --[
+  PositiveRevision( revision ),
+  Sent( $S, pk(ml), pk(ed), $B, lineage, revision, item )
+  ]->
+   [
+   Out( <'VSE2', 
+         <$S, device, pk(ml), pk(ed), $B, h(pk(dk)), lineage, revision>, item, 
+         sign(<'VELA-DSA-v1', 'vela share item v2', 
+               <$S, device, pk(ml), pk(ed), $B, h(pk(dk)), lineage, revision>, item>,
+              ml), 
+         sign(<'vela share item v2', 
+               <$S, device, pk(ml), pk(ed), $B, h(pk(dk)), lineage, revision>, item>,
+              ed)
+        >
+   )
+   ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) OtherSigningDomains:
+   [ !SigningKeys( S, device, ml, ed ), In( m ) ]
+  -->
+   [
+   Out( <sign(<'VELA-DSA-v1', 'alternate protocol', m>, ml), 
+         sign(<'alternate protocol', m>, ed)>
+   )
+   ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) NewLocalSlot:
+   [ !RecipientKey( $B, dk ), Fr( ~slot ) ]
+  -->
+   [ !Profile( ~slot ), DiskEmpty( ~slot, $B, dk ), Out( ~slot ) ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) FirstJournal:
+   [
+   DiskEmpty( slot, B, dk ), Fr( ~tx ),
+   In( <slot, S, 'VSE2', 
+        <S, device, mvk, evk, B, h(pk(dk)), lineage, revision>, item, msig, esig>
+   )
+   ]
+  --[
+  Verified( verify(msig,
+                   <'VELA-DSA-v1', 'vela share item v2', 
+                    <S, device, mvk, evk, B, h(pk(dk)), lineage, revision>, item>,
+                   mvk)
+  ),
+  Verified( verify(esig,
+                   <'vela share item v2', 
+                    <S, device, mvk, evk, B, h(pk(dk)), lineage, revision>, item>,
+                   evk)
+  ),
+  PositiveRevision( revision ),
+  FirstPinned( slot, <S, mvk, evk, lineage> ),
+  JournalAdmitted( slot, B, <S, mvk, evk, lineage>, revision, item, ~tx,
+                   'initial'
+  )
+  ]->
+   [
+   DiskPending( slot, B, dk, <S, mvk, evk, lineage>, revision, item, ~tx,
+                'initial', 'absent', 'absent'
+   )
+   ]
+
+  /*
+  rule (modulo AC) FirstJournal:
+     [
+     DiskEmpty( slot, B, dk ), Fr( ~tx ),
+     In( <slot, S, 'VSE2', 
+          <S, device, mvk, evk, B, h(pk(dk)), lineage, revision>, item, msig, esig>
+     )
+     ]
+    --[
+    Verified( z ), Verified( z.1 ), PositiveRevision( revision ),
+    FirstPinned( slot, <S, mvk, evk, lineage> ),
+    JournalAdmitted( slot, B, <S, mvk, evk, lineage>, revision, item, ~tx,
+                     'initial'
+    )
+    ]->
+     [
+     DiskPending( slot, B, dk, <S, mvk, evk, lineage>, revision, item, ~tx,
+                  'initial', 'absent', 'absent'
+     )
+     ]
+    variants (modulo AC)
+    1. B     = B.30
+       S     = S.31
+       device
+             = device.32
+       dk    = dk.33
+       esig  = esig.34
+       evk   = evk.35
+       item  = item.36
+       lineage
+             = lineage.37
+       msig  = msig.38
+       mvk   = mvk.39
+       revision
+             = revision.40
+       z     = verify(msig.38,
+                      <'VELA-DSA-v1', 'vela share item v2', 
+                       <S.31, device.32, mvk.39, evk.35, B.30, h(pk(dk.33)), lineage.37, 
+                        revision.40>, 
+                       item.36>,
+                      mvk.39)
+       z.1   = verify(esig.34,
+                      <'vela share item v2', 
+                       <S.31, device.32, mvk.39, evk.35, B.30, h(pk(dk.33)), lineage.37, 
+                        revision.40>, 
+                       item.36>,
+                      evk.35)
+    
+    2. B     = B.59
+       S     = S.60
+       device
+             = device.61
+       dk    = dk.62
+       esig  = sign(<'vela share item v2', 
+                     <S.60, device.61, mvk.68, pk(x.115), B.59, h(pk(dk.62)), lineage.66, 
+                      revision.69>, 
+                     item.65>,
+                    x.115)
+       evk   = pk(x.115)
+       item  = item.65
+       lineage
+             = lineage.66
+       msig  = msig.67
+       mvk   = mvk.68
+       revision
+             = revision.69
+       z     = verify(msig.67,
+                      <'VELA-DSA-v1', 'vela share item v2', 
+                       <S.60, device.61, mvk.68, pk(x.115), B.59, h(pk(dk.62)), lineage.66, 
+                        revision.69>, 
+                       item.65>,
+                      mvk.68)
+       z.1   = true
+    
+    3. B     = B.59
+       S     = S.60
+       device
+             = device.61
+       dk    = dk.62
+       esig  = sign(<'vela share item v2', 
+                     <S.60, device.61, pk(x.114), pk(x.115), B.59, h(pk(dk.62)), lineage.66, 
+                      revision.69>, 
+                     item.65>,
+                    x.115)
+       evk   = pk(x.115)
+       item  = item.65
+       lineage
+             = lineage.66
+       msig  = sign(<'VELA-DSA-v1', 'vela share item v2', 
+                     <S.60, device.61, pk(x.114), pk(x.115), B.59, h(pk(dk.62)), lineage.66, 
+                      revision.69>, 
+                     item.65>,
+                    x.114)
+       mvk   = pk(x.114)
+       revision
+             = revision.69
+       z     = true
+       z.1   = true
+    
+    4. B     = B.62
+       S     = S.63
+       device
+             = device.64
+       dk    = dk.65
+       esig  = esig.66
+       evk   = evk.67
+       item  = item.68
+       lineage
+             = lineage.69
+       msig  = sign(<'VELA-DSA-v1', 'vela share item v2', 
+                     <S.63, device.64, pk(x.121), evk.67, B.62, h(pk(dk.65)), lineage.69, 
+                      revision.72>, 
+                     item.68>,
+                    x.121)
+       mvk   = pk(x.121)
+       revision
+             = revision.72
+       z     = true
+       z.1   = verify(esig.66,
+                      <'vela share item v2', 
+                       <S.63, device.64, pk(x.121), evk.67, B.62, h(pk(dk.65)), lineage.69, 
+                        revision.72>, 
+                       item.68>,
+                      evk.67)
+  */
+
+rule (modulo E) ReadSnapshot:
+   [ !ReadyGeneration( slot, gen, revision ), Fr( ~tx ) ]
+  -->
+   [ Snapshot( slot, ~tx, gen, revision ) ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) UpdateJournal:
+   [
+   DiskClean( slot, B, dk, <S, mvk, evk, lineage>, pinned, gen, vrev, vitem
+   ),
+   Snapshot( slot, tx, gen, pinned ),
+   In( <slot, S, 'VSE2', 
+        <S, device, mvk, evk, B, h(pk(dk)), lineage, revision>, item, msig, esig>
+   )
+   ]
+  --[
+  Verified( verify(msig,
+                   <'VELA-DSA-v1', 'vela share item v2', 
+                    <S, device, mvk, evk, B, h(pk(dk)), lineage, revision>, item>,
+                   mvk)
+  ),
+  Verified( verify(esig,
+                   <'vela share item v2', 
+                    <S, device, mvk, evk, B, h(pk(dk)), lineage, revision>, item>,
+                   evk)
+  ),
+  RevisionIncreases( pinned, revision ),
+  PinObserved( slot, <S, mvk, evk, lineage> ),
+  JournalAdmitted( slot, B, <S, mvk, evk, lineage>, revision, item, tx,
+                   successor(gen)
+  )
+  ]->
+   [
+   DiskPending( slot, B, dk, <S, mvk, evk, lineage>, revision, item, tx,
+                successor(gen), vrev, vitem
+   )
+   ]
+
+  /*
+  rule (modulo AC) UpdateJournal:
+     [
+     DiskClean( slot, B, dk, <S, mvk, evk, lineage>, pinned, gen, vrev, vitem
+     ),
+     Snapshot( slot, tx, gen, pinned ),
+     In( <slot, S, 'VSE2', 
+          <S, device, mvk, evk, B, h(pk(dk)), lineage, revision>, item, msig, esig>
+     )
+     ]
+    --[
+    Verified( z ), Verified( z.1 ), RevisionIncreases( pinned, revision ),
+    PinObserved( slot, <S, mvk, evk, lineage> ),
+    JournalAdmitted( slot, B, <S, mvk, evk, lineage>, revision, item, tx,
+                     successor(gen)
+    )
+    ]->
+     [
+     DiskPending( slot, B, dk, <S, mvk, evk, lineage>, revision, item, tx,
+                  successor(gen), vrev, vitem
+     )
+     ]
+    variants (modulo AC)
+    1. B     = B.22
+       S     = S.23
+       device
+             = device.24
+       dk    = dk.25
+       esig  = esig.26
+       evk   = evk.27
+       item  = item.29
+       lineage
+             = lineage.30
+       msig  = msig.31
+       mvk   = mvk.32
+       revision
+             = revision.34
+       z     = verify(msig.31,
+                      <'VELA-DSA-v1', 'vela share item v2', 
+                       <S.23, device.24, mvk.32, evk.27, B.22, h(pk(dk.25)), lineage.30, 
+                        revision.34>, 
+                       item.29>,
+                      mvk.32)
+       z.1   = verify(esig.26,
+                      <'vela share item v2', 
+                       <S.23, device.24, mvk.32, evk.27, B.22, h(pk(dk.25)), lineage.30, 
+                        revision.34>, 
+                       item.29>,
+                      evk.27)
+    
+    2. B     = B.30
+       S     = S.31
+       device
+             = device.32
+       dk    = dk.33
+       esig  = sign(<'vela share item v2', 
+                     <S.31, device.32, pk(x.54), pk(x.55), B.30, h(pk(dk.33)), lineage.38, 
+                      revision.42>, 
+                     item.37>,
+                    x.55)
+       evk   = pk(x.55)
+       item  = item.37
+       lineage
+             = lineage.38
+       msig  = sign(<'VELA-DSA-v1', 'vela share item v2', 
+                     <S.31, device.32, pk(x.54), pk(x.55), B.30, h(pk(dk.33)), lineage.38, 
+                      revision.42>, 
+                     item.37>,
+                    x.54)
+       mvk   = pk(x.54)
+       revision
+             = revision.42
+       z     = true
+       z.1   = true
+    
+    3. B     = B.31
+       S     = S.32
+       device
+             = device.33
+       dk    = dk.34
+       esig  = sign(<'vela share item v2', 
+                     <S.32, device.33, mvk.41, pk(x.56), B.31, h(pk(dk.34)), lineage.39, 
+                      revision.43>, 
+                     item.38>,
+                    x.56)
+       evk   = pk(x.56)
+       item  = item.38
+       lineage
+             = lineage.39
+       msig  = msig.40
+       mvk   = mvk.41
+       revision
+             = revision.43
+       z     = verify(msig.40,
+                      <'VELA-DSA-v1', 'vela share item v2', 
+                       <S.32, device.33, mvk.41, pk(x.56), B.31, h(pk(dk.34)), lineage.39, 
+                        revision.43>, 
+                       item.38>,
+                      mvk.41)
+       z.1   = true
+    
+    4. B     = B.33
+       S     = S.34
+       device
+             = device.35
+       dk    = dk.36
+       esig  = esig.37
+       evk   = evk.38
+       item  = item.40
+       lineage
+             = lineage.41
+       msig  = sign(<'VELA-DSA-v1', 'vela share item v2', 
+                     <S.34, device.35, pk(x.62), evk.38, B.33, h(pk(dk.36)), lineage.41, 
+                      revision.45>, 
+                     item.40>,
+                    x.62)
+       mvk   = pk(x.62)
+       revision
+             = revision.45
+       z     = true
+       z.1   = verify(esig.37,
+                      <'vela share item v2', 
+                       <S.34, device.35, pk(x.62), evk.38, B.33, h(pk(dk.36)), lineage.41, 
+                        revision.45>, 
+                       item.40>,
+                      evk.38)
+  */
+
+rule (modulo E) PersistVault:
+   [
+   DiskPending( slot, B, dk, <S, mvk, evk, lineage>, revision, item, tx,
+                gen, oldrev, olditem
+   )
+   ]
+  --[
+  PinObserved( slot, <S, mvk, evk, lineage> ),
+  RemoteApplied( slot, B, <S, mvk, evk, lineage>, revision, item, tx, gen )
+  ]->
+   [
+   DiskApplied( slot, B, dk, <S, mvk, evk, lineage>, revision, tx, gen,
+                revision, item
+   )
+   ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) ClearJournal:
+   [
+   DiskApplied( slot, B, dk, <S, mvk, evk, lineage>, pinned, tx, gen, vrev,
+                vitem
+   )
+   ]
+  --[ PinObserved( slot, <S, mvk, evk, lineage> ), Cleared( slot, tx ) ]->
+   [
+   DiskClean( slot, B, dk, <S, mvk, evk, lineage>, pinned, gen, vrev, vitem
+   ),
+   !ReadyGeneration( slot, gen, pinned )
+   ]
+
+  // loop breaker: [0]
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) OpenVault:
+   [
+   DiskClean( slot, B, dk, <S, mvk, evk, lineage>, pinned, gen, vrev, vitem
+   )
+   ]
+  --[
+  PinObserved( slot, <S, mvk, evk, lineage> ),
+  Opened( slot, pinned, vrev, vitem )
+  ]->
+   [
+   DiskClean( slot, B, dk, <S, mvk, evk, lineage>, pinned, gen, vrev, vitem
+   )
+   ]
+
+  // loop breaker: [0]
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) Crash:
+   [ !Profile( slot ) ] --[ Crash( slot ) ]-> [ ]
+
+  /* has exactly the trivial AC variant */
+
+restriction SignaturesVerify:
+  "∀ result #i. (Verified( result ) @ #i) ⇒ (result = true)"
+  // safety formula
+
+  /*
+  expanded formula:
+  "∀ result #i. (Verified( result ) @ #i) ⇒ (result = true)"
+  */
+
+restriction Positive:
+  "∀ r #i. (PositiveRevision( r ) @ #i) ⇒ ((r = %1) ∨ (%1 ⊏ r))"
+  // safety formula
+
+  /*
+  expanded formula:
+  "∀ r #i. (PositiveRevision( r ) @ #i) ⇒ ((r = %1) ∨ (%1 ⊏ r))"
+  */
+
+restriction Increasing:
+  "∀ a b #i. (RevisionIncreases( a, b ) @ #i) ⇒ (a ⊏ b)"
+  // safety formula
+
+  /*
+  expanded formula:
+  "∀ a b #i. (RevisionIncreases( a, b ) @ #i) ⇒ (a ⊏ b)"
+  */
+
+lemma applied_requires_prior_authenticated_journal:
+  all-traces
+  "∀ slot B S mvk evk lin rev item tx gen #i.
+    (RemoteApplied( slot, B, <S, mvk, evk, lin>, rev, item, tx, gen ) @ #i) ⇒
+    (∃ #j.
+      (JournalAdmitted( slot, B, <S, mvk, evk, lin>, rev, item, tx, gen
+       ) @ #j) ∧
+      (#j < #i))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ slot B S mvk evk lin rev item tx gen #i.
+  (RemoteApplied( slot, B, <S, mvk, evk, lin>, rev, item, tx, gen ) @ #i)
+ ∧
+  ∀ #j.
+   (JournalAdmitted( slot, B, <S, mvk, evk, lin>, rev, item, tx, gen ) @ #j)
+  ⇒
+   ¬(#j < #i)"
+*/
+simplify
+solve( DiskPending( slot, B, dk, <S, mvk, evk, lin>, rev, item, tx, gen,
+                    oldrev, olditem
+       ) ▶₀ #i )
+  case FirstJournal
+  by contradiction /* from formulas */
+next
+  case UpdateJournal_case_1
+  by contradiction /* from formulas */
+next
+  case UpdateJournal_case_2
+  by contradiction /* from formulas */
+qed
+
+lemma first_pin_is_unique [reuse, use_induction]:
+  all-traces
+  "∀ slot pin1 pin2 #i #j.
+    ((FirstPinned( slot, pin1 ) @ #i) ∧ (FirstPinned( slot, pin2 ) @ #j)) ⇒
+    ((#i = #j) ∧ (pin1 = pin2))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ slot pin1 pin2 #i #j.
+  (FirstPinned( slot, pin1 ) @ #i) ∧ (FirstPinned( slot, pin2 ) @ #j)
+ ∧
+  ((¬(#i = #j)) ∨ (¬(pin1 = pin2)))"
+*/
+induction
+  case empty_trace
+  by contradiction /* from formulas */
+next
+  case non_empty_trace
+  solve( (¬(#i = #j))  ∥
+         (¬(<S, pk(x), pk(x.1), lineage> = <S.1, pk(x.2), pk(x.3), lineage.1>)) )
+    case case_1
+    solve( (last(#j))  ∥ (last(#i))  ∥
+           ((#i = #j) ∧
+            (<S, pk(x), pk(x.1), lineage> = <S.1, pk(x.2), pk(x.3), lineage.1>)) )
+      case case_1
+      solve( (revision = %1)  ∥ (%1 ⊏ revision) )
+        case case_1
+        solve( (revision = %1)  ∥ (%1 ⊏ revision) )
+          case case_1
+          solve( DiskEmpty( slot, B, dk ) ▶₀ #i )
+            case NewLocalSlot
+            solve( DiskEmpty( ~slot, B.1, dk.1 ) ▶₀ #j )
+              case NewLocalSlot
+              by contradiction /* cyclic */
+            qed
+          qed
+        next
+          case case_2
+          solve( DiskEmpty( slot, B, dk ) ▶₀ #i )
+            case NewLocalSlot
+            solve( DiskEmpty( ~slot, B.1, dk.1 ) ▶₀ #j )
+              case NewLocalSlot
+              by contradiction /* cyclic */
+            qed
+          qed
+        qed
+      next
+        case case_2
+        solve( (revision.1 = %1)  ∥ (%1 ⊏ revision.1) )
+          case case_1
+          solve( DiskEmpty( slot, B, dk ) ▶₀ #i )
+            case NewLocalSlot
+            solve( DiskEmpty( ~slot, B.1, dk.1 ) ▶₀ #j )
+              case NewLocalSlot
+              by contradiction /* cyclic */
+            qed
+          qed
+        next
+          case case_2
+          solve( DiskEmpty( slot, B, dk ) ▶₀ #i )
+            case NewLocalSlot
+            solve( DiskEmpty( ~slot, B.1, dk.1 ) ▶₀ #j )
+              case NewLocalSlot
+              by contradiction /* cyclic */
+            qed
+          qed
+        qed
+      qed
+    next
+      case case_2
+      solve( (revision = %1)  ∥ (%1 ⊏ revision) )
+        case case_1
+        solve( (revision = %1)  ∥ (%1 ⊏ revision) )
+          case case_1
+          solve( DiskEmpty( slot, B, dk ) ▶₀ #i )
+            case NewLocalSlot
+            solve( DiskEmpty( ~slot, B.1, dk.1 ) ▶₀ #j )
+              case NewLocalSlot
+              by contradiction /* cyclic */
+            qed
+          qed
+        next
+          case case_2
+          solve( DiskEmpty( slot, B, dk ) ▶₀ #i )
+            case NewLocalSlot
+            solve( DiskEmpty( ~slot, B.1, dk.1 ) ▶₀ #j )
+              case NewLocalSlot
+              by contradiction /* cyclic */
+            qed
+          qed
+        qed
+      next
+        case case_2
+        solve( (revision.1 = %1)  ∥ (%1 ⊏ revision.1) )
+          case case_1
+          solve( DiskEmpty( slot, B, dk ) ▶₀ #i )
+            case NewLocalSlot
+            solve( DiskEmpty( ~slot, B.1, dk.1 ) ▶₀ #j )
+              case NewLocalSlot
+              by contradiction /* cyclic */
+            qed
+          qed
+        next
+          case case_2
+          solve( DiskEmpty( slot, B, dk ) ▶₀ #i )
+            case NewLocalSlot
+            solve( DiskEmpty( ~slot, B.1, dk.1 ) ▶₀ #j )
+              case NewLocalSlot
+              by contradiction /* cyclic */
+            qed
+          qed
+        qed
+      qed
+    next
+      case case_3
+      by contradiction /* from formulas */
+    qed
+  next
+    case case_2
+    solve( (last(#j))  ∥ (last(#i))  ∥
+           ((#i = #j) ∧
+            (<S, pk(x), pk(x.1), lineage> = <S.1, pk(x.2), pk(x.3), lineage.1>)) )
+      case case_1
+      solve( (revision = %1)  ∥ (%1 ⊏ revision) )
+        case case_1
+        solve( (revision = %1)  ∥ (%1 ⊏ revision) )
+          case case_1
+          solve( DiskEmpty( slot, B, dk ) ▶₀ #i )
+            case NewLocalSlot
+            solve( DiskEmpty( ~slot, B.1, dk.1 ) ▶₀ #j )
+              case NewLocalSlot
+              by contradiction /* from formulas */
+            qed
+          qed
+        next
+          case case_2
+          solve( DiskEmpty( slot, B, dk ) ▶₀ #i )
+            case NewLocalSlot
+            solve( DiskEmpty( ~slot, B.1, dk.1 ) ▶₀ #j )
+              case NewLocalSlot
+              by contradiction /* contradictory subterm store */
+            qed
+          qed
+        qed
+      next
+        case case_2
+        solve( (revision.1 = %1)  ∥ (%1 ⊏ revision.1) )
+          case case_1
+          solve( DiskEmpty( slot, B, dk ) ▶₀ #i )
+            case NewLocalSlot
+            solve( DiskEmpty( ~slot, B.1, dk.1 ) ▶₀ #j )
+              case NewLocalSlot
+              by contradiction /* contradictory subterm store */
+            qed
+          qed
+        next
+          case case_2
+          solve( DiskEmpty( slot, B, dk ) ▶₀ #i )
+            case NewLocalSlot
+            solve( DiskEmpty( ~slot, B.1, dk.1 ) ▶₀ #j )
+              case NewLocalSlot
+              by contradiction /* from formulas */
+            qed
+          qed
+        qed
+      qed
+    next
+      case case_2
+      solve( (revision = %1)  ∥ (%1 ⊏ revision) )
+        case case_1
+        solve( (revision = %1)  ∥ (%1 ⊏ revision) )
+          case case_1
+          solve( DiskEmpty( slot, B, dk ) ▶₀ #i )
+            case NewLocalSlot
+            solve( DiskEmpty( ~slot, B.1, dk.1 ) ▶₀ #j )
+              case NewLocalSlot
+              by contradiction /* from formulas */
+            qed
+          qed
+        next
+          case case_2
+          solve( DiskEmpty( slot, B, dk ) ▶₀ #i )
+            case NewLocalSlot
+            solve( DiskEmpty( ~slot, B.1, dk.1 ) ▶₀ #j )
+              case NewLocalSlot
+              by contradiction /* contradictory subterm store */
+            qed
+          qed
+        qed
+      next
+        case case_2
+        solve( (revision.1 = %1)  ∥ (%1 ⊏ revision.1) )
+          case case_1
+          solve( DiskEmpty( slot, B, dk ) ▶₀ #i )
+            case NewLocalSlot
+            solve( DiskEmpty( ~slot, B.1, dk.1 ) ▶₀ #j )
+              case NewLocalSlot
+              by contradiction /* contradictory subterm store */
+            qed
+          qed
+        next
+          case case_2
+          solve( DiskEmpty( slot, B, dk ) ▶₀ #i )
+            case NewLocalSlot
+            solve( DiskEmpty( ~slot, B.1, dk.1 ) ▶₀ #j )
+              case NewLocalSlot
+              by contradiction /* from formulas */
+            qed
+          qed
+        qed
+      qed
+    next
+      case case_3
+      by contradiction /* from formulas */
+    qed
+  qed
+qed
+
+lemma observed_pin_has_first_contact [reuse, use_induction]:
+  all-traces
+  "∀ slot pin #i.
+    (PinObserved( slot, pin ) @ #i) ⇒
+    (∃ #j. (FirstPinned( slot, pin ) @ #j) ∧ (#j < #i))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ slot pin #i.
+  (PinObserved( slot, pin ) @ #i)
+ ∧
+  ∀ #j. (FirstPinned( slot, pin ) @ #j) ⇒ ¬(#j < #i)"
+*/
+induction
+  case empty_trace
+  by contradiction /* from formulas */
+next
+  case non_empty_trace
+  solve( (last(#i))  ∥
+         (∃ #j. (FirstPinned( slot, pin ) @ #j) ∧ (¬(last(#j))) ∧ (#j < #i)) )
+    case case_1
+    solve( PinObserved( slot, pin ) @ #i )
+      case ClearJournal
+      solve( DiskApplied( slot, B, dk, <S, mvk, evk, lineage>, pinned, tx, gen,
+                          vrev, vitem
+             ) ▶₀ #i )
+        case PersistVault_case_1
+        by contradiction /* from formulas */
+      next
+        case PersistVault_case_2
+        by contradiction /* from formulas */
+      next
+        case PersistVault_case_3
+        by contradiction /* from formulas */
+      qed
+    next
+      case OpenVault
+      solve( DiskClean( slot, B, dk, <S, mvk, evk, lineage>, pinned, gen, vrev,
+                        vitem
+             ) ▶₀ #i )
+        case ClearJournal
+        by contradiction /* from formulas */
+      next
+        case OpenVault
+        by contradiction /* from formulas */
+      qed
+    next
+      case PersistVault
+      solve( DiskPending( slot, B, dk, <S, mvk, evk, lineage>, revision, item,
+                          tx, gen, oldrev, olditem
+             ) ▶₀ #i )
+        case FirstJournal
+        by contradiction /* from formulas */
+      next
+        case UpdateJournal_case_1
+        by contradiction /* from formulas */
+      next
+        case UpdateJournal_case_2
+        by contradiction /* from formulas */
+      qed
+    next
+      case UpdateJournal
+      solve( DiskClean( slot, B, dk, <S, pk(x), pk(x.1), lineage>, pinned, gen,
+                        vrev, vitem
+             ) ▶₀ #i )
+        case ClearJournal
+        by contradiction /* from formulas */
+      next
+        case OpenVault
+        by contradiction /* from formulas */
+      qed
+    qed
+  next
+    case case_2
+    by contradiction /* from formulas */
+  qed
+qed
+
+lemma admission_records_observed_pin [reuse,
+                                      hide_lemma=first_pin_is_unique,
+                                      hide_lemma=observed_pin_has_first_contact]:
+  all-traces
+  "∀ slot B pin rev item tx gen #i.
+    (JournalAdmitted( slot, B, pin, rev, item, tx, gen ) @ #i) ⇒
+    ((FirstPinned( slot, pin ) @ #i) ∨ (PinObserved( slot, pin ) @ #i))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ slot B pin rev item tx gen #i.
+  (JournalAdmitted( slot, B, pin, rev, item, tx, gen ) @ #i)
+ ∧
+  (¬(FirstPinned( slot, pin ) @ #i)) ∧ (¬(PinObserved( slot, pin ) @ #i))"
+*/
+simplify
+solve( JournalAdmitted( slot, B, pin, rev, item, tx, gen ) @ #i )
+  case FirstJournal
+  by contradiction /* from formulas */
+next
+  case UpdateJournal
+  by contradiction /* from formulas */
+qed
+
+lemma journal_preserves_first_pin:
+  all-traces
+  "∀ slot B pin pin0 rev item tx gen #i #j.
+    ((FirstPinned( slot, pin0 ) @ #j) ∧
+     (JournalAdmitted( slot, B, pin, rev, item, tx, gen ) @ #i)) ⇒
+    (pin = pin0)"
+/*
+guarded formula characterizing all counter-examples:
+"∃ slot B pin pin0 rev item tx gen #i #j.
+  (FirstPinned( slot, pin0 ) @ #j) ∧
+  (JournalAdmitted( slot, B, pin, rev, item, tx, gen ) @ #i)
+ ∧
+  ¬(pin = pin0)"
+*/
+simplify
+solve( (FirstPinned( slot, pin ) @ #i)  ∥
+       (PinObserved( slot, pin ) @ #i) )
+  case case_1
+  by contradiction /* from formulas */
+next
+  case case_2
+  by contradiction /* from formulas */
+qed
+
+lemma open_has_matching_pin_and_content [use_induction,
+                                         hide_lemma=first_pin_is_unique,
+                                         hide_lemma=observed_pin_has_first_contact,
+                                         hide_lemma=admission_records_observed_pin]:
+  all-traces
+  "∀ slot pinned revision item #i.
+    (Opened( slot, pinned, revision, item ) @ #i) ⇒ (pinned = revision)"
+/*
+guarded formula characterizing all counter-examples:
+"∃ slot pinned revision item #i.
+  (Opened( slot, pinned, revision, item ) @ #i) ∧ ¬(pinned = revision)"
+*/
+induction
+  case empty_trace
+  by contradiction /* from formulas */
+next
+  case non_empty_trace
+  solve( (last(#i))  ∥ (pinned = revision) )
+    case case_1
+    solve( DiskClean( slot, B, dk, <S, mvk, evk, lineage>, pinned, gen,
+                      revision, item
+           ) ▶₀ #i )
+      case ClearJournal
+      solve( DiskApplied( slot, B, dk, <S, mvk, evk, lineage>, pinned, tx, gen,
+                          revision, item
+             ) ▶₀ #vr )
+        case PersistVault_case_1
+        by contradiction /* from formulas */
+      next
+        case PersistVault_case_2
+        by contradiction /* from formulas */
+      next
+        case PersistVault_case_3
+        by contradiction /* from formulas */
+      qed
+    next
+      case OpenVault
+      by contradiction /* from formulas */
+    qed
+  next
+    case case_2
+    by contradiction /* from formulas */
+  qed
+qed
+
+lemma crash_recovery_and_update_are_reachable [hide_lemma=first_pin_is_unique,
+                                               hide_lemma=observed_pin_has_first_contact,
+                                               hide_lemma=admission_records_observed_pin]:
+  exists-trace
+  "∃ slot B S m e lin r1 r2 i1 i2 t1 t2 g1 g2 #h #s1 #s2 #a #b #c #d #f.
+    (((((((((((((HonestHybridKey( S, m, e ) @ #h) ∧
+                (Sent( S, m, e, B, lin, r1, i1 ) @ #s1)) ∧
+               (Sent( S, m, e, B, lin, r2, i2 ) @ #s2)) ∧
+              (¬(∃ #x. MlRevealed( m ) @ #x))) ∧
+             (¬(∃ #y. EdRevealed( e ) @ #y))) ∧
+            (JournalAdmitted( slot, B, <S, m, e, lin>, r1, i1, t1, g1 ) @ #a)) ∧
+           (Crash( slot ) @ #b)) ∧
+          (RemoteApplied( slot, B, <S, m, e, lin>, r1, i1, t1, g1 ) @ #c)) ∧
+         (JournalAdmitted( slot, B, <S, m, e, lin>, r2, i2, t2, g2 ) @ #d)) ∧
+        (RemoteApplied( slot, B, <S, m, e, lin>, r2, i2, t2, g2 ) @ #f)) ∧
+       (#a < #b)) ∧
+      (#b < #c)) ∧
+     (#c < #d)) ∧
+    (#d < #f)"
+/*
+guarded formula characterizing all satisfying traces:
+"∃ slot B S m e lin r1 r2 i1 i2 t1 t2 g1 g2 #h #s1 #s2 #a #b #c #d #f.
+  (HonestHybridKey( S, m, e ) @ #h) ∧
+  (Sent( S, m, e, B, lin, r1, i1 ) @ #s1) ∧
+  (Sent( S, m, e, B, lin, r2, i2 ) @ #s2) ∧
+  (JournalAdmitted( slot, B, <S, m, e, lin>, r1, i1, t1, g1 ) @ #a) ∧
+  (Crash( slot ) @ #b) ∧
+  (RemoteApplied( slot, B, <S, m, e, lin>, r1, i1, t1, g1 ) @ #c) ∧
+  (JournalAdmitted( slot, B, <S, m, e, lin>, r2, i2, t2, g2 ) @ #d) ∧
+  (RemoteApplied( slot, B, <S, m, e, lin>, r2, i2, t2, g2 ) @ #f)
+ ∧
+  (∀ #x. (MlRevealed( m ) @ #x) ⇒ ⊥) ∧
+  (∀ #y. (EdRevealed( e ) @ #y) ⇒ ⊥) ∧
+  (#a < #b) ∧
+  (#b < #c) ∧
+  (#c < #d) ∧
+  (#d < #f)"
+*/
+simplify
+solve( (r1 = %1)  ∥ (%1 ⊏ r1) )
+  case case_1
+  solve( (r2 = %1)  ∥ (%1 ⊏ r2) )
+    case case_2
+    solve( !SigningKeys( $S, device.1, ~ml, ~ed ) ▶₀ #s1 )
+      case SenderIdentity
+      solve( !RecipientKey( $B, dk.2 ) ▶₁ #s1 )
+        case RecipientIdentity
+        solve( !SigningKeys( $S, device.1, ~ml, ~ed ) ▶₀ #s2 )
+          case SenderIdentity
+          solve( !RecipientKey( $B, dk.3 ) ▶₁ #s2 )
+            case RecipientIdentity
+            solve( !Profile( slot ) ▶₀ #b )
+              case NewLocalSlot
+              solve( DiskPending( ~slot, $B, dk, <$S, pk(~ml), pk(~ed), lin>, %1, i1,
+                                  t1, g1, oldrev, olditem
+                     ) ▶₀ #c )
+                case FirstJournal
+                solve( DiskPending( ~slot, $B, dk.1, <$S, pk(~ml), pk(~ed), lin>, r2, i2,
+                                    t2, g2, oldrev, olditem
+                       ) ▶₀ #f )
+                  case UpdateJournal_case_1
+                  solve( JournalAdmitted( ~slot, $B, <$S, pk(~ml), pk(~ed), lin>, %1, i1,
+                                          ~tx, 'initial'
+                         ) @ #a )
+                    case FirstJournal
+                    solve( JournalAdmitted( ~slot, $B, <$S, pk(~ml), pk(~ed), lin>, r2, i2,
+                                            ~tx.1, successor(gen)
+                           ) @ #d )
+                      case UpdateJournal
+                      solve( DiskClean( ~slot, $B, dk.1, <$S, pk(~ml), pk(~ed), lin>, pinned,
+                                        gen, vrev, vitem
+                             ) ▶₀ #d )
+                        case ClearJournal
+                        solve( Snapshot( ~slot, ~tx.1, gen, pinned ) ▶₁ #d )
+                          case ReadSnapshot
+                          solve( !KU( sign(<'VELA-DSA-v1', 'vela share item v2', 
+                                            <$S, device, pk(~ml), pk(~ed), $B, h(pk(~dk)), lin, %1>, i1>,
+                                           ~ml)
+                                 ) @ #vk.42 )
+                            case SenderSend
+                            solve( !KU( sign(<'VELA-DSA-v1', 'vela share item v2', 
+                                              <$S, device.1, pk(~ml), pk(~ed), $B, h(pk(dk.1)), lin, r2>, i2>,
+                                             ~ml)
+                                   ) @ #vk.47 )
+                              case SenderSend
+                              solve( DiskApplied( ~slot, $B, ~dk.1, <$S, pk(~ml), pk(~ed), lin>,
+                                                  pinned, tx.2, gen, oldrev, olditem
+                                     ) ▶₀ #vr.4 )
+                                case PersistVault_case_1
+                                solve( DiskApplied( ~slot, B.1, dk.3, <S.1, mvk, evk, lineage>, %1, tx.2,
+                                                    'initial', vrev, vitem
+                                       ) ▶₀ #vr.6 )
+                                  case PersistVault
+                                  solve( !KU( ~slot ) @ #vk.37 )
+                                    case NewLocalSlot
+                                    solve( !KU( ~device ) @ #vk.40 )
+                                      case SenderIdentity
+                                      solve( !KU( sign(<'vela share item v2', 
+                                                        <$S, ~device, pk(~ml), pk(~ed), $B, h(pk(~dk)), lin, 
+                                                         %1>, 
+                                                        i1>,
+                                                       ~ed)
+                                             ) @ #vk.45 )
+                                        case SenderSend
+                                        solve( !KU( sign(<'vela share item v2', 
+                                                          <$S, ~device, pk(~ml), pk(~ed), $B, h(pk(~dk)), 
+                                                           lin, r2>, 
+                                                          i2>,
+                                                         ~ed)
+                                               ) @ #vk.46 )
+                                          case SenderSend
+                                          solve( !KU( pk(~ml) ) @ #vk.43 )
+                                            case SenderIdentity
+                                            solve( !KU( pk(~ed) ) @ #vk.44 )
+                                              case SenderIdentity
+                                              solve( !KU( h(pk(~dk)) ) @ #vk.46 )
+                                                case SenderSend
+                                                solve( (revision = %1)  ∥ (%1 ⊏ revision) )
+                                                  case case_1
+                                                  SOLVED // trace found
+                                                qed
+                                              qed
+                                            qed
+                                          qed
+                                        qed
+                                      qed
+                                    qed
+                                  qed
+                                qed
+                              qed
+                            qed
+                          qed
+                        qed
+                      qed
+                    qed
+                  qed
+                qed
+              qed
+            qed
+          qed
+        qed
+      qed
+    qed
+  qed
+qed
+
+lemma ml_component_journal_authentication [hide_lemma=first_pin_is_unique,
+                                           hide_lemma=observed_pin_has_first_contact,
+                                           hide_lemma=admission_records_observed_pin, reuse, use_induction]:
+  all-traces
+  "∀ slot B S mvk evk lin rev item tx gen #i #h.
+    ((JournalAdmitted( slot, B, <S, mvk, evk, lin>, rev, item, tx, gen
+      ) @ #i) ∧
+     (HonestHybridKey( S, mvk, evk ) @ #h)) ⇒
+    ((∃ #s. (Sent( S, mvk, evk, B, lin, rev, item ) @ #s) ∧ (#s < #i)) ∨
+     (∃ #m. (MlRevealed( mvk ) @ #m) ∧ (#m < #i)))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ slot B S mvk evk lin rev item tx gen #i #h.
+  (JournalAdmitted( slot, B, <S, mvk, evk, lin>, rev, item, tx, gen
+   ) @ #i) ∧
+  (HonestHybridKey( S, mvk, evk ) @ #h)
+ ∧
+  (∀ #s. (Sent( S, mvk, evk, B, lin, rev, item ) @ #s) ⇒ ¬(#s < #i)) ∧
+  (∀ #m. (MlRevealed( mvk ) @ #m) ⇒ ¬(#m < #i))"
+*/
+induction
+  case empty_trace
+  by contradiction /* from formulas */
+next
+  case non_empty_trace
+  solve( (last(#h))  ∥ (last(#i))  ∥
+         (∃ #s.
+           (Sent( $S, pk(~ml), pk(~ed), B, lin, rev, item ) @ #s)
+          ∧
+           (¬(last(#s))) ∧ (#s < #i))  ∥
+         (∃ #m. (MlRevealed( pk(~ml) ) @ #m) ∧ (¬(last(#m))) ∧ (#m < #i)) )
+    case case_1
+    solve( JournalAdmitted( slot, B, <$S, pk(~ml), pk(~ed), lin>, rev, item,
+                            tx, gen
+           ) @ #i )
+      case FirstJournal
+      by contradiction /* node #i after last node #h */
+    next
+      case UpdateJournal
+      by contradiction /* node #i after last node #h */
+    qed
+  next
+    case case_2
+    solve( JournalAdmitted( slot, B, <$S, pk(~ml), pk(~ed), lin>, rev, item,
+                            tx, gen
+           ) @ #i )
+      case FirstJournal
+      solve( (rev = %1)  ∥ (%1 ⊏ rev) )
+        case case_1
+        solve( DiskEmpty( slot, B, dk ) ▶₀ #i )
+          case NewLocalSlot
+          solve( !KU( sign(<'VELA-DSA-v1', 'vela share item v2', 
+                            <$S, device.1, pk(~ml), pk(~ed), $B, h(pk(~dk)), lin, %1>, item>,
+                           ~ml)
+                 ) @ #vk.24 )
+            case SenderSend
+            by contradiction /* from formulas */
+          next
+            case c_sign
+            solve( !KU( ~ml ) @ #vk.28 )
+              case RevealMlComponent
+              by contradiction /* from formulas */
+            qed
+          qed
+        qed
+      next
+        case case_2
+        solve( DiskEmpty( slot, B, dk ) ▶₀ #i )
+          case NewLocalSlot
+          solve( !KU( sign(<'VELA-DSA-v1', 'vela share item v2', 
+                            <$S, device.1, pk(~ml), pk(~ed), $B, h(pk(~dk)), lin, rev>, item>,
+                           ~ml)
+                 ) @ #vk.24 )
+            case SenderSend
+            by contradiction /* from formulas */
+          next
+            case c_sign
+            solve( !KU( ~ml ) @ #vk.28 )
+              case RevealMlComponent
+              by contradiction /* from formulas */
+            qed
+          qed
+        qed
+      qed
+    next
+      case UpdateJournal
+      solve( DiskClean( slot, B, dk, <$S, pk(~ml), pk(~ed), lin>, pinned, gen,
+                        vrev, vitem
+             ) ▶₀ #i )
+        case ClearJournal
+        solve( Snapshot( slot, tx, gen, pinned ) ▶₁ #i )
+          case ReadSnapshot
+          solve( !KU( sign(<'VELA-DSA-v1', 'vela share item v2', 
+                            <$S, device.1, pk(~ml), pk(~ed), B, h(pk(dk)), lin, rev>, item>,
+                           ~ml)
+                 ) @ #vk.24 )
+            case SenderSend
+            by contradiction /* from formulas */
+          next
+            case c_sign
+            solve( !KU( ~ml ) @ #vk.28 )
+              case RevealMlComponent
+              by contradiction /* from formulas */
+            qed
+          qed
+        qed
+      next
+        case OpenVault
+        solve( Snapshot( slot, tx, gen, pinned ) ▶₁ #i )
+          case ReadSnapshot
+          solve( !KU( sign(<'VELA-DSA-v1', 'vela share item v2', 
+                            <$S, device.1, pk(~ml), pk(~ed), B, h(pk(dk)), lin, rev>, item>,
+                           ~ml)
+                 ) @ #vk.24 )
+            case SenderSend
+            by contradiction /* from formulas */
+          next
+            case c_sign
+            solve( !KU( ~ml ) @ #vk.28 )
+              case RevealMlComponent
+              by contradiction /* from formulas */
+            qed
+          qed
+        qed
+      qed
+    qed
+  next
+    case case_3
+    by contradiction /* from formulas */
+  next
+    case case_4
+    by contradiction /* from formulas */
+  qed
+qed
+
+lemma ed_component_journal_authentication [hide_lemma=first_pin_is_unique,
+                                           hide_lemma=observed_pin_has_first_contact,
+                                           hide_lemma=admission_records_observed_pin, reuse, use_induction]:
+  all-traces
+  "∀ slot B S mvk evk lin rev item tx gen #i #h.
+    ((JournalAdmitted( slot, B, <S, mvk, evk, lin>, rev, item, tx, gen
+      ) @ #i) ∧
+     (HonestHybridKey( S, mvk, evk ) @ #h)) ⇒
+    ((∃ #s. (Sent( S, mvk, evk, B, lin, rev, item ) @ #s) ∧ (#s < #i)) ∨
+     (∃ #e. (EdRevealed( evk ) @ #e) ∧ (#e < #i)))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ slot B S mvk evk lin rev item tx gen #i #h.
+  (JournalAdmitted( slot, B, <S, mvk, evk, lin>, rev, item, tx, gen
+   ) @ #i) ∧
+  (HonestHybridKey( S, mvk, evk ) @ #h)
+ ∧
+  (∀ #s. (Sent( S, mvk, evk, B, lin, rev, item ) @ #s) ⇒ ¬(#s < #i)) ∧
+  (∀ #e. (EdRevealed( evk ) @ #e) ⇒ ¬(#e < #i))"
+*/
+induction
+  case empty_trace
+  by contradiction /* from formulas */
+next
+  case non_empty_trace
+  solve( (last(#h))  ∥ (last(#i))  ∥
+         (∃ #s.
+           (Sent( $S, pk(~ml), pk(~ed), B, lin, rev, item ) @ #s)
+          ∧
+           (¬(last(#s))) ∧ (#s < #i))  ∥
+         (∃ #e. (EdRevealed( pk(~ed) ) @ #e) ∧ (¬(last(#e))) ∧ (#e < #i)) )
+    case case_1
+    solve( (∃ #s.
+             (Sent( $S, pk(~ml), pk(~ed), B, lin, rev, item ) @ #s) ∧ #s < #i)  ∥
+           (∃ #m. (MlRevealed( pk(~ml) ) @ #m) ∧ #m < #i) )
+      case case_1
+      by contradiction /* from formulas */
+    next
+      case case_2
+      by contradiction /* node #i after last node #h */
+    qed
+  next
+    case case_2
+    solve( (∃ #s.
+             (Sent( $S, pk(~ml), pk(~ed), B, lin, rev, item ) @ #s) ∧ #s < #i)  ∥
+           (∃ #m. (MlRevealed( pk(~ml) ) @ #m) ∧ #m < #i) )
+      case case_1
+      by contradiction /* from formulas */
+    next
+      case case_2
+      solve( !SigningKeys( S.1, device.1, ~ml, ed.1 ) ▶₀ #m )
+        case SenderIdentity
+        solve( JournalAdmitted( slot, B, <$S, pk(~ml), pk(~ed), lin>, rev, item,
+                                tx, gen
+               ) @ #i )
+          case FirstJournal
+          solve( (rev = %1)  ∥ (%1 ⊏ rev) )
+            case case_1
+            solve( DiskEmpty( slot, B, dk ) ▶₀ #i )
+              case NewLocalSlot
+              solve( !KU( sign(<'VELA-DSA-v1', 'vela share item v2', 
+                                <$S, device.1, pk(~ml), pk(~ed), $B, h(pk(~dk)), lin, %1>, item>,
+                               ~ml)
+                     ) @ #vk.24 )
+                case SenderSend
+                by contradiction /* from formulas */
+              next
+                case c_sign
+                solve( !KU( sign(<'vela share item v2', 
+                                  <$S, device.1, pk(~ml), pk(~ed), $B, h(pk(~dk)), lin, %1>, item>,
+                                 ~ed)
+                       ) @ #vk.26 )
+                  case SenderSend
+                  by contradiction /* from formulas */
+                next
+                  case c_sign
+                  solve( !KU( ~ed ) @ #vk.32 )
+                    case RevealEdComponent
+                    by contradiction /* from formulas */
+                  qed
+                qed
+              qed
+            qed
+          next
+            case case_2
+            solve( DiskEmpty( slot, B, dk ) ▶₀ #i )
+              case NewLocalSlot
+              solve( !KU( sign(<'VELA-DSA-v1', 'vela share item v2', 
+                                <$S, device.1, pk(~ml), pk(~ed), $B, h(pk(~dk)), lin, rev>, item>,
+                               ~ml)
+                     ) @ #vk.24 )
+                case SenderSend
+                by contradiction /* from formulas */
+              next
+                case c_sign
+                solve( !KU( sign(<'vela share item v2', 
+                                  <$S, device.1, pk(~ml), pk(~ed), $B, h(pk(~dk)), lin, rev>, item>,
+                                 ~ed)
+                       ) @ #vk.26 )
+                  case SenderSend
+                  by contradiction /* from formulas */
+                next
+                  case c_sign
+                  solve( !KU( ~ed ) @ #vk.32 )
+                    case RevealEdComponent
+                    by contradiction /* from formulas */
+                  qed
+                qed
+              qed
+            qed
+          qed
+        next
+          case UpdateJournal
+          solve( DiskClean( slot, B, dk, <$S, pk(~ml), pk(~ed), lin>, pinned, gen,
+                            vrev, vitem
+                 ) ▶₀ #i )
+            case ClearJournal
+            solve( Snapshot( slot, tx, gen, pinned ) ▶₁ #i )
+              case ReadSnapshot
+              solve( !KU( sign(<'VELA-DSA-v1', 'vela share item v2', 
+                                <$S, device.1, pk(~ml), pk(~ed), B, h(pk(dk)), lin, rev>, item>,
+                               ~ml)
+                     ) @ #vk.24 )
+                case SenderSend
+                by contradiction /* from formulas */
+              next
+                case c_sign
+                solve( !KU( sign(<'vela share item v2', 
+                                  <$S, device.1, pk(~ml), pk(~ed), B, h(pk(dk)), lin, rev>, item>,
+                                 ~ed)
+                       ) @ #vk.26 )
+                  case SenderSend
+                  by contradiction /* from formulas */
+                next
+                  case c_sign
+                  solve( !KU( ~ed ) @ #vk.32 )
+                    case RevealEdComponent
+                    by contradiction /* from formulas */
+                  qed
+                qed
+              qed
+            qed
+          next
+            case OpenVault
+            solve( Snapshot( slot, tx, gen, pinned ) ▶₁ #i )
+              case ReadSnapshot
+              solve( !KU( sign(<'VELA-DSA-v1', 'vela share item v2', 
+                                <$S, device.1, pk(~ml), pk(~ed), B, h(pk(dk)), lin, rev>, item>,
+                               ~ml)
+                     ) @ #vk.24 )
+                case SenderSend
+                by contradiction /* from formulas */
+              next
+                case c_sign
+                solve( !KU( sign(<'vela share item v2', 
+                                  <$S, device.1, pk(~ml), pk(~ed), B, h(pk(dk)), lin, rev>, item>,
+                                 ~ed)
+                       ) @ #vk.26 )
+                  case SenderSend
+                  by contradiction /* from formulas */
+                next
+                  case c_sign
+                  solve( !KU( ~ed ) @ #vk.32 )
+                    case RevealEdComponent
+                    by contradiction /* from formulas */
+                  qed
+                qed
+              qed
+            qed
+          qed
+        qed
+      qed
+    qed
+  next
+    case case_3
+    by contradiction /* from formulas */
+  next
+    case case_4
+    by contradiction /* from formulas */
+  qed
+qed
+
+lemma hybrid_journal_authentication [hide_lemma=first_pin_is_unique,
+                                     hide_lemma=observed_pin_has_first_contact,
+                                     hide_lemma=admission_records_observed_pin, reuse]:
+  all-traces
+  "∀ slot B S mvk evk lin rev item tx gen #i #h.
+    ((JournalAdmitted( slot, B, <S, mvk, evk, lin>, rev, item, tx, gen
+      ) @ #i) ∧
+     (HonestHybridKey( S, mvk, evk ) @ #h)) ⇒
+    ((∃ #s. (Sent( S, mvk, evk, B, lin, rev, item ) @ #s) ∧ (#s < #i)) ∨
+     ((∃ #m. (MlRevealed( mvk ) @ #m) ∧ (#m < #i)) ∧
+      (∃ #e. (EdRevealed( evk ) @ #e) ∧ (#e < #i))))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ slot B S mvk evk lin rev item tx gen #i #h.
+  (JournalAdmitted( slot, B, <S, mvk, evk, lin>, rev, item, tx, gen
+   ) @ #i) ∧
+  (HonestHybridKey( S, mvk, evk ) @ #h)
+ ∧
+  (∀ #s. (Sent( S, mvk, evk, B, lin, rev, item ) @ #s) ⇒ ¬(#s < #i)) ∧
+  (((∀ #m. (MlRevealed( mvk ) @ #m) ⇒ ¬(#m < #i)) ∨
+    (∀ #e. (EdRevealed( evk ) @ #e) ⇒ ¬(#e < #i))))"
+*/
+simplify
+solve( (∀ #m. (MlRevealed( pk(~ml) ) @ #m) ⇒ ¬(#m < #i))  ∥
+       (∀ #e. (EdRevealed( pk(~ed) ) @ #e) ⇒ ¬(#e < #i)) )
+  case case_1
+  solve( (∃ #s.
+           (Sent( $S, pk(~ml), pk(~ed), B, lin, rev, item ) @ #s) ∧ #s < #i)  ∥
+         (∃ #e. (EdRevealed( pk(~ed) ) @ #e) ∧ #e < #i) )
+    case case_1
+    by contradiction /* from formulas */
+  next
+    case case_2
+    solve( (∃ #s.
+             (Sent( $S, pk(~ml), pk(~ed), B, lin, rev, item ) @ #s) ∧ #s < #i)  ∥
+           (∃ #m. (MlRevealed( pk(~ml) ) @ #m) ∧ #m < #i) )
+      case case_1
+      by contradiction /* from formulas */
+    next
+      case case_2
+      by contradiction /* from formulas */
+    qed
+  qed
+next
+  case case_2
+  solve( (∃ #s.
+           (Sent( $S, pk(~ml), pk(~ed), B, lin, rev, item ) @ #s) ∧ #s < #i)  ∥
+         (∃ #e. (EdRevealed( pk(~ed) ) @ #e) ∧ #e < #i) )
+    case case_1
+    by contradiction /* from formulas */
+  next
+    case case_2
+    by contradiction /* from formulas */
+  qed
+qed
+
+lemma durable_content_is_sender_authenticated [hide_lemma=first_pin_is_unique,
+                                               hide_lemma=observed_pin_has_first_contact,
+                                               hide_lemma=admission_records_observed_pin]:
+  all-traces
+  "∀ slot B S mvk evk lin rev item tx gen #i #h.
+    ((RemoteApplied( slot, B, <S, mvk, evk, lin>, rev, item, tx, gen
+      ) @ #i) ∧
+     (HonestHybridKey( S, mvk, evk ) @ #h)) ⇒
+    ((∃ #s. (Sent( S, mvk, evk, B, lin, rev, item ) @ #s) ∧ (#s < #i)) ∨
+     ((∃ #m. (MlRevealed( mvk ) @ #m) ∧ (#m < #i)) ∧
+      (∃ #e. (EdRevealed( evk ) @ #e) ∧ (#e < #i))))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ slot B S mvk evk lin rev item tx gen #i #h.
+  (RemoteApplied( slot, B, <S, mvk, evk, lin>, rev, item, tx, gen ) @ #i) ∧
+  (HonestHybridKey( S, mvk, evk ) @ #h)
+ ∧
+  (∀ #s. (Sent( S, mvk, evk, B, lin, rev, item ) @ #s) ⇒ ¬(#s < #i)) ∧
+  (((∀ #m. (MlRevealed( mvk ) @ #m) ⇒ ¬(#m < #i)) ∨
+    (∀ #e. (EdRevealed( evk ) @ #e) ⇒ ¬(#e < #i))))"
+*/
+simplify
+solve( (∀ #m. (MlRevealed( pk(~ml) ) @ #m) ⇒ ¬(#m < #i))  ∥
+       (∀ #e. (EdRevealed( pk(~ed) ) @ #e) ⇒ ¬(#e < #i)) )
+  case case_1
+  solve( DiskPending( slot, B, dk, <$S, pk(~ml), pk(~ed), lin>, rev, item,
+                      tx, gen, oldrev, olditem
+         ) ▶₀ #i )
+    case FirstJournal
+    solve( (rev = %1)  ∥ (%1 ⊏ rev) )
+      case case_1
+      solve( (∃ #s.
+               (Sent( $S, pk(~ml), pk(~ed), $B, lin, %1, item ) @ #s) ∧ #s < #vr)  ∥
+             ((∃ #m. (MlRevealed( pk(~ml) ) @ #m) ∧ #m < #vr) ∧
+              (∃ #e. (EdRevealed( pk(~ed) ) @ #e) ∧ #e < #vr)) )
+        case case_1
+        by contradiction /* from formulas */
+      next
+        case case_2
+        by contradiction /* from formulas */
+      qed
+    next
+      case case_2
+      solve( (∃ #s.
+               (Sent( $S, pk(~ml), pk(~ed), $B, lin, rev, item ) @ #s) ∧ #s < #vr)  ∥
+             ((∃ #m. (MlRevealed( pk(~ml) ) @ #m) ∧ #m < #vr) ∧
+              (∃ #e. (EdRevealed( pk(~ed) ) @ #e) ∧ #e < #vr)) )
+        case case_1
+        by contradiction /* from formulas */
+      next
+        case case_2
+        by contradiction /* from formulas */
+      qed
+    qed
+  next
+    case UpdateJournal_case_1
+    solve( (∃ #s.
+             (Sent( $S, pk(~ml), pk(~ed), B, lin, rev, item ) @ #s) ∧ #s < #vr)  ∥
+           ((∃ #m. (MlRevealed( pk(~ml) ) @ #m) ∧ #m < #vr) ∧
+            (∃ #e. (EdRevealed( pk(~ed) ) @ #e) ∧ #e < #vr)) )
+      case case_1
+      by contradiction /* from formulas */
+    next
+      case case_2
+      by contradiction /* from formulas */
+    qed
+  next
+    case UpdateJournal_case_2
+    solve( (∃ #s.
+             (Sent( $S, pk(~ml), pk(~ed), B, lin, rev, item ) @ #s) ∧ #s < #vr)  ∥
+           ((∃ #m. (MlRevealed( pk(~ml) ) @ #m) ∧ #m < #vr) ∧
+            (∃ #e. (EdRevealed( pk(~ed) ) @ #e) ∧ #e < #vr)) )
+      case case_1
+      by contradiction /* from formulas */
+    next
+      case case_2
+      by contradiction /* from formulas */
+    qed
+  qed
+next
+  case case_2
+  solve( DiskPending( slot, B, dk, <$S, pk(~ml), pk(~ed), lin>, rev, item,
+                      tx, gen, oldrev, olditem
+         ) ▶₀ #i )
+    case FirstJournal
+    solve( (rev = %1)  ∥ (%1 ⊏ rev) )
+      case case_1
+      solve( (∃ #s.
+               (Sent( $S, pk(~ml), pk(~ed), $B, lin, %1, item ) @ #s) ∧ #s < #vr)  ∥
+             ((∃ #m. (MlRevealed( pk(~ml) ) @ #m) ∧ #m < #vr) ∧
+              (∃ #e. (EdRevealed( pk(~ed) ) @ #e) ∧ #e < #vr)) )
+        case case_1
+        by contradiction /* from formulas */
+      next
+        case case_2
+        by contradiction /* from formulas */
+      qed
+    next
+      case case_2
+      solve( (∃ #s.
+               (Sent( $S, pk(~ml), pk(~ed), $B, lin, rev, item ) @ #s) ∧ #s < #vr)  ∥
+             ((∃ #m. (MlRevealed( pk(~ml) ) @ #m) ∧ #m < #vr) ∧
+              (∃ #e. (EdRevealed( pk(~ed) ) @ #e) ∧ #e < #vr)) )
+        case case_1
+        by contradiction /* from formulas */
+      next
+        case case_2
+        by contradiction /* from formulas */
+      qed
+    qed
+  next
+    case UpdateJournal_case_1
+    solve( (∃ #s.
+             (Sent( $S, pk(~ml), pk(~ed), B, lin, rev, item ) @ #s) ∧ #s < #vr)  ∥
+           ((∃ #m. (MlRevealed( pk(~ml) ) @ #m) ∧ #m < #vr) ∧
+            (∃ #e. (EdRevealed( pk(~ed) ) @ #e) ∧ #e < #vr)) )
+      case case_1
+      by contradiction /* from formulas */
+    next
+      case case_2
+      by contradiction /* from formulas */
+    qed
+  next
+    case UpdateJournal_case_2
+    solve( (∃ #s.
+             (Sent( $S, pk(~ml), pk(~ed), B, lin, rev, item ) @ #s) ∧ #s < #vr)  ∥
+           ((∃ #m. (MlRevealed( pk(~ml) ) @ #m) ∧ #m < #vr) ∧
+            (∃ #e. (EdRevealed( pk(~ed) ) @ #e) ∧ #e < #vr)) )
+      case case_1
+      by contradiction /* from formulas */
+    next
+      case case_2
+      by contradiction /* from formulas */
+    qed
+  qed
+qed
+
+/* All wellformedness checks were successful. */
+
+/*
+Generated from:
+Tamarin version 1.12.0
+Maude version 3.5.1
+Git revision: 82780bbaf3328a45f624ddb41e51bf75425f851c (with uncommited changes), branch: master
+Compiled at: 2026-03-07 14:22:39.174278293 UTC
+*/
+
+end
+
+==============================================================================
+summary of summaries:
+
+analyzed: /home/hirew/.t3/worktrees/VELA/t3-700776df/security/formal/m29_signed_share_commit.spthy
+
+  processing time: 17.42s
+  
+  applied_requires_prior_authenticated_journal (all-traces): verified (5 steps)
+  first_pin_is_unique (all-traces): verified (67 steps)
+  observed_pin_has_first_contact (all-traces): verified (19 steps)
+  admission_records_observed_pin (all-traces): verified (4 steps)
+  journal_preserves_first_pin (all-traces): verified (4 steps)
+  open_has_matching_pin_and_content (all-traces): verified (10 steps)
+  crash_recovery_and_update_are_reachable (exists-trace): verified (27 steps)
+  ml_component_journal_authentication (all-traces): verified (31 steps)
+  ed_component_journal_authentication (all-traces): verified (42 steps)
+  hybrid_journal_authentication (all-traces): verified (10 steps)
+  durable_content_is_sender_authenticated (all-traces): verified (30 steps)
+
+==============================================================================

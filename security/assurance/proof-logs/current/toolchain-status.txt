@@ -1,0 +1,15 @@
+2026-10-23T00:42:00Z
+F* 2025.10.06~dev
+platform=Linux_x86_64
+compiler=OCaml 5.1.1
+date=unset
+commit=unset
+Z3 version 4.13.3 - 64 bit
+cargo-hax v0.3.7:
+    cargo-hax
+    hax-export-json-schemas
+hax-driver v0.3.7:
+    driver-hax-frontend-exporter
+hax-engine-names-extract v0.3.7 (/home/hirew/.local/opt/vela-tools/src/hax-0.3.7/engine/names/extract):
+    hax-engine-names-extract
+d8b5b3d3b666fee8943a351445d2b680105e8ea3

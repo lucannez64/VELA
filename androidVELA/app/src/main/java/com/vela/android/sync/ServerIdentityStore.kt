@@ -37,15 +37,30 @@ class ServerIdentityStore(context: Context) {
     // the private keys out of Kotlin protects them in memory.
     private val prefs = EncryptedPrefs.open(context, "vela_server_identity")
 
+    /**
+     * Every identity write commits synchronously before the bearer token that
+     * depends on it can be committed. `apply()` here was a crash window in
+     * which a durable token could outlive its pin and send later syncs to a
+     * fresh, empty baseline namespace.
+     */
+    private val record = SerializedIdentityRecord(
+        readRaw = { prefs.getString(KEY_IDENTITY_JSON, null) },
+        writeRaw = { json ->
+            check(prefs.edit().putString(KEY_IDENTITY_JSON, json).commit()) {
+                "Could not persist the server identity"
+            }
+        },
+    )
+
     /** Handle for the loaded identity, opened lazily and reused. */
     @Volatile
     private var handle: NativeVelaCore.IdentityHandle? = null
 
     fun load(): ServerIdentity? {
-        val json = prefs.getString(KEY_IDENTITY_JSON, null) ?: return null
+        val json = record.raw() ?: return null
         val parsed = runCatching { JSONObject(json) }.getOrNull() ?: return null
         migrateLegacyPlaintextKeys(parsed)?.let { return it }
-        return runCatching { fromJson(parsed) }.getOrNull()
+        return ServerIdentityJson.decode(json)
     }
 
     fun getOrCreate(): ServerIdentity {
@@ -182,21 +197,21 @@ class ServerIdentityStore(context: Context) {
                 signedAt = signedAt,
             )
         }
-        load()?.let {
-            save(
-                it.copy(
-                    shareEkB64 = shareEk,
-                    sealedB64 = sealed,
-                    shareEkRegistrationPending = true,
-                    // Fresh binding metadata for the NEW key — never carry the
-                    // old key's signature forward.
-                    shareEkSignedAt = signature?.let { _ -> signedAt },
-                    shareEkSignature = signature,
-                )
+        // Read-modify-write the *current* record: a whole-record save built
+        // from an earlier load could resurrect an older pin or share key.
+        val updated = update {
+            it.copy(
+                shareEkB64 = shareEk,
+                sealedB64 = sealed,
+                shareEkRegistrationPending = true,
+                // Fresh binding metadata for the NEW key — never carry the
+                // old key's signature forward.
+                shareEkSignedAt = signature?.let { _ -> signedAt },
+                shareEkSignature = signature,
             )
-        }
+        } ?: return null
         handle = handle?.copy(shareEkB64 = shareEk, sealedB64 = sealed)
-        return shareEk
+        return updated.shareEkB64
     }
 
     /**
@@ -204,9 +219,10 @@ class ServerIdentityStore(context: Context) {
      * is still current.
      */
     fun markShareKeyRegistered(shareEkB64: String) {
-        val identity = load() ?: return
-        if (identity.shareEkB64 != shareEkB64) return
-        save(identity.copy(shareEkRegistrationPending = false))
+        update { identity ->
+            if (identity.shareEkB64 != shareEkB64) identity
+            else identity.copy(shareEkRegistrationPending = false)
+        }
     }
 
     /** Drop the in-memory keys. Call on lock or sign-out. */
@@ -216,8 +232,17 @@ class ServerIdentityStore(context: Context) {
     }
 
     fun save(identity: ServerIdentity) {
-        prefs.edit().putString(KEY_IDENTITY_JSON, identity.toJson().toString()).apply()
+        record.save(identity)
     }
+
+    /**
+     * Atomically apply a targeted change to the current record. Returns `null`
+     * if the record vanished or became unreadable; in that case nothing is
+     * written and the caller must fail closed rather than resurrect stale
+     * identity material.
+     */
+    fun update(transform: (ServerIdentity) -> ServerIdentity): ServerIdentity? =
+        record.update(transform)
 
     /**
      * Rewrite an identity written before the keys moved behind a handle.
@@ -260,35 +285,10 @@ class ServerIdentityStore(context: Context) {
     private fun sealKey(): ByteArray {
         prefs.getString(KEY_SEAL_KEY, null)?.let { return Base64.getDecoder().decode(it) }
         val key = ByteArray(32).also { SecureRandom().nextBytes(it) }
-        prefs.edit().putString(KEY_SEAL_KEY, Base64.getEncoder().encodeToString(key)).apply()
+        check(
+            prefs.edit().putString(KEY_SEAL_KEY, Base64.getEncoder().encodeToString(key)).commit()
+        ) { "Could not persist the identity seal key" }
         return key
-    }
-
-    private fun fromJson(json: JSONObject): ServerIdentity {
-        return ServerIdentity(
-            userId = json.optString("user_id").takeIf { it.isNotBlank() },
-            deviceId = json.optString("device_id").takeIf { it.isNotBlank() },
-            hybridEkB64 = json.getString("hybrid_ek_b64"),
-            hybridVkB64 = json.getString("hybrid_vk_b64"),
-            shareEkB64 = json.optString("share_ek_b64"),
-            sealedB64 = json.optString("sealed_b64"),
-            shareEkRegistrationPending = json.optBoolean("share_ek_registration_pending", false),
-            shareEkSignedAt = json.optString("share_ek_signed_at").takeIf { it.isNotBlank() },
-            shareEkSignature = json.optString("share_ek_signature").takeIf { it.isNotBlank() },
-        )
-    }
-
-    private fun ServerIdentity.toJson(): JSONObject {
-        return JSONObject()
-            .put("user_id", userId)
-            .put("device_id", deviceId)
-            .put("hybrid_ek_b64", hybridEkB64)
-            .put("hybrid_vk_b64", hybridVkB64)
-            .put("share_ek_b64", shareEkB64)
-            .put("sealed_b64", sealedB64)
-            .put("share_ek_registration_pending", shareEkRegistrationPending)
-            .put("share_ek_signed_at", shareEkSignedAt)
-            .put("share_ek_signature", shareEkSignature)
     }
 
     companion object {

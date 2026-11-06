@@ -1,0 +1,22 @@
+
+VELA assurance run — logs in /home/runner/work/_temp/assurance-logs
+  correspondence                               PASS
+  share-journal                                PASS
+  network-boundaries                           PASS
+  tamarin-m1-m10-credential-release            PASS
+  tamarin-rekey                                PASS
+  tamarin-session                              PASS
+  tamarin-enrollment                           PASS
+  tamarin-recovery                             PASS
+  tamarin-client-recovery                      PASS
+  tamarin-recovery-publication                 PASS
+  tamarin-recovery-publication-recovery        PASS
+  tamarin-pair-selection                       PASS
+  tamarin-share-channel                        PASS
+  tamarin-web-session-pass-through             PASS
+  tamarin-link-revocation-finality             PASS
+  tamarin-composition                          PASS
+  tamarin-sync-admission                       PASS
+  proverif-m22-oram-access-hiding              PASS
+  statistical-m24-oram-stash-bounds            PASS
+  (Rust extraction/policy checks skipped; pass --with-fstar to include them; journal F* encoding check still runs)

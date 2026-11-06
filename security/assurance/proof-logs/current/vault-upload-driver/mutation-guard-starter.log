@@ -1,0 +1,38 @@
+* Warning 271 at /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 328 at /tmp/opencode/mutants/guard-starter/vault-upload-driver-composition/Vela_rekey_policy_vault_upload_driver_composition.fst(276,8-276,28):
+  - Global binding
+        'Vela_rekey_policy_vault_upload_driver_composition.all_requests_ok_cons'
+    is recursive but not used in its body
+
+* Warning 328 at /tmp/opencode/mutants/guard-starter/vault-upload-driver-composition/Vela_rekey_policy_vault_upload_driver_composition.fst(302,8-302,30):
+  - Global binding
+        'Vela_rekey_policy_vault_upload_driver_composition.requests_in_range_cons'
+    is recursive but not used in its body
+
+* Error 19 at /tmp/opencode/mutants/guard-starter/vault-upload-driver-composition/Vela_rekey_policy_vault_upload_driver_composition.fst(497,2-515,22):
+  - Could not prove post-condition
+  - The SMT solver could not prove the query. Use --query_stats for more
+    details.
+  - Also see: /tmp/opencode/mutants/guard-starter/vault-upload-driver-composition/Vela_rekey_policy_vault_upload_driver_composition.fst(497,2-515,22)
+  - Other related locations: /tmp/opencode/mutants/guard-starter/vault-upload-driver-composition/Vela_rekey_policy_vault_upload_driver_composition.fst(496,13-496,39)
+
+1 error was reported (see above)

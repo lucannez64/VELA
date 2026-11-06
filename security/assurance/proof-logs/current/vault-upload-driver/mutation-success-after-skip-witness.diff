@@ -1,0 +1,79 @@
+--- /home/hirew/.t3/worktrees/VELA/t3-d0ca44cd/serverVELA/vela-rekey-policy/proofs/fstar/vault-upload-driver-composition/Vela_rekey_policy_vault_upload_driver_composition.fst	2026-10-27 00:19:56.661995313 +0100
++++ /tmp/opencode/mutants/success-after-skip-witness/vault-upload-driver-composition/Vela_rekey_policy_vault_upload_driver_composition.fst	2026-10-27 00:45:13.514450968 +0100
+@@ -720,13 +720,8 @@
+     (ensures (
+       (upload_step d (UploadEvent_Write o)).f_driver.f_write_matched
+       = committed_obs o)) =
+-  match o <: t_WriteObservation with
+-  | WriteObservation_Inserted -> ()
+-  | WriteObservation_Updated -> ()
+-  | WriteObservation_Existing -> ()
+-  | WriteObservation_Skipped -> ()
+-  | WriteObservation_Duplicate -> ()
+-  | WriteObservation_Failed -> ()
++  admit ()
++
+ 
+ /// The round-1 driver-level facts: an active `Write` effect carries an ACTIVE
+ /// route at the captured epoch, and a shadow `Write` effect is never a web
+@@ -1491,7 +1486,7 @@
+       (account_at c5 0).a_epoch = mk_i64 2 /\
+       FStar.List.Tot.length c6.w_store = 0 /\
+       (request_head c6.w_reqs).rq_committed = false /\
+-      (request_head c6.w_reqs).rq_driver.f_failed = true /\
++      (request_head c6.w_reqs).rq_driver.f_failed = false /\
+       c6.w_stale_commit = 0 /\ c6.w_bad_shadow_commit = 0 /\
+       c6.w_success_without_commit = 0) = ()
+ 
+@@ -1610,4 +1605,51 @@
+   upload_store_theorem active_commit_schedule;
+   upload_store_theorem two_account_schedule
+ 
++/// Counterexample for the success-after-skip mutation.
++let e7 = world_step c6 (Reread 0 (RereadObservation_Read { f_version = mk_i64 1 }))
++let e8 = world_step e7 (Publish 0)
++
++let success_after_skip_schedule : list action =
++  [ Spawn 0 false 0 0 0; Resolve 0; Quota 0 QuotaObservation_Allowed;
++    RekeyStart 0 0; RekeyCommit 0; GuardedWrite 0;
++    Reread 0 (RereadObservation_Read { f_version = mk_i64 1 }); Publish 0 ]
++
++let success_after_skip_facts ()
++  : Lemma (
++      FStar.List.Tot.length e8.w_store = 0 /\
++      (request_head e8.w_reqs).rq_committed = false /\
++      (request_head e8.w_reqs).rq_driver.f_responded = true /\
++      e8.w_success_without_commit = 1) = ()
++
++let success_after_skip_counterexample ()
++  : Lemma (
++      let w = run_world initial success_after_skip_schedule in
++      FStar.List.Tot.length w.w_store = 0 /\
++      (request_head w.w_reqs).rq_committed = false /\
++      w.w_success_without_commit = 1) =
++  run_cons initial (Spawn 0 false 0 0 0)
++    [Resolve 0; Quota 0 QuotaObservation_Allowed;
++     RekeyStart 0 0; RekeyCommit 0; GuardedWrite 0;
++     Reread 0 (RereadObservation_Read { f_version = mk_i64 1 }); Publish 0];
++  run_cons c1 (Resolve 0)
++    [Quota 0 QuotaObservation_Allowed; RekeyStart 0 0; RekeyCommit 0;
++     GuardedWrite 0;
++     Reread 0 (RereadObservation_Read { f_version = mk_i64 1 }); Publish 0];
++  run_cons c2 (Quota 0 QuotaObservation_Allowed)
++    [RekeyStart 0 0; RekeyCommit 0; GuardedWrite 0;
++     Reread 0 (RereadObservation_Read { f_version = mk_i64 1 }); Publish 0];
++  run_cons c3 (RekeyStart 0 0)
++    [RekeyCommit 0; GuardedWrite 0;
++     Reread 0 (RereadObservation_Read { f_version = mk_i64 1 }); Publish 0];
++  run_cons c4 (RekeyCommit 0)
++    [GuardedWrite 0;
++     Reread 0 (RereadObservation_Read { f_version = mk_i64 1 }); Publish 0];
++  run_cons c5 (GuardedWrite 0)
++    [Reread 0 (RereadObservation_Read { f_version = mk_i64 1 }); Publish 0];
++  run_cons c6 (Reread 0 (RereadObservation_Read { f_version = mk_i64 1 }))
++    [Publish 0];
++  run_cons e7 (Publish 0) [];
++  run_nil e8;
++  success_after_skip_facts ()
++
+ #pop-options

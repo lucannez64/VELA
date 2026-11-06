@@ -1,0 +1,30 @@
+# Commands (run from libVELA/vela-crypto in the t3-9621cdba worktree).
+# Every Cargo/hax/F* command went through vela-heavy; wrappers were untracked
+# and deleted before the commit.
+
+# Temporary wrappers (deleted):
+#   verify-fstar-sharefacts-tmp.sh:
+#     #!/usr/bin/env bash
+#     exec "$(dirname "$0")/verify-share-facts-fstar.sh" "$@"
+#   verify-fstar-o14a-tmp.sh: the embedding gate's fstar.exe command plus
+#     proofs/fstar/share-envelope-inverse/Vela_crypto_share_envelope_inverse.fst
+#     and --include proofs/fstar/share-envelope-inverse.
+
+VELA_STEP_TIMEOUT=3600 CARGO_TARGET_DIR=../../target-o14a-2 \
+  ~/.local/opt/vela-tools/bin/vela-heavy ./verify-fstar-o14a-tmp.sh
+# -> exit 0, Vela_crypto_share_envelope_inverse verified, 637574 ms
+
+VELA_STEP_TIMEOUT=3600 CARGO_TARGET_DIR=../../target-o14a-2 \
+  ~/.local/opt/vela-tools/bin/vela-heavy ./verify-fstar-sharefacts-tmp.sh
+# -> exit 0, 14 share-envelope tests + 2 doctests, hax re-extraction,
+#    all F* modules including the inverse verified, 300893 ms
+
+VELA_STEP_TIMEOUT=3600 CARGO_TARGET_DIR=../../target-o14a-2 \
+  ~/.local/opt/vela-tools/bin/vela-heavy cargo test --locked
+# -> exit 0, 142 + 4 + 2 passed
+
+python3 security/formal/check-no-proof-escapes.py
+# -> 172 F* files: no proof escapes, no unimplemented interfaces.
+
+python3 security/formal/check-secret-erasure.py
+# -> 17 secret-bearing types in 12 files: zeroized, not Copy, not Debug-leaking.

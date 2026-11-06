@@ -1,0 +1,3 @@
+PASS: rejected --lax
+PASS: rejected --admit_smt_queries true
+PASS: rejected --unsafe_tactic_exec

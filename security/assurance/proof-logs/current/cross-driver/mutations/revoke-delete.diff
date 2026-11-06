@@ -1,0 +1,31 @@
+--- a/serverVELA/vela-session-policy/proofs/fstar/extraction-f2-cross/Vela_session_policy.Revocation_driver.fst
++++ b/serverVELA/vela-session-policy/proofs/fstar/extraction-f2-cross/Vela_session_policy.Revocation_driver.fst
+@@ -289,7 +289,7 @@
+           let result:t_RevocationTransition = result in
+           revocation_state_is_sound result.f_driver &&
+           revocation_effect_is_sound result.f_driver result.f_effect) =
+-  if actor.f_authenticated && actor.f_device_active
++  if true
+   then
+     transition ({
+           f_stage = RevocationStage_Observe <: t_RevocationStage;
+@@ -335,7 +335,7 @@
+   | DeviceLookupObservation_Malformed  ->
+     terminal driver (RevocationFailure_TargetParseStorage <: t_RevocationFailure)
+   | DeviceLookupObservation_Present target ->
+-    if ~.target.f_same_account
++    if false
+     then terminal driver (RevocationFailure_CrossAccount <: t_RevocationFailure)
+     else
+       if target.f_already_revoked
+--- a/serverVELA/vela-session-policy/proofs/fstar/extraction-f2-cross/Vela_session_policy.Deletion_driver.fst
++++ b/serverVELA/vela-session-policy/proofs/fstar/extraction-f2-cross/Vela_session_policy.Deletion_driver.fst
+@@ -398,7 +398,7 @@
+           deletion_state_is_sound result.f_driver &&
+           deletion_effect_is_sound result.f_driver result.f_effect) =
+   let actor_active:bool = actor.f_authenticated && actor.f_device_active in
+-  if actor_active && actor.f_scoped_to_session_account
++  if actor_active
+   then
+     transition ({
+           f_stage = DeletionStage_ObserveDevices <: t_DeletionStage;

@@ -1,0 +1,75 @@
+(* VELA hybrid KEM, combiner v2 — IND-CCA2 from ML-KEM IND-CCA2 and
+   the library collision bounds, with the DH secret exponent disclosed.
+
+   Code: libVELA/vela-crypto/src/kem.rs (encapsulate, decapsulate, combine_v2).
+
+     ss = H(ss_mlkem, ss_x25519, x25519_epk, x25519_pk, ct_mlkem, pk_mlkem)
+
+   Assumptions:
+   - ML-KEM-1024: IND-CCA2 KEM plus the library's public-key and
+     encapsulation-ciphertext collision bounds (IND_CCA2_KEM). Decapsulation may
+     fail in the generic model; ML-KEM's implicit rejection never does, which
+     is a special case.
+   - HKDF-SHA256 over the transcript: a random oracle H.
+   - SHA-256 of ct_mlkem / pk_mlkem: collision resistant (inputs fed to H
+     directly; argued, not modelled).
+   - X25519: NO assumption. The adversary receives the X25519 secret key.
+
+   This is the case where binding the X25519 ephemeral key matters: a
+   capsule reusing the challenge ML-KEM ciphertext with a different X25519
+   ephemeral key decapsulates the challenge ML-KEM secret, and only the
+   transcript binding keeps its derived key independent of the challenge.
+
+   Expected: "All queries proved."
+*)
+
+param Qd.
+
+(* ── X25519 group, no assumption (secret key leaked) ── *)
+type Z [large,bounded].
+type G [large,bounded].
+expand DH_good_group(G, Z, g, exp, exp', mult).
+
+(* ── ML-KEM: IND-CCA2 ── *)
+type mlkseed [large,fixed].
+type mlpk [bounded].
+type mlsk [bounded].
+type mlss [large,fixed].
+type mlct [bounded].
+type mlencout [bounded].
+proba Penc.
+proba Pkeycoll.
+proba Pctxtcoll.
+expand IND_CCA2_KEM(mlkseed, mlpk, mlsk, mlss, mlct, mlencout, mlpkgen, mlskgen,
+                    mlencap, mlpair, mldecap, mlinjbot, Penc, Pkeycoll, Pctxtcoll).
+
+(* ── The combiner: HKDF-SHA256 as a random oracle ── *)
+type hashkey [fixed].
+type key [large,fixed].
+expand ROM_hash_6(hashkey, mlss, G, G, G, mlct, mlpk, key, H, Horacle, qH).
+
+query secret b [cv_bit].
+
+process
+  Ostart() :=
+    hk <-R hashkey;
+    b <-R bool;
+    ks <-R mlkseed;
+    x <-R Z;
+    (* the X25519 secret key is handed to the adversary *)
+    return(mlpkgen(ks), x);
+    ((
+      Ochall() :=
+        let mlpair(ssm: mlss, ctm: mlct) = mlencap(mlpkgen(ks)) in
+        y <-R Z;
+        epk: G <- exp(g, y);
+        k0 <- H(hk, ssm, exp(exp(g, x), y), epk, exp(g, x), ctm, mlpkgen(ks));
+        k1 <-R key;
+        return(ctm, epk, if b then k0 else k1)
+    ) | (
+      foreach id <= Qd do
+      Odecap(ctq: mlct, epkq: G) :=
+        find suchthat defined(ctm, epk) && ctq = ctm && epkq = epk then yield else
+        let mlinjbot(ssq: mlss) = mldecap(ctq, mlskgen(ks)) in
+        return(H(hk, ssq, exp(epkq, x), epkq, exp(g, x), ctq, mlpkgen(ks)))
+    ) | run Horacle(hk))

@@ -44,8 +44,9 @@ export async function pollSession(id: string, pollSecret: string): Promise<PollR
   return (await r.json()) as PollResponse;
 }
 
+/** A challenge for `POST /web-session/:id/token`; the server rejects it elsewhere. */
 export async function getChallenge(): Promise<string> {
-  const r = await fetch(`${BASE}/auth/challenge`);
+  const r = await fetch(`${BASE}/auth/challenge?purpose=web_token`);
   if (!r.ok) throw new Error(`Challenge failed (HTTP ${r.status})`);
   return ((await r.json()) as { challenge: string }).challenge;
 }
@@ -119,8 +120,18 @@ export class SseDecoder {
 }
 
 export class AuthedSession {
-  /** Authenticated epoch returned by the latest sync manifest. */
+  /**
+   * Vault key epoch this tab pinned from its first manifest. The server cannot
+   * authenticate it (no web grant carries an epoch the browser can verify), so
+   * this is a tab-local floor: every later manifest must match it exactly and
+   * a different one is refused before it can influence a read or an upload.
+   * A fresh tab still trusts the first manifest the server sends (U-27
+   * residual).
+   */
   epoch = 1;
+
+  /** Whether `epoch` was pinned by a manifest yet. */
+  private epochPinned = false;
 
   constructor(public token: string) {}
 
@@ -144,7 +155,16 @@ export class AuthedSession {
       chunks: { chunk_id: string; version: number; lamport_clock: number }[];
     };
     if (!Number.isSafeInteger(m.epoch) || m.epoch < 1) throw new Error('Server returned an invalid vault epoch.');
-    this.epoch = m.epoch;
+    if (!this.epochPinned) {
+      this.epoch = m.epoch;
+      this.epochPinned = true;
+    } else if (m.epoch !== this.epoch) {
+      throw new Error(
+        m.epoch < this.epoch
+          ? `The server offered vault key epoch ${m.epoch} after this page had already pinned epoch ${this.epoch}; refusing the downgrade.`
+          : `The vault key epoch changed to ${m.epoch} while this page was open (it was ${this.epoch}); reload this page and approve access again.`,
+      );
+    }
     const out = new Map<string, ChunkMeta>();
     for (const c of m.chunks) out.set(c.chunk_id, { version: c.version, lamport: c.lamport_clock });
     return out;

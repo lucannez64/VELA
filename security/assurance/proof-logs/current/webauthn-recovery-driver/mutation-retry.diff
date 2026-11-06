@@ -1,0 +1,20 @@
+--- /home/hirew/.t3/worktrees/VELA/t3-e2171f5c/serverVELA/vela-recovery-policy/proofs/fstar/extraction-webauthn-driver/Vela_recovery_policy.Webauthn_driver.fst	2026-10-26 17:04:23.390979837 +0100
++++ /tmp/webauthn-mutation-retry/extraction-webauthn-driver/Vela_recovery_policy.Webauthn_driver.fst	2026-10-26 17:12:15.441879394 +0100
+@@ -1936,12 +1936,14 @@
+   | GrantStoreObservation_Stored  ->
+     auth_finish_transition ({
+           driver with
+-          f_stage = AuthFinishStage_Done <: t_AuthFinishStage;
+-          f_grant_stored = true
++          f_stage = AuthFinishStage_Account <: t_AuthFinishStage;
++          f_grant_issued = false;
++          f_share_decoded = false;
++          f_grant_stored = false
+         }
+         <:
+         t_AuthFinishDriver)
+-      (AuthFinishEffect_Complete <: t_AuthFinishEffect)
++      (AuthFinishEffect_Idle <: t_AuthFinishEffect)
+   | GrantStoreObservation_Failed  ->
+     auth_finish_terminal driver (AuthFinishFailure_GrantStorage <: t_AuthFinishFailure)
+ 
