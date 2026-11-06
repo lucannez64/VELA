@@ -326,33 +326,105 @@ jobs:
             VELA_PROOF_OUT="$RUNNER_TEMP/assurance-logs/cryptoverif" \
             security/formal/run-cryptoverif-proofs.sh
 
-      - name: Check bounded policies and rekey handler/database conformance
-        run: |
-          cargo test --manifest-path serverVELA/Cargo.toml --test rekey_state_model
-          cargo test --manifest-path serverVELA/Cargo.toml --test session_capability_model
-          cargo test --manifest-path serverVELA/Cargo.toml --test enrollment_ceremony_model
-          cargo test --manifest-path serverVELA/Cargo.toml --test recovery_lifecycle_model
-          cargo test --manifest-path serverVELA/Cargo.toml --test share_channel_model
-          cargo test --manifest-path serverVELA/Cargo.toml --test recovery_possession_model
-          cargo test --manifest-path serverVELA/Cargo.toml --test pairing_model
-          cargo test --manifest-path serverVELA/Cargo.toml --test challenge_single_use_model
-          cargo test --manifest-path serverVELA/Cargo.toml --test login_driver_handler
-          cargo test --manifest-path serverVELA/Cargo.toml -p vela-session-policy --test login_driver
-          cargo test --manifest-path serverVELA/Cargo.toml -p vela-session-policy --lib revocation_driver
-          cargo test --manifest-path serverVELA/Cargo.toml -p vela-session-policy --lib deletion_driver
-          cargo test --manifest-path serverVELA/Cargo.toml -p vela-session-policy --lib deletion_interpreter
-          cargo test --manifest-path serverVELA/Cargo.toml -p vela-session-policy --lib
-          cargo test --manifest-path serverVELA/Cargo.toml --test account_deletion_model
-          cargo test --manifest-path serverVELA/Cargo.toml --test device_revocation_model
-          cargo test --manifest-path serverVELA/Cargo.toml -p vela-recovery-policy --test redemption_driver
-          cargo test --manifest-path serverVELA/Cargo.toml -p vela-share-policy --test driver
-          cargo test --manifest-path serverVELA/Cargo.toml -p vela-share-policy --lib
-          cargo test --manifest-path serverVELA/Cargo.toml -p vela-recovery-policy --test possession_driver
-          cargo test --manifest-path serverVELA/Cargo.toml -p vela-recovery-policy --test webauthn_driver
-          cargo test --manifest-path serverVELA/Cargo.toml --test integration
-          cargo test --manifest-path serverVELA/Cargo.toml -p vela-enrollment-policy
-          cargo test --manifest-path serverVELA/Cargo.toml -p vela-rekey-policy --lib
-          cargo test --manifest-path libVELA/vela-client-recovery-policy/Cargo.toml --test bounded_refinement
+      - name: Bounded conformance - rekey_state_model
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml --test rekey_state_model
+
+      - name: Bounded conformance - session_capability_model
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml --test session_capability_model
+
+      - name: Bounded conformance - enrollment_ceremony_model
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml --test enrollment_ceremony_model
+
+      - name: Bounded conformance - recovery_lifecycle_model
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml --test recovery_lifecycle_model
+
+      - name: Bounded conformance - share_channel_model
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml --test share_channel_model
+
+      - name: Bounded conformance - recovery_possession_model
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml --test recovery_possession_model
+
+      - name: Bounded conformance - pairing_model
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml --test pairing_model
+
+      - name: Bounded conformance - challenge_single_use_model
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml --test challenge_single_use_model
+
+      - name: Bounded conformance - login_driver_handler
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml --test login_driver_handler
+
+      - name: Bounded conformance - login_driver
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-session-policy --test login_driver
+
+      - name: Bounded conformance - vela-session-policy revocation_driver
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-session-policy --lib revocation_driver
+
+      - name: Bounded conformance - vela-session-policy deletion_driver
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-session-policy --lib deletion_driver
+
+      - name: Bounded conformance - vela-session-policy deletion_interpreter
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-session-policy --lib deletion_interpreter
+
+      - name: Bounded conformance - vela-session-policy library
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-session-policy --lib
+
+      - name: Bounded conformance - account_deletion_model
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml --test account_deletion_model
+
+      - name: Bounded conformance - device_revocation_model
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml --test device_revocation_model
+
+      - name: Bounded conformance - redemption_driver
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-recovery-policy --test redemption_driver
+
+      - name: Bounded conformance - driver
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-share-policy --test driver
+
+      - name: Bounded conformance - vela-share-policy library
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-share-policy --lib
+
+      - name: Bounded conformance - possession_driver
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-recovery-policy --test possession_driver
+
+      - name: Bounded conformance - webauthn_driver
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-recovery-policy --test webauthn_driver
+
+      - name: Bounded conformance - integration
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml --test integration
+
+      - name: Bounded conformance - vela-enrollment-policy vela-enrollment-policy
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-enrollment-policy
+
+      - name: Bounded conformance - vela-rekey-policy library
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-rekey-policy --lib
+
+      - name: Bounded conformance - bounded_refinement
+        timeout-minutes: 30
+        run: cargo test --manifest-path libVELA/vela-client-recovery-policy/Cargo.toml --test bounded_refinement
 
       - name: Verify the desktop, Android, Apple, and web epoch wire contract
         env:
