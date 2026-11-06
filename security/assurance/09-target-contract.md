@@ -34,6 +34,17 @@ contracts above cites those call sites. The database row is the largest: the
 server's 269 SQL/store call sites all rely on the linearizable-store and
 atomic-transaction assumption that the executor proofs model (plan step H10).
 
+The toolchain and model side of this boundary is reviewed in
+[07](07-boundary-review.md#trusted-base-review-f-6-2026-11-05) (plan steps T1-T11):
+the String/Vec and other std models are reviewed against Rust and tested
+against it on 119 million cases with no mismatch; the hax-lib symbols that stay
+abstract are listed in the
+[inventory](proof-logs/current/model-contract-inventory/README.md); every F\*
+gate verifies under four Z3 seeds; and the pinned checkers run from one
+digest-pinned [proof image](proof-logs/current/proof-container/README.md).
+That makes the trusted toolchain explicit and reproducible; it does not make
+extraction or the checkers verified.
+
 The protocol adversary controls the network and can operate a malicious server
 where the particular claim allows it. Compromise events, trusted human comparison
 and initial key-directory/pin assumptions must be stated per claim. First-contact

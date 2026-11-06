@@ -899,11 +899,13 @@ progress: `plan-live.py serve`. The first F-6 step, the
 lists every hax library symbol the proofs use and which of them are trusted.
 A repository-wide check (`security/formal/check-no-proof-escapes.py`, in CI)
 now rejects `assume`, `admit`, axioms and unimplemented interfaces in every
-tracked F* file; all 168 pass. Its `--all` mode also scans generated
+tracked F* file; all 183 pass. Its `--all` mode also scans generated
 extractions and lists one hax-generated assumption: the `PartialEq` instance
 for `t_Phase` in the vault-upload driver's root module, which that gate keeps
 out of its focused source check. The instance is satisfiable but unspecified;
-step T7 reviews it.
+T7 checks it against Rust's derived equality on all four constructor pairs and
+it stays trusted. The full F-6 result is in
+[07](07-boundary-review.md#trusted-base-review-f-6-2026-11-05).
 
 | Area | Status | Required to close |
 |---|---|---|
@@ -912,7 +914,7 @@ step T7 reviews it.
 | F-3: persistence/recovery | Partial: M28 and composed M29; the Tamarin↔F★ source bridge for M28 is proved (all ten lemmas on source traces of the original and instrumented rules, under a trusted F★ transcription of Tamarin's semantics) | Prove the actual journal implementation refines M28; formalize collection equality and filesystem outcomes; compose local edits/deletions and RMS migration; cover or explicitly exclude independent processes |
 | F-4: construction security | Partial: CryptoVerif proofs for idealized v2 KEM games, modular KEM-DEM, AND-signature, v2 possession-proof and authenticated-share games under the explicit assumptions | Close the combiner gaps listed in `security/formal/cryptoverif/README.md` (concrete X25519 clamping/cofactor/encoding correspondence after conditional nonuniform distribution accounting, SHA-256 step, quantum-query and multi-user composition; KEM-DEM is proved modularly); computational games and reductions for envelope framing and KDF use beyond the random-oracle model, under named primitive assumptions (share tags and the v2 possession proof are now proved in CryptoVerif with KDFs as random oracles; legacy v1 possession commitments are not covered); verify application randomness/error/erasure handling. Primitive internals and leakage resistance are trusted under the selected boundary |
 | F-5: native clients/composition | [Shared chunk kernel](17-universal-chunk-admission.md) and [integer-epoch kernel](18-mobile-sync-admission.md) checked; mobile runtime fixes internally reviewed and hosted on fdee2bc; bounded Android (millions of traces) and iOS (1,110 traces, passing in macOS CI) conformance of the download gates against the Rust rules; native trace refinement remains open | Verify Kotlin/Swift callers, persistence and FFI; formalize enrollment UI trust; compose recovery, enrollment, sync, sharing and revocation in one argument |
-| F-6: trusted base | Partial | Maintain zero local extraction assumptions and review imported model contracts; verify/review std/hax model correspondence and the String/Vec models; retain extraction/compiler correctness explicitly as trusted under the chosen boundary; review solver/library/OS interface assumptions; reproduce in CI and obtain independent review |
+| F-6: trusted base | Closed under the selected boundary, except independent review: zero local extraction assumptions, enforced in CI over all 183 F* files (T2); every imported model symbol inventoried (T1), reviewed against Rust std (T3-T6) and differentially tested against Rust (T7: 127 operations, 119 million cases, no mismatch); every F* gate verified under Z3 seeds 0-3 in [hosted run 41989077099](proof-logs/current/proof-stability/README.md) (T8); OS/library interface call sites listed against 09's contracts (T9); environment pinned (T10, G-3 closed) and `run-all.sh` run inside one [digest-pinned proof image](proof-logs/current/proof-container/README.md) that hosted CI uses (T11). Extraction, compiler and checker correctness and the abstract hax-lib symbols stay trusted under the [selected boundary](09-target-contract.md) ([review](07-boundary-review.md#trusted-base-review-f-6-2026-11-05)) | Independent third-party review of the models, proofs and trusted base (plan step Z4) |
 
 Every complete scoped proof must still choose a logic/kernel, machine model
 and interface to physical execution. An assumed OS operation in a model is

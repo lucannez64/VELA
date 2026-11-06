@@ -122,9 +122,9 @@ states its proof boundary (for example
 | Item | Why it is trusted |
 |---|---|
 | **hax frontend and engine 0.3.7** | Extraction soundness. hax is research-grade. A translation bug could make F\* prove something about code that differs from the Rust |
-| **hax `core_models` / `rust_primitives` F\* libraries** | Models of Rust integers, slices, and `Option`. Shipped by hax, not reviewed here |
+| **hax `core_models` / `rust_primitives` F\* libraries** | Models of Rust integers, slices, `Vec`, `String` and `Option`. Every used symbol is [inventoried](proof-logs/current/model-contract-inventory/README.md) (T1), [reviewed against Rust std](proof-logs/current/std-model-review/README.md) (T3-T6) and [differentially tested against Rust](proof-logs/current/std-model-diff/README.md) (T7: 127 operations, 119 million cases, no mismatch). Abstract symbols (bit operations and their lemmas, `str_*`, `format'`) and the hax-generated `PartialEq` for `t_Phase` stay trusted |
 | **Structural equality and local declarations** | The earlier 18 opaque PartialEq assumptions have been eliminated. Current extracted modules contain no local assume val/admit bodies; the drift gate enforces this reviewed state. Imported hax libraries still include trusted models/assumptions and emit float/loop warnings |
-| **F\* 2025.10.06 and Z3 4.13.3** | Standard trusted computing base for F\* |
+| **F\* 2025.10.06 and Z3 4.13.3** | Standard trusted computing base for F\*. Every gate also verifies under Z3 seeds 1-3 ([proof stability](proof-logs/current/proof-stability/README.md), T8), and hosted CI runs them inside one [digest-pinned proof image](proof-logs/current/proof-container/README.md) (T11) |
 | **The spec predicates** | `*_matches_spec` predicates are written in Rust by the same authors. F\* proves code = spec, not spec = intent |
 
 ### Extraction artifacts

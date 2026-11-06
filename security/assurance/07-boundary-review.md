@@ -182,6 +182,30 @@ OS durability semantics and concrete trace refinement remain obligations.
   desktop linked-update admission. Do not extend desktop pin persistence or
   exactly-once acceptance claims to these platforms.
 
+## Trusted-base review (F-6), 2026-11-05
+
+This pass reviewed what the proofs trust rather than what they prove (plan
+steps T1-T11). It is a maintainer-side review, like the rest of this file;
+independent review is plan step Z4.
+
+| Step | Result | Evidence |
+|---|---|---|
+| T1 imported models | 114 hax library symbols used: 0 assumed, 8 abstract, 105 defined, 1 local | [inventory](proof-logs/current/model-contract-inventory/README.md) |
+| T2 no proof escapes | `check-no-proof-escapes.py` (CI) rejects `assume`, `admit`, axioms and unimplemented interfaces in all 183 tracked F\* files | `security/formal/check-no-proof-escapes.py` |
+| T3-T6 std models | `Vec`, `String`/UTF-8/`format!`, integers, `Option`/`Result`/slices reviewed against Rust std. Found: `format!` makes every result equal in F\* (fixed for the store keys by O4), an unreachable send view-count wrap, and two hax-lib bugs (`ne`, `mul_overflow`) that the corpus does not use and `check-model-guards.py` keeps out | [review](proof-logs/current/std-model-review/README.md), [store keys](proof-logs/current/store-key-injectivity/README.md) |
+| T7 differential tests | The F\* model definitions, run through F\*'s OCaml extraction, agree with Rust on 127 operations and 119 million cases; the trusted bit lemmas hold on 10^6 samples. CI repeats it with 10^4 cases | [std-model-diff](proof-logs/current/std-model-diff/README.md) |
+| T8 seed stability | Every F\* gate verifies under Z3 seeds 1, 2 and 3 as well as the default (57 hosted jobs). Two seed-dependent proofs were rewritten: the share-envelope inverse (`frame_body_frame` used its whole rlimit) and the rekey-driver witnesses (rlimit 16000 down to 100) | [proof stability](proof-logs/current/proof-stability/README.md), [fixes](proof-logs/current/proof-stability/fixes/merged-tree.md) |
+| T9 OS/library interfaces | Every production call site of entropy, clocks, filesystem, synchronization, database and network is listed against the contract it relies on | [interface inventory](proof-logs/current/os-interface-inventory/README.md), [09](09-target-contract.md#trusted-interfaces) |
+| T10 environment pins | Actions by commit SHA, scanners and tools by exact version, Ubuntu packages from one snapshot date, the hax engine's opam resolution locked; `check-env-pins.py` enforces it | [env-pins](proof-logs/current/env-pins/README.md) |
+| T11 proof container | One digest-pinned image carries every tool; `run-all.sh` passes inside it and hosted CI runs its proof jobs in it | [proof container](proof-logs/current/proof-container/README.md) |
+
+**Still trusted under the selected boundary** ([09](09-target-contract.md)):
+hax extraction, the F\*, Z3, Tamarin, ProVerif and CryptoVerif checkers, the
+Rust compiler; the abstract library symbols (bit operations and their lemmas,
+the `str_*` functions, `format'`) and the hax-generated `PartialEq` for
+`t_Phase`. The review and the differential tests are evidence that these
+models match Rust on the behaviour the corpus reaches, not a refinement proof.
+
 ## Reproduce and interpret the evidence
 
 The historical diagnostic patch is
