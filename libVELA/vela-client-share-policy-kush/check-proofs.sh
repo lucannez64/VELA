@@ -41,33 +41,70 @@ EOF
     fi
 }
 
+# plan_share_admission
 mutate "drop the lineage check" \
-    "    if lineage <= 0 { return reject_cross_lineage(has_pin, lineage, _); }"$'\n' ""
+    "        && facts.lineage_matches_pin"$'\n'"        && facts.candidate_revision > facts.pinned_revision"$'\n'"    {" \
+    "        && facts.candidate_revision > facts.pinned_revision"$'\n'"    {"
 mutate "accept a replayed (equal) revision" \
-    "if cand <= pinned { return" "if cand < pinned { return"
+    "        && facts.candidate_revision > facts.pinned_revision"$'\n'"    {" \
+    "        && facts.candidate_revision >= facts.pinned_revision"$'\n'"    {"
 mutate "drop the authentication check" \
-    "    if auth <= 0 { return reject_unauthenticated(auth, _); }"$'\n' ""
+    "    let bound = facts.envelope_authenticated"$'\n'"        && facts.addressed_to_recipient" \
+    "    let bound = facts.addressed_to_recipient"
 mutate "first contact even when pinned" \
-    "    if has_pin <= 0 {" "    if has_pin <= 1 {"
+    "    if !facts.has_pin && bound {" "    if bound {"
 mutate "allow revision 0" \
-    "    if cand <= 0 { return reject_revision_zero(cand, _); }"$'\n' ""
+    "        && facts.candidate_revision >= 1;" "        && facts.candidate_revision >= 0;"
 mutate "apply an update from a foreign signer" \
-    "if signer <= 0 { return reject_foreign_signer(has_pin, signer, _); }" \
-    "if signer <= 0 { return apply_update(auth, addr, sender, has_pin, signer, lineage, pinned, cand, _, _); }"
-mutate "skip the has_pin domain check" \
-    "    if has_pin > 1 { return reject_malformed_high(has_pin, _); }"$'\n' ""
-mutate "reject with the wrong reason" \
-    "    if auth <= 0 { return reject_unauthenticated(auth, _); }" \
-    "    if auth <= 0 { return reject_misaddressed(addr, _); }"
+    "        && bound"$'\n'"        && facts.signer_matches_pin"$'\n' "        && bound"$'\n'
+mutate "pin the old revision on update" \
+    "            revision: facts.candidate_revision,"$'\n'"        })"$'\n'"    } else {" \
+    "            revision: facts.pinned_revision,"$'\n'"        })"$'\n'"    } else {"
+mutate "reject a valid update" \
+    "    } else if facts.has_pin" "    } else if false && facts.has_pin"
+# the Rust-named predicates
+mutate "predicate: drop the lineage check" \
+    "        && facts.lineage_matches_pin"$'\n'"        && facts.candidate_revision > facts.pinned_revision"$'\n'"}" \
+    "        && facts.candidate_revision > facts.pinned_revision"$'\n'"}"
+mutate "predicate: first contact even when pinned" \
+    "    !facts.has_pin && envelope_is_bound(facts)" "    envelope_is_bound(facts)"
+mutate "predicate: allow revision 0" \
+    "        && facts.candidate_revision >= 1"$'\n'"}" \
+    "        && facts.candidate_revision >= 0"$'\n'"}"
+mutate "count an update as not admitted" \
+    "        ShareAdmissionDecision.ApplyUpdate(_) => true," \
+    "        ShareAdmissionDecision.ApplyUpdate(_) => false,"
 mutate "restore a deleted item" \
-    "    if tombstoned >= 1 { return recovery_deleted(current_present, tombstoned, _); }"$'\n' ""
+    "    matches_before && (current_present || !tombstoned)"$'\n'"}" \
+    "    matches_before && (current_present || tombstoned)"$'\n'"}"
 mutate "overwrite a pending commit" \
-    "    if pending >= 1 { return generation_pending(pending, _); }"$'\n' ""
+    "    if current != snapshot || pending || current" \
+    "    if current != snapshot || current"
+mutate "overflow the generation counter" \
+    " || current == 18446744073709551615 {" " {"
 mutate "re-accept a share that is already pinned" \
-    "    if has_pin >= 1 { return acceptance_pinned(has_pin, _); }"$'\n' ""
-mutate "false lemma: next revision is stale" \
-    "    erased reason: { has_pin == 1 && cand <= pinned },"$'\n'"    erased up:" \
-    "    erased reason: { has_pin == 1 && cand <= pinned + 1 },"$'\n'"    erased up:"
+    "    !accepted && !has_pin && has_payload"$'\n'"}" \
+    "    !accepted && has_payload"$'\n'"}"
+mutate "false theorem: stale revision without clamp" \
+    "            candidate_revision: facts.pinned_revision," \
+    "            candidate_revision: facts.candidate_revision,"
+
+# The permit field is private: code outside the policy module can neither
+# mint a permit nor read its revision directly.
+cp "$root/src/policy.kush" "$scratch/src/policy.kush"
+for forged in \
+    "policy.ShareAdmissionDecision.ApplyUpdate(policy.SharePinPermit { revision: 7 })" \
+    "p.revision"; do
+    printf '%s\n' "module share_policy.tests.main;" "use share_policy.policy;" \
+        "fn forge(p: policy.SharePinPermit) -> Unit ! {} { let d = $forged; }" \
+        >"$scratch/tests/main.kush"
+    if output=$(cd "$scratch" && "$kush" check 2>&1); then
+        echo "NOT REJECTED: permit access outside the module: $forged" >&2
+        failures=$((failures + 1))
+    else
+        printf '%-44s rejected: %s\n' "outside: $forged" "$(head -1 <<<"$output")"
+    fi
+done
 
 if ((failures)); then
     echo "$failures injected bug(s) were not rejected" >&2

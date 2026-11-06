@@ -6,34 +6,27 @@ module share_policy.tests.main;
 // representative revisions including 0 and the upper limit.
 
 use std.test;
+use std.option.Option;
 use share_policy.policy;
 use share_policy.oracle;
 
-/// Revisions 0, 1, 2, 5, MAX - 1, MAX (MAX = i64::MAX here).
+/// Revisions 0, 1, 2, 5, u64::MAX - 1, u64::MAX.
 
-fn revision_at(index: i64) -> i64 ! {} {
+fn revision_at(index: i64) -> u64 ! {} {
     if index == 0 { 0 } else {
         if index == 1 { 1 } else {
             if index == 2 { 2 } else {
-                if index == 3 { 5 } else { if index == 4 { 9223372036854775806 } else { 9223372036854775807 } }
+                if index == 3 { 5 } else { if index == 4 { 18446744073709551614 } else { 18446744073709551615 } }
             }
         }
     }
 }
 
-fn bit(bits: i64, k: i64) -> i64 ! {panic} {
-    (bits >> k) & 1
+fn bit(bits: i64, k: i64) -> Bool ! {panic} {
+    ((bits >> k) & 1) == 1
 }
 
-fn flag(value: i64) -> Bool ! {} {
-    value == 1
-}
-
-fn unsigned(value: i64) -> u64 ! {} {
-    Int.truncate(value)
-}
-
-fn facts_of(bits: i64, pinned: i64, cand: i64) -> policy.ShareAdmissionFacts ! {panic} {
+fn facts_of(bits: i64, pinned: u64, cand: u64) -> policy.ShareAdmissionFacts ! {panic} {
     policy.ShareAdmissionFacts {
         envelope_authenticated: bit(bits, 0),
         addressed_to_recipient: bit(bits, 1),
@@ -57,14 +50,14 @@ fn decisions_match_the_rust_policy_everywhere() -> Unit ! {io, panic} {
             while c < 6 {
                 let pinned = revision_at(p);
                 let cand = revision_at(c);
-                let a = flag(bit(bits, 0));
-                let b = flag(bit(bits, 1));
-                let s = flag(bit(bits, 2));
-                let h = flag(bit(bits, 3));
-                let g = flag(bit(bits, 4));
-                let l = flag(bit(bits, 5));
-                let expected_code = oracle.rust_plan_code(a, b, s, h, g, l, unsigned(pinned), unsigned(cand));
-                let expected_revision = oracle.rust_plan_revision(a, b, s, h, g, l, unsigned(pinned), unsigned(cand));
+                let a = bit(bits, 0);
+                let b = bit(bits, 1);
+                let s = bit(bits, 2);
+                let h = bit(bits, 3);
+                let g = bit(bits, 4);
+                let l = bit(bits, 5);
+                let expected_code = oracle.rust_plan_code(a, b, s, h, g, l, pinned, cand);
+                let expected_revision = oracle.rust_plan_revision(a, b, s, h, g, l, pinned, cand);
                 test.equal_i64(policy.decision_code(policy.plan_share_admission(facts_of(bits, pinned, cand))), expected_code);
                 test.equal_i64(policy.decision_revision(policy.plan_share_admission(facts_of(bits, pinned, cand))), expected_revision);
                 checked = checked + 1;
@@ -78,64 +71,56 @@ fn decisions_match_the_rust_policy_everywhere() -> Unit ! {io, panic} {
 }
 
 #[test]
-fn malformed_facts_are_rejected() -> Unit ! {io, panic} {
-    // Every well-formed admitted case, with one field corrupted.
-    let first = policy.ShareAdmissionFacts {
-        envelope_authenticated: 1, addressed_to_recipient: 1, sender_matches_attribution: 1,
-        has_pin: 0, signer_matches_pin: 0, lineage_matches_pin: 0,
-        pinned_revision: 0, candidate_revision: 1,
-    };
-    test.equal_i64(policy.decision_code(policy.plan_share_admission(first)), 1);
-    let mut i = 0;
-    while i < 2 {
-        let bad = if i == 0 { 2 } else { -1 };
-        test.equal_i64(policy.decision_code(policy.plan_share_admission(policy.ShareAdmissionFacts {
-            envelope_authenticated: bad, addressed_to_recipient: 1, sender_matches_attribution: 1,
-            has_pin: 0, signer_matches_pin: 0, lineage_matches_pin: 0, pinned_revision: 0, candidate_revision: 1,
-        })), 0);
-        // A garbage pin flag must not reopen first contact (fail closed).
-        test.equal_i64(policy.decision_code(policy.plan_share_admission(policy.ShareAdmissionFacts {
-            envelope_authenticated: 1, addressed_to_recipient: 1, sender_matches_attribution: 1,
-            has_pin: bad, signer_matches_pin: 0, lineage_matches_pin: 0, pinned_revision: 0, candidate_revision: 1,
-        })), 0);
-        test.equal_i64(policy.decision_code(policy.plan_share_admission(policy.ShareAdmissionFacts {
-            envelope_authenticated: 1, addressed_to_recipient: 1, sender_matches_attribution: 1,
-            has_pin: 0, signer_matches_pin: bad, lineage_matches_pin: 0, pinned_revision: 0, candidate_revision: 1,
-        })), 0);
-        i = i + 1;
+fn negative_theorems_hold_on_samples() -> Unit ! {io, panic} {
+    // Proved for all inputs at compile time; run here on every flag
+    // combination as a sanity check of the compiled code.
+    let mut bits = 0;
+    while bits < 64 {
+        let f = facts_of(bits, 3, 4);
+        test.is_false(policy.unauthenticated_share_can_be_admitted(facts_of(bits, 3, 4)));
+        test.is_false(policy.misaddressed_share_can_be_admitted(facts_of(bits, 3, 4)));
+        test.is_false(policy.misattributed_share_can_be_admitted(facts_of(bits, 3, 4)));
+        test.is_false(policy.foreign_signer_update_can_be_applied(facts_of(bits, 3, 4)));
+        test.is_false(policy.cross_lineage_update_can_be_applied(facts_of(bits, 3, 4)));
+        test.is_false(policy.stale_revision_update_can_be_applied(facts_of(bits, 3, 4)));
+        test.is_false(policy.pinned_share_can_restart_as_first_contact(f));
+        bits = bits + 1;
     }
-    test.equal_i64(policy.decision_code(policy.plan_share_admission(policy.ShareAdmissionFacts {
-        envelope_authenticated: 1, addressed_to_recipient: 1, sender_matches_attribution: 1,
-        has_pin: 1, signer_matches_pin: 1, lineage_matches_pin: 1, pinned_revision: -5, candidate_revision: 1,
-    })), 0);
+    test.is_false(policy.exhausted_generation_can_commit());
+    test.is_false(policy.stale_snapshot_can_commit(4, 3));
+    test.is_false(policy.pending_commit_can_be_overwritten(3, 3));
+    test.is_false(policy.local_edit_can_be_overwritten(true, false));
+    test.is_false(policy.deleted_item_can_be_restored(true));
+    test.is_false(policy.existing_pin_can_restart_acceptance(false, true));
+    test.is_false(policy.missing_payload_can_be_accepted(false, false));
 }
 
 #[test]
 fn store_generations_match_the_rust_policy() -> Unit ! {io, panic} {
-    // Up to MAX - 1: at i64::MAX the Kush port is exhausted while the Rust
-    // u64 counter still has room, a documented range difference.
+    // Every pair of representative counters, including exhaustion at
+    // u64::MAX. Both sides report a result as its i64 bit pattern, so
+    // Some(u64::MAX) (from MAX - 1) reads -1 on both, as None does; that one
+    // case is compared directly below.
     let mut c = 0;
-    while c < 5 {
+    while c < 6 {
         let mut s = 0;
-        while s < 5 {
+        while s < 6 {
             let mut pending = 0;
             while pending < 2 {
                 let current = revision_at(c);
                 let snapshot = revision_at(s);
-                let expected = oracle.rust_next_generation(unsigned(current), unsigned(snapshot), flag(pending));
-                test.equal_i64(policy.generation_code(policy.next_store_generation(current, snapshot, pending)), expected);
+                let expected = oracle.rust_next_generation(current, snapshot, pending == 1);
+                test.equal_i64(policy.generation_code(policy.next_store_generation(current, snapshot, pending == 1)), expected);
                 pending = pending + 1;
             }
             s = s + 1;
         }
         c = c + 1;
     }
-    // Exhaustion at each side's maximum.
-    test.equal_i64(policy.generation_code(policy.next_store_generation(9223372036854775807, 9223372036854775807, 0)), -1);
-    test.equal_i64(oracle.rust_next_generation(Int.truncate(-1), Int.truncate(-1), false), -1);
-    // Malformed counters and flags are refused.
-    test.equal_i64(policy.generation_code(policy.next_store_generation(-1, -1, 0)), -1);
-    test.equal_i64(policy.generation_code(policy.next_store_generation(3, 3, 2)), -1);
+    match policy.next_store_generation(18446744073709551614, 18446744073709551614, false) {
+        Option.Some(next) => test.is_true(next == 18446744073709551615),
+        Option.None => test.is_true(false),
+    }
 }
 
 #[test]
@@ -145,10 +130,8 @@ fn recovery_and_acceptance_match_the_rust_policy() -> Unit ! {io, panic} {
         let x = bit(bits, 0);
         let y = bit(bits, 1);
         let z = bit(bits, 2);
-        test.is_true(policy.recovery_should_apply(x, y, z) == oracle.rust_recovery(flag(x), flag(y), flag(z)));
-        test.is_true(policy.initial_acceptance_is_authorized(x, y, z) == oracle.rust_acceptance(flag(x), flag(y), flag(z)));
+        test.is_true(policy.recovery_should_apply(x, y, z) == oracle.rust_recovery(x, y, z));
+        test.is_true(policy.initial_acceptance_is_authorized(x, y, z) == oracle.rust_acceptance(x, y, z));
         bits = bits + 1;
     }
-    test.is_false(policy.recovery_should_apply(1, 2, 0));
-    test.is_false(policy.initial_acceptance_is_authorized(0, -1, 1));
 }

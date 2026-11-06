@@ -15,14 +15,14 @@ use share_policy.oracle;
 fn decide(i: i64) -> i64 ! {panic} {
     let x = (i * 2654435761) % 4294967296;
     let decision = policy.plan_share_admission(policy.ShareAdmissionFacts {
-        envelope_authenticated: x & 1,
-        addressed_to_recipient: (x >> 1) & 1,
-        sender_matches_attribution: (x >> 2) & 1,
-        has_pin: (x >> 3) & 1,
-        signer_matches_pin: (x >> 4) & 1,
-        lineage_matches_pin: (x >> 5) & 1,
-        pinned_revision: (x >> 6) & 7,
-        candidate_revision: (x >> 9) & 7,
+        envelope_authenticated: (x & 1) == 1,
+        addressed_to_recipient: ((x >> 1) & 1) == 1,
+        sender_matches_attribution: ((x >> 2) & 1) == 1,
+        has_pin: ((x >> 3) & 1) == 1,
+        signer_matches_pin: ((x >> 4) & 1) == 1,
+        lineage_matches_pin: ((x >> 5) & 1) == 1,
+        pinned_revision: Int.truncate((x >> 6) & 7),
+        candidate_revision: Int.truncate((x >> 9) & 7),
     });
     policy.decision_code(decision) * 8 + policy.decision_revision(decision)
 }

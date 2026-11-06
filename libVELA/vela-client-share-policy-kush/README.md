@@ -15,112 +15,123 @@ can call Rust, but cannot yet export a library to Rust).
 
 | File | Content |
 | --- | --- |
-| [`src/policy.kush`](src/policy.kush) | the policy, its specification as guarded constructors, and the lemmas |
+| [`src/policy.kush`](src/policy.kush) | the policy, its `ensures` specification, and the negative theorems |
 | [`tests/main.kush`](tests/main.kush) | differential tests against the Rust crate |
 | [`src/main.kush`](src/main.kush) | benchmark: the same generated inputs through Kush and through Rust |
-| [`check-proofs.sh`](check-proofs.sh) | checks the proofs, then injects 12 bugs and requires each to be rejected |
+| [`check-proofs.sh`](check-proofs.sh) | checks the proofs, then injects 19 bugs and requires each to be rejected |
 
 ## How the proofs work
 
-Kush has no function postconditions (hax's `ensures`). Its executable proof
-tool is the erased arithmetic precondition `erased p: { linear facts }`,
-discharged at each call site from the branch facts that reach it by a
-Fourier–Motzkin decision procedure. Each certificate is re-checked by an
-independent checker in the compiler.
+The port has the Rust crate's shape: the same types (`bool` flags, `u64`
+revisions), the same functions, and each hax `ensures` is a Kush `ensures`
+clause on the same function:
 
-The port uses that as follows:
+```kush
+pub fn plan_share_admission(facts: ShareAdmissionFacts) -> ShareAdmissionDecision ! {}
+    ensures AcceptFirstContact(permit) => { !facts.has_pin && facts.envelope_authenticated && ...
+                                            && permit.revision == facts.candidate_revision }
+    ensures ApplyUpdate(permit) => { facts.has_pin && ... && facts.candidate_revision > facts.pinned_revision ... }
+    ensures Reject => { !(first contact conditions) }
+    ensures Reject => { !(update conditions) }
+{ ... }
 
-- **Every result is built by a guarded constructor** whose precondition is the
-  spec of that result. `accept_first_contact` requires exactly the Rust
-  `first_contact_is_admissible`, `apply_update` requires
-  `update_is_admissible`, and every rejection requires one *reason*
-  (`auth == 0`, `has_pin == 1 && cand <= pinned`, ...). If any return site in
-  `plan_share_admission` is not justified by the checks before it, the file
-  does not compile.
-- **Lemmas** are uncalled functions whose bodies only type-check if their
-  hypotheses are contradictory. They prove that every rejection reason
-  excludes both admissions (so a rejection always satisfies the Rust
-  `Reject` spec), that first contact and update are exclusive, and they
-  restate each Rust negative theorem (`unauthenticated_share_can_be_admitted`,
-  `stale_revision_update_can_be_applied`, `pinned_share_can_restart_as_first_contact`,
-  `exhausted_generation_can_commit`, ...).
-- The same pattern covers `initial_acceptance_is_authorized`,
-  `next_store_generation` and `recovery_should_apply` (the `||` in recovery
-  becomes two accepting constructors).
+pub fn stale_revision_update_can_be_applied(facts: ShareAdmissionFacts) -> Bool ! {}
+    ensures { !result }
+{ ... is_admitted(plan_share_admission(...)) ... }
+```
 
-Kush's `{ ... }` fragment needs integers, so the encoding differs from Rust:
-
-- flags are `i64` with 1 = true and 0 = false. Any other value is malformed
-  and rejected first, which is itself proved (a garbage `has_pin` cannot
-  reopen first contact);
-- revisions and generations are `i64` in `0 ..= i64::MAX`, with `i64::MAX` in
-  the role of `u64::MAX`. Negative values are malformed.
+- The compiler proves every clause at every value a function returns, from
+  the branch conditions that reach it. The prover is Fourier–Motzkin with
+  case splits, and an independent checker in the compiler re-checks each
+  certificate. A body that can break a clause does not compile.
+- A caller receives the callee's clauses as facts about the call's result.
+  The 14 negative theorems use this, as in hax: each one calls
+  `plan_share_admission` (or `next_store_generation`, ...) on falsified
+  facts and proves `!result`.
+- `admission_matches_spec` and `store_generation_matches_spec` are not
+  separate functions: Kush clauses cannot call functions, so their bodies
+  are written out as the clauses (the `Reject` case as two clauses, one per
+  negated condition). A Rust `ensures result == P` is written as
+  `result => { P }` plus `!result => { !(P) }`.
+- `SharePinPermit.revision` is private to the policy module, as in Rust: other
+  modules can neither build a permit nor read the field, only call
+  `share_permit_revision` (which promises `result == permit.revision`).
+- `next_store_generation` computes `current + 1` without an overflow check:
+  the compiler proves `current < u64::MAX` at that point and emits a plain
+  add, so the function needs no `panic` effect.
 
 ## Results (2026-11-06)
 
 All runs were on the developer machine with the Kush compiler at
-`816561d`.
+`d76b546` (debug build of the compiler).
 
-- **Proofs:** `kush check` discharges all 79 proof obligations (53 at the
-  return sites of the four policy functions, 26 in lemma bodies) in
-  **0.14 s**, using a debug build of the compiler. The repository's recorded hax + F* run for the Rust crate took
-  31 s (`security/assurance/proof-logs/current/refinement-5g/vela-client-share-policy.log`),
-  measured under different conditions and with stronger guarantees (see
-  below).
-- **Proofs are not vacuous:** `check-proofs.sh` injects 12 bugs (dropped
-  lineage check, replay of an equal revision, missing authentication, first
-  contact while pinned, revision 0, update from a foreign signer, skipped
-  domain check, wrong rejection reason, restoring a deleted item, overwriting
-  a pending commit, re-accepting a pinned share, and a false lemma). Each one
-  is rejected at compile time, and the error names the exact conjunct that can
-  no longer be proved.
-- **Agreement with Rust:** `kush test` compares every result with the linked
-  Rust crate. That covers all 64 flag combinations × 36 revision pairs
-  (decision and permit revision), the generation table, and all
-  recovery/acceptance inputs, plus malformed inputs. 4/4 tests pass.
-- **Speed:** `kush build --release` runs 10^8 generated decisions with
+- **Proofs:** `kush check` proves the 33 `ensures` clauses of the 26 policy
+  functions in **0.13–0.17 s** (`kush check src/policy.kush`; the whole package with
+  tests and benchmark takes 1.2 s).
+  The repository's recorded hax + F* run for the Rust crate took 31 s
+  (`security/assurance/proof-logs/current/refinement-5g/vela-client-share-policy.log`),
+  measured under different conditions.
+- **Proofs are not vacuous:** `check-proofs.sh` injects 17 bugs into the
+  policy (dropped lineage, signer or authentication check, replay of an equal
+  revision, revision 0, first contact while pinned, the old revision in an
+  update permit, a valid update rejected, an update counted as not
+  admitted, restoring a deleted item, overwriting a pending commit, an
+  unchecked counter overflow, re-accepting a pinned share, a false theorem,
+  and the same three bugs in the Rust-named predicates) and two attempts to
+  forge or read a permit from another module. All 19 are rejected at compile
+  time; each proof error names the clause that no longer holds.
+- **Agreement with Rust:** `kush test` compares results with the linked Rust
+  crate: all 64 flag combinations × 36 revision pairs including `u64::MAX`
+  (decision and permit revision), the generation table including
+  exhaustion, and all recovery/acceptance inputs. It also runs the negative
+  theorems on samples. 4/4 tests pass.
+- **Speed:** `kush run --release` runs 10^8 generated decisions with
   identical checksums on both sides:
 
-  | | ns per decision (3 runs) |
-  | --- | --- |
-  | Kush (Cranelift, `--release`) | 14.2, 15.7, 15.5 |
-  | Rust crate (`cargo --release`, same loop in Rust) | 3.9, 3.5, 3.4 |
-  | Kush input generator alone | 5.2 |
+  | Kush build | Kush ns/decision | Rust ns/decision | machine |
+  | --- | --- | --- | --- |
+  | this port | 11.9, 11.9, 11.9 | 3.3, 3.3, 3.4 | quiet (load ≈ 2.5) |
+  | this port | 17.4, 19.7, 17.2 | 4.5, 4.6, 4.6 | busy (F*/Z3 runs, load ≈ 9) |
+  | Rust-shaped body (calls the predicates) | 23.4, 23.8, 24.1 | 3.3, 3.4, 3.3 | quiet |
+  | first port (i64 flags, guarded constructors) | 14.2, 15.7, 15.5 | 3.9, 3.5, 3.4 | quiet |
 
-  Kush is about 4× slower here. The likely causes are Cranelift rather than
-  LLVM, no inlining of the small constructor calls, and checked
-  multiplication/modulo in the generator. The policy itself has no
-  arithmetic, only comparisons.
+  The Kush input generator alone (same loop, no policy call) takes
+  6.2–8.7 ns, so the policy itself is roughly 4–6 ns per decision against
+  Rust's 3.3 ns for generator and policy together. Rust is about 3.5× faster
+  overall: LLVM inlines and vectorises the loop, while Kush's Cranelift
+  backend does not inline calls and keeps the generator's checked
+  multiplication and modulo. Writing the conditions out instead of calling
+  the predicate functions halves Kush's time; the proofs are the same.
 
 ## What is proved, compared with hax + F*
 
 | Property | hax + F* (Rust) | Kush port |
 | --- | --- | --- |
-| Every returned decision matches the spec (`admission_matches_spec`) | proved as a postcondition of `plan_share_admission` | proved per return site, by the guarded constructors plus the reason lemmas |
-| Negative theorems | proved about compositions with `plan_share_admission` | proved as lemmas about the spec conditions. They apply to `plan_share_admission` because its only accepting returns require those conditions; that "only" is by construction, not a checked theorem |
-| Decisions can only be produced by the policy | Rust private field on `SharePinPermit` | **not enforced**: Kush has no private fields, and enum constructors are public |
-| No arithmetic overflow | proved | `current + 1` is shown safe by its precondition, but Kush still emits a checked add (the `panic` effect stays in the row) |
-| Domain | `bool`, `u64` | `i64` flags (malformed values rejected and proved), `i64` revisions |
-| Trusted base | hax extraction, F*, Z3, hax proof libraries | Kush compiler (checker, independent certificate checker, code generator) |
+| Every returned decision matches the spec | postcondition `admission_matches_spec` | same clauses, written out |
+| Negative theorems about `plan_share_admission` and the state decisions | 14, as postconditions | the same 14, as postconditions |
+| Only the policy can mint a permit | private field | private field |
+| No arithmetic overflow | proved | proved; the checked add is removed |
+| Domain | `bool`, `u64` | `bool`, `u64` |
+| Trusted base | hax extraction, F*, Z3, hax proof libraries | Kush compiler (checker, certificate checker, code generator) |
 
-Kush limits met along the way:
+Remaining differences and Kush limits:
 
-- no postconditions or refinement return types, so a fact proved inside a
-  function cannot flow to its caller;
-- the arithmetic fragment rejects `Bool` atoms and `u64` terms, and a goal
-  with no variables (such as `{ 0 >= 1 }`) is not proved even from
-  contradictory facts (the lemmas use `v >= 1 && v <= 0` instead);
-- proofs never remove runtime overflow checks;
-- even `0 - 1` on constants needs the `panic` effect;
-- no field privacy;
-- no library output for Rust callers.
+- clauses cannot call functions, so the spec predicates are written out
+  instead of named;
+- there is no struct update syntax (`..facts`), so the negative theorems list
+  every field;
+- the Kush code generator (Cranelift) does not inline calls, which is why
+  `plan_share_admission` writes out the conditions instead of calling the
+  predicate functions (see the speed table);
+- VELA's Rust code cannot call this policy: Kush builds executables and calls
+  Rust, but cannot yet export a library to Rust.
 
 ## Reproduction
 
 ```bash
 cd libVELA/vela-client-share-policy-kush
 kush check                       # all proofs
-./check-proofs.sh "$(command -v kush)"   # proofs + 12 injected bugs rejected
+./check-proofs.sh "$(command -v kush)"   # proofs + 19 injected bugs rejected
 kush bindgen Bridge.toml --check # generated adapter is current
 kush test                        # differential tests (builds oracle/ with cargo)
 kush run --release               # benchmark, 10^8 decisions; last two lines are ps/decision
