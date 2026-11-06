@@ -1,0 +1,79 @@
+module share_policy;
+
+// Benchmark: decide `iterations` generated envelopes with the Kush policy,
+// then with the Rust reference crate (one FFI call that runs the identical
+// loop in Rust), and print the checksums and the time per decision.
+//
+//   kush run --release            # 100_000_000 iterations
+//   kush run --release -- 1000    # custom count
+
+use std.result.Result;
+use std.text;
+use share_policy.policy;
+use share_policy.oracle;
+
+fn decide(i: i64) -> i64 ! {panic} {
+    let x = (i * 2654435761) % 4294967296;
+    let decision = policy.plan_share_admission(policy.ShareAdmissionFacts {
+        envelope_authenticated: x & 1,
+        addressed_to_recipient: (x >> 1) & 1,
+        sender_matches_attribution: (x >> 2) & 1,
+        has_pin: (x >> 3) & 1,
+        signer_matches_pin: (x >> 4) & 1,
+        lineage_matches_pin: (x >> 5) & 1,
+        pinned_revision: (x >> 6) & 7,
+        candidate_revision: (x >> 9) & 7,
+    });
+    policy.decision_code(decision) * 8 + policy.decision_revision(decision)
+}
+
+fn kush_bench(iterations: i64) -> i64 ! {panic} {
+    let mut checksum = 0;
+    let mut i = 0;
+    while i < iterations {
+        checksum = (checksum + decide(i)) % 1000000007;
+        i = i + 1;
+    }
+    checksum
+}
+
+fn now() -> i64 ! {io, panic} {
+    match TIME.monotonic_ns() {
+        Result.Ok(ns) => ns,
+        Result.Err(_) => 0,
+    }
+}
+
+fn iterations() -> i64 ! {io, alloc, panic} {
+    match ENV.arg_count() {
+        Result.Ok(count) => {
+            if count < 2 {
+                return 100000000;
+            }
+            match ENV.arg(1, Bytes.with_capacity(32)) {
+                Result.Ok(bytes) => match text.parse_i64(&bytes) {
+                    Result.Ok(n) => n,
+                    Result.Err(_) => 100000000,
+                },
+                Result.Err(_) => 100000000,
+            }
+        },
+        Result.Err(_) => 100000000,
+    }
+}
+
+fn main() -> i64 ! {io, alloc, panic} {
+    let n = iterations();
+    let t0 = now();
+    let kush = kush_bench(n);
+    let t1 = now();
+    let rust = oracle.rust_bench(n);
+    let t2 = now();
+    print_i64(n);
+    print_i64(kush);
+    print_i64(rust);
+    // Picoseconds per decision, to keep integer output.
+    print_i64((t1 - t0) * 1000 / n);
+    print_i64((t2 - t1) * 1000 / n);
+    if kush == rust { 0 } else { 1 }
+}

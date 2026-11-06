@@ -1,0 +1,10 @@
+[package]
+name = "share_policy"
+version = "0.1.0"
+entry = "src/main.kush"
+test = "tests/main.kush"
+
+# The Rust reference crate is linked only as a differential oracle for tests
+# and the benchmark comparison; the policy itself is Kush.
+[native]
+cargo-manifests = ["oracle/Cargo.toml"]

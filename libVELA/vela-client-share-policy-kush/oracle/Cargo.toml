@@ -1,0 +1,20 @@
+[package]
+name = "vela-share-policy-oracle"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Links the Rust reference policy into the Kush port as a differential test oracle"
+
+[lib]
+name = "vela_share_policy_oracle"
+crate-type = ["staticlib"]
+path = "src/lib.rs"
+
+[dependencies]
+vela-client-share-policy = { path = "../../vela-client-share-policy" }
+
+# Standalone: not a member of any VELA workspace.
+[workspace]
+
+[profile.release]
+panic = "unwind"

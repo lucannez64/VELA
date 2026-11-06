@@ -1,0 +1,588 @@
+module share_policy.policy;
+
+// Client share admission policy, written and proved in Kush.
+//
+// This is a port of `libVELA/vela-client-share-policy` (Rust + hax + F*).
+// It decides whether a received signed envelope may be accepted as a first
+// contact or applied as an update, plus the durable sharing-state decisions.
+//
+// How the proofs work
+// -------------------
+// Kush has no function postconditions. Instead, every value the policy
+// returns is built by a *guarded constructor*: a function whose erased
+// `{ ... }` parameters state exactly when that result is allowed. The
+// compiler discharges those obligations at each call site from the branch
+// facts that reach it, with a linear-arithmetic decision procedure whose
+// Farkas certificates are re-checked independently (crates/kush/src/facts.rs).
+// A return site that is not justified does not compile.
+//
+// * Accepting constructors require the admission condition (the spec).
+// * Rejecting constructors require one *reason*, a conjunction that the
+//   lemmas below prove excludes both admission conditions.
+// Together: whatever `plan_share_admission` returns satisfies
+// `admission_matches_spec` of the Rust crate, for well-formed facts.
+//
+// Lemmas are functions that are never called. Each one compiles only if its
+// hypotheses are contradictory: its body must prove an impossible bound on a
+// variable. They mirror the Rust crate's negative theorems.
+//
+// Encoding (machine-checked proofs need integers)
+// -----------------------------------------------
+// Kush's arithmetic prover works over `i64`, not `Bool` or `u64`, so:
+// * every observation flag is an `i64`: 1 = observed true, 0 = false. Any
+//   other value is malformed and is rejected (fail closed, proved);
+// * revisions are `i64` in `0 ..= i64::MAX` (the Rust crate uses `u64`);
+//   negative values are malformed. `i64::MAX` plays the role of `u64::MAX`.
+
+/// Revisions start at 1. Zero is never a valid revision.
+
+pub fn initial_revision() -> i64 ! {} { 1 }
+
+/// The largest revision / store generation (`u64::MAX` in the Rust crate).
+pub fn max_revision() -> i64 ! {} { 9223372036854775807 }
+
+/// What the client observed about one received envelope (flags are 0 or 1).
+pub struct ShareAdmissionFacts {
+    envelope_authenticated: i64,
+    addressed_to_recipient: i64,
+    sender_matches_attribution: i64,
+    has_pin: i64,
+    signer_matches_pin: i64,
+    lineage_matches_pin: i64,
+    pinned_revision: i64,
+    candidate_revision: i64,
+}
+
+/// What the policy admitted: the revision the caller must record in its pin.
+pub struct SharePinPermit {
+    revision: i64,
+}
+
+pub fn share_permit_revision(permit: SharePinPermit) -> i64 ! {} {
+    permit.revision
+}
+
+pub enum ShareAdmissionDecision {
+    /// Show as a new received share; pin on acceptance.
+    AcceptFirstContact(SharePinPermit),
+    /// Replace the held copy and advance the pin.
+    ApplyUpdate(SharePinPermit),
+    Reject,
+}
+
+/// Decision code used by tests and the benchmark: 0 reject, 1 first
+/// contact, 2 update.
+pub fn decision_code(decision: ShareAdmissionDecision) -> i64 ! {} {
+    match decision {
+        ShareAdmissionDecision.AcceptFirstContact(_) => 1,
+        ShareAdmissionDecision.ApplyUpdate(_) => 2,
+        ShareAdmissionDecision.Reject => 0,
+    }
+}
+
+/// The permit revision, or -1 for a rejection.
+pub fn decision_revision(decision: ShareAdmissionDecision) -> i64 ! {} {
+    match decision {
+        ShareAdmissionDecision.AcceptFirstContact(permit) => share_permit_revision(permit),
+        ShareAdmissionDecision.ApplyUpdate(permit) => share_permit_revision(permit),
+        ShareAdmissionDecision.Reject => -1,
+    }
+}
+
+pub fn is_admitted(decision: ShareAdmissionDecision) -> Bool ! {} {
+    match decision {
+        ShareAdmissionDecision.Reject => false,
+        _ => true,
+    }
+}
+
+// ── Guarded constructors: the specification ────────────────────────────────
+//
+// Parameter order everywhere: authenticated, addressed, sender, has_pin,
+// signer, lineage, pinned, candidate.
+//
+// Well-formed facts (WF): six flags in 0..=1, revisions non-negative.
+// First contact (FC): authenticated, addressed, sender match, no pin, and
+//   candidate >= 1.
+// Update (UP): authenticated, addressed, sender match, pinned, signer and
+//   lineage match the pin, candidate >= 1 and candidate > pinned.
+
+fn accept_first_contact(
+    auth: i64,
+    addr: i64,
+    sender: i64,
+    has_pin: i64,
+    signer: i64,
+    lineage: i64,
+    pinned: i64,
+    cand: i64,
+    erased wf: { 0 <= auth && auth <= 1 && 0 <= addr && addr <= 1 && 0 <= sender && sender <= 1 && 0 <= has_pin && has_pin <= 1 && 0 <= signer && signer <= 1 && 0 <= lineage && lineage <= 1 && 0 <= pinned && 0 <= cand },
+    erased fc: { auth == 1 && addr == 1 && sender == 1 && has_pin == 0 && cand >= 1 },
+) -> ShareAdmissionDecision ! {} {
+    ShareAdmissionDecision.AcceptFirstContact(SharePinPermit { revision: cand })
+}
+
+fn apply_update(
+    auth: i64,
+    addr: i64,
+    sender: i64,
+    has_pin: i64,
+    signer: i64,
+    lineage: i64,
+    pinned: i64,
+    cand: i64,
+    erased wf: { 0 <= auth && auth <= 1 && 0 <= addr && addr <= 1 && 0 <= sender && sender <= 1 && 0 <= has_pin && has_pin <= 1 && 0 <= signer && signer <= 1 && 0 <= lineage && lineage <= 1 && 0 <= pinned && 0 <= cand },
+    erased up: { auth == 1 && addr == 1 && sender == 1 && has_pin == 1 && signer == 1 && lineage == 1 && cand >= 1 && cand >= pinned + 1 },
+) -> ShareAdmissionDecision ! {} {
+    ShareAdmissionDecision.ApplyUpdate(SharePinPermit { revision: cand })
+}
+
+/// A malformed flag or revision (below its range).
+fn reject_malformed_low(value: i64, erased below: { value <= 0 - 1 }) -> ShareAdmissionDecision ! {} {
+    ShareAdmissionDecision.Reject
+}
+
+/// A malformed flag (above 1).
+fn reject_malformed_high(value: i64, erased above: { value >= 2 }) -> ShareAdmissionDecision ! {} {
+    ShareAdmissionDecision.Reject
+}
+
+/// A well-formed rejection: `reason` is one of the conjunctions proved by the
+/// lemmas below to exclude both FC and UP. The caller states which.
+fn reject_unauthenticated(auth: i64, erased reason: { auth == 0 }) -> ShareAdmissionDecision ! {} {
+    ShareAdmissionDecision.Reject
+}
+
+fn reject_misaddressed(addr: i64, erased reason: { addr == 0 }) -> ShareAdmissionDecision ! {} {
+    ShareAdmissionDecision.Reject
+}
+
+fn reject_misattributed(sender: i64, erased reason: { sender == 0 }) -> ShareAdmissionDecision ! {} {
+    ShareAdmissionDecision.Reject
+}
+
+fn reject_revision_zero(cand: i64, erased reason: { cand <= 0 }) -> ShareAdmissionDecision ! {} {
+    ShareAdmissionDecision.Reject
+}
+
+fn reject_foreign_signer(has_pin: i64, signer: i64, erased reason: { has_pin == 1 && signer == 0 }) -> ShareAdmissionDecision ! {} {
+    ShareAdmissionDecision.Reject
+}
+
+fn reject_cross_lineage(has_pin: i64, lineage: i64, erased reason: { has_pin == 1 && lineage == 0 }) -> ShareAdmissionDecision ! {} {
+    ShareAdmissionDecision.Reject
+}
+
+fn reject_stale_revision(has_pin: i64, pinned: i64, cand: i64, erased reason: { has_pin == 1 && cand <= pinned }) -> ShareAdmissionDecision ! {} {
+    ShareAdmissionDecision.Reject
+}
+
+// ── The policy ─────────────────────────────────────────────────────────────
+
+/// Decide what to do with one received envelope. Every return goes through a
+/// guarded constructor, so each one is checked against the specification.
+pub fn plan_share_admission(facts: ShareAdmissionFacts) -> ShareAdmissionDecision ! {} {
+    let auth = facts.envelope_authenticated;
+    let addr = facts.addressed_to_recipient;
+    let sender = facts.sender_matches_attribution;
+    let has_pin = facts.has_pin;
+    let signer = facts.signer_matches_pin;
+    let lineage = facts.lineage_matches_pin;
+    let pinned = facts.pinned_revision;
+    let cand = facts.candidate_revision;
+    // Malformed encodings are rejected first (fail closed).
+    if auth < 0 { return reject_malformed_low(auth, _); }
+    if auth > 1 { return reject_malformed_high(auth, _); }
+    if addr < 0 { return reject_malformed_low(addr, _); }
+    if addr > 1 { return reject_malformed_high(addr, _); }
+    if sender < 0 { return reject_malformed_low(sender, _); }
+    if sender > 1 { return reject_malformed_high(sender, _); }
+    if has_pin < 0 { return reject_malformed_low(has_pin, _); }
+    if has_pin > 1 { return reject_malformed_high(has_pin, _); }
+    if signer < 0 { return reject_malformed_low(signer, _); }
+    if signer > 1 { return reject_malformed_high(signer, _); }
+    if lineage < 0 { return reject_malformed_low(lineage, _); }
+    if lineage > 1 { return reject_malformed_high(lineage, _); }
+    if pinned < 0 { return reject_malformed_low(pinned, _); }
+    if cand < 0 { return reject_malformed_low(cand, _); }
+    // Conditions shared by both paths.
+    if auth <= 0 { return reject_unauthenticated(auth, _); }
+    if addr <= 0 { return reject_misaddressed(addr, _); }
+    if sender <= 0 { return reject_misattributed(sender, _); }
+    if cand <= 0 { return reject_revision_zero(cand, _); }
+    if has_pin <= 0 {
+        return accept_first_contact(auth, addr, sender, has_pin, signer, lineage, pinned, cand, _, _);
+    }
+    // Pinned: only an update by the pinned key, lineage, and a newer revision.
+    if signer <= 0 { return reject_foreign_signer(has_pin, signer, _); }
+    if lineage <= 0 { return reject_cross_lineage(has_pin, lineage, _); }
+    if cand <= pinned { return reject_stale_revision(has_pin, pinned, cand, _); }
+    apply_update(auth, addr, sender, has_pin, signer, lineage, pinned, cand, _, _)
+}
+
+// ── Lemmas: each reject reason excludes both admissions ────────────────────
+//
+// `absurd` can only be called where the facts are contradictory: no `v` is
+// both >= 1 and <= 0. A lemma that type-checks is a checked proof that its
+// erased hypotheses cannot hold together.
+
+fn absurd(v: i64, erased impossible: { v >= 1 && v <= 0 }) -> Unit ! {} {
+    ()
+}
+
+/// FC and UP never hold together: a decision is never ambiguous.
+fn first_contact_and_update_are_exclusive(
+    auth: i64, addr: i64, sender: i64, has_pin: i64, signer: i64, lineage: i64, pinned: i64, cand: i64,
+    erased fc: { auth == 1 && addr == 1 && sender == 1 && has_pin == 0 && cand >= 1 },
+    erased up: { auth == 1 && addr == 1 && sender == 1 && has_pin == 1 && signer == 1 && lineage == 1 && cand >= 1 && cand >= pinned + 1 },
+) -> Unit ! {} {
+    absurd(has_pin, _)
+}
+
+/// Malformed values are never well formed (so never admitted, since both
+/// accepting constructors require WF).
+fn malformed_low_is_not_well_formed(value: i64, erased below: { value <= 0 - 1 }, erased in_range: { 0 <= value }) -> Unit ! {} {
+    absurd(value, _)
+}
+
+fn malformed_high_is_not_well_formed(value: i64, erased above: { value >= 2 }, erased in_range: { value <= 1 }) -> Unit ! {} {
+    absurd(value, _)
+}
+
+/// Rust `unauthenticated_share_can_be_admitted`: never as first contact...
+fn unauthenticated_share_cannot_be_first_contact(
+    auth: i64, addr: i64, sender: i64, has_pin: i64, cand: i64,
+    erased reason: { auth == 0 },
+    erased fc: { auth == 1 && addr == 1 && sender == 1 && has_pin == 0 && cand >= 1 },
+) -> Unit ! {} {
+    absurd(auth, _)
+}
+
+/// ...and never as an update.
+fn unauthenticated_share_cannot_be_update(
+    auth: i64, addr: i64, sender: i64, has_pin: i64, signer: i64, lineage: i64, pinned: i64, cand: i64,
+    erased reason: { auth == 0 },
+    erased up: { auth == 1 && addr == 1 && sender == 1 && has_pin == 1 && signer == 1 && lineage == 1 && cand >= 1 && cand >= pinned + 1 },
+) -> Unit ! {} {
+    absurd(auth, _)
+}
+
+/// Rust `misaddressed_share_can_be_admitted`.
+fn misaddressed_share_cannot_be_first_contact(
+    auth: i64, addr: i64, sender: i64, has_pin: i64, cand: i64,
+    erased reason: { addr == 0 },
+    erased fc: { auth == 1 && addr == 1 && sender == 1 && has_pin == 0 && cand >= 1 },
+) -> Unit ! {} {
+    absurd(addr, _)
+}
+
+fn misaddressed_share_cannot_be_update(
+    auth: i64, addr: i64, sender: i64, has_pin: i64, signer: i64, lineage: i64, pinned: i64, cand: i64,
+    erased reason: { addr == 0 },
+    erased up: { auth == 1 && addr == 1 && sender == 1 && has_pin == 1 && signer == 1 && lineage == 1 && cand >= 1 && cand >= pinned + 1 },
+) -> Unit ! {} {
+    absurd(addr, _)
+}
+
+/// Rust `misattributed_share_can_be_admitted`.
+fn misattributed_share_cannot_be_first_contact(
+    auth: i64, addr: i64, sender: i64, has_pin: i64, cand: i64,
+    erased reason: { sender == 0 },
+    erased fc: { auth == 1 && addr == 1 && sender == 1 && has_pin == 0 && cand >= 1 },
+) -> Unit ! {} {
+    absurd(sender, _)
+}
+
+fn misattributed_share_cannot_be_update(
+    auth: i64, addr: i64, sender: i64, has_pin: i64, signer: i64, lineage: i64, pinned: i64, cand: i64,
+    erased reason: { sender == 0 },
+    erased up: { auth == 1 && addr == 1 && sender == 1 && has_pin == 1 && signer == 1 && lineage == 1 && cand >= 1 && cand >= pinned + 1 },
+) -> Unit ! {} {
+    absurd(sender, _)
+}
+
+/// Revision zero (or below) is never admitted.
+fn revision_zero_cannot_be_first_contact(
+    auth: i64, addr: i64, sender: i64, has_pin: i64, cand: i64,
+    erased reason: { cand <= 0 },
+    erased fc: { auth == 1 && addr == 1 && sender == 1 && has_pin == 0 && cand >= 1 },
+) -> Unit ! {} {
+    absurd(cand, _)
+}
+
+fn revision_zero_cannot_be_update(
+    auth: i64, addr: i64, sender: i64, has_pin: i64, signer: i64, lineage: i64, pinned: i64, cand: i64,
+    erased reason: { cand <= 0 },
+    erased up: { auth == 1 && addr == 1 && sender == 1 && has_pin == 1 && signer == 1 && lineage == 1 && cand >= 1 && cand >= pinned + 1 },
+) -> Unit ! {} {
+    absurd(cand, _)
+}
+
+/// Rust `foreign_signer_update_can_be_applied`: never applied, and a pinned
+/// share is never a first contact either.
+fn foreign_signer_update_cannot_be_applied(
+    auth: i64, addr: i64, sender: i64, has_pin: i64, signer: i64, lineage: i64, pinned: i64, cand: i64,
+    erased reason: { has_pin == 1 && signer == 0 },
+    erased up: { auth == 1 && addr == 1 && sender == 1 && has_pin == 1 && signer == 1 && lineage == 1 && cand >= 1 && cand >= pinned + 1 },
+) -> Unit ! {} {
+    absurd(signer, _)
+}
+
+/// Rust `cross_lineage_update_can_be_applied`.
+fn cross_lineage_update_cannot_be_applied(
+    auth: i64, addr: i64, sender: i64, has_pin: i64, signer: i64, lineage: i64, pinned: i64, cand: i64,
+    erased reason: { has_pin == 1 && lineage == 0 },
+    erased up: { auth == 1 && addr == 1 && sender == 1 && has_pin == 1 && signer == 1 && lineage == 1 && cand >= 1 && cand >= pinned + 1 },
+) -> Unit ! {} {
+    absurd(lineage, _)
+}
+
+/// Rust `stale_revision_update_can_be_applied`: a replayed or older revision
+/// is never applied.
+fn stale_revision_update_cannot_be_applied(
+    auth: i64, addr: i64, sender: i64, has_pin: i64, signer: i64, lineage: i64, pinned: i64, cand: i64,
+    erased reason: { has_pin == 1 && cand <= pinned },
+    erased up: { auth == 1 && addr == 1 && sender == 1 && has_pin == 1 && signer == 1 && lineage == 1 && cand >= 1 && cand >= pinned + 1 },
+) -> Unit ! {} {
+    absurd(cand, _)
+}
+
+/// Rust `pinned_share_can_restart_as_first_contact`: the three pinned-path
+/// reasons (and any pin at all) exclude a first contact.
+fn pinned_share_cannot_restart_as_first_contact(
+    auth: i64, addr: i64, sender: i64, has_pin: i64, cand: i64,
+    erased pinned: { has_pin == 1 },
+    erased fc: { auth == 1 && addr == 1 && sender == 1 && has_pin == 0 && cand >= 1 },
+) -> Unit ! {} {
+    absurd(has_pin, _)
+}
+
+// ── Durable sharing state decisions ─────────────────────────────────────────
+//
+// Same pattern: flags are 0/1 (malformed values are refused first), each
+// accepting result requires its spec, and each refusal names a reason that a
+// lemma proves excludes the spec.
+
+/// A malformed flag or counter: below its range...
+fn bool_malformed_low(value: i64, erased below: { value <= 0 - 1 }) -> Bool ! {} { false }
+
+/// ...or a flag above 1.
+fn bool_malformed_high(value: i64, erased above: { value >= 2 }) -> Bool ! {} { false }
+
+/// `!accepted && !has_pin && has_payload`.
+fn acceptance_authorized(
+    accepted: i64, has_pin: i64, has_payload: i64,
+    erased spec: { accepted == 0 && has_pin == 0 && has_payload == 1 },
+) -> Bool ! {} {
+    true
+}
+
+fn acceptance_already_accepted(accepted: i64, erased reason: { accepted == 1 }) -> Bool ! {} { false }
+
+fn acceptance_pinned(has_pin: i64, erased reason: { has_pin == 1 }) -> Bool ! {} { false }
+
+fn acceptance_without_payload(has_payload: i64, erased reason: { has_payload == 0 }) -> Bool ! {} { false }
+
+pub fn initial_acceptance_is_authorized(accepted: i64, has_pin: i64, has_payload: i64) -> Bool ! {} {
+    if accepted < 0 { return bool_malformed_low(accepted, _); }
+    if accepted > 1 { return bool_malformed_high(accepted, _); }
+    if has_pin < 0 { return bool_malformed_low(has_pin, _); }
+    if has_pin > 1 { return bool_malformed_high(has_pin, _); }
+    if has_payload < 0 { return bool_malformed_low(has_payload, _); }
+    if has_payload > 1 { return bool_malformed_high(has_payload, _); }
+    if accepted >= 1 { return acceptance_already_accepted(accepted, _); }
+    if has_pin >= 1 { return acceptance_pinned(has_pin, _); }
+    if has_payload <= 0 { return acceptance_without_payload(has_payload, _); }
+    acceptance_authorized(accepted, has_pin, has_payload, _)
+}
+
+fn already_accepted_cannot_restart_acceptance(
+    accepted: i64, has_pin: i64, has_payload: i64,
+    erased reason: { accepted == 1 },
+    erased spec: { accepted == 0 && has_pin == 0 && has_payload == 1 },
+) -> Unit ! {} {
+    absurd(accepted, _)
+}
+
+/// Rust `existing_pin_can_restart_acceptance`.
+fn existing_pin_cannot_restart_acceptance(
+    accepted: i64, has_pin: i64, has_payload: i64,
+    erased reason: { has_pin == 1 },
+    erased spec: { accepted == 0 && has_pin == 0 && has_payload == 1 },
+) -> Unit ! {} {
+    absurd(has_pin, _)
+}
+
+/// Rust `missing_payload_can_be_accepted`.
+fn missing_payload_cannot_be_accepted(
+    accepted: i64, has_pin: i64, has_payload: i64,
+    erased reason: { has_payload == 0 },
+    erased spec: { accepted == 0 && has_pin == 0 && has_payload == 1 },
+) -> Unit ! {} {
+    absurd(has_payload, _)
+}
+
+/// The result of `next_store_generation`: the next generation, or none.
+pub enum NextGeneration {
+    Next(i64),
+    Refused,
+}
+
+/// Spec of `Some(next)`: same snapshot, nothing pending, not exhausted, and
+/// `next = current + 1`. The precondition shows the addition cannot
+/// overflow, but Kush still emits its checked addition (hence `panic`).
+fn generation_advances(
+    current: i64, snapshot: i64, pending: i64,
+    erased spec: { current == snapshot && pending == 0 && 0 <= current && current <= 9223372036854775806 },
+) -> NextGeneration ! {panic} {
+    NextGeneration.Next(current + 1)
+}
+
+fn generation_malformed(value: i64, erased below: { value <= 0 - 1 }) -> NextGeneration ! {} {
+    NextGeneration.Refused
+}
+
+fn generation_malformed_high(value: i64, erased above: { value >= 2 }) -> NextGeneration ! {} {
+    NextGeneration.Refused
+}
+
+fn generation_stale_snapshot(current: i64, snapshot: i64, erased reason: { current >= snapshot + 1 }) -> NextGeneration ! {} {
+    NextGeneration.Refused
+}
+
+fn generation_older_snapshot(current: i64, snapshot: i64, erased reason: { snapshot >= current + 1 }) -> NextGeneration ! {} {
+    NextGeneration.Refused
+}
+
+fn generation_pending(pending: i64, erased reason: { pending == 1 }) -> NextGeneration ! {} {
+    NextGeneration.Refused
+}
+
+fn generation_exhausted(current: i64, erased reason: { current >= 9223372036854775807 }) -> NextGeneration ! {} {
+    NextGeneration.Refused
+}
+
+pub fn next_store_generation(current: i64, snapshot: i64, pending: i64) -> NextGeneration ! {panic} {
+    if current < 0 { return generation_malformed(current, _); }
+    if pending < 0 { return generation_malformed(pending, _); }
+    if pending > 1 { return generation_malformed_high(pending, _); }
+    if current > snapshot { return generation_stale_snapshot(current, snapshot, _); }
+    if current < snapshot { return generation_older_snapshot(current, snapshot, _); }
+    if pending >= 1 { return generation_pending(pending, _); }
+    if current >= 9223372036854775807 { return generation_exhausted(current, _); }
+    generation_advances(current, snapshot, pending, _)
+}
+
+pub fn generation_code(result: NextGeneration) -> i64 ! {} {
+    match result {
+        NextGeneration.Next(next) => next,
+        NextGeneration.Refused => -1,
+    }
+}
+
+/// Rust `stale_snapshot_can_commit`: a mismatched snapshot never advances.
+fn stale_snapshot_cannot_commit(
+    current: i64, snapshot: i64, pending: i64,
+    erased reason: { current >= snapshot + 1 },
+    erased spec: { current == snapshot && pending == 0 && 0 <= current && current <= 9223372036854775806 },
+) -> Unit ! {} {
+    absurd(current, _)
+}
+
+fn older_snapshot_cannot_commit(
+    current: i64, snapshot: i64, pending: i64,
+    erased reason: { snapshot >= current + 1 },
+    erased spec: { current == snapshot && pending == 0 && 0 <= current && current <= 9223372036854775806 },
+) -> Unit ! {} {
+    absurd(snapshot, _)
+}
+
+/// Rust `pending_commit_can_be_overwritten`.
+fn pending_commit_cannot_be_overwritten(
+    current: i64, snapshot: i64, pending: i64,
+    erased reason: { pending == 1 },
+    erased spec: { current == snapshot && pending == 0 && 0 <= current && current <= 9223372036854775806 },
+) -> Unit ! {} {
+    absurd(pending, _)
+}
+
+/// Rust `exhausted_generation_can_commit`.
+fn exhausted_generation_cannot_commit(
+    current: i64, snapshot: i64, pending: i64,
+    erased reason: { current >= 9223372036854775807 },
+    erased spec: { current == snapshot && pending == 0 && 0 <= current && current <= 9223372036854775806 },
+) -> Unit ! {} {
+    absurd(current, _)
+}
+
+/// `matches_before && (current_present || !tombstoned)`. The disjunction is
+/// two accepting constructors.
+fn recovery_applies_present(
+    matches_before: i64, current_present: i64, tombstoned: i64,
+    erased spec: { matches_before == 1 && current_present == 1 && 0 <= tombstoned && tombstoned <= 1 },
+) -> Bool ! {} {
+    true
+}
+
+fn recovery_applies_live(
+    matches_before: i64, current_present: i64, tombstoned: i64,
+    erased spec: { matches_before == 1 && 0 <= current_present && current_present <= 1 && tombstoned == 0 },
+) -> Bool ! {} {
+    true
+}
+
+fn recovery_local_edit(matches_before: i64, erased reason: { matches_before == 0 }) -> Bool ! {} { false }
+
+fn recovery_deleted(current_present: i64, tombstoned: i64, erased reason: { current_present == 0 && tombstoned == 1 }) -> Bool ! {} {
+    false
+}
+
+pub fn recovery_should_apply(matches_before: i64, current_present: i64, tombstoned: i64) -> Bool ! {} {
+    if matches_before < 0 { return bool_malformed_low(matches_before, _); }
+    if matches_before > 1 { return bool_malformed_high(matches_before, _); }
+    if current_present < 0 { return bool_malformed_low(current_present, _); }
+    if current_present > 1 { return bool_malformed_high(current_present, _); }
+    if tombstoned < 0 { return bool_malformed_low(tombstoned, _); }
+    if tombstoned > 1 { return bool_malformed_high(tombstoned, _); }
+    if matches_before <= 0 { return recovery_local_edit(matches_before, _); }
+    if current_present >= 1 {
+        return recovery_applies_present(matches_before, current_present, tombstoned, _);
+    }
+    if tombstoned >= 1 { return recovery_deleted(current_present, tombstoned, _); }
+    recovery_applies_live(matches_before, current_present, tombstoned, _)
+}
+
+/// Rust `local_edit_can_be_overwritten`: both accepting cases need
+/// `matches_before == 1`.
+fn local_edit_cannot_be_overwritten_present(
+    matches_before: i64, current_present: i64, tombstoned: i64,
+    erased reason: { matches_before == 0 },
+    erased spec: { matches_before == 1 && current_present == 1 && 0 <= tombstoned && tombstoned <= 1 },
+) -> Unit ! {} {
+    absurd(matches_before, _)
+}
+
+fn local_edit_cannot_be_overwritten_live(
+    matches_before: i64, current_present: i64, tombstoned: i64,
+    erased reason: { matches_before == 0 },
+    erased spec: { matches_before == 1 && 0 <= current_present && current_present <= 1 && tombstoned == 0 },
+) -> Unit ! {} {
+    absurd(matches_before, _)
+}
+
+/// Rust `deleted_item_can_be_restored`.
+fn deleted_item_cannot_be_restored_present(
+    matches_before: i64, current_present: i64, tombstoned: i64,
+    erased reason: { current_present == 0 && tombstoned == 1 },
+    erased spec: { matches_before == 1 && current_present == 1 && 0 <= tombstoned && tombstoned <= 1 },
+) -> Unit ! {} {
+    absurd(current_present, _)
+}
+
+fn deleted_item_cannot_be_restored_live(
+    matches_before: i64, current_present: i64, tombstoned: i64,
+    erased reason: { current_present == 0 && tombstoned == 1 },
+    erased spec: { matches_before == 1 && 0 <= current_present && current_present <= 1 && tombstoned == 0 },
+) -> Unit ! {} {
+    absurd(tombstoned, _)
+}

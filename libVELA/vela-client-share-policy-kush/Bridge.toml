@@ -1,0 +1,76 @@
+[adapter]
+module = "share_policy.oracle"
+rust-output = "oracle/src/ffi.rs"
+kush-output = "src/oracle.kush"
+
+[[function]]
+name = "rust_plan_code"
+symbol = "vela_oracle_plan_code"
+rust-path = "crate::bridge::plan_code"
+parameters = [
+    { name = "auth", type = "bool" },
+    { name = "addr", type = "bool" },
+    { name = "sender", type = "bool" },
+    { name = "has_pin", type = "bool" },
+    { name = "signer", type = "bool" },
+    { name = "lineage", type = "bool" },
+    { name = "pinned", type = "u64" },
+    { name = "cand", type = "u64" },
+]
+result = "i64"
+
+[[function]]
+name = "rust_plan_revision"
+symbol = "vela_oracle_plan_revision"
+rust-path = "crate::bridge::plan_revision"
+parameters = [
+    { name = "auth", type = "bool" },
+    { name = "addr", type = "bool" },
+    { name = "sender", type = "bool" },
+    { name = "has_pin", type = "bool" },
+    { name = "signer", type = "bool" },
+    { name = "lineage", type = "bool" },
+    { name = "pinned", type = "u64" },
+    { name = "cand", type = "u64" },
+]
+result = "i64"
+
+[[function]]
+name = "rust_next_generation"
+symbol = "vela_oracle_next_generation"
+rust-path = "crate::bridge::next_generation"
+parameters = [
+    { name = "current", type = "u64" },
+    { name = "snapshot", type = "u64" },
+    { name = "pending", type = "bool" },
+]
+result = "i64"
+
+[[function]]
+name = "rust_recovery"
+symbol = "vela_oracle_recovery"
+rust-path = "crate::bridge::recovery"
+parameters = [
+    { name = "matches_before", type = "bool" },
+    { name = "current_present", type = "bool" },
+    { name = "tombstoned", type = "bool" },
+]
+result = "bool"
+
+[[function]]
+name = "rust_acceptance"
+symbol = "vela_oracle_acceptance"
+rust-path = "crate::bridge::acceptance"
+parameters = [
+    { name = "accepted", type = "bool" },
+    { name = "has_pin", type = "bool" },
+    { name = "has_payload", type = "bool" },
+]
+result = "bool"
+
+[[function]]
+name = "rust_bench"
+symbol = "vela_oracle_bench"
+rust-path = "crate::bridge::bench"
+parameters = [{ name = "iterations", type = "i64" }]
+result = "i64"
