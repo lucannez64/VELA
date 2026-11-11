@@ -82,12 +82,12 @@ jobs:
         if: ${{ env.HOOK != '' }}
         run: |
           if [ -n "$TOKEN" ]; then
-            CODE=$(curl -sS -o /tmp/coolify.out -w '%{http_code}' -X GET \
+            CODE=$(curl -sS -o /tmp/coolify.out -w '%{http_code}' -X POST \
               -H "Authorization: Bearer $TOKEN" \
               -H "X-Deploy-Secret: $DEPLOY_SECRET" \
               "$HOOK")
           else
-            CODE=$(curl -sS -o /tmp/coolify.out -w '%{http_code}' -X GET \
+            CODE=$(curl -sS -o /tmp/coolify.out -w '%{http_code}' -X POST \
               -H "X-Deploy-Secret: $DEPLOY_SECRET" \
               "$HOOK")
           fi
