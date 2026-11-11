@@ -1,0 +1,35 @@
+Pairing driver increment counts
+
+Extraction (proofs/fstar/extraction-pairing-driver/)
+  F* modules ........................................ 2 (root + Pairing_driver)
+  extracted Rust functions with contracts .......... 30
+    selected entry points .......................... 19
+    private decisions pulled in .................... 11
+  postconditions (ensures) ......................... 30
+  preconditions (requires) ......................... 24
+
+Per-request proof (proofs/fstar/pairing-driver-lemmas/)
+  `Lemma` declarations / lemma statements .......... 43
+  recursive definitions ............................ 15
+  headline theorems ................................ 4
+    invitation_trace_theorem, claim_trace_theorem,
+    completion_trace_theorem, result_trace_theorem
+
+Composition proof (proofs/fstar/pairing-driver-composition/)
+  `Lemma` declarations / lemma statements .......... 67
+  recursive definitions ............................ 13
+  actions in the schedule alphabet ................. 12
+  headline theorem ................................. 1
+    pairing_composition_theorem
+  named consequences ............................... 6
+  witness schedules ................................ 6
+  non-vacuity `_ok` witnesses ...................... 16
+
+Rust
+  new driver unit tests ............................ 11
+  crate lib tests (total) .......................... 13
+  crate integration tests (fact_construction) ...... 5
+
+Mutation checks
+  mutants of the extracted driver .................. 6
+  mutants rejected ................................. 6

@@ -1,0 +1,91 @@
+F* 2025.10.06
+platform=Linux_x86_64
+compiler=OCaml 4.14.2
+date=2025-10-06 12:00:42 -0700
+commit=7b347386330d0e5a331a220535b6f15288903234
+rustc: rustc 1.101.0-nightly (e9bbadf68 2026-10-12)
+cargo hax: hax  version=0.3.7 commit=unknown 
+   Compiling vela-enrollment-policy v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-74511b52/serverVELA/vela-enrollment-policy)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.31s
+     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-74511b52/target-own/debug/build/vela-enrollment-policy/4867041615cc08d8/out/vela_enrollment_policy-4867041615cc08d8)
+
+running 26 tests
+test enroll_driver::tests::a_rejected_challenge_never_reaches_the_insert ... ok
+test enroll_driver::tests::an_ambiguous_insert_error_is_terminal_and_restores_nothing ... ok
+test enroll_driver::tests::every_pre_insert_failure_spends_the_challenge_and_stops ... ok
+test enroll_driver::tests::every_sound_device_stage_observation_is_sound ... ok
+test enroll_driver::tests::happy_path_inserts_after_every_approval ... ok
+test enroll_driver::tests::out_of_order_events_are_ignored ... ok
+test enroll_interpreter::tests::a_rejected_challenge_performs_nothing_else ... ok
+test enroll_interpreter::tests::an_ambiguous_insert_error_is_terminal ... ok
+test enroll_interpreter::tests::interpreter_performs_exactly_the_driver_effects_for_every_outcome ... ok
+test pairing_driver::tests::a_completion_is_signed_bound_and_taken_once ... ok
+test pairing_driver::tests::a_completion_needs_the_stored_claim_and_the_opener_signature ... ok
+test pairing_driver::tests::a_replayed_package_fetch_returns_nothing ... ok
+test pairing_driver::tests::a_take_mismatch_restores_and_never_inserts ... ok
+test pairing_driver::tests::an_ambiguous_insert_error_consumes_the_ceremony ... ok
+test pairing_driver::tests::an_insert_failure_never_claims_a_recorded_result ... ok
+test pairing_driver::tests::bfs_reachable_states_preserve_the_invariant ... ok
+test pairing_driver::tests::claim_rejection_is_exactly_the_policy_refusal ... ok
+test pairing_driver::tests::claim_rejection_precedence_is_historical ... ok
+test pairing_driver::tests::every_sound_state_times_event_is_total_and_sound ... ok
+test pairing_driver::tests::out_of_order_events_are_inert ... ok
+test pairing_interpreter::tests::a_completion_take_mismatch_restores_and_stops ... ok
+test pairing_interpreter::tests::a_terminal_begin_performs_nothing ... ok
+test pairing_interpreter::tests::an_ambiguous_insert_error_consumes_the_ceremony ... ok
+test pairing_interpreter::tests::interpreter_performs_exactly_the_driver_effects_for_every_outcome ... ok
+test tests::completion_requires_every_binding ... ok
+test tests::result_requires_the_claimed_private_key ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 5 tests
+test claim_facts_are_exactly_the_grant_store_and_lengths ... ok
+test completion_facts_are_exactly_the_store_sql_epoch_and_signature_observations ... ok
+test inspect_facts_are_exactly_the_claim_and_session_bindings ... ok
+test open_facts_are_exactly_the_session_observations ... ok
+test result_facts_are_exactly_the_store_key_and_signature_observations ... ok
+     Running tests/fact_construction.rs (/home/hirew/.t3/worktrees/VELA/t3-74511b52/target-own/debug/build/vela-enrollment-policy/46dffc16dc02f030/out/fact_construction-46dffc16dc02f030)
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests vela_enrollment_policy
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Checking vela-enrollment-policy v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-74511b52/serverVELA/vela-enrollment-policy)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.35s
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-enroll-driver/Vela_enrollment_policy.Enroll_driver.fst[0m
+Driver source policy: 1 extracted modules, 1 proof modules; no unreviewed escapes/options
+F* enrollment-driver lemma argv: --cmi --cache_off --warn_error -331 --z3version 4.13.3 --already_cached +Prims+FStar+LowStar+C+Spec.Loops+TestLib --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/core --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proofs/fstar/extraction --include proofs/fstar/extraction-enroll-driver --z3rlimit 16000 --include proofs/fstar/enroll-driver-lemmas proofs/fstar/extraction-enroll-driver/Vela_enrollment_policy.Enroll_driver.fst proofs/fstar/enroll-driver-lemmas/Vela_enrollment_policy_enroll_driver_lemmas.fst
+* Warning 271 at /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+Verified module: Vela_enrollment_policy.Enroll_driver
+Verified module: Vela_enrollment_policy_enroll_driver_lemmas
+All verification conditions discharged successfully
+enrollment driver: one consumed enroll-purpose challenge, approving device checks, verified new-key signature, active rekey permit and guarded insert per request
+enrollment trace: at most one insert effect per challenge; success implies the insert; an ambiguous insert error is terminal and restores nothing
+d4b9b81f02632fbd06c09677b336c37c9104d9d72250d904b761a744d8fafa03  proofs/fstar/extraction-enroll-driver/Vela_enrollment_policy.Enroll_driver.fst
+45f32ac1e3998f5c49e816cf70d51b0028f9d03285cf49f443ef317de55e943b  proofs/fstar/enroll-driver-lemmas/Vela_enrollment_policy_enroll_driver_lemmas.fst
+a1a64135a80460065a12dd9bd4f606cc2d058aa05639854797f44534d7dec3d0  src/enroll_driver.rs

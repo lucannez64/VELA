@@ -1,0 +1,144 @@
+warning: unused field `edition` in `workspace.package`
+  --> Cargo.toml:10:1
+   |
+10 | edition = "2021"
+   | ^^^^^^^
+   |
+   = note: `cargo::unused_workspace_package_fields` is set to `warn` by default
+help: consider removing the field `workspace.package.edition`
+warning: workspace (manifest) generated 1 warning
+   Compiling vela-desktop-core v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-700776df/desktopVELA/vela-desktop-core)
+warning: unused import: `ImportedEntry`
+   --> vela-desktop-core/src/commands/vault.rs:796:36
+    |
+796 |     use crate::import::{EntryKind, ImportedEntry};
+    |                                    ^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: duplicated attribute
+    --> vela-desktop-core/src/commands/vault.rs:1939:5
+     |
+1939 |     #[test]
+     |     ^^^^^^^
+     |
+     = note: `#[warn(duplicate_macro_attributes)]` on by default
+
+warning: unused import: `is_provider`
+   --> vela-desktop-core/src/ipc.rs:136:43
+    |
+136 |     use crate::ipc_gate::{authorize_host, is_provider, OsProcessTable};
+    |                                           ^^^^^^^^^^^
+
+warning: unused imports: `Arc` and `Mutex`
+  --> vela-desktop-core/src/js_login.rs:45:17
+   |
+45 | use std::sync::{Arc, Mutex};
+   |                 ^^^  ^^^^^
+
+warning: unused variable: `autofill_source`
+   --> vela-desktop-core/src/ipc.rs:436:13
+    |
+436 |         let autofill_source = (
+    |             ^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_autofill_source`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `browser_cookies`
+   --> vela-desktop-core/src/login.rs:514:9
+    |
+514 |     let browser_cookies: &[crate::login::BrowserCookie] = request
+    |         ^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_browser_cookies`
+
+warning: type `RateLimitState` is more private than the item `AppState::rate_limiter`
+   --> vela-desktop-core/src/lib.rs:107:5
+    |
+107 |     pub rate_limiter: RwLock<HashMap<String, RateLimitState>>,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ field `AppState::rate_limiter` is reachable at visibility `pub`
+    |
+note: but type `RateLimitState` is only usable at visibility `pub(crate)`
+   --> vela-desktop-core/src/lib.rs:365:1
+    |
+365 | struct RateLimitState {
+    | ^^^^^^^^^^^^^^^^^^^^^
+    = note: `#[warn(private_interfaces)]` on by default
+
+warning: constant `PASSWORD_CREDENTIAL_NAME` is never used
+ --> vela-desktop-core/src/biometric.rs:8:7
+  |
+8 | const PASSWORD_CREDENTIAL_NAME: &str = "VELA_RMS_PASSWORD";
+  |       ^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `unsupported_total` is never used
+    --> vela-desktop-core/src/commands/vault.rs:1066:4
+     |
+1066 | fn unsupported_total(unsupported: &[String]) -> u32 {
+     |    ^^^^^^^^^^^^^^^^^
+
+warning: constant `REKEY_CAPSULE_V1_MAGIC` is never used
+   --> vela-desktop-core/src/crypto.rs:157:7
+    |
+157 | const REKEY_CAPSULE_V1_MAGIC: &[u8] = b"vela rekey capsule v1\0";
+    |       ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `REKEY_CAPSULE_BINDING_CONTEXT` is never used
+   --> vela-desktop-core/src/crypto.rs:158:7
+    |
+158 | const REKEY_CAPSULE_BINDING_CONTEXT: &str = "vela rekey capsule binding v1";
+    |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `TPM_PERSISTENT_HANDLE` is never used
+   --> vela-desktop-core/src/device.rs:515:11
+    |
+515 |     const TPM_PERSISTENT_HANDLE: &str = "0x81000001";
+    |           ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `first_uri` is never used
+   --> vela-desktop-core/src/import.rs:451:4
+    |
+451 | fn first_uri(login: &Value) -> String {
+    |    ^^^^^^^^^
+
+warning: constant `SCRIPT_STEP_LIMIT` is never used
+  --> vela-desktop-core/src/js_login.rs:58:7
+   |
+58 | const SCRIPT_STEP_LIMIT: usize = 2_000_000;
+   |       ^^^^^^^^^^^^^^^^^
+
+warning: function `inline_scripts` is never used
+   --> vela-desktop-core/src/js_login.rs:442:4
+    |
+442 | fn inline_scripts(html: &str) -> Vec<String> {
+    |    ^^^^^^^^^^^^^^
+
+warning: function `page` is never used
+ --> vela-desktop-core/src/js_login/tests.rs:9:4
+  |
+9 | fn page(script: &str) -> String {
+  |    ^^^^
+
+warning: constant `EMAIL_CODE` is never used
+   --> vela-desktop-core/src/login/recipe.rs:435:15
+    |
+435 |     pub const EMAIL_CODE: u64 = 1;
+    |               ^^^^^^^^^^
+
+warning: constant `EMAIL_CONFIRMATION` is never used
+   --> vela-desktop-core/src/login/recipe.rs:438:15
+    |
+438 |     pub const EMAIL_CONFIRMATION: u64 = 4;
+    |               ^^^^^^^^^^^^^^^^^^
+
+warning: `vela-desktop-core` (lib test) generated 18 warnings (run `cargo fix --lib -p vela-desktop-core --tests` to apply 5 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.78s
+     Running unittests src/lib.rs (target/debug/build/vela-desktop-core/60b79f989487b7bf/out/vela_desktop_core-60b79f989487b7bf)
+
+running 3 tests
+test sharing::assurance_boundary_review::witness_crash_between_vault_and_pin_writes_leaves_old_pin ... ok
+test sharing::assurance_boundary_review::witness_reaccept_replaces_existing_signer_pin ... ok
+test sharing::assurance_boundary_review::witness_stale_snapshot_can_overwrite_a_newer_pin ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 459 filtered out; finished in 0.04s
+

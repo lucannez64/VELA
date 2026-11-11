@@ -1,0 +1,17 @@
+--- a/desktopVELA/vela-desktop-core/src/sync.rs
++++ b/desktopVELA/vela-desktop-core/src/sync.rs
+@@ -522,11 +522,12 @@
+     sealed_open_succeeded: bool,
+     key_epoch: i64,
+ ) -> vela_sync_policy::ChunkDownloadFacts {
++    let _ = (sealed_open_succeeded, key_epoch);
+     vela_sync_policy::ChunkDownloadFacts {
+         server_lamport,
+         last_seen_lamport,
+-        aad_binding_verified: sealed_open_succeeded,
+-        key_epoch_positive: key_epoch >= vela_sync_policy::INITIAL_EPOCH,
++        aad_binding_verified: true,
++        key_epoch_positive: true,
+     }
+ }
+ 

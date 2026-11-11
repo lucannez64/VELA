@@ -1,0 +1,11 @@
+--- /tmp/vela-f2-cancel-mut/share/pristine.fst	2026-10-27 22:19:01.405112796 +0100
++++ serverVELA/vela-share-policy/proofs/fstar/extraction-driver/Vela_share_policy.Driver.fst	2026-10-27 22:19:01.416778576 +0100
+@@ -743,7 +743,7 @@
+   | ShareRequestKind_UpdateLinkedItem  ->
+     if changed
+     then
+-      transition ({ driver with f_stage = ShareStage_Done <: t_ShareStage; f_committed = true }
++      transition ({ driver with f_stage = ShareStage_Done <: t_ShareStage; f_committed = true; f_revoked = true }
+           <:
+           t_ShareDriver)
+         (ShareEffect_Complete <: t_ShareEffect)

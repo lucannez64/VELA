@@ -1,0 +1,15 @@
+SwiftCompile normal arm64 Compiling\ RichItemsTests.swift,\ SyncAdmissionModelTests.swift,\ VaultEventStreamTests.swift,\ VaultRepositoryTests.swift /Users/runner/work/VELA/VELA/iosVELA/Tests/RichItemsTests.swift /Users/runner/work/VELA/VELA/iosVELA/Tests/SyncAdmissionModelTests.swift /Users/runner/work/VELA/VELA/iosVELA/Tests/VaultEventStreamTests.swift /Users/runner/work/VELA/VELA/iosVELA/Tests/VaultRepositoryTests.swift (in target 'VELATests' from project 'VELA')
+SwiftCompile normal arm64 /Users/runner/work/VELA/VELA/iosVELA/Tests/SyncAdmissionModelTests.swift (in target 'VELATests' from project 'VELA')
+SwiftDriverJobDiscovery normal arm64 Compiling RichItemsTests.swift, SyncAdmissionModelTests.swift, VaultEventStreamTests.swift, VaultRepositoryTests.swift (in target 'VELATests' from project 'VELA')
+Test Suite 'SyncAdmissionModelTests' started at 2026-10-25 02:19:06.371.
+Test Case '-[VELATests.SyncAdmissionModelTests testAdmissionKernelBoundaryGridMatchesIndependentPredicate]' started.
+Test Case '-[VELATests.SyncAdmissionModelTests testAdmissionKernelBoundaryGridMatchesIndependentPredicate]' passed (0.013 seconds).
+Test Case '-[VELATests.SyncAdmissionModelTests testBoundedExhaustiveSequencesUpToDepthThreeConform]' started.
+Test Case '-[VELATests.SyncAdmissionModelTests testBoundedExhaustiveSequencesUpToDepthThreeConform]' passed (8.310 seconds).
+Test Case '-[VELATests.SyncAdmissionModelTests testEpochJumpOfferIsRefusedAndNoNamespaceMoves]' started.
+Test Case '-[VELATests.SyncAdmissionModelTests testEpochJumpOfferIsRefusedAndNoNamespaceMoves]' passed (0.006 seconds).
+Test Case '-[VELATests.SyncAdmissionModelTests testRefusedDownloadsLeaveNonEmptyLocalVaultIntact]' started.
+Test Case '-[VELATests.SyncAdmissionModelTests testRefusedDownloadsLeaveNonEmptyLocalVaultIntact]' passed (0.010 seconds).
+Test Case '-[VELATests.SyncAdmissionModelTests testRollbackRefusedFloorNeverDecreasesAndReplayStaysAdmitted]' started.
+Test Case '-[VELATests.SyncAdmissionModelTests testRollbackRefusedFloorNeverDecreasesAndReplayStaysAdmitted]' passed (0.013 seconds).
+Test Suite 'SyncAdmissionModelTests' passed at 2026-10-25 02:19:14.723.

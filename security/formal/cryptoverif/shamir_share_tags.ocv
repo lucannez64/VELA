@@ -1,0 +1,69 @@
+(* VELA authenticated Shamir shares: a substituted share is rejected instead
+   of reconstructing a different secret.
+
+   Code: libVELA/vela-crypto/src/shamir.rs (share_mac_key, share_mac,
+   reconstruct). Audit finding C-3.
+
+     mac_key = KDF("vela shamir share authentication v1", secret)
+     tag     = BLAKE3-keyed(mac_key, x ‖ y)[..16]
+     reconstruct: interpolate secret' from the presented shares, then verify
+                  every presented tag under KDF(secret'); fail on mismatch.
+
+   Scenario: a 2-of-3 split; one custodian (e.g. the server) is malicious and
+   presents any share value and tag it likes; the other presented share is
+   the honest one, with its honest tag. The adversary is given EVERYTHING,
+   including the honest share and the secret: the property does not rely on
+   secrecy, only on the honest tag failing under a key derived from a
+   different secret.
+
+   Assumptions:
+   - KDF (BLAKE3 derive_key with this context) and the keyed tag function are
+     random oracles; the 16-byte truncation is the oracle's output type.
+   - Shamir over GF(2^8), abstracted: interp(y_honest, complete(s, y_honest))
+     = s, and for a fixed honest share, interp is injective in the other
+     share (true for 2-point Lagrange interpolation at distinct x).
+   - Only tagged (v2) shares are modelled. Untagged legacy shares skip
+     verification in reconstruct(); vela-client-recovery-policy rejects them
+     before reconstruction (untagged_shares_can_reconstruct, F*-proved).
+
+   Expected: "All queries proved."
+*)
+
+type rms_t [large,fixed].
+type yval [large,fixed].
+type xcoord [fixed].
+type mackey [large,fixed].
+type tag [large,fixed].
+const x_honest, x_attacker: xcoord.
+
+fun complete(rms_t, yval): yval.
+fun interp(yval, yval): rms_t.
+equation forall s: rms_t, yh: yval; interp(yh, complete(s, yh)) = s.
+equation forall yh: yval, y1: yval, y2: yval; (interp(yh, y1) = interp(yh, y2)) = (y1 = y2).
+
+type hashkey [fixed].
+expand ROM_hash_1(hashkey, rms_t, mackey, kdf, kdf_oracle, qK).
+expand ROM_hash_3(hashkey, mackey, xcoord, yval, tag, mac, mac_oracle, qM).
+
+event accepted_wrong_secret.
+query event(accepted_wrong_secret) ==> false.
+
+process
+  Ostart() :=
+    hk1 <-R hashkey;
+    hk2 <-R hashkey;
+    s <-R rms_t;
+    yh <-R yval;
+    ya: yval <- complete(s, yh);
+    th: tag <- mac(hk2, kdf(hk1, s), x_honest, yh);
+    ta: tag <- mac(hk2, kdf(hk1, s), x_attacker, ya);
+    (* the adversary learns everything about the honest split *)
+    return(s, yh, th, ya, ta);
+    ((
+      (* reconstruction from the honest share and an adversarial one *)
+      Oreconstruct(ya': yval, ta': tag) :=
+        s' <- interp(yh, ya');
+        k' <- kdf(hk1, s');
+        if mac(hk2, k', x_honest, yh) = th && mac(hk2, k', x_attacker, ya') = ta' then
+        if s' <> s then event accepted_wrong_secret
+    ) | run kdf_oracle(hk1) | run mac_oracle(hk2))

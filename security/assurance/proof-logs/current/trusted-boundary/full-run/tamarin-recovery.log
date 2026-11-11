@@ -1,0 +1,12 @@
+maude tool: 'maude'
+ checking version: 3.5.1. OK.
+ checking installation: OK.
+[Theory M14_AccountRecoveryLifecycle] Theory loaded
+[Theory M14_AccountRecoveryLifecycle] Theory translated
+[Theory M14_AccountRecoveryLifecycle] Derivation checks started
+[Theory M14_AccountRecoveryLifecycle] Derivation checks ended
+[Theory M14_AccountRecoveryLifecycle] Theory closed
+[Saturating Sources] Step 1 (Max 5)
+[Saturating Sources] Done
+m14_account_recovery_lifecycle: 18 verified
+recovery formal proof gate: 18 verified, 0 falsified, 0 warnings

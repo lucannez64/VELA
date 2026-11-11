@@ -1,0 +1,450 @@
+   Compiling proc-macro2 v1.0.106
+   Compiling quote v1.0.45
+   Compiling syn v2.0.117
+   Compiling libc v0.2.186
+   Compiling jobserver v0.1.34
+   Compiling find-msvc-tools v0.1.11
+   Compiling cc v1.4.3
+   Compiling getrandom v0.2.17
+   Compiling serde_core v1.0.228
+   Compiling memchr v2.8.1
+   Compiling smallvec v1.15.1
+   Compiling log v0.4.32
+   Compiling subtle v2.6.1
+   Compiling generic-array v0.14.7
+   Compiling synstructure v0.13.2
+   Compiling rand_core v0.6.4
+   Compiling syn v3.0.3
+   Compiling bitflags v2.13.0
+   Compiling crypto-common v0.1.7
+   Compiling zeroize_derive v1.4.3
+   Compiling serde v1.0.228
+   Compiling zeroize v1.8.2
+   Compiling serde_derive v1.0.228
+   Compiling futures-core v0.3.32
+   Compiling tracing-core v0.1.36
+   Compiling lock_api v0.4.14
+   Compiling zerofrom-derive v0.1.7
+   Compiling displaydoc v0.2.6
+   Compiling tracing-attributes v0.1.31
+   Compiling futures-sink v0.3.32
+   Compiling getrandom v0.4.2
+   Compiling tracing v0.1.44
+   Compiling zerofrom v0.1.8
+   Compiling yoke-derive v0.8.2
+   Compiling bytes v1.11.1
+   Compiling yoke v0.8.3
+   Compiling parking_lot_core v0.9.12
+   Compiling num-traits v0.2.19
+   Compiling futures-channel v0.3.32
+   Compiling zerovec-derive v0.11.5
+   Compiling futures-io v0.3.32
+   Compiling zerovec v0.11.8
+   Compiling parking_lot v0.12.5
+   Compiling futures-macro v0.3.32
+   Compiling futures-task v0.3.32
+   Compiling futures-util v0.3.32
+   Compiling writeable v0.6.4
+   Compiling tinystr v0.8.4
+   Compiling time-core v0.1.8
+   Compiling deranged v0.5.8
+   Compiling icu_locale_core v2.3.0
+   Compiling time-macros v0.2.27
+   Compiling potential_utf v0.1.5
+   Compiling zerotrie v0.2.5
+   Compiling cfg_aliases v0.2.1
+   Compiling zerocopy v0.8.52
+   Compiling crossbeam-utils v0.8.21
+   Compiling icu_provider v2.3.0
+   Compiling time v0.3.47
+   Compiling zerocopy-derive v0.8.52
+   Compiling either v1.16.0
+   Compiling rustix v1.1.4
+   Compiling icu_collections v2.3.0
+   Compiling http v1.4.2
+   Compiling zmij v1.0.21
+   Compiling rustversion v1.0.22
+   Compiling icu_properties_data v2.3.0
+   Compiling linux-raw-sys v0.12.1
+   Compiling icu_normalizer_data v2.3.0
+   Compiling getrandom v0.3.4
+   Compiling errno v0.3.14
+   Compiling socket2 v0.6.4
+   Compiling serde_json v1.0.150
+   Compiling signal-hook-registry v1.4.8
+   Compiling block-buffer v0.10.4
+   Compiling cmake v0.1.58
+   Compiling mio v1.2.1
+   Compiling tokio-macros v2.7.0
+   Compiling lazy_static v1.5.0
+   Compiling dunce v1.0.5
+   Compiling fs_extra v1.3.0
+   Compiling utf16_iter v1.0.5
+   Compiling write16 v1.0.0
+   Compiling icu_normalizer v2.3.0
+   Compiling aws-lc-sys v0.45.0
+   Compiling tokio v1.53.3
+   Compiling digest v0.10.7
+   Compiling icu_properties v2.3.0
+   Compiling nom v7.1.3
+   Compiling prettyplease v0.2.37
+   Compiling strsim v0.11.1
+   Compiling thiserror v2.0.18
+   Compiling crossbeam-epoch v0.9.20
+   Compiling rand_core v0.9.5
+   Compiling ppv-lite86 v0.2.21
+   Compiling zstd-sys v2.0.16+zstd.1.5.7
+   Compiling aho-corasick v1.1.4
+   Compiling thiserror-impl v2.0.18
+   Compiling foldhash v0.2.0
+   Compiling regex-automata v0.4.14
+   Compiling rand_chacha v0.9.0
+   Compiling inout v0.1.4
+   Compiling ring v0.17.14
+   Compiling async-trait v0.1.89
+   Compiling aws-lc-rs v1.18.1
+   Compiling crunchy v0.2.4
+   Compiling cipher v0.4.4
+   Compiling rand v0.9.4
+   Compiling num-integer v0.1.46
+   Compiling rustls-pki-types v1.14.1
+   Compiling universal-hash v0.5.1
+   Compiling ident_case v1.0.1
+   Compiling zstd-safe v7.2.4
+   Compiling darling_core v0.23.0
+   Compiling num-bigint v0.4.6
+   Compiling crossbeam-deque v0.8.6
+   Compiling itertools v0.14.0
+   Compiling ownedbytes v0.9.0
+   Compiling typeid v1.0.3
+   Compiling rayon-core v1.13.0
+   Compiling glob v0.3.4
+   Compiling icu_locale_fallback_data v2.3.0
+   Compiling sha1_smol v1.0.1
+   Compiling uuid v1.23.3
+   Compiling openssl-sys v0.9.116
+   Compiling clang-sys v1.9.1
+   Compiling tantivy-common v0.11.0
+   Compiling bitpacking v0.9.3
+   Compiling darling_macro v0.23.0
+   Compiling hybrid-array v0.4.12
+   Compiling http-body v1.0.1
+   Compiling crossbeam-channel v0.5.15
+   Compiling bytemuck_derive v1.12.0
+   Compiling libloading v0.8.9
+   Compiling home v0.5.12
+   Compiling utf8-ranges v1.0.5
+   Compiling rustix v0.38.44
+   Compiling rustc-hash v2.1.2
+   Compiling fastrand v2.4.1
+   Compiling rustls v0.23.46
+   Compiling erased-serde v0.4.10
+   Compiling allocator-api2 v0.2.21
+   Compiling hashbrown v0.16.1
+   Compiling tantivy-fst v0.5.0
+   Compiling bytemuck v1.25.0
+   Compiling darling v0.23.0
+   Compiling tantivy-bitpacker v0.10.0
+   Compiling zstd v0.13.3
+   Compiling rustls-webpki v0.103.16
+   Compiling twox-hash v2.1.2
+   Compiling regex v1.12.4
+   Compiling matchers v0.2.0
+   Compiling tokio-util v0.7.18
+   Compiling sharded-slab v0.1.7
+   Compiling ordered-float v5.3.0
+   Compiling tracing-log v0.2.0
+   Compiling aead v0.5.2
+   Compiling memoffset v0.9.1
+   Compiling thread_local v1.1.9
+   Compiling thiserror-impl v1.0.69
+   Compiling murmurhash32 v0.3.1
+   Compiling regex-syntax v0.8.11
+   Compiling linux-raw-sys v0.4.15
+   Compiling typetag v0.2.23
+   Compiling icu_collator_data v2.3.0
+   Compiling nu-ansi-term v0.50.3
+   Compiling icu_locale_data v2.3.0
+   Compiling tracing-subscriber v0.3.23
+   Compiling tantivy-stacker v0.7.0
+   Compiling chrono v0.4.45
+   Compiling thiserror v1.0.69
+   Compiling lz4_flex v0.13.1
+   Compiling icu_locale_fallback v2.3.0
+   Compiling rayon v1.12.0
+   Compiling tantivy-sstable v0.7.0
+   Compiling bon-macros v3.9.3
+   Compiling lru v0.16.4
+   Compiling polyval v0.6.2
+   Compiling strum_macros v0.26.4
+   Compiling idna_adapter v1.2.2
+   Compiling branches v0.4.6
+   Compiling crc32c v0.6.8
+   Compiling bigdecimal v0.4.10
+   Compiling typetag-impl v0.2.23
+   Compiling uncased v0.9.10
+   Compiling simsimd v6.5.16
+   Compiling aegis v0.9.15
+   Compiling miette-derive v7.6.0
+   Compiling turso_macros v0.7.2
+   Compiling inventory v0.3.24
+   Compiling io-uring v0.7.14
+   Compiling bindgen v0.69.5
+   Compiling rustc-hash v1.1.0
+   Compiling turso_ext v0.7.2
+   Compiling downcast-rs v2.0.2
+   Compiling fastdivide v0.4.2
+   Compiling tantivy-columnar v0.7.0
+   Compiling miette v7.6.0
+   Compiling idna v1.1.0
+   Compiling strum v0.26.3
+   Compiling ghash v0.5.1
+   Compiling bon v3.9.3
+   Compiling which v4.4.2
+   Compiling cexpr v0.6.0
+   Compiling tantivy-query-grammar v0.26.0
+   Compiling roaring v0.11.4
+   Compiling tempfile v3.27.0
+   Compiling crypto-common v0.2.2
+   Compiling aes v0.8.4
+   Compiling ctr v0.9.2
+   Compiling rusticata-macros v4.1.0
+   Compiling arc-swap v1.9.2
+   Compiling fs4 v0.13.1
+   Compiling itertools v0.12.1
+   Compiling turso_core v0.7.2
+   Compiling tantivy-tokenizer-api v0.7.0
+   Compiling rust-stemmers v1.2.0
+   Compiling sketches-ddsketch v0.4.1
+   Compiling asn1-rs-derive v0.5.1
+   Compiling measure_time v0.9.0
+   Compiling memmap2 v0.9.11
+   Compiling asn1-rs-impl v0.2.0
+   Compiling aristo-macros v0.4.1
+   Compiling levenshtein_automata v0.2.1
+   Compiling portable-atomic v1.14.0
+   Compiling datasketches v0.2.0
+   Compiling lazycell v1.3.0
+   Compiling softaes v0.1.5
+   Compiling utf8parse v0.2.2
+   Compiling census v0.4.2
+   Compiling htmlescape v0.3.1
+   Compiling shlex v1.3.0
+   Compiling oneshot v0.1.13
+   Compiling tantivy v0.26.1
+   Compiling h2 v0.4.16
+   Compiling aristo v0.4.1
+   Compiling asn1-rs v0.6.2
+   Compiling aes-gcm v0.10.3
+   Compiling icu_locale v2.3.0
+   Compiling icu_collator v2.3.0
+   Compiling intrusive-collections v0.9.7
+   Compiling turso_parser v0.7.2
+   Compiling url v2.5.8
+   Compiling pack1 v1.1.0
+   Compiling block-buffer v0.12.1
+   Compiling fastbloom v0.14.1
+   Compiling rapidhash v4.5.1
+   Compiling polling v3.11.0
+   Compiling sync_wrapper v1.0.2
+   Compiling openssl-probe v0.2.1
+   Compiling bumpalo v3.20.3
+   Compiling mime v0.3.17
+   Compiling fallible-iterator v0.3.0
+   Compiling openssl v0.10.80
+   Compiling allocator-api2 v0.4.0
+   Compiling cfg_block v0.1.1
+   Compiling pastey v0.2.3
+   Compiling base64urlsafedata v0.5.5
+   Compiling rustls-native-certs v0.8.4
+   Compiling digest v0.11.3
+   Compiling hyper v1.10.1
+   Compiling turso_sdk_kit v0.7.2
+   Compiling anstyle-parse v1.0.0
+   Compiling prost-derive v0.14.4
+   Compiling chacha20 v0.10.1
+   Compiling http-body-util v0.1.3
+   Compiling sha2 v0.10.9
+   Compiling quinn-udp v0.5.14
+   Compiling nix v0.30.1
+   Compiling env_filter v2.0.0
+   Compiling libmimalloc-sys v0.1.49
+   Compiling openssl-macros v0.1.1
+   Compiling curve25519-dalek-derive v0.1.1
+   Compiling anstyle-query v1.1.5
+   Compiling colorchoice v1.0.5
+   Compiling symlink v0.1.0
+   Compiling litrs v1.0.0
+   Compiling unicase v2.9.0
+   Compiling genawaiter-macro v0.99.1
+   Compiling ipnet v2.12.1
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling anstyle v1.0.14
+   Compiling parking_lot_core v0.8.6
+   Compiling anstream v1.0.0
+   Compiling tinyvec v1.11.0
+   Compiling webauthn-attestation-ca v0.5.5
+   Compiling hyper-util v0.1.20
+   Compiling genawaiter v0.99.1
+   Compiling mime_guess v2.0.5
+   Compiling document-features v0.2.12
+   Compiling tracing-appender v0.2.5
+   Compiling curve25519-dalek v4.1.3
+   Compiling env_logger v0.11.11
+   Compiling rand v0.10.2
+   Compiling prost v0.14.4
+   Compiling fastbloom v0.17.0
+   Compiling rustls-platform-verifier v0.7.0
+   Compiling oid-registry v0.7.1
+   Compiling tower v0.5.3
+   Compiling der-parser v9.0.0
+   Compiling half v2.7.1
+   Compiling quinn v0.11.9
+   Compiling rand_pcg v0.10.2
+   Compiling nibble_vec v0.1.0
+   Compiling ahash v0.8.12
+   Compiling multer v3.1.0
+   Compiling blake3 v1.8.5
+   Compiling instant v0.1.13
+   Compiling turso_sdk_kit_macros v0.7.2
+   Compiling clap_lex v1.1.0
+   Compiling endian-type v0.1.2
+   Compiling unicode-segmentation v1.13.3
+   Compiling signature v2.2.0
+   Compiling lru-slab v0.1.2
+   Compiling quinn-proto v0.11.18
+   Compiling dirs-sys v0.5.0
+   Compiling ed25519 v2.2.3
+   Compiling x509-parser v0.16.0
+   Compiling sha3 v0.10.9
+   Compiling password-hash v0.5.0
+   Compiling radix_trie v0.2.1
+   Compiling clap_builder v4.6.0
+   Compiling webauthn-rs-core v0.5.5
+   Compiling sha3 v0.11.0
+   Compiling serde_cbor_2 v0.13.0
+   Compiling turso_sync_engine v0.7.2
+   Compiling crossterm v0.29.0
+   Compiling webauthn-rs-proto v0.5.5
+   Compiling kem v0.3.0
+   Compiling tokio-rustls v0.26.4
+   Compiling serde_urlencoded v0.7.1
+   Compiling module-lattice v0.2.3
+   Compiling poly1305 v0.8.0
+   Compiling clap_derive v4.6.1
+   Compiling chacha20 v0.9.1
+   Compiling blake2 v0.10.6
+   Compiling hmac v0.12.1
+   Compiling fd-lock v4.0.4
+   Compiling crossbeam-queue v0.3.12
+   Compiling futures-executor v0.3.32
+   Compiling encoding_rs v0.8.35
+   Compiling pin-project-internal v1.1.13
+   Compiling spin v0.9.8
+   Compiling stoolap v0.4.0
+   Compiling fiat-crypto v0.3.0
+   Compiling hashbrown v0.14.5
+   Compiling arrayvec v0.7.6
+   Compiling dashmap v6.2.1
+   Compiling orion v0.17.15
+   Compiling pin-project v1.1.13
+   Compiling futures v0.3.32
+   Compiling crossbeam v0.8.4
+   Compiling rustyline v17.0.2
+   Compiling hkdf v0.12.4
+   Compiling argon2 v0.5.3
+   Compiling chacha20poly1305 v0.10.1
+   Compiling clap v4.6.1
+   Compiling ml-kem v0.3.2
+   Compiling comfy-table v7.2.2
+   Compiling mimalloc v0.1.52
+   Compiling turso_sync_sdk_kit v0.7.2
+   Compiling parking_lot v0.11.2
+   Compiling fips204 v0.4.6
+   Compiling ed25519-dalek v2.2.0
+   Compiling dirs v6.0.0
+   Compiling x25519-dalek v2.0.1
+   Compiling axum-core v0.4.5
+   Compiling h3 v0.0.8
+   Compiling md-5 v0.10.6
+   Compiling sha1 v0.10.6
+   Compiling xattr v1.6.1
+   Compiling ed25519-compact v2.3.0
+   Compiling serde_path_to_error v0.1.20
+   Compiling filetime v0.2.29
+   Compiling rtoolbox v0.0.5
+   Compiling fs2 v0.4.3
+   Compiling axum-macros v0.4.2
+   Compiling http-range-header v0.4.2
+   Compiling radsort v0.1.1
+   Compiling ct-codecs v1.1.7
+   Compiling matchit v0.7.3
+   Compiling vela-crypto v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-700776df/libVELA/vela-crypto)
+   Compiling axum v0.7.9
+   Compiling pasetors v0.6.8
+   Compiling tower-http v0.5.2
+   Compiling sled v0.34.7
+   Compiling rpassword v7.5.4
+   Compiling tar v0.4.46
+   Compiling h3-quinn v0.0.10
+   Compiling turso v0.7.2
+   Compiling webauthn-rs v0.5.5
+   Compiling tower v0.4.13
+   Compiling webpki-roots v1.0.10
+   Compiling vela-rekey-policy v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-700776df/serverVELA/vela-rekey-policy)
+   Compiling dotenvy v0.15.7
+   Compiling vela-server v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-700776df/serverVELA/vela-server)
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> vela-server/src/sqldb.rs:76:5
+   |
+76 |     async fn query(&self, sql: &str, params: Vec<turso::Value>) -> anyhow::Result<Vec<VelaRow>>;
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+   = note: `#[warn(async_fn_in_trait)]` on by default
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+76 -     async fn query(&self, sql: &str, params: Vec<turso::Value>) -> anyhow::Result<Vec<VelaRow>>;
+76 +     fn query(&self, sql: &str, params: Vec<turso::Value>) -> impl std::future::Future<Output = anyhow::Result<Vec<VelaRow>>> + Send;
+   |
+
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> vela-server/src/sqldb.rs:78:5
+   |
+78 |     async fn execute(&self, sql: &str, params: Vec<turso::Value>) -> anyhow::Result<u64>;
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+78 -     async fn execute(&self, sql: &str, params: Vec<turso::Value>) -> anyhow::Result<u64>;
+78 +     fn execute(&self, sql: &str, params: Vec<turso::Value>) -> impl std::future::Future<Output = anyhow::Result<u64>> + Send;
+   |
+
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> vela-server/src/sqldb.rs:80:5
+   |
+80 |     async fn execute_batch(&self, sql: &str) -> anyhow::Result<()>;
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+80 -     async fn execute_batch(&self, sql: &str) -> anyhow::Result<()>;
+80 +     fn execute_batch(&self, sql: &str) -> impl std::future::Future<Output = anyhow::Result<()>> + Send;
+   |
+
+warning: `vela-server` (lib) generated 3 warnings
+   Compiling hyper-rustls v0.27.9
+   Compiling tower-http v0.6.11
+   Compiling reqwest v0.12.28
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 16m 50s
+     Running tests/session_capability_model.rs (target/debug/build/vela-server/0efa76be6ffaf2f2/out/session_capability_model-0efa76be6ffaf2f2)
+
+running 3 tests
+test every_bounded_grant_and_exchange_matches_the_m12_relation ... ok
+test every_bounded_renewal_preserves_capability_or_fails_closed ... ok
+test route_matrix_never_gives_web_sessions_permanent_authority ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

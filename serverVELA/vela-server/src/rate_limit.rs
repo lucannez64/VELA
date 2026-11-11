@@ -36,11 +36,29 @@
 use crate::error::{AppError, Result};
 use crate::store::Store;
 
+use vela_enrollment_policy::executor::{
+    classify_rate_limit as classify_enrollment_rate_limit, plan_rate_claim_by_ip,
+    plan_rate_enroll_by_ip, plan_rate_grant_by_user, plan_rate_package_fetch,
+    plan_rate_package_store, plan_rate_result_by_ip, render as render_enrollment_rate,
+    PairingStmt, RateObservation as EnrollmentRateObservation,
+    RateOutcome as EnrollmentRateOutcome, Rendered as EnrollmentRendered,
+};
+use vela_recovery_policy::rate_store::{
+    self as recovery_rate, classify_rate_limit as classify_recovery_rate_limit,
+    render as render_recovery_rate, RateOutcome as RecoveryRateOutcome,
+    RateObservation as RecoveryRateObservation, RateStmt as RecoveryRateStmt,
+};
+
 const WINDOW_SECS: i64 = 60;
 /// Maximum PASETO token lifetime in seconds (15 minutes).
 pub const TOKEN_MAX_LIFETIME_SECS: u64 = 15 * 60;
 /// Session hard-cap in seconds (8 hours) — used as the device JTI-set TTL.
 const SESSION_HARD_CAP_SECS: i64 = 8 * 60 * 60;
+
+/// The refusal message [`check`] has always produced.
+pub(crate) fn rate_limited(limit: u64, window_secs: i64) -> AppError {
+    AppError::RateLimited(format!("limit of {limit} per {window_secs}s exceeded"))
+}
 
 /// Generic sliding-window counter.
 ///
@@ -53,11 +71,142 @@ pub fn check(store: &Store, key: &str, limit: u64, window_secs: i64) -> Result<(
     // has ever made (red-team RT-7).
     let count = store.incr_fixed_window(key, 1, window_secs)?;
     if count > limit {
-        Err(AppError::RateLimited(format!(
-            "limit of {limit} per {window_secs}s exceeded"
-        )))
+        Err(rate_limited(limit, window_secs))
     } else {
         Ok(())
+    }
+}
+
+// ─── Plan-driven fixed windows ───────────────────────────────────────────────
+//
+// The limiter below the named helpers is a fixed-window counter increment at
+// one exact key and window, so it is a typed statement in the policy crates
+// (`vela_enrollment_policy::executor::PairingStmt::RateLimitIncr` and
+// `vela_recovery_policy::rate_store::RateStmt::Incr`), with a pinned rendering
+// and an extracted admission classifier. `check` above stays for the limiters
+// outside the enrollment and recovery handlers.
+
+/// The window an enrollment rate plan renders, for the refusal message.
+fn enrollment_window_of(plan: &[PairingStmt]) -> i64 {
+    match plan.first().map(render_enrollment_rate) {
+        Some(EnrollmentRendered::KvIncr { window_secs, .. }) => window_secs as i64,
+        _ => 0,
+    }
+}
+
+/// Runs one extracted enrollment plan: the counter increment, then the
+/// extracted classifier. Returns the observation and the store error, if any.
+pub(crate) fn enrollment_window<F>(
+    mut incr: F,
+    plan: &[PairingStmt],
+    limit: u64,
+) -> (EnrollmentRateObservation, Option<AppError>)
+where
+    F: FnMut(&str, u64, i64) -> Result<u64>,
+{
+    let Some(stmt) = plan.first() else {
+        return (
+            EnrollmentRateObservation::StorageFailed,
+            Some(AppError::Internal("rate-limit plan carried no statement".into())),
+        );
+    };
+    let EnrollmentRendered::KvIncr { key, window_secs } = render_enrollment_rate(stmt) else {
+        return (
+            EnrollmentRateObservation::StorageFailed,
+            Some(AppError::Internal(
+                "rate-limit plan carried no counter".into(),
+            )),
+        );
+    };
+    match incr(&key, 1, window_secs as i64) {
+        Ok(count) => (
+            classify_enrollment_rate_limit(&[EnrollmentRateOutcome::Count(count)], limit),
+            None,
+        ),
+        Err(error) => (
+            classify_enrollment_rate_limit(&[EnrollmentRateOutcome::Failed], limit),
+            Some(error),
+        ),
+    }
+}
+
+/// Runs one extracted enrollment plan and renders its verdict.
+fn enrollment_check<F>(incr: F, plan: &[PairingStmt], limit: u64) -> Result<()>
+where
+    F: FnMut(&str, u64, i64) -> Result<u64>,
+{
+    let window = enrollment_window_of(plan);
+    let (observation, error) = enrollment_window(incr, plan, limit);
+    match observation {
+        EnrollmentRateObservation::Admitted => Ok(()),
+        EnrollmentRateObservation::Limited => Err(rate_limited(limit, window)),
+        EnrollmentRateObservation::StorageFailed => Err(error.unwrap_or_else(|| {
+            AppError::Internal("rate limiter store failed".into())
+        })),
+    }
+}
+
+/// The window a recovery rate plan renders, for the refusal message.
+fn recovery_window_of(plan: &[RecoveryRateStmt]) -> i64 {
+    match plan.first().map(render_recovery_rate) {
+        Some(vela_recovery_policy::redemption_store::Rendered::KvIncr { window_secs, .. }) => {
+            window_secs as i64
+        }
+        _ => 0,
+    }
+}
+
+/// Runs one extracted recovery plan: the counter increment, then the extracted
+/// classifier.
+pub(crate) fn recovery_window<F>(
+    mut incr: F,
+    plan: &[RecoveryRateStmt],
+    limit: u64,
+) -> (RecoveryRateObservation, Option<AppError>)
+where
+    F: FnMut(&str, u64, i64) -> Result<u64>,
+{
+    let Some(stmt) = plan.first() else {
+        return (
+            RecoveryRateObservation::StorageFailed,
+            Some(AppError::Internal("rate-limit plan carried no statement".into())),
+        );
+    };
+    let vela_recovery_policy::redemption_store::Rendered::KvIncr { key, window_secs } =
+        render_recovery_rate(stmt)
+    else {
+        return (
+            RecoveryRateObservation::StorageFailed,
+            Some(AppError::Internal(
+                "rate-limit plan carried no counter".into(),
+            )),
+        );
+    };
+    match incr(&key, 1, window_secs as i64) {
+        Ok(count) => (
+            classify_recovery_rate_limit(&[RecoveryRateOutcome::Count(count)], limit),
+            None,
+        ),
+        Err(error) => (
+            classify_recovery_rate_limit(&[RecoveryRateOutcome::Failed], limit),
+            Some(error),
+        ),
+    }
+}
+
+/// Runs one extracted recovery plan and renders its verdict.
+fn recovery_check<F>(incr: F, plan: &[RecoveryRateStmt], limit: u64) -> Result<()>
+where
+    F: FnMut(&str, u64, i64) -> Result<u64>,
+{
+    let window = recovery_window_of(plan);
+    let (observation, error) = recovery_window(incr, plan, limit);
+    match observation {
+        RecoveryRateObservation::Admitted => Ok(()),
+        RecoveryRateObservation::Limited => Err(rate_limited(limit, window)),
+        RecoveryRateObservation::StorageFailed => Err(error.unwrap_or_else(|| {
+            AppError::Internal("rate limiter store failed".into())
+        })),
     }
 }
 
@@ -77,7 +226,11 @@ pub fn verify_by_ip(store: &Store, ip: &str) -> Result<()> {
 /// signature verification (compute-intensive) and creates a new device row,
 /// so it needs the same per-IP throttle as /auth/verify — previously missing.
 pub fn enroll_by_ip(store: &Store, ip: &str) -> Result<()> {
-    check(store, &format!("rl:enroll:ip:{ip}"), 10, WINDOW_SECS)
+    enrollment_check(
+        |key, delta, window| store.incr_fixed_window(key, delta, window),
+        &plan_rate_enroll_by_ip(ip),
+        10,
+    )
 }
 
 /// 5 *failed* proofs/min per (ip, device_id) for POST /auth/verify.
@@ -99,17 +252,29 @@ const HOUR_SECS: i64 = 3600;
 /// 20 enrollment-package writes/hour per IP. The endpoint is unauthenticated,
 /// so without this an attacker could fill the embedded store with 64 KiB blobs.
 pub fn enrollment_package_store_by_ip(store: &Store, ip: &str) -> Result<()> {
-    check(store, &format!("rl:enroll_pkg:store:ip:{ip}"), 20, HOUR_SECS)
+    enrollment_check(
+        |key, delta, window| store.incr_fixed_window(key, delta, window),
+        &plan_rate_package_store(ip),
+        20,
+    )
 }
 
 /// 60 enrollment-package fetches/hour per IP (token-guessing throttle).
 pub fn enrollment_package_fetch_by_ip(store: &Store, ip: &str) -> Result<()> {
-    check(store, &format!("rl:enroll_pkg:fetch:ip:{ip}"), 60, HOUR_SECS)
+    enrollment_check(
+        |key, delta, window| store.incr_fixed_window(key, delta, window),
+        &plan_rate_package_fetch(ip),
+        60,
+    )
 }
 
 /// 10 recovery initiations/hour per IP (anti-enumeration / WebAuthn state churn).
 pub fn recovery_initiate_by_ip(store: &Store, ip: &str) -> Result<()> {
-    check(store, &format!("rl:recover:init:ip:{ip}"), 10, HOUR_SECS)
+    recovery_check(
+        |key, delta, window| store.incr_fixed_window(key, delta, window),
+        &recovery_rate::plan_initiate_by_ip(ip),
+        10,
+    )
 }
 
 /// Per-(IP, user) recovery-initiation cap. Public so tests assert the documented
@@ -128,11 +293,10 @@ pub const RECOVERY_INITIATE_PER_USER_HOURLY: u64 = 50;
 /// need it (audit S-3). Scoped this way, each source can only ever throttle
 /// itself, exactly like the `/auth/verify` failure counters above.
 pub fn recovery_initiate_by_ip_user(store: &Store, ip: &str, user_id: &str) -> Result<()> {
-    check(
-        store,
-        &format!("rl:recover:init:ip_user:{ip}:{user_id}"),
+    recovery_check(
+        |key, delta, window| store.incr_fixed_window(key, delta, window),
+        &recovery_rate::plan_initiate_by_ip_user(ip, user_id),
         RECOVERY_INITIATE_PER_IP_USER_HOURLY,
-        HOUR_SECS,
     )
 }
 
@@ -144,11 +308,10 @@ pub fn recovery_initiate_by_ip_user(store: &Store, ip: &str, user_id: &str) -> R
 /// initiation stores state under its own `recovery_id`, so churn costs storage
 /// rather than correctness.
 pub fn recovery_initiate_by_user(store: &Store, user_id: &str) -> Result<()> {
-    check(
-        store,
-        &format!("rl:recover:init:user:{user_id}"),
+    recovery_check(
+        |key, delta, window| store.incr_fixed_window(key, delta, window),
+        &recovery_rate::plan_initiate_by_user(user_id),
         RECOVERY_INITIATE_PER_USER_HOURLY,
-        HOUR_SECS,
     )
 }
 
@@ -174,64 +337,132 @@ pub const RECOVERY_CONSEQUENCE_PER_USER_HOURLY: u64 = 50;
 
 /// 5 `/recovery/recover` attempts/hour per (IP, user).
 pub fn recovery_recover_by_ip_user(store: &Store, ip: &str, user_id: &str) -> Result<()> {
-    check(
-        store,
-        &format!("rl:recover:ip_user:{ip}:{user_id}"),
+    recovery_check(
+        |key, delta, window| store.incr_fixed_window(key, delta, window),
+        &recovery_rate::plan_recover_by_ip_user(ip, user_id),
         RECOVERY_CONSEQUENCE_PER_IP_USER_HOURLY,
-        HOUR_SECS,
     )
 }
 
 /// 50 `/recovery/recover` attempts/hour per user, across every source.
 pub fn recovery_recover_by_user(store: &Store, user_id: &str) -> Result<()> {
-    check(
-        store,
-        &format!("rl:recover:user:{user_id}"),
+    recovery_check(
+        |key, delta, window| store.incr_fixed_window(key, delta, window),
+        &recovery_rate::plan_recover_by_user(user_id),
         RECOVERY_CONSEQUENCE_PER_USER_HOURLY,
-        HOUR_SECS,
+    )
+}
+
+/// 10 `/recovery/enroll-device` attempts/hour per IP (the endpoint is
+/// unauthenticated and unguessable-grant gated, so this only bounds volume).
+pub fn recovery_enroll_by_ip(store: &Store, ip: &str) -> Result<()> {
+    recovery_check(
+        |key, delta, window| store.incr_fixed_window(key, delta, window),
+        &recovery_rate::plan_enroll_by_ip(ip),
+        10,
     )
 }
 
 /// 5 `/recovery/enroll-device` attempts/hour per (IP, user).
 pub fn recovery_enroll_by_ip_user(store: &Store, ip: &str, user_id: &str) -> Result<()> {
-    check(
-        store,
-        &format!("rl:recover:enroll:ip_user:{ip}:{user_id}"),
+    recovery_check(
+        |key, delta, window| store.incr_fixed_window(key, delta, window),
+        &recovery_rate::plan_enroll_by_ip_user(ip, user_id),
         RECOVERY_CONSEQUENCE_PER_IP_USER_HOURLY,
-        HOUR_SECS,
     )
 }
 
 /// 50 `/recovery/enroll-device` attempts/hour per user, across every source.
 pub fn recovery_enroll_by_user(store: &Store, user_id: &str) -> Result<()> {
-    check(
-        store,
-        &format!("rl:recover:enroll:user:{user_id}"),
+    recovery_check(
+        |key, delta, window| store.incr_fixed_window(key, delta, window),
+        &recovery_rate::plan_enroll_by_user(user_id),
         RECOVERY_CONSEQUENCE_PER_USER_HOURLY,
-        HOUR_SECS,
     )
 }
 
 /// 120 share sends/hour per sender (anti inbox-flooding of a targeted recipient).
 pub fn share_send_by_sender(store: &Store, sender: &str) -> Result<()> {
-    check(store, &format!("rl:share:send:user:{sender}"), 120, HOUR_SECS)
+    check_plan(
+        store,
+        &vela_share_policy::store::plan_rate_limit(
+            format!("rl:share:send:user:{sender}"),
+            120,
+            HOUR_SECS,
+        ),
+    )
 }
 
 /// 60 one-off share-link creations/hour per user.
 pub fn send_create_by_user(store: &Store, user_id: &str) -> Result<()> {
-    check(store, &format!("rl:send:create:user:{user_id}"), 60, HOUR_SECS)
+    check_plan(
+        store,
+        &vela_share_policy::store::plan_rate_limit(
+            format!("rl:send:create:user:{user_id}"),
+            60,
+            HOUR_SECS,
+        ),
+    )
 }
 
 /// 60 share-link fetches/min per IP. The id is a random 128-bit UUID, so this
 /// only bounds grinding/enumeration against an endpoint that is unauthenticated
 /// by design (the recipient has no account).
 pub fn send_fetch_by_ip(store: &Store, ip: &str) -> Result<()> {
-    check(store, &format!("rl:send:fetch:ip:{ip}"), 60, WINDOW_SECS)
+    check_plan(
+        store,
+        &vela_share_policy::store::plan_rate_limit(
+            format!("rl:send:fetch:ip:{ip}"),
+            60,
+            WINDOW_SECS,
+        ),
+    )
 }
 
 /// 120 share-link list calls/min per user.
 pub fn send_list_by_user(store: &Store, user_id: &str) -> Result<()> {
-    check(store, &format!("rl:send:list:user:{user_id}"), 120, WINDOW_SECS)
+    check_plan(
+        store,
+        &vela_share_policy::store::plan_rate_limit(
+            format!("rl:send:list:user:{user_id}"),
+            120,
+            WINDOW_SECS,
+        ),
+    )
+}
+
+/// The same fixed-window counter as [`check`], through the verified plan: the
+/// statement carries the exact key, budget and window, `render_rate` fixes the
+/// store call, and `classify_rate_limit` decides from the counter's new value.
+/// The counter's window rollover is the store's scheduler choice.
+fn check_plan(store: &Store, stmt: &vela_share_policy::store::RateStmt) -> Result<()> {
+    use vela_share_policy::store::{classify_rate_limit, render_rate, RateOutcome, RateRendered};
+    let result = match render_rate(stmt) {
+        RateRendered::IncrFixedWindow {
+            key,
+            delta,
+            window_secs,
+        } => store.incr_fixed_window(&key, delta, window_secs),
+    };
+    let (outcome, error) = match result {
+        Ok(count) => (RateOutcome::Count(count), None),
+        Err(error) => (RateOutcome::Failed, Some(error)),
+    };
+    let observation = classify_rate_limit(&[outcome], stmt.limit);
+    if observation.failed {
+        return match error {
+            Some(error) => Err(error),
+            None => Err(AppError::Internal("rate limit store failure".into())),
+        };
+    }
+    if observation.allowed {
+        Ok(())
+    } else {
+        Err(AppError::RateLimited(format!(
+            "limit of {} per {}s exceeded",
+            stmt.limit, stmt.window_secs
+        )))
+    }
 }
 
 /// 30 ephemeral-web-session starts/hour per IP (the endpoint is unauthenticated).
@@ -256,11 +487,10 @@ pub fn web_session_keys_by_user(store: &Store, user_id: &str) -> Result<()> {
 /// duplicate-credential lookup, so this bounds how often a single account can
 /// drive that regardless of the generic per-JTI request limiter.
 pub fn webauthn_register_by_user(store: &Store, user_id: &str) -> Result<()> {
-    check(
-        store,
-        &format!("rl:webauthn:register:user:{user_id}"),
+    recovery_check(
+        |key, delta, window| store.incr_fixed_window(key, delta, window),
+        &recovery_rate::plan_webauthn_register_by_user(user_id),
         20,
-        HOUR_SECS,
     )
 }
 
@@ -304,7 +534,11 @@ pub fn web_session_token_by_ip_session(store: &Store, ip: &str, session_id: &str
 /// enrolls a device rarely; a burst is either a mistake or someone farming
 /// grants.
 pub fn enrollment_grant_by_user(store: &Store, user_id: &str) -> Result<()> {
-    check(store, &format!("rl:enroll:grant:{user_id}"), 10, HOUR_SECS)
+    enrollment_check(
+        |key, delta, window| store.incr_fixed_window(key, delta, window),
+        &plan_rate_grant_by_user(user_id),
+        10,
+    )
 }
 
 /// 20 claim attempts/hour per IP.
@@ -314,7 +548,11 @@ pub fn enrollment_grant_by_user(store: &Store, user_id: &str) -> Result<()> {
 /// person doing this by hand needs, and well below useful for grinding grant
 /// ids, which are UUIDs anyway.
 pub fn enrollment_claim_by_ip(store: &Store, ip: &str) -> Result<()> {
-    check(store, &format!("rl:enroll:claim:ip:{ip}"), 20, HOUR_SECS)
+    enrollment_check(
+        |key, delta, window| store.incr_fixed_window(key, delta, window),
+        &plan_rate_claim_by_ip(ip),
+        20,
+    )
 }
 
 /// 120 result polls/min per IP.
@@ -326,7 +564,11 @@ pub fn enrollment_claim_by_ip(store: &Store, ip: &str) -> Result<()> {
 /// request has to carry a signature under a key the caller already claimed
 /// with, so there is nothing here to grind.
 pub fn enrollment_result_by_ip(store: &Store, ip: &str) -> Result<()> {
-    check(store, &format!("rl:enroll:result:ip:{ip}"), 120, WINDOW_SECS)
+    enrollment_check(
+        |key, delta, window| store.incr_fixed_window(key, delta, window),
+        &plan_rate_result_by_ip(ip),
+        120,
+    )
 }
 
 // ─── Exponential backoff enforcement ─────────────────────────────────────────
@@ -365,17 +607,28 @@ pub fn check_backoff(store: &Store, scope: &str) -> Result<()> {
 /// fails this at most once (a stale challenge); anything grinding at it slows
 /// down geometrically.
 pub fn record_backoff_failure(store: &Store, scope: &str) -> Result<()> {
-    let backoff_key = format!("rl:backoff:{scope}");
-    let streak_key = format!("rl:streak:{scope}");
+    record_backoff_failure_keys(
+        store,
+        &format!("rl:streak:{scope}"),
+        &format!("rl:backoff:{scope}"),
+    )
+}
 
-    let streak = store.incr_expire(&streak_key, 1, 300)?;
+/// The same record, on keys the caller already built (an executor's typed
+/// statement carries the exact keys it proved).
+pub fn record_backoff_failure_keys(
+    store: &Store,
+    streak_key: &str,
+    backoff_key: &str,
+) -> Result<()> {
+    let streak = store.incr_expire(streak_key, 1, 300)?;
     let eff_streak = streak.min(10);
     if eff_streak >= 3 {
         let exp = (eff_streak - 3).min(8);
         let delay_secs: u64 = (1u64 << exp).min(300);
-        store.set_ex(&backoff_key, &[1u8], delay_secs)?;
+        store.set_ex(backoff_key, &[1u8], delay_secs)?;
         if streak < 12 {
-            tracing::warn!(scope, streak, delay_secs, "backoff applied");
+            tracing::warn!(scope = streak_key, streak, delay_secs, "backoff applied");
         }
     }
     Ok(())
@@ -383,8 +636,17 @@ pub fn record_backoff_failure(store: &Store, scope: &str) -> Result<()> {
 
 /// Clear a scope's streak after it succeeds.
 pub fn reset_backoff(store: &Store, scope: &str) -> Result<()> {
-    let _ = store.del(&format!("rl:streak:{scope}"))?;
-    let _ = store.del(&format!("rl:backoff:{scope}"))?;
+    reset_backoff_keys(
+        store,
+        &format!("rl:streak:{scope}"),
+        &format!("rl:backoff:{scope}"),
+    )
+}
+
+/// The same reset, on keys the caller already built.
+pub fn reset_backoff_keys(store: &Store, streak_key: &str, backoff_key: &str) -> Result<()> {
+    let _ = store.del(streak_key)?;
+    let _ = store.del(backoff_key)?;
     Ok(())
 }
 
@@ -473,6 +735,25 @@ pub fn revoke_all_device_jtis(store: &Store, device_id: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The re-key limiter now runs through a plan, but its refusal must stay
+    // byte for byte the historical one: the same message and a 429.
+    #[test]
+    fn rekey_refusal_keeps_the_historical_text_and_status() {
+        use axum::http::StatusCode;
+        use axum::response::IntoResponse;
+
+        let error = rate_limited(30, 3600);
+        assert!(matches!(
+            &error,
+            AppError::RateLimited(message)
+                if message == "limit of 30 per 3600s exceeded"
+        ));
+        assert_eq!(
+            error.into_response().status(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
+    }
 
     // Regression test: `record_verify_failure` and `verify_fail_by_device` are
     // called back-to-back on every failed /auth/verify attempt (see

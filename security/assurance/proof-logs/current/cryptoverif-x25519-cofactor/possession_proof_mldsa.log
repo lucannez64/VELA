@@ -1,0 +1,934 @@
+Doing expand get, insert and prove unique annotations... No change.
+Doing simplify (non-expanded game)... No change.
+Doing expand... Done.
+Doing remove assignments of findcond... Done.
+Doing simplify... Run simplify 1 time(s). Fixpoint reached.
+No change.
+Doing move all binders... No change.
+Doing SA rename new without array accesses and remove assignments of findcond... No change.
+Doing merge branches... No change.
+Proof of event(forge) ==> false failed:
+  Found forge at 63
+  but could not prove false
+Trying equivalence rom(kdf_ed)... Transf. OK Proba. computed Transf. done Succeeded.
+Doing simplify (non-expanded game)... Done.
+Doing expand... Done.
+Doing remove assignments of findcond... Done.
+Doing simplify... Doing global dependency analysis on rms inside simplify... At 10, returned message mldsa_pkgen(ms) depends on rms.
+No change
+Doing global dependency analysis on rms inside simplify... At 10, returned message mldsa_pkgen(ms) depends on rms.
+No change
+Run simplify 2 time(s). Fixpoint reached.
+Done.
+Doing move all binders... Done.
+Doing SA rename new without array accesses and remove assignments of findcond... No change.
+Doing merge branches... No change.
+Proof of event(forge) ==> false failed:
+  Found forge at 59
+  but could not prove false
+Trying equivalence rom(kdf_ed)... Failed:
+At 5, term kdf_ml(hk1, rms) could not be discharged
+Trying equivalence rom(kdf_ml)... Transf. OK Proba. computed Transf. done Succeeded.
+Doing simplify (non-expanded game)... Done.
+Doing expand... Done.
+Doing remove assignments of findcond... Done.
+Doing simplify... Doing global dependency analysis on rms inside simplify... Done. Restarting simplify
+Eliminated collisions between rms and x1_1 Probability: qKed / |rms_t|
+(rms collides with a value independent of rms[...] with probability at most 1 / |rms_t|;
+ x1_1 does not depend on rms[...])
+Eliminated collisions between rms and x1 Probability: qKml / |rms_t|
+(rms collides with a value independent of rms[...] with probability at most 1 / |rms_t|;
+ x1 does not depend on rms[...])
+Run simplify 2 time(s). Fixpoint reached.
+Done.
+Doing move all binders... Done.
+Doing SA rename new without array accesses and remove assignments of findcond... No change.
+Doing merge branches... No change.
+Proof of event(forge) ==> false failed:
+  Found forge at 54
+  but could not prove false
+Trying equivalence rom(kdf_ed)... Failed.
+Trying equivalence rom(kdf_ml)... Failed.
+Trying equivalence uf_cma(mldsa_sign)... Failed.
+Doing remove assignments of binder sk... Done.
+Trying equivalence uf_cma(mldsa_sign) with r, r_3... Transf. OK Proba. computed Transf. done Succeeded.
+Doing simplify (non-expanded game)... No change.
+Doing expand... Done.
+Doing remove assignments of findcond... Done.
+Doing simplify... Run simplify 2 time(s). Fixpoint reached.
+Done.
+Doing move all binders... No change.
+Doing SA rename new without array accesses and remove assignments of findcond... No change.
+Doing merge branches... No change.
+Proved query event(forge) ==> false
+===================== Proof starts =======================
+Initial state
+Game 1 is
+     Ostart() :=
+     hk1 <-R hashkey;
+     hk2 <-R hashkey;
+     rms <-R rms_t;
+     ms: mldsa_seed <- kdf_ml(hk1, rms);
+     es: ed_seed <- kdf_ed(hk2, rms);
+     return(mldsa_pkgen(ms), ed_pkgen(es), es);
+     ((
+       foreach is <= Qs do
+       Oprove(m: msg) :=
+       return((m_1: msg <- m; sk: mldsa_sk <- mldsa_skgen(ms); r <-R sign_seed; sign_r(m_1, sk, r)), ed_sign(m, es))
+     ) | (
+       Oforge(m': msg, s1: mldsa_sig, s2: ed_sig) :=
+       if mldsa_check(m', mldsa_pkgen(ms), s1) && ed_check(m', ed_pkgen(es), s2) then
+       find u_1 = u <= Qs suchthat defined(m[u]) && (m' = m[u]) then
+         yield
+       else
+         event forge
+     ) | (
+       foreach iH <= qKml do
+       OH(x1: rms_t) :=
+       return(kdf_ml(hk1, x1))
+     ) | (
+       foreach iH_1 <= qKed do
+       OH_1(x1_1: rms_t) :=
+       return(kdf_ed(hk2, x1_1))
+     ))
+
+
+Applying expand
+  - Expand if/find/let
+yields
+
+Game 2 is
+     Ostart() :=
+     hk1 <-R hashkey;
+     hk2 <-R hashkey;
+     rms <-R rms_t;
+     ms: mldsa_seed <- kdf_ml(hk1, rms);
+     es: ed_seed <- kdf_ed(hk2, rms);
+     return(mldsa_pkgen(ms), ed_pkgen(es), es);
+     ((
+       foreach is <= Qs do
+       Oprove(m: msg) :=
+       m_1: msg <- m;
+       sk: mldsa_sk <- mldsa_skgen(ms);
+       r <-R sign_seed;
+       return(sign_r(m_1, sk, r), ed_sign(m, es))
+     ) | (
+       Oforge(m': msg, s1: mldsa_sig, s2: ed_sig) :=
+       if mldsa_check(m', mldsa_pkgen(ms), s1) && ed_check(m', ed_pkgen(es), s2) then
+       find u_1 = u <= Qs suchthat defined(m[u]) && (m' = m[u]) then
+         yield
+       else
+         event forge
+     ) | (
+       foreach iH <= qKml do
+       OH(x1: rms_t) :=
+       return(kdf_ml(hk1, x1))
+     ) | (
+       foreach iH_1 <= qKed do
+       OH_1(x1_1: rms_t) :=
+       return(kdf_ed(hk2, x1_1))
+     ))
+
+
+Applying remove assignments of findcond
+  - Remove assignments on m_1 (definition removed, all usages removed)
+yields
+
+Game 3 is
+     Ostart() :=
+     hk1 <-R hashkey;
+     hk2 <-R hashkey;
+     rms <-R rms_t;
+     ms: mldsa_seed <- kdf_ml(hk1, rms);
+     es: ed_seed <- kdf_ed(hk2, rms);
+     return(mldsa_pkgen(ms), ed_pkgen(es), es);
+     ((
+       foreach is <= Qs do
+       Oprove(m: msg) :=
+       sk: mldsa_sk <- mldsa_skgen(ms);
+       r <-R sign_seed;
+       return(sign_r(m, sk, r), ed_sign(m, es))
+     ) | (
+       Oforge(m': msg, s1: mldsa_sig, s2: ed_sig) :=
+       if mldsa_check(m', mldsa_pkgen(ms), s1) && ed_check(m', ed_pkgen(es), s2) then
+       find u_1 = u <= Qs suchthat defined(m[u]) && (m' = m[u]) then
+         yield
+       else
+         event forge
+     ) | (
+       foreach iH <= qKml do
+       OH(x1: rms_t) :=
+       return(kdf_ml(hk1, x1))
+     ) | (
+       foreach iH_1 <= qKed do
+       OH_1(x1_1: rms_t) :=
+       return(kdf_ed(hk2, x1_1))
+     ))
+
+
+Applying equivalence rom(kdf_ed)
+  - Equivalence rom(kdf_ed) with variables: hk2 -> hk
+yields
+
+Game 4 is
+     Ostart() :=
+     hk1 <-R hashkey;
+     rms <-R rms_t;
+     ms: mldsa_seed <- kdf_ml(hk1, rms);
+     es: ed_seed <- (x_O: rms_t <- rms; {11}find [unique]  else r_1 <-R ed_seed; r_1);
+     return(mldsa_pkgen(ms), ed_pkgen(es), es);
+     ((
+       foreach is <= Qs do
+       Oprove(m: msg) :=
+       sk: mldsa_sk <- mldsa_skgen(ms);
+       r <-R sign_seed;
+       return(sign_r(m, sk, r), ed_sign(m, es))
+     ) | (
+       Oforge(m': msg, s1: mldsa_sig, s2: ed_sig) :=
+       if mldsa_check(m', mldsa_pkgen(ms), s1) && ed_check(m', ed_pkgen(es), s2) then
+       find u_1 = u <= Qs suchthat defined(m[u]) && (m' = m[u]) then
+         yield
+       else
+         event forge
+     ) | (
+       foreach iH <= qKml do
+       OH(x1: rms_t) :=
+       return(kdf_ml(hk1, x1))
+     ) | (
+       foreach iH_1 <= qKed do
+       OH_1(x1_1: rms_t) :=
+       return((x_O_1: rms_t <- x1_1; find [unique]  suchthat defined(x_O, r_1) && (x_O_1 = x_O) then r_1 orfind u_2 = ri <= qKed suchthat defined(x_O_1[ri], r_2[ri]) && (x_O_1 = x_O_1[ri]) then r_2[u_2] else r_2 <-R ed_seed; r_2))
+     ))
+
+
+Applying simplify (non-expanded game)
+  - Simplification pass
+    - Find at 11 removed (else branch kept if any)
+yields
+
+Game 5 is
+     Ostart() :=
+     hk1 <-R hashkey;
+     rms <-R rms_t;
+     ms: mldsa_seed <- kdf_ml(hk1, rms);
+     es: ed_seed <- (x_O: rms_t <- rms; r_1 <-R ed_seed; r_1);
+     return(mldsa_pkgen(ms), ed_pkgen(es), es);
+     ((
+       foreach is <= Qs do
+       Oprove(m: msg) :=
+       sk: mldsa_sk <- mldsa_skgen(ms);
+       r <-R sign_seed;
+       return(sign_r(m, sk, r), ed_sign(m, es))
+     ) | (
+       Oforge(m': msg, s1: mldsa_sig, s2: ed_sig) :=
+       if mldsa_check(m', mldsa_pkgen(ms), s1) && ed_check(m', ed_pkgen(es), s2) then
+       find u_1 = u <= Qs suchthat defined(m[u]) && (m' = m[u]) then
+         yield
+       else
+         event forge
+     ) | (
+       foreach iH <= qKml do
+       OH(x1: rms_t) :=
+       return(kdf_ml(hk1, x1))
+     ) | (
+       foreach iH_1 <= qKed do
+       OH_1(x1_1: rms_t) :=
+       return((x_O_1: rms_t <- x1_1; find [unique]  suchthat defined(x_O, r_1) && (x_O_1 = x_O) then r_1 orfind u_2 = ri <= qKed suchthat defined(x_O_1[ri], r_2[ri]) && (x_O_1 = x_O_1[ri]) then r_2[u_2] else r_2 <-R ed_seed; r_2))
+     ))
+
+
+Applying expand
+  - Expand if/find/let
+yields
+
+Game 6 is
+     Ostart() :=
+     hk1 <-R hashkey;
+     rms <-R rms_t;
+     ms: mldsa_seed <- kdf_ml(hk1, rms);
+     x_O: rms_t <- rms;
+     r_1 <-R ed_seed;
+     es: ed_seed <- r_1;
+     return(mldsa_pkgen(ms), ed_pkgen(es), es);
+     ((
+       foreach is <= Qs do
+       Oprove(m: msg) :=
+       sk: mldsa_sk <- mldsa_skgen(ms);
+       r <-R sign_seed;
+       return(sign_r(m, sk, r), ed_sign(m, es))
+     ) | (
+       Oforge(m': msg, s1: mldsa_sig, s2: ed_sig) :=
+       if mldsa_check(m', mldsa_pkgen(ms), s1) && ed_check(m', ed_pkgen(es), s2) then
+       find u_1 = u <= Qs suchthat defined(m[u]) && (m' = m[u]) then
+         yield
+       else
+         event forge
+     ) | (
+       foreach iH <= qKml do
+       OH(x1: rms_t) :=
+       return(kdf_ml(hk1, x1))
+     ) | (
+       foreach iH_1 <= qKed do
+       OH_1(x1_1: rms_t) :=
+       x_O_1: rms_t <- x1_1;
+       find [unique]  suchthat defined(x_O, r_1) && (x_O_1 = x_O) then
+         return(r_1)
+       orfind u_2 = ri <= qKed suchthat defined(x_O_1[ri], r_2[ri]) && (x_O_1 = x_O_1[ri]) then
+         return(r_2[u_2])
+       else
+         r_2 <-R ed_seed;
+         return(r_2)
+     ))
+
+
+Applying remove assignments of findcond
+  - Remove assignments on x_O (definition removed, all usages removed)
+  - Remove assignments on es (definition removed, all usages removed)
+  - Remove assignments on x_O_1 (definition point kept, all usages removed)
+yields
+
+Game 7 is
+     Ostart() :=
+     hk1 <-R hashkey;
+     rms <-R rms_t;
+     ms: mldsa_seed <- kdf_ml(hk1, rms);
+     r_1 <-R ed_seed;
+     return(mldsa_pkgen(ms), ed_pkgen(r_1), r_1);
+     ((
+       foreach is <= Qs do
+       Oprove(m: msg) :=
+       sk: mldsa_sk <- mldsa_skgen(ms);
+       r <-R sign_seed;
+       return(sign_r(m, sk, r), ed_sign(m, r_1))
+     ) | (
+       Oforge(m': msg, s1: mldsa_sig, s2: ed_sig) :=
+       if mldsa_check(m', mldsa_pkgen(ms), s1) && ed_check(m', ed_pkgen(r_1), s2) then
+       find u_1 = u <= Qs suchthat defined(m[u]) && (m' = m[u]) then
+         yield
+       else
+         event forge
+     ) | (
+       foreach iH <= qKml do
+       OH(x1: rms_t) :=
+       return(kdf_ml(hk1, x1))
+     ) | (
+       foreach iH_1 <= qKed do
+       OH_1(x1_1: rms_t) :=
+       x_O_1: rms_t <- cst_rms_t;
+ {75}  find [unique]  suchthat defined(r_1) && (x1_1 = rms) then
+         return(r_1)
+       orfind u_2 = ri <= qKed suchthat defined(x1_1[ri], x_O_1[ri], r_2[ri]) && (x1_1 = x1_1[ri]) then
+         return(r_2[u_2])
+       else
+         r_2 <-R ed_seed;
+         return(r_2)
+     ))
+
+
+Applying simplify
+  - Simplification pass
+    - Replaced defined condition x1_1[ri], x_O_1[ri], r_2[ri] with r_2[ri], x1_1[ri] in find at 75
+    - Replaced defined condition r_1 with an empty condition in find at 75
+yields
+
+Game 8 is
+     Ostart() :=
+     hk1 <-R hashkey;
+     rms <-R rms_t;
+     ms: mldsa_seed <- kdf_ml(hk1, rms);
+     r_1 <-R ed_seed;
+     return(mldsa_pkgen(ms), ed_pkgen(r_1), r_1);
+     ((
+       foreach is <= Qs do
+       Oprove(m: msg) :=
+       sk: mldsa_sk <- mldsa_skgen(ms);
+       r <-R sign_seed;
+       return(sign_r(m, sk, r), ed_sign(m, r_1))
+     ) | (
+       Oforge(m': msg, s1: mldsa_sig, s2: ed_sig) :=
+       if mldsa_check(m', mldsa_pkgen(ms), s1) && ed_check(m', ed_pkgen(r_1), s2) then
+       find u_1 = u <= Qs suchthat defined(m[u]) && (m' = m[u]) then
+         yield
+       else
+         event forge
+     ) | (
+       foreach iH <= qKml do
+       OH(x1: rms_t) :=
+       return(kdf_ml(hk1, x1))
+     ) | (
+       foreach iH_1 <= qKed do
+       OH_1(x1_1: rms_t) :=
+       x_O_1: rms_t <- cst_rms_t;
+       find [unique]  suchthat x1_1 = rms then
+         return(r_1)
+       orfind u_2 = ri <= qKed suchthat defined(r_2[ri], x1_1[ri]) && (x1_1 = x1_1[ri]) then
+         return(r_2[u_2])
+       else
+         r_2 <-R ed_seed;
+         return(r_2)
+     ))
+
+
+Applying move all binders
+  - Move assignment to x_O_1
+yields
+
+Game 9 is
+     Ostart() :=
+     hk1 <-R hashkey;
+     rms <-R rms_t;
+     ms: mldsa_seed <- kdf_ml(hk1, rms);
+     r_1 <-R ed_seed;
+     return(mldsa_pkgen(ms), ed_pkgen(r_1), r_1);
+     ((
+       foreach is <= Qs do
+       Oprove(m: msg) :=
+       sk: mldsa_sk <- mldsa_skgen(ms);
+       r <-R sign_seed;
+       return(sign_r(m, sk, r), ed_sign(m, r_1))
+     ) | (
+       Oforge(m': msg, s1: mldsa_sig, s2: ed_sig) :=
+       if mldsa_check(m', mldsa_pkgen(ms), s1) && ed_check(m', ed_pkgen(r_1), s2) then
+       find u_1 = u <= Qs suchthat defined(m[u]) && (m' = m[u]) then
+         yield
+       else
+         event forge
+     ) | (
+       foreach iH <= qKml do
+       OH(x1: rms_t) :=
+       return(kdf_ml(hk1, x1))
+     ) | (
+       foreach iH_1 <= qKed do
+       OH_1(x1_1: rms_t) :=
+       find [unique]  suchthat x1_1 = rms then
+         return(r_1)
+       orfind u_2 = ri <= qKed suchthat defined(r_2[ri], x1_1[ri]) && (x1_1 = x1_1[ri]) then
+         return(r_2[u_2])
+       else
+         r_2 <-R ed_seed;
+         return(r_2)
+     ))
+
+
+Applying equivalence rom(kdf_ml)
+  - Equivalence rom(kdf_ml) with variables: hk1 -> hk
+yields
+
+Game 10 is
+     Ostart() :=
+     rms <-R rms_t;
+     ms: mldsa_seed <- (x_O_2: rms_t <- rms; {6}find [unique]  else r_3 <-R mldsa_seed; r_3);
+     r_1 <-R ed_seed;
+     return(mldsa_pkgen(ms), ed_pkgen(r_1), r_1);
+     ((
+       foreach is <= Qs do
+       Oprove(m: msg) :=
+       sk: mldsa_sk <- mldsa_skgen(ms);
+       r <-R sign_seed;
+       return(sign_r(m, sk, r), ed_sign(m, r_1))
+     ) | (
+       Oforge(m': msg, s1: mldsa_sig, s2: ed_sig) :=
+       if mldsa_check(m', mldsa_pkgen(ms), s1) && ed_check(m', ed_pkgen(r_1), s2) then
+       find u_1 = u <= Qs suchthat defined(m[u]) && (m' = m[u]) then
+         yield
+       else
+         event forge
+     ) | (
+       foreach iH <= qKml do
+       OH(x1: rms_t) :=
+       return((x_O_3: rms_t <- x1; find [unique]  suchthat defined(x_O_2, r_3) && (x_O_3 = x_O_2) then r_3 orfind u_4 = ri_2 <= qKml suchthat defined(x_O_3[ri_2], r_4[ri_2]) && (x_O_3 = x_O_3[ri_2]) then r_4[u_4] else r_4 <-R mldsa_seed; r_4))
+     ) | (
+       foreach iH_1 <= qKed do
+       OH_1(x1_1: rms_t) :=
+       find [unique]  suchthat x1_1 = rms then
+         return(r_1)
+       orfind u_2 = ri <= qKed suchthat defined(r_2[ri], x1_1[ri]) && (x1_1 = x1_1[ri]) then
+         return(r_2[u_2])
+       else
+         r_2 <-R ed_seed;
+         return(r_2)
+     ))
+
+
+Applying simplify (non-expanded game)
+  - Simplification pass
+    - Find at 6 removed (else branch kept if any)
+yields
+
+Game 11 is
+     Ostart() :=
+     rms <-R rms_t;
+     ms: mldsa_seed <- (x_O_2: rms_t <- rms; r_3 <-R mldsa_seed; r_3);
+     r_1 <-R ed_seed;
+     return(mldsa_pkgen(ms), ed_pkgen(r_1), r_1);
+     ((
+       foreach is <= Qs do
+       Oprove(m: msg) :=
+       sk: mldsa_sk <- mldsa_skgen(ms);
+       r <-R sign_seed;
+       return(sign_r(m, sk, r), ed_sign(m, r_1))
+     ) | (
+       Oforge(m': msg, s1: mldsa_sig, s2: ed_sig) :=
+       if mldsa_check(m', mldsa_pkgen(ms), s1) && ed_check(m', ed_pkgen(r_1), s2) then
+       find u_1 = u <= Qs suchthat defined(m[u]) && (m' = m[u]) then
+         yield
+       else
+         event forge
+     ) | (
+       foreach iH <= qKml do
+       OH(x1: rms_t) :=
+       return((x_O_3: rms_t <- x1; find [unique]  suchthat defined(x_O_2, r_3) && (x_O_3 = x_O_2) then r_3 orfind u_4 = ri_2 <= qKml suchthat defined(x_O_3[ri_2], r_4[ri_2]) && (x_O_3 = x_O_3[ri_2]) then r_4[u_4] else r_4 <-R mldsa_seed; r_4))
+     ) | (
+       foreach iH_1 <= qKed do
+       OH_1(x1_1: rms_t) :=
+       find [unique]  suchthat x1_1 = rms then
+         return(r_1)
+       orfind u_2 = ri <= qKed suchthat defined(r_2[ri], x1_1[ri]) && (x1_1 = x1_1[ri]) then
+         return(r_2[u_2])
+       else
+         r_2 <-R ed_seed;
+         return(r_2)
+     ))
+
+
+Applying expand
+  - Expand if/find/let
+yields
+
+Game 12 is
+     Ostart() :=
+     rms <-R rms_t;
+     x_O_2: rms_t <- rms;
+     r_3 <-R mldsa_seed;
+     ms: mldsa_seed <- r_3;
+     r_1 <-R ed_seed;
+     return(mldsa_pkgen(ms), ed_pkgen(r_1), r_1);
+     ((
+       foreach is <= Qs do
+       Oprove(m: msg) :=
+       sk: mldsa_sk <- mldsa_skgen(ms);
+       r <-R sign_seed;
+       return(sign_r(m, sk, r), ed_sign(m, r_1))
+     ) | (
+       Oforge(m': msg, s1: mldsa_sig, s2: ed_sig) :=
+       if mldsa_check(m', mldsa_pkgen(ms), s1) && ed_check(m', ed_pkgen(r_1), s2) then
+       find u_1 = u <= Qs suchthat defined(m[u]) && (m' = m[u]) then
+         yield
+       else
+         event forge
+     ) | (
+       foreach iH <= qKml do
+       OH(x1: rms_t) :=
+       x_O_3: rms_t <- x1;
+       find [unique]  suchthat defined(x_O_2, r_3) && (x_O_3 = x_O_2) then
+         return(r_3)
+       orfind u_4 = ri_2 <= qKml suchthat defined(x_O_3[ri_2], r_4[ri_2]) && (x_O_3 = x_O_3[ri_2]) then
+         return(r_4[u_4])
+       else
+         r_4 <-R mldsa_seed;
+         return(r_4)
+     ) | (
+       foreach iH_1 <= qKed do
+       OH_1(x1_1: rms_t) :=
+       find [unique]  suchthat x1_1 = rms then
+         return(r_1)
+       orfind u_2 = ri <= qKed suchthat defined(r_2[ri], x1_1[ri]) && (x1_1 = x1_1[ri]) then
+         return(r_2[u_2])
+       else
+         r_2 <-R ed_seed;
+         return(r_2)
+     ))
+
+
+Applying remove assignments of findcond
+  - Remove assignments on x_O_2 (definition removed, all usages removed)
+  - Remove assignments on ms (definition removed, all usages removed)
+  - Remove assignments on x_O_3 (definition point kept, all usages removed)
+yields
+
+Game 13 is
+     Ostart() :=
+     rms <-R rms_t;
+     r_3 <-R mldsa_seed;
+     r_1 <-R ed_seed;
+     return(mldsa_pkgen(r_3), ed_pkgen(r_1), r_1);
+     ((
+       foreach is <= Qs do
+       Oprove(m: msg) :=
+       sk: mldsa_sk <- mldsa_skgen(r_3);
+       r <-R sign_seed;
+       return(sign_r(m, sk, r), ed_sign(m, r_1))
+     ) | (
+       Oforge(m': msg, s1: mldsa_sig, s2: ed_sig) :=
+       if mldsa_check(m', mldsa_pkgen(r_3), s1) && ed_check(m', ed_pkgen(r_1), s2) then
+       find u_1 = u <= Qs suchthat defined(m[u]) && (m' = m[u]) then
+         yield
+       else
+         event forge
+     ) | (
+       foreach iH <= qKml do
+       OH(x1: rms_t) :=
+       x_O_3: rms_t <- cst_rms_t;
+       find [unique]  suchthat defined(r_3) && (x1 = rms) then
+         return(r_3)
+       orfind u_4 = ri_2 <= qKml suchthat defined(x1[ri_2], x_O_3[ri_2], r_4[ri_2]) && (x1 = x1[ri_2]) then
+         return(r_4[u_4])
+       else
+         r_4 <-R mldsa_seed;
+         return(r_4)
+     ) | (
+       foreach iH_1 <= qKed do
+       OH_1(x1_1: rms_t) :=
+       find [unique]  suchthat x1_1 = rms then
+         return(r_1)
+       orfind u_2 = ri <= qKed suchthat defined(r_2[ri], x1_1[ri]) && (x1_1 = x1_1[ri]) then
+         return(r_2[u_2])
+       else
+         r_2 <-R ed_seed;
+         return(r_2)
+     ))
+
+
+Applying simplify [probability (qKed + qKml) / |rms_t|]
+  - Global dependency analysis on rms
+yields
+
+Game 14 is
+     Ostart() :=
+  {2}rms <-R rms_t;
+     r_3 <-R mldsa_seed;
+     r_1 <-R ed_seed;
+     return(mldsa_pkgen(r_3), ed_pkgen(r_1), r_1);
+     ((
+       foreach is <= Qs do
+       Oprove(m: msg) :=
+       sk: mldsa_sk <- mldsa_skgen(r_3);
+       r <-R sign_seed;
+       return(sign_r(m, sk, r), ed_sign(m, r_1))
+     ) | (
+       Oforge(m': msg, s1: mldsa_sig, s2: ed_sig) :=
+       if mldsa_check(m', mldsa_pkgen(r_3), s1) && ed_check(m', ed_pkgen(r_1), s2) then
+       find u_1 = u <= Qs suchthat defined(m[u]) && (m' = m[u]) then
+         yield
+       else
+         event forge
+     ) | (
+       foreach iH <= qKml do
+       OH(x1: rms_t) :=
+       x_O_3: rms_t <- cst_rms_t;
+ {63}  find [unique] u_4 = ri_2 <= qKml suchthat defined(x1[ri_2], x_O_3[ri_2], r_4[ri_2]) && (x1 = x1[ri_2]) then
+         return(r_4[u_4])
+       else
+         r_4 <-R mldsa_seed;
+         return(r_4)
+     ) | (
+       foreach iH_1 <= qKed do
+       OH_1(x1_1: rms_t) :=
+       find [unique] u_2 = ri <= qKed suchthat defined(r_2[ri], x1_1[ri]) && (x1_1 = x1_1[ri]) then
+         return(r_2[u_2])
+       else
+         r_2 <-R ed_seed;
+         return(r_2)
+     ))
+
+
+Applying simplify
+  - Simplification pass
+    - Replaced defined condition x1[ri_2], x_O_3[ri_2], r_4[ri_2] with r_4[ri_2], x1[ri_2] in find at 63
+    - Remove random number generation at 2
+yields
+
+Game 15 is
+     Ostart() :=
+     r_3 <-R mldsa_seed;
+     r_1 <-R ed_seed;
+     return(mldsa_pkgen(r_3), ed_pkgen(r_1), r_1);
+     ((
+       foreach is <= Qs do
+       Oprove(m: msg) :=
+       sk: mldsa_sk <- mldsa_skgen(r_3);
+       r <-R sign_seed;
+       return(sign_r(m, sk, r), ed_sign(m, r_1))
+     ) | (
+       Oforge(m': msg, s1: mldsa_sig, s2: ed_sig) :=
+       if mldsa_check(m', mldsa_pkgen(r_3), s1) && ed_check(m', ed_pkgen(r_1), s2) then
+       find u_1 = u <= Qs suchthat defined(m[u]) && (m' = m[u]) then
+         yield
+       else
+         event forge
+     ) | (
+       foreach iH <= qKml do
+       OH(x1: rms_t) :=
+       x_O_3: rms_t <- cst_rms_t;
+       find [unique] u_4 = ri_2 <= qKml suchthat defined(r_4[ri_2], x1[ri_2]) && (x1 = x1[ri_2]) then
+         return(r_4[u_4])
+       else
+         r_4 <-R mldsa_seed;
+         return(r_4)
+     ) | (
+       foreach iH_1 <= qKed do
+       OH_1(x1_1: rms_t) :=
+       find [unique] u_2 = ri <= qKed suchthat defined(r_2[ri], x1_1[ri]) && (x1_1 = x1_1[ri]) then
+         return(r_2[u_2])
+       else
+         r_2 <-R ed_seed;
+         return(r_2)
+     ))
+
+
+Applying move all binders
+  - Move assignment to x_O_3
+yields
+
+Game 16 is
+     Ostart() :=
+     r_3 <-R mldsa_seed;
+     r_1 <-R ed_seed;
+     return(mldsa_pkgen(r_3), ed_pkgen(r_1), r_1);
+     ((
+       foreach is <= Qs do
+       Oprove(m: msg) :=
+       sk: mldsa_sk <- mldsa_skgen(r_3);
+       r <-R sign_seed;
+       return(sign_r(m, sk, r), ed_sign(m, r_1))
+     ) | (
+       Oforge(m': msg, s1: mldsa_sig, s2: ed_sig) :=
+       if mldsa_check(m', mldsa_pkgen(r_3), s1) && ed_check(m', ed_pkgen(r_1), s2) then
+       find u_1 = u <= Qs suchthat defined(m[u]) && (m' = m[u]) then
+         yield
+       else
+         event forge
+     ) | (
+       foreach iH <= qKml do
+       OH(x1: rms_t) :=
+       find [unique] u_4 = ri_2 <= qKml suchthat defined(r_4[ri_2], x1[ri_2]) && (x1 = x1[ri_2]) then
+         return(r_4[u_4])
+       else
+         r_4 <-R mldsa_seed;
+         return(r_4)
+     ) | (
+       foreach iH_1 <= qKed do
+       OH_1(x1_1: rms_t) :=
+       find [unique] u_2 = ri <= qKed suchthat defined(r_2[ri], x1_1[ri]) && (x1_1 = x1_1[ri]) then
+         return(r_2[u_2])
+       else
+         r_2 <-R ed_seed;
+         return(r_2)
+     ))
+
+
+Applying remove assignments of binder sk
+  - Remove assignments on sk (definition removed, all usages removed)
+yields
+
+Game 17 is
+     Ostart() :=
+     r_3 <-R mldsa_seed;
+     r_1 <-R ed_seed;
+     return(mldsa_pkgen(r_3), ed_pkgen(r_1), r_1);
+     ((
+       foreach is <= Qs do
+       Oprove(m: msg) :=
+       r <-R sign_seed;
+       return(sign_r(m, mldsa_skgen(r_3), r), ed_sign(m, r_1))
+     ) | (
+       Oforge(m': msg, s1: mldsa_sig, s2: ed_sig) :=
+       if mldsa_check(m', mldsa_pkgen(r_3), s1) && ed_check(m', ed_pkgen(r_1), s2) then
+       find u_1 = u <= Qs suchthat defined(m[u]) && (m' = m[u]) then
+         yield
+       else
+         event forge
+     ) | (
+       foreach iH <= qKml do
+       OH(x1: rms_t) :=
+       find [unique] u_4 = ri_2 <= qKml suchthat defined(r_4[ri_2], x1[ri_2]) && (x1 = x1[ri_2]) then
+         return(r_4[u_4])
+       else
+         r_4 <-R mldsa_seed;
+         return(r_4)
+     ) | (
+       foreach iH_1 <= qKed do
+       OH_1(x1_1: rms_t) :=
+       find [unique] u_2 = ri <= qKed suchthat defined(r_2[ri], x1_1[ri]) && (x1_1 = x1_1[ri]) then
+         return(r_2[u_2])
+       else
+         r_2 <-R ed_seed;
+         return(r_2)
+     ))
+
+
+Applying equivalence uf_cma(mldsa_sign) with r, r_3 [probability Pmldsa(time_1, Qs)]
+  - Equivalence uf_cma(mldsa_sign) with variables: r_3 -> r_1, r -> r2
+yields
+
+Game 18 is
+     Ostart() :=
+     r_3 <-R mldsa_seed;
+     r_1 <-R ed_seed;
+     return(pkgen2(r_3), ed_pkgen(r_1), r_1);
+     ((
+       foreach is <= Qs do
+       Oprove(m: msg) :=
+       r <-R sign_seed;
+       return((x: msg <- m; sign_r2(x, skgen2(r_3), r)), ed_sign(m, r_1))
+     ) | (
+       Oforge(m': msg, s1: mldsa_sig, s2: ed_sig) :=
+ {33}  if (m1: msg <- m'; si1: mldsa_sig <- s1; find u_6 = ri_4 <= Qs suchthat defined(x[ri_4]) && (m1 = x[ri_4]) && check2(m1, pkgen2(r_3), si1) then true else false) && ed_check(m', ed_pkgen(r_1), s2) then
+       find u_1 = u <= Qs suchthat defined(m[u]) && (m' = m[u]) then
+         yield
+       else
+         event forge
+     ) | (
+       foreach iH <= qKml do
+       OH(x1: rms_t) :=
+       find [unique] u_4 = ri_2 <= qKml suchthat defined(r_4[ri_2], x1[ri_2]) && (x1 = x1[ri_2]) then
+         return(r_4[u_4])
+       else
+         r_4 <-R mldsa_seed;
+         return(r_4)
+     ) | (
+       foreach iH_1 <= qKed do
+       OH_1(x1_1: rms_t) :=
+       find [unique] u_2 = ri <= qKed suchthat defined(r_2[ri], x1_1[ri]) && (x1_1 = x1_1[ri]) then
+         return(r_2[u_2])
+       else
+         r_2 <-R ed_seed;
+         return(r_2)
+     ))
+
+
+Applying expand
+  - Expand if/find/let
+    - Test at 33 always false
+yields
+
+Game 19 is
+     Ostart() :=
+     r_3 <-R mldsa_seed;
+     r_1 <-R ed_seed;
+     return(pkgen2(r_3), ed_pkgen(r_1), r_1);
+     ((
+       foreach is <= Qs do
+       Oprove(m: msg) :=
+       r <-R sign_seed;
+       x: msg <- m;
+       return(sign_r2(x, skgen2(r_3), r), ed_sign(m, r_1))
+     ) | (
+       Oforge(m': msg, s1: mldsa_sig, s2: ed_sig) :=
+       m1: msg <- m';
+       si1: mldsa_sig <- s1;
+       find u_6 = ri_4 <= Qs suchthat defined(x[ri_4]) && (m1 = x[ri_4]) && check2(m1, pkgen2(r_3), si1) then
+       if ed_check(m', ed_pkgen(r_1), s2) then
+       find u_1 = u <= Qs suchthat defined(m[u]) && (m' = m[u]) then
+         yield
+       else
+         event forge
+     ) | (
+       foreach iH <= qKml do
+       OH(x1: rms_t) :=
+       find [unique] u_4 = ri_2 <= qKml suchthat defined(r_4[ri_2], x1[ri_2]) && (x1 = x1[ri_2]) then
+         return(r_4[u_4])
+       else
+         r_4 <-R mldsa_seed;
+         return(r_4)
+     ) | (
+       foreach iH_1 <= qKed do
+       OH_1(x1_1: rms_t) :=
+       find [unique] u_2 = ri <= qKed suchthat defined(r_2[ri], x1_1[ri]) && (x1_1 = x1_1[ri]) then
+         return(r_2[u_2])
+       else
+         r_2 <-R ed_seed;
+         return(r_2)
+     ))
+
+
+Applying remove assignments of findcond
+  - Remove assignments on m1 (definition removed, all usages removed)
+  - Remove assignments on si1 (definition removed, all usages removed)
+  - Remove assignments on x (definition removed, all usages removed)
+yields
+
+Game 20 is
+     Ostart() :=
+     r_3 <-R mldsa_seed;
+     r_1 <-R ed_seed;
+     return(pkgen2(r_3), ed_pkgen(r_1), r_1);
+     ((
+       foreach is <= Qs do
+       Oprove(m: msg) :=
+       r <-R sign_seed;
+       return(sign_r2(m, skgen2(r_3), r), ed_sign(m, r_1))
+     ) | (
+       Oforge(m': msg, s1: mldsa_sig, s2: ed_sig) :=
+ {30}  find u_6 = ri_4 <= Qs suchthat defined(m[ri_4], r[ri_4]) && (m' = m[ri_4]) && check2(m', pkgen2(r_3), s1) then
+ {43}  if ed_check(m', ed_pkgen(r_1), s2) then
+ {49}  find u_1 = u <= Qs suchthat defined(m[u]) && (m' = m[u]) then
+         yield
+       else
+         event forge
+     ) | (
+       foreach iH <= qKml do
+       OH(x1: rms_t) :=
+       find [unique] u_4 = ri_2 <= qKml suchthat defined(r_4[ri_2], x1[ri_2]) && (x1 = x1[ri_2]) then
+         return(r_4[u_4])
+       else
+         r_4 <-R mldsa_seed;
+         return(r_4)
+     ) | (
+       foreach iH_1 <= qKed do
+       OH_1(x1_1: rms_t) :=
+       find [unique] u_2 = ri <= qKed suchthat defined(r_2[ri], x1_1[ri]) && (x1_1 = x1_1[ri]) then
+         return(r_2[u_2])
+       else
+         r_2 <-R ed_seed;
+         return(r_2)
+     ))
+
+
+Applying simplify
+  - Simplification pass
+    - Remove else branch of find at 49
+    - A single branch always succeeds in find at 49
+    - Merge branches of test at 43
+    - Replaced defined condition m[ri_4], r[ri_4] with m[ri_4] in find at 30
+    - Find at 30 removed (else branch kept if any)
+yields
+
+Game 21 is
+     Ostart() :=
+     r_3 <-R mldsa_seed;
+     r_1 <-R ed_seed;
+     return(pkgen2(r_3), ed_pkgen(r_1), r_1);
+     ((
+       foreach is <= Qs do
+       Oprove(m: msg) :=
+       r <-R sign_seed;
+       return(sign_r2(m, skgen2(r_3), r), ed_sign(m, r_1))
+     ) | (
+       Oforge(m': msg, s1: mldsa_sig, s2: ed_sig) :=
+       yield
+     ) | (
+       foreach iH <= qKml do
+       OH(x1: rms_t) :=
+       find [unique] u_4 = ri_2 <= qKml suchthat defined(r_4[ri_2], x1[ri_2]) && (x1 = x1[ri_2]) then
+         return(r_4[u_4])
+       else
+         r_4 <-R mldsa_seed;
+         return(r_4)
+     ) | (
+       foreach iH_1 <= qKed do
+       OH_1(x1_1: rms_t) :=
+       find [unique] u_2 = ri <= qKed suchthat defined(r_2[ri], x1_1[ri]) && (x1_1 = x1_1[ri]) then
+         return(r_2[u_2])
+       else
+         r_2 <-R ed_seed;
+         return(r_2)
+     ))
+
+
+Proved event(forge) ==> false in game 21
+Pr[Game 1: forge] <= Pmldsa(time_1, Qs) + (qKml + qKed) / |rms_t| + Pr[Game 21: forge]
+Pr[Game 21: forge] <= 0
+RESULT Proved event(forge) ==> false up to probability Pmldsa(time_1, Qs) + (qKed + qKml) / |rms_t|
+RESULT time_1 = Qs * time(ed_sign) + time(ed_check) + 2 * time(ed_pkgen) + time
+All queries proved.

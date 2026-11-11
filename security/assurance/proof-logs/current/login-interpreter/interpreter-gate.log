@@ -1,0 +1,43 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target-own/debug/deps/vela_session_policy-652ed2674f77390e)
+
+running 4 tests
+test login_interpreter::tests::a_challenge_refusal_performs_nothing_else ... ok
+test login_interpreter::tests::a_failed_track_never_reaches_respond ... ok
+test login_interpreter::tests::final_driver_matches_the_replayed_trace ... ok
+test login_interpreter::tests::interpreter_performs_exactly_the_driver_effects_for_every_outcome ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 51 filtered out; finished in 0.00s
+
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-login-interpreter/Vela_session_policy.Challenge.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-login-interpreter/Vela_session_policy.Login_driver.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-login-interpreter/Vela_session_policy.Login_interpreter.fst[0m
+Driver source policy: 3 extracted modules, 2 proof modules; no unreviewed escapes/options
+* Warning 271 at /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+Verified module: Vela_session_policy.Login_interpreter
+Verified module: Vela_session_policy_login_interpreter_lemmas
+All verification conditions discharged successfully
+login interpreter: the handler's loop calls only the executor method for the driver's current effect, stops at the verdict within 6 turns, and ends in the driver state the per-request login theorems cover
+4d1bdbb1122715a6da96c68043e51961ba1a7a142f9cc719c6f43d0731106af3  proofs/fstar/extraction-login-interpreter/Vela_session_policy.Login_interpreter.fst
+b11b4877599d6565140f77d94f4438828d6049962015358ccd3b875a41ed311d  proofs/fstar/login-interpreter-lemmas/Vela_session_policy_login_interpreter_lemmas.fst
+8f423881e9d98dde48c4fa04ee7079febda6d9e72ca71587560eb55db79d432d  src/login_interpreter.rs

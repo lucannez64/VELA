@@ -1,0 +1,105 @@
+   Compiling syn v2.0.118
+   Compiling serde_core v1.0.228
+   Compiling memchr v2.8.2
+   Compiling serde v1.0.228
+   Compiling smallvec v1.15.2
+   Compiling cc v1.2.64
+   Compiling serde_json v1.0.150
+   Compiling blake3 v1.8.5
+   Compiling csv-core v0.1.13
+   Compiling synstructure v0.13.2
+   Compiling csv v1.4.0
+   Compiling zip v9.0.5
+   Compiling uuid v1.23.3
+   Compiling zerofrom-derive v0.1.7
+   Compiling yoke-derive v0.8.2
+   Compiling zerofrom v0.1.8
+   Compiling zerovec-derive v0.11.3
+   Compiling yoke v0.8.3
+   Compiling displaydoc v0.2.6
+   Compiling zeroize_derive v1.5.0
+   Compiling zeroize v1.9.0
+   Compiling zerotrie v0.2.4
+   Compiling curve25519-dalek-derive v0.1.1
+   Compiling serde_derive v1.0.228
+   Compiling zerovec v0.11.6
+   Compiling curve25519-dalek v4.1.3
+   Compiling tinystr v0.8.3
+   Compiling icu_locale_core v2.2.0
+   Compiling potential_utf v0.1.5
+   Compiling icu_collections v2.2.0
+   Compiling icu_provider v2.2.0
+   Compiling icu_properties v2.2.0
+   Compiling icu_normalizer v2.2.0
+   Compiling cipher v0.4.4
+   Compiling chacha20 v0.9.1
+   Compiling idna_adapter v1.2.2
+   Compiling idna v1.1.0
+   Compiling thiserror-impl v1.0.69
+   Compiling url v2.5.8
+   Compiling chrono v0.4.45
+   Compiling thiserror v1.0.69
+   Compiling chacha20poly1305 v0.10.1
+   Compiling x25519-dalek v2.0.1
+   Compiling ed25519-dalek v2.2.0
+   Compiling fips204 v0.4.6
+   Compiling vela-import v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-0e516d4a/libVELA/vela-import)
+warning: function `first_uri` is never used
+   --> /home/hirew/.t3/worktrees/VELA/t3-0e516d4a/libVELA/vela-import/src/lib.rs:470:4
+    |
+470 | fn first_uri(login: &Value) -> String {
+    |    ^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling vela-core v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-0e516d4a/libVELA/vela-core)
+   Compiling vela-crypto v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-0e516d4a/libVELA/vela-crypto)
+warning: `vela-import` (lib) generated 1 warning
+   Compiling vela-apple-bridge v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-0e516d4a/libVELA/vela-apple-bridge)
+warning: unused attribute
+   --> src/lib.rs:463:1
+    |
+463 | #[no_mangle]
+    | ^^^^^^^^^^^^ help: remove this attribute
+    |
+note: attribute also specified here
+   --> src/lib.rs:459:1
+    |
+459 | #[no_mangle]
+    | ^^^^^^^^^^^^
+    = note: `#[warn(unused_attributes)]` (part of `#[warn(unused)]`) on by default
+
+warning: struct `Response` is never constructed
+   --> src/lib.rs:897:12
+    |
+897 |     struct Response {
+    |            ^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `vela-apple-bridge` (lib test) generated 2 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 37.37s
+     Running unittests src/lib.rs (target-vela-n0-desktop/debug/build/vela-apple-bridge/9433370e773e12c2/out/vela_apple_bridge-9433370e773e12c2)
+
+running 18 tests
+test tests::admitted_download_enforces_epoch_and_rollback_after_real_open ... ok
+test tests::admitted_download_reads_android_sealed_wire_ciphertext ... ok
+test tests::admitted_download_refuses_legacy_unsealed_blobs_at_any_epoch ... ok
+test tests::bound_recovery_rejects_cross_account_and_mixed_epoch_inputs ... ok
+test tests::bound_shares_accept_every_channel_pair_and_reject_bad_ones ... ok
+test tests::enrollment_package_round_trips ... ok
+test tests::enrollment_v3_fingerprint_is_over_the_devices_own_key_and_the_capsule_opens ... ok
+test tests::identity_handle_signs_and_reveals_no_private_key ... ok
+test tests::password_strength_returns_json ... ok
+test tests::possession_proof_matches_expected_construction ... ok
+test tests::recovery_split_then_combine_recovers_rms ... ok
+test tests::rms_capsule_round_trips ... ok
+test tests::signed_shares_round_trip_and_forged_updates_are_refused ... ok
+test tests::vault_chunk_round_trips_and_binds_chunk_id ... ok
+test tests::vault_encrypt_decrypt_round_trips ... ok
+test tests::verified_publication_planner_advances_and_retires_exact_journals ... ok
+test tests::version_is_reported ... ok
+test tests::wrong_rms_does_not_decrypt ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.80s
+

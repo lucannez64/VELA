@@ -1,0 +1,6 @@
+$ fstar.exe <vault upload interpreter gate args; mutated driver file passed explicitly>
+* Error 19 at proofs/fstar/extraction-vault-upload-driver/Vela_rekey_policy.Vault_upload_driver.fst(642,2-705,20):
+  - Could not prove post-condition
+  - The SMT solver could not prove the query.
+1 error was reported
+exit=1

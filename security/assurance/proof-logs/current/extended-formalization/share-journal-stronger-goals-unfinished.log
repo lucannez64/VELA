@@ -1,0 +1,10 @@
+maude tool: 'maude'
+ checking version: 3.5.1. OK.
+ checking installation: OK.
+[Theory M28_ShareJournal] Theory loaded
+[Theory M28_ShareJournal] Theory translated
+[Theory M28_ShareJournal] Derivation checks started
+[Theory M28_ShareJournal] Derivation checks ended
+[Theory M28_ShareJournal] Theory closed
+[Saturating Sources] Step 1 (Max 5)
+[Saturating Sources] Done

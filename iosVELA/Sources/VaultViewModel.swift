@@ -397,6 +397,9 @@ final class VaultViewModel: ObservableObject {
     func wipe() {
         envelope = VaultStore(items: [])
         repo.reset()
+        // Deliberate reset: the documented recovery from a rollback baseline
+        // that belongs to a vault re-created elsewhere.
+        SyncEngine.clearBaselines()
         rms = nil
         items = []
         tombstones = []

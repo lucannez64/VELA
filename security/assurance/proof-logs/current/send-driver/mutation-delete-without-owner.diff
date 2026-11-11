@@ -1,0 +1,11 @@
+--- serverVELA/vela-share-policy/proofs/fstar/extraction-send-driver/Vela_share_policy.Send_driver.fst	2026-10-27 22:50:49.388227574 +0100
++++ /tmp/vela-f2-account-b-mut/send-delete-without-owner/Vela_share_policy.Send_driver.fst	2026-10-27 22:49:36.714340264 +0100
+@@ -519,7 +519,7 @@
+           send_state_is_sound result.f_driver &&
+           send_effect_is_sound result.f_driver result.f_effect) =
+   let base:t_SendDriver = fresh_driver (SendRequestKind_Delete <: t_SendRequestKind) in
+-  if ~.owner_present
++  if false
+   then terminal base (SendFailure_Unauthenticated <: t_SendFailure)
+   else
+     transition ({ base with f_authorized = true; f_wrote = true } <: t_SendDriver)

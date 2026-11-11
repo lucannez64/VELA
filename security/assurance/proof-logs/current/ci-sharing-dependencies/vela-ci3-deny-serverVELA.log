@@ -1,0 +1,68 @@
+warning[no-license-field]: license expression was not specified in manifest for crate 'cfg_block = 0.1.1'
+ ├ cfg_block v0.1.1
+   └── turso_core v0.7.2
+       ├── turso v0.7.2
+       │   └── vela-server v0.1.0
+       ├── turso_sdk_kit v0.7.2
+       │   ├── turso v0.7.2 (*)
+       │   └── turso_sync_sdk_kit v0.7.2
+       │       └── turso v0.7.2 (*)
+       ├── turso_sync_engine v0.7.2
+       │   └── turso_sync_sdk_kit v0.7.2 (*)
+       └── turso_sync_sdk_kit v0.7.2 (*)
+
+warning[license-not-encountered]: license was not encountered
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:88:4
+   │
+88 │   "Unicode-DFS-2016",
+   │    ━━━━━━━━━━━━━━━━ unmatched license allowance
+
+warning[unmatched-skip]: skipped crate 'num-bigint-dig' was not encountered
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:61:4
+   │
+61 │   "num-bigint-dig",
+   │    ━━━━━━━━━━━━━━ unmatched skip configuration
+
+warning[yanked]: detected yanked crate (try `cargo update -p chacha20`)
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/serverVELA/Cargo.lock:64:1
+   │
+64 │ chacha20 0.10.1 registry+https://github.com/rust-lang/crates.io-index
+   │ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ yanked version
+   │
+   ├ chacha20 v0.10.1
+     └── rand v0.10.2
+         └── quinn-proto v0.11.18
+             └── quinn v0.11.9
+                 ├── h3-quinn v0.0.10
+                 │   └── vela-server v0.1.0
+                 └── vela-server v0.1.0 (*)
+
+warning[yanked]: detected yanked crate (try `cargo update -p clipboard-win`)
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/serverVELA/Cargo.lock:73:1
+   │
+73 │ clipboard-win 5.4.1 registry+https://github.com/rust-lang/crates.io-index
+   │ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ yanked version
+   │
+   ├ clipboard-win v5.4.1
+     └── rustyline v17.0.2
+         └── stoolap v0.4.0
+             └── vela-server v0.1.0
+
+warning[yanked]: detected yanked crate (try `cargo update -p spin`)
+    ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/serverVELA/Cargo.lock:408:1
+    │
+408 │ spin 0.9.8 registry+https://github.com/rust-lang/crates.io-index
+    │ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ yanked version
+    │
+    ├ spin v0.9.8
+      └── multer v3.1.0
+          └── axum v0.7.9
+              └── vela-server v0.1.0
+
+warning[advisory-not-detected]: advisory was not encountered
+   ┌─ /home/hirew/.t3/worktrees/VELA/t3-700776df/security/deny.toml:33:4
+   │
+33 │   "RUSTSEC-2023-0071",
+   │    ━━━━━━━━━━━━━━━━━ no crate matched advisory criteria
+
+advisories ok, bans ok, licenses ok, sources ok

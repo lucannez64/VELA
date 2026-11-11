@@ -1,0 +1,18 @@
+MUTANT starter: composition failed as expected: * Error 19 at /home/hirew/.t3/worktrees/VELA/t3-700776df/serverVELA/vela-rekey-policy/proofs/fstar/rekey-driver-composition/Vela_rekey_policy_rekey_driver_composition.fst(145,2-148,35):
+MUTANT starter: witness verified, counter reachable
+MUTANT commit-skip: composition failed as expected: * Error 19 at /home/hirew/.t3/worktrees/VELA/t3-700776df/serverVELA/vela-rekey-policy/proofs/fstar/rekey-driver-composition/Vela_rekey_policy_rekey_driver_composition.fst(244,2-254,11):
+MUTANT commit-skip: witness verified, counter reachable
+MUTANT completeness: composition failed as expected: * Error 19 at /home/hirew/.t3/worktrees/VELA/t3-700776df/serverVELA/vela-rekey-policy/proofs/fstar/rekey-driver-composition/Vela_rekey_policy_rekey_driver_composition.fst(189,2-205,11):
+MUTANT completeness: witness verified, counter reachable
+MUTANT web: composition failed as expected: * Error 19 at /home/hirew/.t3/worktrees/VELA/t3-700776df/serverVELA/vela-rekey-policy/proofs/fstar/rekey-driver-composition/Vela_rekey_policy_rekey_driver_composition.fst(976,2-980,23):
+MUTANT web: witness verified, counter reachable
+rekey composition mutation summary:
+starter|composition|fails|* Error 19 at /home/hirew/.t3/worktrees/VELA/t3-700776df/serverVELA/vela-rekey-policy/proofs/fstar/rekey-driver-composition/Vela_rekey_policy_rekey_driver_composition.fst(145,2-148,35):
+starter|witness|verified|counter reachable
+commit-skip|composition|fails|* Error 19 at /home/hirew/.t3/worktrees/VELA/t3-700776df/serverVELA/vela-rekey-policy/proofs/fstar/rekey-driver-composition/Vela_rekey_policy_rekey_driver_composition.fst(244,2-254,11):
+commit-skip|witness|verified|counter reachable
+completeness|composition|fails|* Error 19 at /home/hirew/.t3/worktrees/VELA/t3-700776df/serverVELA/vela-rekey-policy/proofs/fstar/rekey-driver-composition/Vela_rekey_policy_rekey_driver_composition.fst(189,2-205,11):
+completeness|witness|verified|counter reachable
+web|composition|fails|* Error 19 at /home/hirew/.t3/worktrees/VELA/t3-700776df/serverVELA/vela-rekey-policy/proofs/fstar/rekey-driver-composition/Vela_rekey_policy_rekey_driver_composition.fst(976,2-980,23):
+web|witness|verified|counter reachable
+EXIT=0

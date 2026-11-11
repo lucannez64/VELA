@@ -1,0 +1,12 @@
+--- serverVELA/vela-session-policy/proofs/fstar/login-raw-nonce-lemmas/Vela_session_policy_login_raw_nonce.fst	2026-10-25 15:31:54.081725631 +0100
++++ /tmp/vela-raw-nonce-mutations/copy/Vela_session_policy_login_raw_nonce.fst	2026-10-25 15:34:16.349040842 +0100
+@@ -45,7 +45,8 @@
+ /// it with `classify_consumption` for `ChallengePurpose_Login`.
+ let raw_login_decision (b: t_Slice u8) : t_ChallengeConsumption =
+   classify_consumption
+-    (Core_models.Option.Option_Some (stored_tag_from_bytes b))
++    (Core_models.Option.Option_Some
++       (purpose_stored_tag ChallengePurpose_Login))
+     ChallengePurpose_Login
+
+ /// `Missing` is impossible for a present raw value.  This is the only coercion

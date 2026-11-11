@@ -1,0 +1,111 @@
+F* 2025.10.06
+platform=Linux_x86_64
+compiler=OCaml 4.14.2
+date=2025-10-06 12:00:42 -0700
+commit=7b347386330d0e5a331a220535b6f15288903234
+rustc: rustc 1.93.0-nightly (843f8ce2e 2025-11-07)
+cargo hax: hax  version=0.3.7 commit=unknown 
+   Compiling vela-session-policy v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-70c1e16e/serverVELA/vela-session-policy)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.14s
+     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/deps/vela_session_policy-652ed2674f77390e)
+
+running 34 tests
+test challenge::tests::absent_tag_is_missing_not_wrong_purpose ... ok
+test challenge::tests::bytes_roundtrip_matches_the_issued_tag ... ok
+test challenge::tests::every_cross_purpose_presentation_is_wrong_and_spends ... ok
+test challenge::tests::exact_issued_tags_are_recognized ... ok
+test challenge::tests::one_byte_or_length_mutation_is_unknown ... ok
+test challenge::tests::padding_past_the_stored_length_is_not_significant ... ok
+test challenge::tests::producer_contract_rejects_corrupted_and_truncated_values ... ok
+test challenge::tests::producer_preserves_long_input_length_so_it_cannot_alias ... ok
+test challenge::tests::producer_retains_length_and_exact_prefix_for_every_length ... ok
+test challenge::tests::taken_adapter_accepts_only_the_exact_expected_literal ... ok
+test challenge::tests::taken_adapter_agrees_with_the_former_as_deref_adapter ... ok
+test challenge::tests::taken_adapter_keeps_a_long_value_from_aliasing_the_prefix ... ok
+test challenge::tests::taken_adapter_maps_absent_to_missing ... ok
+test challenge::tests::taken_adapter_refuses_empty_unknown_and_long_values ... ok
+test challenge::tests::unknown_and_cross_purpose_tags_never_accept ... ok
+test revocation_driver::tests::admission_is_exhaustive_and_precedence_is_fixed ... ok
+test revocation_driver::tests::already_revoked_retry_repeats_lockout_and_cascade_without_record ... ok
+test revocation_driver::tests::bfs_reachable_states_preserve_the_invariant ... ok
+test revocation_driver::tests::cross_account_target_is_refused_without_effects ... ok
+test revocation_driver::tests::done_is_inert_for_every_event ... ok
+test revocation_driver::tests::every_storage_failure_is_terminal_without_a_record ... ok
+test revocation_driver::tests::exhaustive_stage_times_event_is_total_and_sound ... ok
+test revocation_driver::tests::fresh_revoke_orders_lockout_before_record_before_cascade ... ok
+test revocation_driver::tests::logout_writes_one_marker_and_is_terminal ... ok
+test revocation_driver::tests::out_of_order_events_are_inert ... ok
+test revocation_driver::tests::revoked_actor_never_reaches_an_effect ... ok
+test structural_equality_tests::structural_comparisons_match_derived_equality_exhaustively ... ok
+test tests::grant_binds_pending_approver_nonce_mode_and_epoch ... ok
+test tests::invalid_and_overflowing_times_fail_closed ... ok
+test tests::permanent_routes_are_device_only ... ok
+test tests::renewal_preserves_scope_epoch_and_cap ... ok
+test tests::scope_parser_rejects_unknown_claims ... ok
+test tests::terminal_sessions_never_issue ... ok
+test tests::web_issue_requires_every_lifecycle_fact ... ok
+
+test result: ok. 34 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/login_driver.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/deps/login_driver-b24c847c6df3c843)
+
+running 13 tests
+test a_wrong_purpose_cannot_be_mutated_into_a_success ... ok
+test absent_or_undecodable_devices_are_terminal_refusals ... ok
+test an_invalid_verifier_cannot_be_mutated_into_a_success ... ok
+test backoff_reset_and_token_issue_failures_are_terminal_refusals ... ok
+test begin_requests_the_challenge_take ... ok
+test challenge_decode_failure_does_not_touch_the_failure_counter ... ok
+test every_stage_is_sound_and_every_event_is_classified ... ok
+test failure_counter_storage_error_is_terminal_and_keeps_precedence ... ok
+test out_of_order_events_are_ignored_and_do_not_change_the_driver ... ok
+test successful_login_reaches_exactly_one_response ... ok
+test tracking_failure_never_responds_even_though_the_token_was_issued ... ok
+test verifier_rejection_requires_the_failure_side_effects_and_never_responds ... ok
+test wrong_purpose_and_missing_challenges_are_terminal_refusals ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests vela_session_policy
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Checking vela-session-policy v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-70c1e16e/serverVELA/vela-session-policy)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.87s
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-revocation-driver/Vela_session_policy.Revocation_driver.fst[0m
+Driver source policy: 1 extracted modules, 2 proof modules; no unreviewed escapes/options
+F* revocation-driver argv: --cmi --cache_off --warn_error -331 --z3rlimit 16000 --z3version 4.13.3 --already_cached +Prims+FStar+LowStar+C+Spec.Loops+TestLib --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/core --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proofs/fstar/extraction --include proofs/fstar/extraction-revocation-driver --include proofs/fstar/revocation-driver-lemmas --include proofs/fstar/revocation-driver-composition proofs/fstar/extraction-revocation-driver/Vela_session_policy.Revocation_driver.fst proofs/fstar/revocation-driver-lemmas/Vela_session_policy_revocation_driver_lemmas.fst proofs/fstar/revocation-driver-composition/Vela_session_policy_revocation_driver_composition.fst
+* Warning 271 at /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+Verified module: Vela_session_policy.Revocation_driver
+Verified module: Vela_session_policy_revocation_driver_lemmas
+Verified module: Vela_session_policy_revocation_driver_composition
+All verification conditions discharged successfully
+revocation driver: 13 focused Rust functions, 13 soundness postconditions (7 preconditions)
+per-request trace: lockout before SQL record, cascade only after a successful or repeated revoke, at most one success/failure
+logout trace: one JTI write, success implies the marker, storage failure terminal
+revocation composition: arbitrary interleavings never authorize a cross-account or revoked-actor revoke and never admit a revoked device's token
+a0f60fcfeba214d5929cf061d090dd3a64c26772acdaacfb0be6e57c2dbd6474  proofs/fstar/extraction-revocation-driver/Vela_session_policy.Revocation_driver.fst
+cb78fec6340dc968f015fc4e34b80822dbc5d0aab3b46a06b3b11ae55234e005  proofs/fstar/revocation-driver-lemmas/Vela_session_policy_revocation_driver_lemmas.fst
+a35d438630d89b875a32271399151c0d5e63c5e980f3fe08142b00360c2f6ffe  proofs/fstar/revocation-driver-composition/Vela_session_policy_revocation_driver_composition.fst
+1ba8ac1d551cbc9fc2feb2ae0e83f313506e42b2ab4ed4eb4cf6c2b081f7174f  src/revocation_driver.rs

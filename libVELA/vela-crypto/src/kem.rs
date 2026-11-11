@@ -4,13 +4,33 @@
 //! discrete-log assumption (X25519) holds, the hybrid shared secret is
 //! computationally indistinguishable from random.
 //!
-//! Shared secret derivation:
-//!   shared_secret = HKDF-SHA256(
-//!       ikm  = mlkem_ss || x25519_ss,
-//!       salt = b"vela hybrid kem v1",
-//!       info = b"",
-//!       len  = 32,
-//!   )
+//! # Combiner v2 (current)
+//!
+//! ```text
+//! shared_secret = HKDF-SHA256(
+//!     salt = b"vela hybrid kem v2",
+//!     ikm  = mlkem_ss ‖ x25519_ss ‖ x25519_epk ‖ x25519_pk
+//!            ‖ SHA-256(mlkem_ct) ‖ SHA-256(mlkem_ek),
+//!     info = b"vela hybrid kem v2",
+//!     len  = 32,
+//! )
+//! ```
+//!
+//! The secret is bound to the whole transcript: both ciphertexts and both
+//! recipient public keys. X25519 is not IND-CCA on its own, so a combiner that
+//! hashes only the two shared secrets keeps CCA security only while ML-KEM
+//! holds. Binding the X25519 ephemeral and recipient keys is what X-Wing
+//! (Barbosa et al., 2024) does to make the classical half stand on its own.
+//! We also bind the ML-KEM ciphertext and key (by hash) instead of relying on
+//! ML-KEM's ciphertext-binding property, as in the generic combiners of
+//! Giacon, Heuer and Poettering (PKC 2018). Non-contributory X25519 results
+//! (low-order points) are rejected.
+//!
+//! # Sealed blobs
+//!
+//! [`seal_share`] writes `SEALED_V2_MAGIC ‖ capsule (1600 B) ‖ XChaCha20-Poly1305`.
+//! [`open_share`] accepts only that format. The magic makes the combiner
+//! version explicit instead of something a decryptor has to guess.
 
 use hkdf::Hkdf;
 use ml_kem::{
@@ -21,13 +41,17 @@ use ml_kem::{
     Kem, KeyExport, KeyInit, MlKem1024, TryKeyInit,
 };
 use rand_core::OsRng;
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 use x25519_dalek::{EphemeralSecret, PublicKey as X25519PublicKey, StaticSecret};
-use zeroize::Zeroizing;
+use zeroize::{ZeroizeOnDrop, Zeroizing};
 
 use crate::error::{Result, VelaError};
 
-const HKDF_SALT: &[u8] = b"vela hybrid kem v1";
+const COMBINER_V2_LABEL: &[u8] = b"vela hybrid kem v2";
+
+/// Prefix of every blob [`seal_share`] produces: names the format and the
+/// combiner version.
+pub const SEALED_V2_MAGIC: &[u8; 4] = b"VKM2";
 
 /// A hybrid public key bundle (encapsulation side).
 pub struct HybridPublicKey {
@@ -37,13 +61,18 @@ pub struct HybridPublicKey {
 
 /// A hybrid secret key bundle (decapsulation side).
 ///
-/// Note: `ml_kem::DecapsulationKey` does not implement `Zeroize` in rc.0, so we
-/// rely on drop semantics for the ML-KEM key.  The X25519 static secret implements
-/// `ZeroizeOnDrop` natively via `x25519-dalek`.
+/// Both fields wipe themselves when dropped: `ml-kem`'s `DecapsulationKey`
+/// implements `Drop` + `ZeroizeOnDrop` when its `zeroize` feature is enabled
+/// (see `libVELA/vela-crypto/Cargo.toml`), and `x25519-dalek`'s `StaticSecret`
+/// zeroizes on drop by default.
 pub struct HybridSecretKey {
     pub mlkem_dk: MlKemDk,
     pub x25519_sk: StaticSecret,
 }
+
+// Marker only: the two field destructors above do the wiping. Do not add a
+// manual `Drop` that would short-circuit either of them.
+impl ZeroizeOnDrop for HybridSecretKey {}
 
 /// The wire-format capsule sent to the recipient.
 pub struct HybridCapsule {
@@ -93,7 +122,7 @@ pub fn generate_keypair() -> (HybridPublicKey, HybridSecretKey) {
     (pk, sk)
 }
 
-/// Encapsulate a fresh shared secret for the given public key.
+/// Encapsulate a fresh shared secret for the given public key (combiner v2).
 ///
 /// Returns the capsule to transmit to the recipient and the shared secret
 /// for the sender's own use (e.g., to encrypt the RMS before sending).
@@ -105,32 +134,61 @@ pub fn encapsulate(pk: &HybridPublicKey) -> Result<(HybridCapsule, SharedSecret)
     let x25519_esk = EphemeralSecret::random_from_rng(OsRng);
     let x25519_epk = X25519PublicKey::from(&x25519_esk);
     let x25519_ss = x25519_esk.diffie_hellman(&pk.x25519_pk);
-
-    let shared = combine_secrets(AsRef::<[u8]>::as_ref(&mlkem_ss), x25519_ss.as_bytes())?;
+    if !x25519_ss.was_contributory() {
+        return Err(VelaError::InvalidParameter(
+            "recipient X25519 key is a low-order point".into(),
+        ));
+    }
 
     let capsule = HybridCapsule {
         mlkem_ct,
         x25519_epk,
     };
+    let shared = combine_v2(
+        AsRef::<[u8]>::as_ref(&mlkem_ss),
+        x25519_ss.as_bytes(),
+        &capsule,
+        pk,
+    )?;
     Ok((capsule, shared))
 }
 
-/// Decapsulate a received capsule using our secret key.
+/// Decapsulate a received capsule using our secret key (combiner v2).
 pub fn decapsulate(sk: &HybridSecretKey, capsule: &HybridCapsule) -> Result<SharedSecret> {
     let mlkem_ss = sk.mlkem_dk.decapsulate(&capsule.mlkem_ct);
     let x25519_ss = sk.x25519_sk.diffie_hellman(&capsule.x25519_epk);
-    combine_secrets(AsRef::<[u8]>::as_ref(&mlkem_ss), x25519_ss.as_bytes())
+    if !x25519_ss.was_contributory() {
+        return Err(VelaError::KemError);
+    }
+    combine_v2(
+        AsRef::<[u8]>::as_ref(&mlkem_ss),
+        x25519_ss.as_bytes(),
+        capsule,
+        &sk.public_key(),
+    )
 }
 
-fn combine_secrets(mlkem_ss: &[u8], x25519_ss: &[u8]) -> Result<SharedSecret> {
-    let mut ikm = Zeroizing::new(Vec::with_capacity(mlkem_ss.len() + 32));
+fn combine_v2(
+    mlkem_ss: &[u8],
+    x25519_ss: &[u8; 32],
+    capsule: &HybridCapsule,
+    recipient: &HybridPublicKey,
+) -> Result<SharedSecret> {
+    let ct_hash = Sha256::digest(capsule.mlkem_ct.as_ref() as &[u8]);
+    let ek_hash = Sha256::digest(recipient.mlkem_ek.to_bytes().as_ref() as &[u8]);
+
+    let mut ikm = Zeroizing::new(Vec::with_capacity(mlkem_ss.len() + 4 * 32 + 32));
     ikm.extend_from_slice(mlkem_ss);
     ikm.extend_from_slice(x25519_ss);
+    ikm.extend_from_slice(capsule.x25519_epk.as_bytes());
+    ikm.extend_from_slice(recipient.x25519_pk.as_bytes());
+    ikm.extend_from_slice(&ct_hash);
+    ikm.extend_from_slice(&ek_hash);
 
-    let hk = Hkdf::<Sha256>::new(Some(HKDF_SALT), &ikm);
+    let hk = Hkdf::<Sha256>::new(Some(COMBINER_V2_LABEL), &ikm);
     let mut okm = [0u8; 32];
-    hk.expand(b"", &mut okm).map_err(|_| VelaError::KemError)?;
-
+    hk.expand(COMBINER_V2_LABEL, &mut okm)
+        .map_err(|_| VelaError::KemError)?;
     Ok(SharedSecret(okm))
 }
 
@@ -220,23 +278,46 @@ impl HybridSecretKey {
 
 /// Encrypt `plaintext` for a recipient's share public key.
 ///
-/// Wire format: `[1600 B KEM capsule ‖ XChaCha20-Poly1305 ct]`.
+/// Wire format: `SEALED_V2_MAGIC (4 B) ‖ KEM capsule (1600 B) ‖ XChaCha20-Poly1305 ct`.
 pub fn seal_share(pk: &HybridPublicKey, plaintext: &[u8]) -> Result<Vec<u8>> {
     let (capsule, ss) = encapsulate(pk)?;
     let ct = crate::aead::encrypt(ss.as_bytes(), plaintext)?;
-    let mut out = capsule.to_bytes(); // 1600 B
+    let mut out = Vec::with_capacity(SEALED_V2_MAGIC.len() + HybridCapsule::WIRE_LEN + ct.len());
+    out.extend_from_slice(SEALED_V2_MAGIC);
+    out.extend_from_slice(&capsule.to_bytes());
     out.extend_from_slice(&ct);
     Ok(out)
 }
 
-/// Decrypt a share blob produced by [`seal_share`] using the recipient's secret key.
+/// Decrypt a blob produced by [`seal_share`] using the recipient's secret key.
+///
+/// Blobs without the v2 prefix (written by the v1 combiner) are rejected:
+/// every caller of this function handles short-lived material that a current
+/// client re-creates on demand.
+///
+/// The blob is attacker-supplied — anyone can seal to a published share key —
+/// so every failure (short data, wrong header, malformed capsule, low-order
+/// X25519 point, wrong key, bad tag) is the same
+/// [`VelaError::DecryptionFailed`] (C15). ML-KEM itself never reports failure:
+/// a wrong ciphertext decapsulates to a pseudorandom secret via implicit
+/// rejection, and the AEAD tag is what rejects it.
 pub fn open_share(sk: &HybridSecretKey, data: &[u8]) -> Result<Vec<u8>> {
-    if data.len() <= HybridCapsule::WIRE_LEN {
+    crate::error::uniform_open(open_share_inner(sk, data))
+}
+
+fn open_share_inner(sk: &HybridSecretKey, data: &[u8]) -> Result<Vec<u8>> {
+    let header = SEALED_V2_MAGIC.len() + HybridCapsule::WIRE_LEN;
+    if data.len() <= header {
         return Err(VelaError::InvalidParameter("share data too short".into()));
     }
-    let capsule = HybridCapsule::from_bytes(&data[..HybridCapsule::WIRE_LEN])?;
+    if &data[..SEALED_V2_MAGIC.len()] != SEALED_V2_MAGIC {
+        return Err(VelaError::InvalidParameter(
+            "sealed blob is not in the v2 format (written by an outdated client?)".into(),
+        ));
+    }
+    let capsule = HybridCapsule::from_bytes(&data[SEALED_V2_MAGIC.len()..header])?;
     let ss = decapsulate(sk, &capsule)?;
-    let pt = crate::aead::decrypt(ss.as_bytes(), &data[HybridCapsule::WIRE_LEN..])?;
+    let pt = crate::aead::decrypt(ss.as_bytes(), &data[header..])?;
     Ok(pt.to_vec())
 }
 
@@ -335,7 +416,8 @@ mod tests {
         let (pk, sk) = generate_keypair();
         let plaintext = b"github.com password: hunter2";
         let blob = seal_share(&pk, plaintext).unwrap();
-        assert!(blob.len() > HybridCapsule::WIRE_LEN);
+        assert!(blob.len() > SEALED_V2_MAGIC.len() + HybridCapsule::WIRE_LEN);
+        assert_eq!(&blob[..4], SEALED_V2_MAGIC);
         let recovered = open_share(&sk, &blob).unwrap();
         assert_eq!(recovered, plaintext);
     }
@@ -348,5 +430,107 @@ mod tests {
         // ML-KEM uses implicit rejection — decap succeeds but gives garbage,
         // so AEAD decryption will fail with an authentication error.
         assert!(open_share(&sk2, &blob).is_err());
+    }
+
+    /// The v2 secret is bound to the X25519 ephemeral key: substituting a
+    /// different ephemeral (a mix-and-match capsule) changes the key even
+    /// though the ML-KEM half is untouched.
+    #[test]
+    fn swapping_the_x25519_ephemeral_changes_the_secret() {
+        let (pk, sk) = generate_keypair();
+        let (capsule, ss) = encapsulate(&pk).unwrap();
+        let (other, _) = encapsulate(&pk).unwrap();
+        let mixed = HybridCapsule {
+            mlkem_ct: capsule.mlkem_ct.clone(),
+            x25519_epk: other.x25519_epk,
+        };
+        let mixed_ss = decapsulate(&sk, &mixed).unwrap();
+        assert_ne!(ss.0, mixed_ss.0);
+    }
+
+    /// The v2 secret is bound to the recipient's key: the same capsule bytes
+    /// decapsulated by a key with the same X25519 half but another ML-KEM half
+    /// do not agree.
+    #[test]
+    fn the_secret_is_bound_to_the_recipient_key() {
+        let (pk, sk) = generate_keypair();
+        let (capsule, ss) = encapsulate(&pk).unwrap();
+        let (_, other_sk) = generate_keypair();
+        let franken = HybridSecretKey {
+            mlkem_dk: other_sk.mlkem_dk,
+            x25519_sk: sk.x25519_sk.clone(),
+        };
+        let ss2 = decapsulate(&franken, &capsule).unwrap();
+        assert_ne!(ss.0, ss2.0);
+    }
+
+    #[test]
+    fn low_order_x25519_points_are_rejected() {
+        let (pk, sk) = generate_keypair();
+        let (capsule, _) = encapsulate(&pk).unwrap();
+        let low_order = HybridCapsule {
+            mlkem_ct: capsule.mlkem_ct,
+            x25519_epk: X25519PublicKey::from([0u8; 32]),
+        };
+        assert!(decapsulate(&sk, &low_order).is_err());
+
+        let bad_pk = HybridPublicKey {
+            mlkem_ek: pk.mlkem_ek,
+            x25519_pk: X25519PublicKey::from([0u8; 32]),
+        };
+        assert!(encapsulate(&bad_pk).is_err());
+    }
+
+    #[test]
+    fn blobs_without_the_v2_prefix_are_rejected() {
+        let (pk, sk) = generate_keypair();
+        let mut blob = seal_share(&pk, b"secret").unwrap();
+        blob[0] ^= 1;
+        assert!(open_share(&sk, &blob).is_err());
+    }
+
+    /// Every failure to open an attacker-sealed capsule is one error (C15).
+    ///
+    /// The causes an attacker who can seal to the published share key controls
+    /// are: a short blob, a wrong header, a corrupt ML-KEM ciphertext, a
+    /// low-order X25519 ephemeral, a flipped tag, and opening with the wrong
+    /// secret key.
+    #[test]
+    fn every_open_share_failure_is_the_same_error() {
+        let (pk, sk) = generate_keypair();
+        let (_, other_sk) = generate_keypair();
+        let valid = seal_share(&pk, b"secret").unwrap();
+        let header = SEALED_V2_MAGIC.len() + HybridCapsule::WIRE_LEN;
+
+        let mut wrong_magic = valid.clone();
+        wrong_magic[0] ^= 1;
+        let mut corrupt_mlkem = valid.clone();
+        corrupt_mlkem[SEALED_V2_MAGIC.len() + 10] ^= 1;
+        let mut low_order_epk = valid.clone();
+        let epk_start = SEALED_V2_MAGIC.len() + HybridCapsule::MLKEM_CT_LEN;
+        for byte in &mut low_order_epk[epk_start..header] {
+            *byte = 0;
+        }
+        let mut flipped_tag = valid.clone();
+        let last = flipped_tag.len() - 1;
+        flipped_tag[last] ^= 1;
+
+        let cases: Vec<Result<Vec<u8>>> = vec![
+            open_share(&sk, &[]),
+            open_share(&sk, &valid[..header]),
+            open_share(&sk, &wrong_magic),
+            open_share(&sk, &corrupt_mlkem),
+            open_share(&sk, &low_order_epk),
+            open_share(&sk, &flipped_tag),
+            open_share(&other_sk, &valid),
+        ];
+
+        for result in cases {
+            match result {
+                Err(VelaError::DecryptionFailed) => {}
+                Err(other) => panic!("non-uniform decryption error: {other}"),
+                Ok(_) => panic!("attacker-chosen capsule opened"),
+            }
+        }
     }
 }

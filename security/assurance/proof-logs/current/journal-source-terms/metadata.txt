@@ -1,0 +1,23 @@
+worktree: /home/hirew/.t3/worktrees/VELA/t3-522ec213
+branch: t3/m28-source-terms
+base: 0351452
+module: security/formal/m28-trace-equivalence/M28_source_terms.fst
+module_sha256: 20259d38e29e24e813941eb5cdca227a2950d199c2c4a89d71ce971b982bdc1f
+source_lines: 646
+existing_module: security/formal/m28-trace-equivalence/M28TraceEquivalence.fst
+existing_module_sha256: 739c530661a3bbbd49051fb8490f81ed0c42b6b49c4809e3e32dd6dcdbc2e16c
+gate: security/formal/m28-trace-equivalence/verify.sh
+gate_command: VELA_FSTAR_BIN=/home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/bin/fstar.exe VELA_STEP_TIMEOUT=3600 ~/.local/opt/vela-tools/bin/vela-heavy security/formal/m28-trace-equivalence/verify.sh
+full_runner: security/formal/run-share-journal-proofs.sh
+fstar: F* 2025.10.06 (commit 7b347386330d0e5a331a220535b6f15288903234, OCaml 4.14.2)
+z3: 4.13.3 (pinned via --z3version)
+flags: --cache_off --z3rlimit 100 --z3version 4.13.3 --include security/formal/m28-trace-equivalence
+source_guard: passed (check-m28-semantic-proof.py on M28TraceEquivalence.fst)
+no_escape_gate: passed (169 tracked F* files; no proof escapes, no unimplemented interfaces)
+verified_modules: 2 (M28TraceEquivalence, M28_source_terms)
+verification_result: all verification conditions discharged successfully
+warnings: 0
+tamarin_models_changed: 0
+m28_verdicts: 10 verified, 0 falsified, 0 warnings
+m29_verdicts: 11 verified, 0 falsified, 0 warnings
+rust_files_changed: 0 (no postcondition-count change)

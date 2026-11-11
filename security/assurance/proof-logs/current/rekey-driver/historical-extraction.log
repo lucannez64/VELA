@@ -1,0 +1,3 @@
+    Checking vela-rekey-policy v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-5dd9794e/serverVELA/vela-rekey-policy)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.10s
+[1m[94minfo[0m: [1mhax: wrote file ./proofs/fstar/extraction/Vela_rekey_policy.fst[0m

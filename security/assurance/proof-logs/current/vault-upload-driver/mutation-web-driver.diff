@@ -1,0 +1,20 @@
+--- proofs/fstar/extraction-vault-upload-driver/Vela_rekey_policy.Vault_upload_driver.fst	2026-10-26 21:32:29.911274860 +0100
++++ /tmp/opencode/mut-web/extraction-vault-upload-driver/Vela_rekey_policy.Vault_upload_driver.fst	2026-10-26 21:51:08.730340592 +0100
+@@ -489,7 +489,7 @@
+
+ let on_attempt (driver: t_UploadDriver) (authority: Vela_rekey_policy.t_AttemptAuthority)
+     : t_UploadTransition =
+-  if driver.f_web
++  if false
+   then terminal driver (UploadFailure_ShadowWebSessionForbidden <: t_UploadFailure)
+   else
+     let state:Vela_rekey_policy.t_RekeyState =
+@@ -513,7 +513,7 @@
+     with
+     | Vela_rekey_policy.ShadowDecision_Allow  -> enter_quota driver
+     | Vela_rekey_policy.ShadowDecision_Reject  ->
+-      if ~.authority.Vela_rekey_policy.f_device_scope
++      if false
+       then terminal driver (UploadFailure_ShadowWebSessionForbidden <: t_UploadFailure)
+       else
+         if ~.authority.Vela_rekey_policy.f_rotation_id_present

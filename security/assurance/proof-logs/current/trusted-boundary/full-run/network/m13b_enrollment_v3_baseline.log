@@ -1,0 +1,150 @@
+maude tool: 'maude'
+ checking version: 3.5.1. OK.
+ checking installation: OK.
+[Theory M13b_EnrollmentV3Baseline] Theory loaded
+[Theory M13b_EnrollmentV3Baseline] Theory translated
+[Theory M13b_EnrollmentV3Baseline] Derivation checks started
+[Theory M13b_EnrollmentV3Baseline] Derivation checks ended
+[Theory M13b_EnrollmentV3Baseline] Theory closed
+[Saturating Sources] Step 1 (Max 5)
+[Saturating Sources] Done
+theory M13b_EnrollmentV3Baseline
+
+begin
+
+// Function signature and definition of the equational theory E
+
+functions: adec/2, aenc/2, fst/1, h/1, pair/2, pk/1, sign/2, snd/1,
+           true/0, verify/3
+equations:
+    adec(aenc(x.1, pk(x.2)), x.2) = x.1,
+    fst(<x.1, x.2>) = x.1,
+    snd(<x.1, x.2>) = x.2,
+    verify(sign(x.1, x.2), x.1, pk(x.2)) = true
+
+macros: FP( vk, ek ) =  h(<'vela enrollment device fingerprint v3', vk>)
+
+rule (modulo E) Primary:
+   [ Fr( ~skP ), Fr( ~rms ) ]
+  --[ RmsCreated( $A, ~rms ) ]->
+   [ !Primary( $A, ~skP, ~rms ), Out( pk(~skP) ) ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) Start_Ceremony:
+   [ Fr( ~c ) ]
+  --[ CeremonyStarted( ~c ) ]->
+   [ JoinTurn( ~c ), PrimaryTurn( ~c ) ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) Join_Claim:
+   [ JoinTurn( c ), Fr( ~skJ ), Fr( ~dkJ ) ]
+  --[ Claimed( c, pk(~dkJ), pk(~skJ) ) ]->
+   [
+   JoinScreen( c, FP(pk(~skJ), pk(~dkJ)) ), JoinWaiting( c, ~skJ, ~dkJ ),
+   Out( <'claim', pk(~dkJ), pk(~skJ)> )
+   ]
+
+  /*
+  rule (modulo AC) Join_Claim:
+     [ JoinTurn( c ), Fr( ~skJ ), Fr( ~dkJ ) ]
+    --[ Claimed( c, pk(~dkJ), pk(~skJ) ) ]->
+     [
+     JoinScreen( c, h(<'vela enrollment device fingerprint v3', pk(~skJ)>) ),
+     JoinWaiting( c, ~skJ, ~dkJ ), Out( <'claim', pk(~dkJ), pk(~skJ)> )
+     ]
+  */
+
+rule (modulo E) Primary_Confirm:
+   [
+   PrimaryTurn( c ), !Primary( $A, skP, rms ), In( <'claim', ek, vk> ),
+   JoinScreen( c, FP(vk, ek) )
+   ]
+  --[ Confirmed( c, $A, ek, vk ), RmsSealedTo( rms, ek ) ]->
+   [
+   Out( <aenc(rms, ek), 
+         sign(<'vela device enrollment v1', ek, vk, aenc(rms, ek)>, skP)>
+   )
+   ]
+
+  /*
+  rule (modulo AC) Primary_Confirm:
+     [
+     PrimaryTurn( c ), !Primary( $A, skP, rms ), In( <'claim', ek, vk> ),
+     JoinScreen( c, h(<'vela enrollment device fingerprint v3', vk>) )
+     ]
+    --[ Confirmed( c, $A, ek, vk ), RmsSealedTo( rms, ek ) ]->
+     [
+     Out( <aenc(rms, ek), 
+           sign(<'vela device enrollment v1', ek, vk, aenc(rms, ek)>, skP)>
+     )
+     ]
+  */
+
+rule (modulo E) Join_Adopt:
+   [ JoinWaiting( c, skJ, dkJ ), In( aenc(r, pk(dkJ)) ) ]
+  --[ Adopted( c, r ) ]->
+   [ ]
+
+  /* has exactly the trivial AC variant */
+
+lemma rms_leaks_through_a_substituted_kem_key:
+  exists-trace
+  "∃ c A rms ek vk #a #b #k.
+    ((RmsCreated( A, rms ) @ #a) ∧ (Confirmed( c, A, ek, vk ) @ #b)) ∧
+    (K( rms ) @ #k)"
+/*
+guarded formula characterizing all satisfying traces:
+"∃ c A rms ek vk #a #b #k.
+  (RmsCreated( A, rms ) @ #a) ∧
+  (Confirmed( c, A, ek, vk ) @ #b) ∧
+  (K( rms ) @ #k)"
+*/
+simplify
+solve( PrimaryTurn( c ) ▶₀ #b )
+  case Start_Ceremony
+  solve( !Primary( $A, skP.1, rms.1 ) ▶₁ #b )
+    case Primary
+    solve( JoinScreen( ~c, h(<'vela enrollment device fingerprint v3', vk>)
+           ) ▶₃ #b )
+      case Join_Claim
+      solve( !KU( ~rms ) @ #vk.5 )
+        case Primary_Confirm
+        solve( !KU( pk(x) ) @ #vk.8 )
+          case c_pk
+          solve( !KU( pk(~skJ) ) @ #vk.7 )
+            case Join_Claim
+            solve( !KU( pk(~skJ.1) ) @ #vk.9 )
+              case Join_Claim
+              SOLVED // trace found
+            qed
+          qed
+        qed
+      qed
+    qed
+  qed
+qed
+
+/* All wellformedness checks were successful. */
+
+/*
+Generated from:
+Tamarin version 1.12.0
+Maude version 3.5.1
+Git revision: 82780bbaf3328a45f624ddb41e51bf75425f851c (with uncommited changes), branch: master
+Compiled at: 2026-03-07 14:22:39.174278293 UTC
+*/
+
+end
+
+==============================================================================
+summary of summaries:
+
+analyzed: /home/hirew/.t3/worktrees/VELA/t3-700776df/security/formal/m13b_enrollment_v3_baseline.spthy
+
+  processing time: 0.50s
+  
+  rms_leaks_through_a_substituted_kem_key (exists-trace): verified (9 steps)
+
+==============================================================================

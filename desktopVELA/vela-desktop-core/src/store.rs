@@ -25,7 +25,7 @@ struct DeviceIdStore {
     user_id: String,
 }
 
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct IdentityKeysStore {
     pub hybrid_ek: Vec<u8>,
     pub hybrid_vk: Vec<u8>,
@@ -48,6 +48,33 @@ pub struct IdentityKeysStore {
     /// capsule is only ever sealed to a device that is *joining*.
     #[serde(default)]
     pub hybrid_dk: Vec<u8>,
+}
+
+impl std::fmt::Debug for IdentityKeysStore {
+    /// The public halves stay visible; the three private keys do not. The
+    /// derived `Debug` printed them verbatim into any log line that formatted
+    /// the record.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IdentityKeysStore")
+            .field("hybrid_ek", &format_args!("[public; {} bytes]", self.hybrid_ek.len()))
+            .field("hybrid_vk", &format_args!("[public; {} bytes]", self.hybrid_vk.len()))
+            .field("hybrid_sk", &"[REDACTED]")
+            .field("share_ek", &format_args!("[public; {} bytes]", self.share_ek.len()))
+            .field("share_dk", &"[REDACTED]")
+            .field("hybrid_dk", &"[REDACTED]")
+            .finish()
+    }
+}
+
+impl Drop for IdentityKeysStore {
+    /// `hybrid_sk`, `share_dk`, and `hybrid_dk` are private keys. Serde buffers
+    /// and callers make copies, but every record wipes its own fields.
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.hybrid_sk.zeroize();
+        self.share_dk.zeroize();
+        self.hybrid_dk.zeroize();
+    }
 }
 
 pub struct Store {
@@ -443,7 +470,10 @@ impl Store {
 
         if !vault_path.exists() {
             tracing::info!("No vault file found, returning empty vault");
-            return Ok(VaultStore::new());
+            let mut vault = VaultStore::new();
+            crate::sharing::recover_share_commit(self, crypto, &mut vault)
+                .map_err(anyhow::Error::msg)?;
+            return Ok(vault);
         }
 
         let ciphertext = fs::read(&vault_path)?;
@@ -452,7 +482,9 @@ impl Store {
         }
 
         let plaintext = crypto.decrypt_vault(&ciphertext)?;
-        let vault: VaultStore = serde_json::from_slice(&plaintext)?;
+        let mut vault: VaultStore = serde_json::from_slice(&plaintext)?;
+        crate::sharing::recover_share_commit(self, crypto, &mut vault)
+            .map_err(anyhow::Error::msg)?;
         Ok(vault)
     }
 
@@ -602,7 +634,9 @@ impl Store {
                 hybrid_ek: hybrid_ek.to_vec(),
                 hybrid_vk: hybrid_vk.to_vec(),
                 hybrid_sk: hybrid_sk.to_vec(),
-                ..Default::default()
+                share_ek: Vec::new(),
+                share_dk: Vec::new(),
+                hybrid_dk: Vec::new(),
             },
             crypto,
         )
@@ -688,14 +722,36 @@ pub fn write_secret_file(path: &PathBuf, bytes: &[u8]) -> anyhow::Result<()> {
         fs::create_dir_all(parent)?;
         restrict_directory(parent)?;
     }
-    // Atomic write: tmp file + rename, so a crash mid-write can never leave a
-    // truncated secret file behind.
-    let tmp_path = path.with_extension("tmp");
-    fs::write(&tmp_path, bytes)?;
-    restrict_file(&tmp_path)?;
-    fs::rename(&tmp_path, path)?;
-    restrict_file(path)?;
-    Ok(())
+    // Unique, private temp files avoid concurrent writers sharing a .tmp path.
+    // Sync contents before rename, then the directory entry (Unix) before
+    // acknowledging the commit. Failures before rename leave the old file intact;
+    // an error after rename is an uncertain commit and callers must allow replay.
+    use std::io::Write;
+    let tmp_path = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
+    let result = (|| -> anyhow::Result<()> {
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&tmp_path)?;
+        restrict_file(&tmp_path)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(&tmp_path, path)?;
+        #[cfg(unix)]
+        if let Some(parent) = path.parent() {
+            fs::File::open(parent)?.sync_all()?;
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp_path);
+    }
+    result
 }
 
 fn restrict_directory(path: &Path) -> anyhow::Result<()> {
@@ -783,6 +839,25 @@ mod tests {
             allow_second_factor_downgrade: None,
         });
         vault
+    }
+
+    #[test]
+    fn identity_keys_debug_redacts_private_keys() {
+        let keys = IdentityKeysStore {
+            hybrid_ek: b"public-ek".to_vec(),
+            hybrid_vk: b"public-vk".to_vec(),
+            hybrid_sk: b"sk-signing-secret".to_vec(),
+            share_ek: b"public-share-ek".to_vec(),
+            share_dk: b"share-decapsulation-secret".to_vec(),
+            hybrid_dk: b"hybrid-dk-secret".to_vec(),
+        };
+        let rendered = format!("{keys:?}");
+        for secret in ["sk-signing-secret", "share-decapsulation-secret", "hybrid-dk-secret"] {
+            assert!(!rendered.contains(secret), "private key leaked: {rendered}");
+        }
+        assert!(rendered.contains("[REDACTED]"), "{rendered}");
+        // Public halves remain useful for debugging.
+        assert!(rendered.contains("hybrid_ek"), "{rendered}");
     }
 
     #[test]
@@ -896,10 +971,10 @@ mod tests {
             .unwrap();
 
         let raw = fs::read(store.store_path().join(IDENTITY_KEYS_FILE)).unwrap();
-        assert_ne!(
-            raw.first(),
-            Some(&b'{'),
-            "identity keys must not be plaintext"
+        // A random AEAD nonce can start with '{'; inspect the complete file.
+        assert!(
+            serde_json::from_slice::<IdentityKeysStore>(&raw).is_err(),
+            "identity keys must not be plaintext JSON"
         );
 
         let loaded = store.load_identity_keys(&crypto).unwrap().unwrap();

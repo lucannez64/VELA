@@ -197,6 +197,76 @@ enum VelaCoreFFI {
         return field(response, "item_json")
     }
 
+    // ── Share envelope v2 (signed, recipient-bound shared items) ────────────
+
+    /// What a recipient remembers about an accepted share.
+    struct SharePin: Codable, Equatable {
+        let senderUserID: String
+        let senderVKBase64: String
+        let lineageID: String
+        let revision: UInt64
+
+        fileprivate var json: [String: Any] {
+            ["sender_user_id": senderUserID, "sender_vk_b64": senderVKBase64,
+             "lineage_id": lineageID, "revision": revision]
+        }
+    }
+
+    struct AdmittedShare {
+        let itemJSON: String
+        let firstContact: Bool
+        let pin: SharePin
+        /// Fingerprint of the sending device's key, for out-of-band comparison.
+        let senderFingerprint: String
+    }
+
+    /// Sign and seal a shared item for one recipient. The signing key stays
+    /// native; the envelope names this device's key.
+    static func identitySealSignedShare(
+        handle: UInt64, senderUserID: String, senderDeviceID: String,
+        recipientUserID: String, recipientShareEKBase64: String,
+        lineageID: String, revision: UInt64, itemJSON: String
+    ) -> String? {
+        let request = json([
+            "handle": handle, "sender_user_id": senderUserID, "sender_device_id": senderDeviceID,
+            "recipient_user_id": recipientUserID, "recipient_share_ek_b64": recipientShareEKBase64,
+            "lineage_id": lineageID, "revision": revision, "item_json": itemJSON,
+        ])
+        let response = request.withCString { consume(vela_ffi_identity_seal_signed_share_json($0)) }
+        return field(response, "capsule_b64")
+    }
+
+    /// Open a received share envelope, verify its signature and recipient
+    /// binding, and run the verified admission policy. Returns nil when the
+    /// share is rejected (unsigned, forged, misaddressed, or not newer than `pin`).
+    static func identityAdmitShare(
+        handle: UInt64, capsuleBase64: String, recipientUserID: String,
+        attributedSenderUserID: String, pin: SharePin? = nil
+    ) -> AdmittedShare? {
+        var object: [String: Any] = [
+            "handle": handle, "capsule_b64": capsuleBase64,
+            "recipient_user_id": recipientUserID, "attributed_sender_user_id": attributedSenderUserID,
+        ]
+        if let pin { object["pin"] = pin.json }
+        let response = json(object).withCString { consume(vela_ffi_identity_admit_share_json($0)) }
+        guard let data = response.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let itemJSON = obj["item_json"] as? String,
+              let firstContact = obj["first_contact"] as? Bool,
+              let fingerprint = obj["sender_fingerprint"] as? String,
+              let pinObj = obj["pin"] as? [String: Any],
+              let senderUserID = pinObj["sender_user_id"] as? String,
+              let senderVK = pinObj["sender_vk_b64"] as? String,
+              let lineageID = pinObj["lineage_id"] as? String,
+              let revision = (pinObj["revision"] as? NSNumber)?.uint64Value
+        else { return nil }
+        return AdmittedShare(
+            itemJSON: itemJSON, firstContact: firstContact,
+            pin: SharePin(senderUserID: senderUserID, senderVKBase64: senderVK,
+                          lineageID: lineageID, revision: revision),
+            senderFingerprint: fingerprint)
+    }
+
     // ── Enrollment v3 (audit P-1) ───────────────────────────────────────────
 
     /// This device's own enrollment fingerprint.
@@ -295,6 +365,9 @@ enum VelaCoreFFI {
     /// verified for ciphertexts sealed with associated data and ignored for the
     /// older unbound ones, so this reads both while the fleet upgrades
     /// (audit C-2, rollout step 2).
+    ///
+    /// Low-level decrypt only: this makes **no** rollback/epoch admission
+    /// decision. Production sync must call `decryptVaultChunkAdmitted`.
     static func decryptVaultChunk(
         rms: Data,
         chunkID: String,
@@ -318,6 +391,91 @@ enum VelaCoreFFI {
             }
         }
         return field(response, "vault_json")
+    }
+
+    /// Production sync download: the Rust side authenticates the chunk, checks
+    /// that the manifest epoch is exactly this device's authenticated epoch, and
+    /// applies the verified rollback policy against the supplied per-chunk
+    /// baseline. Plaintext is returned only when all three succeed.
+    ///
+    /// The request carries raw integers only — the AAD-binding fact is derived
+    /// from the actual AEAD open in Rust, never from a Swift boolean.
+    ///
+    /// Returns the revision the verified policy actually admitted. Callers must
+    /// record *that* clock, not the manifest entry they asked for: trusting the
+    /// request would baseline a revision nobody authenticated.
+    struct AdmittedChunk {
+        let vaultJSON: String
+        let lamportClock: Int64
+    }
+
+    enum AdmissionError: Error {
+        /// The Rust bridge refused admission. The string is the bridge's own
+        /// message (never a value supplied by the server response body).
+        case refused(String)
+    }
+
+    /// Production variant that preserves the refusal reason so the caller can
+    /// distinguish a legacy-unsealed chunk (needs explicit migration) from a
+    /// rollback/auth failure. The optional-returning
+    /// `decryptVaultChunkAdmitted` remains for existing callers/tests and is a
+    /// thin `try?` wrapper.
+    static func decryptVaultChunkAdmittedOrThrow(
+        rms: Data,
+        chunkID: String,
+        ciphertextBase64: String,
+        lamportClock: Int64,
+        keyEpoch: Int,
+        localKeyEpoch: Int,
+        lastSeenLamport: Int64?
+    ) throws -> AdmittedChunk {
+        var request: [String: Any] = [
+            "chunk_id": chunkID,
+            "ciphertext_b64": ciphertextBase64,
+            "lamport_clock": lamportClock,
+            "key_epoch": keyEpoch,
+            "local_key_epoch": localKeyEpoch,
+        ]
+        if let lastSeenLamport {
+            request["last_seen_lamport"] = lastSeenLamport
+        }
+        let response = json(request).withCString { req in
+            withRmsBytes(rms) { rmsPtr, rmsLen in
+                consume(vela_ffi_decrypt_admitted_vault_chunk_json(rmsPtr, rmsLen, req))
+            }
+        }
+        guard let data = response.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw AdmissionError.refused("empty admission response")
+        }
+        if let error = object["error"] as? String {
+            throw AdmissionError.refused(error)
+        }
+        guard let vaultJSON = object["vault_json"] as? String,
+              let clock = object["lamport_clock"] as? NSNumber else {
+            throw AdmissionError.refused("malformed admission response")
+        }
+        return AdmittedChunk(vaultJSON: vaultJSON, lamportClock: clock.int64Value)
+    }
+
+    static func decryptVaultChunkAdmitted(
+        rms: Data,
+        chunkID: String,
+        ciphertextBase64: String,
+        lamportClock: Int64,
+        keyEpoch: Int,
+        localKeyEpoch: Int,
+        lastSeenLamport: Int64?
+    ) -> AdmittedChunk? {
+        try? decryptVaultChunkAdmittedOrThrow(
+            rms: rms,
+            chunkID: chunkID,
+            ciphertextBase64: ciphertextBase64,
+            lamportClock: lamportClock,
+            keyEpoch: keyEpoch,
+            localKeyEpoch: localKeyEpoch,
+            lastSeenLamport: lastSeenLamport
+        )
     }
 
     // MARK: - Web sessions

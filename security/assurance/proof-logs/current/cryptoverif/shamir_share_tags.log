@@ -1,0 +1,2133 @@
+Doing expand get, insert and prove unique annotations... No change.
+Doing simplify (non-expanded game)... No change.
+Doing expand... No change.
+Doing remove assignments of findcond... No change.
+Doing simplify... Doing global dependency analysis on s inside simplify... At 27, returned message s depends on s.
+No change
+Run simplify 1 time(s). Fixpoint reached.
+No change.
+Doing move all binders... No change.
+Doing SA rename new without array accesses and remove assignments of findcond... No change.
+Doing merge branches... No change.
+Proof of event(accepted_wrong_secret) ==> false failed:
+  Found accepted_wrong_secret at 64
+  but could not prove false
+Trying equivalence rom(mac)... Transf. OK Proba. computed Transf. done Succeeded.
+Doing simplify (non-expanded game)... Done.
+Doing expand... Eliminated collisions between r_4 and r Probability: qM / |tag|
+Eliminated collisions between r_3 and r Probability: 1 / |tag|
+Done.
+Doing remove assignments of findcond... Done.
+Doing simplify... Doing global dependency analysis on yh inside simplify... At 25, returned message yh depends on yh.
+No change
+Doing global dependency analysis on r_4 inside simplify... At 354, returned message r_4 depends on r_4.
+No change
+Doing global dependency analysis on s inside simplify... At 24, returned message s depends on s.
+No change
+Eliminated collisions between r_2 and ta' Probability: 1 / |tag|
+(r_2 collides with a value independent of r_2 with probability at most 1 / |tag|;
+ ta' does not depend on r_2)
+Doing global dependency analysis on yh inside simplify... At 25, returned message yh depends on yh.
+No change
+Doing global dependency analysis on r_4 inside simplify... At 288, returned message r_4 depends on r_4.
+No change
+Doing global dependency analysis on s inside simplify... At 24, returned message s depends on s.
+No change
+Run simplify 2 time(s). Fixpoint reached.
+Done.
+Doing move all binders... Done.
+Doing SA rename new without array accesses and remove assignments of findcond... No change.
+Doing merge branches... No change.
+Proof of event(accepted_wrong_secret) ==> false failed:
+  Found accepted_wrong_secret at 85
+  but could not prove false
+Trying equivalence rom(mac)... Failed:
+At 10, term kdf(hk1, s) could not be discharged
+Trying equivalence rom(kdf)... Transf. OK Proba. computed Transf. done Succeeded.
+Doing simplify (non-expanded game)... Done.
+Doing expand... Eliminated collisions between r_6 and r_5 Probability: 1 / |mackey|
+Eliminated collisions between r_8 and r_5 Probability: qK / |mackey|
+Eliminated collisions between r_7 and r_5 Probability: 1 / |mackey|
+Done.
+Doing remove assignments of findcond... Done.
+Doing simplify... Doing global dependency analysis on yh inside simplify... At 19, returned message yh depends on yh.
+No change
+Doing global dependency analysis on r_5 inside simplify... At 387, returned message r_5 depends on r_5.
+No change
+Doing global dependency analysis on s inside simplify... At 18, returned message s depends on s.
+No change
+Doing global dependency analysis on r_8 inside simplify... At 417, returned message r_8 depends on r_8.
+No change
+Doing global dependency analysis on r_4 inside simplify... At 520, returned message r_4 depends on r_4.
+No change
+Eliminated collisions between r_7 and x1_1[ri_1] Probability: qM / |mackey|
+(r_7 collides with a value independent of r_7 with probability at most 1 / |mackey|;
+ x1_1[ri_1] does not depend on r_7)
+Doing global dependency analysis on yh inside simplify... At 17, returned message yh depends on yh.
+No change
+Doing global dependency analysis on r_5 inside simplify... At 222, returned message r_5 depends on r_5.
+No change
+Doing global dependency analysis on s inside simplify... At 16, returned message s depends on s.
+No change
+Doing global dependency analysis on r_8 inside simplify... At 245, returned message r_8 depends on r_8.
+No change
+Doing global dependency analysis on r_4 inside simplify... At 348, returned message r_4 depends on r_4.
+No change
+Run simplify 2 time(s). Fixpoint reached.
+Done.
+Doing SA rename k'... Done.
+Doing SA rename new without array accesses and remove assignments of findcond... Done.
+Doing simplify... Doing global dependency analysis on r_7 inside simplify... At 219, returned message r_7 depends on r_7.
+No change
+Doing global dependency analysis on yh inside simplify... At 17, returned message yh depends on yh.
+No change
+Doing global dependency analysis on r_8 inside simplify... At 236, returned message r_8 depends on r_8.
+No change
+Doing global dependency analysis on r_5 inside simplify... At 212, returned message r_5 depends on r_5.
+No change
+Doing global dependency analysis on s inside simplify... At 16, returned message s depends on s.
+No change
+Doing global dependency analysis on r_4 inside simplify... At 358, returned message r_4 depends on r_4.
+No change
+Doing global dependency analysis on r_7 inside simplify... At 218, returned message r_7 depends on r_7.
+No change
+Doing global dependency analysis on yh inside simplify... At 17, returned message yh depends on yh.
+No change
+Doing global dependency analysis on r_8 inside simplify... At 234, returned message r_8 depends on r_8.
+No change
+Doing global dependency analysis on r_5 inside simplify... At 211, returned message r_5 depends on r_5.
+No change
+Doing global dependency analysis on s inside simplify... At 16, returned message s depends on s.
+No change
+Doing global dependency analysis on r_4 inside simplify... At 356, returned message r_4 depends on r_4.
+No change
+Run simplify 2 time(s). Fixpoint reached.
+Done.
+Doing SA rename x_O_8... Done.
+Doing SA rename new without array accesses and remove assignments of findcond... Done.
+Doing simplify... Doing global dependency analysis on r_7 inside simplify... At 208, returned message r_7 depends on r_7.
+No change
+Doing global dependency analysis on yh inside simplify... At 17, returned message yh depends on yh.
+No change
+Doing global dependency analysis on r_8 inside simplify... At 224, returned message r_8 depends on r_8.
+No change
+Doing global dependency analysis on s inside simplify... At 16, returned message s depends on s.
+No change
+Doing global dependency analysis on r_5 inside simplify... At 201, returned message r_5 depends on r_5.
+No change
+Doing global dependency analysis on r_4 inside simplify... At 400, returned message r_4 depends on r_4.
+No change
+Doing global dependency analysis on r_7 inside simplify... At 208, returned message r_7 depends on r_7.
+No change
+Doing global dependency analysis on yh inside simplify... At 17, returned message yh depends on yh.
+No change
+Doing global dependency analysis on r_8 inside simplify... At 224, returned message r_8 depends on r_8.
+No change
+Doing global dependency analysis on s inside simplify... At 16, returned message s depends on s.
+No change
+Doing global dependency analysis on r_5 inside simplify... At 201, returned message r_5 depends on r_5.
+No change
+Doing global dependency analysis on r_4 inside simplify... At 400, returned message r_4 depends on r_4.
+No change
+Run simplify 2 time(s). Fixpoint reached.
+Done.
+Doing SA rename k'... No change.
+Doing simplify... Doing global dependency analysis on r_7 inside simplify... At 208, returned message r_7 depends on r_7.
+No change
+Doing global dependency analysis on yh inside simplify... At 17, returned message yh depends on yh.
+No change
+Doing global dependency analysis on r_8 inside simplify... At 224, returned message r_8 depends on r_8.
+No change
+Doing global dependency analysis on s inside simplify... At 16, returned message s depends on s.
+No change
+Doing global dependency analysis on r_5 inside simplify... At 201, returned message r_5 depends on r_5.
+No change
+Doing global dependency analysis on r_4 inside simplify... At 400, returned message r_4 depends on r_4.
+No change
+Run simplify 1 time(s). Fixpoint reached.
+No change.
+Doing move all binders... Done.
+Doing SA rename new without array accesses and remove assignments of findcond... No change.
+Doing merge branches... No change.
+Proved query event(accepted_wrong_secret) ==> false
+===================== Proof starts =======================
+Initial state
+Game 1 is
+      Ostart() :=
+      hk1 <-R hashkey;
+      hk2 <-R hashkey;
+      s <-R rms_t;
+      yh <-R yval;
+      ya: yval <- complete(s, yh);
+      th: tag <- mac(hk2, kdf(hk1, s), x_honest, yh);
+      ta: tag <- mac(hk2, kdf(hk1, s), x_attacker, ya);
+      return(s, yh, th, ya, ta);
+      ((
+        Oreconstruct(ya': yval, ta': tag) :=
+        s': rms_t <- interp(yh, ya');
+        k': mackey <- kdf(hk1, s');
+        if (mac(hk2, k', x_honest, yh) = th) && (mac(hk2, k', x_attacker, ya') = ta') then
+        if s' <> s then
+        event accepted_wrong_secret
+      ) | (
+        foreach iH <= qK do
+        OH(x1: rms_t) :=
+        return(kdf(hk1, x1))
+      ) | (
+        foreach iH_1 <= qM do
+        OH_1(x1_1: mackey, x2: xcoord, x3: yval) :=
+        return(mac(hk2, x1_1, x2, x3))
+      ))
+
+
+Applying equivalence rom(mac)
+  - Equivalence rom(mac) with variables: hk2 -> hk
+yields
+
+Game 2 is
+      Ostart() :=
+      hk1 <-R hashkey;
+      s <-R rms_t;
+      yh <-R yval;
+      ya: yval <- complete(s, yh);
+      th: tag <- (x_O_2: mackey <- kdf(hk1, s); x_O_1: xcoord <- x_honest; x_O: yval <- yh; {18}find [unique]  else r <-R tag; r);
+      ta: tag <- (x_O_5: mackey <- kdf(hk1, s); x_O_4: xcoord <- x_attacker; x_O_3: yval <- ya; {30}if defined(x_O_2, x_O_1, x_O, r) && {31}((x_O_5 = x_O_2) && (x_O_4 = x_O_1) && (x_O_3 = x_O)) then r else r_1 <-R tag; r_1);
+      return(s, yh, th, ya, ta);
+      ((
+        Oreconstruct(ya': yval, ta': tag) :=
+        s': rms_t <- interp(yh, ya');
+        k': mackey <- kdf(hk1, s');
+        if ((x_O_11: mackey <- k'; x_O_10: xcoord <- x_honest; x_O_9: yval <- yh; {71}find [unique]  suchthat defined(x_O_2, x_O_1, x_O, r) && (x_O_11 = x_O_2) && (x_O_10 = x_O_1) && (x_O_9 = x_O) then r orfind  suchthat defined(x_O_5, x_O_4, x_O_3, r_1) && {84}((x_O_11 = x_O_5) && (x_O_10 = x_O_4) && (x_O_9 = x_O_3)) then r_1 orfind u_1 = ri_1 <= qM suchthat defined(x_O_14[ri_1], x_O_13[ri_1], x_O_12[ri_1], r_4[ri_1]) && (x_O_11 = x_O_14[ri_1]) && (x_O_10 = x_O_13[ri_1]) && (x_O_9 = x_O_12[ri_1]) then r_4[u_1] else r_3 <-R tag; r_3) = th) && ((x_O_8: mackey <- k'; x_O_7: xcoord <- x_attacker; x_O_6: yval <- ya'; {126}find [unique]  suchthat defined(x_O_2, x_O_1, x_O, r) && {127}((x_O_8 = x_O_2) && (x_O_7 = x_O_1) && (x_O_6 = x_O)) then r orfind  suchthat defined(x_O_5, x_O_4, x_O_3, r_1) && (x_O_8 = x_O_5) && (x_O_7 = x_O_4) && (x_O_6 = x_O_3) then r_1 orfind  suchthat defined(x_O_11, x_O_10, x_O_9, r_3) && {151}((x_O_8 = x_O_11) && (x_O_7 = x_O_10) && (x_O_6 = x_O_9)) then r_3 orfind u_2 = ri_2 <= qM suchthat defined(x_O_14[ri_2], x_O_13[ri_2], x_O_12[ri_2], r_4[ri_2]) && (x_O_8 = x_O_14[ri_2]) && (x_O_7 = x_O_13[ri_2]) && (x_O_6 = x_O_12[ri_2]) then r_4[u_2] else r_2 <-R tag; r_2) = ta') then
+        if s' <> s then
+        event accepted_wrong_secret
+      ) | (
+        foreach iH <= qK do
+        OH(x1: rms_t) :=
+        return(kdf(hk1, x1))
+      ) | (
+        foreach iH_1 <= qM do
+        OH_1(x1_1: mackey, x2: xcoord, x3: yval) :=
+        return((x_O_14: mackey <- x1_1; x_O_13: xcoord <- x2; x_O_12: yval <- x3; find [unique]  suchthat defined(x_O_2, x_O_1, x_O, r) && (x_O_14 = x_O_2) && (x_O_13 = x_O_1) && (x_O_12 = x_O) then r orfind  suchthat defined(x_O_5, x_O_4, x_O_3, r_1) && (x_O_14 = x_O_5) && (x_O_13 = x_O_4) && (x_O_12 = x_O_3) then r_1 orfind  suchthat defined(x_O_8, x_O_7, x_O_6, r_2) && (x_O_14 = x_O_8) && (x_O_13 = x_O_7) && (x_O_12 = x_O_6) then r_2 orfind  suchthat defined(x_O_11, x_O_10, x_O_9, r_3) && (x_O_14 = x_O_11) && (x_O_13 = x_O_10) && (x_O_12 = x_O_9) then r_3 orfind u = ri <= qM suchthat defined(x_O_14[ri], x_O_13[ri], x_O_12[ri], r_4[ri]) && (x_O_14 = x_O_14[ri]) && (x_O_13 = x_O_13[ri]) && (x_O_12 = x_O_12[ri]) then r_4[u] else r_4 <-R tag; r_4))
+      ))
+
+
+Applying simplify (non-expanded game)
+  - Simplification pass
+    - Find at 18 removed (else branch kept if any)
+    - Replaced ((x_O_5 = x_O_2) && (x_O_4 = x_O_1) && (x_O_3 = x_O)) with false at 31
+    - Remove branch 1 in find at 30
+    - Find at 30 removed (else branch kept if any)
+    - Replaced ((x_O_11 = x_O_5) && (x_O_10 = x_O_4) && (x_O_9 = x_O_3)) with false at 84
+    - Remove branch 2 in find at 71
+    - Replaced ((x_O_8 = x_O_11) && (x_O_7 = x_O_10) && (x_O_6 = x_O_9)) with false at 151
+    - Remove branch 3 in find at 126
+    - Replaced ((x_O_8 = x_O_2) && (x_O_7 = x_O_1) && (x_O_6 = x_O)) with false at 127
+    - Remove branch 1 in find at 126
+yields
+
+Game 3 is
+      Ostart() :=
+      hk1 <-R hashkey;
+      s <-R rms_t;
+      yh <-R yval;
+      ya: yval <- complete(s, yh);
+      th: tag <- (x_O_2: mackey <- kdf(hk1, s); x_O_1: xcoord <- x_honest; x_O: yval <- yh; r <-R tag; r);
+      ta: tag <- (x_O_5: mackey <- kdf(hk1, s); x_O_4: xcoord <- x_attacker; x_O_3: yval <- ya; r_1 <-R tag; r_1);
+      return(s, yh, th, ya, ta);
+      ((
+        Oreconstruct(ya': yval, ta': tag) :=
+        s': rms_t <- interp(yh, ya');
+        k': mackey <- kdf(hk1, s');
+  {48}  if ((x_O_11: mackey <- k'; x_O_10: xcoord <- x_honest; x_O_9: yval <- yh; find [unique]  suchthat defined(x_O_2, x_O_1, x_O, r) && (x_O_11 = x_O_2) && (x_O_10 = x_O_1) && (x_O_9 = x_O) then r orfind u_1 = ri_1 <= qM suchthat defined(x_O_14[ri_1], x_O_13[ri_1], x_O_12[ri_1], r_4[ri_1]) && (x_O_11 = x_O_14[ri_1]) && (x_O_10 = x_O_13[ri_1]) && (x_O_9 = x_O_12[ri_1]) then r_4[u_1] else r_3 <-R tag; r_3) = th) && ((x_O_8: mackey <- k'; x_O_7: xcoord <- x_attacker; x_O_6: yval <- ya'; {100}find [unique]  suchthat defined(x_O_5, x_O_4, x_O_3, r_1) && (x_O_8 = x_O_5) && (x_O_7 = x_O_4) && (x_O_6 = x_O_3) then r_1 orfind u_2 = ri_2 <= qM suchthat defined(x_O_14[ri_2], x_O_13[ri_2], x_O_12[ri_2], r_4[ri_2]) && (x_O_8 = x_O_14[ri_2]) && (x_O_7 = x_O_13[ri_2]) && (x_O_6 = x_O_12[ri_2]) then r_4[u_2] else r_2 <-R tag; r_2) = ta') then
+ {136}  if s' <> s then
+        event accepted_wrong_secret
+      ) | (
+        foreach iH <= qK do
+        OH(x1: rms_t) :=
+        return(kdf(hk1, x1))
+      ) | (
+        foreach iH_1 <= qM do
+        OH_1(x1_1: mackey, x2: xcoord, x3: yval) :=
+        return((x_O_14: mackey <- x1_1; x_O_13: xcoord <- x2; x_O_12: yval <- x3; find [unique]  suchthat defined(x_O_2, x_O_1, x_O, r) && (x_O_14 = x_O_2) && (x_O_13 = x_O_1) && (x_O_12 = x_O) then r orfind  suchthat defined(x_O_5, x_O_4, x_O_3, r_1) && (x_O_14 = x_O_5) && (x_O_13 = x_O_4) && (x_O_12 = x_O_3) then r_1 orfind  suchthat defined(x_O_8, x_O_7, x_O_6, r_2) && (x_O_14 = x_O_8) && (x_O_13 = x_O_7) && (x_O_12 = x_O_6) then r_2 orfind  suchthat defined(x_O_11, x_O_10, x_O_9, r_3) && (x_O_14 = x_O_11) && (x_O_13 = x_O_10) && (x_O_12 = x_O_9) then r_3 orfind u = ri <= qM suchthat defined(x_O_14[ri], x_O_13[ri], x_O_12[ri], r_4[ri]) && (x_O_14 = x_O_14[ri]) && (x_O_13 = x_O_13[ri]) && (x_O_12 = x_O_12[ri]) then r_4[u] else r_4 <-R tag; r_4))
+      ))
+
+
+Applying expand [probability (qM + 1) / |tag|]
+  - Expand if/find/let
+    - Test at 48 always false
+    - Test at 48 always false
+    - Test at 48 always false
+    - Test at 48 always false
+    - Test at 48 always false
+    - Test at 48 always false
+    - Replaced defined condition x_O_14[ri_2], x_O_13[ri_2], x_O_12[ri_2], r_4[ri_2] with r_4[ri_2], x_O_12[ri_2], x_O_13[ri_2], x_O_14[ri_2], r in find at 100
+    - Test at 136 always false
+    - Merge branches of test at 48
+yields
+
+Game 4 is
+      Ostart() :=
+      hk1 <-R hashkey;
+      s <-R rms_t;
+      yh <-R yval;
+      ya: yval <- complete(s, yh);
+      x_O_2: mackey <- kdf(hk1, s);
+      x_O_1: xcoord <- x_honest;
+      x_O: yval <- yh;
+      r <-R tag;
+      th: tag <- r;
+      x_O_5: mackey <- kdf(hk1, s);
+      x_O_4: xcoord <- x_attacker;
+      x_O_3: yval <- ya;
+      r_1 <-R tag;
+      ta: tag <- r_1;
+      return(s, yh, th, ya, ta);
+      ((
+        Oreconstruct(ya': yval, ta': tag) :=
+        s': rms_t <- interp(yh, ya');
+        k': mackey <- kdf(hk1, s');
+        x_O_11: mackey <- k';
+        x_O_10: xcoord <- x_honest;
+        x_O_9: yval <- yh;
+        find [unique]  suchthat defined(x_O_2, x_O_1, x_O, r) && (x_O_11 = x_O_2) && (x_O_10 = x_O_1) && (x_O_9 = x_O) then
+        (
+          x_O_8: mackey <- k';
+          x_O_7: xcoord <- x_attacker;
+          x_O_6: yval <- ya';
+          find [unique]  suchthat defined(x_O_5, x_O_4, x_O_3, r_1) && (x_O_8 = x_O_5) && (x_O_7 = x_O_4) && (x_O_6 = x_O_3) then
+            yield
+          orfind u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x_O_12[ri_2], x_O_13[ri_2], x_O_14[ri_2], r) && (x_O_8 = x_O_14[ri_2]) && (x_O_7 = x_O_13[ri_2]) && (x_O_6 = x_O_12[ri_2]) then
+          (
+            if (r = th) && (r_4[u_2] = ta') then
+            if s' <> s then
+            event accepted_wrong_secret
+          )
+          else
+            r_2 <-R tag;
+            if (r = th) && (r_2 = ta') then
+            if s' <> s then
+            event accepted_wrong_secret
+        )
+        orfind u_1 = ri_1 <= qM suchthat defined(x_O_14[ri_1], x_O_13[ri_1], x_O_12[ri_1], r_4[ri_1]) && (x_O_11 = x_O_14[ri_1]) && (x_O_10 = x_O_13[ri_1]) && (x_O_9 = x_O_12[ri_1]) then
+          x_O_8: mackey <- k';
+          x_O_7: xcoord <- x_attacker;
+          x_O_6: yval <- ya';
+          find [unique]  suchthat defined(x_O_5, x_O_4, x_O_3, r_1) && (x_O_8 = x_O_5) && (x_O_7 = x_O_4) && (x_O_6 = x_O_3) then
+            yield
+          orfind u_2 = ri_2 <= qM suchthat defined(x_O_14[ri_2], x_O_13[ri_2], x_O_12[ri_2], r_4[ri_2]) && (x_O_8 = x_O_14[ri_2]) && (x_O_7 = x_O_13[ri_2]) && (x_O_6 = x_O_12[ri_2]) then
+            yield
+          else
+            r_2 <-R tag
+        else
+          r_3 <-R tag;
+          x_O_8: mackey <- k';
+          x_O_7: xcoord <- x_attacker;
+          x_O_6: yval <- ya';
+          find [unique]  suchthat defined(x_O_5, x_O_4, x_O_3, r_1) && (x_O_8 = x_O_5) && (x_O_7 = x_O_4) && (x_O_6 = x_O_3) then
+            yield
+          orfind u_2 = ri_2 <= qM suchthat defined(x_O_14[ri_2], x_O_13[ri_2], x_O_12[ri_2], r_4[ri_2]) && (x_O_8 = x_O_14[ri_2]) && (x_O_7 = x_O_13[ri_2]) && (x_O_6 = x_O_12[ri_2]) then
+            yield
+          else
+            r_2 <-R tag
+      ) | (
+        foreach iH <= qK do
+        OH(x1: rms_t) :=
+        return(kdf(hk1, x1))
+      ) | (
+        foreach iH_1 <= qM do
+        OH_1(x1_1: mackey, x2: xcoord, x3: yval) :=
+        x_O_14: mackey <- x1_1;
+        x_O_13: xcoord <- x2;
+        x_O_12: yval <- x3;
+        find [unique]  suchthat defined(x_O_2, x_O_1, x_O, r) && (x_O_14 = x_O_2) && (x_O_13 = x_O_1) && (x_O_12 = x_O) then
+          return(r)
+        orfind  suchthat defined(x_O_5, x_O_4, x_O_3, r_1) && (x_O_14 = x_O_5) && (x_O_13 = x_O_4) && (x_O_12 = x_O_3) then
+          return(r_1)
+        orfind  suchthat defined(x_O_8, x_O_7, x_O_6, r_2) && (x_O_14 = x_O_8) && (x_O_13 = x_O_7) && (x_O_12 = x_O_6) then
+          return(r_2)
+        orfind  suchthat defined(x_O_11, x_O_10, x_O_9, r_3) && (x_O_14 = x_O_11) && (x_O_13 = x_O_10) && (x_O_12 = x_O_9) then
+          return(r_3)
+        orfind u = ri <= qM suchthat defined(x_O_14[ri], x_O_13[ri], x_O_12[ri], r_4[ri]) && (x_O_14 = x_O_14[ri]) && (x_O_13 = x_O_13[ri]) && (x_O_12 = x_O_12[ri]) then
+          return(r_4[u])
+        else
+          r_4 <-R tag;
+          return(r_4)
+      ))
+
+
+Applying remove assignments of findcond
+  - Remove assignments on x_O (definition removed, all usages removed)
+  - Remove assignments on th (definition removed, all usages removed)
+  - Remove assignments on x_O_3 (definition removed, all usages removed)
+  - Remove assignments on ta (definition removed, all usages removed)
+  - Remove assignments on x_O_14 (definition point kept, all usages removed)
+  - Remove assignments on x_O_13 (definition removed, all usages removed)
+  - Remove assignments on x_O_12 (definition removed, all usages removed)
+  - Remove assignments on x_O_11 (definition removed, all usages removed)
+  - Remove assignments on x_O_9 (definition removed, all usages removed)
+  - Remove assignments on x_O_6 (definition kept, array references kept)
+  - Remove assignments on x_O_8 (definition kept, array references kept)
+  - Remove assignments on x_O_6 (definition kept, array references kept)
+  - Remove assignments on x_O_8 (definition kept, array references kept)
+  - Remove assignments on x_O_6 (definition kept, array references kept)
+  - Remove assignments on x_O_8 (definition kept, array references kept)
+yields
+
+Game 5 is
+      Ostart() :=
+      hk1 <-R hashkey;
+      s <-R rms_t;
+      yh <-R yval;
+      ya: yval <- complete(s, yh);
+      x_O_2: mackey <- kdf(hk1, s);
+      x_O_1: xcoord <- x_honest;
+      r <-R tag;
+      x_O_5: mackey <- kdf(hk1, s);
+      x_O_4: xcoord <- x_attacker;
+      r_1 <-R tag;
+      return(s, yh, r, ya, r_1);
+      ((
+        Oreconstruct(ya': yval, ta': tag) :=
+        s': rms_t <- interp(yh, ya');
+        k': mackey <- kdf(hk1, s');
+        x_O_10: xcoord <- x_honest;
+  {42}  find [unique]  suchthat defined(x_O_2, x_O_1, r) && {43}((k' = x_O_2) && (x_O_10 = x_O_1) && (yh = yh)) then
+        (
+          x_O_8: mackey <- k';
+          x_O_7: xcoord <- x_attacker;
+          x_O_6: yval <- ya';
+  {60}    find [unique]  suchthat defined(x_O_5, x_O_4, r_1) && {61}((k' = x_O_5) && (x_O_7 = x_O_4) && (ya' = ya)) then
+            yield
+          orfind u_2 = ri_2 <= qM suchthat defined(x3[ri_2], x2[ri_2], x1_1[ri_2], x_O_14[ri_2], r_4[ri_2], r) && (k' = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+          (
+            if {93}((r = r) && (r_4[u_2] = ta')) then
+            if s' <> s then
+            event accepted_wrong_secret
+          )
+          else
+            r_2 <-R tag;
+ {112}      if (r = r) && (r_2 = ta') then
+            if s' <> s then
+            event accepted_wrong_secret
+        )
+        orfind u_1 = ri_1 <= qM suchthat defined(x1_1[ri_1], x2[ri_1], x3[ri_1], x_O_14[ri_1], r_4[ri_1]) && (k' = x1_1[ri_1]) && (x_O_10 = x2[ri_1]) && (yh = x3[ri_1]) then
+          x_O_8: mackey <- k';
+          x_O_7: xcoord <- x_attacker;
+          x_O_6: yval <- ya';
+ {158}    find [unique]  suchthat defined(x_O_5, x_O_4, r_1) && {159}((k' = x_O_5) && (x_O_7 = x_O_4) && (ya' = ya)) then
+            yield
+          orfind u_2 = ri_2 <= qM suchthat defined(x1_1[ri_2], x2[ri_2], x3[ri_2], x_O_14[ri_2], r_4[ri_2]) && (k' = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+            yield
+          else
+            r_2 <-R tag
+        else
+          r_3 <-R tag;
+          x_O_8: mackey <- k';
+          x_O_7: xcoord <- x_attacker;
+          x_O_6: yval <- ya';
+ {203}    find [unique]  suchthat defined(x_O_5, x_O_4, r_1) && {204}((k' = x_O_5) && (x_O_7 = x_O_4) && (ya' = ya)) then
+            yield
+          orfind u_2 = ri_2 <= qM suchthat defined(x1_1[ri_2], x2[ri_2], x3[ri_2], x_O_14[ri_2], r_4[ri_2]) && (k' = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+            yield
+          else
+            r_2 <-R tag
+      ) | (
+        foreach iH <= qK do
+        OH(x1: rms_t) :=
+        return(kdf(hk1, x1))
+      ) | (
+        foreach iH_1 <= qM do
+        OH_1(x1_1: mackey, x2: xcoord, x3: yval) :=
+        x_O_14: mackey <- cst_mackey;
+ {256}  find [unique]  suchthat defined(x_O_2, x_O_1, r) && (x1_1 = x_O_2) && (x2 = x_O_1) && (x3 = yh) then
+          return(r)
+        orfind  suchthat defined(x_O_5, x_O_4, r_1) && (x1_1 = x_O_5) && (x2 = x_O_4) && (x3 = ya) then
+          return(r_1)
+        orfind  suchthat defined(x_O_8, x_O_7, x_O_6, r_2) && (x1_1 = x_O_8) && (x2 = x_O_7) && (x3 = x_O_6) then
+          return(r_2)
+        orfind  suchthat defined(yh, k', x_O_10, r_3) && (x1_1 = k') && (x2 = x_O_10) && (x3 = yh) then
+          return(r_3)
+        orfind u = ri <= qM suchthat defined(x1_1[ri], x2[ri], x3[ri], x_O_14[ri], r_4[ri]) && (x1_1 = x1_1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) then
+          return(r_4[u])
+        else
+          r_4 <-R tag;
+          return(r_4)
+      ))
+
+
+Applying simplify [probability 1 / |tag|]
+  - Simplification pass
+    - Replaced defined condition x1_1[ri], x2[ri], x3[ri], x_O_14[ri], r_4[ri] with r_4[ri], x3[ri], x2[ri], x1_1[ri] in find at 256
+    - Replaced defined condition yh, k', x_O_10, r_3 with k', x_O_10, r_3 in find at 256
+    - Replaced defined condition x_O_5, x_O_4, r_1 with an empty condition in find at 256
+    - Replaced defined condition x_O_2, x_O_1, r with an empty condition in find at 256
+    - Replaced ((k' = x_O_5) && (x_O_7 = x_O_4) && (ya' = ya)) with false at 204
+    - Remove branch 1 in find at 203
+    - Replaced defined condition x1_1[ri_2], x2[ri_2], x3[ri_2], x_O_14[ri_2], r_4[ri_2] with r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2] in find at 203
+    - Replaced ((k' = x_O_5) && (x_O_7 = x_O_4) && (ya' = ya)) with false at 159
+    - Remove branch 1 in find at 158
+    - Replaced defined condition x1_1[ri_2], x2[ri_2], x3[ri_2], x_O_14[ri_2], r_4[ri_2] with r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2] in find at 158
+    - Replaced defined condition x1_1[ri_1], x2[ri_1], x3[ri_1], x_O_14[ri_1], r_4[ri_1] with r_4[ri_1], x3[ri_1], x2[ri_1], x1_1[ri_1] in find at 42
+    - Replaced ((k' = x_O_2) && (x_O_10 = x_O_1) && (yh = yh)) with (k' = x_O_2) at 43
+    - Test at 112 always false
+    - Replaced ((r = r) && (r_4[u_2] = ta')) with (r_4[u_2] = ta') at 93
+    - Replaced defined condition x3[ri_2], x2[ri_2], x1_1[ri_2], x_O_14[ri_2], r_4[ri_2], r with r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2] in find at 60
+    - Replaced ((k' = x_O_5) && (x_O_7 = x_O_4) && (ya' = ya)) with (ya' = ya) at 61
+    - Replaced defined condition x_O_5, x_O_4, r_1 with an empty condition in find at 60
+    - Replaced defined condition x_O_2, x_O_1, r with an empty condition in find at 42
+yields
+
+Game 6 is
+      Ostart() :=
+      hk1 <-R hashkey;
+      s <-R rms_t;
+      yh <-R yval;
+      ya: yval <- complete(s, yh);
+      x_O_2: mackey <- kdf(hk1, s);
+      x_O_1: xcoord <- x_honest;
+      r <-R tag;
+      x_O_5: mackey <- kdf(hk1, s);
+      x_O_4: xcoord <- x_attacker;
+      r_1 <-R tag;
+      return(s, yh, r, ya, r_1);
+      ((
+        Oreconstruct(ya': yval, ta': tag) :=
+        s': rms_t <- interp(yh, ya');
+        k': mackey <- kdf(hk1, s');
+        x_O_10: xcoord <- x_honest;
+        find [unique]  suchthat k' = x_O_2 then
+          x_O_8: mackey <- k';
+          x_O_7: xcoord <- x_attacker;
+          x_O_6: yval <- ya';
+          find [unique]  suchthat ya' = ya then
+            yield
+          orfind u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (k' = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+          (
+            if r_4[u_2] = ta' then
+            if s' <> s then
+            event accepted_wrong_secret
+          )
+          else
+            r_2 <-R tag
+        orfind u_1 = ri_1 <= qM suchthat defined(r_4[ri_1], x3[ri_1], x2[ri_1], x1_1[ri_1]) && (k' = x1_1[ri_1]) && (x_O_10 = x2[ri_1]) && (yh = x3[ri_1]) then
+          x_O_8: mackey <- k';
+          x_O_7: xcoord <- x_attacker;
+          x_O_6: yval <- ya';
+          find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (k' = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+            yield
+          else
+            r_2 <-R tag
+        else
+          r_3 <-R tag;
+          x_O_8: mackey <- k';
+          x_O_7: xcoord <- x_attacker;
+          x_O_6: yval <- ya';
+          find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (k' = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+            yield
+          else
+            r_2 <-R tag
+      ) | (
+        foreach iH <= qK do
+        OH(x1: rms_t) :=
+        return(kdf(hk1, x1))
+      ) | (
+        foreach iH_1 <= qM do
+        OH_1(x1_1: mackey, x2: xcoord, x3: yval) :=
+        x_O_14: mackey <- cst_mackey;
+        find [unique]  suchthat (x1_1 = x_O_2) && (x2 = x_O_1) && (x3 = yh) then
+          return(r)
+        orfind  suchthat (x1_1 = x_O_5) && (x2 = x_O_4) && (x3 = ya) then
+          return(r_1)
+        orfind  suchthat defined(x_O_8, x_O_7, x_O_6, r_2) && (x1_1 = x_O_8) && (x2 = x_O_7) && (x3 = x_O_6) then
+          return(r_2)
+        orfind  suchthat defined(k', x_O_10, r_3) && (x1_1 = k') && (x2 = x_O_10) && (x3 = yh) then
+          return(r_3)
+        orfind u = ri <= qM suchthat defined(r_4[ri], x3[ri], x2[ri], x1_1[ri]) && (x1_1 = x1_1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) then
+          return(r_4[u])
+        else
+          r_4 <-R tag;
+          return(r_4)
+      ))
+
+
+Applying move all binders
+  - Move assignment to x_O_14
+  - Move random number generation r_3
+yields
+
+Game 7 is
+      Ostart() :=
+      hk1 <-R hashkey;
+      s <-R rms_t;
+      yh <-R yval;
+      ya: yval <- complete(s, yh);
+      x_O_2: mackey <- kdf(hk1, s);
+      x_O_1: xcoord <- x_honest;
+      r <-R tag;
+      x_O_5: mackey <- kdf(hk1, s);
+      x_O_4: xcoord <- x_attacker;
+      r_1 <-R tag;
+      return(s, yh, r, ya, r_1);
+      ((
+        Oreconstruct(ya': yval, ta': tag) :=
+        s': rms_t <- interp(yh, ya');
+        k': mackey <- kdf(hk1, s');
+        x_O_10: xcoord <- x_honest;
+        find [unique]  suchthat k' = x_O_2 then
+          x_O_8: mackey <- k';
+          x_O_7: xcoord <- x_attacker;
+          x_O_6: yval <- ya';
+          find [unique]  suchthat ya' = ya then
+            yield
+          orfind u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (k' = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+          (
+            if r_4[u_2] = ta' then
+            if s' <> s then
+            event accepted_wrong_secret
+          )
+          else
+            r_2 <-R tag
+        orfind u_1 = ri_1 <= qM suchthat defined(r_4[ri_1], x3[ri_1], x2[ri_1], x1_1[ri_1]) && (k' = x1_1[ri_1]) && (x_O_10 = x2[ri_1]) && (yh = x3[ri_1]) then
+          x_O_8: mackey <- k';
+          x_O_7: xcoord <- x_attacker;
+          x_O_6: yval <- ya';
+          find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (k' = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+            yield
+          else
+            r_2 <-R tag
+        else
+          x_O_8: mackey <- k';
+          x_O_7: xcoord <- x_attacker;
+          x_O_6: yval <- ya';
+          find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (k' = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+            r_3 <-R tag
+          else
+            r_2 <-R tag;
+            r_3 <-R tag
+      ) | (
+        foreach iH <= qK do
+        OH(x1: rms_t) :=
+        return(kdf(hk1, x1))
+      ) | (
+        foreach iH_1 <= qM do
+        OH_1(x1_1: mackey, x2: xcoord, x3: yval) :=
+        find [unique]  suchthat (x1_1 = x_O_2) && (x2 = x_O_1) && (x3 = yh) then
+          return(r)
+        orfind  suchthat (x1_1 = x_O_5) && (x2 = x_O_4) && (x3 = ya) then
+          return(r_1)
+        orfind  suchthat defined(x_O_8, x_O_7, x_O_6, r_2) && (x1_1 = x_O_8) && (x2 = x_O_7) && (x3 = x_O_6) then
+          return(r_2)
+        orfind  suchthat defined(k', x_O_10, r_3) && (x1_1 = k') && (x2 = x_O_10) && (x3 = yh) then
+          return(r_3)
+        orfind u = ri <= qM suchthat defined(r_4[ri], x3[ri], x2[ri], x1_1[ri]) && (x1_1 = x1_1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) then
+          return(r_4[u])
+        else
+          r_4 <-R tag;
+          return(r_4)
+      ))
+
+
+Applying equivalence rom(kdf)
+  - Equivalence rom(kdf) with variables: hk1 -> hk
+yields
+
+Game 8 is
+      Ostart() :=
+      s <-R rms_t;
+      yh <-R yval;
+      ya: yval <- complete(s, yh);
+      x_O_2: mackey <- (x_O_15: rms_t <- s; {11}find [unique]  else r_5 <-R mackey; r_5);
+      x_O_1: xcoord <- x_honest;
+      r <-R tag;
+      x_O_5: mackey <- (x_O_16: rms_t <- s; if defined(x_O_15, r_5) && {21}(x_O_16 = x_O_15) then r_5 else r_6 <-R mackey; r_6);
+      x_O_4: xcoord <- x_attacker;
+      r_1 <-R tag;
+      return(s, yh, r, ya, r_1);
+      ((
+        Oreconstruct(ya': yval, ta': tag) :=
+        s': rms_t <- interp(yh, ya');
+        k': mackey <- (x_O_17: rms_t <- s'; find [unique]  suchthat defined(x_O_15, r_5) && (x_O_17 = x_O_15) then r_5 orfind  suchthat defined(x_O_16, r_6) && (x_O_17 = x_O_16) then r_6 orfind u_6 = ri_6 <= qK suchthat defined(x_O_18[ri_6], r_8[ri_6]) && (x_O_17 = x_O_18[ri_6]) then r_8[u_6] else r_7 <-R mackey; r_7);
+        x_O_10: xcoord <- x_honest;
+        find [unique]  suchthat k' = x_O_2 then
+          x_O_8: mackey <- k';
+          x_O_7: xcoord <- x_attacker;
+          x_O_6: yval <- ya';
+          find [unique]  suchthat ya' = ya then
+            yield
+          orfind u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (k' = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+          (
+            if r_4[u_2] = ta' then
+            if s' <> s then
+            event accepted_wrong_secret
+          )
+          else
+            r_2 <-R tag
+        orfind u_1 = ri_1 <= qM suchthat defined(r_4[ri_1], x3[ri_1], x2[ri_1], x1_1[ri_1]) && (k' = x1_1[ri_1]) && (x_O_10 = x2[ri_1]) && (yh = x3[ri_1]) then
+          x_O_8: mackey <- k';
+          x_O_7: xcoord <- x_attacker;
+          x_O_6: yval <- ya';
+          find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (k' = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+            yield
+          else
+            r_2 <-R tag
+        else
+          x_O_8: mackey <- k';
+          x_O_7: xcoord <- x_attacker;
+          x_O_6: yval <- ya';
+          find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (k' = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+            r_3 <-R tag
+          else
+            r_2 <-R tag;
+            r_3 <-R tag
+      ) | (
+        foreach iH <= qK do
+        OH(x1: rms_t) :=
+        return((x_O_18: rms_t <- x1; find [unique]  suchthat defined(x_O_15, r_5) && (x_O_18 = x_O_15) then r_5 orfind  suchthat defined(x_O_16, r_6) && (x_O_18 = x_O_16) then r_6 orfind  suchthat defined(x_O_17, r_7) && (x_O_18 = x_O_17) then r_7 orfind u_5 = ri_5 <= qK suchthat defined(x_O_18[ri_5], r_8[ri_5]) && (x_O_18 = x_O_18[ri_5]) then r_8[u_5] else r_8 <-R mackey; r_8))
+      ) | (
+        foreach iH_1 <= qM do
+        OH_1(x1_1: mackey, x2: xcoord, x3: yval) :=
+        find [unique]  suchthat (x1_1 = x_O_2) && (x2 = x_O_1) && (x3 = yh) then
+          return(r)
+        orfind  suchthat (x1_1 = x_O_5) && (x2 = x_O_4) && (x3 = ya) then
+          return(r_1)
+        orfind  suchthat defined(x_O_8, x_O_7, x_O_6, r_2) && (x1_1 = x_O_8) && (x2 = x_O_7) && (x3 = x_O_6) then
+          return(r_2)
+        orfind  suchthat defined(k', x_O_10, r_3) && (x1_1 = k') && (x2 = x_O_10) && (x3 = yh) then
+          return(r_3)
+        orfind u = ri <= qM suchthat defined(r_4[ri], x3[ri], x2[ri], x1_1[ri]) && (x1_1 = x1_1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) then
+          return(r_4[u])
+        else
+          r_4 <-R tag;
+          return(r_4)
+      ))
+
+
+Applying simplify (non-expanded game)
+  - Simplification pass
+    - Find at 11 removed (else branch kept if any)
+    - Replaced (x_O_16 = x_O_15) with true at 21
+yields
+
+Game 9 is
+      Ostart() :=
+      s <-R rms_t;
+      yh <-R yval;
+      ya: yval <- complete(s, yh);
+      x_O_2: mackey <- (x_O_15: rms_t <- s; r_5 <-R mackey; r_5);
+      x_O_1: xcoord <- x_honest;
+      r <-R tag;
+      x_O_5: mackey <- (x_O_16: rms_t <- s; {19}if defined(x_O_15, r_5) then r_5 else r_6 <-R mackey; r_6);
+      x_O_4: xcoord <- x_attacker;
+      r_1 <-R tag;
+      return(s, yh, r, ya, r_1);
+      ((
+        Oreconstruct(ya': yval, ta': tag) :=
+        s': rms_t <- interp(yh, ya');
+        k': mackey <- (x_O_17: rms_t <- s'; find [unique]  suchthat defined(x_O_15, r_5) && (x_O_17 = x_O_15) then r_5 orfind  suchthat defined(x_O_16, r_6) && (x_O_17 = x_O_16) then r_6 orfind u_6 = ri_6 <= qK suchthat defined(x_O_18[ri_6], r_8[ri_6]) && (x_O_17 = x_O_18[ri_6]) then r_8[u_6] else r_7 <-R mackey; r_7);
+        x_O_10: xcoord <- x_honest;
+  {64}  find [unique]  suchthat k' = x_O_2 then
+          x_O_8: mackey <- k';
+          x_O_7: xcoord <- x_attacker;
+          x_O_6: yval <- ya';
+          find [unique]  suchthat ya' = ya then
+            yield
+          orfind u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (k' = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+          (
+            if r_4[u_2] = ta' then
+            if s' <> s then
+            event accepted_wrong_secret
+          )
+          else
+            r_2 <-R tag
+        orfind u_1 = ri_1 <= qM suchthat defined(r_4[ri_1], x3[ri_1], x2[ri_1], x1_1[ri_1]) && (k' = x1_1[ri_1]) && (x_O_10 = x2[ri_1]) && (yh = x3[ri_1]) then
+          x_O_8: mackey <- k';
+          x_O_7: xcoord <- x_attacker;
+          x_O_6: yval <- ya';
+          find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (k' = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+            yield
+          else
+            r_2 <-R tag
+        else
+          x_O_8: mackey <- k';
+          x_O_7: xcoord <- x_attacker;
+          x_O_6: yval <- ya';
+          find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (k' = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+            r_3 <-R tag
+          else
+            r_2 <-R tag;
+            r_3 <-R tag
+      ) | (
+        foreach iH <= qK do
+        OH(x1: rms_t) :=
+        return((x_O_18: rms_t <- x1; find [unique]  suchthat defined(x_O_15, r_5) && (x_O_18 = x_O_15) then r_5 orfind  suchthat defined(x_O_16, r_6) && (x_O_18 = x_O_16) then r_6 orfind  suchthat defined(x_O_17, r_7) && (x_O_18 = x_O_17) then r_7 orfind u_5 = ri_5 <= qK suchthat defined(x_O_18[ri_5], r_8[ri_5]) && (x_O_18 = x_O_18[ri_5]) then r_8[u_5] else r_8 <-R mackey; r_8))
+      ) | (
+        foreach iH_1 <= qM do
+        OH_1(x1_1: mackey, x2: xcoord, x3: yval) :=
+        find [unique]  suchthat (x1_1 = x_O_2) && (x2 = x_O_1) && (x3 = yh) then
+          return(r)
+        orfind  suchthat (x1_1 = x_O_5) && (x2 = x_O_4) && (x3 = ya) then
+          return(r_1)
+        orfind  suchthat defined(x_O_8, x_O_7, x_O_6, r_2) && (x1_1 = x_O_8) && (x2 = x_O_7) && (x3 = x_O_6) then
+          return(r_2)
+        orfind  suchthat defined(k', x_O_10, r_3) && (x1_1 = k') && (x2 = x_O_10) && (x3 = yh) then
+          return(r_3)
+        orfind u = ri <= qM suchthat defined(r_4[ri], x3[ri], x2[ri], x1_1[ri]) && (x1_1 = x1_1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) then
+          return(r_4[u])
+        else
+          r_4 <-R tag;
+          return(r_4)
+      ))
+
+
+Applying expand [probability (qK + 2) / |mackey|]
+  - Expand if/find/let
+    - Remove branch 1 in find at 64
+    - Remove branch 1 in find at 64
+    - Remove branch 1 in find at 64
+    - Remove else branch of find at 64
+    - Remove branch 2 in find at 64
+    - A single branch always succeeds in find at 64
+    - Remove branch 1 in find at 64
+    - Remove branch 1 in find at 64
+    - Remove branch 1 in find at 64
+    - Remove else branch of find at 64
+    - Remove branch 2 in find at 64
+    - A single branch always succeeds in find at 64
+    - Replaced defined condition x_O_15, r_5 with r_5 in find at 19
+yields
+
+Game 10 is
+      Ostart() :=
+      s <-R rms_t;
+      yh <-R yval;
+      ya: yval <- complete(s, yh);
+      x_O_15: rms_t <- s;
+      r_5 <-R mackey;
+      x_O_2: mackey <- r_5;
+      x_O_1: xcoord <- x_honest;
+      r <-R tag;
+      x_O_16: rms_t <- s;
+      if defined(r_5) then
+        x_O_5: mackey <- r_5;
+        x_O_4: xcoord <- x_attacker;
+        r_1 <-R tag;
+        return(s, yh, r, ya, r_1);
+        ((
+          Oreconstruct(ya': yval, ta': tag) :=
+          s': rms_t <- interp(yh, ya');
+          x_O_17: rms_t <- s';
+          find [unique]  suchthat defined(x_O_15, r_5) && (x_O_17 = x_O_15) then
+            k': mackey <- r_5;
+            x_O_10: xcoord <- x_honest;
+            x_O_8: mackey <- k';
+            x_O_7: xcoord <- x_attacker;
+            x_O_6: yval <- ya';
+            find [unique]  suchthat ya' = ya then
+              yield
+            orfind u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (k' = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+            (
+              if r_4[u_2] = ta' then
+              if s' <> s then
+              event accepted_wrong_secret
+            )
+            else
+              r_2 <-R tag
+          orfind  suchthat defined(x_O_16, r_6) && (x_O_17 = x_O_16) then
+            k': mackey <- r_6;
+            x_O_10: xcoord <- x_honest;
+            find [unique] u_1 = ri_1 <= qM suchthat defined(r_4[ri_1], x3[ri_1], x2[ri_1], x1_1[ri_1]) && (k' = x1_1[ri_1]) && (x_O_10 = x2[ri_1]) && (yh = x3[ri_1]) then
+              x_O_8: mackey <- k';
+              x_O_7: xcoord <- x_attacker;
+              x_O_6: yval <- ya';
+              find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (k' = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+                yield
+              else
+                r_2 <-R tag
+            else
+              x_O_8: mackey <- k';
+              x_O_7: xcoord <- x_attacker;
+              x_O_6: yval <- ya';
+              find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (k' = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+                r_3 <-R tag
+              else
+                r_2 <-R tag;
+                r_3 <-R tag
+          orfind u_6 = ri_6 <= qK suchthat defined(x_O_18[ri_6], r_8[ri_6]) && (x_O_17 = x_O_18[ri_6]) then
+            k': mackey <- r_8[u_6];
+            x_O_10: xcoord <- x_honest;
+            find [unique] u_1 = ri_1 <= qM suchthat defined(r_4[ri_1], x3[ri_1], x2[ri_1], x1_1[ri_1]) && (k' = x1_1[ri_1]) && (x_O_10 = x2[ri_1]) && (yh = x3[ri_1]) then
+              x_O_8: mackey <- k';
+              x_O_7: xcoord <- x_attacker;
+              x_O_6: yval <- ya';
+              find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (k' = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+                yield
+              else
+                r_2 <-R tag
+            else
+              x_O_8: mackey <- k';
+              x_O_7: xcoord <- x_attacker;
+              x_O_6: yval <- ya';
+              find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (k' = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+                r_3 <-R tag
+              else
+                r_2 <-R tag;
+                r_3 <-R tag
+          else
+            r_7 <-R mackey;
+            k': mackey <- r_7;
+            x_O_10: xcoord <- x_honest;
+            find [unique] u_1 = ri_1 <= qM suchthat defined(r_4[ri_1], x3[ri_1], x2[ri_1], x1_1[ri_1]) && (k' = x1_1[ri_1]) && (x_O_10 = x2[ri_1]) && (yh = x3[ri_1]) then
+              x_O_8: mackey <- k';
+              x_O_7: xcoord <- x_attacker;
+              x_O_6: yval <- ya';
+              find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (k' = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+                yield
+              else
+                r_2 <-R tag
+            else
+              x_O_8: mackey <- k';
+              x_O_7: xcoord <- x_attacker;
+              x_O_6: yval <- ya';
+              find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (k' = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+                r_3 <-R tag
+              else
+                r_2 <-R tag;
+                r_3 <-R tag
+        ) | (
+          foreach iH <= qK do
+          OH(x1: rms_t) :=
+          x_O_18: rms_t <- x1;
+          find [unique]  suchthat defined(x_O_15, r_5) && (x_O_18 = x_O_15) then
+            return(r_5)
+          orfind  suchthat defined(x_O_16, r_6) && (x_O_18 = x_O_16) then
+            return(r_6)
+          orfind  suchthat defined(x_O_17, r_7) && (x_O_18 = x_O_17) then
+            return(r_7)
+          orfind u_5 = ri_5 <= qK suchthat defined(x_O_18[ri_5], r_8[ri_5]) && (x_O_18 = x_O_18[ri_5]) then
+            return(r_8[u_5])
+          else
+            r_8 <-R mackey;
+            return(r_8)
+        ) | (
+          foreach iH_1 <= qM do
+          OH_1(x1_1: mackey, x2: xcoord, x3: yval) :=
+          find [unique]  suchthat (x1_1 = x_O_2) && (x2 = x_O_1) && (x3 = yh) then
+            return(r)
+          orfind  suchthat (x1_1 = x_O_5) && (x2 = x_O_4) && (x3 = ya) then
+            return(r_1)
+          orfind  suchthat defined(x_O_8, x_O_7, x_O_6, r_2) && (x1_1 = x_O_8) && (x2 = x_O_7) && (x3 = x_O_6) then
+            return(r_2)
+          orfind  suchthat defined(k', x_O_10, r_3) && (x1_1 = k') && (x2 = x_O_10) && (x3 = yh) then
+            return(r_3)
+          orfind u = ri <= qM suchthat defined(r_4[ri], x3[ri], x2[ri], x1_1[ri]) && (x1_1 = x1_1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) then
+            return(r_4[u])
+          else
+            r_4 <-R tag;
+            return(r_4)
+        ))
+      else
+        r_6 <-R mackey;
+        x_O_5: mackey <- r_6;
+        x_O_4: xcoord <- x_attacker;
+        r_1 <-R tag;
+        return(s, yh, r, ya, r_1);
+        ((
+          Oreconstruct(ya': yval, ta': tag) :=
+          s': rms_t <- interp(yh, ya');
+          x_O_17: rms_t <- s';
+          find [unique]  suchthat defined(x_O_15, r_5) && (x_O_17 = x_O_15) then
+            k': mackey <- r_5;
+            x_O_10: xcoord <- x_honest;
+            x_O_8: mackey <- k';
+            x_O_7: xcoord <- x_attacker;
+            x_O_6: yval <- ya';
+            find [unique]  suchthat ya' = ya then
+              yield
+            orfind u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (k' = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+            (
+              if r_4[u_2] = ta' then
+              if s' <> s then
+              event accepted_wrong_secret
+            )
+            else
+              r_2 <-R tag
+          orfind  suchthat defined(x_O_16, r_6) && (x_O_17 = x_O_16) then
+            k': mackey <- r_6;
+            x_O_10: xcoord <- x_honest;
+            find [unique] u_1 = ri_1 <= qM suchthat defined(r_4[ri_1], x3[ri_1], x2[ri_1], x1_1[ri_1]) && (k' = x1_1[ri_1]) && (x_O_10 = x2[ri_1]) && (yh = x3[ri_1]) then
+              x_O_8: mackey <- k';
+              x_O_7: xcoord <- x_attacker;
+              x_O_6: yval <- ya';
+              find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (k' = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+                yield
+              else
+                r_2 <-R tag
+            else
+              x_O_8: mackey <- k';
+              x_O_7: xcoord <- x_attacker;
+              x_O_6: yval <- ya';
+              find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (k' = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+                r_3 <-R tag
+              else
+                r_2 <-R tag;
+                r_3 <-R tag
+          orfind u_6 = ri_6 <= qK suchthat defined(x_O_18[ri_6], r_8[ri_6]) && (x_O_17 = x_O_18[ri_6]) then
+            k': mackey <- r_8[u_6];
+            x_O_10: xcoord <- x_honest;
+            find [unique] u_1 = ri_1 <= qM suchthat defined(r_4[ri_1], x3[ri_1], x2[ri_1], x1_1[ri_1]) && (k' = x1_1[ri_1]) && (x_O_10 = x2[ri_1]) && (yh = x3[ri_1]) then
+              x_O_8: mackey <- k';
+              x_O_7: xcoord <- x_attacker;
+              x_O_6: yval <- ya';
+              find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (k' = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+                yield
+              else
+                r_2 <-R tag
+            else
+              x_O_8: mackey <- k';
+              x_O_7: xcoord <- x_attacker;
+              x_O_6: yval <- ya';
+              find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (k' = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+                r_3 <-R tag
+              else
+                r_2 <-R tag;
+                r_3 <-R tag
+          else
+            r_7 <-R mackey;
+            k': mackey <- r_7;
+            x_O_10: xcoord <- x_honest;
+            find [unique] u_1 = ri_1 <= qM suchthat defined(r_4[ri_1], x3[ri_1], x2[ri_1], x1_1[ri_1]) && (k' = x1_1[ri_1]) && (x_O_10 = x2[ri_1]) && (yh = x3[ri_1]) then
+              x_O_8: mackey <- k';
+              x_O_7: xcoord <- x_attacker;
+              x_O_6: yval <- ya';
+              find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (k' = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+                yield
+              else
+                r_2 <-R tag
+            else
+              x_O_8: mackey <- k';
+              x_O_7: xcoord <- x_attacker;
+              x_O_6: yval <- ya';
+              find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (k' = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+                r_3 <-R tag
+              else
+                r_2 <-R tag;
+                r_3 <-R tag
+        ) | (
+          foreach iH <= qK do
+          OH(x1: rms_t) :=
+          x_O_18: rms_t <- x1;
+          find [unique]  suchthat defined(x_O_15, r_5) && (x_O_18 = x_O_15) then
+            return(r_5)
+          orfind  suchthat defined(x_O_16, r_6) && (x_O_18 = x_O_16) then
+            return(r_6)
+          orfind  suchthat defined(x_O_17, r_7) && (x_O_18 = x_O_17) then
+            return(r_7)
+          orfind u_5 = ri_5 <= qK suchthat defined(x_O_18[ri_5], r_8[ri_5]) && (x_O_18 = x_O_18[ri_5]) then
+            return(r_8[u_5])
+          else
+            r_8 <-R mackey;
+            return(r_8)
+        ) | (
+          foreach iH_1 <= qM do
+          OH_1(x1_1: mackey, x2: xcoord, x3: yval) :=
+          find [unique]  suchthat (x1_1 = x_O_2) && (x2 = x_O_1) && (x3 = yh) then
+            return(r)
+          orfind  suchthat (x1_1 = x_O_5) && (x2 = x_O_4) && (x3 = ya) then
+            return(r_1)
+          orfind  suchthat defined(x_O_8, x_O_7, x_O_6, r_2) && (x1_1 = x_O_8) && (x2 = x_O_7) && (x3 = x_O_6) then
+            return(r_2)
+          orfind  suchthat defined(k', x_O_10, r_3) && (x1_1 = k') && (x2 = x_O_10) && (x3 = yh) then
+            return(r_3)
+          orfind u = ri <= qM suchthat defined(r_4[ri], x3[ri], x2[ri], x1_1[ri]) && (x1_1 = x1_1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) then
+            return(r_4[u])
+          else
+            r_4 <-R tag;
+            return(r_4)
+        ))
+
+
+Applying remove assignments of findcond
+  - Remove assignments on x_O_15 (definition removed, all usages removed)
+  - Remove assignments on x_O_2 (definition removed, all usages removed)
+  - Remove assignments on x_O_16 (definition removed, all usages removed)
+  - Remove assignments on x_O_5 (definition removed, all usages removed)
+  - Remove assignments on x_O_18 (definition kept, array references kept)
+  - Remove assignments on k' (definition kept, array references kept)
+  - Remove assignments on k' (definition kept, array references kept)
+  - Remove assignments on k' (definition kept, array references kept)
+  - Remove assignments on k' (definition kept, array references kept)
+  - Remove assignments on x_O_17 (definition kept, array references kept)
+  - Remove assignments on x_O_5 (definition removed, all usages removed)
+  - Remove assignments on x_O_18 (definition kept, array references kept)
+  - Remove assignments on k' (definition kept, array references kept)
+  - Remove assignments on k' (definition kept, array references kept)
+  - Remove assignments on k' (definition kept, array references kept)
+  - Remove assignments on k' (definition kept, array references kept)
+  - Remove assignments on x_O_17 (definition kept, array references kept)
+yields
+
+Game 11 is
+      Ostart() :=
+      s <-R rms_t;
+      yh <-R yval;
+      ya: yval <- complete(s, yh);
+      r_5 <-R mackey;
+      x_O_1: xcoord <- x_honest;
+      r <-R tag;
+  {12}if defined(r_5) then
+        x_O_4: xcoord <- x_attacker;
+        r_1 <-R tag;
+        return(s, yh, r, ya, r_1);
+        ((
+          Oreconstruct(ya': yval, ta': tag) :=
+          s': rms_t <- interp(yh, ya');
+          x_O_17: rms_t <- s';
+  {32}    find [unique]  suchthat defined(r_5) && (s' = s) then
+            k': mackey <- r_5;
+            x_O_10: xcoord <- x_honest;
+            x_O_8: mackey <- r_5;
+            x_O_7: xcoord <- x_attacker;
+            x_O_6: yval <- ya';
+            find [unique]  suchthat ya' = ya then
+              yield
+            orfind u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (r_5 = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+            (
+              if r_4[u_2] = ta' then
+              if s' <> s then
+              event accepted_wrong_secret
+            )
+            else
+              r_2 <-R tag
+          orfind  suchthat defined(r_6) && (s' = s) then
+            k': mackey <- r_6;
+            x_O_10: xcoord <- x_honest;
+            find [unique] u_1 = ri_1 <= qM suchthat defined(r_4[ri_1], x3[ri_1], x2[ri_1], x1_1[ri_1]) && (r_6 = x1_1[ri_1]) && (x_O_10 = x2[ri_1]) && (yh = x3[ri_1]) then
+              x_O_8: mackey <- r_6;
+              x_O_7: xcoord <- x_attacker;
+              x_O_6: yval <- ya';
+              find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (r_6 = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+                yield
+              else
+                r_2 <-R tag
+            else
+              x_O_8: mackey <- r_6;
+              x_O_7: xcoord <- x_attacker;
+              x_O_6: yval <- ya';
+              find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (r_6 = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+                r_3 <-R tag
+              else
+                r_2 <-R tag;
+                r_3 <-R tag
+          orfind u_6 = ri_6 <= qK suchthat defined(x_O_18[ri_6], r_8[ri_6]) && (s' = x_O_18[ri_6]) then
+            k': mackey <- r_8[u_6];
+            x_O_10: xcoord <- x_honest;
+            find [unique] u_1 = ri_1 <= qM suchthat defined(r_4[ri_1], x3[ri_1], x2[ri_1], x1_1[ri_1]) && (r_8[u_6] = x1_1[ri_1]) && (x_O_10 = x2[ri_1]) && (yh = x3[ri_1]) then
+              x_O_8: mackey <- r_8[u_6];
+              x_O_7: xcoord <- x_attacker;
+              x_O_6: yval <- ya';
+              find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (r_8[u_6] = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+                yield
+              else
+                r_2 <-R tag
+            else
+              x_O_8: mackey <- r_8[u_6];
+              x_O_7: xcoord <- x_attacker;
+              x_O_6: yval <- ya';
+              find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (r_8[u_6] = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+                r_3 <-R tag
+              else
+                r_2 <-R tag;
+                r_3 <-R tag
+          else
+            r_7 <-R mackey;
+            k': mackey <- r_7;
+            x_O_10: xcoord <- x_honest;
+ {289}      find [unique] u_1 = ri_1 <= qM suchthat defined(r_4[ri_1], x3[ri_1], x2[ri_1], x1_1[ri_1]) && {294}((r_7 = x1_1[ri_1]) && (x_O_10 = x2[ri_1]) && (yh = x3[ri_1])) then
+              x_O_8: mackey <- r_7;
+              x_O_7: xcoord <- x_attacker;
+              x_O_6: yval <- ya';
+              find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (r_7 = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+                yield
+              else
+                r_2 <-R tag
+            else
+              x_O_8: mackey <- r_7;
+              x_O_7: xcoord <- x_attacker;
+              x_O_6: yval <- ya';
+ {345}        find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && {350}((r_7 = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2])) then
+                r_3 <-R tag
+              else
+                r_2 <-R tag;
+                r_3 <-R tag
+        ) | (
+          foreach iH <= qK do
+          OH(x1: rms_t) :=
+          x_O_18: rms_t <- x1;
+ {381}    find [unique]  suchthat defined(r_5) && (x1 = s) then
+            return(r_5)
+          orfind  suchthat defined(r_6) && (x1 = s) then
+            return(r_6)
+          orfind  suchthat defined(x_O_17, r_7) && (x1 = x_O_17) then
+            return(r_7)
+          orfind u_5 = ri_5 <= qK suchthat defined(x_O_18[ri_5], r_8[ri_5]) && (x1 = x_O_18[ri_5]) then
+            return(r_8[u_5])
+          else
+            r_8 <-R mackey;
+            return(r_8)
+        ) | (
+          foreach iH_1 <= qM do
+          OH_1(x1_1: mackey, x2: xcoord, x3: yval) :=
+          find [unique]  suchthat (x1_1 = r_5) && (x2 = x_O_1) && (x3 = yh) then
+            return(r)
+          orfind  suchthat (x1_1 = r_5) && (x2 = x_O_4) && (x3 = ya) then
+            return(r_1)
+          orfind  suchthat defined(x_O_8, x_O_7, x_O_6, r_2) && (x1_1 = x_O_8) && (x2 = x_O_7) && (x3 = x_O_6) then
+            return(r_2)
+          orfind  suchthat defined(k', x_O_10, r_3) && (x1_1 = k') && (x2 = x_O_10) && (x3 = yh) then
+            return(r_3)
+          orfind u = ri <= qM suchthat defined(r_4[ri], x3[ri], x2[ri], x1_1[ri]) && (x1_1 = x1_1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) then
+            return(r_4[u])
+          else
+            r_4 <-R tag;
+            return(r_4)
+        ))
+      else
+        r_6 <-R mackey;
+        x_O_4: xcoord <- x_attacker;
+        r_1 <-R tag;
+        return(s, yh, r, ya, r_1);
+        ((
+          Oreconstruct(ya': yval, ta': tag) :=
+          s': rms_t <- interp(yh, ya');
+          x_O_17: rms_t <- s';
+          find [unique]  suchthat defined(r_5) && (s' = s) then
+            k': mackey <- r_5;
+            x_O_10: xcoord <- x_honest;
+            x_O_8: mackey <- r_5;
+            x_O_7: xcoord <- x_attacker;
+            x_O_6: yval <- ya';
+            find [unique]  suchthat ya' = ya then
+              yield
+            orfind u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (r_5 = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+            (
+              if r_4[u_2] = ta' then
+              if s' <> s then
+              event accepted_wrong_secret
+            )
+            else
+              r_2 <-R tag
+          orfind  suchthat defined(r_6) && (s' = s) then
+            k': mackey <- r_6;
+            x_O_10: xcoord <- x_honest;
+            find [unique] u_1 = ri_1 <= qM suchthat defined(r_4[ri_1], x3[ri_1], x2[ri_1], x1_1[ri_1]) && (r_6 = x1_1[ri_1]) && (x_O_10 = x2[ri_1]) && (yh = x3[ri_1]) then
+              x_O_8: mackey <- r_6;
+              x_O_7: xcoord <- x_attacker;
+              x_O_6: yval <- ya';
+              find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (r_6 = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+                yield
+              else
+                r_2 <-R tag
+            else
+              x_O_8: mackey <- r_6;
+              x_O_7: xcoord <- x_attacker;
+              x_O_6: yval <- ya';
+              find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (r_6 = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+                r_3 <-R tag
+              else
+                r_2 <-R tag;
+                r_3 <-R tag
+          orfind u_6 = ri_6 <= qK suchthat defined(x_O_18[ri_6], r_8[ri_6]) && (s' = x_O_18[ri_6]) then
+            k': mackey <- r_8[u_6];
+            x_O_10: xcoord <- x_honest;
+            find [unique] u_1 = ri_1 <= qM suchthat defined(r_4[ri_1], x3[ri_1], x2[ri_1], x1_1[ri_1]) && (r_8[u_6] = x1_1[ri_1]) && (x_O_10 = x2[ri_1]) && (yh = x3[ri_1]) then
+              x_O_8: mackey <- r_8[u_6];
+              x_O_7: xcoord <- x_attacker;
+              x_O_6: yval <- ya';
+              find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (r_8[u_6] = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+                yield
+              else
+                r_2 <-R tag
+            else
+              x_O_8: mackey <- r_8[u_6];
+              x_O_7: xcoord <- x_attacker;
+              x_O_6: yval <- ya';
+              find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (r_8[u_6] = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+                r_3 <-R tag
+              else
+                r_2 <-R tag;
+                r_3 <-R tag
+          else
+            r_7 <-R mackey;
+            k': mackey <- r_7;
+            x_O_10: xcoord <- x_honest;
+            find [unique] u_1 = ri_1 <= qM suchthat defined(r_4[ri_1], x3[ri_1], x2[ri_1], x1_1[ri_1]) && (r_7 = x1_1[ri_1]) && (x_O_10 = x2[ri_1]) && (yh = x3[ri_1]) then
+              x_O_8: mackey <- r_7;
+              x_O_7: xcoord <- x_attacker;
+              x_O_6: yval <- ya';
+              find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (r_7 = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+                yield
+              else
+                r_2 <-R tag
+            else
+              x_O_8: mackey <- r_7;
+              x_O_7: xcoord <- x_attacker;
+              x_O_6: yval <- ya';
+              find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (r_7 = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+                r_3 <-R tag
+              else
+                r_2 <-R tag;
+                r_3 <-R tag
+        ) | (
+          foreach iH <= qK do
+          OH(x1: rms_t) :=
+          x_O_18: rms_t <- x1;
+          find [unique]  suchthat defined(r_5) && (x1 = s) then
+            return(r_5)
+          orfind  suchthat defined(r_6) && (x1 = s) then
+            return(r_6)
+          orfind  suchthat defined(x_O_17, r_7) && (x1 = x_O_17) then
+            return(r_7)
+          orfind u_5 = ri_5 <= qK suchthat defined(x_O_18[ri_5], r_8[ri_5]) && (x1 = x_O_18[ri_5]) then
+            return(r_8[u_5])
+          else
+            r_8 <-R mackey;
+            return(r_8)
+        ) | (
+          foreach iH_1 <= qM do
+          OH_1(x1_1: mackey, x2: xcoord, x3: yval) :=
+          find [unique]  suchthat (x1_1 = r_5) && (x2 = x_O_1) && (x3 = yh) then
+            return(r)
+          orfind  suchthat (x1_1 = r_6) && (x2 = x_O_4) && (x3 = ya) then
+            return(r_1)
+          orfind  suchthat defined(x_O_8, x_O_7, x_O_6, r_2) && (x1_1 = x_O_8) && (x2 = x_O_7) && (x3 = x_O_6) then
+            return(r_2)
+          orfind  suchthat defined(k', x_O_10, r_3) && (x1_1 = k') && (x2 = x_O_10) && (x3 = yh) then
+            return(r_3)
+          orfind u = ri <= qM suchthat defined(r_4[ri], x3[ri], x2[ri], x1_1[ri]) && (x1_1 = x1_1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) then
+            return(r_4[u])
+          else
+            r_4 <-R tag;
+            return(r_4)
+        ))
+
+
+Applying simplify [probability qM / |mackey|]
+  - Simplification pass
+    - Transformed find at 12 into a test
+    - Test at 12 always true
+    - Remove branch 2 in find at 381
+    - Replaced defined condition r_5 with an empty condition in find at 381
+    - Replaced ((r_7 = x1_1[ri_1]) && (x_O_10 = x2[ri_1]) && (yh = x3[ri_1])) with false at 294
+    - Remove branch 1 in find at 289
+    - Find at 289 removed (else branch kept if any)
+    - Replaced ((r_7 = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2])) with false at 350
+    - Remove branch 1 in find at 345
+    - Find at 345 removed (else branch kept if any)
+    - Remove branch 2 in find at 32
+    - Replaced defined condition r_5 with an empty condition in find at 32
+yields
+
+Game 12 is
+      Ostart() :=
+      s <-R rms_t;
+      yh <-R yval;
+      ya: yval <- complete(s, yh);
+      r_5 <-R mackey;
+      x_O_1: xcoord <- x_honest;
+      r <-R tag;
+      x_O_4: xcoord <- x_attacker;
+      r_1 <-R tag;
+      return(s, yh, r, ya, r_1);
+      ((
+        Oreconstruct(ya': yval, ta': tag) :=
+        s': rms_t <- interp(yh, ya');
+        x_O_17: rms_t <- s';
+        find [unique]  suchthat s' = s then
+          k': mackey <- r_5;
+          x_O_10: xcoord <- x_honest;
+          x_O_8: mackey <- r_5;
+          x_O_7: xcoord <- x_attacker;
+          x_O_6: yval <- ya';
+          find [unique]  suchthat ya' = ya then
+            yield
+          orfind u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (r_5 = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+          (
+            if r_4[u_2] = ta' then
+            if s' <> s then
+            event accepted_wrong_secret
+          )
+          else
+            r_2 <-R tag
+        orfind u_6 = ri_6 <= qK suchthat defined(x_O_18[ri_6], r_8[ri_6]) && (s' = x_O_18[ri_6]) then
+          k': mackey <- r_8[u_6];
+          x_O_10: xcoord <- x_honest;
+          find [unique] u_1 = ri_1 <= qM suchthat defined(r_4[ri_1], x3[ri_1], x2[ri_1], x1_1[ri_1]) && (r_8[u_6] = x1_1[ri_1]) && (x_O_10 = x2[ri_1]) && (yh = x3[ri_1]) then
+            x_O_8: mackey <- r_8[u_6];
+            x_O_7: xcoord <- x_attacker;
+            x_O_6: yval <- ya';
+            find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (r_8[u_6] = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+              yield
+            else
+              r_2 <-R tag
+          else
+            x_O_8: mackey <- r_8[u_6];
+            x_O_7: xcoord <- x_attacker;
+            x_O_6: yval <- ya';
+            find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (r_8[u_6] = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+              r_3 <-R tag
+            else
+              r_2 <-R tag;
+              r_3 <-R tag
+        else
+          r_7 <-R mackey;
+          k': mackey <- r_7;
+          x_O_10: xcoord <- x_honest;
+          x_O_8: mackey <- r_7;
+          x_O_7: xcoord <- x_attacker;
+          x_O_6: yval <- ya';
+          r_2 <-R tag;
+          r_3 <-R tag
+      ) | (
+        foreach iH <= qK do
+        OH(x1: rms_t) :=
+        x_O_18: rms_t <- x1;
+        find [unique]  suchthat x1 = s then
+          return(r_5)
+        orfind  suchthat defined(x_O_17, r_7) && (x1 = x_O_17) then
+          return(r_7)
+        orfind u_5 = ri_5 <= qK suchthat defined(x_O_18[ri_5], r_8[ri_5]) && (x1 = x_O_18[ri_5]) then
+          return(r_8[u_5])
+        else
+          r_8 <-R mackey;
+          return(r_8)
+      ) | (
+        foreach iH_1 <= qM do
+        OH_1(x1_1: mackey, x2: xcoord, x3: yval) :=
+        find [unique]  suchthat (x1_1 = r_5) && (x2 = x_O_1) && (x3 = yh) then
+          return(r)
+        orfind  suchthat (x1_1 = r_5) && (x2 = x_O_4) && (x3 = ya) then
+          return(r_1)
+        orfind  suchthat defined(x_O_8, x_O_7, x_O_6, r_2) && (x1_1 = x_O_8) && (x2 = x_O_7) && (x3 = x_O_6) then
+          return(r_2)
+        orfind  suchthat defined(k', x_O_10, r_3) && (x1_1 = k') && (x2 = x_O_10) && (x3 = yh) then
+          return(r_3)
+        orfind u = ri <= qM suchthat defined(r_4[ri], x3[ri], x2[ri], x1_1[ri]) && (x1_1 = x1_1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) then
+          return(r_4[u])
+        else
+          r_4 <-R tag;
+          return(r_4)
+      ))
+
+
+Applying SA rename k'
+  - Rename variable k' into k'_3, k'_2, k'_1
+yields
+
+Game 13 is
+      Ostart() :=
+      s <-R rms_t;
+      yh <-R yval;
+      ya: yval <- complete(s, yh);
+      r_5 <-R mackey;
+      x_O_1: xcoord <- x_honest;
+      r <-R tag;
+      x_O_4: xcoord <- x_attacker;
+      r_1 <-R tag;
+      return(s, yh, r, ya, r_1);
+      ((
+        Oreconstruct(ya': yval, ta': tag) :=
+        s': rms_t <- interp(yh, ya');
+        x_O_17: rms_t <- s';
+        find [unique]  suchthat s' = s then
+          k'_1: mackey <- r_5;
+          x_O_10: xcoord <- x_honest;
+          x_O_8: mackey <- r_5;
+          x_O_7: xcoord <- x_attacker;
+          x_O_6: yval <- ya';
+          find [unique]  suchthat ya' = ya then
+            yield
+          orfind u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (r_5 = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+          (
+            if r_4[u_2] = ta' then
+            if s' <> s then
+            event accepted_wrong_secret
+          )
+          else
+            r_2 <-R tag
+        orfind u_6 = ri_6 <= qK suchthat defined(x_O_18[ri_6], r_8[ri_6]) && (s' = x_O_18[ri_6]) then
+          k'_2: mackey <- r_8[u_6];
+          x_O_10: xcoord <- x_honest;
+          find [unique] u_1 = ri_1 <= qM suchthat defined(r_4[ri_1], x3[ri_1], x2[ri_1], x1_1[ri_1]) && (r_8[u_6] = x1_1[ri_1]) && (x_O_10 = x2[ri_1]) && (yh = x3[ri_1]) then
+            x_O_8: mackey <- r_8[u_6];
+            x_O_7: xcoord <- x_attacker;
+            x_O_6: yval <- ya';
+            find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (r_8[u_6] = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+              yield
+            else
+              r_2 <-R tag
+          else
+            x_O_8: mackey <- r_8[u_6];
+            x_O_7: xcoord <- x_attacker;
+            x_O_6: yval <- ya';
+            find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (r_8[u_6] = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+              r_3 <-R tag
+            else
+              r_2 <-R tag;
+              r_3 <-R tag
+        else
+          r_7 <-R mackey;
+          k'_3: mackey <- r_7;
+          x_O_10: xcoord <- x_honest;
+          x_O_8: mackey <- r_7;
+          x_O_7: xcoord <- x_attacker;
+          x_O_6: yval <- ya';
+          r_2 <-R tag;
+          r_3 <-R tag
+      ) | (
+        foreach iH <= qK do
+        OH(x1: rms_t) :=
+        x_O_18: rms_t <- x1;
+        find [unique]  suchthat x1 = s then
+          return(r_5)
+        orfind  suchthat defined(x_O_17, r_7) && (x1 = x_O_17) then
+          return(r_7)
+        orfind u_5 = ri_5 <= qK suchthat defined(x_O_18[ri_5], r_8[ri_5]) && (x1 = x_O_18[ri_5]) then
+          return(r_8[u_5])
+        else
+          r_8 <-R mackey;
+          return(r_8)
+      ) | (
+        foreach iH_1 <= qM do
+        OH_1(x1_1: mackey, x2: xcoord, x3: yval) :=
+        find [unique]  suchthat (x1_1 = r_5) && (x2 = x_O_1) && (x3 = yh) then
+          return(r)
+        orfind  suchthat (x1_1 = r_5) && (x2 = x_O_4) && (x3 = ya) then
+          return(r_1)
+        orfind  suchthat defined(x_O_8, x_O_7, x_O_6, r_2) && (x1_1 = x_O_8) && (x2 = x_O_7) && (x3 = x_O_6) then
+          return(r_2)
+        orfind  suchthat defined(k'_2, x_O_10, r_3) && (x1_1 = k'_2) && (x2 = x_O_10) && (x3 = yh) then
+          return(r_3)
+        orfind  suchthat defined(k'_3, x_O_10, r_3) && (x1_1 = k'_3) && (x2 = x_O_10) && (x3 = yh) then
+          return(r_3)
+        orfind u = ri <= qM suchthat defined(r_4[ri], x3[ri], x2[ri], x1_1[ri]) && (x1_1 = x1_1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) then
+          return(r_4[u])
+        else
+          r_4 <-R tag;
+          return(r_4)
+      ))
+
+
+Applying SA rename new without array accesses and remove assignments of findcond
+  - Remove assignments on x_O_18 (definition point kept, all usages removed)
+  - Remove assignments on x_O_17 (definition removed, all usages removed)
+  - Remove assignments on k'_3 (definition removed, all usages removed)
+  - Remove assignments on k'_1 (definition removed, all usages removed)
+  - Remove assignments on k'_2 (definition point kept, all usages removed)
+yields
+
+Game 14 is
+      Ostart() :=
+      s <-R rms_t;
+      yh <-R yval;
+      ya: yval <- complete(s, yh);
+      r_5 <-R mackey;
+      x_O_1: xcoord <- x_honest;
+      r <-R tag;
+      x_O_4: xcoord <- x_attacker;
+      r_1 <-R tag;
+      return(s, yh, r, ya, r_1);
+      ((
+        Oreconstruct(ya': yval, ta': tag) :=
+        s': rms_t <- interp(yh, ya');
+  {28}  find [unique]  suchthat s' = s then
+          x_O_10: xcoord <- x_honest;
+          x_O_8: mackey <- r_5;
+          x_O_7: xcoord <- x_attacker;
+          x_O_6: yval <- ya';
+          find [unique]  suchthat ya' = ya then
+            yield
+          orfind u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (r_5 = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+          (
+            if r_4[u_2] = ta' then
+            if s' <> s then
+            event accepted_wrong_secret
+          )
+          else
+            r_2 <-R tag
+        orfind u_6 = ri_6 <= qK suchthat defined(x1[ri_6], x_O_18[ri_6], r_8[ri_6]) && (s' = x1[ri_6]) then
+          k'_2: mackey <- cst_mackey;
+          x_O_10: xcoord <- x_honest;
+          find [unique] u_1 = ri_1 <= qM suchthat defined(r_4[ri_1], x3[ri_1], x2[ri_1], x1_1[ri_1]) && (r_8[u_6] = x1_1[ri_1]) && (x_O_10 = x2[ri_1]) && (yh = x3[ri_1]) then
+            x_O_8: mackey <- r_8[u_6];
+            x_O_7: xcoord <- x_attacker;
+            x_O_6: yval <- ya';
+            find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (r_8[u_6] = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+              yield
+            else
+              r_2 <-R tag
+          else
+            x_O_8: mackey <- r_8[u_6];
+            x_O_7: xcoord <- x_attacker;
+            x_O_6: yval <- ya';
+            find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (r_8[u_6] = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+              r_3 <-R tag
+            else
+              r_2 <-R tag;
+              r_3 <-R tag
+        else
+          r_7 <-R mackey;
+          x_O_10: xcoord <- x_honest;
+          x_O_8: mackey <- r_7;
+          x_O_7: xcoord <- x_attacker;
+          x_O_6: yval <- ya';
+          r_2 <-R tag;
+          r_3 <-R tag
+      ) | (
+        foreach iH <= qK do
+        OH(x1: rms_t) :=
+        x_O_18: rms_t <- cst_rms_t;
+ {206}  find [unique]  suchthat x1 = s then
+          return(r_5)
+        orfind  suchthat defined(s', r_7) && (x1 = s') then
+          return(r_7)
+        orfind u_5 = ri_5 <= qK suchthat defined(x1[ri_5], x_O_18[ri_5], r_8[ri_5]) && (x1 = x1[ri_5]) then
+          return(r_8[u_5])
+        else
+          r_8 <-R mackey;
+          return(r_8)
+      ) | (
+        foreach iH_1 <= qM do
+        OH_1(x1_1: mackey, x2: xcoord, x3: yval) :=
+ {242}  find [unique]  suchthat (x1_1 = r_5) && (x2 = x_O_1) && (x3 = yh) then
+          return(r)
+        orfind  suchthat (x1_1 = r_5) && (x2 = x_O_4) && (x3 = ya) then
+          return(r_1)
+        orfind  suchthat defined(x_O_8, x_O_7, x_O_6, r_2) && (x1_1 = x_O_8) && (x2 = x_O_7) && (x3 = x_O_6) then
+          return(r_2)
+        orfind  suchthat defined(r_8[u_6], k'_2, x_O_10, r_3) && (x1_1 = r_8[u_6]) && (x2 = x_O_10) && (x3 = yh) then
+          return(r_3)
+        orfind  suchthat defined(r_7, x_O_10, r_3) && (x1_1 = r_7) && (x2 = x_O_10) && (x3 = yh) then
+          return(r_3)
+        orfind u = ri <= qM suchthat defined(r_4[ri], x3[ri], x2[ri], x1_1[ri]) && (x1_1 = x1_1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) then
+          return(r_4[u])
+        else
+          r_4 <-R tag;
+          return(r_4)
+      ))
+
+
+Applying simplify
+  - Simplification pass
+    - Replaced defined condition r_8[u_6], k'_2, x_O_10, r_3 with r_3, x_O_10, r_8[u_6] in find at 242
+    - Replaced defined condition x1[ri_5], x_O_18[ri_5], r_8[ri_5] with r_8[ri_5], x1[ri_5] in find at 206
+    - Replaced defined condition x1[ri_6], x_O_18[ri_6], r_8[ri_6] with r_8[ri_6], x1[ri_6] in find at 28
+yields
+
+Game 15 is
+      Ostart() :=
+      s <-R rms_t;
+      yh <-R yval;
+      ya: yval <- complete(s, yh);
+      r_5 <-R mackey;
+      x_O_1: xcoord <- x_honest;
+      r <-R tag;
+      x_O_4: xcoord <- x_attacker;
+      r_1 <-R tag;
+      return(s, yh, r, ya, r_1);
+      ((
+        Oreconstruct(ya': yval, ta': tag) :=
+        s': rms_t <- interp(yh, ya');
+        find [unique]  suchthat s' = s then
+          x_O_10: xcoord <- x_honest;
+          x_O_8: mackey <- r_5;
+          x_O_7: xcoord <- x_attacker;
+          x_O_6: yval <- ya';
+          find [unique]  suchthat ya' = ya then
+            yield
+          orfind u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (r_5 = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+          (
+            if r_4[u_2] = ta' then
+            if s' <> s then
+            event accepted_wrong_secret
+          )
+          else
+            r_2 <-R tag
+        orfind u_6 = ri_6 <= qK suchthat defined(r_8[ri_6], x1[ri_6]) && (s' = x1[ri_6]) then
+          k'_2: mackey <- cst_mackey;
+          x_O_10: xcoord <- x_honest;
+          find [unique] u_1 = ri_1 <= qM suchthat defined(r_4[ri_1], x3[ri_1], x2[ri_1], x1_1[ri_1]) && (r_8[u_6] = x1_1[ri_1]) && (x_O_10 = x2[ri_1]) && (yh = x3[ri_1]) then
+            x_O_8: mackey <- r_8[u_6];
+            x_O_7: xcoord <- x_attacker;
+            x_O_6: yval <- ya';
+            find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (r_8[u_6] = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+              yield
+            else
+              r_2 <-R tag
+          else
+            x_O_8: mackey <- r_8[u_6];
+            x_O_7: xcoord <- x_attacker;
+            x_O_6: yval <- ya';
+            find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (r_8[u_6] = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+              r_3 <-R tag
+            else
+              r_2 <-R tag;
+              r_3 <-R tag
+        else
+          r_7 <-R mackey;
+          x_O_10: xcoord <- x_honest;
+          x_O_8: mackey <- r_7;
+          x_O_7: xcoord <- x_attacker;
+          x_O_6: yval <- ya';
+          r_2 <-R tag;
+          r_3 <-R tag
+      ) | (
+        foreach iH <= qK do
+        OH(x1: rms_t) :=
+        x_O_18: rms_t <- cst_rms_t;
+        find [unique]  suchthat x1 = s then
+          return(r_5)
+        orfind  suchthat defined(s', r_7) && (x1 = s') then
+          return(r_7)
+        orfind u_5 = ri_5 <= qK suchthat defined(r_8[ri_5], x1[ri_5]) && (x1 = x1[ri_5]) then
+          return(r_8[u_5])
+        else
+          r_8 <-R mackey;
+          return(r_8)
+      ) | (
+        foreach iH_1 <= qM do
+        OH_1(x1_1: mackey, x2: xcoord, x3: yval) :=
+        find [unique]  suchthat (x1_1 = r_5) && (x2 = x_O_1) && (x3 = yh) then
+          return(r)
+        orfind  suchthat (x1_1 = r_5) && (x2 = x_O_4) && (x3 = ya) then
+          return(r_1)
+        orfind  suchthat defined(x_O_8, x_O_7, x_O_6, r_2) && (x1_1 = x_O_8) && (x2 = x_O_7) && (x3 = x_O_6) then
+          return(r_2)
+        orfind  suchthat defined(r_3, x_O_10, r_8[u_6]) && (x1_1 = r_8[u_6]) && (x2 = x_O_10) && (x3 = yh) then
+          return(r_3)
+        orfind  suchthat defined(r_7, x_O_10, r_3) && (x1_1 = r_7) && (x2 = x_O_10) && (x3 = yh) then
+          return(r_3)
+        orfind u = ri <= qM suchthat defined(r_4[ri], x3[ri], x2[ri], x1_1[ri]) && (x1_1 = x1_1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) then
+          return(r_4[u])
+        else
+          r_4 <-R tag;
+          return(r_4)
+      ))
+
+
+Applying SA rename x_O_8
+  - Rename variable x_O_8 into x_O_22, x_O_21, x_O_20, x_O_19
+yields
+
+Game 16 is
+      Ostart() :=
+      s <-R rms_t;
+      yh <-R yval;
+      ya: yval <- complete(s, yh);
+      r_5 <-R mackey;
+      x_O_1: xcoord <- x_honest;
+      r <-R tag;
+      x_O_4: xcoord <- x_attacker;
+      r_1 <-R tag;
+      return(s, yh, r, ya, r_1);
+      ((
+        Oreconstruct(ya': yval, ta': tag) :=
+        s': rms_t <- interp(yh, ya');
+        find [unique]  suchthat s' = s then
+          x_O_10: xcoord <- x_honest;
+          x_O_19: mackey <- r_5;
+          x_O_7: xcoord <- x_attacker;
+          x_O_6: yval <- ya';
+          find [unique]  suchthat ya' = ya then
+            yield
+          orfind u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (r_5 = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+          (
+            if r_4[u_2] = ta' then
+            if s' <> s then
+            event accepted_wrong_secret
+          )
+          else
+            r_2 <-R tag
+        orfind u_6 = ri_6 <= qK suchthat defined(r_8[ri_6], x1[ri_6]) && (s' = x1[ri_6]) then
+          k'_2: mackey <- cst_mackey;
+          x_O_10: xcoord <- x_honest;
+          find [unique] u_1 = ri_1 <= qM suchthat defined(r_4[ri_1], x3[ri_1], x2[ri_1], x1_1[ri_1]) && (r_8[u_6] = x1_1[ri_1]) && (x_O_10 = x2[ri_1]) && (yh = x3[ri_1]) then
+            x_O_20: mackey <- r_8[u_6];
+            x_O_7: xcoord <- x_attacker;
+            x_O_6: yval <- ya';
+            find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (r_8[u_6] = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+              yield
+            else
+              r_2 <-R tag
+          else
+            x_O_21: mackey <- r_8[u_6];
+            x_O_7: xcoord <- x_attacker;
+            x_O_6: yval <- ya';
+            find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (r_8[u_6] = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+              r_3 <-R tag
+            else
+              r_2 <-R tag;
+              r_3 <-R tag
+        else
+          r_7 <-R mackey;
+          x_O_10: xcoord <- x_honest;
+          x_O_22: mackey <- r_7;
+          x_O_7: xcoord <- x_attacker;
+          x_O_6: yval <- ya';
+          r_2 <-R tag;
+          r_3 <-R tag
+      ) | (
+        foreach iH <= qK do
+        OH(x1: rms_t) :=
+        x_O_18: rms_t <- cst_rms_t;
+        find [unique]  suchthat x1 = s then
+          return(r_5)
+        orfind  suchthat defined(s', r_7) && (x1 = s') then
+          return(r_7)
+        orfind u_5 = ri_5 <= qK suchthat defined(r_8[ri_5], x1[ri_5]) && (x1 = x1[ri_5]) then
+          return(r_8[u_5])
+        else
+          r_8 <-R mackey;
+          return(r_8)
+      ) | (
+        foreach iH_1 <= qM do
+        OH_1(x1_1: mackey, x2: xcoord, x3: yval) :=
+        find [unique]  suchthat (x1_1 = r_5) && (x2 = x_O_1) && (x3 = yh) then
+          return(r)
+        orfind  suchthat (x1_1 = r_5) && (x2 = x_O_4) && (x3 = ya) then
+          return(r_1)
+        orfind  suchthat defined(x_O_19, x_O_7, x_O_6, r_2) && (x1_1 = x_O_19) && (x2 = x_O_7) && (x3 = x_O_6) then
+          return(r_2)
+        orfind  suchthat defined(x_O_20, x_O_7, x_O_6, r_2) && (x1_1 = x_O_20) && (x2 = x_O_7) && (x3 = x_O_6) then
+          return(r_2)
+        orfind  suchthat defined(x_O_21, x_O_7, x_O_6, r_2) && (x1_1 = x_O_21) && (x2 = x_O_7) && (x3 = x_O_6) then
+          return(r_2)
+        orfind  suchthat defined(x_O_22, x_O_7, x_O_6, r_2) && (x1_1 = x_O_22) && (x2 = x_O_7) && (x3 = x_O_6) then
+          return(r_2)
+        orfind  suchthat defined(r_3, x_O_10, r_8[u_6]) && (x1_1 = r_8[u_6]) && (x2 = x_O_10) && (x3 = yh) then
+          return(r_3)
+        orfind  suchthat defined(r_7, x_O_10, r_3) && (x1_1 = r_7) && (x2 = x_O_10) && (x3 = yh) then
+          return(r_3)
+        orfind u = ri <= qM suchthat defined(r_4[ri], x3[ri], x2[ri], x1_1[ri]) && (x1_1 = x1_1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) then
+          return(r_4[u])
+        else
+          r_4 <-R tag;
+          return(r_4)
+      ))
+
+
+Applying SA rename new without array accesses and remove assignments of findcond
+  - Remove assignments on x_O_18 (definition removed, all usages removed)
+  - Remove assignments on x_O_22 (definition removed, all usages removed)
+  - Remove assignments on x_O_19 (definition point kept, all usages removed)
+  - Remove assignments on k'_2 (definition removed, all usages removed)
+  - Remove assignments on x_O_21 (definition point kept, all usages removed)
+  - Remove assignments on x_O_20 (definition point kept, all usages removed)
+yields
+
+Game 17 is
+      Ostart() :=
+      s <-R rms_t;
+      yh <-R yval;
+      ya: yval <- complete(s, yh);
+      r_5 <-R mackey;
+      x_O_1: xcoord <- x_honest;
+      r <-R tag;
+      x_O_4: xcoord <- x_attacker;
+      r_1 <-R tag;
+      return(s, yh, r, ya, r_1);
+      ((
+        Oreconstruct(ya': yval, ta': tag) :=
+        s': rms_t <- interp(yh, ya');
+        find [unique]  suchthat s' = s then
+          x_O_10: xcoord <- x_honest;
+          x_O_19: mackey <- cst_mackey;
+          x_O_7: xcoord <- x_attacker;
+          x_O_6: yval <- ya';
+          find [unique]  suchthat ya' = ya then
+            yield
+          orfind u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (r_5 = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+          (
+            if r_4[u_2] = ta' then
+            if s' <> s then
+            event accepted_wrong_secret
+          )
+          else
+            r_2 <-R tag
+        orfind u_6 = ri_6 <= qK suchthat defined(r_8[ri_6], x1[ri_6]) && (s' = x1[ri_6]) then
+          x_O_10: xcoord <- x_honest;
+          find [unique] u_1 = ri_1 <= qM suchthat defined(r_4[ri_1], x3[ri_1], x2[ri_1], x1_1[ri_1]) && (r_8[u_6] = x1_1[ri_1]) && (x_O_10 = x2[ri_1]) && (yh = x3[ri_1]) then
+            x_O_20: mackey <- cst_mackey;
+            x_O_7: xcoord <- x_attacker;
+            x_O_6: yval <- ya';
+            find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (r_8[u_6] = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+              yield
+            else
+              r_2 <-R tag
+          else
+            x_O_21: mackey <- cst_mackey;
+            x_O_7: xcoord <- x_attacker;
+            x_O_6: yval <- ya';
+            find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (r_8[u_6] = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+              r_3 <-R tag
+            else
+              r_2 <-R tag;
+              r_3 <-R tag
+        else
+          r_7 <-R mackey;
+          x_O_10: xcoord <- x_honest;
+          x_O_7: xcoord <- x_attacker;
+          x_O_6: yval <- ya';
+          r_2 <-R tag;
+          r_3 <-R tag
+      ) | (
+        foreach iH <= qK do
+        OH(x1: rms_t) :=
+        find [unique]  suchthat x1 = s then
+          return(r_5)
+        orfind  suchthat defined(s', r_7) && (x1 = s') then
+          return(r_7)
+        orfind u_5 = ri_5 <= qK suchthat defined(r_8[ri_5], x1[ri_5]) && (x1 = x1[ri_5]) then
+          return(r_8[u_5])
+        else
+          r_8 <-R mackey;
+          return(r_8)
+      ) | (
+        foreach iH_1 <= qM do
+        OH_1(x1_1: mackey, x2: xcoord, x3: yval) :=
+ {229}  find [unique]  suchthat (x1_1 = r_5) && (x2 = x_O_1) && (x3 = yh) then
+          return(r)
+        orfind  suchthat (x1_1 = r_5) && (x2 = x_O_4) && (x3 = ya) then
+          return(r_1)
+        orfind  suchthat defined(r_5, x_O_19, x_O_7, x_O_6, r_2) && (x1_1 = r_5) && (x2 = x_O_7) && (x3 = x_O_6) then
+          return(r_2)
+        orfind  suchthat defined(r_8[u_6], x_O_20, x_O_7, x_O_6, r_2) && (x1_1 = r_8[u_6]) && (x2 = x_O_7) && (x3 = x_O_6) then
+          return(r_2)
+        orfind  suchthat defined(r_8[u_6], x_O_21, x_O_7, x_O_6, r_2) && (x1_1 = r_8[u_6]) && (x2 = x_O_7) && (x3 = x_O_6) then
+          return(r_2)
+        orfind  suchthat defined(r_7, x_O_7, x_O_6, r_2) && (x1_1 = r_7) && (x2 = x_O_7) && (x3 = x_O_6) then
+          return(r_2)
+        orfind  suchthat defined(r_3, x_O_10, r_8[u_6]) && (x1_1 = r_8[u_6]) && (x2 = x_O_10) && (x3 = yh) then
+          return(r_3)
+        orfind  suchthat defined(r_7, x_O_10, r_3) && (x1_1 = r_7) && (x2 = x_O_10) && (x3 = yh) then
+          return(r_3)
+        orfind u = ri <= qM suchthat defined(r_4[ri], x3[ri], x2[ri], x1_1[ri]) && (x1_1 = x1_1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) then
+          return(r_4[u])
+        else
+          r_4 <-R tag;
+          return(r_4)
+      ))
+
+
+Applying simplify
+  - Simplification pass
+    - Replaced defined condition r_5, x_O_19, x_O_7, x_O_6, r_2 with x_O_19, x_O_7, x_O_6, r_2 in find at 229
+yields
+
+Game 18 is
+      Ostart() :=
+      s <-R rms_t;
+      yh <-R yval;
+      ya: yval <- complete(s, yh);
+      r_5 <-R mackey;
+      x_O_1: xcoord <- x_honest;
+      r <-R tag;
+      x_O_4: xcoord <- x_attacker;
+      r_1 <-R tag;
+      return(s, yh, r, ya, r_1);
+      ((
+        Oreconstruct(ya': yval, ta': tag) :=
+        s': rms_t <- interp(yh, ya');
+        find [unique]  suchthat s' = s then
+          x_O_10: xcoord <- x_honest;
+          x_O_19: mackey <- cst_mackey;
+          x_O_7: xcoord <- x_attacker;
+          x_O_6: yval <- ya';
+          find [unique]  suchthat ya' = ya then
+            yield
+          orfind u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (r_5 = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+          (
+            if r_4[u_2] = ta' then
+            if s' <> s then
+            event accepted_wrong_secret
+          )
+          else
+            r_2 <-R tag
+        orfind u_6 = ri_6 <= qK suchthat defined(r_8[ri_6], x1[ri_6]) && (s' = x1[ri_6]) then
+          x_O_10: xcoord <- x_honest;
+          find [unique] u_1 = ri_1 <= qM suchthat defined(r_4[ri_1], x3[ri_1], x2[ri_1], x1_1[ri_1]) && (r_8[u_6] = x1_1[ri_1]) && (x_O_10 = x2[ri_1]) && (yh = x3[ri_1]) then
+            x_O_20: mackey <- cst_mackey;
+            x_O_7: xcoord <- x_attacker;
+            x_O_6: yval <- ya';
+            find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (r_8[u_6] = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+              yield
+            else
+              r_2 <-R tag
+          else
+            x_O_21: mackey <- cst_mackey;
+            x_O_7: xcoord <- x_attacker;
+            x_O_6: yval <- ya';
+            find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (r_8[u_6] = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+              r_3 <-R tag
+            else
+              r_2 <-R tag;
+              r_3 <-R tag
+        else
+          r_7 <-R mackey;
+          x_O_10: xcoord <- x_honest;
+          x_O_7: xcoord <- x_attacker;
+          x_O_6: yval <- ya';
+          r_2 <-R tag;
+          r_3 <-R tag
+      ) | (
+        foreach iH <= qK do
+        OH(x1: rms_t) :=
+        find [unique]  suchthat x1 = s then
+          return(r_5)
+        orfind  suchthat defined(s', r_7) && (x1 = s') then
+          return(r_7)
+        orfind u_5 = ri_5 <= qK suchthat defined(r_8[ri_5], x1[ri_5]) && (x1 = x1[ri_5]) then
+          return(r_8[u_5])
+        else
+          r_8 <-R mackey;
+          return(r_8)
+      ) | (
+        foreach iH_1 <= qM do
+        OH_1(x1_1: mackey, x2: xcoord, x3: yval) :=
+        find [unique]  suchthat (x1_1 = r_5) && (x2 = x_O_1) && (x3 = yh) then
+          return(r)
+        orfind  suchthat (x1_1 = r_5) && (x2 = x_O_4) && (x3 = ya) then
+          return(r_1)
+        orfind  suchthat defined(x_O_19, x_O_7, x_O_6, r_2) && (x1_1 = r_5) && (x2 = x_O_7) && (x3 = x_O_6) then
+          return(r_2)
+        orfind  suchthat defined(r_8[u_6], x_O_20, x_O_7, x_O_6, r_2) && (x1_1 = r_8[u_6]) && (x2 = x_O_7) && (x3 = x_O_6) then
+          return(r_2)
+        orfind  suchthat defined(r_8[u_6], x_O_21, x_O_7, x_O_6, r_2) && (x1_1 = r_8[u_6]) && (x2 = x_O_7) && (x3 = x_O_6) then
+          return(r_2)
+        orfind  suchthat defined(r_7, x_O_7, x_O_6, r_2) && (x1_1 = r_7) && (x2 = x_O_7) && (x3 = x_O_6) then
+          return(r_2)
+        orfind  suchthat defined(r_3, x_O_10, r_8[u_6]) && (x1_1 = r_8[u_6]) && (x2 = x_O_10) && (x3 = yh) then
+          return(r_3)
+        orfind  suchthat defined(r_7, x_O_10, r_3) && (x1_1 = r_7) && (x2 = x_O_10) && (x3 = yh) then
+          return(r_3)
+        orfind u = ri <= qM suchthat defined(r_4[ri], x3[ri], x2[ri], x1_1[ri]) && (x1_1 = x1_1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) then
+          return(r_4[u])
+        else
+          r_4 <-R tag;
+          return(r_4)
+      ))
+
+
+Applying move all binders
+  - Move assignment to x_O_19
+  - Move assignment to x_O_10
+  - Move assignment to x_O_21
+  - Move assignment to x_O_20
+yields
+
+Game 19 is
+      Ostart() :=
+      s <-R rms_t;
+      yh <-R yval;
+      ya: yval <- complete(s, yh);
+      r_5 <-R mackey;
+      x_O_1: xcoord <- x_honest;
+      r <-R tag;
+      x_O_4: xcoord <- x_attacker;
+      r_1 <-R tag;
+      return(s, yh, r, ya, r_1);
+      ((
+        Oreconstruct(ya': yval, ta': tag) :=
+        s': rms_t <- interp(yh, ya');
+        find [unique]  suchthat s' = s then
+          x_O_7: xcoord <- x_attacker;
+          x_O_6: yval <- ya';
+          find [unique]  suchthat ya' = ya then
+            x_O_19: mackey <- cst_mackey;
+            x_O_10: xcoord <- x_honest
+          orfind u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (r_5 = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+            if r_4[u_2] = ta' then
+              if s' <> s then
+                event accepted_wrong_secret;
+                x_O_19: mackey <- cst_mackey;
+                x_O_10: xcoord <- x_honest
+              else
+                x_O_19: mackey <- cst_mackey;
+                x_O_10: xcoord <- x_honest
+            else
+              x_O_19: mackey <- cst_mackey;
+              x_O_10: xcoord <- x_honest
+          else
+            r_2 <-R tag;
+            x_O_19: mackey <- cst_mackey;
+            x_O_10: xcoord <- x_honest
+        orfind u_6 = ri_6 <= qK suchthat defined(r_8[ri_6], x1[ri_6]) && (s' = x1[ri_6]) then
+          x_O_10: xcoord <- x_honest;
+          find [unique] u_1 = ri_1 <= qM suchthat defined(r_4[ri_1], x3[ri_1], x2[ri_1], x1_1[ri_1]) && (r_8[u_6] = x1_1[ri_1]) && (x_O_10 = x2[ri_1]) && (yh = x3[ri_1]) then
+            x_O_7: xcoord <- x_attacker;
+            x_O_6: yval <- ya';
+            find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (r_8[u_6] = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+              x_O_20: mackey <- cst_mackey
+            else
+              r_2 <-R tag;
+              x_O_20: mackey <- cst_mackey
+          else
+            x_O_7: xcoord <- x_attacker;
+            x_O_6: yval <- ya';
+            find [unique] u_2 = ri_2 <= qM suchthat defined(r_4[ri_2], x3[ri_2], x2[ri_2], x1_1[ri_2]) && (r_8[u_6] = x1_1[ri_2]) && (x_O_7 = x2[ri_2]) && (ya' = x3[ri_2]) then
+              r_3 <-R tag;
+              x_O_21: mackey <- cst_mackey
+            else
+              r_2 <-R tag;
+              r_3 <-R tag;
+              x_O_21: mackey <- cst_mackey
+        else
+          r_7 <-R mackey;
+          x_O_10: xcoord <- x_honest;
+          x_O_7: xcoord <- x_attacker;
+          x_O_6: yval <- ya';
+          r_2 <-R tag;
+          r_3 <-R tag
+      ) | (
+        foreach iH <= qK do
+        OH(x1: rms_t) :=
+        find [unique]  suchthat x1 = s then
+          return(r_5)
+        orfind  suchthat defined(s', r_7) && (x1 = s') then
+          return(r_7)
+        orfind u_5 = ri_5 <= qK suchthat defined(r_8[ri_5], x1[ri_5]) && (x1 = x1[ri_5]) then
+          return(r_8[u_5])
+        else
+          r_8 <-R mackey;
+          return(r_8)
+      ) | (
+        foreach iH_1 <= qM do
+        OH_1(x1_1: mackey, x2: xcoord, x3: yval) :=
+        find [unique]  suchthat (x1_1 = r_5) && (x2 = x_O_1) && (x3 = yh) then
+          return(r)
+        orfind  suchthat (x1_1 = r_5) && (x2 = x_O_4) && (x3 = ya) then
+          return(r_1)
+        orfind  suchthat defined(x_O_19, x_O_7, x_O_6, r_2) && (x1_1 = r_5) && (x2 = x_O_7) && (x3 = x_O_6) then
+          return(r_2)
+        orfind  suchthat defined(r_8[u_6], x_O_20, x_O_7, x_O_6, r_2) && (x1_1 = r_8[u_6]) && (x2 = x_O_7) && (x3 = x_O_6) then
+          return(r_2)
+        orfind  suchthat defined(r_8[u_6], x_O_21, x_O_7, x_O_6, r_2) && (x1_1 = r_8[u_6]) && (x2 = x_O_7) && (x3 = x_O_6) then
+          return(r_2)
+        orfind  suchthat defined(r_7, x_O_7, x_O_6, r_2) && (x1_1 = r_7) && (x2 = x_O_7) && (x3 = x_O_6) then
+          return(r_2)
+        orfind  suchthat defined(r_3, x_O_10, r_8[u_6]) && (x1_1 = r_8[u_6]) && (x2 = x_O_10) && (x3 = yh) then
+          return(r_3)
+        orfind  suchthat defined(r_7, x_O_10, r_3) && (x1_1 = r_7) && (x2 = x_O_10) && (x3 = yh) then
+          return(r_3)
+        orfind u = ri <= qM suchthat defined(r_4[ri], x3[ri], x2[ri], x1_1[ri]) && (x1_1 = x1_1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) then
+          return(r_4[u])
+        else
+          r_4 <-R tag;
+          return(r_4)
+      ))
+
+
+Proved event(accepted_wrong_secret) ==> false in game 19
+Pr[Game 1: accepted_wrong_secret] <= (qM + 2 + qK) / |mackey| + (2 + qM) / |tag| + Pr[Game 19: accepted_wrong_secret]
+Pr[Game 19: accepted_wrong_secret] <= 0
+RESULT Proved event(accepted_wrong_secret) ==> false up to probability (qK + 2 + qM) / |mackey| + (qM + 2) / |tag|
+All queries proved.

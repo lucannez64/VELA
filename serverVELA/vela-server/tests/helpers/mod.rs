@@ -1,5 +1,4 @@
 use axum::Router;
-use uuid::Uuid;
 
 use vela_server::{
     config,
@@ -16,13 +15,8 @@ pub async fn test_state() -> vela_server::state::AppState {
 pub async fn test_state_with_config(
     configure: impl FnOnce(&mut config::Config),
 ) -> vela_server::state::AppState {
-    let turso_path = format!(
-        "{}/vela-test-{}.db",
-        std::env::temp_dir().display(),
-        Uuid::new_v4()
-    );
     let turso = std::sync::Arc::new(
-        TursoDb::open(&turso_path, 1)
+        TursoDb::open_temp(1)
             .await
             .expect("failed to open temp turso db"),
     );

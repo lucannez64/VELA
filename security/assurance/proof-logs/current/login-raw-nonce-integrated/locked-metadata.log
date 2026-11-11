@@ -1,0 +1,2 @@
+Command: vela-heavy env [same pinned environment] cargo metadata --locked --format-version 1 --manifest-path serverVELA/vela-session-policy/Cargo.toml
+Exit: 0

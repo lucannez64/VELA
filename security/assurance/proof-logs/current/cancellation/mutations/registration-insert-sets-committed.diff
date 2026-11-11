@@ -1,0 +1,12 @@
+--- /tmp/vela-f2-cancel-mut2/session/pristine.fst
++++ vela-session-policy/proofs/fstar/extraction-registration-driver/Vela_session_policy.Registration_driver.fst
+@@ -615,7 +615,8 @@
+     transition ({
+           driver with
+           f_stage = RegistrationStage_Commit <: t_RegistrationStage;
+-          f_device_inserted = true
++          f_device_inserted = true;
++          f_committed = true
+         }
+         <:
+         t_RegistrationDriver)

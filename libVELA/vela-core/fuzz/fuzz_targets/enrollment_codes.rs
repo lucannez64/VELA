@@ -44,7 +44,8 @@ fuzz_target!(|data: &[u8]| {
     assert_eq!(enrollment_verification_code(&code), rendered);
 
     // Fingerprint: same shape guarantees over arbitrary key bytes.
-    let fingerprint = enrollment_fingerprint(data);
+    let (vk, ek) = data.split_at(data.len() / 2);
+    let fingerprint = enrollment_fingerprint(vk, ek);
     assert_eq!(
         fingerprint.chars().filter(|c| c.is_ascii_digit()).count(),
         18

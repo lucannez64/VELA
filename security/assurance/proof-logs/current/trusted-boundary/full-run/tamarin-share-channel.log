@@ -1,0 +1,23 @@
+maude tool: 'maude'
+ checking version: 3.5.1. OK.
+ checking installation: OK.
+[Theory M19_EkRegistryBaseline] Theory loaded
+[Theory M19_EkRegistryBaseline] Theory translated
+[Theory M19_EkRegistryBaseline] Derivation checks started
+[Theory M19_EkRegistryBaseline] Derivation checks ended
+[Theory M19_EkRegistryBaseline] Theory closed
+[Saturating Sources] Step 1 (Max 5)
+[Saturating Sources] Done
+m19a_ek_registry_baseline: 2 verified
+maude tool: 'maude'
+ checking version: 3.5.1. OK.
+ checking installation: OK.
+[Theory M19_ShareChannel] Theory loaded
+[Theory M19_ShareChannel] Theory translated
+[Theory M19_ShareChannel] Derivation checks started
+[Theory M19_ShareChannel] Derivation checks ended
+[Theory M19_ShareChannel] Theory closed
+[Saturating Sources] Step 1 (Max 5)
+[Saturating Sources] Done
+m19b_share_channel: 6 verified
+m19 share-channel formal proof gate: lemma counts derived from theories, 0 falsified, 0 warnings

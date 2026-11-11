@@ -1,0 +1,7 @@
+$ fstar.exe <recovery interpreter gate args; mutated driver passed explicitly>
+* Error 19 at proofs/fstar/extraction-recovery-share-driver/Vela_recovery_policy.Recovery_share_driver.fst(639,2-660,54):
+  - Could not prove post-condition
+  - The SMT solver could not prove the query. Use --query_stats for more
+    details.
+1 error was reported (see above)
+exit=1

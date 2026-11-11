@@ -1,0 +1,65 @@
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> vela-server/src/sqldb.rs:76:5
+   |
+76 |     async fn query(&self, sql: &str, params: Vec<turso::Value>) -> anyhow::Result<Vec<VelaRow>>;
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+   = note: `#[warn(async_fn_in_trait)]` on by default
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+76 -     async fn query(&self, sql: &str, params: Vec<turso::Value>) -> anyhow::Result<Vec<VelaRow>>;
+76 +     fn query(&self, sql: &str, params: Vec<turso::Value>) -> impl std::future::Future<Output = anyhow::Result<Vec<VelaRow>>> + Send;
+   |
+
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> vela-server/src/sqldb.rs:78:5
+   |
+78 |     async fn execute(&self, sql: &str, params: Vec<turso::Value>) -> anyhow::Result<u64>;
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+78 -     async fn execute(&self, sql: &str, params: Vec<turso::Value>) -> anyhow::Result<u64>;
+78 +     fn execute(&self, sql: &str, params: Vec<turso::Value>) -> impl std::future::Future<Output = anyhow::Result<u64>> + Send;
+   |
+
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> vela-server/src/sqldb.rs:80:5
+   |
+80 |     async fn execute_batch(&self, sql: &str) -> anyhow::Result<()>;
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+80 -     async fn execute_batch(&self, sql: &str) -> anyhow::Result<()>;
+80 +     fn execute_batch(&self, sql: &str) -> impl std::future::Future<Output = anyhow::Result<()>> + Send;
+   |
+
+warning: `vela-server` (lib) generated 3 warnings
+   Compiling vela-server v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-d4e0322e/serverVELA/vela-server)
+warning: function `test_app` is never used
+  --> vela-server/tests/helpers/mod.rs:42:14
+   |
+42 | pub async fn test_app() -> Router {
+   |              ^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `vela-server` (test "device_revocation_model") generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.67s
+     Running tests/device_revocation_model.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-server/6c4eb19fbc01f6ea/out/device_revocation_model-6c4eb19fbc01f6ea)
+
+running 7 tests
+test automatic_renewal_stays_bound_to_the_device ... ok
+test device_token_admission_requires_a_matching_live_device_row ... ok
+test durable_revocation_refuses_a_late_login_token_after_sentinel_expiry ... ok
+test every_bounded_revocation_trace_matches_the_model ... ok
+test logout_schema_and_revoke_do_not_mint_undelivered_replacements ... ok
+test revoke_and_logout_invalidate_exactly_the_expected_authority ... ok
+test the_device_sentinel_stops_a_token_that_escaped_jti_enumeration ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 57.85s
+

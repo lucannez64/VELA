@@ -1,0 +1,11 @@
+--- serverVELA/vela-recovery-policy/proofs/fstar/extraction-recovery-share-driver/Vela_recovery_policy.Recovery_share_driver.fst	2026-10-27 22:18:49.007165253 +0100
++++ /tmp/vela-f2-recshare-mut/driver-mut/ext/Vela_recovery_policy.Recovery_share_driver.fst	2026-10-27 22:48:47.062413416 +0100
+@@ -547,7 +547,7 @@
+         (Vela_recovery_policy.impl_ShareDeletionPermit__epoch permit <: i64)
+     in
+     let d:t_ShareLifecycleDriver = { d with f_deletes_share = true } <: t_ShareLifecycleDriver in
+-    let d:t_ShareLifecycleDriver = { d with f_deletes_pending = true } <: t_ShareLifecycleDriver in
++    let d:t_ShareLifecycleDriver = { d with f_deletes_pending = false } <: t_ShareLifecycleDriver in
+     transition d
+       (ShareEffect_DeleteShare
+         ({

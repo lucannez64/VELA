@@ -1,0 +1,11 @@
+--- serverVELA/vela-session-policy/proofs/fstar/extraction-deletion-interpreter/Vela_session_policy.Deletion_interpreter.fst	2026-10-27 10:55:09.833938201 +0100
++++ /tmp/vela-mut/a/Vela_session_policy.Deletion_interpreter.fst	2026-10-27 10:44:37.571712226 +0100
+@@ -128,7 +128,7 @@
+             with
+             | Vela_session_policy.Deletion_driver.DeletionEffect_ScanDevices  ->
+               let (tmp0: v_Io), (out: Vela_session_policy.Deletion_driver.t_ScanObservation) =
+-                f_scan_devices #v_Io #FStar.Tactics.Typeclasses.solve io
++                f_scan_web_sessions #v_Io #FStar.Tactics.Typeclasses.solve io
+               in
+               let io:v_Io = tmp0 in
+               io,

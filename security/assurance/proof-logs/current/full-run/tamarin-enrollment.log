@@ -1,0 +1,12 @@
+maude tool: 'maude'
+ checking version: 3.5.1. OK.
+ checking installation: OK.
+[Theory M13_DeviceEnrollmentCeremony] Theory loaded
+[Theory M13_DeviceEnrollmentCeremony] Theory translated
+[Theory M13_DeviceEnrollmentCeremony] Derivation checks started
+[Theory M13_DeviceEnrollmentCeremony] Derivation checks ended
+[Theory M13_DeviceEnrollmentCeremony] Theory closed
+[Saturating Sources] Step 1 (Max 5)
+[Saturating Sources] Done
+m13_device_enrollment_ceremony: 16 verified
+enrollment formal proof gate: 16 verified, 0 falsified, 0 warnings

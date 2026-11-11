@@ -21,18 +21,40 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use uuid::Uuid;
-use vela_recovery_policy::{EnrollmentDecision, EnrollmentFacts, RecoveryPhase};
+use vela_recovery_policy::{
+    driver::{
+        AuthorityRecheckObservation, ConsumptionObservation, FinalPolicyObservation,
+        InsertObservation, RedemptionEffect, RedemptionFailure, RedemptionInsertPermit,
+        RedemptionStart, RekeyObservation, ReplayObservation,
+    },
+    plan_enrollment_preflight, EnrollmentAccountFacts, EnrollmentAccountObservation,
+    EnrollmentGrantFacts, EnrollmentObservation, EnrollmentPreflightDecision,
+    EnrollmentPreflightObservation, EnrollmentPreflightRejection,
+};
 use vela_rekey_policy::{MutationAuthority, MutationDecision, MutationKind, MutationRequest};
 
 use crate::{
     error::{AppError, Result},
     net, rate_limit,
-    sqldb::{Db as _, TursoValue},
     state::AppState,
 };
+use vela_recovery_policy::redemption_store::{self, GrantGuard, GrantTake, GrantView, ReadOutcome};
 
-const HYBRID_EK_LEN: usize = 1568 + 32;
-const HYBRID_VK_LEN: usize = 2592 + 32;
+use super::sql::{
+    authority_row_view, enrolled_device_row_view, enrollment_account_row_view, put_grant,
+    run_read, run_writes, take_grant, PoolSql, RecoveryKv, RecoverySql, StoreKv,
+};
+
+const HYBRID_EK_LEN: usize = vela_recovery_policy::HYBRID_EK_LEN;
+const HYBRID_VK_LEN: usize = vela_recovery_policy::HYBRID_VK_LEN;
+// Pin the policy constants to the actual crypto wire sizes and the enrollment
+// ceremony's policy; drift is a build failure rather than a weaker admission.
+const _: () = {
+    assert!(HYBRID_EK_LEN == vela_crypto::kem::ML_KEM_EK_LEN + 32);
+    assert!(HYBRID_VK_LEN == vela_crypto::signing::HYBRID_VK_LEN);
+    assert!(HYBRID_EK_LEN == vela_enrollment_policy::HYBRID_EK_LEN);
+    assert!(HYBRID_VK_LEN == vela_enrollment_policy::HYBRID_VK_LEN);
+};
 #[derive(Deserialize)]
 pub struct EnrollDeviceRequest {
     pub user_id: Uuid,
@@ -55,12 +77,7 @@ pub async fn post_enroll_device(
     Json(body): Json<EnrollDeviceRequest>,
 ) -> Result<Json<EnrollDeviceResponse>> {
     let ip = net::client_ip(&headers, addr.map(|ConnectInfo(a)| a.ip()), &state.config);
-    rate_limit::check(
-        &state.store,
-        &format!("rl:recover:enroll:ip:{ip}"),
-        10,
-        3600,
-    )?;
+    rate_limit::recovery_enroll_by_ip(&state.store, &ip)?;
     // Keyed on the caller as well as the target (red-team RT-1) — see the note
     // in `recover.rs`. This check also runs before the grant is verified, so the
     // per-user-only form was spendable with a garbage body.
@@ -87,296 +104,625 @@ pub async fn post_enroll_device(
 
     // Do not reveal account or rotation state unless the caller possesses the
     // unguessable grant. This is only a non-consuming proof; redemption below
-    // remains atomic and single-use.
-    let grant =
-        crate::recovery::recover::load_enroll_grant(&state, body.user_id, body.recovery_grant)?;
-    let grant_epoch = grant.key_epoch;
+    // remains atomic and single-use. The checked preflight kernel owns the
+    // account/epoch/rotation/credential/commitment decision and its precedence;
+    // it neither consumes the grant nor authorizes a device insert.
+    let observed_grant =
+        crate::recovery::recover::observe_enroll_grant(&state, body.user_id, body.recovery_grant)?;
+    let grant_present = observed_grant.is_some();
 
     // The grant already proved `user_id` exists and completed recovery, but
     // a deleted-account race between /recovery/recover and this call is
     // still possible in principle — fail closed rather than orphan a device
-    // row under a FK that no longer resolves.
-    let user_rows = state
-        .sqldb
-        .query(
-            "SELECT key_epoch, rekey_state, recovery_webauthn_cred_id, recovery_auth_hash
-             FROM users WHERE id = ?",
-            vec![TursoValue::Text(body.user_id.to_string())],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    let Some(user_row) = user_rows.first() else {
-        return Err(AppError::NotFound("account no longer exists".into()));
+    // row under a FK that no longer resolves. When the grant is missing this
+    // query is deliberately skipped and the policy sees `NotQueried`, so a
+    // failed grant lookup cannot probe account state.
+    let account_observation = match observed_grant.as_ref() {
+        None => EnrollmentAccountObservation::NotQueried,
+        Some(grant) => {
+            let mut sql = PoolSql(&state.sqldb);
+            enrollment_account_preflight(&mut sql, &body.user_id, grant).await?
+        }
     };
-    let account_epoch = user_row.i64(0).unwrap_or(1).max(1);
-    if account_epoch != grant_epoch {
-        return Err(AppError::Unauthorized(
-            "recovery grant was invalidated by vault key rotation".into(),
-        ));
-    }
-    if user_row.text(1).is_some() {
-        return Err(AppError::Conflict(
-            "device enrollment is paused during vault key rotation".into(),
-        ));
-    }
-    // Credential-bound grants die when the passkey is replaced. Possession
-    // grants (M18) are bound to no credential; they instead require the RMS
-    // commitment that verified their proof to still be staged — deleting
-    // recovery setup or rotating the RMS revokes them.
-    let possession_hash_present = match user_row.get(3) {
-        Some(TursoValue::Text(text)) => !crate::db::decode_b64(text)?.is_empty(),
-        _ => false,
+    let account_present = matches!(
+        account_observation,
+        EnrollmentAccountObservation::Present(_)
+    );
+    let grant_observation = match observed_grant.as_ref() {
+        Some(grant) => Some(EnrollmentGrantFacts {
+            epoch: grant.key_epoch,
+            possession: grant.possession,
+        }),
+        None => None,
     };
-    let credential_matches_current = if grant.possession {
-        possession_hash_present
-    } else {
-        user_row.text(2) == Some(grant.credential_id.as_str())
+    let decision = plan_enrollment_preflight(EnrollmentPreflightObservation {
+        grant: grant_observation,
+        account: account_observation,
+    });
+    let (start, grant, account) = match (decision, observed_grant, account_observation) {
+        (
+            EnrollmentPreflightDecision::Ready(ready),
+            Some(grant),
+            EnrollmentAccountObservation::Present(account),
+        ) => (RedemptionStart::Redeem(ready), Some(grant), Some(account)),
+        // U-24: with no live grant, the only thing left to try is the
+        // non-consuming replay lookup. The policy's own precedence guarantees
+        // `GrantUnavailable` is exactly the absent-grant rejection.
+        (
+            EnrollmentPreflightDecision::Reject(EnrollmentPreflightRejection::GrantUnavailable),
+            None,
+            _,
+        ) => (RedemptionStart::Replay, None, None),
+        (EnrollmentPreflightDecision::Reject(reason), _, _) => {
+            return Err(preflight_rejection_error(reason));
+        }
+        _ => {
+            // The policy cannot admit an unobserved account; keep this branch
+            // fail-closed if the wiring ever drifts.
+            return Err(AppError::Internal(
+                "enrollment preflight admitted an unobserved account".into(),
+            ));
+        }
     };
-    if !credential_matches_current {
-        return Err(AppError::Unauthorized(if grant.possession {
-            "recovery grant was invalidated by recovery setup deletion or rotation".into()
-        } else {
-            "recovery grant was invalidated by credential replacement".into()
-        }));
-    }
 
     // Consume only after validation and the fast rotation check. The guarded
     // insert below remains the authority for a concurrent rotation; if that
     // race is lost, the grant is restored so the user can retry afterwards.
-    let consumed_grant =
-        crate::recovery::recover::take_enroll_grant(&state, body.user_id, body.recovery_grant)?;
-    if consumed_grant != grant {
-        crate::recovery::recover::restore_enroll_grant(
-            &state,
-            body.user_id,
-            body.recovery_grant,
-            &consumed_grant,
-        )?;
-        return Err(AppError::Unauthorized(
-            "recovery grant changed while redeeming".into(),
-        ));
-    }
-    let consumed_epoch = consumed_grant.key_epoch;
-    let recovery_permit = match vela_recovery_policy::plan_enrollment(EnrollmentFacts {
-        phase: RecoveryPhase::GrantIssued,
-        // Both ids are part of the same unguessable sled key.
-        user_matches: true,
-        grant_live: true,
-        grant_consumed: true,
-        credential_matches_current,
-        possession_grant: consumed_grant.possession,
-        possession_hash_present,
-        public_keys_valid: hybrid_ek.len() == HYBRID_EK_LEN && hybrid_vk.len() == HYBRID_VK_LEN,
-        account_epoch_active: user_row.text(1).is_none(),
-        grant_epoch: consumed_epoch,
-        account_epoch,
-    }) {
-        EnrollmentDecision::Enroll(permit) => permit,
-        EnrollmentDecision::Reject => {
-            crate::recovery::recover::restore_enroll_grant(
-                &state,
-                body.user_id,
-                body.recovery_grant,
-                &consumed_grant,
-            )?;
-            return Err(AppError::Unauthorized(
-                "verified recovery policy rejected device enrollment".into(),
-            ));
-        }
+    // Every post-preflight decision and every effect between consumption and
+    // the verdict goes through the proved `redemption_interpreter!` loop; this
+    // handler only supplies the I/O and renders the terminal effect.
+    //
+    // U-24: when the preflight finds no live grant, the request may be a retry
+    // of a request whose reply was lost after the device row committed. The
+    // same loop then runs the replay ceremony, whose only effect is a
+    // non-consuming lookup of the device row this exact grant created. The
+    // lookup answers only for the request's own key material, so it returns
+    // the device the first request created and never enrolls a second one.
+    let mut io = EnrollDeviceIo {
+        sql: PoolSql(&state.sqldb),
+        kv: StoreKv(&state.store),
+        user_id: body.user_id,
+        recovery_grant: body.recovery_grant,
+        hybrid_ek,
+        hybrid_vk,
+        device_name: body
+            .device_name
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "Recovered Device".to_string()),
+        device_type: body
+            .device_type
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "unknown".to_string()),
+        now: None,
+        grant,
+        grant_present,
+        account,
+        account_present,
+        consumed_grant: None,
+        grant_consumed: false,
+        consumed_matches_observed: false,
+        new_device_id: None,
+        replay_device_id: None,
+        insert_error: None,
+        error: None,
     };
-    let permit = match vela_rekey_policy::plan_active_mutation(MutationRequest {
-        declared_epoch: recovery_permit.epoch(),
-        authority_epoch: consumed_epoch,
-        kind: MutationKind::Enrollment,
-        authority: MutationAuthority::RecoveryGrant,
-    }) {
-        MutationDecision::Permit(permit) => permit,
-        MutationDecision::Reject => {
-            crate::recovery::recover::restore_enroll_grant(
-                &state,
-                body.user_id,
-                body.recovery_grant,
-                &consumed_grant,
-            )?;
-            return Err(AppError::Unauthorized(
-                "recovery grant changed while redeeming".into(),
-            ));
-        }
+    let Some(transition) = vela_recovery_policy::redemption_interpreter!(io, start, await) else {
+        return Err(io.error.take().unwrap_or_else(|| {
+            AppError::Internal("recovery enrollment aborted without an error".into())
+        }));
     };
 
-    let new_device_id = Uuid::new_v4();
-    let now = Utc::now().to_rfc3339();
-    let device_name = body
-        .device_name
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "Recovered Device".to_string());
-    let device_type = body
-        .device_type
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "unknown".to_string());
-
-    let inserted = if consumed_grant.possession {
-        insert_recovered_device(
-            &state,
-            &InsertRecoveredDevice {
-                device_id: new_device_id,
-                user_id: body.user_id.clone(),
-                device_name: &device_name,
-                device_type: &device_type,
-                hybrid_ek_b64: crate::db::encode_b64(&hybrid_ek),
-                hybrid_vk_b64: crate::db::encode_b64(&hybrid_vk),
-                created_at: now.clone(),
-                epoch: permit.epoch(),
-                guard_credential: None,
-            },
-        )
-        .await
-    } else {
-        insert_recovered_device(
-            &state,
-            &InsertRecoveredDevice {
-                device_id: new_device_id,
-                user_id: body.user_id.clone(),
-                device_name: &device_name,
-                device_type: &device_type,
-                hybrid_ek_b64: crate::db::encode_b64(&hybrid_ek),
-                hybrid_vk_b64: crate::db::encode_b64(&hybrid_vk),
-                created_at: now.clone(),
-                epoch: permit.epoch(),
-                guard_credential: Some(consumed_grant.credential_id.clone()),
-            },
-        )
-        .await
-    };
-    let inserted = match inserted {
-        Ok(inserted) => inserted,
-        Err(error) => {
-            crate::recovery::recover::restore_enroll_grant(
-                &state,
-                body.user_id,
-                body.recovery_grant,
-                &consumed_grant,
-            )?;
-            return Err(AppError::Internal(error.to_string()));
+    match transition.effect {
+        RedemptionEffect::Complete => {
+            let new_device_id = io
+                .new_device_id
+                .or(io.replay_device_id)
+                .ok_or_else(|| {
+                    AppError::Internal("redemption driver completed without a device id".into())
+                })?;
+            tracing::info!(
+                new_device_id = %new_device_id,
+                user_id = %body.user_id,
+                replay = start == RedemptionStart::Replay,
+                "device enrolled via account recovery"
+            );
+            Ok(Json(EnrollDeviceResponse { device_id: new_device_id }))
         }
-    };
-    if inserted == 0 {
-        let current = match state
-            .sqldb
-            .query(
-                "SELECT recovery_webauthn_cred_id, recovery_auth_hash FROM users WHERE id = ?",
-                vec![TursoValue::Text(body.user_id.to_string())],
-            )
-            .await
+        // An insert error may hide a committed row, so the grant stays
+        // consumed; the user restarts recovery instead of reusing it.
+        RedemptionEffect::Fail(RedemptionFailure::InsertStorage)
+            if io.insert_error.is_some() =>
         {
-            Ok(current) => current,
-            Err(error) => {
-                crate::recovery::recover::restore_enroll_grant(
-                    &state,
-                    body.user_id,
-                    body.recovery_grant,
-                    &consumed_grant,
-                )?;
-                return Err(AppError::Internal(error.to_string()));
-            }
-        };
-        let Some(row) = current.first() else {
-            crate::recovery::recover::restore_enroll_grant(
-                &state,
-                body.user_id,
-                body.recovery_grant,
-                &consumed_grant,
-            )?;
-            return Err(AppError::NotFound("account no longer exists".into()));
-        };
-        if consumed_grant.possession {
-            if !matches!(row.get(1), Some(TursoValue::Text(_))) {
-                // Setup deletion is revocation, not a retryable rotation:
-                // leave the old grant consumed.
-                return Err(AppError::Unauthorized(
-                    "recovery grant was invalidated by recovery setup deletion or rotation".into(),
-                ));
-            }
-        } else if row.text(0) != Some(consumed_grant.credential_id.as_str()) {
-            // Credential replacement is revocation, not a retryable rotation:
-            // leave the old grant consumed.
-            return Err(AppError::Unauthorized(
-                "recovery grant was invalidated by credential replacement".into(),
-            ));
+            Err(io.insert_error.take().expect("checked above"))
         }
-        crate::recovery::recover::restore_enroll_grant(
-            &state,
-            body.user_id,
-            body.recovery_grant,
-            &consumed_grant,
-        )?;
-        return Err(AppError::Conflict(
-            "device enrollment is paused during vault key rotation".into(),
+        // A failed authority recheck reports the database error it hit.
+        RedemptionEffect::Fail(failure) | RedemptionEffect::RestoreAndFail(failure) => {
+            Err(match failure {
+                RedemptionFailure::RecheckStorage => io
+                    .error
+                    .take()
+                    .unwrap_or_else(|| redemption_failure_error(failure)),
+                _ => redemption_failure_error(failure),
+            })
+        }
+        _ => Err(AppError::Internal(
+            "redemption driver reached no verdict".into(),
+        )),
+    }
+}
+
+/// The I/O behind each enrollment-redemption effect. The driver decides which
+/// method runs and when (through the shared `redemption_interpreter!` loop,
+/// proved in F* as `run_redemption`); each method only performs its effect and
+/// reports the observation. `None` aborts the request with `error`, which is
+/// rendered unchanged.
+pub(super) struct EnrollDeviceIo<S, K> {
+    sql: S,
+    kv: K,
+    user_id: Uuid,
+    recovery_grant: Uuid,
+    hybrid_ek: Vec<u8>,
+    hybrid_vk: Vec<u8>,
+    device_name: String,
+    device_type: String,
+    /// A fixed enrollment instant for the conformance test; `None` takes the
+    /// wall clock exactly when the insert runs, as the handler always has.
+    now: Option<String>,
+    /// The decoded grant from the non-consuming preflight lookup. `None` on the
+    /// U-24 replay start, which has no live grant.
+    grant: Option<crate::recovery::recover::RecoveryEnrollGrant>,
+    grant_present: bool,
+    /// The preflight account facts. `None` on the U-24 replay start, which does
+    /// not read account state.
+    account: Option<EnrollmentAccountFacts>,
+    account_present: bool,
+    /// The grant removed by the atomic consumption, when one was removed.
+    consumed_grant: Option<crate::recovery::recover::RecoveryEnrollGrant>,
+    grant_consumed: bool,
+    consumed_matches_observed: bool,
+    new_device_id: Option<Uuid>,
+    /// The device the U-24 replay lookup found for this exact grant and key.
+    replay_device_id: Option<Uuid>,
+    insert_error: Option<AppError>,
+    /// The first error from an effect that has no observation to report.
+    error: Option<AppError>,
+}
+
+impl<S: RecoverySql, K: RecoveryKv> EnrollDeviceIo<S, K> {
+    /// The atomic single-use consumption. A store failure has no observation:
+    /// it aborts with the store's own error, exactly as the inline effect did.
+    pub(super) async fn consume_grant(&mut self) -> Option<ConsumptionObservation> {
+        let Some(grant) = self.grant.as_ref() else {
+            self.error = Some(AppError::Internal(
+                "redemption driver admitted a consumption without a grant".into(),
+            ));
+            return None;
+        };
+        let preflight = grant_view(grant);
+        let stmt = redemption_store::plan_take_grant(redemption_store::grant_key(
+            &self.user_id.to_string(),
+            &self.recovery_grant.to_string(),
         ));
+        let bytes = match take_grant(&mut self.kv, &stmt) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                self.error = Some(error);
+                return None;
+            }
+        };
+        let observed = match bytes {
+            None => None,
+            Some(value) => match crate::recovery::recover::decode_enroll_grant(&value) {
+                Ok(grant) => Some(grant),
+                Err(error) => {
+                    self.error = Some(error);
+                    return None;
+                }
+            },
+        };
+        self.grant_consumed = observed.is_some();
+        self.consumed_matches_observed = observed.as_ref() == self.grant.as_ref();
+        let taken = match observed.as_ref() {
+            None => GrantTake::Missing,
+            Some(consumed) => GrantTake::Taken(grant_view(consumed)),
+        };
+        let observation = redemption_store::classify_take(&taken, &preflight);
+        self.consumed_grant = observed;
+        Some(observation)
     }
 
-    tracing::info!(
-        new_device_id = %new_device_id,
-        user_id = %body.user_id,
-        "device enrolled via account recovery"
-    );
+    /// The final enrollment and rekey policy decision. It is pure: the driver
+    /// still decides whether the returned permits may authorize an insert.
+    async fn final_policy(&mut self) -> Option<FinalPolicyObservation> {
+        let Some(consumed) = self.consumed_grant.as_ref() else {
+            self.error = Some(AppError::Internal(
+                "redemption driver admitted an unobserved grant".into(),
+            ));
+            return None;
+        };
+        let Some(account) = self.account.as_ref() else {
+            self.error = Some(AppError::Internal(
+                "redemption driver admitted an unobserved account".into(),
+            ));
+            return None;
+        };
+        let consumed_epoch = consumed.key_epoch;
+        let rekey = match vela_rekey_policy::plan_active_mutation(MutationRequest {
+            declared_epoch: consumed_epoch,
+            authority_epoch: consumed_epoch,
+            kind: MutationKind::Enrollment,
+            authority: MutationAuthority::RecoveryGrant,
+        }) {
+            MutationDecision::Permit(permit) => RekeyObservation::Permit {
+                epoch: permit.epoch(),
+            },
+            MutationDecision::Reject => RekeyObservation::Reject,
+        };
+        Some(FinalPolicyObservation {
+            enrollment: EnrollmentObservation {
+                grant_present: self.grant_present,
+                grant_consumed: self.grant_consumed,
+                consumed_matches_observed: self.consumed_matches_observed,
+                account_present: self.account_present,
+                grant_possession: consumed.possession,
+                grant_epoch: consumed_epoch,
+                stored_epoch: account.stored_epoch,
+                account_epoch_active: account.epoch_active,
+                credential_id_matches: account.credential_id_matches,
+                commitment_len: account.commitment_len,
+                hybrid_ek_len: self.hybrid_ek.len(),
+                hybrid_vk_len: self.hybrid_vk.len(),
+            },
+            rekey,
+        })
+    }
 
-    Ok(Json(EnrollDeviceResponse {
-        device_id: new_device_id,
-    }))
+    /// Exactly one guarded device insert with the driver's permit.
+    pub(super) async fn insert_device(&mut self, permit: RedemptionInsertPermit) -> Option<InsertObservation> {
+        let Some(consumed) = self.consumed_grant.as_ref() else {
+            self.error = Some(AppError::Internal(
+                "redemption driver admitted an unobserved grant".into(),
+            ));
+            return None;
+        };
+        let new_device_id = Uuid::new_v4();
+        self.new_device_id = Some(new_device_id);
+        let guard = if permit.possession {
+            GrantGuard::Commitment
+        } else {
+            GrantGuard::Credential {
+                credential_id: consumed.credential_id.clone(),
+            }
+        };
+        let plan = redemption_store::plan_insert_device(
+            new_device_id.to_string(),
+            self.user_id.to_string(),
+            self.device_name.clone(),
+            self.device_type.clone(),
+            crate::db::encode_b64(&self.hybrid_ek),
+            crate::db::encode_b64(&self.hybrid_vk),
+            self.now.clone().unwrap_or_else(|| Utc::now().to_rfc3339()),
+            permit.epoch,
+            guard,
+            self.recovery_grant.to_string(),
+        );
+        let (outcomes, error) = run_writes(&mut self.sql, &plan).await;
+        let observation = redemption_store::classify_insert(&outcomes);
+        if let Some(error) = error {
+            self.insert_error = Some(AppError::Internal(error.to_string()));
+        }
+        Some(observation)
+    }
+
+    /// The live authority recheck after a zero-row insert. A query failure is
+    /// an observation (`QueryFailed`); the driver decides that it restores the
+    /// grant, and the original error is kept for the response.
+    pub(super) async fn recheck_authority(&mut self) -> Option<AuthorityRecheckObservation> {
+        let Some(consumed) = self.consumed_grant.as_ref() else {
+            self.error = Some(AppError::Internal(
+                "redemption driver admitted an unobserved grant".into(),
+            ));
+            return None;
+        };
+        let stmt = redemption_store::plan_authority_read(self.user_id.to_string());
+        let rows = match run_read(&mut self.sql, &stmt).await {
+            Ok(rows) => rows,
+            Err(error) => {
+                self.error = Some(AppError::Internal(error.to_string()));
+                return Some(AuthorityRecheckObservation::QueryFailed);
+            }
+        };
+        Some(redemption_store::classify_authority(
+            &ReadOutcome::Row(authority_row_view(&rows)),
+            consumed.possession,
+            &consumed.credential_id,
+        ))
+    }
+
+    /// The U-24 replay lookup: the device row this exact grant created, read
+    /// without consuming anything. A query or decode failure has no
+    /// observation, so the request aborts with the original error and the
+    /// handler renders it unchanged. The driver answers with the device only
+    /// when the row's stored keys equal the request's own key material.
+    pub(super) async fn replay_enrolled_device(&mut self) -> Option<ReplayObservation> {
+        let stmt = redemption_store::plan_enrolled_device(
+            self.user_id.to_string(),
+            self.recovery_grant.to_string(),
+        );
+        let rows = match run_read(&mut self.sql, &stmt).await {
+            Ok(rows) => rows,
+            Err(error) => {
+                self.error = Some(AppError::Internal(error.to_string()));
+                return None;
+            }
+        };
+        let row = match enrolled_device_row_view(&rows) {
+            Ok(row) => row,
+            Err(error) => {
+                self.error = Some(error);
+                return None;
+            }
+        };
+        let hybrid_ek = crate::db::encode_b64(&self.hybrid_ek);
+        let hybrid_vk = crate::db::encode_b64(&self.hybrid_vk);
+        let observation = redemption_store::classify_replay(row.as_ref(), &hybrid_ek, &hybrid_vk);
+        if matches!(
+            observation,
+            ReplayObservation::Enrolled { key_matches: true }
+        ) {
+            let Some(row) = row.as_ref() else {
+                self.error = Some(AppError::Internal(
+                    "replay classifier reported a row that was not read".into(),
+                ));
+                return None;
+            };
+            match Uuid::parse_str(&row.device_id) {
+                Ok(device_id) => self.replay_device_id = Some(device_id),
+                Err(error) => {
+                    self.error = Some(AppError::Internal(format!(
+                        "enrolled device row carries an invalid id: {error}"
+                    )));
+                    return None;
+                }
+            }
+        }
+        Some(observation)
+    }
+
+    /// Restore the consumed grant before returning the driver's failure. A
+    /// store error replaces the failure, exactly as the inline `?` did.
+    pub(super) async fn restore_grant(&mut self) -> Option<()> {
+        let Some(consumed) = self.consumed_grant.as_ref() else {
+            return Some(());
+        };
+        let value = match serde_json::to_string(consumed) {
+            Ok(value) => value,
+            Err(error) => {
+                self.error = Some(AppError::Internal(format!(
+                    "failed to serialize recovery grant: {error}"
+                )));
+                return None;
+            }
+        };
+        let plan = redemption_store::plan_restore_grant(
+            redemption_store::grant_key(
+                &self.user_id.to_string(),
+                &self.recovery_grant.to_string(),
+            ),
+            value,
+            grant_view(consumed),
+        );
+        match plan.first().map(|stmt| put_grant(&mut self.kv, stmt)) {
+            Some(Ok(())) => Some(()),
+            Some(Err(error)) => {
+                self.error = Some(error);
+                None
+            }
+            None => {
+                self.error = Some(AppError::Internal(
+                    "restore plan carried no statement".into(),
+                ));
+                None
+            }
+        }
+    }
 }
 
-struct InsertRecoveredDevice<'a> {
-    device_id: Uuid,
-    user_id: Uuid,
-    device_name: &'a str,
-    device_type: &'a str,
-    hybrid_ek_b64: String,
-    hybrid_vk_b64: String,
-    created_at: String,
-    epoch: i64,
-    /// `Some(credential_id)` for WebAuthn-bound grants: the insert only lands
-    /// while that exact credential is still current. `None` for possession
-    /// grants: the insert only lands while the RMS commitment still exists.
-    guard_credential: Option<String>,
-}
-
-async fn insert_recovered_device(
-    state: &AppState,
-    body: &InsertRecoveredDevice<'_>,
-) -> Result<u64> {
-    let (guard_sql, guard_param) = match &body.guard_credential {
-        Some(credential_id) => (
-            "AND recovery_webauthn_cred_id = ?",
-            Some(TursoValue::Text(credential_id.clone())),
-        ),
-        None => ("AND recovery_auth_hash IS NOT NULL", None),
-    };
-    let sql = format!(
-        "INSERT INTO devices
-         (id, user_id, device_name, device_type, last_active, hybrid_ek, hybrid_vk, enrolled_by, created_at)
-         SELECT ?, ?, ?, ?, NULL, ?, ?, NULL, ?
-         WHERE EXISTS (
-             SELECT 1 FROM users
-             WHERE id = ? AND key_epoch = ? AND rekey_state IS NULL
-               {guard_sql}
-         )"
-    );
-    let mut params = vec![
-        TursoValue::Text(body.device_id.to_string()),
-        TursoValue::Text(body.user_id.to_string()),
-        TursoValue::Text(body.device_name.to_string()),
-        TursoValue::Text(body.device_type.to_string()),
-        TursoValue::Text(body.hybrid_ek_b64.clone()),
-        TursoValue::Text(body.hybrid_vk_b64.clone()),
-        TursoValue::Text(body.created_at.clone()),
-        TursoValue::Text(body.user_id.to_string()),
-        TursoValue::Integer(body.epoch),
-    ];
-    params.extend(guard_param);
-    state
-        .sqldb
-        .execute(&sql, params)
+/// `post_enroll_device`'s preflight account read: the plan's one query, the
+/// live-row view and the extracted classifier, adapted to the driver's facts.
+pub(super) async fn enrollment_account_preflight<S: RecoverySql>(
+    sql: &mut S,
+    user_id: &Uuid,
+    grant: &crate::recovery::recover::RecoveryEnrollGrant,
+) -> Result<EnrollmentAccountObservation> {
+    let stmt = redemption_store::plan_enrollment_account(user_id.to_string());
+    let user_rows = run_read(sql, &stmt)
         .await
-        .map_err(|e| AppError::Internal(e.to_string()))
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let row = enrollment_account_row_view(&user_rows, grant)?;
+    Ok(match redemption_store::classify_enrollment_account(
+        row.as_ref(),
+        grant.key_epoch,
+        &grant.credential_id,
+    ) {
+        None => EnrollmentAccountObservation::Absent,
+        Some(view) => EnrollmentAccountObservation::Present(EnrollmentAccountFacts {
+            stored_epoch: view.stored_epoch,
+            epoch_active: view.epoch_active,
+            credential_id_matches: view.credential_id_matches,
+            commitment_len: view.commitment_len,
+        }),
+    })
+}
+
+fn grant_view(grant: &crate::recovery::recover::RecoveryEnrollGrant) -> GrantView {
+    GrantView {
+        key_epoch: grant.key_epoch,
+        credential_id: grant.credential_id.clone(),
+        possession: grant.possession,
+    }
+}
+
+/// Construction and side-channel access for the bounded real-database
+/// conformance test (`recovery/conformance.rs`).
+#[cfg(test)]
+impl<S, K> EnrollDeviceIo<S, K> {
+    pub(super) fn for_conformance(
+        sql: S,
+        kv: K,
+        user_id: Uuid,
+        recovery_grant: Uuid,
+        grant: crate::recovery::recover::RecoveryEnrollGrant,
+        consumed: Option<crate::recovery::recover::RecoveryEnrollGrant>,
+    ) -> Self {
+        let stored_epoch = grant.key_epoch;
+        Self {
+            sql,
+            kv,
+            user_id,
+            recovery_grant,
+            hybrid_ek: vec![1, 2, 3],
+            hybrid_vk: vec![4, 5, 6],
+            device_name: "conformance-device".into(),
+            device_type: "conformance".into(),
+            now: Some("2026-10-30T12:00:00+00:00".into()),
+            grant: Some(grant),
+            grant_present: true,
+            account: Some(EnrollmentAccountFacts {
+                stored_epoch: Some(stored_epoch),
+                epoch_active: true,
+                credential_id_matches: false,
+                commitment_len: 0,
+            }),
+            account_present: true,
+            consumed_grant: consumed,
+            grant_consumed: false,
+            consumed_matches_observed: false,
+            new_device_id: None,
+            replay_device_id: None,
+            insert_error: None,
+            error: None,
+        }
+    }
+
+    /// A replay-only executor for the U-24 conformance test: no live grant and
+    /// no account facts, exactly the state the handler builds when the
+    /// preflight finds no grant.
+    pub(super) fn for_replay_conformance(
+        sql: S,
+        kv: K,
+        user_id: Uuid,
+        recovery_grant: Uuid,
+    ) -> Self {
+        Self {
+            sql,
+            kv,
+            user_id,
+            recovery_grant,
+            hybrid_ek: vec![1, 2, 3],
+            hybrid_vk: vec![4, 5, 6],
+            device_name: "conformance-device".into(),
+            device_type: "conformance".into(),
+            now: Some("2026-10-30T12:00:00+00:00".into()),
+            grant: None,
+            grant_present: false,
+            account: None,
+            account_present: false,
+            consumed_grant: None,
+            grant_consumed: false,
+            consumed_matches_observed: false,
+            new_device_id: None,
+            replay_device_id: None,
+            insert_error: None,
+            error: None,
+        }
+    }
+
+    pub(super) fn insert_error_is_set(&self) -> bool {
+        self.insert_error.is_some()
+    }
+
+    pub(super) fn error_is_set(&self) -> bool {
+        self.error.is_some()
+    }
+
+    pub(super) fn new_device_id(&self) -> Option<Uuid> {
+        self.new_device_id
+    }
+
+    pub(super) fn replay_device_id(&self) -> Option<Uuid> {
+        self.replay_device_id
+    }
+
+    pub(super) fn consumed_grant(&self) -> Option<&crate::recovery::recover::RecoveryEnrollGrant> {
+        self.consumed_grant.as_ref()
+    }
+
+    pub(super) fn grant_consumed(&self) -> bool {
+        self.grant_consumed
+    }
+
+    pub(super) fn consumed_matches_observed(&self) -> bool {
+        self.consumed_matches_observed
+    }
+}
+
+/// Map the checked preflight rejection to the handler's historical status and
+/// message. The kernel decides which reason wins; this function only renders it.
+fn preflight_rejection_error(reason: EnrollmentPreflightRejection) -> AppError {
+    match reason {
+        EnrollmentPreflightRejection::GrantUnavailable => {
+            AppError::Unauthorized("recovery grant expired or already used".into())
+        }
+        // Unreachable through the production wiring: the account query either
+        // errors, returns `Absent`, or returns `Present`. Keep it fail-closed.
+        EnrollmentPreflightRejection::AccountUnavailable => {
+            AppError::Internal("enrollment account was not observed".into())
+        }
+        EnrollmentPreflightRejection::AccountAbsent => {
+            AppError::NotFound("account no longer exists".into())
+        }
+        EnrollmentPreflightRejection::EpochMismatch => {
+            AppError::Unauthorized("recovery grant was invalidated by vault key rotation".into())
+        }
+        EnrollmentPreflightRejection::RotationPaused => {
+            AppError::Conflict("device enrollment is paused during vault key rotation".into())
+        }
+        EnrollmentPreflightRejection::CredentialReplaced => AppError::Unauthorized(
+            "recovery grant was invalidated by credential replacement".into(),
+        ),
+        EnrollmentPreflightRejection::CommitmentMissing => AppError::Unauthorized(
+            "recovery grant was invalidated by recovery setup deletion or rotation".into(),
+        ),
+    }
+}
+
+/// Render a driver failure with the handler's historical status/message. The
+/// storage variants carry the original database error text at the call site;
+/// this fallback exists so the mapping stays total.
+fn redemption_failure_error(failure: RedemptionFailure) -> AppError {
+    match failure {
+        RedemptionFailure::GrantUnavailable => {
+            AppError::Unauthorized("recovery grant expired or already used".into())
+        }
+        RedemptionFailure::GrantChanged => {
+            AppError::Unauthorized("recovery grant changed while redeeming".into())
+        }
+        RedemptionFailure::PolicyRejected => {
+            AppError::Unauthorized("verified recovery policy rejected device enrollment".into())
+        }
+        RedemptionFailure::AccountAbsent => AppError::NotFound("account no longer exists".into()),
+        RedemptionFailure::CommitmentRevoked => AppError::Unauthorized(
+            "recovery grant was invalidated by recovery setup deletion or rotation".into(),
+        ),
+        RedemptionFailure::CredentialReplaced => AppError::Unauthorized(
+            "recovery grant was invalidated by credential replacement".into(),
+        ),
+        RedemptionFailure::Rotating => {
+            AppError::Conflict("device enrollment is paused during vault key rotation".into())
+        }
+        RedemptionFailure::InsertStorage | RedemptionFailure::RecheckStorage => {
+            AppError::Internal("redemption storage observation failed".into())
+        }
+    }
 }

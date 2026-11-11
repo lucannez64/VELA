@@ -164,11 +164,50 @@ pub fn seal_fleet_chunk(
     }
 }
 
+/// The fleet's default key epoch: the pre-rotation AAD every client still
+/// reads. A caller that omits the epoch is on this epoch, not on an implicit
+/// "latest".
+pub const DEFAULT_FLEET_EPOCH: i64 = 1;
+
+/// Seal a chunk whose caller may omit the epoch.
+///
+/// The "absent means epoch 1" default used to be re-implemented in every
+/// bridge (Android rejected an absent epoch, Apple and WASM substituted 1).
+/// It lives here once so the three writers cannot disagree, and a nonpositive
+/// epoch is refused by the same message everywhere.
+pub fn seal_fleet_chunk_optional_epoch(
+    key: &[u8; 32],
+    plaintext: &[u8],
+    epoch: Option<i64>,
+    chunk_id: &str,
+    lamport_clock: i64,
+) -> Result<Vec<u8>> {
+    let epoch = u64::try_from(epoch.unwrap_or(DEFAULT_FLEET_EPOCH)).map_err(|_| {
+        VelaError::InvalidParameter("vault key epoch must be positive".into())
+    })?;
+    seal_fleet_chunk(key, plaintext, epoch, chunk_id, lamport_clock)
+}
+
+/// Refusal text for a pre-C-2 blob that carries no sealed header.
+///
+/// The Android and iOS clients branch on this substring to show their
+/// "migrate through the pre-C-2 path" hint (`NativeVelaCore.mapAdmittedChunkFailure`,
+/// `SyncEngine`), because the ABI has no error codes yet (FFI inventory F9).
+/// Keeping the one constant here keeps the three production download paths
+/// saying the same thing.
+pub const LEGACY_UNSEALED_REFUSAL: &str = "legacy unsealed chunk ciphertext cannot be admitted; \
+     migrate it through the explicit pre-C-2 path";
+
 /// Canonical fleet wire policy for chunk decryption.
 ///
 /// Epoch 1 accepts legacy chunk AAD. Epochs above 1 require an authenticated
 /// binding to the exact requested epoch; the legacy fallback exposed by
 /// [`open_epoch_chunk`] is never accepted after rotation.
+///
+/// This keeps the pre-C-2 **unsealed** shape readable at epoch 1 for the
+/// explicit migration paths (re-key rotation, enrollment import, the
+/// desktop-only audit log). A sync download must use
+/// [`open_sealed_fleet_chunk`] instead.
 pub fn open_fleet_chunk(
     key: &[u8; 32],
     blob: &[u8],
@@ -192,6 +231,62 @@ pub fn open_fleet_chunk(
             Ok(plaintext)
         }
     }
+}
+
+/// Open a chunk on a migration path whose caller may omit the epoch.
+///
+/// The mirror of [`seal_fleet_chunk_optional_epoch`]: "absent means epoch 1"
+/// lives here once. A sync download must not use this function; it calls
+/// [`open_sealed_fleet_chunk`] (through `vela_crypto::admission`).
+pub fn open_fleet_chunk_optional_epoch(
+    key: &[u8; 32],
+    blob: &[u8],
+    epoch: Option<i64>,
+    chunk_id: &str,
+    lamport_clock: i64,
+) -> Result<Zeroizing<Vec<u8>>> {
+    let epoch = u64::try_from(epoch.unwrap_or(DEFAULT_FLEET_EPOCH)).map_err(|_| {
+        VelaError::InvalidParameter("vault key epoch must be positive".into())
+    })?;
+    open_fleet_chunk(key, blob, epoch, chunk_id, lamport_clock)
+}
+
+/// Open a chunk on a production sync download path.
+///
+/// [`open_fleet_chunk`] deliberately keeps the pre-C-2 **unsealed** wire shape
+/// readable at epoch 1 so a fleet can upgrade one client at a time. That shape
+/// (`aead::encrypt`) authenticates neither the chunk id nor the revision:
+/// `aead::open_vault_chunk` simply decrypts it and ignores both labels. A
+/// storage server that relabels such a blob with a higher Lamport clock makes
+/// every reader succeed, so admitting one would make the verified rollback
+/// decision (`vela-sync-policy::plan_chunk_download`) meaningless.
+///
+/// Every production writer now seals through [`seal_fleet_chunk`] — desktop,
+/// Android, Apple and web all call it — and legacy rows are migrated by the
+/// desktop re-key rotation, which re-seals every chunk under the current
+/// epoch. The unsealed shape is therefore refused here, before the AEAD open:
+///
+/// - epoch 1 seals bind `chunk_id ‖ lamport_clock`;
+/// - epoch 2+ seals additionally bind the account epoch.
+///
+/// Callers that legitimately read legacy rows (the re-key rotation, enrollment
+/// import and the desktop-only audit log) call [`open_fleet_chunk`] or
+/// [`open_epoch_chunk`] directly and must not claim admission for the result.
+/// Android, Apple and desktop all use this function so the gate has one
+/// implementation, not one per client.
+pub fn open_sealed_fleet_chunk(
+    key: &[u8; 32],
+    blob: &[u8],
+    epoch: u64,
+    chunk_id: &str,
+    lamport_clock: i64,
+) -> Result<Zeroizing<Vec<u8>>> {
+    if !aead::is_sealed(blob) {
+        return Err(VelaError::InvalidParameter(
+            LEGACY_UNSEALED_REFUSAL.to_string(),
+        ));
+    }
+    open_fleet_chunk(key, blob, epoch, chunk_id, lamport_clock)
 }
 
 /// Split the NEW seed into fresh recovery shares.
@@ -219,6 +314,7 @@ pub fn rekey_recovery_shares(
 pub fn shares_reconstruct_to(shares: &[shamir::Share], expected: &[u8; 32]) -> bool {
     shamir::reconstruct(shares, expected.len())
         .map(|secret| {
+            let secret = Zeroizing::new(secret);
             if secret.len() != expected.len() {
                 return false;
             }
@@ -287,14 +383,13 @@ pub fn open_rekey_capsule(
         ));
     }
     let sk = crate::kem::HybridSecretKey::from_bytes(hybrid_dk_bytes)?;
-    let authenticated_payload =
-        Zeroizing::new(crate::kem::open_share(&sk, capsule).map_err(|_| VelaError::KemError)?);
+    // The capsule is attacker-supplied (a malicious storage server chooses what
+    // it returns), so both cryptographic opens report the one uniform error.
+    // The metadata checks below run only after the payload has authenticated
+    // under the previous RMS, which an attacker without that RMS cannot reach.
+    let authenticated_payload = Zeroizing::new(crate::kem::open_share(&sk, capsule)?);
     let binding_key = kdf::derive(REKEY_CAPSULE_BINDING_CONTEXT, previous_rms);
-    let payload = aead::decrypt(binding_key.as_bytes(), &authenticated_payload).map_err(|_| {
-        VelaError::InvalidParameter(
-            "re-key capsule was not authenticated by the current RMS".into(),
-        )
-    })?;
+    let payload = aead::decrypt(binding_key.as_bytes(), &authenticated_payload)?;
     let fixed_len = REKEY_CAPSULE_V1_MAGIC.len() + 8 + 2 + 32;
     if payload.len() < fixed_len || !payload.starts_with(REKEY_CAPSULE_V1_MAGIC) {
         return Err(VelaError::InvalidParameter(
@@ -489,6 +584,94 @@ mod tests {
         );
     }
 
+    /// Every cryptographic failure opening a sealed fleet chunk is the same
+    /// error (C15). The storage server chooses the blob, its labels, and
+    /// whether the key epoch is right, so these causes must be
+    /// indistinguishable. The unsealed-header refusal is deliberately separate:
+    /// it inspects a public magic value the server already sent.
+    #[test]
+    fn fleet_chunk_cryptographic_failures_are_uniform() {
+        let key = *kdf::derive(kdf::contexts::CHUNK_KEY, &seed(21)).as_bytes();
+        let wrong_key = *kdf::derive(kdf::contexts::CHUNK_KEY, &seed(22)).as_bytes();
+        let plaintext = b"chunk body";
+        let chunk_id = "vault-data-000001";
+        let clock = 17;
+
+        for epoch in 1..=3 {
+            let sealed = seal_fleet_chunk(&key, plaintext, epoch, chunk_id, clock).unwrap();
+            assert_eq!(
+                &open_sealed_fleet_chunk(&key, &sealed, epoch, chunk_id, clock).unwrap()[..],
+                plaintext
+            );
+            let mut tampered = sealed.clone();
+            let last = tampered.len() - 1;
+            tampered[last] ^= 1;
+
+            let cases: Vec<Result<Zeroizing<Vec<u8>>>> = vec![
+                open_sealed_fleet_chunk(&key, &tampered, epoch, chunk_id, clock),
+                open_sealed_fleet_chunk(&wrong_key, &sealed, epoch, chunk_id, clock),
+                open_sealed_fleet_chunk(&key, &sealed, epoch, "vault-data-000002", clock),
+                open_sealed_fleet_chunk(&key, &sealed, epoch, chunk_id, clock + 1),
+            ];
+            for result in cases {
+                match result {
+                    Err(VelaError::DecryptionFailed) => {}
+                    Err(other) => panic!("epoch {epoch}: non-uniform error: {other}"),
+                    Ok(_) => panic!("epoch {epoch}: attacker-chosen chunk opened"),
+                }
+            }
+        }
+    }
+
+    /// The production download gate: an unsealed pre-C-2 blob has no chunk id
+    /// or revision binding, so it must be refused before opening even though
+    /// the migration reader still accepts the same bytes.
+    #[test]
+    fn admission_open_refuses_the_unsealed_legacy_shape() {
+        let key = *kdf::derive(kdf::contexts::CHUNK_KEY, &seed(13)).as_bytes();
+        let plaintext = b"pre-C-2 chunk body";
+        let chunk_id = "vault-data-000001";
+        let clock = 17;
+
+        let legacy = aead::encrypt(&key, plaintext).unwrap();
+        assert!(!aead::is_sealed(&legacy));
+
+        for epoch in 1..=4 {
+            let error = open_sealed_fleet_chunk(&key, &legacy, epoch, chunk_id, clock)
+                .expect_err("unsealed legacy blob must not be admitted");
+            assert!(
+                error.to_string().contains(LEGACY_UNSEALED_REFUSAL),
+                "epoch {epoch}: {error}"
+            );
+        }
+
+        // The migration reader still opens the same bytes — even under a
+        // relabelled id and inflated clock, which is exactly why admission
+        // cannot rely on this call.
+        assert_eq!(
+            &open_fleet_chunk(&key, &legacy, 1, "vault-data-000009", 9_000).unwrap()[..],
+            plaintext
+        );
+
+        for epoch in 1..=4 {
+            let sealed = seal_fleet_chunk(&key, plaintext, epoch, chunk_id, clock).unwrap();
+            assert_eq!(
+                &open_sealed_fleet_chunk(&key, &sealed, epoch, chunk_id, clock).unwrap()[..],
+                plaintext
+            );
+            // A sealed blob relabelled to another chunk id, revision or epoch
+            // fails to open; the admission path inherits that binding.
+            assert!(open_sealed_fleet_chunk(&key, &sealed, epoch, "other", clock).is_err());
+            assert!(open_sealed_fleet_chunk(&key, &sealed, epoch, chunk_id, clock + 1).is_err());
+            assert!(open_sealed_fleet_chunk(&key, &sealed, epoch + 1, chunk_id, clock).is_err());
+        }
+
+        // Epoch 0 is reserved: no blob opens through admission at it.
+        assert!(open_sealed_fleet_chunk(&key, &legacy, 0, chunk_id, clock).is_err());
+        let sealed = seal_fleet_chunk(&key, plaintext, 1, chunk_id, clock).unwrap();
+        assert!(open_sealed_fleet_chunk(&key, &sealed, 0, chunk_id, clock).is_err());
+    }
+
     #[test]
     fn fresh_shares_recover_the_new_seed_and_old_shares_do_not() {
         let old = seed(3);
@@ -523,6 +706,64 @@ mod tests {
         assert!(!shares_reconstruct_to(&shares[0..2], &new));
         // At threshold: verified.
         assert!(shares_reconstruct_to(&shares[0..3], &new));
+    }
+
+    #[test]
+    fn every_rekey_capsule_cryptographic_failure_is_the_same_error() {
+        let previous = seed(16);
+        let new_rms = seed(17);
+        let (pk, sk) = crate::kem::generate_keypair();
+        let capsule = seal_rekey_capsule(&pk.to_bytes(), &previous, &new_rms, 3, "rotation-1")
+            .expect("seal capsule");
+        let (_, other_sk) = crate::kem::generate_keypair();
+        let mut flipped = capsule.clone();
+        let last = flipped.len() - 1;
+        flipped[last] ^= 1;
+
+        let cases: Vec<Result<Zeroizing<[u8; 32]>>> = vec![
+            open_rekey_capsule(
+                other_sk.to_bytes().as_slice(),
+                &capsule,
+                &previous,
+                3,
+                "rotation-1",
+            ),
+            open_rekey_capsule(
+                sk.to_bytes().as_slice(),
+                &flipped,
+                &previous,
+                3,
+                "rotation-1",
+            ),
+            open_rekey_capsule(
+                sk.to_bytes().as_slice(),
+                &capsule,
+                &seed(18),
+                3,
+                "rotation-1",
+            ),
+        ];
+
+        for result in cases {
+            match result {
+                Err(VelaError::DecryptionFailed) => {}
+                Err(other) => panic!("non-uniform decryption error: {other}"),
+                Ok(_) => panic!("attacker-chosen capsule opened"),
+            }
+        }
+
+        // A replayed *valid* capsule with the wrong expected epoch is a
+        // post-authentication protocol mismatch, not a decryption failure; the
+        // attacker supplied the capsule and already knows its epoch.
+        let err = open_rekey_capsule(
+            sk.to_bytes().as_slice(),
+            &capsule,
+            &previous,
+            4,
+            "rotation-1",
+        )
+        .unwrap_err();
+        assert!(matches!(err, VelaError::InvalidParameter(_)), "{err}");
     }
 
     #[test]

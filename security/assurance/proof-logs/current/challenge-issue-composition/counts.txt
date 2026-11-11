@@ -1,0 +1,1 @@
+23 lemmas / 15 recursive definitions; 4 reachability witnesses

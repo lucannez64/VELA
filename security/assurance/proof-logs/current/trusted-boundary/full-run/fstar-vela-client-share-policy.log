@@ -1,0 +1,52 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.01s
+     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-client-share-policy/72dc38bb898b28d9/out/vela_client_share_policy-72dc38bb898b28d9)
+
+running 3 tests
+test tests::first_contact_pins_the_signed_revision ... ok
+test tests::revision_zero_is_never_admitted ... ok
+test tests::update_requires_pin_lineage_and_a_newer_revision ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/exhaustive.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-client-share-policy/5e3c237e822fafcd/out/exhaustive-5e3c237e822fafcd)
+
+running 2 tests
+test decisions_match_the_spec_everywhere ... ok
+test negative_theorems_hold_everywhere ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests vela_client_share_policy
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.02s
+[1m[94minfo[0m: [1mhax: unchanged file ./proofs/fstar/extraction/Vela_client_share_policy.fst[0m
+* Warning 241 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti(0,0-0,0):
+  - Unable to load
+    /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti.checked
+    since checked file
+    /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti.checked
+    does not exist; will recheck
+    /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti
+    (suppressing this warning for further modules)
+
+* Warning 239 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+Verified module: Vela_client_share_policy
+All verification conditions discharged successfully

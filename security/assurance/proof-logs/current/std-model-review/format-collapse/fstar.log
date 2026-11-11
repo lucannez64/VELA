@@ -1,0 +1,7 @@
+* Warning 333:
+  - Unable to open hints file:
+    /tmp/vela-fstar-run-kebhin8s/hints/Fmt_collapse.fst.hints; ran without hints
+
+Verified module: Fmt_collapse
+All verification conditions discharged successfully
+exit 0

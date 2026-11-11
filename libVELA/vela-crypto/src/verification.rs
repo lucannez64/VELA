@@ -68,26 +68,47 @@ pub fn enrollment_verification_code(code: &str) -> String {
 
 // ── Enrollment v3: comparing keys, not locators ─────────────────────────────
 
-/// A comparable fingerprint of the joining device's public signing key.
+/// A comparable fingerprint of **both** of the joining device's public keys.
 ///
 /// v2 hashed the locator string, because the locator was the thing that could
 /// be substituted. v3 has nothing secret in the locator, so what matters is
-/// whether the key the server is about to enrol is the key belonging to the
-/// device in the user's hand — so the fingerprint is over the key itself
-/// (audit P-1).
+/// whether the keys the server is about to enrol are the keys of the device in
+/// the user's hand (audit P-1).
 ///
-/// That also narrows what an attacker would have to do. They cannot see the
-/// legitimate device's public key: only the device that opened the grant may
-/// read a claim, and a grant admits exactly one claim. So making their own
-/// fingerprint match would mean colliding with a value they never observe,
-/// rather than matching a locator they were shown. The 18 digits are kept
-/// anyway — they cost nothing and the reasoning above about offline preimage
-/// search still applies to anyone who does obtain the key.
-pub fn enrollment_fingerprint(hybrid_vk: &[u8]) -> String {
-    // Domain-separated from the v2 locator digest so the two can never be
-    // confused for one another, in a log or by a client that mixes versions.
+/// v3 covered only `hybrid_vk`, the signing key. But the primary seals the RMS
+/// to `hybrid_ek`, the KEM key, and nothing else tied the two together: a
+/// server (or anyone able to rewrite the stored claim) could keep the honest
+/// `hybrid_vk`, swap in a `hybrid_ek` of its own, pass the user's comparison,
+/// and receive the RMS sealed to a key it holds. Found by modelling the
+/// ceremony with the server as the adversary
+/// (`security/formal/m13b_enrollment_key_binding.spthy`). v4 therefore hashes
+/// both keys, length-prefixed, so substituting either one changes the digits
+/// the user compares.
+///
+/// 18 digits (~60 bits): a server that wants to substitute a key must find a
+/// key pair whose fingerprint equals the honest one — a second-preimage search
+/// against a value it only learns once the honest device has claimed, with the
+/// user watching both screens.
+pub fn enrollment_fingerprint(hybrid_vk: &[u8], hybrid_ek: &[u8]) -> String {
+    // Domain-separated from v3 and from the v2 locator digest, so different
+    // versions can never silently agree.
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"vela enrollment device fingerprint v3");
+    hasher.update(b"vela enrollment device fingerprint v4");
+    hasher.update(&(hybrid_vk.len() as u64).to_be_bytes());
+    hasher.update(hybrid_vk);
+    hasher.update(&(hybrid_ek.len() as u64).to_be_bytes());
+    hasher.update(hybrid_ek);
+    format_digits(hasher.finalize().as_bytes())
+}
+
+/// A comparable fingerprint of a device's signing key alone.
+///
+/// Shown next to a received share (share envelope v2): the key a recipient
+/// pins at first contact, for the user to compare out of band with the
+/// sender's device. Domain-separated from the enrollment fingerprint.
+pub fn signing_key_fingerprint(hybrid_vk: &[u8]) -> String {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"vela device signing key fingerprint v1");
     hasher.update(hybrid_vk);
     format_digits(hasher.finalize().as_bytes())
 }
@@ -197,12 +218,38 @@ mod tests {
         let a = vec![7u8; 2624];
         let mut b = a.clone();
         b[2000] ^= 1; // one bit
-        assert_eq!(enrollment_fingerprint(&a), enrollment_fingerprint(&a));
+        assert_eq!(enrollment_fingerprint(&a, &[9u8; 1600]), enrollment_fingerprint(&a, &[9u8; 1600]));
         assert_ne!(
-            enrollment_fingerprint(&a),
-            enrollment_fingerprint(&b),
+            enrollment_fingerprint(&a, &[9u8; 1600]),
+            enrollment_fingerprint(&b, &[9u8; 1600]),
             "a one-bit key difference must be visible to the user"
         );
+    }
+
+    /// The v3 flaw: a substituted KEM key behind an honest signing key must
+    /// change the digits the user compares.
+    #[test]
+    fn fingerprint_covers_the_kem_key_too() {
+        let vk = vec![7u8; 2624];
+        let ek = vec![8u8; 1600];
+        let mut swapped_ek = ek.clone();
+        swapped_ek[100] ^= 1;
+        assert_ne!(
+            enrollment_fingerprint(&vk, &ek),
+            enrollment_fingerprint(&vk, &swapped_ek),
+            "swapping only the KEM key must be visible to the user"
+        );
+        // Length-prefixing: moving bytes across the boundary changes the value.
+        assert_ne!(
+            enrollment_fingerprint(&[1, 2], &[3]),
+            enrollment_fingerprint(&[1], &[2, 3])
+        );
+    }
+
+    #[test]
+    fn signing_key_fingerprint_is_domain_separated() {
+        let vk = vec![7u8; 2624];
+        assert_ne!(signing_key_fingerprint(&vk), enrollment_fingerprint(&vk, &[]));
     }
 
     #[test]
@@ -211,14 +258,14 @@ mod tests {
         // mixed them up must not silently agree.
         let key = b"VELA-ENROLL:v2:abc123";
         assert_ne!(
-            enrollment_fingerprint(key),
+            enrollment_fingerprint(key, &[9u8; 1600]),
             enrollment_verification_code("VELA-ENROLL:v2:abc123")
         );
     }
 
     #[test]
     fn choices_contain_the_answer_exactly_once() {
-        let actual = enrollment_fingerprint(&[1u8; 2624]);
+        let actual = enrollment_fingerprint(&[1u8; 2624], &[9u8; 1600]);
         let choices = enrollment_fingerprint_choices(&actual, 4);
         assert_eq!(choices.len(), 4);
         assert_eq!(
@@ -232,7 +279,7 @@ mod tests {
     fn decoys_are_indistinguishable_from_the_answer() {
         // If a decoy were shaped differently, picking correctly would not
         // require reading the other device's screen.
-        let actual = enrollment_fingerprint(&[2u8; 2624]);
+        let actual = enrollment_fingerprint(&[2u8; 2624], &[9u8; 1600]);
         for choice in enrollment_fingerprint_choices(&actual, 5) {
             let groups: Vec<&str> = choice.split('-').collect();
             assert_eq!(groups.len(), 6, "wrong shape: {choice}");
@@ -245,7 +292,7 @@ mod tests {
 
     #[test]
     fn choices_are_distinct() {
-        let actual = enrollment_fingerprint(&[3u8; 2624]);
+        let actual = enrollment_fingerprint(&[3u8; 2624], &[9u8; 1600]);
         let choices = enrollment_fingerprint_choices(&actual, 5);
         let unique: std::collections::HashSet<&String> = choices.iter().collect();
         assert_eq!(unique.len(), choices.len(), "duplicates: {choices:?}");
@@ -259,7 +306,7 @@ mod tests {
         // distribution rather than merely that a shuffle happens.
         const N: usize = 4;
         const ROUNDS: usize = 4000;
-        let actual = enrollment_fingerprint(&[4u8; 2624]);
+        let actual = enrollment_fingerprint(&[4u8; 2624], &[9u8; 1600]);
         let mut counts = [0usize; N];
 
         for _ in 0..ROUNDS {
@@ -281,7 +328,7 @@ mod tests {
 
     #[test]
     fn the_number_of_choices_is_bounded() {
-        let actual = enrollment_fingerprint(&[5u8; 2624]);
+        let actual = enrollment_fingerprint(&[5u8; 2624], &[9u8; 1600]);
         // One choice is not a choice; a hundred is not glanceable, and a list
         // nobody reads is the failure this exists to prevent.
         assert_eq!(enrollment_fingerprint_choices(&actual, 0).len(), MIN_FINGERPRINT_CHOICES);

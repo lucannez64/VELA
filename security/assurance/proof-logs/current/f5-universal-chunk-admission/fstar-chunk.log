@@ -1,0 +1,26 @@
+* Warning 271 at /tmp/vela-fstar-prebuilt/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+Verified module: Vela_sync_policy
+Verified module: Vela_sync_policy_chunk_lemmas
+All verification conditions discharged successfully
+chunk-lemma source gate: 11 historical postconditions, 20 hand-written lemmas
+e23bc7556ebb25eaf091ae5f8dd3718f490330e7efd9ea9245714655b1f14add  proofs/fstar/extraction/Vela_sync_policy.fst
+f56e4efeca9ae5867ca03ea6e52d203c7645e7fbfd0e3a988e7c39fe1561ca8f  proofs/fstar/chunk-lemmas/Vela_sync_policy_chunk_lemmas.fst

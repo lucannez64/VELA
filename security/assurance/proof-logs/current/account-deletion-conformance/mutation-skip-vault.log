@@ -1,0 +1,71 @@
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> vela-server/src/sqldb.rs:76:5
+   |
+76 |     async fn query(&self, sql: &str, params: Vec<turso::Value>) -> anyhow::Result<Vec<VelaRow>>;
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+   = note: `#[warn(async_fn_in_trait)]` on by default
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+76 -     async fn query(&self, sql: &str, params: Vec<turso::Value>) -> anyhow::Result<Vec<VelaRow>>;
+76 +     fn query(&self, sql: &str, params: Vec<turso::Value>) -> impl std::future::Future<Output = anyhow::Result<Vec<VelaRow>>> + Send;
+   |
+
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> vela-server/src/sqldb.rs:78:5
+   |
+78 |     async fn execute(&self, sql: &str, params: Vec<turso::Value>) -> anyhow::Result<u64>;
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+78 -     async fn execute(&self, sql: &str, params: Vec<turso::Value>) -> anyhow::Result<u64>;
+78 +     fn execute(&self, sql: &str, params: Vec<turso::Value>) -> impl std::future::Future<Output = anyhow::Result<u64>> + Send;
+   |
+
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> vela-server/src/sqldb.rs:80:5
+   |
+80 |     async fn execute_batch(&self, sql: &str) -> anyhow::Result<()>;
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+80 -     async fn execute_batch(&self, sql: &str) -> anyhow::Result<()>;
+80 +     fn execute_batch(&self, sql: &str) -> impl std::future::Future<Output = anyhow::Result<()>> + Send;
+   |
+
+warning: `vela-server` (lib) generated 3 warnings
+   Compiling vela-server v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-53717da1/serverVELA/vela-server)
+warning: function `test_app` is never used
+  --> vela-server/tests/helpers/mod.rs:42:14
+   |
+42 | pub async fn test_app() -> Router {
+   |              ^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `vela-server` (test "account_deletion_model") generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.96s
+     Running tests/account_deletion_model.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-server/5226a05fac8c7944/out/account_deletion_model-5226a05fac8c7944)
+
+running 1 test
+test every_bounded_account_deletion_trace_matches_the_model ... 
+thread 'every_bounded_account_deletion_trace_matches_the_model' (1001864) panicked at vela-server/tests/account_deletion_model.rs:739:13:
+assertion `left == right` failed: account Alice was deleted but vault_chunks.last_writer still has 1 row(s) referencing it after step 1 of the trace (user 58c4580c-84dc-47bd-bb46-058e1f524fbb, device e0de4111-f646-4f47-a763-40ee135cd147)
+  left: 1
+ right: 0
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+
+failures:
+
+failures:
+    every_bounded_account_deletion_trace_matches_the_model
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+
+error: test failed, to rerun pass `-p vela-server --test account_deletion_model`

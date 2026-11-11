@@ -1,0 +1,5 @@
+rustc 1.101.0-nightly (e9bbadf68 2026-10-12)
+cargo 1.101.0-nightly (29c5daa1a 2026-10-07)
+heavy wrapper: ~/.local/opt/vela-tools/bin/vela-heavy; 3 GiB/no swap/one worker
+command: cargo test --manifest-path serverVELA/Cargo.toml -p vela-server --lib --test integration --test device_revocation_model
+CARGO_TARGET_DIR=/home/hirew/.t3/worktrees/VELA/t3-700776df/target; default CARGO_HOME; LLVM dev/test backend

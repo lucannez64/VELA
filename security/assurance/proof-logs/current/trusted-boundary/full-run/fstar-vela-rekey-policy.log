@@ -1,0 +1,52 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.94s
+     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/deps/vela_rekey_policy-e298c9bf57839bbb)
+
+running 11 tests
+test tests::abort_preserves_epoch_and_requires_attempt_authority ... ok
+test tests::active_accepts_only_current_epoch_with_epoch_one_legacy_exception ... ok
+test tests::active_guard_rejects_freezing_and_stale_permits ... ok
+test tests::commit_replay_must_name_the_exact_recorded_attempt ... ok
+test tests::commit_requires_attempt_authority_and_both_completeness_witnesses ... ok
+test tests::every_shadow_authority_fact_is_required ... ok
+test tests::freezing_routes_only_next_epoch_writes_while_reading_current ... ok
+test tests::integer_boundary_and_invalid_epochs_fail_closed ... ok
+test tests::mutation_permits_bind_epoch_and_authority_class ... ok
+test tests::start_requires_every_readiness_gate_and_exact_successor ... ok
+test tests::timeout_rolls_back_only_expired_well_formed_attempts ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests vela_rekey_policy
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.09s
+[1m[94minfo[0m: [1mhax: unchanged file ./proofs/fstar/extraction/Vela_rekey_policy.fst[0m
+* Warning 241 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti(0,0-0,0):
+  - Unable to load
+    /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti.checked
+    since checked file
+    /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti.checked
+    does not exist; will recheck
+    /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti
+    (suppressing this warning for further modules)
+
+* Warning 239 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+Verified module: Vela_rekey_policy
+All verification conditions discharged successfully

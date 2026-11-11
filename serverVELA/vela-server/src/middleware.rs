@@ -1,6 +1,6 @@
 //! Axum middleware and extractors.
 //!
-//! ## `RequireAuth` extractor
+//! ## `AuthSession` extractor
 //!
 //! Parses and validates the `Authorization: Bearer <paseto-token>` header on
 //! every authenticated route.  It:
@@ -8,7 +8,8 @@
 //!   2. Checks the `exp` / `nbf` / `hcap` claims.
 //!   3. Verifies the JTI is not in the sled revocation set.
 //!   4. Runs the 300 req/min per-JTI rate limit.
-//!   5. Optionally renews the token (issued when <5 min remain on current token)
+//!   5. Requires the account and, for device scope, its active matching device row.
+//!   6. Optionally renews the token (issued when <5 min remain on current token)
 //!      via the `X-New-Token` response header.
 
 use axum::{
@@ -19,7 +20,12 @@ use chrono::Utc;
 use vela_rekey_policy::{
     MutationAuthority, MutationDecision, MutationKind, MutationPermit, MutationRequest,
 };
-use vela_session_policy::{RenewalDecision, RouteClass, RouteDecision, TokenClaims};
+use vela_session_policy::{
+    revocation_driver::{
+        plan_admission, AdmissionDecision, AdmissionObservation, AdmissionRefusal,
+    },
+    RenewalDecision, RouteClass, RouteDecision, TokenClaims,
+};
 
 use crate::{
     auth::token::{TokenScope, TokenService},
@@ -28,6 +34,28 @@ use crate::{
     sqldb::{Db as _, TursoValue},
     state::AppState,
 };
+
+/// Map a pure admission refusal to the historical status/message.
+fn admission_error(refusal: AdmissionRefusal) -> AppError {
+    match refusal {
+        AdmissionRefusal::JtiRevoked => AppError::Unauthorized("token has been revoked".into()),
+        AdmissionRefusal::DeviceRevoked | AdmissionRefusal::DeviceRowRevoked => {
+            AppError::Unauthorized("device has been revoked".into())
+        }
+        AdmissionRefusal::AccountAbsent => {
+            AppError::Unauthorized("account no longer exists".into())
+        }
+    }
+}
+
+/// Apply the pure admission decision. Every revocation-based refusal in this
+/// extractor goes through this function.
+fn enforce_admission(observation: AdmissionObservation) -> Result<(), AppError> {
+    match plan_admission(observation) {
+        AdmissionDecision::Admit => Ok(()),
+        AdmissionDecision::Reject(refusal) => Err(admission_error(refusal)),
+    }
+}
 
 /// Authenticated session extracted from the `Authorization: Bearer` header.
 #[derive(Clone, Debug)]
@@ -77,17 +105,24 @@ impl FromRequestParts<AppState> for AuthSession {
         }
 
         // ── 4. JTI and device revocation check ──────────────────────────────
+        // The pure admission planner owns the precedence: JTI marker, then
+        // device sentinel, then account existence, then the durable device
+        // row. The marker observations are complete and may be decided before
+        // the account query, exactly as the historical request path did.
         let store = &state.store;
 
         let jti_revoked = store.exists(&format!("jti:revoked:{}", claims.jti))?;
-        if jti_revoked {
-            return Err(AppError::Unauthorized("token has been revoked".into()));
-        }
-
         let device_revoked = store.exists(&format!("device:revoked:{}", claims.device_id))?;
-        if device_revoked {
-            return Err(AppError::Unauthorized("device has been revoked".into()));
-        }
+        enforce_admission(AdmissionObservation {
+            jti_revoked,
+            device_revoked,
+            // These two fields cannot influence the outcome when either
+            // marker is set, and the tail is re-evaluated below when they are
+            // clear.
+            account_present: true,
+            device_row_active: true,
+            device_scoped: claims.scope == TokenScope::Device,
+        })?;
 
         // ── 5. Per-JTI rate limit (300 req/min) ──────────────────────────────
         rate_limit::authenticated_by_jti(store, &claims.jti)?;
@@ -105,7 +140,16 @@ impl FromRequestParts<AppState> for AuthSession {
             .await
             .map_err(|e| AppError::Internal(e.to_string()))?;
         let Some(user_row) = user_rows.first() else {
-            return Err(AppError::Unauthorized("account no longer exists".into()));
+            enforce_admission(AdmissionObservation {
+                jti_revoked: false,
+                device_revoked: false,
+                account_present: false,
+                device_row_active: true,
+                device_scoped: claims.scope == TokenScope::Device,
+            })?;
+            return Err(AppError::Internal(
+                "admission admitted an absent account".into(),
+            ));
         };
         let current_key_epoch = user_row.i64(0).unwrap_or(1).max(1);
         if claims.scope == TokenScope::WebSession
@@ -114,6 +158,33 @@ impl FromRequestParts<AppState> for AuthSession {
             return Err(AppError::Unauthorized(
                 "web session expired after vault key rotation".into(),
             ));
+        }
+
+        // A login/renewal that read an active device can finish after revoke
+        // enumerated its JTIs. Its later-issued token may outlive the temporary
+        // sled sentinel. The durable row is therefore checked on every new
+        // device-token admission, before issuing a replacement token. Web
+        // sessions use their session id as device_id and have no devices row.
+        // This does not cancel a request that already passed authentication.
+        if claims.scope == TokenScope::Device {
+            let active_device = state
+                .sqldb
+                .query(
+                    "SELECT id FROM devices WHERE id = ? AND user_id = ? AND revoked = 0",
+                    vec![
+                        TursoValue::Text(claims.device_id.to_string()),
+                        TursoValue::Text(claims.user_id.to_string()),
+                    ],
+                )
+                .await
+                .map_err(|e| AppError::Internal(e.to_string()))?;
+            enforce_admission(AdmissionObservation {
+                jti_revoked: false,
+                device_revoked: false,
+                account_present: true,
+                device_row_active: !active_device.is_empty(),
+                device_scoped: true,
+            })?;
         }
 
         // ── 6. Verified token renewal ────────────────────────────────────────
@@ -126,7 +197,16 @@ impl FromRequestParts<AppState> for AuthSession {
             },
             now.timestamp(),
         );
+        // These endpoints terminate the token or do not consistently deliver
+        // and consume renewal headers across their handlers/clients. Keep the old token usable until its
+        // normal expiry rather than retiring it without delivering a successor.
+        // Other handlers' error-path delivery remains a separate limitation.
+        let suppress_renewal = matches!(
+            parts.uri.path(),
+            "/auth/logout" | "/vault/schema" | "/device/revoke"
+        );
         let new_token = match renewal {
+            RenewalDecision::Renew(_) if suppress_renewal => None,
             RenewalDecision::Renew(plan) => {
                 let old_ttl_secs = (claims.exp - now).num_seconds().max(0) as u64;
 

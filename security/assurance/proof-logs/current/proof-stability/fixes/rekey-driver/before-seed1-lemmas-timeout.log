@@ -1,0 +1,98 @@
+z3-seed: gate=/home/hirew/.cache/vela-verify/t8rekey/verify-fstar-lemmas-only.sh seed=1
+z3-seed: fstar.exe on PATH: /home/hirew/.t3/worktrees/VELA/t3-3abe79e1/security/assurance/z3-seed/fstar.exe
+z3-seed: VELA_Z3_SEED=1 VELA_FSTAR_CACHE=0 query_stats=1
+z3-seed: exec /tmp/vela-fstar-prebuilt/fstar/bin/fstar.exe --z3seed 1 --query_stats --cmi --cache_off --warn_error -331 --z3rlimit 16000 --z3version 4.13.3 --already_cached +Prims+FStar+LowStar+C+Spec.Loops+TestLib --include /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/core --include /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives --include /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proofs/fstar/extraction --include proofs/fstar/extraction-rekey-driver-root --include proofs/fstar/extraction-rekey-driver --include proofs/fstar/rekey-driver-lemmas proofs/fstar/rekey-driver-lemmas/Vela_rekey_policy_rekey_driver_lemmas.fst
+* Warning 271 at /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 337 at proofs/fstar/rekey-driver-lemmas/Vela_rekey_policy_rekey_driver_lemmas.fst(488,19-488,20):
+  - The operator '@' has been resolved to FStar.List.Tot.append even though
+    FStar.List.Tot is not in scope. Please add an 'open FStar.List.Tot' to stop
+    relying on this deprecated, special treatment of '@'.
+
+Creating new z3proc (cmd=[("/home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/z3-4.13.3/bin/z3", ["-smt2", "-in"])], version=["4.13.3"])
+(Vela_rekey_policy_rekey_driver_lemmas.fst(61,60-61,62))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.begin_sound_start, 1)	succeeded in 224 milliseconds with fuel 2 and ifuel 1 and rlimit 16000 (used rlimit 0.056)
+(Vela_rekey_policy_rekey_driver_lemmas.fst(64,63-64,65))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.begin_sound_capsules, 1)	succeeded in 31 milliseconds with fuel 2 and ifuel 1 and rlimit 16000 (used rlimit 0.052)
+(Vela_rekey_policy_rekey_driver_lemmas.fst(67,61-67,63))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.begin_sound_commit, 1)	succeeded in 33 milliseconds with fuel 2 and ifuel 1 and rlimit 16000 (used rlimit 0.052)
+(Vela_rekey_policy_rekey_driver_lemmas.fst(70,60-70,62))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.begin_sound_abort, 1)	succeeded in 26 milliseconds with fuel 2 and ifuel 1 and rlimit 16000 (used rlimit 0.052)
+(Vela_rekey_policy_rekey_driver_lemmas.fst(75,65-75,67))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.step_sound, 1)	succeeded in 209 milliseconds with fuel 2 and ifuel 1 and rlimit 16000 (used rlimit 0.200)
+(Vela_rekey_policy_rekey_driver_lemmas.fst(81,84-81,86))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.step_effect_sound, 1)	succeeded in 111 milliseconds with fuel 2 and ifuel 1 and rlimit 16000 (used rlimit 0.183)
+(Vela_rekey_policy_rekey_driver_lemmas.fst(88,2-92,40))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.run, 1)	succeeded in 223 milliseconds with fuel 2 and ifuel 1 and rlimit 16000 (used rlimit 0.349)
+(Vela_rekey_policy_rekey_driver_lemmas.fst(99,2-104,48))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.last_effect, 1)	succeeded in 164 milliseconds with fuel 2 and ifuel 1 and rlimit 16000 (used rlimit 0.338)
+(Vela_rekey_policy_rekey_driver_lemmas.fst(109,2-110,37))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.run_from_start, 1)	succeeded in 38 milliseconds with fuel 2 and ifuel 1 and rlimit 16000 (used rlimit 0.045)
+(Vela_rekey_policy_rekey_driver_lemmas.fst(115,2-116,40))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.run_from_capsules, 1)	succeeded in 38 milliseconds with fuel 2 and ifuel 1 and rlimit 16000 (used rlimit 0.044)
+(Vela_rekey_policy_rekey_driver_lemmas.fst(121,2-122,38))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.run_from_commit, 1)	succeeded in 33 milliseconds with fuel 2 and ifuel 1 and rlimit 16000 (used rlimit 0.044)
+(Vela_rekey_policy_rekey_driver_lemmas.fst(127,2-128,37))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.run_from_abort, 1)	succeeded in 36 milliseconds with fuel 2 and ifuel 1 and rlimit 16000 (used rlimit 0.044)
+(Vela_rekey_policy_rekey_driver_lemmas.fst(135,2-139,46))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.op_sticky, 1)	succeeded in 167 milliseconds with fuel 2 and ifuel 1 and rlimit 16000 (used rlimit 0.278)
+(Vela_rekey_policy_rekey_driver_lemmas.fst(130,0-139,46))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.op_sticky, 2)	succeeded in 42 milliseconds with fuel 2 and ifuel 1 and rlimit 16000 (used rlimit 0.059)
+(Vela_rekey_policy_rekey_driver_lemmas.fst(146,2-164,31))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.step_after_done, 1)	succeeded in 3811 milliseconds with fuel 2 and ifuel 1 and rlimit 16000 (used rlimit 2.995)
+(Vela_rekey_policy_rekey_driver_lemmas.fst(168,2-174,64))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.count_complete, 1)	succeeded in 340 milliseconds with fuel 2 and ifuel 1 and rlimit 16000 (used rlimit 0.421)
+(Vela_rekey_policy_rekey_driver_lemmas.fst(178,2-184,60))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.count_fail, 1)	succeeded in 365 milliseconds with fuel 2 and ifuel 1 and rlimit 16000 (used rlimit 0.438)
+(Vela_rekey_policy_rekey_driver_lemmas.fst(188,2-194,66))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.count_commit_cas, 1)	succeeded in 347 milliseconds with fuel 2 and ifuel 1 and rlimit 16000 (used rlimit 0.420)
+(Vela_rekey_policy_rekey_driver_lemmas.fst(204,2-208,30))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.done_suffix_inert, 1)	succeeded in 824 milliseconds with fuel 2 and ifuel 1 and rlimit 16000 (used rlimit 0.810)
+(Vela_rekey_policy_rekey_driver_lemmas.fst(196,0-208,30))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.done_suffix_inert, 2)	succeeded in 39 milliseconds with fuel 2 and ifuel 1 and rlimit 16000 (used rlimit 0.048)
+(Vela_rekey_policy_rekey_driver_lemmas.fst(214,2-226,52))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.complete_count_le_one, 1)	succeeded in 760 milliseconds with fuel 2 and ifuel 1 and rlimit 16000 (used rlimit 0.785)
+(Vela_rekey_policy_rekey_driver_lemmas.fst(210,0-226,52))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.complete_count_le_one, 2)	succeeded in 46 milliseconds with fuel 2 and ifuel 1 and rlimit 16000 (used rlimit 0.058)
+(Vela_rekey_policy_rekey_driver_lemmas.fst(232,2-244,48))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.fail_count_le_one, 1)	succeeded in 1130 milliseconds with fuel 2 and ifuel 1 and rlimit 16000 (used rlimit 1.097)
+(Vela_rekey_policy_rekey_driver_lemmas.fst(228,0-244,48))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.fail_count_le_one, 2)	succeeded in 47 milliseconds with fuel 2 and ifuel 1 and rlimit 16000 (used rlimit 0.058)
+(Vela_rekey_policy_rekey_driver_lemmas.fst(258,2-258,23))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.commit_effect_requires_completeness, 1)	succeeded in 442 milliseconds with fuel 2 and ifuel 1 and rlimit 16000 (used rlimit 0.489)
+(Vela_rekey_policy_rekey_driver_lemmas.fst(273,2-276,37))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.abort_rollback_restores_active, 1)	succeeded in 829 milliseconds with fuel 2 and ifuel 1 and rlimit 16000 (used rlimit 1.308)
+(Vela_rekey_policy_rekey_driver_lemmas.fst(291,2-294,36))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.timeout_rollback_restores_active, 1)	succeeded in 12164 milliseconds with fuel 2 and ifuel 1 and rlimit 16000 (used rlimit 14.880)
+(Vela_rekey_policy_rekey_driver_lemmas.fst(306,2-306,79))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.web_start_is_refused, 1)	succeeded in 245 milliseconds with fuel 2 and ifuel 1 and rlimit 16000 (used rlimit 0.287)
+(Vela_rekey_policy_rekey_driver_lemmas.fst(315,2-315,80))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.web_commit_is_refused, 1)	succeeded in 216 milliseconds with fuel 2 and ifuel 1 and rlimit 16000 (used rlimit 0.286)
+(Vela_rekey_policy_rekey_driver_lemmas.fst(324,2-324,79))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.web_abort_is_refused, 1)	succeeded in 157 milliseconds with fuel 2 and ifuel 1 and rlimit 16000 (used rlimit 0.284)
+(Vela_rekey_policy_rekey_driver_lemmas.fst(338,2-345,11))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.rekey_start_trace_theorem, 1)	succeeded in 286 milliseconds with fuel 4 and ifuel 2 and rlimit 16000 (used rlimit 0.446)
+(Vela_rekey_policy_rekey_driver_lemmas.fst(358,2-365,11))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.rekey_capsules_trace_theorem, 1)	succeeded in 430 milliseconds with fuel 4 and ifuel 2 and rlimit 16000 (used rlimit 0.463)
+(Vela_rekey_policy_rekey_driver_lemmas.fst(387,2-394,11))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.rekey_commit_trace_theorem, 1)	succeeded in 305 milliseconds with fuel 4 and ifuel 2 and rlimit 16000 (used rlimit 0.414)
+(Vela_rekey_policy_rekey_driver_lemmas.fst(407,2-414,11))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.rekey_abort_trace_theorem, 1)	succeeded in 299 milliseconds with fuel 4 and ifuel 2 and rlimit 16000 (used rlimit 0.438)
+(Vela_rekey_policy_rekey_driver_lemmas.fst(444,0-449,52))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.start_prefix, 1)	succeeded in 84 milliseconds with fuel 2 and ifuel 1 and rlimit 16000 (used rlimit 0.076)
+(Vela_rekey_policy_rekey_driver_lemmas.fst(452,2-452,69))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.start_run, 1)	succeeded in 88 milliseconds with fuel 2 and ifuel 1 and rlimit 16000 (used rlimit 0.081)
+(Vela_rekey_policy_rekey_driver_lemmas.fst(459,2-459,4))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.start_reaches_freeze, 1)	failed {reason-unknown=unknown because (incomplete quantifiers)} in 6577 milliseconds with fuel 2 and ifuel 1 and rlimit 16000 (used rlimit 7.001)
+* Warning 252 at proofs/fstar/rekey-driver-lemmas/Vela_rekey_policy_rekey_driver_lemmas.fst(459,2-459,4):
+  - Could not prove post-condition
+  - See also proofs/fstar/rekey-driver-lemmas/Vela_rekey_policy_rekey_driver_lemmas.fst(456,6-456,49)
+
+(Vela_rekey_policy_rekey_driver_lemmas.fst(459,2-459,4))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.start_reaches_freeze, 1)	failed {reason-unknown=unknown because (incomplete quantifiers)} in 8347 milliseconds with fuel 2 and ifuel 2 and rlimit 16000 (used rlimit 12.208)
+* Warning 252 at proofs/fstar/rekey-driver-lemmas/Vela_rekey_policy_rekey_driver_lemmas.fst(459,2-459,4):
+  - Could not prove post-condition
+  - See also proofs/fstar/rekey-driver-lemmas/Vela_rekey_policy_rekey_driver_lemmas.fst(456,6-456,49)
+
+(Vela_rekey_policy_rekey_driver_lemmas.fst(459,2-459,4))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.start_reaches_freeze, 1)	failed {reason-unknown=unknown because (incomplete quantifiers)} in 25093 milliseconds with fuel 4 and ifuel 2 and rlimit 16000 (used rlimit 27.279)
+* Warning 252 at proofs/fstar/rekey-driver-lemmas/Vela_rekey_policy_rekey_driver_lemmas.fst(459,2-459,4):
+  - Could not prove post-condition
+  - See also proofs/fstar/rekey-driver-lemmas/Vela_rekey_policy_rekey_driver_lemmas.fst(456,6-456,49)
+
+(Vela_rekey_policy_rekey_driver_lemmas.fst(459,2-459,4))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.start_reaches_freeze, 1)	succeeded in 40491 milliseconds with fuel 8 and ifuel 2 and rlimit 16000 (used rlimit 44.229)
+(Vela_rekey_policy_rekey_driver_lemmas.fst(468,0-469,31))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.start_witness, 1)	succeeded in 264 milliseconds with fuel 2 and ifuel 1 and rlimit 16000 (used rlimit 0.335)
+(Vela_rekey_policy_rekey_driver_lemmas.fst(478,2-478,4))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.start_witness_completes, 1)	failed {reason-unknown=unknown because (incomplete quantifiers)} in 18872 milliseconds with fuel 2 and ifuel 1 and rlimit 16000 (used rlimit 20.985)
+* Warning 252 at proofs/fstar/rekey-driver-lemmas/Vela_rekey_policy_rekey_driver_lemmas.fst(478,2-478,4):
+  - Could not prove post-condition
+  - See also proofs/fstar/rekey-driver-lemmas/Vela_rekey_policy_rekey_driver_lemmas.fst(473,6-473,38)
+
+(Vela_rekey_policy_rekey_driver_lemmas.fst(478,2-478,4))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.start_witness_completes, 1)	failed {reason-unknown=unknown because (incomplete quantifiers)} in 13141 milliseconds with fuel 2 and ifuel 2 and rlimit 16000 (used rlimit 9.404)
+* Warning 252 at proofs/fstar/rekey-driver-lemmas/Vela_rekey_policy_rekey_driver_lemmas.fst(478,2-478,4):
+  - Could not prove post-condition
+  - See also proofs/fstar/rekey-driver-lemmas/Vela_rekey_policy_rekey_driver_lemmas.fst(473,6-473,38)
+
+(Vela_rekey_policy_rekey_driver_lemmas.fst(478,2-478,4))	Query-stats (Vela_rekey_policy_rekey_driver_lemmas.start_witness_completes, 1)	failed {reason-unknown=unknown because (incomplete quantifiers)} in 19539 milliseconds with fuel 4 and ifuel 2 and rlimit 16000 (used rlimit 14.873)
+* Warning 252 at proofs/fstar/rekey-driver-lemmas/Vela_rekey_policy_rekey_driver_lemmas.fst(478,2-478,4):
+  - Could not prove post-condition
+  - See also proofs/fstar/rekey-driver-lemmas/Vela_rekey_policy_rekey_driver_lemmas.fst(473,6-473,38)
+

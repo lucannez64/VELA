@@ -1,0 +1,39 @@
+$ git rev-parse HEAD
+148ff3261b62bd60df0d99d354e093500779fdce
+exit_status=0
+
+$ git -C /home/hirew/.local/opt/vela-tools/src/hax-0.3.7 rev-parse HEAD
+d8b5b3d3b666fee8943a351445d2b680105e8ea3
+exit_status=0
+
+$ cargo-hax --version
+hax 
+version=0.3.7
+commit=unknown
+exit_status=0
+
+$ opam list --switch vela-hax --installed hax-engine
+# Packages matching: name-match(hax-engine) & installed
+# Name     # Installed # Synopsis
+hax-engine 0.3.7       pinned to version 0.3.7 at file:///home/hirew/.local/opt/vela-tools/src/hax-0.3.7/engine
+exit_status=0
+
+$ fstar.exe --version
+F* 2025.10.06~dev
+platform=Linux_x86_64
+compiler=OCaml 5.1.1
+date=unset
+commit=unset
+exit_status=0
+
+$ z3-4.13.3 --version
+Z3 version 4.13.3 - 64 bit
+exit_status=0
+
+$ rustc +nightly-2025-11-08 --version
+rustc 1.93.0-nightly (843f8ce2e 2025-11-07)
+exit_status=0
+
+$ opam exec --switch vela-hax -- ocamlc -version
+5.1.1
+exit_status=0

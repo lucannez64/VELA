@@ -1,0 +1,20 @@
+--- serverVELA/vela-session-policy/proofs/fstar/extraction-challenge-issue-driver/Vela_session_policy.Challenge_issue_driver.fst	2026-10-28 00:23:46.261055855 +0100
++++ /tmp/vela-f2-account-a-mut/challenge-driver/extraction/Vela_session_policy.Challenge_issue_driver.fst	2026-10-28 00:39:53.936118254 +0100
+@@ -342,7 +342,16 @@
+         <:
+         t_IssueDriver)
+       (IssueEffect_Issue <: t_IssueEffect)
+-  | StoreObservation_KeyExists  -> terminal driver (IssueFailure_Collision <: t_IssueFailure)
++  | StoreObservation_KeyExists  ->
++    transition ({
++          driver with
++          f_stage = IssueStage_Done <: t_IssueStage;
++          f_stored_fresh = true;
++          f_issued = true
++        }
++        <:
++        t_IssueDriver)
++      (IssueEffect_Issue <: t_IssueEffect)
+   | StoreObservation_Failed  -> terminal driver (IssueFailure_Storage <: t_IssueFailure)
+ 
+ /// The complete, total transition relation. Events that do not match the

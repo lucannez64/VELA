@@ -1,0 +1,6 @@
+121,123c121
+<           if login_state_is_sound (FStar.List.Tot.index w.st_reqs i)
+<           then Core_models.Option.Option_None
+<           else w.st_nonce in
+---
+>           w.st_nonce in

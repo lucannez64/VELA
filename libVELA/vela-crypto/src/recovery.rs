@@ -21,6 +21,7 @@ use vela_client_recovery_policy::{
     AdoptionDecision, AdoptionFacts, BoundShareFacts, ReconstructionDecision, ReconstructionFacts,
     RecoveryChannel,
 };
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RecoveryShareChannel {
@@ -39,6 +40,21 @@ impl From<RecoveryShareChannel> for RecoveryChannel {
     }
 }
 
+impl RecoveryShareChannel {
+    /// Decode the wire name a client sends in a recovery request.
+    ///
+    /// Keeping the three accepted names here means Android, Apple and desktop
+    /// cannot accept different spellings of the same channel.
+    pub fn from_wire_name(name: &str) -> Option<Self> {
+        match name {
+            "cloud" => Some(Self::Cloud),
+            "server" => Some(Self::Server),
+            "trusted_contact" => Some(Self::TrustedContact),
+            _ => None,
+        }
+    }
+}
+
 pub struct BoundRecoveryShare<'a> {
     pub account_id: &'a str,
     pub key_epoch: i64,
@@ -52,10 +68,19 @@ pub struct BoundRecoveryShare<'a> {
     pub share: &'a Share,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Zeroize, ZeroizeOnDrop, Eq, PartialEq)]
 pub struct ReconstructedRms {
     pub rms: [u8; 32],
     pub key_epoch: i64,
+}
+
+impl std::fmt::Debug for ReconstructedRms {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ReconstructedRms")
+            .field("rms", &"[REDACTED]")
+            .field("key_epoch", &self.key_epoch)
+            .finish()
+    }
 }
 
 /// Reconstruct an RMS from any two distinct recovery channels of the exact
@@ -89,8 +114,11 @@ pub fn reconstruct_account_recovery(
         }
     };
 
-    let secret = shamir::reconstruct(&[first.share.clone(), second.share.clone()], 32)?;
-    let rms: [u8; 32] = secret.try_into().map_err(|_| {
+    let secret = Zeroizing::new(shamir::reconstruct(
+        &[first.share.clone(), second.share.clone()],
+        32,
+    )?);
+    let rms: [u8; 32] = secret.as_slice().try_into().map_err(|_| {
         VelaError::InvalidParameter("reconstructed RMS must be exactly 32 bytes".into())
     })?;
 
@@ -134,9 +162,157 @@ fn bound_share_facts<'a>(
     }
 }
 
+/// One decoded, channel-tagged share in a recovery request (M18).
+pub struct CombineShareInput<'a> {
+    pub share: &'a Share,
+    pub channel: RecoveryShareChannel,
+    pub account_id: &'a str,
+    pub key_epoch: i64,
+    pub split_id: Option<&'a str>,
+    /// True only when the share was opened out of an authenticated,
+    /// recipient-bound contact envelope.
+    pub recipient_bound: bool,
+}
+
+/// A decoded recovery request.
+///
+/// Both mobile bridges used to carry an identical copy of the path selection
+/// below (which shape of request selects which reconstructor, and the
+/// "exactly two shares" rule). The decision lives here once.
+pub struct CombineRecoveryInput<'a> {
+    pub requested_user_id: Option<&'a str>,
+    /// Legacy positional shares (`shares_b64`).
+    pub shares: &'a [Share],
+    pub cloud_user_id: Option<&'a str>,
+    pub cloud_key_epoch: Option<i64>,
+    pub cloud_split_id: Option<&'a str>,
+    pub server_user_id: Option<&'a str>,
+    pub server_key_epoch: Option<i64>,
+    pub server_split_id: Option<&'a str>,
+    /// Channel-tagged bound shares. When non-empty, exactly these two are
+    /// reconstructed through the verified pair-selection policy.
+    pub bound_shares: &'a [CombineShareInput<'a>],
+}
+
+fn combine_bound<'a>(input: &'a CombineShareInput<'a>) -> BoundRecoveryShare<'a> {
+    BoundRecoveryShare {
+        account_id: input.account_id,
+        key_epoch: input.key_epoch,
+        split_id: input.split_id,
+        channel: input.channel,
+        recipient_bound: input.recipient_bound,
+        share: input.share,
+    }
+}
+
+/// Reconstruct the RMS from a decoded recovery request.
+///
+/// Three shapes are accepted, exactly as the bridges always accepted them:
+///
+/// - channel-tagged `bound_shares` (M18): exactly two, any two distinct
+///   channels, through the verified pair-selection policy;
+/// - the pre-M18 flat cloud+server binding: exactly two positional shares;
+/// - no binding fields at all: the legacy raw `shamir::reconstruct` path.
+///
+/// A partially filled binding is refused rather than guessed at.
+pub fn combine_recovery_shares(input: CombineRecoveryInput<'_>) -> Result<[u8; 32]> {
+    if !input.bound_shares.is_empty() {
+        let requested = input.requested_user_id.ok_or_else(|| {
+            VelaError::InvalidParameter(
+                "requested_user_id is required for bound account recovery".into(),
+            )
+        })?;
+        if input.bound_shares.len() != 2 {
+            return Err(VelaError::InvalidParameter(
+                "bound account recovery requires exactly two shares".into(),
+            ));
+        }
+        let recovered = reconstruct_account_recovery(
+            requested,
+            combine_bound(&input.bound_shares[0]),
+            combine_bound(&input.bound_shares[1]),
+        )?;
+        return Ok(recovered.rms);
+    }
+
+    match (
+        input.requested_user_id,
+        input.cloud_user_id,
+        input.cloud_key_epoch,
+        input.server_user_id,
+        input.server_key_epoch,
+    ) {
+        (Some(requested), Some(cloud_user), Some(cloud_epoch), Some(server_user), Some(server_epoch)) => {
+            if input.shares.len() != 2 {
+                return Err(VelaError::InvalidParameter(
+                    "bound account recovery requires exactly two shares".into(),
+                ));
+            }
+            let recovered = reconstruct_account_recovery(
+                requested,
+                BoundRecoveryShare {
+                    account_id: cloud_user,
+                    key_epoch: cloud_epoch,
+                    split_id: input.cloud_split_id,
+                    channel: RecoveryShareChannel::Cloud,
+                    recipient_bound: false,
+                    share: &input.shares[0],
+                },
+                BoundRecoveryShare {
+                    account_id: server_user,
+                    key_epoch: server_epoch,
+                    split_id: input.server_split_id,
+                    channel: RecoveryShareChannel::Server,
+                    recipient_bound: false,
+                    share: &input.shares[1],
+                },
+            )?;
+            Ok(recovered.rms)
+        }
+        (None, None, None, None, None) => {
+            let secret = shamir::reconstruct(input.shares, 32)?;
+            secret.as_slice().try_into().map_err(|_| {
+                VelaError::InvalidParameter("reconstructed RMS must be exactly 32 bytes".into())
+            })
+        }
+        _ => Err(VelaError::InvalidParameter(
+            "incomplete account/epoch recovery binding".into(),
+        )),
+    }
+}
+
+/// Open a recovery transfer capsule and require exactly a 32-byte RMS.
+///
+/// Android required exactly 32 bytes; Apple accepted `>= 32` and silently
+/// truncated (FFI inventory F11). Truncation turns a longer, differently
+/// shaped payload into a key the caller did not intend, so the stricter rule
+/// now applies to both bridges and lives here once.
+pub fn open_rms_transfer_capsule(
+    transfer_key: &[u8; 32],
+    capsule: &[u8],
+) -> Result<Zeroizing<[u8; 32]>> {
+    let plaintext = crate::aead::decrypt(transfer_key, capsule)?;
+    plaintext
+        .as_slice()
+        .try_into()
+        .map(Zeroizing::new)
+        .map_err(|_| {
+            VelaError::InvalidParameter("decrypted RMS capsule must be exactly 32 bytes".into())
+        })
+}
+
 // ── Authenticated, recipient-bound trusted-contact envelopes ────────────────
 
-const CONTACT_ENVELOPE_VERSION: u8 = 1;
+/// Envelope version 2 uses the transcript-binding KEM combiner (`kem`
+/// combiner v2). Version 1 used the retired, transcript-unbound legacy
+/// combiner; it is refused by [`open_for_recipient`] and nothing writes it.
+/// The version byte is the only format marker.
+const CONTACT_ENVELOPE_VERSION: u8 = 2;
+const CONTACT_ENVELOPE_VERSION_LEGACY_KEM: u8 = 1;
+/// User-visible error for an envelope in the retired v1 format. Owners must
+/// re-share because the v1 path is deliberately gone (plan step C17).
+const LEGACY_V1_ENVELOPE_RETIRED: &str =
+    "this trusted-contact share uses the retired v1 format; ask the contact to share again";
 /// Setup → contact handoff. Only the recorded recipient can open it.
 const CONTACT_DELIVERY_DOMAIN: &[u8] = b"vela contact-share delivery v1";
 /// Contact → recovering-device response. The direction domains are distinct so
@@ -214,20 +390,56 @@ fn open_for_recipient(
     context: &ContactShareContext<'_>,
     blob: &[u8],
 ) -> Result<Share> {
+    // The version byte is public input, so naming the retired v1 format leaks
+    // nothing (the same exception C15 makes for public headers). It must be
+    // checked here: inside `uniform_open` the C17 re-share message would be
+    // collapsed into `DecryptionFailed`.
+    if blob.first() == Some(&CONTACT_ENVELOPE_VERSION_LEGACY_KEM) {
+        return Err(VelaError::InvalidParameter(
+            LEGACY_V1_ENVELOPE_RETIRED.to_string(),
+        ));
+    }
+    crate::error::uniform_open(open_for_recipient_inner(
+        domain,
+        recipient_sk,
+        context,
+        blob,
+    ))
+}
+
+/// The envelope is attacker-supplied (anyone can KEM-seal to a published share
+/// key), so every failure — short blob, unsupported version, low-order point,
+/// wrong recipient, wrong direction, bad tag, malformed inner share, wrong
+/// coordinate — is one [`VelaError::DecryptionFailed`] (C15).
+fn open_for_recipient_inner(
+    domain: &[u8],
+    recipient_sk: &crate::kem::HybridSecretKey,
+    context: &ContactShareContext<'_>,
+    blob: &[u8],
+) -> Result<Share> {
     let header = 1 + crate::kem::HybridCapsule::WIRE_LEN;
     if blob.len() <= header {
         return Err(VelaError::InvalidParameter(
             "contact envelope too short".into(),
         ));
     }
-    if blob[0] != CONTACT_ENVELOPE_VERSION {
-        return Err(VelaError::InvalidParameter(format!(
-            "unsupported contact envelope version {}",
-            blob[0]
-        )));
-    }
     let capsule = crate::kem::HybridCapsule::from_bytes(&blob[1..header])?;
-    let shared_secret = crate::kem::decapsulate(recipient_sk, &capsule)?;
+    // The first byte is the format/combiner version. Version 1 is retired:
+    // its combiner binds no transcript, so we refuse it before touching the
+    // capsule or ciphertext.
+    let shared_secret = match blob[0] {
+        CONTACT_ENVELOPE_VERSION => crate::kem::decapsulate(recipient_sk, &capsule)?,
+        CONTACT_ENVELOPE_VERSION_LEGACY_KEM => {
+            return Err(VelaError::InvalidParameter(
+                LEGACY_V1_ENVELOPE_RETIRED.to_string(),
+            ))
+        }
+        version => {
+            return Err(VelaError::InvalidParameter(format!(
+                "unsupported contact envelope version {version}"
+            )))
+        }
+    };
     let plaintext = crate::aead::open(
         shared_secret.as_bytes(),
         &blob[header..],
@@ -290,6 +502,24 @@ pub fn open_contact_share_response(
     open_for_recipient(CONTACT_RESPONSE_DOMAIN, request_sk, context, blob)
 }
 
+/// Open a contact envelope of either direction.
+///
+/// The bridge used to pick the opener from a caller-supplied boolean. Keeping
+/// the choice here means a caller cannot re-implement it differently, and the
+/// two domains stay distinct.
+pub fn open_contact_share_for_direction(
+    recipient_sk: &crate::kem::HybridSecretKey,
+    context: &ContactShareContext<'_>,
+    blob: &[u8],
+    is_response: bool,
+) -> Result<Share> {
+    if is_response {
+        open_contact_share_response(recipient_sk, context, blob)
+    } else {
+        open_contact_share(recipient_sk, context, blob)
+    }
+}
+
 // ── RMS possession proof (server enrollment without WebAuthn) ────────────────
 
 /// Length of the staged possession commitment: a hybrid verifying key
@@ -306,6 +536,7 @@ pub const POSSESSION_PROOF_LEN: usize = crate::signing::HYBRID_SIG_LEN;
 /// keygen from this stream instead of OS entropy. The resulting ML-DSA-87 key
 /// pair is an ordinary FIPS 204 key pair; its post-quantum security depends on
 /// ML-DSA, not on this wrapper.
+#[derive(Zeroize, ZeroizeOnDrop)]
 struct KdfStreamRng {
     seed: [u8; 32],
     block: [u8; 32],
@@ -374,9 +605,9 @@ impl rand_core::CryptoRng for KdfStreamRng {}
 /// component through `KdfStreamRng` key generation. Distinct derivation
 /// contexts prevent any cross-component key reuse.
 fn possession_keys(rms: &[u8; 32]) -> (MlDsaSk, MlDsaVk, Ed25519Sk) {
-    let ml_seed = crate::kdf::derive("vela rms possession ml-dsa v1", rms).0;
-    let ed_seed = crate::kdf::derive("vela rms possession ed25519 v1", rms).0;
-    let mut rng = KdfStreamRng::new(ml_seed);
+    let ml_seed = Zeroizing::new(crate::kdf::derive("vela rms possession ml-dsa v1", rms).0);
+    let ed_seed = Zeroizing::new(crate::kdf::derive("vela rms possession ed25519 v1", rms).0);
+    let mut rng = KdfStreamRng::new(*ml_seed);
     // Keygen consumes only our deterministic stream; the Infallible-style error
     // arm is unreachable for well-formed RNG output.
     let (ml_vk, ml_sk) =
@@ -760,6 +991,122 @@ mod tests {
         assert!(open_contact_share(&contact_sk, &context, &corrupt).is_err());
     }
 
+    /// Every failure to open an attacker-supplied contact envelope is one
+    /// error (C15): too short, unsupported version, wrong recipient, flipped
+    /// tag, relabelled context, direction confusion, or malformed inner share.
+    #[test]
+    fn every_contact_envelope_open_failure_is_the_same_error() {
+        let shares = shamir::split(&[15u8; 32], 2, 3).unwrap();
+        let (pk, sk) = crate::kem::generate_keypair();
+        let (_, other_sk) = crate::kem::generate_keypair();
+        let context = ContactShareContext {
+            account_id: ACCOUNT,
+            key_epoch: 5,
+            split_id: Some(SPLIT),
+            coordinate: shares[2].x,
+        };
+        let valid = seal_contact_share(&pk, &context, &shares[2]).unwrap();
+        let mut wrong_version = valid.clone();
+        wrong_version[0] = 9;
+        let mut flipped_tag = valid.clone();
+        let last = flipped_tag.len() - 1;
+        flipped_tag[last] ^= 1;
+        let relabelled = ContactShareContext {
+            account_id: "99999999-9999-9999-9999-999999999999",
+            ..context.clone()
+        };
+
+        // A well-formed envelope whose authenticated plaintext is not a share:
+        // the attacker owns the KEM shared secret, so this is reachable.
+        let (capsule, secret) = crate::kem::encapsulate(&pk).unwrap();
+        let ciphertext = crate::aead::seal(
+            secret.as_bytes(),
+            b"not a share",
+            &context.to_aad(CONTACT_DELIVERY_DOMAIN),
+        )
+        .unwrap();
+        let mut malformed_inner = vec![CONTACT_ENVELOPE_VERSION];
+        malformed_inner.extend_from_slice(&capsule.to_bytes());
+        malformed_inner.extend_from_slice(&ciphertext);
+
+        let cases: Vec<Result<Share>> = vec![
+            open_contact_share(&sk, &context, b"short"),
+            open_contact_share(&sk, &context, &wrong_version),
+            open_contact_share(&other_sk, &context, &valid),
+            open_contact_share(&sk, &context, &flipped_tag),
+            open_contact_share(&sk, &relabelled, &valid),
+            open_contact_share_response(&sk, &context, &valid),
+            open_contact_share(&sk, &context, &malformed_inner),
+        ];
+
+        for result in cases {
+            match result {
+                Err(VelaError::DecryptionFailed) => {}
+                Err(other) => panic!("non-uniform decryption error: {other}"),
+                Ok(_) => panic!("attacker-chosen envelope opened"),
+            }
+        }
+    }
+
+    /// A contact may hold a delivery envelope written before KEM combiner v2.
+    /// It must still open; a recovery response under the legacy combiner must
+    /// not (responses are always fresh, so there is no legacy to honour).
+
+    /// A v1 envelope is detected by its version byte and refused with one
+    /// clear error: the retired v1 KEM path no longer exists (plan step C17).
+    /// A v2 envelope still opens normally.
+    #[test]
+    fn v1_envelopes_are_refused_and_v2_still_opens() {
+        let shares = shamir::split(&[13u8; 32], 2, 3).unwrap();
+        let (pk, sk) = crate::kem::generate_keypair();
+        let context = ContactShareContext {
+            account_id: ACCOUNT,
+            key_epoch: 4,
+            split_id: Some(SPLIT),
+            coordinate: shares[2].x,
+        };
+
+        // v2 envelopes still open and are written with the v2 version byte.
+        let fresh = seal_contact_share(&pk, &context, &shares[2]).unwrap();
+        assert_eq!(fresh[0], CONTACT_ENVELOPE_VERSION);
+        let opened = open_contact_share(&sk, &context, &fresh).unwrap();
+        assert_eq!(opened.y, shares[2].y);
+
+        let assert_retired = |result: Result<Share>| match result {
+            Err(VelaError::InvalidParameter(msg)) => {
+                assert_eq!(msg, LEGACY_V1_ENVELOPE_RETIRED);
+            }
+            Err(other) => panic!("expected the retired-v1 error, got {other:?}"),
+            Ok(_) => panic!("expected the retired-v1 error, got an opened share"),
+        };
+
+        // The refusal is decided by the version byte alone: even a capsule and
+        // ciphertext that v2 would open are refused once relabelled v1.
+        let mut retired_delivery = fresh.clone();
+        retired_delivery[0] = CONTACT_ENVELOPE_VERSION_LEGACY_KEM;
+        assert_retired(open_contact_share(&sk, &context, &retired_delivery));
+
+        let response = seal_contact_share_response(&pk, &context, &shares[2]).unwrap();
+        assert_eq!(response[0], CONTACT_ENVELOPE_VERSION);
+        let mut retired_response = response;
+        retired_response[0] = CONTACT_ENVELOPE_VERSION_LEGACY_KEM;
+        assert_retired(open_contact_share_response(
+            &sk,
+            &context,
+            &retired_response,
+        ));
+
+        // Any other version is refused with the uniform open error (C15):
+        // only the retired v1 format is named, because naming it tells the
+        // owner to re-share and reveals nothing the sender did not choose.
+        let mut unknown = fresh;
+        unknown[0] = 3;
+        assert!(matches!(
+            open_contact_share(&sk, &context, &unknown),
+            Err(VelaError::DecryptionFailed)
+        ));
+    }
+
     #[test]
     fn delivery_envelopes_cannot_be_replayed_as_responses() {
         let shares = shamir::split(&[12u8; 32], 2, 3).unwrap();
@@ -775,6 +1122,18 @@ mod tests {
         // Direction confusion: a delivery envelope is not a valid response.
         let delivery = seal_contact_share(&request_pk, &context, &shares[1]).unwrap();
         assert!(open_contact_share_response(&request_sk, &context, &delivery).is_err());
+    }
+
+    #[test]
+    fn debug_redacts_the_reconstructed_rms() {
+        let recovered = ReconstructedRms {
+            rms: [0xAB; 32],
+            key_epoch: 7,
+        };
+        let rendered = format!("{recovered:?}");
+        assert!(rendered.contains("[REDACTED]"), "{rendered}");
+        assert!(rendered.contains("key_epoch: 7"), "{rendered}");
+        assert!(!rendered.contains("171"), "RMS bytes leaked: {rendered}");
     }
 
     #[test]

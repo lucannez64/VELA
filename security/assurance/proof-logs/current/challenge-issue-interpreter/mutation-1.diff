@@ -1,0 +1,11 @@
+--- serverVELA/vela-session-policy/proofs/fstar/extraction-challenge-issue-interpreter/Vela_session_policy.Challenge_issue_interpreter.fst	2026-10-28 00:26:35.669785475 +0100
++++ /tmp/vela-f2-account-a-mut/challenge-interpreter/extraction/Vela_session_policy.Challenge_issue_interpreter.fst	2026-10-28 00:38:22.922613630 +0100
+@@ -5,7 +5,7 @@
+ 
+ /// Most effects one request performs: the limiter, the random read and the
+ /// store write. A terminal effect needs no further turn.
+-let v_ISSUE_MAX_EFFECTS: usize = mk_usize 3
++let v_ISSUE_MAX_EFFECTS: usize = mk_usize 2
+ 
+ /// The driver has decided: nothing more may be performed.
+ let issue_effect_is_terminal (v_effect: Vela_session_policy.Challenge_issue_driver.t_IssueEffect)

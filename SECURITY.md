@@ -117,6 +117,9 @@ VELA already carries machine-checked and adversarial assurance. See:
 - `security/` — semgrep rules, a static Rust scanner, the exploit/regression
   suite that proves audit fixes stay fixed, and ProVerif/Tamarin formal models.
 - `libVELA/vela-crypto/SECURITY.md` — crypto review status and primitive pins.
+- `security/assurance/` — **start here if you are an external researcher**:
+  security claims, formal-model adversaries and assumptions, implementation
+  correspondence, reproducibility, and known limitations.
 
 ## Contact
 

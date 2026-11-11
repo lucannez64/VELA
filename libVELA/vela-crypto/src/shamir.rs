@@ -10,6 +10,7 @@
 //! where x is a non-zero field element used as the evaluation point.
 
 use crate::error::{Result, VelaError};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 // ── GF(2^8) arithmetic ────────────────────────────────────────────────────────
 // Irreducible polynomial: x^8 + x^4 + x^3 + x + 1  (0x11b, AES field)
@@ -79,7 +80,11 @@ fn gf_div(a: u8, b: u8) -> u8 {
 // ── Share type ─────────────────────────────────────────────────────────────────
 
 /// A single Shamir share: an x-coordinate and one y-value per secret byte.
-#[derive(Clone)]
+///
+/// The y-values and the authentication tag are secret material: two shares
+/// reconstruct the RMS. They are wiped when the share is dropped, including
+/// every clone.
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub struct Share {
     /// Non-zero evaluation point (1..=255).
     pub x: u8,
@@ -224,19 +229,20 @@ pub fn split(secret: &[u8], threshold: u8, n: u8) -> Result<Vec<Share>> {
 
     // For each secret byte, generate a random degree-(k-1) polynomial with
     // f(0) = secret[i].  Coefficients are [secret[i], a_1, …, a_{k-1}].
-    let mut coefficients: Vec<Vec<u8>> = Vec::with_capacity(secret_len);
+    let mut coefficients: Zeroizing<Vec<Vec<u8>>> =
+        Zeroizing::new(Vec::with_capacity(secret_len));
     for &s in secret {
-        let mut poly = vec![0u8; k];
+        let mut poly = Zeroizing::new(vec![0u8; k]);
         poly[0] = s;
         OsRng.fill_bytes(&mut poly[1..]);
-        coefficients.push(poly);
+        coefficients.push(std::mem::take(&mut *poly));
     }
 
     // Evaluate each polynomial at x = 1, 2, …, n, and tag each share with a MAC
     // keyed by the secret. Reconstruction can then tell "these shares do not
     // belong together / one was altered" from "here is your key" — previously a
     // tampered share simply produced a different secret, silently (audit C-3).
-    let mac_key = share_mac_key(secret);
+    let mac_key = Zeroizing::new(share_mac_key(secret));
     let shares: Vec<Share> = (1..=n)
         .map(|x| {
             let y: Vec<u8> = coefficients.iter().map(|poly| eval_poly(poly, x)).collect();
@@ -292,7 +298,7 @@ pub fn reconstruct(shares: &[Share], secret_len: usize) -> Result<Vec<u8>> {
         }
     }
 
-    let mut secret = vec![0u8; secret_len];
+    let mut secret = Zeroizing::new(vec![0u8; secret_len]);
     for byte_idx in 0..secret_len {
         secret[byte_idx] = lagrange_interpolate_at_zero(
             &shares
@@ -307,7 +313,7 @@ pub fn reconstruct(shares: &[Share], secret_len: usize) -> Result<Vec<u8>> {
     // secret rather than an error — the caller then "recovers" into a vault it
     // cannot decrypt, or, with a server-supplied share, into a key the server
     // chose (audit C-3).
-    let mac_key = share_mac_key(&secret);
+    let mac_key = Zeroizing::new(share_mac_key(&secret));
     for share in shares.iter().filter(|share| share.mac.is_some()) {
         let expected = share_mac(&mac_key, share.x, &share.y);
         let presented = share.mac.expect("filtered to tagged shares");
@@ -320,7 +326,7 @@ pub fn reconstruct(shares: &[Share], secret_len: usize) -> Result<Vec<u8>> {
         }
     }
 
-    Ok(secret)
+    Ok(secret.to_vec())
 }
 
 /// Constant-time tag comparison: a caller feeding candidate shares must not

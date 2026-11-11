@@ -1,0 +1,73 @@
+# Raw-byte nonce bridge: successful verification commands
+
+Base commit: `1902ecd30ce7b41fa400cdfbebf387f49144ffd1`
+Worktree: `/home/hirew/.t3/worktrees/VELA/t3-af324129`
+Date: 2026-10-25
+
+All heavy execution ran through the global heavy wrapper
+(`~/.local/opt/vela-tools/bin/vela-heavy`: 3 GiB, no swap, one worker, global
+lock).  The run reuses the checked-in focused extraction and proof modules; it
+does not run hax and does not modify any input.
+
+## Environment
+
+```
+export CARGO_HOME=/tmp/vela-hax-cargo
+export CARGO_TARGET_DIR=/home/hirew/.t3/worktrees/VELA/t3-700776df/target
+export OPAMROOT=$HOME/.local/opt/vela-tools/opam
+export PATH=/tmp/vela-fstar-prebuilt/fstar/bin:$HOME/.local/opt/vela-tools/bin:$HOME/.local/opt/vela-tools/opam/vela-hax/bin:$PATH
+```
+
+Pinned tools observed in the run:
+
+```
+F* 2025.10.06 (commit 7b347386330d0e5a331a220535b6f15288903234)
+Z3 4.13.3
+hax 0.3.7
+rustc 1.93.0-nightly (843f8ce2e 2025-11-07)   # rust-toolchain.toml channel nightly-2025-11-08
+```
+
+The persistent F* fallback is
+`$HOME/.local/opt/vela-formal-fstar-2025.10.06/fstar/bin`; the script uses it
+only when `fstar.exe` is not already on `PATH`.
+
+## Verification
+
+From `serverVELA/vela-session-policy`:
+
+```
+~/.local/opt/vela-tools/bin/vela-heavy ./verify-fstar-login-raw-nonce.sh
+```
+
+Result: exit 0; seven modules verified (two focused extraction modules and
+five hand-written proof modules); all verification conditions discharged.  The
+raw log is `fstar-verify.log`.
+
+The F* invocation uses `--cache_off` and the shared source policy guard
+`security/formal/check-driver-proof-sources.py` over every local source
+directory in the resolution path plus the verifier cwd:
+
+```
+proofs/fstar/extraction-login-driver
+proofs/fstar/challenge-lemmas
+proofs/fstar/login-driver-lemmas
+proofs/fstar/login-driver-composition
+proofs/fstar/login-raw-nonce-lemmas
+serverVELA/vela-session-policy
+```
+
+The historical extraction `proofs/fstar/extraction/Vela_session_policy.fst` is
+hash-guarded before and after the run but deliberately not passed to F*: the
+focused partial root modules would shadow it.
+
+## Mutation checks
+
+See `mutation-commands.txt`, `mutation-A.diff`, `mutation-B.diff`,
+`mutation-A-purpose-always-login.log` and
+`mutation-B-copy-path-ignores-bytes.log`.  Both mutations are in `/tmp`
+copies; the checked-in module and all inputs were unchanged.
+
+## Input immutability
+
+The script hashes every proof input before and after F* and fails if any byte
+moves.  `source-hashes.txt` records the post-run hashes exactly.

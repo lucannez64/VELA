@@ -1,0 +1,8 @@
+m22a_static_position_baseline: equivalence FALSE (baseline attack demonstrated, as expected)
+m22b_trivial_oram_hiding: equivalence TRUE (verified)
+m22c_path_oram_hiding: equivalence TRUE (verified)
+m22 oram access-hiding formal proof gate: 2 equivalences proved, 1 baseline falsified, 0 errors
+
+real	0m0.094s
+user	0m0.031s
+sys	0m0.031s

@@ -1,0 +1,194 @@
+# Differential test of the hax 0.3.7 F* std models against real Rust
+# (security/formal/std-model-diff, plan step T7).
+#
+# GitHub-hosted runners only: this job never uses the owner's `vela-box`
+# runners, so a pull request from a fork cannot execute on the build box.
+#
+# The value measured here: every F* model operation the VELA corpus reaches is
+# run through F*'s OCaml extraction on the same seeded inputs as the Rust
+# standard library, and any value difference fails the job. See
+# security/formal/std-model-diff/README.md for the operation table and
+# security/assurance/proof-logs/current/std-model-diff/README.md for the
+# 10^6-case evidence run.
+name: std-model-diff
+
+on:
+  push:
+    paths:
+      - security/formal/std-model-diff/**
+      - .github/workflows/std-model-diff.yml
+      # the hax and F* pins the compared definitions come from
+      - security/assurance/install-hax.sh
+      - security/assurance/install-formal-fstar.sh
+      # the two local models that replace hax's
+      - libVELA/vela-crypto/proofs/fstar/models/**
+  pull_request:
+    paths:
+      - security/formal/std-model-diff/**
+      - .github/workflows/std-model-diff.yml
+      - security/assurance/install-hax.sh
+      - security/assurance/install-formal-fstar.sh
+      - libVELA/vela-crypto/proofs/fstar/models/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: std-model-diff-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Job containers check out the workspace as another user; this acts like
+  # `git -c safe.directory=*` for every git call (see security.yml).
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: safe.directory
+  GIT_CONFIG_VALUE_0: "*"
+
+jobs:
+  # Reads security/assurance/proof-image/IMAGE (see security.yml): with a
+  # digest this workflow runs inside the pinned proof image and skips its
+  # host apt installs, so snapshot.ubuntu.com outages cannot fail it.
+  proof-image:
+    runs-on: ubuntu-24.04
+    outputs:
+      image: ${{ steps.read.outputs.image }}
+      in_image: ${{ steps.read.outputs.in_image }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Resolve the pinned proof image
+        id: read
+        run: |
+          set -euo pipefail
+          ref=$(head -n 1 security/assurance/proof-image/IMAGE | tr -d '[:space:]')
+          if [[ $ref =~ ^ghcr\.io/[a-z0-9./_-]+@sha256:[0-9a-f]{64}$ ]]; then
+            printf 'image=%s\n' "$ref" >> "$GITHUB_OUTPUT"
+            echo 'in_image=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'image=' >> "$GITHUB_OUTPUT"
+            echo 'in_image=false' >> "$GITHUB_OUTPUT"
+          fi
+
+  differential:
+    name: std models vs Rust
+    needs: proof-image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    # Job containers default to `sh`; the steps use bash.
+    defaults:
+      run:
+        shell: bash -e {0}
+    # Empty while IMAGE holds the placeholder: the job then runs on the host.
+    container:
+      image: ${{ needs.proof-image.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    env:
+      VELA_IN_PROOF_IMAGE: ${{ needs.proof-image.outputs.in_image }}
+      # The image carries the same F* release and the vela-t7 switch.
+      OCAMLFIND: ${{ needs.proof-image.outputs.in_image == 'true' && '/opt/vela-hax-0.3.7/opam/vela-t7/bin/ocamlfind' || '/home/runner/.opam/vela-t7/bin/ocamlfind' }}
+      OCAML_SWITCH_BIN: ${{ needs.proof-image.outputs.in_image == 'true' && '/opt/vela-hax-0.3.7/opam/vela-t7/bin' || '/home/runner/.opam/vela-t7/bin' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@d124f86f28ff42855784ff3319f48ac182c248f8 # 1.99.1
+        if: env.VELA_IN_PROOF_IMAGE != 'true'
+      # Cache the pinned F* release and the OCaml switch that can link its
+      # shipped `fstar.lib`. Keyed on the F* pin and this file.
+      - name: Restore pinned proof tools
+        id: tools
+        if: env.VELA_IN_PROOF_IMAGE != 'true'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ${{ runner.temp }}/vela-t7-fstar
+            ~/.opam
+          key: std-model-diff-tools-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('security/assurance/install-formal-fstar.sh', '.github/workflows/std-model-diff.yml') }}
+
+      # One clearly named tool step; the parent can swap it for the proof
+      # container. It reuses security/assurance/install-formal-fstar.sh for the
+      # F* binary and Z3 (the same prebuilt release the symbolic job uses), and
+      # builds the OCaml switch the evidence run linked against: OCaml 5.1.1
+      # with fstar.2025.10.06's `fstar.lib` built from opam source. Every
+      # package is an exact version (the evidence switch's full set, see
+      # proof-logs/current/std-model-diff/evidence-run.log). The prebuilt
+      # release's own fstar.cmxa is not used: it was compiled against other
+      # ppx_deriving/OCaml builds and does not link with these.
+      - name: Install pinned F*, OCaml and Z3
+        if: env.VELA_IN_PROOF_IMAGE != 'true' && steps.tools.outputs.cache-hit != 'true'
+        timeout-minutes: 120
+        run: |
+          set -euo pipefail
+          # Fixed Ubuntu snapshot (security/assurance/proof-image/apt-snapshot.conf).
+          sudo rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources
+          sudo tee /etc/apt/sources.list.d/vela-snapshot.sources >/dev/null <<'EOF'
+          Types: deb
+          URIs: https://snapshot.ubuntu.com/ubuntu/20261104T000000Z/
+          Suites: noble noble-updates noble-security
+          Components: main restricted universe multiverse
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          EOF
+          # snapshot.ubuntu.com can answer 5xx; make a missing index fatal and retry.
+          for try in 1 2 3 4 5 6; do
+            sudo apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
+              -o Acquire::https::Timeout=30 --error-on=any update && break
+            test "$try" -lt 6 || exit 1; sleep 60
+          done
+          # Package downloads from the snapshot can also answer 5xx: retry.
+          for try in 1 2 3 4 5 6; do
+            sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
+              -o Acquire::https::Timeout=30 install -y --no-install-recommends \
+              opam libgmp-dev pkg-config && break
+            test "$try" -lt 6 || exit 1; sleep 60
+          done
+          security/assurance/install-formal-fstar.sh "$RUNNER_TEMP/vela-t7-fstar"
+          opam init --bare --disable-sandboxing --no-setup --yes
+          opam switch create vela-t7 ocaml-base-compiler.5.1.1 --yes
+          opam install --switch vela-t7 --yes \
+            batteries.3.11.0 camlp-streams.5.0.1 conf-gmp.5 conf-pkg-config.5 cppo.1.8.0 \
+            dune.3.24.2 fstar.2025.10.06 gen.1.1 memtrace.0.2.3 menhir.20260209 \
+            menhirCST.20260209 menhirGLR.20260209 menhirLib.20260209 menhirSdk.20260209 \
+            mtime.2.2.0 num.1.6 ocamlbuild.0.16.1 ocaml-compiler-libs.v0.12.4 ocamlfind.1.9.8 \
+            pprint.20230830 ppx_derivers.1.2.1 ppx_deriving.6.2.0 ppx_deriving_yojson.3.10.0 \
+            ppxlib.0.39.0 process.0.2.1 sedlex.3.8.1 sexplib0.v0.17.0 stdint.0.7.2 \
+            topkg.1.1.1 yojson.3.0.0 zarith.1.14
+          opam clean --switch vela-t7 --yes
+          "$HOME/.opam/vela-t7/bin/ocamlopt" -version
+
+      # Also on a cache hit: ocamlfind runs ocamlopt.opt from the switch.
+      - name: Activate the OCaml switch
+        run: echo "$OCAML_SWITCH_BIN" >> "$GITHUB_PATH"
+
+      - name: Check the extracted ulib links
+        run: |
+          set -euo pipefail
+          "$OCAMLFIND" query fstar.lib
+          printf 'let () = print_string (Z.to_string (FStar_Seq_Base.length (FStar_Seq_Base.seq_of_list [1;2;3])))\n' \
+            > "$RUNNER_TEMP/ulib_smoke.ml"
+          "$OCAMLFIND" ocamlopt -package fstar.lib -linkpkg \
+            -o "$RUNNER_TEMP/ulib_smoke" "$RUNNER_TEMP/ulib_smoke.ml"
+          test "$("$RUNNER_TEMP/ulib_smoke")" = 3
+
+      # The harness reads the pinned hax-lib 0.3.7 proof-libs from the cargo
+      # registry (pins.sha256 checks every file); vela-crypto locks that version.
+      - name: Fetch hax-lib 0.3.7 sources
+        run: cargo fetch --locked --manifest-path libVELA/vela-crypto/Cargo.toml
+
+      - name: Differential test (fixed seed, 10^4 cases per operation)
+        env:
+          VELA_FSTAR: ${{ env.VELA_IN_PROOF_IMAGE == 'true' && '/opt/vela-formal-fstar-2025.10.06/fstar/bin/fstar.exe' || format('{0}/vela-t7-fstar/fstar/bin/fstar.exe', runner.temp) }}
+        run: |
+          # In the image cargo's registry lives under CARGO_HOME, not ~/.cargo.
+          if [[ $VELA_IN_PROOF_IMAGE == true ]]; then
+            export VELA_HAX_PROOF_LIBS="$CARGO_HOME/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7"
+          fi
+          security/formal/std-model-diff/run.sh \
+            --cases 10000 --seed 0x5EED1234ABCD0001 \
+            --log "$RUNNER_TEMP/std-model-diff.log"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: std-model-diff-log
+          path: ${{ runner.temp }}/std-model-diff.log
+          if-no-files-found: warn

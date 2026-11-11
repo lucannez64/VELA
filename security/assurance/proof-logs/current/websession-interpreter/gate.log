@@ -1,0 +1,122 @@
+   Compiling vela-session-policy v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-4ee7d210/serverVELA/vela-session-policy)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.59s
+     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-4ee7d210/target-own/debug/build/vela-session-policy/652ed2674f77390e/out/vela_session_policy-652ed2674f77390e)
+
+running 4 tests
+test websession_interpreter::tests::delete_interpreter_performs_only_the_emitted_effects ... ok
+test websession_interpreter::tests::grant_interpreter_performs_only_the_emitted_effects ... ok
+test websession_interpreter::tests::start_interpreter_performs_only_the_emitted_effects ... ok
+test websession_interpreter::tests::token_interpreter_performs_only_the_emitted_effects ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 63 filtered out; finished in 0.00s
+
+    Checking vela-session-policy v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-4ee7d210/serverVELA/vela-session-policy)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.19s
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-websession-interpreter/Vela_session_policy.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-websession-interpreter/Vela_session_policy.Challenge.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-websession-interpreter/Vela_session_policy.Websession_driver.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-websession-interpreter/Vela_session_policy.Websession_interpreter.fst[0m
+Driver source policy: 4 extracted modules, 5 proof modules; no unreviewed escapes/options
+F* web-session-interpreter module proofs/fstar/websession-interpreter-lemmas/Vela_session_policy_websession_delete_interpreter_lemmas.fst:
+* Warning 271 at /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+Verified module: Vela_session_policy.Websession_interpreter
+Verified module: Vela_session_policy_websession_delete_interpreter_lemmas
+All verification conditions discharged successfully
+F* web-session-interpreter module proofs/fstar/websession-interpreter-lemmas/Vela_session_policy_websession_grant_interpreter_lemmas.fst:
+* Warning 271 at /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+Verified module: Vela_session_policy.Websession_interpreter
+Verified module: Vela_session_policy_websession_grant_interpreter_lemmas
+All verification conditions discharged successfully
+F* web-session-interpreter module proofs/fstar/websession-interpreter-lemmas/Vela_session_policy_websession_start_interpreter_lemmas.fst:
+* Warning 271 at /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+Verified module: Vela_session_policy.Websession_interpreter
+Verified module: Vela_session_policy_websession_start_interpreter_lemmas
+All verification conditions discharged successfully
+F* web-session-interpreter module proofs/fstar/websession-interpreter-lemmas/Vela_session_policy_websession_token_interpreter_lemmas.fst:
+* Warning 271 at /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+Verified module: Vela_session_policy.Websession_interpreter
+Verified module: Vela_session_policy_websession_token_interpreter_lemmas
+All verification conditions discharged successfully
+web-session interpreters: each handler loop calls only the executor method for the driver's current effect, stops at the verdict within 3/3/7/3 turns, and ends in the driver state the per-request theorems cover
+9d881eb51b4fa5ce8499289facc798890eb6e2a9f40d45b75c87fde9e8440992  proofs/fstar/extraction-websession-interpreter/Vela_session_policy.Websession_interpreter.fst
+00162897255122555e32e807b72e90155b2c8fc4df4c76925f2f1793c52859f8  proofs/fstar/websession-interpreter-lemmas/Vela_session_policy_websession_delete_interpreter_lemmas.fst
+f1f83350936f118659ab30234597b8638079791e4b75965dd6838d601db28d68  proofs/fstar/websession-interpreter-lemmas/Vela_session_policy_websession_grant_interpreter_lemmas.fst
+1c56d4a57a2b58402bbea3b757d5442d6b81f95e6d25140398631f68485374ea  proofs/fstar/websession-interpreter-lemmas/Vela_session_policy_websession_start_interpreter_lemmas.fst
+4b501ba0440df1ddeb61632a10c8ea4bdcb4a1a59ccb467a8afa1393aa28e035  proofs/fstar/websession-interpreter-lemmas/Vela_session_policy_websession_token_interpreter_lemmas.fst
+aae9af75fc24bf234629e9f420a0147d19cf6a44671f1fe4073562547119d454  src/websession_interpreter.rs

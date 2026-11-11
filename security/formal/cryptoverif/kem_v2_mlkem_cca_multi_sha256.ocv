@@ -1,0 +1,133 @@
+(* VELA hybrid KEM, combiner v2 — MULTI-USER, MULTI-CHALLENGE IND-CCA2
+   (left-or-right) from ML-KEM IND-CCA2 with every X25519 secret exponent
+   disclosed, and SHA-256 over ct_mlkem / pk_mlkem modelled as a
+   collision-resistant hash.
+
+   Code: libVELA/vela-crypto/src/kem.rs (encapsulate, decapsulate,
+   combine_v2).  The combiner input is
+
+     ss = HKDF-SHA256(ss_mlkem, ss_x25519, x25519_epk, x25519_pk,
+                      SHA-256(ct_mlkem), SHA-256(pk_mlkem))
+
+   (kem.rs:177-192).  This is the multi-user companion of
+   kem_v2_mlkem_cca_sha256.ocv: N honestly generated ML-KEM key pairs
+   and Qc challenge encapsulations instead of one, so the pk-hash
+   collision probability PhashEk is now charged.  The DH exponents are
+   all disclosed; the transcript binding of epk and pk is what keeps
+   capsule re-use from breaking the challenge.
+
+   Game (one global challenge bit b):
+   - N honestly generated key pairs.  For each recipient the adversary
+     gets pk_i = (mlpkgen(ks_i), exp(g,x_i)) and, on this side, the
+     X25519 exponent x_i.  The ML-KEM key seeds ks_i remain secret.
+   - Up to Qc challenge encapsulations, each addressed by an honest
+     recipient public key; Qc is the total over all recipients (take
+     Qc = N*Qe for Qe per recipient).  A challenge returns
+     (ctm, epk, key) with key = H(...) when b=1 and a fresh random key
+     when b=0.
+   - Up to Qd adaptive decapsulation queries per recipient (#Odecap is
+     the total, bounded by N*Qd), rejecting that recipient's challenge
+     capsule as in IND-CCA2.
+   - qH random-oracle queries.
+
+   Goal: the challenge bit b is secret (multi-user, multi-challenge,
+   left-or-right IND-CCA2).
+
+   Assumptions:
+   - ML-KEM-1024: IND-CCA2 KEM plus the library's public-key and
+     encapsulation-ciphertext collision bounds (IND_CCA2_KEM), applied
+     with N recipients and Qc encapsulations: Penc(t, N, Qc, #Odecap).
+     Decapsulation may fail in the generic model; ML-KEM's implicit
+     rejection never does, which is a special case.
+   - HKDF-SHA256 over the transcript: a random oracle H.
+   - SHA-256: fixed (unkeyed) collision resistance on ct_mlkem and
+     pk_mlkem, with probabilities PhashCt and PhashEk.
+   - X25519: NO assumption.  Every DH exponent x_i is handed to the
+     adversary.
+
+   What this model does NOT establish: the Rust model-to-code
+   correspondence, concrete ML-KEM/SHA-256/HKDF parameters, malicious
+   key generation or adaptive corruptions, X25519 encodings, or the
+   KEM-DEM/application composition.  See the accompanying README.
+
+   Expected: "All queries proved."
+ *)
+
+param N.   (* number of honestly generated recipient key pairs *)
+param Qc.  (* total challenge encapsulations, any recipients *)
+param Qd.  (* decapsulation queries per recipient *)
+
+(* ── X25519 group, no assumption (all secret exponents leaked) ── *)
+type Z [large,bounded].
+type G [large,bounded].
+expand DH_good_group(G, Z, g, exp, exp', mult).
+
+(* ── ML-KEM: IND-CCA2 ── *)
+type mlkseed [large,fixed].
+type mlpk [bounded].
+type mlsk [bounded].
+type mlss [large,fixed].
+type mlct [bounded].
+type mlencout [bounded].
+proba Penc.
+proba Pkeycoll.
+proba Pctxtcoll.
+expand IND_CCA2_KEM(mlkseed, mlpk, mlsk, mlss, mlct, mlencout, mlpkgen, mlskgen,
+                    mlencap, mlpair, mldecap, mlinjbot, Penc, Pkeycoll, Pctxtcoll).
+
+(* ── SHA-256 over ct_mlkem and pk_mlkem: collision resistant ── *)
+type hashout [large,fixed].
+proba PhashCt.
+proba PhashEk.
+expand FixedCollisionResistant_hash_1(mlct, hashout, SHAct, PhashCt).
+expand FixedCollisionResistant_hash_1(mlpk, hashout, SHAek, PhashEk).
+
+(* ── The combiner: HKDF-SHA256 as a random oracle ── *)
+type hashkey [fixed].
+type key [large,fixed].
+expand ROM_hash_6(hashkey, mlss, G, G, G, hashout, hashout, key, H, Horacle, qH).
+
+(* Challenge capsules are stored per recipient so that decapsulation can
+   reject exactly that recipient's challenge capsules.  This is separate
+   from the E table internal to the IND_CCA2_KEM assumption. *)
+table Chall(N, mlct, G).
+
+query secret b [cv_bit].
+
+process
+  Ostart() :=
+    hk <-R hashkey;
+    b <-R bool;
+    return();
+    ((
+      foreach i <= N do
+        Osetup() :=
+          ks <-R mlkseed;
+          x <-R Z;
+          (* the X25519 secret exponent is handed to the adversary *)
+          return(mlpkgen(ks), x);
+          (
+            foreach id <= Qd do
+              Odecap(ctq: mlct, epkq: G) :=
+                get Chall(=i, =ctq, =epkq) in yield else
+                let mlinjbot(ssq: mlss) = mldecap(ctq, mlskgen(ks)) in
+                return(H(hk, ssq, exp(epkq, x), epkq, exp(g,x),
+                         SHAct(ctq), SHAek(mlpkgen(ks))))
+          )
+    ) | (
+      foreach ie <= Qc do
+        Ochall(pkm: mlpk, epkx: G) :=
+          find i1 <= N suchthat defined(ks[i1], x[i1])
+               && pkm = mlpkgen(ks[i1]) && epkx = exp(g, x[i1]) then (
+            let mlpair(ssm: mlss, ctm: mlct) = mlencap(pkm) in
+            y <-R Z;
+            epk: G <- exp(g, y);
+            k0 <- H(hk, ssm, exp(epkx, y), epk, epkx,
+                   SHAct(ctm), SHAek(pkm));
+            k1 <-R key;
+            insert Chall(i1, ctm, epk);
+            return(ctm, epk, if b then k0 else k1)
+          ) else (
+            yield
+          )
+    ) | run Horacle(hk))

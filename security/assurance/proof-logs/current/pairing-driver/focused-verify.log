@@ -1,0 +1,110 @@
+F* 2025.10.06
+platform=Linux_x86_64
+compiler=OCaml 4.14.2
+date=2025-10-06 12:00:42 -0700
+commit=7b347386330d0e5a331a220535b6f15288903234
+rustc: rustc 1.101.0-nightly (e9bbadf68 2026-10-12)
+cargo hax: hax  version=0.3.7 commit=unknown 
+   Compiling vela-enrollment-policy v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-04703409/serverVELA/vela-enrollment-policy)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.59s
+     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-enrollment-policy/4867041615cc08d8/out/vela_enrollment_policy-4867041615cc08d8)
+
+running 12 tests
+test pairing_driver::tests::a_completion_is_signed_bound_and_taken_once ... ok
+test pairing_driver::tests::a_completion_needs_the_stored_claim_and_the_opener_signature ... ok
+test pairing_driver::tests::a_replayed_package_fetch_returns_nothing ... ok
+test pairing_driver::tests::a_take_mismatch_restores_and_never_inserts ... ok
+test pairing_driver::tests::an_ambiguous_insert_error_consumes_the_ceremony ... ok
+test pairing_driver::tests::an_insert_failure_never_claims_a_recorded_result ... ok
+test pairing_driver::tests::bfs_reachable_states_preserve_the_invariant ... ok
+test pairing_driver::tests::claim_rejection_precedence_is_historical ... ok
+test pairing_driver::tests::every_sound_state_times_event_is_total_and_sound ... ok
+test pairing_driver::tests::out_of_order_events_are_inert ... ok
+test tests::completion_requires_every_binding ... ok
+test tests::result_requires_the_claimed_private_key ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/fact_construction.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-enrollment-policy/46dffc16dc02f030/out/fact_construction-46dffc16dc02f030)
+
+running 5 tests
+test claim_facts_are_exactly_the_grant_store_and_lengths ... ok
+test completion_facts_are_exactly_the_store_sql_epoch_and_signature_observations ... ok
+test inspect_facts_are_exactly_the_claim_and_session_bindings ... ok
+test open_facts_are_exactly_the_session_observations ... ok
+test result_facts_are_exactly_the_store_key_and_signature_observations ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests vela_enrollment_policy
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Checking vela-enrollment-policy v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-04703409/serverVELA/vela-enrollment-policy)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.01s
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-pairing-driver/Vela_enrollment_policy.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-pairing-driver/Vela_enrollment_policy.Pairing_driver.fst[0m
+Driver source policy: 2 extracted modules, 2 proof modules; no unreviewed escapes/options
+F* pairing-driver lemma argv: --cmi --cache_off --warn_error -331 --z3version 4.13.3 --already_cached +Prims+FStar+LowStar+C+Spec.Loops+TestLib --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/core --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proofs/fstar/extraction --include proofs/fstar/extraction-pairing-driver --z3rlimit 16000 --include proofs/fstar/pairing-driver-lemmas proofs/fstar/extraction-pairing-driver/Vela_enrollment_policy.fst proofs/fstar/extraction-pairing-driver/Vela_enrollment_policy.Pairing_driver.fst proofs/fstar/pairing-driver-lemmas/Vela_enrollment_policy_pairing_driver_lemmas.fst
+* Warning 271 at /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+Verified module: Vela_enrollment_policy
+Verified module: Vela_enrollment_policy.Pairing_driver
+Verified module: Vela_enrollment_policy_pairing_driver_lemmas
+All verification conditions discharged successfully
+F* pairing-driver composition argv: --cmi --cache_off --warn_error -331 --z3version 4.13.3 --already_cached +Prims+FStar+LowStar+C+Spec.Loops+TestLib --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/core --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proofs/fstar/extraction --include proofs/fstar/extraction-pairing-driver --z3rlimit 500 --include proofs/fstar/pairing-driver-composition proofs/fstar/extraction-pairing-driver/Vela_enrollment_policy.fst proofs/fstar/extraction-pairing-driver/Vela_enrollment_policy.Pairing_driver.fst proofs/fstar/pairing-driver-composition/Vela_enrollment_policy_pairing_driver_composition.fst
+* Warning 271 at /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+Verified module: Vela_enrollment_policy
+Verified module: Vela_enrollment_policy.Pairing_driver
+Verified module: Vela_enrollment_policy_pairing_driver_composition
+All verification conditions discharged successfully
+pairing driver: 30 extracted Rust functions (19 selected + 11 private decisions), 30 effect/state postconditions, 24 preconditions
+invitation trace: one destructive redemption per request, a refused/replayed token never completes
+claim trace: at most one guarded claim write, only on a live unclaimed grant with exact key lengths
+completion trace: at most one take and one insert, inserted implies stored claim + active opener + verified signature + matching bindings
+result trace: a returned device is only after the verified result policy accepted a proof under the claimed key
+pairing composition: arbitrary interleavings authorize at most one claim, one take, one insert and one redemption per stored version, never a cross-account, unsigned or already-enrolled completion
+440ee7acf8d6482280a0651680c69492808849490baec7069416439a8c51f1f7  proofs/fstar/extraction-pairing-driver/Vela_enrollment_policy.fst
+b2b0dbfd26ec67a061bcbe52eb641f894db8916c6ee4be96b123abcfbae348a3  proofs/fstar/extraction-pairing-driver/Vela_enrollment_policy.Pairing_driver.fst
+ab768e5db288deda9cb47ab3060c6d66dfe4da0fa6f09feeb1b6dd5b54982f4a  proofs/fstar/pairing-driver-lemmas/Vela_enrollment_policy_pairing_driver_lemmas.fst
+52d2dda82eabcac2992b976d3d17faa0655945d46d80f3767fa8470e953b2ea4  proofs/fstar/pairing-driver-composition/Vela_enrollment_policy_pairing_driver_composition.fst
+55c49f4f159c85b31ea2275bb96c9a004baad4f12deea1592ef9f409cf20f05f  src/pairing_driver.rs

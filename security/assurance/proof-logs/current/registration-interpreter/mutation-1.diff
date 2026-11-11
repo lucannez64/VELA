@@ -1,0 +1,11 @@
+--- serverVELA/vela-session-policy/proofs/fstar/extraction-registration-interpreter/Vela_session_policy.Registration_interpreter.fst	2026-10-28 00:27:36.940829796 +0100
++++ /tmp/vela-f2-account-a-mut/registration-interpreter/extraction/Vela_session_policy.Registration_interpreter.fst	2026-10-28 00:38:22.922669917 +0100
+@@ -5,7 +5,7 @@
+ 
+ /// Most effects one request performs: limiter, optional budget, transaction
+ /// begin, two inserts, commit, token issue and JTI tracking.
+-let v_REGISTRATION_MAX_EFFECTS: usize = mk_usize 8
++let v_REGISTRATION_MAX_EFFECTS: usize = mk_usize 7
+ 
+ /// The driver has decided: nothing more may be performed.
+ let registration_effect_is_terminal

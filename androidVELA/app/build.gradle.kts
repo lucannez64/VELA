@@ -184,6 +184,11 @@ tasks.register("buildRustBridge") {
     inputs.dir(rootProject.projectDir.parentFile.resolve("libVELA/vela-crypto/src"))
     inputs.dir(rootProject.projectDir.parentFile.resolve("libVELA/vela-core/src"))
     inputs.file(rootProject.projectDir.parentFile.resolve("libVELA/vela-core/Cargo.toml"))
+    // Policy changes must invalidate the packaged JNI library as well as tests.
+    listOf("vela-sync-policy", "vela-client-recovery-policy", "vela-client-share-policy").forEach { policy ->
+        inputs.file(rootProject.projectDir.parentFile.resolve("libVELA/$policy/Cargo.toml"))
+        inputs.dir(rootProject.projectDir.parentFile.resolve("libVELA/$policy/src"))
+    }
     outputs.dir(outputRoot)
 
     doLast {

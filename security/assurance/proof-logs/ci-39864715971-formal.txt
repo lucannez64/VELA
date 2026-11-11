@@ -1,0 +1,188 @@
+# Excerpt of CI job 'formal-rekey', workflow 'security', run 39864715971
+# https://github.com/lucannez64/VELA/actions/runs/39864715971/job/120123900498
+# Commit 5a3b72e7f6d2081cc91b9610adc62a54981f0857, runner ubuntu-latest (noble), 2026-10-22
+# Filtered to: step names, tool versions, proof-gate lines, test results.
+# Full log: gh run view 39864715971 --repo lucannez64/VELA --job 120123900498 --log
+
+
+## step: Run dtolnay/rust-toolchain@stable
+rustc 1.99.1 (58cf8f9c3 2026-10-13)
+
+## step: Install Tamarin 1.12.0 and Maude
+tamarin-prover 1.12.0, (C) David Basin, Cas Cremers, Jannik Dreier, Simon Meier, Ralf Sasse, Benedikt Schmidt, 2010-2023
+Maude version 3.2 (unsupported)
+
+## step: Prove rekey state, capsule, and mutation invariants
+m11_rekey_epoch_state_machine: 15 verified
+m11b_rekey_capsule_binding: 4 verified
+m11c_rekey_mutation_authority: 12 verified
+rekey formal proof gate: 31 verified, 0 falsified, 0 warnings
+
+## step: Prove web-session capability lifecycle
+m12_web_session_capability: 14 verified
+session formal proof gate: 14 verified, 0 falsified, 0 warnings
+
+## step: Prove permanent-device enrollment ceremony
+m13_device_enrollment_ceremony: 16 verified
+enrollment formal proof gate: 16 verified, 0 falsified, 0 warnings
+
+## step: Prove account-recovery lifecycle
+m14_account_recovery_lifecycle: 18 verified
+recovery formal proof gate: 18 verified, 0 falsified, 0 warnings
+
+## step: Prove client recovery reconstruction boundary
+m15_client_recovery_boundary: 15 verified
+client recovery formal proof gate: 15 verified, 0 falsified, 0 warnings
+
+## step: Prove recovery setup publication consistency
+m16_recovery_publication_consistency: 14 verified
+recovery publication formal proof gate: 14 verified, 0 falsified, 0 warnings
+
+## step: Prove crash-consistent recovery publication
+m17_recovery_publication_recovery: 14 verified
+recovery publication recovery proof gate: 14 verified, 0 falsified, 0 warnings
+
+## step: Prove the full 2-of-3 pair-selection threshold
+m18_pair_selection: 15 verified
+m18 pair-selection formal proof gate: 15 verified, 0 falsified, 0 warnings
+
+## step: Prove the cross-user share-channel binding integrity
+m19a_ek_registry_baseline: 2 verified
+m19b_share_channel: 6 verified
+m19 share-channel formal proof gate: lemma counts derived from theories, 0 falsified, 0 warnings
+
+## step: Prove the web-session vault pass-through gating
+m20_web_session_pass_through: 7 verified
+m20 web-session pass-through formal proof gate: 7 verified, 0 falsified, 0 warnings
+
+## step: Prove linked-item revocation finality
+m21_link_revocation_finality: 3 verified
+m21 link-revocation formal proof gate: 3 verified, 0 falsified, 0 warnings
+
+## step: Prove cross-milestone rotation-stranding composition
+m26_composition: 4 verified
+m26a_recovery_provenance: 6 verified
+m26 composition formal proof gate: all lemmas verified, 0 falsified, 0 warnings
+
+## step: Prove the client sync-admission policy
+m23_sync_admission: 11 verified
+m23 sync-admission formal proof gate: 11 verified, 0 falsified, 0 warnings
+
+## step: Statistical stash-bounds verification over the real ORAM
+running 4 tests
+test trivial_mode_pattern_is_independent_of_target ... ok
+test unregister_removes_every_trace ... ok
+test integrity_survives_long_random_workload ... ok
+test stash_stays_bounded_over_five_thousand_accesses ... ok
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+m24 oram-stash-bounds gate: 4/4 statistical + invariant tests passed
+
+## step: Prove Path-ORAM access-pattern hiding (ProVerif)
+m22a_static_position_baseline: equivalence FALSE (baseline attack demonstrated, as expected)
+m22b_trivial_oram_hiding: equivalence TRUE (verified)
+m22c_path_oram_hiding: equivalence TRUE (verified)
+m22 oram access-hiding formal proof gate: 2 equivalences proved, 1 baseline falsified, 0 errors
+
+## step: Exhaust the bounded model against real handlers and Turso
+running 5 tests
+test expired_rotation_beats_commit_and_cleans_every_attempt_artifact ... ok
+test verified_mutation_permit_matches_the_m11c_authority_relation ... ok
+test every_bounded_reachable_state_preserves_epoch_invariants ... ok
+test concurrent_start_and_active_write_have_a_lossless_linearization ... ok
+test every_completeness_order_matches_the_real_atomic_commit_guard ... ok
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.40s
+running 3 tests
+test every_bounded_grant_and_exchange_matches_the_m12_relation ... ok
+test every_bounded_renewal_preserves_capability_or_fails_closed ... ok
+test route_matrix_never_gives_web_sessions_permanent_authority ... ok
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 3 tests
+test every_bounded_open_claim_and_inspection_matches_m13 ... ok
+test every_bounded_completion_matches_m13 ... ok
+test every_bounded_result_decision_matches_m13 ... ok
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 3 tests
+test every_bounded_initiation_and_registration_matches_m14 ... ok
+test every_bounded_share_release_and_credential_update_matches_m14 ... ok
+test every_bounded_recovered_device_enrollment_matches_m14 ... ok
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 1 test
+test recovery_publication_finalizes_exactly_the_current_staged_split ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 56 filtered out; finished in 0.03s
+running 3 tests
+test every_bounded_adoption_decision_matches_the_policy ... ok
+test every_bounded_publication_plan_matches_the_policy ... ok
+test every_bounded_reconstruction_decision_matches_the_policy ... ok
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+## step: Verify the desktop, Android, Apple, and web epoch wire contract
+running 8 tests
+test recovery::tests::cross_account_mixed_epoch_and_duplicate_coordinates_fail_closed ... ok
+test recovery::tests::legacy_v1_possession_still_verifies ... ok
+test recovery::tests::every_valid_pair_reconstructs ... ok
+test recovery::tests::delivery_envelopes_cannot_be_replayed_as_responses ... ok
+test recovery::tests::unbound_or_legacy_shares_fail_closed ... ok
+test recovery::tests::contact_envelope_roundtrip_is_recipient_bound_and_context_locked ... ok
+test recovery::tests::possession_keys_are_derived_deterministically ... ok
+test recovery::tests::possession_proofs_bind_attempt_and_epoch ... ok
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 98 filtered out; finished in 0.34s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+running 1 test
+test rekey::tests::fleet_wire_matrix_is_cross_client_and_epoch_compatible ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 105 filtered out; finished in 0.01s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+running 24 tests
+test passkey::tests::a_short_scalar_is_refused_rather_than_padded ... ok
+test passkey::tests::authenticator_data_matches_the_webauthn_layout ... ok
+test passkey::tests::attestation_object_carries_none_attestation ... ok
+test passkey::tests::keygen_refuses_a_relying_party_without_es256 ... ok
+test passkey::tests::registration_data_embeds_attested_credential_data ... ok
+test passkey::tests::spki_der_layout_is_canonical ... ok
+test passkey::tests::the_spki_der_matches_the_cose_key_point ... ok
+test passkey::tests::credential_ids_do_not_repeat ... ok
+test tests::android_accepts_legacy_chunks_only_at_epoch_one ... ok
+test tests::android_chunk_crypto_binds_and_enforces_rotated_epochs ... ok
+test tests::bound_recovery_rejects_cross_account_and_mixed_epoch_inputs ... ok
+test tests::byte_array_paths_round_trip_without_key_material_in_json ... ok
+test passkey::tests::keygen_round_trips_through_the_stored_scalar ... ok
+test tests::byte_buffers_survive_a_round_trip_with_spare_capacity ... ok
+test tests::combine_recovery_rejects_single_share ... ok
+test tests::encrypt_decrypt_vault_json_round_trips_through_crypto ... ok
+test passkey::tests::a_signature_does_not_verify_for_a_different_message ... ok
+test tests::password_strength_bridge_returns_json ... ok
+test tests::recovered_rms_is_returned_as_raw_bytes ... ok
+test tests::split_then_combine_recovery_reconstructs_rms ... ok
+test tests::verified_publication_planner_advances_and_retires_exact_journals ... ok
+test tests::identity_handle_returns_server_sized_public_keys_and_no_secrets ... ok
+test tests::a_sealed_identity_reopens_as_the_same_device ... ok
+test tests::enrollment_v3_fingerprint_is_over_the_devices_own_key_and_the_capsule_opens ... ok
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+running 14 tests
+test tests::enrollment_package_round_trips ... ok
+test tests::bound_recovery_rejects_cross_account_and_mixed_epoch_inputs ... ok
+test tests::bound_shares_accept_every_channel_pair_and_reject_bad_ones ... ok
+test tests::password_strength_returns_json ... ok
+test tests::recovery_split_then_combine_recovers_rms ... ok
+test tests::rms_capsule_round_trips ... ok
+test tests::vault_chunk_round_trips_and_binds_chunk_id ... ok
+test tests::vault_encrypt_decrypt_round_trips ... ok
+test tests::verified_publication_planner_advances_and_retires_exact_journals ... ok
+test tests::version_is_reported ... ok
+test tests::wrong_rms_does_not_decrypt ... ok
+test tests::enrollment_v3_fingerprint_is_over_the_devices_own_key_and_the_capsule_opens ... ok
+test tests::identity_handle_signs_and_reveals_no_private_key ... ok
+test tests::possession_proof_matches_expected_construction ... ok
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
+running 9 tests
+test tests::chunk_key_from_another_chunk_fails ... ok
+test tests::chunk_encrypt_decrypt_roundtrip ... ok
+test tests::granted_keys_match_the_approver_derivation ... ok
+test tests::epoch_chunk_roundtrip_rejects_wrong_or_legacy_epoch ... ok
+test tests::password_strength_scores ... ok
+test tests::epoch_one_uses_the_fleet_legacy_chunk_format ... ok
+test tests::keypair_and_open_share_roundtrip ... ok
+test tests::signing_keypair_sign_and_verify ... ok
+test tests::open_link_roundtrip_matches_the_sender_seal ... ok
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.49s

@@ -4,6 +4,19 @@ set -euo pipefail
 proof_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cd "$proof_root"
 
+# Optional part, so CI can run the two halves as parallel jobs within the
+# per-job time cap: core (the historical extraction and every driver and
+# interpreter gate) and executors (the F-1 executor gate, which only reads its
+# own extraction and lemma folders). No argument runs everything, in order.
+part=${1:-all}
+case $part in
+  all|core|executors) ;;
+  *) echo "usage: $0 [all|core|executors]" >&2; exit 2 ;;
+esac
+wants() { [[ $part == all || $part == "$1" ]]; }
+
+if wants core; then
+
 command -v cargo-hax >/dev/null || {
   echo "cargo-hax is missing; follow README.md" >&2
   exit 1
@@ -58,3 +71,35 @@ fstar.exe \
   --include "$hax_lib_root/proofs/fstar/extraction" \
   --include proofs/fstar/extraction \
   "${proof_files[@]}"
+
+# F-2 focused vault upload/read driver trace and composition proof. It
+# regenerates a partial extraction with the same F* module name into
+# proofs/fstar/extraction-vault-upload-driver, so it must run in its own
+# fstar.exe invocation and never share an include directory with the
+# historical artifact checked above.
+"$proof_root/verify-fstar-vault-upload-driver.sh"
+
+# Handler-to-driver link for PUT and GET /vault/chunk: the interpreter loops
+# both handlers expand, proved to perform exactly the drivers' effects. Needs
+# the vault upload driver extraction above.
+"$proof_root/verify-fstar-vault-upload-interpreter.sh"
+
+# F-2: the vault key-rotation decision drivers, their per-request trace lemmas,
+# the shared-account composition, and the four interpreter loops.
+"$proof_root/verify-fstar-rekey-driver.sh"
+"$proof_root/verify-fstar-rekey-interpreter.sh"
+
+# F-2: the remaining vault/device mutation drivers (chunk delete, ORAM path
+# write, schema floor, capsule ack, rekey-capable), their per-request trace
+# lemmas, and the five interpreter loops with their cancellation lemmas.
+"$proof_root/verify-fstar-vault-mutation-driver.sh"
+"$proof_root/verify-fstar-vault-mutation-interpreter.sh"
+
+fi
+
+# F-1 for the vault, rekey, capsule, ORAM and schema executors: each executor
+# method's observation is the truth about the tables and the store key, proved
+# against a store model for every starting state and every failing statement,
+# with mutation checks and a bounded real-database conformance test. It
+# regenerates its own partial extraction, so it can run on its own.
+if wants executors; then "$proof_root/verify-fstar-vault-executors.sh"; fi

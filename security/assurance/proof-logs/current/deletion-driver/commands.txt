@@ -1,0 +1,36 @@
+# Host
+Host: linux x86_64 (this worktree, /home/hirew/.t3/worktrees/VELA/t3-d4e0322e)
+F* 2025.10.06, Z3 4.13.3, hax 0.3.7, rustc (see focused-verify.log)
+
+# Environment (every heavy command through vela-heavy: global lock, 3 GiB cap)
+export CARGO_HOME=/tmp/vela-hax-cargo
+export OPAMROOT=$HOME/.local/opt/vela-tools/opam
+export PATH=$HOME/.local/opt/vela-formal-fstar-2025.10.06/fstar/bin:$HOME/.local/opt/vela-tools/bin:$HOME/.local/opt/vela-tools/opam/vela-hax/bin:$PATH
+export CARGO_TARGET_DIR=/home/hirew/.t3/worktrees/VELA/t3-700776df/target
+export CARGO_PROFILE_DEV_CODEGEN_BACKEND=llvm
+
+# Focused gate (cargo test + hax + source guard + F*)
+cd serverVELA/vela-session-policy
+~/.local/opt/vela-tools/bin/vela-heavy ./verify-fstar-deletion-driver.sh
+# -> focused-verify.log (exit 0)
+
+# Crate gate: historical extraction + login driver + revocation driver + deletion driver
+~/.local/opt/vela-tools/bin/vela-heavy ./verify-fstar.sh
+# -> full-verify.log (exit 0)
+
+# Server tests (from serverVELA/)
+~/.local/opt/vela-tools/bin/vela-heavy cargo test --offline -p vela-server --test account_deletion_model
+~/.local/opt/vela-tools/bin/vela-heavy cargo test --offline -p vela-server --test integration
+~/.local/opt/vela-tools/bin/vela-heavy cargo test --offline -p vela-server --test device_revocation_model
+# -> cargo-test-account-deletion-model.log (1 passed, 216.84 s)
+# -> cargo-test-integration.log (68 passed)
+# -> cargo-test-device-revocation-model.log (7 passed, 57.85 s)
+
+# Boundary and source-policy gates (from the repo root)
+python3 security/assurance/check-proof-boundary.py
+python3 -m unittest discover -s security/formal/tests -p 'test_*.py'
+
+# Mutation checks: each mutant is a copy of the checked-in extraction under
+# /tmp/opencode/mut/extraction-N; the composition is checked against it with the
+# same fstar.exe argv as verify-fstar-deletion-driver.sh, swapping the include
+# directory. The checked-in extraction is byte-identical to the successful run.

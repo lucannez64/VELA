@@ -1,0 +1,12 @@
+kem_v2_x25519_gdh: proved (as expected)
+  RESULT Proved bit secrecy of b up to probability 4 * pDistRerandom + 2 * pGDH(time_1, 2 * qH) + (2 * Qd + 2 * qH) / |Z|
+kem_v2_mlkem_cca: proved (as expected)
+  RESULT Proved bit secrecy of b up to probability 2 * qH / |mlss| + 2 * Penc(time_1, 1, 1, Qd) + (8 * Qd + 2 * qH) / |Z| + 6 * Qd * Pctxtcoll
+kem_v1_x25519_baseline: unproved (as expected)
+kem_dem_seal_share: proved (as expected)
+  RESULT Proved bit secrecy of b up to probability 2 * Penc(time_4, 1, maxlength(game 20: m0)) + 2 * Penc(time_3, 1, maxlength(game 17: m1)) + 2 * Pencctxt(time_2, 1, Qd, max(maxlength(game 11: m0), maxlength(game 11: m1)), maxlength(game 11: ctq)) + 10 * Qd * Pctxtcoll + 2 * Pkem(time_1, 1, 1, Qd)
+hybrid_sig_mldsa_euf: proved (as expected)
+  RESULT Proved event(forge) ==> false up to probability Pmldsa(time_1, Qs)
+hybrid_sig_ed25519_euf: proved (as expected)
+  RESULT Proved event(forge) ==> false up to probability Ped(time_1, Qs)
+Full CryptoVerif logs: /tmp/vela-cv-runner-final

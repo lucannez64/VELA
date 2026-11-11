@@ -1,0 +1,42 @@
+   Compiling vela-share-policy v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-74511b52/serverVELA/vela-share-policy)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.30s
+     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-74511b52/target-own/debug/build/vela-share-policy/1e0507d2426f7e67/out/vela_share_policy-1e0507d2426f7e67)
+
+running 3 tests
+test send_interpreter::tests::a_rejected_create_performs_nothing ... ok
+test send_interpreter::tests::a_view_once_fetch_calls_consume_read_and_remove_in_order ... ok
+test send_interpreter::tests::interpreter_performs_exactly_the_driver_effects_for_every_outcome ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.00s
+
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.10s
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-send-interpreter/Vela_share_policy.Send_driver.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-send-interpreter/Vela_share_policy.Send_interpreter.fst[0m
+Driver source policy: 2 extracted modules, 2 proof modules; no unreviewed escapes/options
+* Warning 271 at /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+Verified module: Vela_share_policy.Send_interpreter
+Verified module: Vela_share_policy_send_interpreter_lemmas
+All verification conditions discharged successfully
+share-link interpreter: each handler's loop calls only the executor method for the driver's current effect, stops at the verdict within 3 turns, and ends in the driver state the per-request send theorems cover
+b8a90b9e697700b03713462bbfceb550c5bd1690ad9521387901d256dfccf4bd  proofs/fstar/extraction-send-interpreter/Vela_share_policy.Send_interpreter.fst
+8f92dab0f0754483e06cdf42a3fafde61803a5f3d5a737332c2d28ef370330ac  proofs/fstar/send-interpreter-lemmas/Vela_share_policy_send_interpreter_lemmas.fst
+f4db5f1886491a69eea265b45a50046eae9281f67dcaae0dea87ca6054ed6b93  src/send_interpreter.rs

@@ -1,0 +1,20 @@
+--- serverVELA/vela-session-policy/proofs/fstar/challenge-issue-composition/Vela_session_policy_challenge_issue_composition.fst	2026-10-28 00:30:46.565388419 +0100
++++ /tmp/vela-f2-account-a-mut/composition/lemmas/Vela_session_policy_challenge_issue_composition.fst	2026-10-28 00:38:22.922763565 +0100
+@@ -208,7 +208,7 @@
+                  (Core_models.Option.Option_Some (purpose_stored_tag k.k_purpose)) expected in
+              let accepted = decision = ChallengeConsumption_Accepted in
+              let updated =
+-               { k with k_present = false;
++               { k with k_present = true;
+                         k_consumed = Some w.w_next_request;
+                         k_accepted = accepted;
+                         k_accepted_purpose =
+@@ -334,7 +334,7 @@
+                  (Core_models.Option.Option_Some (purpose_stored_tag k.k_purpose)) expected in
+              let accepted = decision = ChallengeConsumption_Accepted in
+              let updated =
+-               { k with k_present = false;
++               { k with k_present = true;
+                         k_consumed = Some w.w_next_request;
+                         k_accepted = accepted;
+                         k_accepted_purpose =

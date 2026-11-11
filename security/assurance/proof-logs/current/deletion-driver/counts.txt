@@ -1,0 +1,32 @@
+Focused extraction (proofs/fstar/extraction-deletion-driver/):
+  Vela_session_policy.Deletion_driver.fst : 10 Rust functions with 10 Prims.Pure
+    contracts (begin_deletion, step, 8 delivered-observation wrappers)
+  Vela_session_policy.Revocation_driver.fst : 1 selected function
+    (plan_admission) with 1 Prims.Pure contract; its spec/admission_is_authorized
+    are extracted as dependencies
+  total: 11 focused Rust functions, 11 postconditions, 9 requires (10 in the
+    deletion module, 1 in the revocation module: plan_admission has none)
+
+Per-request module (deletion-driver-lemmas/):
+  37 Lemma declarations over 12 recursive definitions / 8 Pure recursions
+  Headline: deletion_trace_theorem, deletion_trace_order
+  Effect order: trace_order / deletion_trace_order (lockout -> transaction ->
+  ordered tables -> users -> commit), commit effect requires the users
+  confirmation, failure/complete exclusivity, at-most-one complete/fail/commit
+
+Bridge module (deletion-driver-bridge/):
+  5 Lemmas (step_effect_sound, step_keeps_actor, scoped_effect_authority,
+  step_commit_implies, absent_users_delete_never_commits_stage) and 3 helper
+  definitions
+
+Composition module (deletion-driver-composition/):
+  18 Lemma declarations (incl. 4 reachability witnesses) over 3 actions
+  (SpawnDelete, Deliver, Use) and 6 recursive definitions
+  Counters: w_cross_account, w_second_commit, w_admitted_after_lockout
+
+Rust:
+  src/deletion_driver.rs: 10 unit tests (exhaustive stage x event, out-of-order
+  inertness, done inertness, lockout/transaction order, absent rollback, every
+  SQL failure terminal, lockout failure continues, refused actor, BFS, table
+  order)
+  vela-session-policy unit tests: 44 passed (34 before this increment)

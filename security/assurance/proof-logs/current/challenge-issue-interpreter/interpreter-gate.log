@@ -1,0 +1,58 @@
+warning: function `same_issue_purpose` is never used
+   --> vela-session-policy/src/challenge_issue_driver.rs:158:4
+    |
+158 | fn same_issue_purpose(a: ChallengePurpose, b: ChallengePurpose) -> bool {
+    |    ^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `vela-session-policy` (lib test) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.15s
+     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-181a0f7c/target-own/debug/build/vela-session-policy/652ed2674f77390e/out/vela_session_policy-652ed2674f77390e)
+
+running 8 tests
+test challenge_issue_driver::tests::a_failed_store_issues_nothing_and_a_collision_overwrites_nothing ... ok
+test challenge_issue_driver::tests::every_state_and_effect_is_sound_exhaustively ... ok
+test challenge_issue_driver::tests::invalid_purpose_and_limiter_refusal_perform_nothing ... ok
+test challenge_issue_driver::tests::success_stores_exactly_one_purpose_once ... ok
+test challenge_issue_driver::tests::wrong_nonce_length_fails_before_any_store ... ok
+test challenge_issue_interpreter::tests::every_failure_stops_before_the_store ... ok
+test challenge_issue_interpreter::tests::interpreter_performs_exactly_the_driver_effects ... ok
+test challenge_issue_interpreter::tests::replaying_the_recorded_events_through_the_driver_agrees ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 65 filtered out; finished in 0.00s
+
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-challenge-issue-interpreter/Vela_session_policy.Challenge.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-challenge-issue-interpreter/Vela_session_policy.Challenge_issue_driver.fst[0m
+[1m[94minfo[0m: [1mhax: wrote file proofs/fstar/extraction-challenge-issue-interpreter/Vela_session_policy.Challenge_issue_interpreter.fst[0m
+Driver source policy: 3 extracted modules, 2 proof modules; no unreviewed escapes/options
+F* challenge-issue-interpreter argv: --cmi --cache_off --warn_error -331 --z3rlimit 8000 --z3version 4.13.3 --already_cached +Prims+FStar+LowStar+C+Spec.Loops+TestLib --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/core --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proofs/fstar/extraction --include proofs/fstar/extraction-challenge-issue-driver --include proofs/fstar/challenge-issue-driver-lemmas --include proofs/fstar/extraction-challenge-issue-interpreter --include proofs/fstar/challenge-issue-interpreter-lemmas proofs/fstar/extraction-challenge-issue-interpreter/Vela_session_policy.Challenge_issue_interpreter.fst proofs/fstar/challenge-issue-driver-lemmas/Vela_session_policy_challenge_issue_driver_lemmas.fst proofs/fstar/challenge-issue-interpreter-lemmas/Vela_session_policy_challenge_issue_interpreter_lemmas.fst
+* Warning 271 at /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+Verified module: Vela_session_policy.Challenge_issue_interpreter
+Verified module: Vela_session_policy_challenge_issue_driver_lemmas
+Verified module: Vela_session_policy_challenge_issue_interpreter_lemmas
+All verification conditions discharged successfully
+challenge issue interpreter: the handler's loop calls only the executor method for the driver's current effect, stops at the verdict within 3 turns, and ends in the driver state the per-request theorems cover
+88aafd7ab275bbd655f4b2b188e6a6f970f67a1e388b0844e3ec2b07ea3699c5  proofs/fstar/extraction-challenge-issue-interpreter/Vela_session_policy.Challenge_issue_interpreter.fst
+62d971b9286469b35bc04ee76d07c127ff07749e02b50eada0153a103b0e48b4  proofs/fstar/challenge-issue-interpreter-lemmas/Vela_session_policy_challenge_issue_interpreter_lemmas.fst
+9da38f8b7be61bcb1279ff02306bc80e24cba826c883b4f4935202cc1ca701c4  src/challenge_issue_interpreter.rs

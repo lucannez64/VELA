@@ -1,0 +1,19 @@
+Plan step: C2 (X25519 cofactor and low-order inputs)
+Base commit: ba4785e39fca8be55dd99ac723d1c96f116e0104
+CryptoVerif: 2.12 (local binary ~/.local/opt/vela-tools/src/cv/x/cryptoverif2.12/cryptoverif)
+Library: ~/.local/opt/vela-tools/src/cv/x/cryptoverif2.12/default.ocvl
+Model: kem_v2_x25519_cofactor_sha256.ocv
+Model: x25519_cofactor_projection.ocv
+
+Rust dependencies (libVELA/vela-crypto/Cargo.lock):
+  x25519-dalek 2.0.1 (lines 1255-1258, checksum c7e468321c81fb07fa7f4c636c3972b9100f0346e5b6a9f2bd0603a52f7ed277)
+  curve25519-dalek 4.1.3 (lines 236-239, checksum 97fb8b7c4503de7d6ae7b42ab72a5a59857b4c937ec27a3d4539dba95b5ab2be)
+
+SHA-256 of reviewed inputs:
+f2664dc0998eb06ccfe9de2058147317f4e0f10dbf09d583f8c4f9844e924002  security/formal/cryptoverif/kem_v2_x25519_cofactor_sha256.ocv
+bab0223cc9a8d2ccbe66373884d4b8e7c6c3eebc0b28c7ccfe1f4adb18cff199  security/formal/cryptoverif/x25519_cofactor_projection.ocv
+225418488bd07be67b3b16ddbcffff5d0676c26ffeff93a1957305e0b834b1ea  security/formal/check-cryptoverif-cofactor.py
+8fe19aaa90785df599f02995e5b595ac8b5e2705c660774642b4f437d719cf4e  security/formal/run-cryptoverif-proofs.sh
+b08f75b80e650e3b91f16a956c28f0bbeb53e1a8630a9970eeeee26d2e47032e  security/formal/tests/test_cryptoverif_runner.py
+828694f872a7b63cfbec1ab8810141c08368e9fe9674d59690145894d7bcc155  libVELA/vela-crypto/src/kem.rs
+07c7a6e6cb68b9c785e52f495f11093ad966460c4cbdfbb1bc365835ef75a8a2  libVELA/vela-crypto/Cargo.lock

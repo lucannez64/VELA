@@ -66,6 +66,33 @@ class EncryptedVaultStoreTest {
         assertEquals("alice@example.com", (loaded.items.single() as VaultItem.Login).username)
     }
 
+    @Test
+    fun saveReplacesThroughATemporaryFileAndLeavesNoPartialCopy() {
+        val dir = Files.createTempDirectory("vela-vault-atomic").toFile()
+        val store = EncryptedVaultStore(dir)
+        val rms = ByteArray(32).also { SecureRandom().nextBytes(it) }
+        try {
+            store.save(rms, VaultStore(items = listOf(VaultItem.Login(
+                meta = VaultMeta(name = "First"),
+                url = "example.com",
+                username = "a",
+                password = "b"
+            ))))
+            store.save(rms, VaultStore(items = listOf(VaultItem.Login(
+                meta = VaultMeta(name = "Second"),
+                url = "example.com",
+                username = "a",
+                password = "b"
+            ))))
+
+            // The live file is only ever the complete old or complete new
+            // vault; the temp file used for the replacement is gone.
+            assertEquals("Second", store.load(rms).items.single().name)
+            val leftovers = dir.listFiles().orEmpty().map { it.name }.filter { it.endsWith(".tmp") }
+            assertTrue("temporary write files left behind: $leftovers", leftovers.isEmpty())
+        } finally { dir.deleteRecursively() }
+    }
+
     @Test(expected = AEADBadTagException::class)
     fun wrongRmsCannotDecryptVault() {
         val dir = Files.createTempDirectory("vela-vault-wrong-key").toFile()

@@ -1,0 +1,550 @@
+* Warning 241 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti(0,0-0,0):
+  - Unable to load
+    /home/hirew/.cache/vela-verify/t8-opus/checked/Rust_primitives.Char.fsti.checked
+    since checked file
+    /home/hirew/.cache/vela-verify/t8-opus/checked/Rust_primitives.Char.fsti.checked
+    does not exist; will recheck
+    /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Char.fsti
+    (suppressing this warning for further modules)
+
+* Warning 239 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /home/hirew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 328 at proofs/fstar/share-envelope-inverse/Vela_crypto_share_envelope_inverse.fst(225,8-225,25):
+  - Global binding
+        'Vela_crypto_share_envelope_inverse.first8_list_index'
+    is recursive but not used in its body
+
+(Vela_crypto_share_envelope_inverse.fst(87,2-89,35))	Query-stats splitting query because --split_queries is always
+Creating new z3proc (cmd=[("/home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/z3-4.13.3/bin/z3", ["-smt2", "-in"])], version=["4.13.3"])
+(Vela_crypto_share_envelope_inverse.fst(87,2-89,35))	Query-stats (Vela_crypto_share_envelope_inverse.well_formed, 1)	succeeded in 107 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.016)
+(Vela_crypto_share_envelope_inverse.fst(87,2-89,35))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(87,2-89,35))	Query-stats (Vela_crypto_share_envelope_inverse.well_formed, 2)	succeeded in 11 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.014)
+(Vela_crypto_share_envelope_inverse.fst(87,2-89,35))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(87,2-89,35))	Query-stats (Vela_crypto_share_envelope_inverse.well_formed, 3)	succeeded in 10 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.016)
+(Vela_crypto_share_envelope_inverse.fst(87,2-89,35))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(87,2-89,35))	Query-stats (Vela_crypto_share_envelope_inverse.well_formed, 4)	succeeded in 9 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.016)
+(Vela_crypto_share_envelope_inverse.fst(93,56-93,58))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(93,56-93,58))	Query-stats (Vela_crypto_share_envelope_inverse.u8s_len, 1)	succeeded in 70 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.097)
+(Vela_crypto_share_envelope_inverse.fst(97,2-97,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(97,2-97,4))	Query-stats (Vela_crypto_share_envelope_inverse.u64_len_value, 1)	succeeded in 11 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.019)
+(Vela_crypto_share_envelope_inverse.fst(97,2-97,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(97,2-97,4))	Query-stats (Vela_crypto_share_envelope_inverse.u64_len_value, 2)	succeeded in 11 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.020)
+(Vela_crypto_share_envelope_inverse.fst(97,2-97,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(97,2-97,4))	Query-stats (Vela_crypto_share_envelope_inverse.u64_len_value, 3)	succeeded in 331 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.561)
+(Vela_crypto_share_envelope_inverse.fst(101,2-101,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(101,2-101,4))	Query-stats (Vela_crypto_share_envelope_inverse.impl_len_nat, 1)	succeeded in 11 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.018)
+(Vela_crypto_share_envelope_inverse.fst(101,2-101,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(101,2-101,4))	Query-stats (Vela_crypto_share_envelope_inverse.impl_len_nat, 2)	succeeded in 12 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.020)
+(Vela_crypto_share_envelope_inverse.fst(101,2-101,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(101,2-101,4))	Query-stats (Vela_crypto_share_envelope_inverse.impl_len_nat, 3)	succeeded in 12 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.030)
+(Vela_crypto_share_envelope_inverse.fst(105,2-106,21))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(105,2-106,21))	Query-stats (Vela_crypto_share_envelope_inverse.lp_len, 1)	succeeded in 20 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.046)
+(Vela_crypto_share_envelope_inverse.fst(116,2-116,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(116,2-116,4))	Query-stats (Vela_crypto_share_envelope_inverse.body_len_unfold, 1)	succeeded in 20340 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 19.185)
+(Vela_crypto_share_envelope_inverse.fst(122,2-122,12))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(122,2-122,12))	Query-stats (Vela_crypto_share_envelope_inverse.frame_len_unfold, 1)	succeeded in 182 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.352)
+(Vela_crypto_share_envelope_inverse.fst(125,0-125,35))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(125,0-125,35))	Query-stats (Vela_crypto_share_envelope_inverse.marker_len, 1)	succeeded in 60 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.072)
+(Vela_crypto_share_envelope_inverse.fst(128,0-128,36))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(128,0-128,36))	Query-stats (Vela_crypto_share_envelope_inverse.digest_len, 1)	succeeded in 51 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.077)
+(Vela_crypto_share_envelope_inverse.fst(131,0-132,52))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(131,0-132,52))	Query-stats (Vela_crypto_share_envelope_inverse.signature_trailer, 1)	succeeded in 55 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.070)
+(Vela_crypto_share_envelope_inverse.fst(131,0-132,52))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(131,0-132,52))	Query-stats (Vela_crypto_share_envelope_inverse.signature_trailer, 2)	succeeded in 96 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.107)
+(Vela_crypto_share_envelope_inverse.fst(142,2-155,3))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(142,2-155,3))	Query-stats (Vela_crypto_share_envelope_inverse.frame_of, 1)	succeeded in 336 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.576)
+(Vela_crypto_share_envelope_inverse.fst(142,2-155,3))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(142,2-155,3))	Query-stats (Vela_crypto_share_envelope_inverse.frame_of, 2)	succeeded in 27 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.022)
+(Vela_crypto_share_envelope_inverse.fst(142,2-155,3))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(142,2-155,3))	Query-stats (Vela_crypto_share_envelope_inverse.frame_of, 3)	succeeded in 579 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.802)
+(Vela_crypto_share_envelope_inverse.fst(162,2-163,67))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(162,2-163,67))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_prefix, 1)	succeeded in 32 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.022)
+(Vela_crypto_share_envelope_inverse.fst(162,2-163,67))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(162,2-163,67))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_prefix, 2)	succeeded in 22 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.025)
+(Vela_crypto_share_envelope_inverse.fst(162,2-163,67))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(162,2-163,67))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_prefix, 3)	succeeded in 22 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.023)
+(Vela_crypto_share_envelope_inverse.fst(162,2-163,67))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(162,2-163,67))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_prefix, 4)	succeeded in 20 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.026)
+(Vela_crypto_share_envelope_inverse.fst(162,2-163,67))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(162,2-163,67))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_prefix, 5)	succeeded in 34 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.032)
+(Vela_crypto_share_envelope_inverse.fst(162,2-163,67))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(162,2-163,67))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_prefix, 6)	succeeded in 49 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.048)
+(Vela_crypto_share_envelope_inverse.fst(162,2-163,67))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(162,2-163,67))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_prefix, 7)	succeeded in 30 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.027)
+(Vela_crypto_share_envelope_inverse.fst(162,2-163,67))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(162,2-163,67))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_prefix, 8)	succeeded in 29 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.028)
+(Vela_crypto_share_envelope_inverse.fst(162,2-163,67))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(162,2-163,67))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_prefix, 9)	succeeded in 21 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.016)
+(Vela_crypto_share_envelope_inverse.fst(162,2-163,67))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(162,2-163,67))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_prefix, 10)	succeeded in 31 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.030)
+(Vela_crypto_share_envelope_inverse.fst(169,2-172,79))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(169,2-172,79))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_suffix, 1)	succeeded in 24 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.024)
+(Vela_crypto_share_envelope_inverse.fst(169,2-172,79))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(169,2-172,79))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_suffix, 2)	succeeded in 27 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.024)
+(Vela_crypto_share_envelope_inverse.fst(169,2-172,79))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(169,2-172,79))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_suffix, 3)	succeeded in 23 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.019)
+(Vela_crypto_share_envelope_inverse.fst(169,2-172,79))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(169,2-172,79))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_suffix, 4)	succeeded in 28 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.025)
+(Vela_crypto_share_envelope_inverse.fst(169,2-172,79))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(169,2-172,79))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_suffix, 5)	succeeded in 28 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.026)
+(Vela_crypto_share_envelope_inverse.fst(169,2-172,79))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(169,2-172,79))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_suffix, 6)	succeeded in 22 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.019)
+(Vela_crypto_share_envelope_inverse.fst(169,2-172,79))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(169,2-172,79))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_suffix, 7)	succeeded in 29 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.032)
+(Vela_crypto_share_envelope_inverse.fst(169,2-172,79))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(169,2-172,79))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_suffix, 8)	succeeded in 45 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.051)
+(Vela_crypto_share_envelope_inverse.fst(169,2-172,79))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(169,2-172,79))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_suffix, 9)	succeeded in 37 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.029)
+(Vela_crypto_share_envelope_inverse.fst(169,2-172,79))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(169,2-172,79))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_suffix, 10)	succeeded in 35 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.029)
+(Vela_crypto_share_envelope_inverse.fst(169,2-172,79))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(169,2-172,79))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_suffix, 11)	succeeded in 26 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.022)
+(Vela_crypto_share_envelope_inverse.fst(169,2-172,79))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(169,2-172,79))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_suffix, 12)	succeeded in 21 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.016)
+(Vela_crypto_share_envelope_inverse.fst(169,2-172,79))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(169,2-172,79))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_suffix, 13)	succeeded in 35 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.030)
+(Vela_crypto_share_envelope_inverse.fst(181,23-188,23))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(181,23-188,23))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_left3_full, 1)	succeeded in 32 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.025)
+(Vela_crypto_share_envelope_inverse.fst(181,23-188,23))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(181,23-188,23))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_left3_full, 2)	succeeded in 29 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.026)
+(Vela_crypto_share_envelope_inverse.fst(181,23-188,23))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(181,23-188,23))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_left3_full, 3)	succeeded in 29 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.026)
+(Vela_crypto_share_envelope_inverse.fst(181,23-188,23))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(181,23-188,23))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_left3_full, 4)	succeeded in 28 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.026)
+(Vela_crypto_share_envelope_inverse.fst(181,23-188,23))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(181,23-188,23))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_left3_full, 5)	succeeded in 28 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.027)
+(Vela_crypto_share_envelope_inverse.fst(181,23-188,23))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(181,23-188,23))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_left3_full, 6)	succeeded in 27 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.027)
+(Vela_crypto_share_envelope_inverse.fst(181,23-188,23))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(181,23-188,23))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_left3_full, 7)	succeeded in 38 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.035)
+(Vela_crypto_share_envelope_inverse.fst(181,23-188,23))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(181,23-188,23))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_left3_full, 8)	succeeded in 65 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.061)
+(Vela_crypto_share_envelope_inverse.fst(181,23-188,23))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(181,23-188,23))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_left3_full, 9)	succeeded in 22 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.016)
+(Vela_crypto_share_envelope_inverse.fst(181,23-188,23))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(181,23-188,23))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_left3_full, 10)	succeeded in 32 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.029)
+(Vela_crypto_share_envelope_inverse.fst(197,10-201,23))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(197,10-201,23))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_right3_mid, 1)	succeeded in 31 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.024)
+(Vela_crypto_share_envelope_inverse.fst(197,10-201,23))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(197,10-201,23))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_right3_mid, 2)	succeeded in 34 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.025)
+(Vela_crypto_share_envelope_inverse.fst(197,10-201,23))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(197,10-201,23))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_right3_mid, 3)	succeeded in 31 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.027)
+(Vela_crypto_share_envelope_inverse.fst(197,10-201,23))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(197,10-201,23))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_right3_mid, 4)	succeeded in 28 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.025)
+(Vela_crypto_share_envelope_inverse.fst(197,10-201,23))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(197,10-201,23))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_right3_mid, 5)	succeeded in 28 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.026)
+(Vela_crypto_share_envelope_inverse.fst(197,10-201,23))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(197,10-201,23))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_right3_mid, 6)	succeeded in 29 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.028)
+(Vela_crypto_share_envelope_inverse.fst(197,10-201,23))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(197,10-201,23))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_right3_mid, 7)	succeeded in 37 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.034)
+(Vela_crypto_share_envelope_inverse.fst(197,10-201,23))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(197,10-201,23))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_right3_mid, 8)	succeeded in 53 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.053)
+(Vela_crypto_share_envelope_inverse.fst(197,10-201,23))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(197,10-201,23))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_right3_mid, 9)	succeeded in 21 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.015)
+(Vela_crypto_share_envelope_inverse.fst(197,10-201,23))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(197,10-201,23))	Query-stats (Vela_crypto_share_envelope_inverse.slice_append_right3_mid, 10)	succeeded in 28 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.029)
+(Vela_crypto_share_envelope_inverse.fst(208,2-217,3))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(208,2-217,3))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list, 1)	succeeded in 26 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.023)
+(Vela_crypto_share_envelope_inverse.fst(208,2-217,3))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(208,2-217,3))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list, 2)	succeeded in 26 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.025)
+(Vela_crypto_share_envelope_inverse.fst(208,2-217,3))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(208,2-217,3))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list, 3)	succeeded in 29 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.027)
+(Vela_crypto_share_envelope_inverse.fst(208,2-217,3))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(208,2-217,3))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list, 4)	succeeded in 30 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.029)
+(Vela_crypto_share_envelope_inverse.fst(208,2-217,3))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(208,2-217,3))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list, 5)	succeeded in 32 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.031)
+(Vela_crypto_share_envelope_inverse.fst(208,2-217,3))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(208,2-217,3))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list, 6)	succeeded in 36 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.033)
+(Vela_crypto_share_envelope_inverse.fst(208,2-217,3))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(208,2-217,3))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list, 7)	succeeded in 37 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.035)
+(Vela_crypto_share_envelope_inverse.fst(208,2-217,3))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(208,2-217,3))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list, 8)	succeeded in 40 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.038)
+(Vela_crypto_share_envelope_inverse.fst(219,72-222,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(219,72-222,42))	Query-stats (Vela_crypto_share_envelope_inverse.head8, 1)	succeeded in 56 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.071)
+(Vela_crypto_share_envelope_inverse.fst(219,72-222,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(219,72-222,42))	Query-stats (Vela_crypto_share_envelope_inverse.head8, 2)	succeeded in 84 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.083)
+(Vela_crypto_share_envelope_inverse.fst(219,72-222,42))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(219,72-222,42))	Query-stats (Vela_crypto_share_envelope_inverse.head8, 3)	succeeded in 15 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.014)
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list_index, 1)	failed {reason-unknown=unknown because (incomplete quantifiers)} in 74 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.092)
+* Warning 252 at proofs/fstar/share-envelope-inverse/Vela_crypto_share_envelope_inverse.fst(225,62-225,63):
+  - Subtyping check failed
+  - Expected type i: Prims.nat{i < FStar.List.Tot.Base.length (first8_list s)}
+    got type i: Prims.nat{i < 8}
+  - See also /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.List.Tot.Base.fst(89,40-89,52)
+
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list_index, 1)	failed {reason-unknown=unknown because (incomplete quantifiers)} in 63 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.109)
+* Warning 252 at proofs/fstar/share-envelope-inverse/Vela_crypto_share_envelope_inverse.fst(225,62-225,63):
+  - Subtyping check failed
+  - Expected type i: Prims.nat{i < FStar.List.Tot.Base.length (first8_list s)}
+    got type i: Prims.nat{i < 8}
+  - See also /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.List.Tot.Base.fst(89,40-89,52)
+
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list_index, 1)	failed {reason-unknown=unknown because (incomplete quantifiers)} in 87 milliseconds with fuel 4 and ifuel 2 and rlimit 100 (used rlimit 0.143)
+* Warning 252 at proofs/fstar/share-envelope-inverse/Vela_crypto_share_envelope_inverse.fst(225,62-225,63):
+  - Subtyping check failed
+  - Expected type i: Prims.nat{i < FStar.List.Tot.Base.length (first8_list s)}
+    got type i: Prims.nat{i < 8}
+  - See also /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.List.Tot.Base.fst(89,40-89,52)
+
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list_index, 1)	succeeded in 43 milliseconds with fuel 8 and ifuel 2 and rlimit 100 (used rlimit 0.089)
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list_index, 2)	succeeded in 15 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.021)
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list_index, 3)	succeeded in 37 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.069)
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list_index, 4)	succeeded in 44 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.084)
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list_index, 5)	failed {reason-unknown=unknown because (incomplete quantifiers)} in 59 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.102)
+* Warning 252 at proofs/fstar/share-envelope-inverse/Vela_crypto_share_envelope_inverse.fst(227,2-234,23):
+  - Assertion failed
+  - See also /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/Prims.fst(459,90-459,102)
+
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list_index, 5)	failed {reason-unknown=unknown because (incomplete quantifiers)} in 60 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.106)
+* Warning 252 at proofs/fstar/share-envelope-inverse/Vela_crypto_share_envelope_inverse.fst(227,2-234,23):
+  - Assertion failed
+  - See also /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/Prims.fst(459,90-459,102)
+
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list_index, 5)	succeeded in 68 milliseconds with fuel 4 and ifuel 2 and rlimit 100 (used rlimit 0.109)
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list_index, 6)	failed {reason-unknown=unknown because (incomplete quantifiers)} in 81 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.129)
+* Warning 252 at proofs/fstar/share-envelope-inverse/Vela_crypto_share_envelope_inverse.fst(227,2-234,23):
+  - Assertion failed
+  - See also /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/Prims.fst(459,90-459,102)
+
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list_index, 6)	failed {reason-unknown=unknown because (incomplete quantifiers)} in 86 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.110)
+* Warning 252 at proofs/fstar/share-envelope-inverse/Vela_crypto_share_envelope_inverse.fst(227,2-234,23):
+  - Assertion failed
+  - See also /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/Prims.fst(459,90-459,102)
+
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list_index, 6)	succeeded in 107 milliseconds with fuel 4 and ifuel 2 and rlimit 100 (used rlimit 0.123)
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list_index, 7)	failed {reason-unknown=unknown because (incomplete quantifiers)} in 93 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.112)
+* Warning 252 at proofs/fstar/share-envelope-inverse/Vela_crypto_share_envelope_inverse.fst(227,2-234,23):
+  - Assertion failed
+  - See also /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/Prims.fst(459,90-459,102)
+
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list_index, 7)	failed {reason-unknown=unknown because (incomplete quantifiers)} in 71 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.115)
+* Warning 252 at proofs/fstar/share-envelope-inverse/Vela_crypto_share_envelope_inverse.fst(227,2-234,23):
+  - Assertion failed
+  - See also /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/Prims.fst(459,90-459,102)
+
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list_index, 7)	failed {reason-unknown=unknown because (incomplete quantifiers)} in 90 milliseconds with fuel 4 and ifuel 2 and rlimit 100 (used rlimit 0.139)
+* Warning 252 at proofs/fstar/share-envelope-inverse/Vela_crypto_share_envelope_inverse.fst(227,2-234,23):
+  - Assertion failed
+  - See also /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/Prims.fst(459,90-459,102)
+
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list_index, 7)	succeeded in 113 milliseconds with fuel 8 and ifuel 2 and rlimit 100 (used rlimit 0.150)
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list_index, 8)	failed {reason-unknown=unknown because (incomplete quantifiers)} in 87 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.114)
+* Warning 252 at proofs/fstar/share-envelope-inverse/Vela_crypto_share_envelope_inverse.fst(227,2-234,23):
+  - Assertion failed
+  - See also /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/Prims.fst(459,90-459,102)
+
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list_index, 8)	failed {reason-unknown=unknown because (incomplete quantifiers)} in 80 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.131)
+* Warning 252 at proofs/fstar/share-envelope-inverse/Vela_crypto_share_envelope_inverse.fst(227,2-234,23):
+  - Assertion failed
+  - See also /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/Prims.fst(459,90-459,102)
+
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list_index, 8)	failed {reason-unknown=unknown because (incomplete quantifiers)} in 125 milliseconds with fuel 4 and ifuel 2 and rlimit 100 (used rlimit 0.145)
+* Warning 252 at proofs/fstar/share-envelope-inverse/Vela_crypto_share_envelope_inverse.fst(227,2-234,23):
+  - Assertion failed
+  - See also /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/Prims.fst(459,90-459,102)
+
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list_index, 8)	succeeded in 141 milliseconds with fuel 8 and ifuel 2 and rlimit 100 (used rlimit 0.166)
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list_index, 9)	failed {reason-unknown=unknown because (incomplete quantifiers)} in 91 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.118)
+* Warning 252 at proofs/fstar/share-envelope-inverse/Vela_crypto_share_envelope_inverse.fst(227,2-234,23):
+  - Assertion failed
+  - See also /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/Prims.fst(459,90-459,102)
+
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list_index, 9)	failed {reason-unknown=unknown because (incomplete quantifiers)} in 96 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.123)
+* Warning 252 at proofs/fstar/share-envelope-inverse/Vela_crypto_share_envelope_inverse.fst(227,2-234,23):
+  - Assertion failed
+  - See also /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/Prims.fst(459,90-459,102)
+
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list_index, 9)	failed {reason-unknown=unknown because (incomplete quantifiers)} in 154 milliseconds with fuel 4 and ifuel 2 and rlimit 100 (used rlimit 0.149)
+* Warning 252 at proofs/fstar/share-envelope-inverse/Vela_crypto_share_envelope_inverse.fst(227,2-234,23):
+  - Assertion failed
+  - See also /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/Prims.fst(459,90-459,102)
+
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list_index, 9)	succeeded in 153 milliseconds with fuel 8 and ifuel 2 and rlimit 100 (used rlimit 0.187)
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list_index, 10)	failed {reason-unknown=unknown because (incomplete quantifiers)} in 97 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.123)
+* Warning 252 at proofs/fstar/share-envelope-inverse/Vela_crypto_share_envelope_inverse.fst(227,2-234,23):
+  - Assertion failed
+  - See also /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/Prims.fst(459,90-459,102)
+
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list_index, 10)	failed {reason-unknown=unknown because (incomplete quantifiers)} in 101 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.126)
+* Warning 252 at proofs/fstar/share-envelope-inverse/Vela_crypto_share_envelope_inverse.fst(227,2-234,23):
+  - Assertion failed
+  - See also /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/Prims.fst(459,90-459,102)
+
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list_index, 10)	failed {reason-unknown=unknown because (incomplete quantifiers)} in 155 milliseconds with fuel 4 and ifuel 2 and rlimit 100 (used rlimit 0.160)
+* Warning 252 at proofs/fstar/share-envelope-inverse/Vela_crypto_share_envelope_inverse.fst(227,2-234,23):
+  - Assertion failed
+  - See also /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/Prims.fst(459,90-459,102)
+
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list_index, 10)	succeeded in 170 milliseconds with fuel 8 and ifuel 2 and rlimit 100 (used rlimit 0.205)
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(227,2-234,23))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list_index, 11)	succeeded in 272 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.289)
+(Vela_crypto_share_envelope_inverse.fst(225,0-234,23))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(225,0-234,23))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list_index, 12)	failed {reason-unknown=unknown because (incomplete quantifiers)} in 68 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.089)
+* Warning 252 at proofs/fstar/share-envelope-inverse/Vela_crypto_share_envelope_inverse.fst(226,33-226,34):
+  - Subtyping check failed
+  - Expected type i: Prims.nat{i < FStar.List.Tot.Base.length (first8_list s)}
+    got type i: (i: Prims.nat{i < 8}){s << s \/ s === s /\ i << i}
+  - See also /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.List.Tot.Base.fst(89,40-89,52)
+
+(Vela_crypto_share_envelope_inverse.fst(225,0-234,23))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list_index, 12)	failed {reason-unknown=unknown because (incomplete quantifiers)} in 71 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.096)
+* Warning 252 at proofs/fstar/share-envelope-inverse/Vela_crypto_share_envelope_inverse.fst(226,33-226,34):
+  - Subtyping check failed
+  - Expected type i: Prims.nat{i < FStar.List.Tot.Base.length (first8_list s)}
+    got type i: (i: Prims.nat{i < 8}){s << s \/ s === s /\ i << i}
+  - See also /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.List.Tot.Base.fst(89,40-89,52)
+
+(Vela_crypto_share_envelope_inverse.fst(225,0-234,23))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list_index, 12)	failed {reason-unknown=unknown because (incomplete quantifiers)} in 121 milliseconds with fuel 4 and ifuel 2 and rlimit 100 (used rlimit 0.147)
+* Warning 252 at proofs/fstar/share-envelope-inverse/Vela_crypto_share_envelope_inverse.fst(226,33-226,34):
+  - Subtyping check failed
+  - Expected type i: Prims.nat{i < FStar.List.Tot.Base.length (first8_list s)}
+    got type i: (i: Prims.nat{i < 8}){s << s \/ s === s /\ i << i}
+  - See also /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.List.Tot.Base.fst(89,40-89,52)
+
+(Vela_crypto_share_envelope_inverse.fst(225,0-234,23))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list_index, 12)	succeeded in 74 milliseconds with fuel 8 and ifuel 2 and rlimit 100 (used rlimit 0.095)
+(Vela_crypto_share_envelope_inverse.fst(225,0-234,23))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(225,0-234,23))	Query-stats (Vela_crypto_share_envelope_inverse.first8_list_index, 13)	succeeded in 20 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.022)
+(Vela_crypto_share_envelope_inverse.fst(238,2-238,23))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(238,2-238,23))	Query-stats (Vela_crypto_share_envelope_inverse.head8_index, 1)	succeeded in 23 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.032)
+(Vela_crypto_share_envelope_inverse.fst(238,2-238,23))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(238,2-238,23))	Query-stats (Vela_crypto_share_envelope_inverse.head8_index, 2)	succeeded in 19 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.021)
+(Vela_crypto_share_envelope_inverse.fst(238,2-238,23))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(238,2-238,23))	Query-stats (Vela_crypto_share_envelope_inverse.head8_index, 3)	succeeded in 32 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.035)
+(Vela_crypto_share_envelope_inverse.fst(244,2-251,17))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(244,2-251,17))	Query-stats (Vela_crypto_share_envelope_inverse.decode_head8, 1)	succeeded in 23 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.024)
+(Vela_crypto_share_envelope_inverse.fst(244,2-251,17))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(244,2-251,17))	Query-stats (Vela_crypto_share_envelope_inverse.decode_head8, 2)	succeeded in 44 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.065)
+(Vela_crypto_share_envelope_inverse.fst(244,2-251,17))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(244,2-251,17))	Query-stats (Vela_crypto_share_envelope_inverse.decode_head8, 3)	succeeded in 21 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.019)
+(Vela_crypto_share_envelope_inverse.fst(244,2-251,17))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(244,2-251,17))	Query-stats (Vela_crypto_share_envelope_inverse.decode_head8, 4)	succeeded in 17 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.020)
+(Vela_crypto_share_envelope_inverse.fst(244,2-251,17))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(244,2-251,17))	Query-stats (Vela_crypto_share_envelope_inverse.decode_head8, 5)	succeeded in 15 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.021)
+(Vela_crypto_share_envelope_inverse.fst(244,2-251,17))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(244,2-251,17))	Query-stats (Vela_crypto_share_envelope_inverse.decode_head8, 6)	succeeded in 21 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.022)
+(Vela_crypto_share_envelope_inverse.fst(244,2-251,17))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(244,2-251,17))	Query-stats (Vela_crypto_share_envelope_inverse.decode_head8, 7)	succeeded in 21 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.024)
+(Vela_crypto_share_envelope_inverse.fst(244,2-251,17))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(244,2-251,17))	Query-stats (Vela_crypto_share_envelope_inverse.decode_head8, 8)	succeeded in 20 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.025)
+(Vela_crypto_share_envelope_inverse.fst(244,2-251,17))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(244,2-251,17))	Query-stats (Vela_crypto_share_envelope_inverse.decode_head8, 9)	succeeded in 20 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.026)
+(Vela_crypto_share_envelope_inverse.fst(244,2-251,17))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(244,2-251,17))	Query-stats (Vela_crypto_share_envelope_inverse.decode_head8, 10)	succeeded in 28 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.027)
+(Vela_crypto_share_envelope_inverse.fst(244,2-251,17))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(244,2-251,17))	Query-stats (Vela_crypto_share_envelope_inverse.decode_head8, 11)	succeeded in 53 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.116)
+(Vela_crypto_share_envelope_inverse.fst(258,28-268,16))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(258,28-268,16))	Query-stats (Vela_crypto_share_envelope_inverse.decode_head8_prefixed, 1)	succeeded in 26 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.028)
+(Vela_crypto_share_envelope_inverse.fst(258,28-268,16))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(258,28-268,16))	Query-stats (Vela_crypto_share_envelope_inverse.decode_head8_prefixed, 2)	succeeded in 36 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.068)
+(Vela_crypto_share_envelope_inverse.fst(258,28-268,16))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(258,28-268,16))	Query-stats (Vela_crypto_share_envelope_inverse.decode_head8_prefixed, 3)	succeeded in 20 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.028)
+(Vela_crypto_share_envelope_inverse.fst(258,28-268,16))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(258,28-268,16))	Query-stats (Vela_crypto_share_envelope_inverse.decode_head8_prefixed, 4)	succeeded in 25 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.035)
+(Vela_crypto_share_envelope_inverse.fst(258,28-268,16))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(258,28-268,16))	Query-stats (Vela_crypto_share_envelope_inverse.decode_head8_prefixed, 5)	succeeded in 35 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.037)
+(Vela_crypto_share_envelope_inverse.fst(258,28-268,16))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(258,28-268,16))	Query-stats (Vela_crypto_share_envelope_inverse.decode_head8_prefixed, 6)	succeeded in 34 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.039)
+(Vela_crypto_share_envelope_inverse.fst(258,28-268,16))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(258,28-268,16))	Query-stats (Vela_crypto_share_envelope_inverse.decode_head8_prefixed, 7)	succeeded in 37 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.041)
+(Vela_crypto_share_envelope_inverse.fst(258,28-268,16))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(258,28-268,16))	Query-stats (Vela_crypto_share_envelope_inverse.decode_head8_prefixed, 8)	succeeded in 26 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.043)
+(Vela_crypto_share_envelope_inverse.fst(258,28-268,16))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(258,28-268,16))	Query-stats (Vela_crypto_share_envelope_inverse.decode_head8_prefixed, 9)	succeeded in 25 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.044)
+(Vela_crypto_share_envelope_inverse.fst(258,28-268,16))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(258,28-268,16))	Query-stats (Vela_crypto_share_envelope_inverse.decode_head8_prefixed, 10)	succeeded in 27 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.046)
+(Vela_crypto_share_envelope_inverse.fst(258,28-268,16))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(258,28-268,16))	Query-stats (Vela_crypto_share_envelope_inverse.decode_head8_prefixed, 11)	succeeded in 17 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.021)
+(Vela_crypto_share_envelope_inverse.fst(258,28-268,16))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(258,28-268,16))	Query-stats (Vela_crypto_share_envelope_inverse.decode_head8_prefixed, 12)	succeeded in 3539 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 3.983)
+(Vela_crypto_share_envelope_inverse.fst(273,2-277,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(273,2-277,4))	Query-stats (Vela_crypto_share_envelope_inverse.decode_head8_append, 1)	succeeded in 62 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.102)
+(Vela_crypto_share_envelope_inverse.fst(273,2-277,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(273,2-277,4))	Query-stats (Vela_crypto_share_envelope_inverse.decode_head8_append, 2)	succeeded in 61 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.089)
+(Vela_crypto_share_envelope_inverse.fst(273,2-277,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(273,2-277,4))	Query-stats (Vela_crypto_share_envelope_inverse.decode_head8_append, 3)	succeeded in 1476 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 1.879)
+(Vela_crypto_share_envelope_inverse.fst(291,54-295,33))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(291,54-295,33))	Query-stats (Vela_crypto_share_envelope_inverse.split_prefix_append, 1)	succeeded in 27 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.020)
+(Vela_crypto_share_envelope_inverse.fst(291,54-295,33))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(291,54-295,33))	Query-stats (Vela_crypto_share_envelope_inverse.split_prefix_append, 2)	succeeded in 19 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.019)
+(Vela_crypto_share_envelope_inverse.fst(291,54-295,33))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(291,54-295,33))	Query-stats (Vela_crypto_share_envelope_inverse.split_prefix_append, 3)	succeeded in 23 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.021)
+(Vela_crypto_share_envelope_inverse.fst(291,54-295,33))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(291,54-295,33))	Query-stats (Vela_crypto_share_envelope_inverse.split_prefix_append, 4)	succeeded in 19 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.020)
+(Vela_crypto_share_envelope_inverse.fst(291,54-295,33))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(291,54-295,33))	Query-stats (Vela_crypto_share_envelope_inverse.split_prefix_append, 5)	succeeded in 23 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.026)
+(Vela_crypto_share_envelope_inverse.fst(291,54-295,33))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(291,54-295,33))	Query-stats (Vela_crypto_share_envelope_inverse.split_prefix_append, 6)	succeeded in 43 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.040)
+(Vela_crypto_share_envelope_inverse.fst(291,54-295,33))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(291,54-295,33))	Query-stats (Vela_crypto_share_envelope_inverse.split_prefix_append, 7)	succeeded in 34 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.040)
+(Vela_crypto_share_envelope_inverse.fst(291,54-295,33))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(291,54-295,33))	Query-stats (Vela_crypto_share_envelope_inverse.split_prefix_append, 8)	succeeded in 66 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.066)
+(Vela_crypto_share_envelope_inverse.fst(302,99-315,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(302,99-315,4))	Query-stats (Vela_crypto_share_envelope_inverse.split_lp_append, 1)	succeeded in 32 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.035)
+(Vela_crypto_share_envelope_inverse.fst(302,99-315,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(302,99-315,4))	Query-stats (Vela_crypto_share_envelope_inverse.split_lp_append, 2)	succeeded in 53 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.060)
+(Vela_crypto_share_envelope_inverse.fst(302,99-315,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(302,99-315,4))	Query-stats (Vela_crypto_share_envelope_inverse.split_lp_append, 3)	succeeded in 30 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.030)
+(Vela_crypto_share_envelope_inverse.fst(302,99-315,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(302,99-315,4))	Query-stats (Vela_crypto_share_envelope_inverse.split_lp_append, 4)	succeeded in 48048 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 40.546)
+(Vela_crypto_share_envelope_inverse.fst(323,53-330,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(323,53-330,4))	Query-stats (Vela_crypto_share_envelope_inverse.split_u64_append, 1)	succeeded in 114 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.112)
+(Vela_crypto_share_envelope_inverse.fst(323,53-330,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(323,53-330,4))	Query-stats (Vela_crypto_share_envelope_inverse.split_u64_append, 2)	succeeded in 36 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.046)
+(Vela_crypto_share_envelope_inverse.fst(323,53-330,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(323,53-330,4))	Query-stats (Vela_crypto_share_envelope_inverse.split_u64_append, 3)	succeeded in 1589 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 2.086)
+(Vela_crypto_share_envelope_inverse.fst(342,54-348,24))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(342,54-348,24))	Query-stats (Vela_crypto_share_envelope_inverse.split_lp_pair_append, 1)	succeeded in 45 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.072)
+(Vela_crypto_share_envelope_inverse.fst(342,54-348,24))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(342,54-348,24))	Query-stats (Vela_crypto_share_envelope_inverse.split_lp_pair_append, 2)	succeeded in 39 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.074)
+(Vela_crypto_share_envelope_inverse.fst(342,54-348,24))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(342,54-348,24))	Query-stats (Vela_crypto_share_envelope_inverse.split_lp_pair_append, 3)	succeeded in 23 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.039)
+(Vela_crypto_share_envelope_inverse.fst(342,54-348,24))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(342,54-348,24))	Query-stats (Vela_crypto_share_envelope_inverse.split_lp_pair_append, 4)	succeeded in 52 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.075)
+(Vela_crypto_share_envelope_inverse.fst(342,54-348,24))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(342,54-348,24))	Query-stats (Vela_crypto_share_envelope_inverse.split_lp_pair_append, 5)	succeeded in 52 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.078)
+(Vela_crypto_share_envelope_inverse.fst(357,2-358,36))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(357,2-358,36))	Query-stats (Vela_crypto_share_envelope_inverse.split_lp_pair_last, 1)	succeeded in 29 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.041)
+(Vela_crypto_share_envelope_inverse.fst(357,2-358,36))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(357,2-358,36))	Query-stats (Vela_crypto_share_envelope_inverse.split_lp_pair_last, 2)	succeeded in 31 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.045)
+(Vela_crypto_share_envelope_inverse.fst(357,2-358,36))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(357,2-358,36))	Query-stats (Vela_crypto_share_envelope_inverse.split_lp_pair_last, 3)	succeeded in 48 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.070)
+(Vela_crypto_share_envelope_inverse.fst(357,2-358,36))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(357,2-358,36))	Query-stats (Vela_crypto_share_envelope_inverse.split_lp_pair_last, 4)	succeeded in 27 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.032)
+(Vela_crypto_share_envelope_inverse.fst(375,64-384,31))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(375,64-384,31))	Query-stats (Vela_crypto_share_envelope_inverse.split_lp_four_append, 1)	succeeded in 219 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.352)
+(Vela_crypto_share_envelope_inverse.fst(375,64-384,31))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(375,64-384,31))	Query-stats (Vela_crypto_share_envelope_inverse.split_lp_four_append, 2)	succeeded in 70 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.109)
+(Vela_crypto_share_envelope_inverse.fst(375,64-384,31))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(375,64-384,31))	Query-stats (Vela_crypto_share_envelope_inverse.split_lp_four_append, 3)	succeeded in 39 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.063)
+(Vela_crypto_share_envelope_inverse.fst(375,64-384,31))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(375,64-384,31))	Query-stats (Vela_crypto_share_envelope_inverse.split_lp_four_append, 4)	succeeded in 54 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.114)
+(Vela_crypto_share_envelope_inverse.fst(375,64-384,31))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(375,64-384,31))	Query-stats (Vela_crypto_share_envelope_inverse.split_lp_four_append, 5)	succeeded in 67 milliseconds with fuel 2 and ifuel 1 and rlimit 100 (used rlimit 0.118)
+(Vela_crypto_share_envelope_inverse.fst(408,2-408,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(408,2-408,4))	Query-stats (Vela_crypto_share_envelope_inverse.push_bytes_spec, 1)	succeeded in 35 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.048)
+(Vela_crypto_share_envelope_inverse.fst(408,2-408,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(408,2-408,4))	Query-stats (Vela_crypto_share_envelope_inverse.push_bytes_spec, 2)	succeeded in 32 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.055)
+(Vela_crypto_share_envelope_inverse.fst(419,2-419,35))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(419,2-419,35))	Query-stats (Vela_crypto_share_envelope_inverse.push_u64_spec, 1)	succeeded in 78 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.116)
+(Vela_crypto_share_envelope_inverse.fst(419,2-419,35))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(419,2-419,35))	Query-stats (Vela_crypto_share_envelope_inverse.push_u64_spec, 2)	succeeded in 58 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.115)
+(Vela_crypto_share_envelope_inverse.fst(419,2-419,35))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(419,2-419,35))	Query-stats (Vela_crypto_share_envelope_inverse.push_u64_spec, 3)	succeeded in 55 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.117)
+(Vela_crypto_share_envelope_inverse.fst(419,2-419,35))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(419,2-419,35))	Query-stats (Vela_crypto_share_envelope_inverse.push_u64_spec, 4)	succeeded in 23 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.044)
+(Vela_crypto_share_envelope_inverse.fst(433,2-436,9))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(433,2-436,9))	Query-stats (Vela_crypto_share_envelope_inverse.push_lp_spec, 1)	succeeded in 62 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.134)
+(Vela_crypto_share_envelope_inverse.fst(433,2-436,9))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(433,2-436,9))	Query-stats (Vela_crypto_share_envelope_inverse.push_lp_spec, 2)	succeeded in 25 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.037)
+(Vela_crypto_share_envelope_inverse.fst(433,2-436,9))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(433,2-436,9))	Query-stats (Vela_crypto_share_envelope_inverse.push_lp_spec, 3)	succeeded in 70 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.129)
+(Vela_crypto_share_envelope_inverse.fst(433,2-436,9))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(433,2-436,9))	Query-stats (Vela_crypto_share_envelope_inverse.push_lp_spec, 4)	succeeded in 77 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.147)
+(Vela_crypto_share_envelope_inverse.fst(433,2-436,9))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(433,2-436,9))	Query-stats (Vela_crypto_share_envelope_inverse.push_lp_spec, 5)	succeeded in 33 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.061)
+(Vela_crypto_share_envelope_inverse.fst(447,105-486,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(447,105-486,4))	Query-stats (Vela_crypto_share_envelope_inverse.push_share_body_spec, 1)	succeeded in 100 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.167)
+(Vela_crypto_share_envelope_inverse.fst(447,105-486,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(447,105-486,4))	Query-stats (Vela_crypto_share_envelope_inverse.push_share_body_spec, 2)	succeeded in 332 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.639)
+(Vela_crypto_share_envelope_inverse.fst(447,105-486,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(447,105-486,4))	Query-stats (Vela_crypto_share_envelope_inverse.push_share_body_spec, 3)	succeeded in 68 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.139)
+(Vela_crypto_share_envelope_inverse.fst(447,105-486,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(447,105-486,4))	Query-stats (Vela_crypto_share_envelope_inverse.push_share_body_spec, 4)	succeeded in 55 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.099)
+(Vela_crypto_share_envelope_inverse.fst(447,105-486,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(447,105-486,4))	Query-stats (Vela_crypto_share_envelope_inverse.push_share_body_spec, 5)	succeeded in 276 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.603)
+(Vela_crypto_share_envelope_inverse.fst(447,105-486,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(447,105-486,4))	Query-stats (Vela_crypto_share_envelope_inverse.push_share_body_spec, 6)	succeeded in 66 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.104)
+(Vela_crypto_share_envelope_inverse.fst(447,105-486,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(447,105-486,4))	Query-stats (Vela_crypto_share_envelope_inverse.push_share_body_spec, 7)	succeeded in 282 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.615)
+(Vela_crypto_share_envelope_inverse.fst(447,105-486,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(447,105-486,4))	Query-stats (Vela_crypto_share_envelope_inverse.push_share_body_spec, 8)	succeeded in 57 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.109)
+(Vela_crypto_share_envelope_inverse.fst(447,105-486,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(447,105-486,4))	Query-stats (Vela_crypto_share_envelope_inverse.push_share_body_spec, 9)	succeeded in 341 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.630)
+(Vela_crypto_share_envelope_inverse.fst(447,105-486,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(447,105-486,4))	Query-stats (Vela_crypto_share_envelope_inverse.push_share_body_spec, 10)	succeeded in 71 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.113)
+(Vela_crypto_share_envelope_inverse.fst(447,105-486,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(447,105-486,4))	Query-stats (Vela_crypto_share_envelope_inverse.push_share_body_spec, 11)	succeeded in 268 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.645)
+(Vela_crypto_share_envelope_inverse.fst(447,105-486,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(447,105-486,4))	Query-stats (Vela_crypto_share_envelope_inverse.push_share_body_spec, 12)	succeeded in 62 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.125)
+(Vela_crypto_share_envelope_inverse.fst(447,105-486,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(447,105-486,4))	Query-stats (Vela_crypto_share_envelope_inverse.push_share_body_spec, 13)	succeeded in 289 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.691)
+(Vela_crypto_share_envelope_inverse.fst(447,105-486,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(447,105-486,4))	Query-stats (Vela_crypto_share_envelope_inverse.push_share_body_spec, 14)	succeeded in 86 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.130)
+(Vela_crypto_share_envelope_inverse.fst(447,105-486,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(447,105-486,4))	Query-stats (Vela_crypto_share_envelope_inverse.push_share_body_spec, 15)	succeeded in 350 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.706)
+(Vela_crypto_share_envelope_inverse.fst(447,105-486,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(447,105-486,4))	Query-stats (Vela_crypto_share_envelope_inverse.push_share_body_spec, 16)	succeeded in 65 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.136)
+(Vela_crypto_share_envelope_inverse.fst(447,105-486,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(447,105-486,4))	Query-stats (Vela_crypto_share_envelope_inverse.push_share_body_spec, 17)	succeeded in 356 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.727)
+(Vela_crypto_share_envelope_inverse.fst(447,105-486,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(447,105-486,4))	Query-stats (Vela_crypto_share_envelope_inverse.push_share_body_spec, 18)	succeeded in 68 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.141)
+(Vela_crypto_share_envelope_inverse.fst(447,105-486,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(447,105-486,4))	Query-stats (Vela_crypto_share_envelope_inverse.push_share_body_spec, 19)	succeeded in 5907 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 5.269)
+(Vela_crypto_share_envelope_inverse.fst(501,2-507,8))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(501,2-507,8))	Query-stats (Vela_crypto_share_envelope_inverse.push_share_prefix_spec, 1)	succeeded in 174 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.409)
+(Vela_crypto_share_envelope_inverse.fst(501,2-507,8))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(501,2-507,8))	Query-stats (Vela_crypto_share_envelope_inverse.push_share_prefix_spec, 2)	succeeded in 81 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.188)
+(Vela_crypto_share_envelope_inverse.fst(501,2-507,8))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(501,2-507,8))	Query-stats (Vela_crypto_share_envelope_inverse.push_share_prefix_spec, 3)	succeeded in 85 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.190)
+(Vela_crypto_share_envelope_inverse.fst(501,2-507,8))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(501,2-507,8))	Query-stats (Vela_crypto_share_envelope_inverse.push_share_prefix_spec, 4)	succeeded in 86 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.197)
+(Vela_crypto_share_envelope_inverse.fst(501,2-507,8))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(501,2-507,8))	Query-stats (Vela_crypto_share_envelope_inverse.push_share_prefix_spec, 5)	succeeded in 93 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.201)
+(Vela_crypto_share_envelope_inverse.fst(501,2-507,8))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(501,2-507,8))	Query-stats (Vela_crypto_share_envelope_inverse.push_share_prefix_spec, 6)	succeeded in 810 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 1.127)
+(Vela_crypto_share_envelope_inverse.fst(520,45-523,41))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(520,45-523,41))	Query-stats (Vela_crypto_share_envelope_inverse.encode_share_prefix_spec, 1)	succeeded in 111 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.235)
+(Vela_crypto_share_envelope_inverse.fst(520,45-523,41))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(520,45-523,41))	Query-stats (Vela_crypto_share_envelope_inverse.encode_share_prefix_spec, 2)	succeeded in 42 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.079)
+(Vela_crypto_share_envelope_inverse.fst(520,45-523,41))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(520,45-523,41))	Query-stats (Vela_crypto_share_envelope_inverse.encode_share_prefix_spec, 3)	succeeded in 27 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.046)
+(Vela_crypto_share_envelope_inverse.fst(537,2-537,31))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(537,2-537,31))	Query-stats (Vela_crypto_share_envelope_inverse.append_share_signature_spec, 1)	succeeded in 63 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.136)
+(Vela_crypto_share_envelope_inverse.fst(537,2-537,31))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(537,2-537,31))	Query-stats (Vela_crypto_share_envelope_inverse.append_share_signature_spec, 2)	succeeded in 16 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.019)
+(Vela_crypto_share_envelope_inverse.fst(537,2-537,31))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(537,2-537,31))	Query-stats (Vela_crypto_share_envelope_inverse.append_share_signature_spec, 3)	succeeded in 43 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.075)
+(Vela_crypto_share_envelope_inverse.fst(551,2-560,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(551,2-560,4))	Query-stats (Vela_crypto_share_envelope_inverse.encode_share_frame_spec, 1)	succeeded in 23 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.038)
+(Vela_crypto_share_envelope_inverse.fst(551,2-560,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(551,2-560,4))	Query-stats (Vela_crypto_share_envelope_inverse.encode_share_frame_spec, 2)	succeeded in 45 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.083)
+(Vela_crypto_share_envelope_inverse.fst(551,2-560,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(551,2-560,4))	Query-stats (Vela_crypto_share_envelope_inverse.encode_share_frame_spec, 3)	succeeded in 106 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.244)
+(Vela_crypto_share_envelope_inverse.fst(551,2-560,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(551,2-560,4))	Query-stats (Vela_crypto_share_envelope_inverse.encode_share_frame_spec, 4)	succeeded in 115 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.249)
+(Vela_crypto_share_envelope_inverse.fst(551,2-560,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(551,2-560,4))	Query-stats (Vela_crypto_share_envelope_inverse.encode_share_frame_spec, 5)	succeeded in 62 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.121)
+(Vela_crypto_share_envelope_inverse.fst(577,2-584,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(577,2-584,4))	Query-stats (Vela_crypto_share_envelope_inverse.frame_body_frame, 1)	succeeded in 32 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.060)
+(Vela_crypto_share_envelope_inverse.fst(577,2-584,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(577,2-584,4))	Query-stats (Vela_crypto_share_envelope_inverse.frame_body_frame, 2)	succeeded in 149 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 0.375)
+(Vela_crypto_share_envelope_inverse.fst(577,2-584,4))	Query-stats splitting query because --split_queries is always
+(Vela_crypto_share_envelope_inverse.fst(577,2-584,4))	Query-stats (Vela_crypto_share_envelope_inverse.frame_body_frame, 3)	failed {reason-unknown=unknown because canceled} in 288524 milliseconds with fuel 2 and ifuel 2 and rlimit 100 (used rlimit 100.000)
+* Error 19 at proofs/fstar/share-envelope-inverse/Vela_crypto_share_envelope_inverse.fst(577,2-584,4):
+  - Assertion failed
+  - Also see: proofs/fstar/share-envelope-inverse/Vela_crypto_share_envelope_inverse.fst(577,2-584,4)
+  - Other related locations: /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/Prims.fst(459,90-459,102)
+
+1 error was reported (see above)

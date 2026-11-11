@@ -3,9 +3,10 @@
 Formal verification that a server-level linked-share revocation is final:
 no recipient can read the capsule again once `revoked = true` is committed,
 and only the original sender (verified by the account's device identity
-binding, M19) can revoke. The server's ETag (`If-Match`) and `revoked = 0`
-filter are modeled structurally; the formal property proves the structural
-exclusion of any later read event after revocation.
+binding, M19) can revoke. The server's `revoked = 0` filter and sender-only
+SQL guards are modeled structurally; the formal property proves the structural
+exclusion of any later read event after revocation. (Correction: there is no
+`If-Match`/ETag check on linked updates; earlier text claimed one.)
 
 ## Model
 
@@ -59,6 +60,10 @@ The enforced server-side rules are `authorize_route` (already hax-verified in
 `vela-session-policy`) and the SQL predicates in `share/mod.rs`: only the
 sender may update/delete (`DELETE` and `PUT /share/linked` require the
 session user to match `sender_user_id`), `revoked = 0` excludes revoked rows
-in `get_linked_items`, and the ETag comparison (`If-Match`) binds updates to
-exact capsule versions. The formal model proves the structural exclusion
-these predicates enforce.
+in `get_linked_items`. Both handlers also call
+`vela_share_policy::plan_link_mutation` on facts observed from the row; there
+is no ETag comparison. They
+take `AuthSession`, so a web session of the sender may also update or revoke.
+The formal model proves the structural exclusion these predicates enforce; the
+bounded conformance test `share_channel_model.rs` checks the real handlers
+against it (see `security/assurance/proof-logs/current/share-channel-conformance/`).

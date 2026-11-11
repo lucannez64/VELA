@@ -1,0 +1,33 @@
+F* webauthn-driver argv: --cmi --cache_off --warn_error -331 --z3rlimit 4000 --z3version 4.13.3 --already_cached +Prims+FStar+LowStar+C+Spec.Loops+TestLib --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/core --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives --include /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proofs/fstar/extraction --include proofs/fstar/extraction-webauthn-driver --include proofs/fstar/webauthn-driver-lemmas --include proofs/fstar/webauthn-driver-composition proofs/fstar/extraction-webauthn-driver/Vela_recovery_policy.fst proofs/fstar/extraction-webauthn-driver/Vela_recovery_policy.Webauthn_driver.fst proofs/fstar/webauthn-driver-lemmas/Vela_recovery_policy_webauthn_driver_lemmas.fst proofs/fstar/webauthn-driver-composition/Vela_recovery_policy_webauthn_driver_composition.fst
+* Warning 271 at /home/hirew/.local/opt/vela-formal-fstar-2025.10.06/fstar/lib/fstar/ulib/FStar.UInt.fsti(436,8-436,51):
+  - Pattern uses these theory symbols or terms that should not be in an SMT
+    pattern:
+      Prims.op_Subtraction
+
+* Warning 239 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Float.fsti(5,5-5,10):
+  - Adding an implicit 'assume new' qualifier on Rust_primitives.Float.float
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(107,0-124,26):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+* Warning 242 at /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(136,0-136,81):
+  - Definitions of inner let-rec while_loop_internal and its enclosing top-level
+    letbinding are not encoded to the solver, you will only be able to reason
+    with their types
+  - Also see: /tmp/vela-hax-cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hax-lib-0.3.7/proof-libs/fstar/rust_primitives/Rust_primitives.Hax.fst(115,10-115,29)
+
+Verified module: Vela_recovery_policy
+Verified module: Vela_recovery_policy.Webauthn_driver
+Verified module: Vela_recovery_policy_webauthn_driver_lemmas
+Verified module: Vela_recovery_policy_webauthn_driver_composition
+All verification conditions discharged successfully
+webauthn driver proof: 27 focused Rust contracts checked
+webauthn driver composition: any number of interleaved requests issue at most one grant per challenge
+5a3736865b9ddf18f4a417faa07bfea48be8266ab0f418a822a8eb7fccd5d34d  proofs/fstar/extraction-webauthn-driver/Vela_recovery_policy.fst
+3d8cee1dfc903510b23bcbeb505adf4466ba1e113eb85d367f30324edf368baf  proofs/fstar/extraction-webauthn-driver/Vela_recovery_policy.Webauthn_driver.fst
+54fb28544bf96c7608c9c11c247c6563ecfe1383973f2dab0255903f10ba1f19  proofs/fstar/webauthn-driver-lemmas/Vela_recovery_policy_webauthn_driver_lemmas.fst
+dc1df713528bed91802afab53d549050d0d6f91ea98a8af699c40a17ae5b5177  proofs/fstar/webauthn-driver-composition/Vela_recovery_policy_webauthn_driver_composition.fst
+b30814cef5eea7711133fbdf74553f271ba311f27da06231043416817b192880  src/webauthn_driver.rs

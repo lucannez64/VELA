@@ -1,0 +1,106 @@
+   Compiling vela-server v0.1.0 (/home/hirew/.t3/worktrees/VELA/t3-751c3edd/serverVELA/vela-server)
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> vela-server/src/sqldb.rs:76:5
+   |
+76 |     async fn query(&self, sql: &str, params: Vec<turso::Value>) -> anyhow::Result<Vec<VelaRow>>;
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+   = note: `#[warn(async_fn_in_trait)]` on by default
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+76 -     async fn query(&self, sql: &str, params: Vec<turso::Value>) -> anyhow::Result<Vec<VelaRow>>;
+76 +     fn query(&self, sql: &str, params: Vec<turso::Value>) -> impl std::future::Future<Output = anyhow::Result<Vec<VelaRow>>> + Send;
+   |
+
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> vela-server/src/sqldb.rs:78:5
+   |
+78 |     async fn execute(&self, sql: &str, params: Vec<turso::Value>) -> anyhow::Result<u64>;
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+78 -     async fn execute(&self, sql: &str, params: Vec<turso::Value>) -> anyhow::Result<u64>;
+78 +     fn execute(&self, sql: &str, params: Vec<turso::Value>) -> impl std::future::Future<Output = anyhow::Result<u64>> + Send;
+   |
+
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> vela-server/src/sqldb.rs:80:5
+   |
+80 |     async fn execute_batch(&self, sql: &str) -> anyhow::Result<()>;
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+80 -     async fn execute_batch(&self, sql: &str) -> anyhow::Result<()>;
+80 +     fn execute_batch(&self, sql: &str) -> impl std::future::Future<Output = anyhow::Result<()>> + Send;
+   |
+
+warning: `vela-server` (lib test) generated 3 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.95s
+     Running unittests src/lib.rs (/home/hirew/.t3/worktrees/VELA/t3-700776df/target/debug/build/vela-server/bd95b96d7fa2eab2/out/vela_server-bd95b96d7fa2eab2)
+
+running 57 tests
+test config::tests::an_existing_key_is_never_silently_rotated ... ok
+test config::tests::an_over_broad_trusted_proxy_range_is_refused ... ok
+test config::tests::concurrent_key_creation_is_atomic_and_convergent ... ok
+test config::tests::malformed_proxy_ranges_are_still_refused ... ok
+test config::tests::ordinary_proxy_ranges_are_still_accepted ... ok
+test db::tests::bootstrap_stoolap_into_turso_copies_once_and_is_idempotent ... ok
+test db::tests::upgrades_a_pre_rekey_stoolap_schema_before_creating_epoch_indexes ... ok
+test db::tests::webauthn_cred_id_unique_index_rejects_cross_account_duplicates ... ok
+test device::list::tests::list_devices_query_returns_devices_for_user ... ok
+test device::rendezvous::tests::a_claim_carries_no_private_key_material ... ok
+test device::rendezvous::tests::a_grant_records_both_the_user_and_the_device ... ok
+test device::rendezvous::tests::a_result_keeps_the_key_its_signature_is_checked_against ... ok
+test device::rendezvous::tests::grants_claims_and_results_do_not_share_keys ... ok
+test ids::tests::accepts_the_ids_our_own_clients_generate ... ok
+test ids::tests::rejects_an_unbounded_id ... ok
+test ids::tests::rejects_empty ... ok
+test ids::tests::rejects_non_ascii_lookalikes ... ok
+test ids::tests::rejects_separators_that_could_reshape_a_key ... ok
+test ids::tests::rejects_traversal_shapes ... ok
+test ids::tests::the_error_names_the_field ... ok
+test migration::tests::export_can_include_deployment_config_explicitly ... ok
+test migration::tests::export_import_roundtrip_restores_data_and_identity ... ok
+test migration::tests::export_import_roundtrip_with_directory_db ... ok
+test migration::tests::wrong_passphrase_fails_verification ... ok
+test net::tests::cf_connecting_ip_wins_from_trusted_proxy ... ok
+test net::tests::cidr_matching ... ok
+test net::tests::direct_peer_when_proxy_untrusted ... ok
+test net::tests::garbage_forwarded_value_falls_back_to_peer ... ok
+test net::tests::x_forwarded_for_first_hop_when_no_cf_header ... ok
+test rate_limit::tests::backoff_from_one_ip_does_not_lock_out_device_from_another_ip ... ok
+test rate_limit::tests::single_failure_increments_fail_counter_once ... ok
+test recovery::initiate::tests::stale_freshness_observations_cannot_replace_the_winning_challenge ... ok
+test recovery::possess::tests::stale_possession_attempt_cannot_replace_the_winning_challenge ... ok
+test routes::cf_visitor_tests::accepts_what_cloudflare_actually_sends ... ok
+test routes::cf_visitor_tests::rejects_anything_that_is_not_an_object_with_that_field ... ok
+test routes::cf_visitor_tests::rejects_plain_http ... ok
+test routes::cf_visitor_tests::the_string_appearing_elsewhere_is_not_the_scheme ... ok
+test send::tests::ttl_clamps_to_bounds ... ok
+test send::tests::view_once_pins_one_view_and_others_clamp ... ok
+test sqldb::tests::opens_and_upgrades_a_pre_rekey_database ... ok
+test sqldb::tests::schema_and_crud ... ok
+test sqldb::tests::transaction_commit_and_rollback ... ok
+test store::tests::a_claim_cannot_be_created_without_a_live_grant ... ok
+test store::tests::a_fixed_window_keeps_the_expiry_it_opened_with ... ok
+test store::tests::a_streak_counter_still_refreshes_its_ttl ... ok
+test store::tests::an_expired_claim_does_not_block_a_new_one ... ok
+test store::tests::exactly_one_racing_completion_takes_the_whole_pair ... ok
+test store::tests::get_del_redeems_a_one_shot_artifact_exactly_once_under_concurrency ... ok
+test store::tests::set_ex_nx_lets_exactly_one_writer_win ... ok
+test store::tests::set_ex_nx_wins_under_concurrency_exactly_once ... ok
+test store::tests::taking_a_pair_is_all_or_nothing ... ok
+test vault::events::tests::event_bus_numbers_revisions_monotonically ... ok
+test vault::events::tests::stream_slots_are_capped_per_account_and_released ... ok
+test vault::events::tests::subscribers_only_see_their_own_accounts_events ... ok
+test vault::events::tests::wire_payload_never_carries_the_owner_id ... ok
+test web_session::tests::expiry_check ... ok
+test web_session::tests::ttl_clamps_to_bounds ... ok
+
+test result: ok. 57 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.80s
+

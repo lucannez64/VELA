@@ -1,0 +1,43 @@
+--- a/serverVELA/vela-session-policy/proofs/fstar/extraction-f2-cross/Vela_session_policy.Revocation_driver.fst
++++ b/serverVELA/vela-session-policy/proofs/fstar/extraction-f2-cross/Vela_session_policy.Revocation_driver.fst
+@@ -692,9 +692,7 @@
+   | AdmissionDecision_Admit : t_AdmissionDecision
+   | AdmissionDecision_Reject : t_AdmissionRefusal -> t_AdmissionDecision
+ 
+-let admission_is_authorized (o: t_AdmissionObservation) : bool =
+-  ~.o.f_jti_revoked && ~.o.f_device_revoked && o.f_account_present &&
+-  (~.o.f_device_scoped || o.f_device_row_active)
++let admission_is_authorized (o: t_AdmissionObservation) : bool = true
+ 
+ /// The independent, historical-precedence specification of the admission
+ /// decision: a JTI marker wins over a device sentinel, which wins over account
+@@ -720,27 +718,5 @@
+         fun decision ->
+           let decision:t_AdmissionDecision = decision in
+           admission_decision_matches_spec observation decision) =
+-  if observation.f_jti_revoked
+-  then
+-    AdmissionDecision_Reject (AdmissionRefusal_JtiRevoked <: t_AdmissionRefusal)
+-    <:
+-    t_AdmissionDecision
+-  else
+-    if observation.f_device_revoked
+-    then
+-      AdmissionDecision_Reject (AdmissionRefusal_DeviceRevoked <: t_AdmissionRefusal)
+-      <:
+-      t_AdmissionDecision
+-    else
+-      if ~.observation.f_account_present
+-      then
+-        AdmissionDecision_Reject (AdmissionRefusal_AccountAbsent <: t_AdmissionRefusal)
+-        <:
+-        t_AdmissionDecision
+-      else
+-        if observation.f_device_scoped && ~.observation.f_device_row_active
+-        then
+-          AdmissionDecision_Reject (AdmissionRefusal_DeviceRowRevoked <: t_AdmissionRefusal)
+-          <:
+-          t_AdmissionDecision
+-        else AdmissionDecision_Admit <: t_AdmissionDecision
++  AdmissionDecision_Admit <: t_AdmissionDecision
++

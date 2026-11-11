@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# Computational proofs of the hybrid KEM combiner (CryptoVerif 2.12).
+#   kem_v2_x25519_gdh     must prove: uniform-group GDH, other KEM key disclosed
+#   kem_v2_x25519_gdh_sha256 same with SHA-256(ct)/SHA-256(pk) in the KDF input
+#   kem_v2_x25519_gdh_nonuniform must prove: nonuniform/clamped-style exponents,
+#                         explicit collision + rerandomization loss
+#   kem_v2_x25519_gdh_nonuniform_sha256 same with SHA-256(ct)/SHA-256(pk) in the KDF input
+#   kem_v2_x25519_gdh_multi_sha256 must prove: N recipients, Qc challenges,
+#                         multi-user/multi-challenge IND-CCA2 (GDH side)
+#   kem_v2_x25519_gdh_nonuniform_multi_sha256 same for nonuniform exponents
+#   kem_v2_x25519_cofactor_sha256 must prove: cofactor-8 group + kem.rs low-order
+#                         reject check, clamped exponents, SHA-256 bridge
+#   x25519_cofactor_projection must prove: exp(Y,x) and the reject test depend only
+#                         on the prime-order projection pow_8(Y) (exact, cofactor killed)
+#   kem_v2_mlkem_cca      must prove: ML-KEM IND-CCA2/collision bounds, DH key disclosed
+#   kem_v2_mlkem_cca_sha256 same with SHA-256(ct)/SHA-256(pk) in the KDF input
+#   kem_v2_mlkem_cca_multi_sha256 must prove: N recipients, Qc challenges,
+#                         multi-user/multi-challenge IND-CCA2 (ML-KEM side)
+#   kem_v1_x25519_baseline must remain explicitly unproved (not an attack trace)
+#   kem_dem_seal_share    must prove: seal_share (KEM + XChaCha20-Poly1305) is IND-CCA2 PKE
+#   hybrid_sig_mldsa_euf  must prove: AND signature EUF-CMA from ML-DSA alone (Ed25519 key leaked)
+#   hybrid_sig_ed25519_euf must prove: AND signature EUF-CMA from Ed25519 alone (ML-DSA key leaked)
+#   possession_proof_mldsa must prove: RMS possession proof unforgeable from ML-DSA alone (Ed25519 seed leaked)
+#   possession_proof_ed25519 must prove: same from Ed25519 alone (ML-DSA seed leaked)
+#   shamir_share_tags     must prove: a substituted tagged share never reconstructs a different secret
+# Needs `cryptoverif` on PATH (or CRYPTOVERIF=/path/to/cryptoverif) and its
+# library `default.ocvl` next to the binary (or CRYPTOVERIF_LIB=/path/to/default).
+set -euo pipefail
+root=$(cd "$(dirname "$0")" && pwd)
+cv=${CRYPTOVERIF:-$(command -v cryptoverif || true)}
+[[ -x "$cv" ]] || { echo "cryptoverif not found; see security/assurance/04-reproducibility.md" >&2; exit 2; }
+lib=${CRYPTOVERIF_LIB:-$(dirname "$cv")/default}
+out=${VELA_PROOF_OUT:-$(mktemp -d -t vela-cryptoverif.XXXXXX)}
+python3 "$root/check-cryptoverif-boundary.py"
+mkdir -p "$out"
+
+run() {
+  local model=$1 expect=$2 query=$3 log="$out/$1.log"
+  local status=0 got
+  "$root/../assurance/bounded.sh" timeout 600 "$cv" -lib "$lib" "$root/cryptoverif/$model.ocv" >"$log" 2>&1 || status=$?
+  if (( status != 0 )); then
+    echo "$model: proof process failed (exit $status); see $log" >&2
+    exit 1
+  fi
+  if grep -q '^Error' "$log"; then echo "$model: CryptoVerif error; see $log" >&2; exit 1; fi
+  if grep -q '^All queries proved\.' "$log"; then
+    got=proved
+  elif grep -q '^RESULT Could not prove bit secrecy of b\.$' "$log"; then
+    got=unproved
+  else
+    echo "$model: no recognized proof verdict; see $log" >&2
+    exit 1
+  fi
+  if [[ $got == proved ]]; then
+    if [[ $model == x25519_cofactor_projection ]]; then
+      if ! grep -Fq 'RESULT Proved indistinguishability between game 1 and game 2' "$log"; then
+        echo "$model: missing expected query result ($query): cofactor projection equivalence; see $log" >&2
+        exit 1
+      fi
+    elif ! grep -Fq "RESULT Proved $query up to probability " "$log"; then
+      echo "$model: missing expected query result ($query); see $log" >&2
+      exit 1
+    fi
+  fi
+  if [[ $got != "$expect" ]]; then echo "$model: expected $expect, got $got; see $log" >&2; exit 1; fi
+  if [[ $model == kem_v2_x25519_gdh_nonuniform ]]; then
+    python3 "$root/check-cryptoverif-bound.py" "$log"
+  elif [[ $model == kem_v2_x25519_gdh_sha256 || $model == kem_v2_x25519_gdh_nonuniform_sha256 || $model == kem_v2_mlkem_cca_sha256 || $model == kem_v2_x25519_gdh_multi_sha256 || $model == kem_v2_x25519_gdh_nonuniform_multi_sha256 || $model == kem_v2_mlkem_cca_multi_sha256 ]]; then
+    python3 "$root/check-cryptoverif-sha256-bound.py" "$model" "$log"
+  elif [[ $model == kem_v2_x25519_cofactor_sha256 ]]; then
+    python3 "$root/check-cryptoverif-cofactor.py" bound "$log"
+  elif [[ $model == x25519_cofactor_projection ]]; then
+    python3 "$root/check-cryptoverif-cofactor.py" projection "$log"
+  fi
+  echo "$model: $got (as expected)"
+  grep '^RESULT Proved' "$log" | sort -u | sed 's/^/  /' || true
+}
+
+run kem_v2_x25519_gdh proved 'bit secrecy of b'
+run kem_v2_x25519_gdh_sha256 proved 'bit secrecy of b'
+run kem_v2_x25519_gdh_nonuniform proved 'bit secrecy of b'
+run kem_v2_x25519_gdh_nonuniform_sha256 proved 'bit secrecy of b'
+run kem_v2_x25519_gdh_multi_sha256 proved 'bit secrecy of b'
+run kem_v2_x25519_gdh_nonuniform_multi_sha256 proved 'bit secrecy of b'
+run kem_v2_x25519_cofactor_sha256 proved 'bit secrecy of b'
+run x25519_cofactor_projection proved 'indistinguishability'
+run kem_v2_mlkem_cca proved 'bit secrecy of b'
+run kem_v2_mlkem_cca_sha256 proved 'bit secrecy of b'
+run kem_v2_mlkem_cca_multi_sha256 proved 'bit secrecy of b'
+run kem_v1_x25519_baseline unproved 'bit secrecy of b'
+run kem_dem_seal_share proved 'bit secrecy of b'
+run hybrid_sig_mldsa_euf proved 'event(forge) ==> false'
+run hybrid_sig_ed25519_euf proved 'event(forge) ==> false'
+run possession_proof_mldsa proved 'event(forge) ==> false'
+run possession_proof_ed25519 proved 'event(forge) ==> false'
+run shamir_share_tags proved 'event(accepted_wrong_secret) ==> false'
+printf 'Full CryptoVerif logs: %s\n' "$out"

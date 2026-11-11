@@ -1,0 +1,3386 @@
+Doing expand get, insert and prove unique annotations... No change.
+Doing simplify (non-expanded game)... No change.
+Doing expand... __________________
+Elsefind begin
+
+__________________
+Elsefind summary: these terms are true:
+
+Done.
+Doing remove assignments of findcond... No change.
+Doing simplify... __________________
+Elsefind begin
+
+__________________
+Elsefind summary: these terms are true:
+
+Doing global dependency analysis on y inside simplify... At 51, returned message epk depends on y.
+No change
+
+_________________
+Occ = 66 : 
+Substitutions:
+(k0 >>= H(hk, ssm, exp(g, mult(x, y)), epk, exp(g, x), ctm, pkm))
+(epk >>= exp(g, y))
+(ctq = mlencap_ct(pkm, s))
+(pkm >>= mlpkgen(skm))
+(ctm >>= mlencap_ct(pkm, s))
+(ssm >>= mlencap_ss(pkm, s))
+(epkq = exp(g, y))
+Facts:
+Elsefind:
+__________________
+Elsefind begin
+
+__________________
+Elsefind summary: these terms are true:
+
+Doing global dependency analysis on y inside simplify... At 51, returned message epk depends on y.
+No change
+
+_________________
+Occ = 66 : 
+Substitutions:
+(k0 >>= H(hk, ssm, exp(g, mult(x, y)), epk, exp(g, x), ctm, pkm))
+(epk >>= exp(g, y))
+(ctq = mlencap_ct(pkm, s))
+(pkm >>= mlpkgen(skm))
+(ctm >>= mlencap_ct(pkm, s))
+(ssm >>= mlencap_ss(pkm, s))
+(epkq = exp(g, y))
+Facts:
+Elsefind:
+Run simplify 2 time(s). Fixpoint reached.
+Done.
+Doing move all binders... Done.
+Doing SA rename new without array accesses and remove assignments of findcond... No change.
+Doing merge branches... No change.
+__________________
+Elsefind begin
+
+__________________
+Elsefind summary: these terms are true:
+
+Proof of (one-session) secrecy of b failed:
+  at 28, bad usage(s) of b.
+Trying equivalence rom(H)... Transf. OK Proba. computed Transf. done Succeeded.
+Doing simplify (non-expanded game)... No change.
+Doing expand... __________________
+Elsefind begin
+
+-----------------
+Variables known to be currently defined: r_2[ri], x_O_12[ri], x_O_13[ri], x_O_14[ri], x_O_15[ri], x_O_16[ri], x_O_17[ri], x6[ri], x5[ri], x4[ri], x3[ri], x2[ri], x1[ri], x_O_12, x_O_13, x_O_14, x_O_15, x_O_16, x_O_17, x1, x2, x3, x4, x5, x6, x, skm, b
+Program point known to be executed in an else branch of find: {451}[ri]
+Elsefind_fact (before renaming): for all ri; not(defined(x_O_17[ri], x_O_16[ri], x_O_15[ri], x_O_14[ri], x_O_13[ri], x_O_12[ri], r_2[ri]) && ((x_O_17 = x_O_17[ri]) && (x_O_16 = x_O_16[ri]) && (x_O_15 = x_O_15[ri]) && (x_O_14 = x_O_14[ri]) && (x_O_13 = x_O_13[ri]) && (x_O_12 = x_O_12[ri]) && (iH <> ri)))
+Elsefind_fact_vars_before:
+r_2[ri], x_O_12[ri], x_O_13[ri], x_O_14[ri], x_O_15[ri], x_O_16[ri], x_O_17[ri], x1[ri], x2[ri], x3[ri], x4[ri], x5[ri], x6[ri], x, skm, b
+Elsefind_fact (after renaming): for all @ri; not(defined(r_2[@ri]) && ((x_O_17[ri] = x_O_17[@ri]) && (x_O_16[ri] = x_O_16[@ri]) && (x_O_15[ri] = x_O_15[@ri]) && (x_O_14[ri] = x_O_14[@ri]) && (x_O_13[ri] = x_O_13[@ri]) && (x_O_12[ri] = x_O_12[@ri]) && (ri <> @ri)))
+Elsefind_fact_try:
+((x_O_17[ri] = x_O_17[ri]) && (x_O_16[ri] = x_O_16[ri]) && (x_O_15[ri] = x_O_15[ri]) && (x_O_14[ri] = x_O_14[ri]) && (x_O_13[ri] = x_O_13[ri]) && (x_O_12[ri] = x_O_12[ri]) && (ri <> ri))
+And the def_list':
+r_2[ri]
+equal to
+r_2[ri]
+Let's assume that r_2[ri] is defined after or simultaneously {451}[ri]
+Found a usable term: not(((x_O_17[ri] = x_O_17[ri]) && (x_O_16[ri] = x_O_16[ri]) && (x_O_15[ri] = x_O_15[ri]) && (x_O_14[ri] = x_O_14[ri]) && (x_O_13[ri] = x_O_13[ri]) && (x_O_12[ri] = x_O_12[ri]) && (ri <> ri)))
+-----------------
+Variables known to be currently defined: r_2[ri], x_O_12[ri], x_O_13[ri], x_O_14[ri], x_O_15[ri], x_O_16[ri], x_O_17[ri], x6[ri], x5[ri], x4[ri], x3[ri], x2[ri], x1[ri], x_O_12, x_O_13, x_O_14, x_O_15, x_O_16, x_O_17, x1, x2, x3, x4, x5, x6, x, skm, b
+Program point known to be executed in an else branch of find: {451}[ri]
+Elsefind_fact (before renaming): for all ri_1; not(defined(x_O_11[ri_1], x_O_10[ri_1], x_O_9[ri_1], x_O_8[ri_1], x_O_7[ri_1], x_O_6[ri_1], r_1[ri_1]) && ((x_O_17 = x_O_11[ri_1]) && (x_O_16 = x_O_10[ri_1]) && (x_O_15 = x_O_9[ri_1]) && (x_O_14 = x_O_8[ri_1]) && (x_O_13 = x_O_7[ri_1]) && (x_O_12 = x_O_6[ri_1])))
+Elsefind_fact_vars_before:
+r_2[ri], x_O_12[ri], x_O_13[ri], x_O_14[ri], x_O_15[ri], x_O_16[ri], x_O_17[ri], x1[ri], x2[ri], x3[ri], x4[ri], x5[ri], x6[ri], x, skm, b
+Elsefind_fact (after renaming): for all @ri_1; not(defined(r_1[@ri_1]) && ((x_O_17[ri] = x_O_11[@ri_1]) && (x_O_16[ri] = x_O_10[@ri_1]) && (x_O_15[ri] = x_O_9[@ri_1]) && (x_O_14[ri] = x_O_8[@ri_1]) && (x_O_13[ri] = x_O_7[@ri_1]) && (x_O_12[ri] = x_O_6[@ri_1])))
+-----------------
+Variables known to be currently defined: r_2[ri], x_O_12[ri], x_O_13[ri], x_O_14[ri], x_O_15[ri], x_O_16[ri], x_O_17[ri], x6[ri], x5[ri], x4[ri], x3[ri], x2[ri], x1[ri], x_O_12, x_O_13, x_O_14, x_O_15, x_O_16, x_O_17, x1, x2, x3, x4, x5, x6, x, skm, b
+Program point known to be executed in an else branch of find: {451}[ri]
+Elsefind_fact (before renaming): for all ; not(defined(x_O_5, x_O_4, x_O_3, x_O_2, x_O_1, x_O, r) && ((x_O_17 = x_O_5) && (x_O_16 = x_O_4) && (x_O_15 = x_O_3) && (x_O_14 = x_O_2) && (x_O_13 = x_O_1) && (x_O_12 = x_O)))
+Elsefind_fact_vars_before:
+r_2[ri], x_O_12[ri], x_O_13[ri], x_O_14[ri], x_O_15[ri], x_O_16[ri], x_O_17[ri], x1[ri], x2[ri], x3[ri], x4[ri], x5[ri], x6[ri], x, skm, b
+Elsefind_fact (after renaming): for all ; not(defined(r) && ((x_O_17[ri] = x_O_5) && (x_O_16[ri] = x_O_4) && (x_O_15[ri] = x_O_3) && (x_O_14[ri] = x_O_2) && (x_O_13[ri] = x_O_1) && (x_O_12[ri] = x_O)))
+__________________
+Elsefind summary: these terms are true:
+not(((x_O_17[ri] = x_O_17[ri]) && (x_O_16[ri] = x_O_16[ri]) && (x_O_15[ri] = x_O_15[ri]) && (x_O_14[ri] = x_O_14[ri]) && (x_O_13[ri] = x_O_13[ri]) && (x_O_12[ri] = x_O_12[ri]) && (ri <> ri)))
+__________________
+Elsefind begin
+
+-----------------
+Variables known to be currently defined: r_1[ri_1], x_O_6[ri_1], x_O_7[ri_1], x_O_8[ri_1], x_O_9[ri_1], x_O_10[ri_1], x_O_11[ri_1], epkq[ri_1], ctq[ri_1], x_O_12, x_O_13, x_O_14, x_O_15, x_O_16, x_O_17, x1, x2, x3, x4, x5, x6, x, skm, b
+Program point known to be executed in an else branch of find: {305}[ri_1]
+Elsefind_fact (before renaming): for all ri_2; not(defined(x_O_17[ri_2], x_O_16[ri_2], x_O_15[ri_2], x_O_14[ri_2], x_O_13[ri_2], x_O_12[ri_2], r_2[ri_2]) && ((x_O_11 = x_O_17[ri_2]) && (x_O_10 = x_O_16[ri_2]) && (x_O_9 = x_O_15[ri_2]) && (x_O_8 = x_O_14[ri_2]) && (x_O_7 = x_O_13[ri_2]) && (x_O_6 = x_O_12[ri_2])))
+Elsefind_fact_vars_before:
+r_1[ri_1], x_O_6[ri_1], x_O_7[ri_1], x_O_8[ri_1], x_O_9[ri_1], x_O_10[ri_1], x_O_11[ri_1], ctq[ri_1], epkq[ri_1], x, skm, b
+Elsefind_fact (after renaming): for all @ri_2; not(defined(r_2[@ri_2]) && ((x_O_11[ri_1] = x_O_17[@ri_2]) && (x_O_10[ri_1] = x_O_16[@ri_2]) && (x_O_9[ri_1] = x_O_15[@ri_2]) && (x_O_8[ri_1] = x_O_14[@ri_2]) && (x_O_7[ri_1] = x_O_13[@ri_2]) && (x_O_6[ri_1] = x_O_12[@ri_2])))
+-----------------
+Variables known to be currently defined: r_1[ri_1], x_O_6[ri_1], x_O_7[ri_1], x_O_8[ri_1], x_O_9[ri_1], x_O_10[ri_1], x_O_11[ri_1], epkq[ri_1], ctq[ri_1], x_O_12, x_O_13, x_O_14, x_O_15, x_O_16, x_O_17, x1, x2, x3, x4, x5, x6, x, skm, b
+Program point known to be executed in an else branch of find: {305}[ri_1]
+Elsefind_fact (before renaming): for all ri_3; not(defined(x_O_11[ri_3], x_O_10[ri_3], x_O_9[ri_3], x_O_8[ri_3], x_O_7[ri_3], x_O_6[ri_3], r_1[ri_3]) && ((x_O_11 = x_O_11[ri_3]) && (x_O_10 = x_O_10[ri_3]) && (x_O_9 = x_O_9[ri_3]) && (x_O_8 = x_O_8[ri_3]) && (x_O_7 = x_O_7[ri_3]) && (x_O_6 = x_O_6[ri_3]) && (id <> ri_3)))
+Elsefind_fact_vars_before:
+r_1[ri_1], x_O_6[ri_1], x_O_7[ri_1], x_O_8[ri_1], x_O_9[ri_1], x_O_10[ri_1], x_O_11[ri_1], ctq[ri_1], epkq[ri_1], x, skm, b
+Elsefind_fact (after renaming): for all @ri_3; not(defined(r_1[@ri_3]) && ((x_O_11[ri_1] = x_O_11[@ri_3]) && (x_O_10[ri_1] = x_O_10[@ri_3]) && (x_O_9[ri_1] = x_O_9[@ri_3]) && (x_O_8[ri_1] = x_O_8[@ri_3]) && (x_O_7[ri_1] = x_O_7[@ri_3]) && (x_O_6[ri_1] = x_O_6[@ri_3]) && (ri_1 <> @ri_3)))
+Elsefind_fact_try:
+((x_O_11[ri_1] = x_O_11[ri_1]) && (x_O_10[ri_1] = x_O_10[ri_1]) && (x_O_9[ri_1] = x_O_9[ri_1]) && (x_O_8[ri_1] = x_O_8[ri_1]) && (x_O_7[ri_1] = x_O_7[ri_1]) && (x_O_6[ri_1] = x_O_6[ri_1]) && (ri_1 <> ri_1))
+And the def_list':
+r_1[ri_1]
+equal to
+r_1[ri_1]
+Let's assume that r_1[ri_1] is defined after or simultaneously {305}[ri_1]
+Found a usable term: not(((x_O_11[ri_1] = x_O_11[ri_1]) && (x_O_10[ri_1] = x_O_10[ri_1]) && (x_O_9[ri_1] = x_O_9[ri_1]) && (x_O_8[ri_1] = x_O_8[ri_1]) && (x_O_7[ri_1] = x_O_7[ri_1]) && (x_O_6[ri_1] = x_O_6[ri_1]) && (ri_1 <> ri_1)))
+-----------------
+Variables known to be currently defined: r_1[ri_1], x_O_6[ri_1], x_O_7[ri_1], x_O_8[ri_1], x_O_9[ri_1], x_O_10[ri_1], x_O_11[ri_1], epkq[ri_1], ctq[ri_1], x_O_12, x_O_13, x_O_14, x_O_15, x_O_16, x_O_17, x1, x2, x3, x4, x5, x6, x, skm, b
+Program point known to be executed in an else branch of find: {305}[ri_1]
+Elsefind_fact (before renaming): for all ; not(defined(x_O_5, x_O_4, x_O_3, x_O_2, x_O_1, x_O, r) && ((x_O_11 = x_O_5) && (x_O_10 = x_O_4) && (x_O_9 = x_O_3) && (x_O_8 = x_O_2) && (x_O_7 = x_O_1) && (x_O_6 = x_O)))
+Elsefind_fact_vars_before:
+r_1[ri_1], x_O_6[ri_1], x_O_7[ri_1], x_O_8[ri_1], x_O_9[ri_1], x_O_10[ri_1], x_O_11[ri_1], ctq[ri_1], epkq[ri_1], x, skm, b
+Elsefind_fact (after renaming): for all ; not(defined(r) && ((x_O_11[ri_1] = x_O_5) && (x_O_10[ri_1] = x_O_4) && (x_O_9[ri_1] = x_O_3) && (x_O_8[ri_1] = x_O_2) && (x_O_7[ri_1] = x_O_1) && (x_O_6[ri_1] = x_O)))
+-----------------
+Variables known to be currently defined: r_1[ri_1], x_O_6[ri_1], x_O_7[ri_1], x_O_8[ri_1], x_O_9[ri_1], x_O_10[ri_1], x_O_11[ri_1], epkq[ri_1], ctq[ri_1], x_O_12, x_O_13, x_O_14, x_O_15, x_O_16, x_O_17, x1, x2, x3, x4, x5, x6, x, skm, b
+Program point known to be executed in an else branch of find: {305}[ri_1]
+Elsefind_fact (before renaming): for all ; not(defined(ctm, epk) && ((ctq = ctm) && (epkq = epk)))
+Elsefind_fact_vars_before:
+r_1[ri_1], x_O_6[ri_1], x_O_7[ri_1], x_O_8[ri_1], x_O_9[ri_1], x_O_10[ri_1], x_O_11[ri_1], ctq[ri_1], epkq[ri_1], x, skm, b
+Elsefind_fact (after renaming): for all ; not(defined(epk) && ((ctq[ri_1] = ctm) && (epkq[ri_1] = epk)))
+-----------------
+Variables known to be currently defined: r_1[ri_1], x_O_6[ri_1], x_O_7[ri_1], x_O_8[ri_1], x_O_9[ri_1], x_O_10[ri_1], x_O_11[ri_1], epkq[ri_1], ctq[ri_1], x_O_12, x_O_13, x_O_14, x_O_15, x_O_16, x_O_17, x1, x2, x3, x4, x5, x6, x, skm, b
+Program point known to be executed in an else branch of find: {159}[ri_1]
+Elsefind_fact (before renaming): for all ; not(defined(ctm, epk) && ((ctq = ctm) && (epkq = epk)))
+Elsefind_fact_vars_before:
+ctq[ri_1], epkq[ri_1], x, skm, b
+Elsefind_fact (after renaming): for all ; not(defined(epk) && ((ctq[ri_1] = ctm) && (epkq[ri_1] = epk)))
+__________________
+Elsefind summary: these terms are true:
+not(((x_O_11[ri_1] = x_O_11[ri_1]) && (x_O_10[ri_1] = x_O_10[ri_1]) && (x_O_9[ri_1] = x_O_9[ri_1]) && (x_O_8[ri_1] = x_O_8[ri_1]) && (x_O_7[ri_1] = x_O_7[ri_1]) && (x_O_6[ri_1] = x_O_6[ri_1]) && (ri_1 <> ri_1)))
+__________________
+Elsefind begin
+
+-----------------
+Variables known to be currently defined: r, x_O, x_O_1, x_O_2, x_O_3, x_O_4, x_O_5, s, y, pkm, ctm, epk, ssm, x_O_12, x_O_13, x_O_14, x_O_15, x_O_16, x_O_17, x1, x2, x3, x4, x5, x6, x, skm, b
+Program point known to be executed in an else branch of find: {129}
+Elsefind_fact (before renaming): for all ri_4; not(defined(x_O_17[ri_4], x_O_16[ri_4], x_O_15[ri_4], x_O_14[ri_4], x_O_13[ri_4], x_O_12[ri_4], r_2[ri_4]) && ((x_O_5 = x_O_17[ri_4]) && (x_O_4 = x_O_16[ri_4]) && (x_O_3 = x_O_15[ri_4]) && (x_O_2 = x_O_14[ri_4]) && (x_O_1 = x_O_13[ri_4]) && (x_O = x_O_12[ri_4])))
+Elsefind_fact_vars_before:
+r, x_O, x_O_1, x_O_2, x_O_3, x_O_4, x_O_5, ssm, epk, ctm, pkm, y, s, x, skm, b
+Elsefind_fact (after renaming): for all @ri_4; not(defined(r_2[@ri_4]) && ((x_O_5 = x_O_17[@ri_4]) && (x_O_4 = x_O_16[@ri_4]) && (x_O_3 = x_O_15[@ri_4]) && (x_O_2 = x_O_14[@ri_4]) && (x_O_1 = x_O_13[@ri_4]) && (x_O = x_O_12[@ri_4])))
+-----------------
+Variables known to be currently defined: r, x_O, x_O_1, x_O_2, x_O_3, x_O_4, x_O_5, s, y, pkm, ctm, epk, ssm, x_O_12, x_O_13, x_O_14, x_O_15, x_O_16, x_O_17, x1, x2, x3, x4, x5, x6, x, skm, b
+Program point known to be executed in an else branch of find: {129}
+Elsefind_fact (before renaming): for all ri_5; not(defined(x_O_11[ri_5], x_O_10[ri_5], x_O_9[ri_5], x_O_8[ri_5], x_O_7[ri_5], x_O_6[ri_5], r_1[ri_5]) && ((x_O_5 = x_O_11[ri_5]) && (x_O_4 = x_O_10[ri_5]) && (x_O_3 = x_O_9[ri_5]) && (x_O_2 = x_O_8[ri_5]) && (x_O_1 = x_O_7[ri_5]) && (x_O = x_O_6[ri_5])))
+Elsefind_fact_vars_before:
+r, x_O, x_O_1, x_O_2, x_O_3, x_O_4, x_O_5, ssm, epk, ctm, pkm, y, s, x, skm, b
+Elsefind_fact (after renaming): for all @ri_5; not(defined(r_1[@ri_5]) && ((x_O_5 = x_O_11[@ri_5]) && (x_O_4 = x_O_10[@ri_5]) && (x_O_3 = x_O_9[@ri_5]) && (x_O_2 = x_O_8[@ri_5]) && (x_O_1 = x_O_7[@ri_5]) && (x_O = x_O_6[@ri_5])))
+__________________
+Elsefind summary: these terms are true:
+
+__________________
+Elsefind begin
+
+-----------------
+Variables known to be currently defined: r_2[ri_2], x_O_12[ri_2], x_O_13[ri_2], x_O_14[ri_2], x_O_15[ri_2], x_O_16[ri_2], x_O_17[ri_2], x6[ri_2], x5[ri_2], x4[ri_2], x3[ri_2], x2[ri_2], x1[ri_2], x_O_6, x_O_7, x_O_8, x_O_9, x_O_10, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {451}[ri_2]
+Elsefind_fact (before renaming): for all ri; not(defined(x_O_17[ri], x_O_16[ri], x_O_15[ri], x_O_14[ri], x_O_13[ri], x_O_12[ri], r_2[ri]) && ((x_O_17 = x_O_17[ri]) && (x_O_16 = x_O_16[ri]) && (x_O_15 = x_O_15[ri]) && (x_O_14 = x_O_14[ri]) && (x_O_13 = x_O_13[ri]) && (x_O_12 = x_O_12[ri]) && (iH <> ri)))
+Elsefind_fact_vars_before:
+r_2[ri_2], x_O_12[ri_2], x_O_13[ri_2], x_O_14[ri_2], x_O_15[ri_2], x_O_16[ri_2], x_O_17[ri_2], x1[ri_2], x2[ri_2], x3[ri_2], x4[ri_2], x5[ri_2], x6[ri_2], x, skm, b
+Elsefind_fact (after renaming): for all @ri_6; not(defined(r_2[@ri_6]) && ((x_O_17[ri_2] = x_O_17[@ri_6]) && (x_O_16[ri_2] = x_O_16[@ri_6]) && (x_O_15[ri_2] = x_O_15[@ri_6]) && (x_O_14[ri_2] = x_O_14[@ri_6]) && (x_O_13[ri_2] = x_O_13[@ri_6]) && (x_O_12[ri_2] = x_O_12[@ri_6]) && (ri_2 <> @ri_6)))
+Elsefind_fact_try:
+((x_O_17[ri_2] = x_O_17[ri_2]) && (x_O_16[ri_2] = x_O_16[ri_2]) && (x_O_15[ri_2] = x_O_15[ri_2]) && (x_O_14[ri_2] = x_O_14[ri_2]) && (x_O_13[ri_2] = x_O_13[ri_2]) && (x_O_12[ri_2] = x_O_12[ri_2]) && (ri_2 <> ri_2))
+And the def_list':
+r_2[ri_2]
+equal to
+r_2[ri_2]
+Let's assume that r_2[ri_2] is defined after or simultaneously {451}[ri_2]
+Found a usable term: not(((x_O_17[ri_2] = x_O_17[ri_2]) && (x_O_16[ri_2] = x_O_16[ri_2]) && (x_O_15[ri_2] = x_O_15[ri_2]) && (x_O_14[ri_2] = x_O_14[ri_2]) && (x_O_13[ri_2] = x_O_13[ri_2]) && (x_O_12[ri_2] = x_O_12[ri_2]) && (ri_2 <> ri_2)))
+-----------------
+Variables known to be currently defined: r_2[ri_2], x_O_12[ri_2], x_O_13[ri_2], x_O_14[ri_2], x_O_15[ri_2], x_O_16[ri_2], x_O_17[ri_2], x6[ri_2], x5[ri_2], x4[ri_2], x3[ri_2], x2[ri_2], x1[ri_2], x_O_6, x_O_7, x_O_8, x_O_9, x_O_10, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {451}[ri_2]
+Elsefind_fact (before renaming): for all ri_1; not(defined(x_O_11[ri_1], x_O_10[ri_1], x_O_9[ri_1], x_O_8[ri_1], x_O_7[ri_1], x_O_6[ri_1], r_1[ri_1]) && ((x_O_17 = x_O_11[ri_1]) && (x_O_16 = x_O_10[ri_1]) && (x_O_15 = x_O_9[ri_1]) && (x_O_14 = x_O_8[ri_1]) && (x_O_13 = x_O_7[ri_1]) && (x_O_12 = x_O_6[ri_1])))
+Elsefind_fact_vars_before:
+r_2[ri_2], x_O_12[ri_2], x_O_13[ri_2], x_O_14[ri_2], x_O_15[ri_2], x_O_16[ri_2], x_O_17[ri_2], x1[ri_2], x2[ri_2], x3[ri_2], x4[ri_2], x5[ri_2], x6[ri_2], x, skm, b
+Elsefind_fact (after renaming): for all @ri_7; not(defined(r_1[@ri_7]) && ((x_O_17[ri_2] = x_O_11[@ri_7]) && (x_O_16[ri_2] = x_O_10[@ri_7]) && (x_O_15[ri_2] = x_O_9[@ri_7]) && (x_O_14[ri_2] = x_O_8[@ri_7]) && (x_O_13[ri_2] = x_O_7[@ri_7]) && (x_O_12[ri_2] = x_O_6[@ri_7])))
+-----------------
+Variables known to be currently defined: r_2[ri_2], x_O_12[ri_2], x_O_13[ri_2], x_O_14[ri_2], x_O_15[ri_2], x_O_16[ri_2], x_O_17[ri_2], x6[ri_2], x5[ri_2], x4[ri_2], x3[ri_2], x2[ri_2], x1[ri_2], x_O_6, x_O_7, x_O_8, x_O_9, x_O_10, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {451}[ri_2]
+Elsefind_fact (before renaming): for all ; not(defined(x_O_5, x_O_4, x_O_3, x_O_2, x_O_1, x_O, r) && ((x_O_17 = x_O_5) && (x_O_16 = x_O_4) && (x_O_15 = x_O_3) && (x_O_14 = x_O_2) && (x_O_13 = x_O_1) && (x_O_12 = x_O)))
+Elsefind_fact_vars_before:
+r_2[ri_2], x_O_12[ri_2], x_O_13[ri_2], x_O_14[ri_2], x_O_15[ri_2], x_O_16[ri_2], x_O_17[ri_2], x1[ri_2], x2[ri_2], x3[ri_2], x4[ri_2], x5[ri_2], x6[ri_2], x, skm, b
+Elsefind_fact (after renaming): for all ; not(defined(r) && ((x_O_17[ri_2] = x_O_5) && (x_O_16[ri_2] = x_O_4) && (x_O_15[ri_2] = x_O_3) && (x_O_14[ri_2] = x_O_2) && (x_O_13[ri_2] = x_O_1) && (x_O_12[ri_2] = x_O)))
+-----------------
+Variables known to be currently defined: r_2[ri_2], x_O_12[ri_2], x_O_13[ri_2], x_O_14[ri_2], x_O_15[ri_2], x_O_16[ri_2], x_O_17[ri_2], x6[ri_2], x5[ri_2], x4[ri_2], x3[ri_2], x2[ri_2], x1[ri_2], x_O_6, x_O_7, x_O_8, x_O_9, x_O_10, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {183}[id]
+Elsefind_fact (before renaming): for all ; not(defined(ctm, epk) && ((ctq = ctm) && (epkq = epk)))
+Elsefind_fact_vars_before:
+x_O_6, x_O_7, x_O_8, x_O_9, x_O_10, x_O_11, ctq, epkq, x, skm, b
+Elsefind_fact (after renaming): for all ; not(defined(epk) && ((ctq = ctm) && (epkq = epk)))
+-----------------
+Variables known to be currently defined: r_2[ri_2], x_O_12[ri_2], x_O_13[ri_2], x_O_14[ri_2], x_O_15[ri_2], x_O_16[ri_2], x_O_17[ri_2], x6[ri_2], x5[ri_2], x4[ri_2], x3[ri_2], x2[ri_2], x1[ri_2], x_O_6, x_O_7, x_O_8, x_O_9, x_O_10, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {159}[id]
+Elsefind_fact (before renaming): for all ; not(defined(ctm, epk) && ((ctq = ctm) && (epkq = epk)))
+Elsefind_fact_vars_before:
+ctq, epkq, x, skm, b
+Elsefind_fact (after renaming): for all ; not(defined(epk) && ((ctq = ctm) && (epkq = epk)))
+__________________
+Elsefind summary: these terms are true:
+not(((x_O_17[ri_2] = x_O_17[ri_2]) && (x_O_16[ri_2] = x_O_16[ri_2]) && (x_O_15[ri_2] = x_O_15[ri_2]) && (x_O_14[ri_2] = x_O_14[ri_2]) && (x_O_13[ri_2] = x_O_13[ri_2]) && (x_O_12[ri_2] = x_O_12[ri_2]) && (ri_2 <> ri_2)))
+__________________
+Elsefind begin
+
+-----------------
+Variables known to be currently defined: r_1[ri_3], x_O_6[ri_3], x_O_7[ri_3], x_O_8[ri_3], x_O_9[ri_3], x_O_10[ri_3], x_O_11[ri_3], epkq[ri_3], ctq[ri_3], x_O_6, x_O_7, x_O_8, x_O_9, x_O_10, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {305}[ri_3]
+Elsefind_fact (before renaming): for all ri_2; not(defined(x_O_17[ri_2], x_O_16[ri_2], x_O_15[ri_2], x_O_14[ri_2], x_O_13[ri_2], x_O_12[ri_2], r_2[ri_2]) && ((x_O_11 = x_O_17[ri_2]) && (x_O_10 = x_O_16[ri_2]) && (x_O_9 = x_O_15[ri_2]) && (x_O_8 = x_O_14[ri_2]) && (x_O_7 = x_O_13[ri_2]) && (x_O_6 = x_O_12[ri_2])))
+Elsefind_fact_vars_before:
+r_1[ri_3], x_O_6[ri_3], x_O_7[ri_3], x_O_8[ri_3], x_O_9[ri_3], x_O_10[ri_3], x_O_11[ri_3], ctq[ri_3], epkq[ri_3], x, skm, b
+Elsefind_fact (after renaming): for all @ri_8; not(defined(r_2[@ri_8]) && ((x_O_11[ri_3] = x_O_17[@ri_8]) && (x_O_10[ri_3] = x_O_16[@ri_8]) && (x_O_9[ri_3] = x_O_15[@ri_8]) && (x_O_8[ri_3] = x_O_14[@ri_8]) && (x_O_7[ri_3] = x_O_13[@ri_8]) && (x_O_6[ri_3] = x_O_12[@ri_8])))
+-----------------
+Variables known to be currently defined: r_1[ri_3], x_O_6[ri_3], x_O_7[ri_3], x_O_8[ri_3], x_O_9[ri_3], x_O_10[ri_3], x_O_11[ri_3], epkq[ri_3], ctq[ri_3], x_O_6, x_O_7, x_O_8, x_O_9, x_O_10, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {305}[ri_3]
+Elsefind_fact (before renaming): for all ri_3; not(defined(x_O_11[ri_3], x_O_10[ri_3], x_O_9[ri_3], x_O_8[ri_3], x_O_7[ri_3], x_O_6[ri_3], r_1[ri_3]) && ((x_O_11 = x_O_11[ri_3]) && (x_O_10 = x_O_10[ri_3]) && (x_O_9 = x_O_9[ri_3]) && (x_O_8 = x_O_8[ri_3]) && (x_O_7 = x_O_7[ri_3]) && (x_O_6 = x_O_6[ri_3]) && (id <> ri_3)))
+Elsefind_fact_vars_before:
+r_1[ri_3], x_O_6[ri_3], x_O_7[ri_3], x_O_8[ri_3], x_O_9[ri_3], x_O_10[ri_3], x_O_11[ri_3], ctq[ri_3], epkq[ri_3], x, skm, b
+Elsefind_fact (after renaming): for all @ri_9; not(defined(r_1[@ri_9]) && ((x_O_11[ri_3] = x_O_11[@ri_9]) && (x_O_10[ri_3] = x_O_10[@ri_9]) && (x_O_9[ri_3] = x_O_9[@ri_9]) && (x_O_8[ri_3] = x_O_8[@ri_9]) && (x_O_7[ri_3] = x_O_7[@ri_9]) && (x_O_6[ri_3] = x_O_6[@ri_9]) && (ri_3 <> @ri_9)))
+Elsefind_fact_try:
+((x_O_11[ri_3] = x_O_11[ri_3]) && (x_O_10[ri_3] = x_O_10[ri_3]) && (x_O_9[ri_3] = x_O_9[ri_3]) && (x_O_8[ri_3] = x_O_8[ri_3]) && (x_O_7[ri_3] = x_O_7[ri_3]) && (x_O_6[ri_3] = x_O_6[ri_3]) && (ri_3 <> ri_3))
+And the def_list':
+r_1[ri_3]
+equal to
+r_1[ri_3]
+Let's assume that r_1[ri_3] is defined after or simultaneously {305}[ri_3]
+Found a usable term: not(((x_O_11[ri_3] = x_O_11[ri_3]) && (x_O_10[ri_3] = x_O_10[ri_3]) && (x_O_9[ri_3] = x_O_9[ri_3]) && (x_O_8[ri_3] = x_O_8[ri_3]) && (x_O_7[ri_3] = x_O_7[ri_3]) && (x_O_6[ri_3] = x_O_6[ri_3]) && (ri_3 <> ri_3)))
+-----------------
+Variables known to be currently defined: r_1[ri_3], x_O_6[ri_3], x_O_7[ri_3], x_O_8[ri_3], x_O_9[ri_3], x_O_10[ri_3], x_O_11[ri_3], epkq[ri_3], ctq[ri_3], x_O_6, x_O_7, x_O_8, x_O_9, x_O_10, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {305}[ri_3]
+Elsefind_fact (before renaming): for all ; not(defined(x_O_5, x_O_4, x_O_3, x_O_2, x_O_1, x_O, r) && ((x_O_11 = x_O_5) && (x_O_10 = x_O_4) && (x_O_9 = x_O_3) && (x_O_8 = x_O_2) && (x_O_7 = x_O_1) && (x_O_6 = x_O)))
+Elsefind_fact_vars_before:
+r_1[ri_3], x_O_6[ri_3], x_O_7[ri_3], x_O_8[ri_3], x_O_9[ri_3], x_O_10[ri_3], x_O_11[ri_3], ctq[ri_3], epkq[ri_3], x, skm, b
+Elsefind_fact (after renaming): for all ; not(defined(r) && ((x_O_11[ri_3] = x_O_5) && (x_O_10[ri_3] = x_O_4) && (x_O_9[ri_3] = x_O_3) && (x_O_8[ri_3] = x_O_2) && (x_O_7[ri_3] = x_O_1) && (x_O_6[ri_3] = x_O)))
+-----------------
+Variables known to be currently defined: r_1[ri_3], x_O_6[ri_3], x_O_7[ri_3], x_O_8[ri_3], x_O_9[ri_3], x_O_10[ri_3], x_O_11[ri_3], epkq[ri_3], ctq[ri_3], x_O_6, x_O_7, x_O_8, x_O_9, x_O_10, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {305}[ri_3]
+Elsefind_fact (before renaming): for all ; not(defined(ctm, epk) && ((ctq = ctm) && (epkq = epk)))
+Elsefind_fact_vars_before:
+r_1[ri_3], x_O_6[ri_3], x_O_7[ri_3], x_O_8[ri_3], x_O_9[ri_3], x_O_10[ri_3], x_O_11[ri_3], ctq[ri_3], epkq[ri_3], x, skm, b
+Elsefind_fact (after renaming): for all ; not(defined(epk) && ((ctq[ri_3] = ctm) && (epkq[ri_3] = epk)))
+-----------------
+Variables known to be currently defined: r_1[ri_3], x_O_6[ri_3], x_O_7[ri_3], x_O_8[ri_3], x_O_9[ri_3], x_O_10[ri_3], x_O_11[ri_3], epkq[ri_3], ctq[ri_3], x_O_6, x_O_7, x_O_8, x_O_9, x_O_10, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {159}[ri_3]
+Elsefind_fact (before renaming): for all ; not(defined(ctm, epk) && ((ctq = ctm) && (epkq = epk)))
+Elsefind_fact_vars_before:
+ctq[ri_3], epkq[ri_3], x, skm, b
+Elsefind_fact (after renaming): for all ; not(defined(epk) && ((ctq[ri_3] = ctm) && (epkq[ri_3] = epk)))
+-----------------
+Variables known to be currently defined: r_1[ri_3], x_O_6[ri_3], x_O_7[ri_3], x_O_8[ri_3], x_O_9[ri_3], x_O_10[ri_3], x_O_11[ri_3], epkq[ri_3], ctq[ri_3], x_O_6, x_O_7, x_O_8, x_O_9, x_O_10, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {183}[id]
+Elsefind_fact (before renaming): for all ; not(defined(ctm, epk) && ((ctq = ctm) && (epkq = epk)))
+Elsefind_fact_vars_before:
+x_O_6, x_O_7, x_O_8, x_O_9, x_O_10, x_O_11, ctq, epkq, x, skm, b
+Elsefind_fact (after renaming): for all ; not(defined(epk) && ((ctq = ctm) && (epkq = epk)))
+-----------------
+Variables known to be currently defined: r_1[ri_3], x_O_6[ri_3], x_O_7[ri_3], x_O_8[ri_3], x_O_9[ri_3], x_O_10[ri_3], x_O_11[ri_3], epkq[ri_3], ctq[ri_3], x_O_6, x_O_7, x_O_8, x_O_9, x_O_10, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {159}[id]
+Elsefind_fact (before renaming): for all ; not(defined(ctm, epk) && ((ctq = ctm) && (epkq = epk)))
+Elsefind_fact_vars_before:
+ctq, epkq, x, skm, b
+Elsefind_fact (after renaming): for all ; not(defined(epk) && ((ctq = ctm) && (epkq = epk)))
+__________________
+Elsefind summary: these terms are true:
+not(((x_O_11[ri_3] = x_O_11[ri_3]) && (x_O_10[ri_3] = x_O_10[ri_3]) && (x_O_9[ri_3] = x_O_9[ri_3]) && (x_O_8[ri_3] = x_O_8[ri_3]) && (x_O_7[ri_3] = x_O_7[ri_3]) && (x_O_6[ri_3] = x_O_6[ri_3]) && (ri_3 <> ri_3)))
+__________________
+Elsefind begin
+
+-----------------
+Variables known to be currently defined: r, x_O, x_O_1, x_O_2, x_O_3, x_O_4, x_O_5, s, y, pkm, ctm, epk, ssm, x_O_6, x_O_7, x_O_8, x_O_9, x_O_10, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {129}
+Elsefind_fact (before renaming): for all ri_4; not(defined(x_O_17[ri_4], x_O_16[ri_4], x_O_15[ri_4], x_O_14[ri_4], x_O_13[ri_4], x_O_12[ri_4], r_2[ri_4]) && ((x_O_5 = x_O_17[ri_4]) && (x_O_4 = x_O_16[ri_4]) && (x_O_3 = x_O_15[ri_4]) && (x_O_2 = x_O_14[ri_4]) && (x_O_1 = x_O_13[ri_4]) && (x_O = x_O_12[ri_4])))
+Elsefind_fact_vars_before:
+r, x_O, x_O_1, x_O_2, x_O_3, x_O_4, x_O_5, ssm, epk, ctm, pkm, y, s, x, skm, b
+Elsefind_fact (after renaming): for all @ri_10; not(defined(r_2[@ri_10]) && ((x_O_5 = x_O_17[@ri_10]) && (x_O_4 = x_O_16[@ri_10]) && (x_O_3 = x_O_15[@ri_10]) && (x_O_2 = x_O_14[@ri_10]) && (x_O_1 = x_O_13[@ri_10]) && (x_O = x_O_12[@ri_10])))
+-----------------
+Variables known to be currently defined: r, x_O, x_O_1, x_O_2, x_O_3, x_O_4, x_O_5, s, y, pkm, ctm, epk, ssm, x_O_6, x_O_7, x_O_8, x_O_9, x_O_10, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {129}
+Elsefind_fact (before renaming): for all ri_5; not(defined(x_O_11[ri_5], x_O_10[ri_5], x_O_9[ri_5], x_O_8[ri_5], x_O_7[ri_5], x_O_6[ri_5], r_1[ri_5]) && ((x_O_5 = x_O_11[ri_5]) && (x_O_4 = x_O_10[ri_5]) && (x_O_3 = x_O_9[ri_5]) && (x_O_2 = x_O_8[ri_5]) && (x_O_1 = x_O_7[ri_5]) && (x_O = x_O_6[ri_5])))
+Elsefind_fact_vars_before:
+r, x_O, x_O_1, x_O_2, x_O_3, x_O_4, x_O_5, ssm, epk, ctm, pkm, y, s, x, skm, b
+Elsefind_fact (after renaming): for all @ri_11; not(defined(r_1[@ri_11]) && ((x_O_5 = x_O_11[@ri_11]) && (x_O_4 = x_O_10[@ri_11]) && (x_O_3 = x_O_9[@ri_11]) && (x_O_2 = x_O_8[@ri_11]) && (x_O_1 = x_O_7[@ri_11]) && (x_O = x_O_6[@ri_11])))
+-----------------
+Variables known to be currently defined: r, x_O, x_O_1, x_O_2, x_O_3, x_O_4, x_O_5, s, y, pkm, ctm, epk, ssm, x_O_6, x_O_7, x_O_8, x_O_9, x_O_10, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {183}[id]
+Elsefind_fact (before renaming): for all ; not(defined(ctm, epk) && ((ctq = ctm) && (epkq = epk)))
+Elsefind_fact_vars_before:
+x_O_6, x_O_7, x_O_8, x_O_9, x_O_10, x_O_11, ctq, epkq, x, skm, b
+Elsefind_fact (after renaming): for all ; not(defined(epk) && ((ctq = ctm) && (epkq = epk)))
+Elsefind_fact_try:
+((ctq = ctm) && (epkq = epk))
+And the def_list':
+epk
+equal to
+epk
+Let's assume that epk is defined after or simultaneously {183}[id]
+Elsefind_fact add_vars stopped
+Elsefind_fact_future_vars:
+ssm, x_O_5, x_O_4, x_O_3, x_O_2, x_O_1, x_O, r, s, y, pkm, ctm, epk
+--Args to dependency_collision:
+Cur_array=id
+Order assumptions=epk defined after or at the same time as {183}[id]
+Depinfo=previous lists
+Facts=
+Substitutions:
+(x_O >>= mlpkgen(skm))
+(x_O_2 >>= exp(g, x))
+(x_O_4 >>= exp(g, mult(x, y)))
+(ssm >>= mlencap_ss(pkm, s))
+(epk >>= exp(g, y))
+(pkm >>= mlpkgen(skm))
+(x_O_7 >>= ctq)
+(x_O_9 >>= epkq)
+(x_O_11 >>= mldecap(ctq, skm))
+(x_O_10 >>= exp(epkq, x))
+(x_O_8 >>= exp(g, x))
+(x_O_6 >>= mlpkgen(skm))
+(ctm >>= mlencap_ct(pkm, s))
+(b = true)
+(x_O_5 >>= mlencap_ss(pkm, s))
+(x_O_3 >>= exp(g, y))
+(x_O_1 >>= mlencap_ct(pkm, s))
+Facts:
+Elsefind:
+for all ; not(defined(ctm, epk) && ((ctq = ctm) && (epkq = epk)))
+
+t'=((ctq = ctm) && (epkq = epk))
+--End of args
+simplif_add (x_O >>= mlpkgen(skm)) knowing
+Substitutions:
+Facts:
+Elsefind:
+
+Adding (x_O >>= mlpkgen(skm))
+simplif_add (x_O_2 >>= exp(g, x)) knowing
+Substitutions:
+(x_O >>= mlpkgen(skm))
+Facts:
+Elsefind:
+
+Adding (x_O_2 >>= exp(g, x))
+simplif_add (x_O_4 >>= exp(g, mult(x, y))) knowing
+Substitutions:
+(x_O_2 >>= exp(g, x))
+(x_O >>= mlpkgen(skm))
+Facts:
+Elsefind:
+
+Adding (x_O_4 >>= exp(g, mult(x, y)))
+simplif_add (ssm >>= mlencap_ss(pkm, s)) knowing
+Substitutions:
+(x_O_4 >>= exp(g, mult(x, y)))
+(x_O >>= mlpkgen(skm))
+(x_O_2 >>= exp(g, x))
+Facts:
+Elsefind:
+
+Adding (ssm >>= mlencap_ss(pkm, s))
+simplif_add (epk >>= exp(g, y)) knowing
+Substitutions:
+(ssm >>= mlencap_ss(pkm, s))
+(x_O_2 >>= exp(g, x))
+(x_O >>= mlpkgen(skm))
+(x_O_4 >>= exp(g, mult(x, y)))
+Facts:
+Elsefind:
+
+Adding (epk >>= exp(g, y))
+simplif_add (pkm >>= mlpkgen(skm)) knowing
+Substitutions:
+(epk >>= exp(g, y))
+(x_O_4 >>= exp(g, mult(x, y)))
+(x_O >>= mlpkgen(skm))
+(x_O_2 >>= exp(g, x))
+(ssm >>= mlencap_ss(pkm, s))
+Facts:
+Elsefind:
+
+Adding (pkm >>= mlpkgen(skm))
+simplif_add (x_O_7 >>= ctq) knowing
+Substitutions:
+(pkm >>= mlpkgen(skm))
+(ssm >>= mlencap_ss(pkm, s))
+(x_O_2 >>= exp(g, x))
+(x_O >>= mlpkgen(skm))
+(x_O_4 >>= exp(g, mult(x, y)))
+(epk >>= exp(g, y))
+Facts:
+Elsefind:
+
+Adding (x_O_7 >>= ctq)
+simplif_add (x_O_9 >>= epkq) knowing
+Substitutions:
+(x_O_7 >>= ctq)
+(epk >>= exp(g, y))
+(x_O_4 >>= exp(g, mult(x, y)))
+(x_O >>= mlpkgen(skm))
+(x_O_2 >>= exp(g, x))
+(ssm >>= mlencap_ss(pkm, s))
+(pkm >>= mlpkgen(skm))
+Facts:
+Elsefind:
+
+Adding (x_O_9 >>= epkq)
+simplif_add (x_O_11 >>= mldecap(ctq, skm)) knowing
+Substitutions:
+(x_O_9 >>= epkq)
+(pkm >>= mlpkgen(skm))
+(ssm >>= mlencap_ss(pkm, s))
+(x_O_2 >>= exp(g, x))
+(x_O >>= mlpkgen(skm))
+(x_O_4 >>= exp(g, mult(x, y)))
+(epk >>= exp(g, y))
+(x_O_7 >>= ctq)
+Facts:
+Elsefind:
+
+Adding (x_O_11 >>= mldecap(ctq, skm))
+simplif_add (x_O_10 >>= exp(epkq, x)) knowing
+Substitutions:
+(x_O_11 >>= mldecap(ctq, skm))
+(x_O_7 >>= ctq)
+(epk >>= exp(g, y))
+(x_O_4 >>= exp(g, mult(x, y)))
+(x_O >>= mlpkgen(skm))
+(x_O_2 >>= exp(g, x))
+(ssm >>= mlencap_ss(pkm, s))
+(pkm >>= mlpkgen(skm))
+(x_O_9 >>= epkq)
+Facts:
+Elsefind:
+
+Adding (x_O_10 >>= exp(epkq, x))
+simplif_add (x_O_8 >>= exp(g, x)) knowing
+Substitutions:
+(x_O_10 >>= exp(epkq, x))
+(x_O_9 >>= epkq)
+(pkm >>= mlpkgen(skm))
+(ssm >>= mlencap_ss(pkm, s))
+(x_O_2 >>= exp(g, x))
+(x_O >>= mlpkgen(skm))
+(x_O_4 >>= exp(g, mult(x, y)))
+(epk >>= exp(g, y))
+(x_O_7 >>= ctq)
+(x_O_11 >>= mldecap(ctq, skm))
+Facts:
+Elsefind:
+
+Adding (x_O_8 >>= exp(g, x))
+simplif_add (x_O_6 >>= mlpkgen(skm)) knowing
+Substitutions:
+(x_O_8 >>= exp(g, x))
+(x_O_11 >>= mldecap(ctq, skm))
+(x_O_7 >>= ctq)
+(epk >>= exp(g, y))
+(x_O_4 >>= exp(g, mult(x, y)))
+(x_O >>= mlpkgen(skm))
+(x_O_2 >>= exp(g, x))
+(ssm >>= mlencap_ss(pkm, s))
+(pkm >>= mlpkgen(skm))
+(x_O_9 >>= epkq)
+(x_O_10 >>= exp(epkq, x))
+Facts:
+Elsefind:
+
+Adding (x_O_6 >>= mlpkgen(skm))
+simplif_add (ctm >>= mlencap_ct(pkm, s)) knowing
+Substitutions:
+(x_O_6 >>= mlpkgen(skm))
+(x_O_10 >>= exp(epkq, x))
+(x_O_9 >>= epkq)
+(pkm >>= mlpkgen(skm))
+(ssm >>= mlencap_ss(pkm, s))
+(x_O_2 >>= exp(g, x))
+(x_O >>= mlpkgen(skm))
+(x_O_4 >>= exp(g, mult(x, y)))
+(epk >>= exp(g, y))
+(x_O_7 >>= ctq)
+(x_O_11 >>= mldecap(ctq, skm))
+(x_O_8 >>= exp(g, x))
+Facts:
+Elsefind:
+
+Adding (ctm >>= mlencap_ct(pkm, s))
+simplif_add (b = true) knowing
+Substitutions:
+(ctm >>= mlencap_ct(pkm, s))
+(x_O_8 >>= exp(g, x))
+(x_O_11 >>= mldecap(ctq, skm))
+(x_O_7 >>= ctq)
+(epk >>= exp(g, y))
+(x_O_4 >>= exp(g, mult(x, y)))
+(x_O >>= mlpkgen(skm))
+(x_O_2 >>= exp(g, x))
+(ssm >>= mlencap_ss(pkm, s))
+(pkm >>= mlpkgen(skm))
+(x_O_9 >>= epkq)
+(x_O_10 >>= exp(epkq, x))
+(x_O_6 >>= mlpkgen(skm))
+Facts:
+Elsefind:
+
+Adding b
+simplif_add (x_O_5 >>= mlencap_ss(pkm, s)) knowing
+Substitutions:
+(b = true)
+(x_O_6 >>= mlpkgen(skm))
+(x_O_10 >>= exp(epkq, x))
+(x_O_9 >>= epkq)
+(pkm >>= mlpkgen(skm))
+(ssm >>= mlencap_ss(pkm, s))
+(x_O_2 >>= exp(g, x))
+(x_O >>= mlpkgen(skm))
+(x_O_4 >>= exp(g, mult(x, y)))
+(epk >>= exp(g, y))
+(x_O_7 >>= ctq)
+(x_O_11 >>= mldecap(ctq, skm))
+(x_O_8 >>= exp(g, x))
+(ctm >>= mlencap_ct(pkm, s))
+Facts:
+Elsefind:
+
+Adding (x_O_5 >>= mlencap_ss(pkm, s))
+simplif_add (x_O_3 >>= exp(g, y)) knowing
+Substitutions:
+(x_O_5 >>= mlencap_ss(pkm, s))
+(ctm >>= mlencap_ct(pkm, s))
+(x_O_8 >>= exp(g, x))
+(x_O_11 >>= mldecap(ctq, skm))
+(x_O_7 >>= ctq)
+(epk >>= exp(g, y))
+(x_O_4 >>= exp(g, mult(x, y)))
+(x_O >>= mlpkgen(skm))
+(x_O_2 >>= exp(g, x))
+(ssm >>= mlencap_ss(pkm, s))
+(pkm >>= mlpkgen(skm))
+(x_O_9 >>= epkq)
+(x_O_10 >>= exp(epkq, x))
+(x_O_6 >>= mlpkgen(skm))
+(b = true)
+Facts:
+Elsefind:
+
+Adding (x_O_3 >>= exp(g, y))
+simplif_add (x_O_1 >>= mlencap_ct(pkm, s)) knowing
+Substitutions:
+(x_O_3 >>= exp(g, y))
+(b = true)
+(x_O_6 >>= mlpkgen(skm))
+(x_O_10 >>= exp(epkq, x))
+(x_O_9 >>= epkq)
+(pkm >>= mlpkgen(skm))
+(ssm >>= mlencap_ss(pkm, s))
+(x_O_2 >>= exp(g, x))
+(x_O >>= mlpkgen(skm))
+(x_O_4 >>= exp(g, mult(x, y)))
+(epk >>= exp(g, y))
+(x_O_7 >>= ctq)
+(x_O_11 >>= mldecap(ctq, skm))
+(x_O_8 >>= exp(g, x))
+(ctm >>= mlencap_ct(pkm, s))
+(x_O_5 >>= mlencap_ss(pkm, s))
+Facts:
+Elsefind:
+
+Adding (x_O_1 >>= mlencap_ct(pkm, s))
+simplif_add ((ctq = ctm) && (epkq = epk)) knowing
+Substitutions:
+(x_O_1 >>= mlencap_ct(pkm, s))
+(x_O_5 >>= mlencap_ss(pkm, s))
+(ctm >>= mlencap_ct(pkm, s))
+(x_O_8 >>= exp(g, x))
+(x_O_11 >>= mldecap(ctq, skm))
+(x_O_7 >>= ctq)
+(epk >>= exp(g, y))
+(x_O_4 >>= exp(g, mult(x, y)))
+(x_O >>= mlpkgen(skm))
+(x_O_2 >>= exp(g, x))
+(ssm >>= mlencap_ss(pkm, s))
+(pkm >>= mlpkgen(skm))
+(x_O_9 >>= epkq)
+(x_O_10 >>= exp(epkq, x))
+(x_O_6 >>= mlpkgen(skm))
+(b = true)
+(x_O_3 >>= exp(g, y))
+Facts:
+Elsefind:
+
+Adding false
+Obtained a contradiction.
+Found a usable term: not(((ctq = ctm) && (epkq = epk)))
+-----------------
+Variables known to be currently defined: r, x_O, x_O_1, x_O_2, x_O_3, x_O_4, x_O_5, s, y, pkm, ctm, epk, ssm, x_O_6, x_O_7, x_O_8, x_O_9, x_O_10, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {159}[id]
+Elsefind_fact (before renaming): for all ; not(defined(ctm, epk) && ((ctq = ctm) && (epkq = epk)))
+Elsefind_fact_vars_before:
+ctq, epkq, x, skm, b
+Elsefind_fact (after renaming): for all ; not(defined(epk) && ((ctq = ctm) && (epkq = epk)))
+Elsefind_fact_try:
+((ctq = ctm) && (epkq = epk))
+And the def_list':
+epk
+equal to
+epk
+Let's assume that epk is defined after or simultaneously {159}[id]
+Elsefind_fact add_vars stopped
+Elsefind_fact_future_vars:
+x_O_11, x_O_10, x_O_9, x_O_8, x_O_7, x_O_6, ssm, x_O_5, x_O_4, x_O_3, x_O_2, x_O_1, x_O, r, s, y, pkm, ctm, epk
+--Args to dependency_collision:
+Cur_array=id
+Order assumptions=epk defined after or at the same time as {159}[id]
+Depinfo=previous lists
+Facts=
+Substitutions:
+(x_O >>= mlpkgen(skm))
+(x_O_2 >>= exp(g, x))
+(x_O_4 >>= exp(g, mult(x, y)))
+(ssm >>= mlencap_ss(pkm, s))
+(epk >>= exp(g, y))
+(pkm >>= mlpkgen(skm))
+(x_O_7 >>= ctq)
+(x_O_9 >>= epkq)
+(x_O_11 >>= mldecap(ctq, skm))
+(x_O_10 >>= exp(epkq, x))
+(x_O_8 >>= exp(g, x))
+(x_O_6 >>= mlpkgen(skm))
+(ctm >>= mlencap_ct(pkm, s))
+(b = true)
+(x_O_5 >>= mlencap_ss(pkm, s))
+(x_O_3 >>= exp(g, y))
+(x_O_1 >>= mlencap_ct(pkm, s))
+Facts:
+Elsefind:
+for all ; not(defined(ctm, epk) && ((ctq = ctm) && (epkq = epk)))
+
+t'=((ctq = ctm) && (epkq = epk))
+--End of args
+simplif_add (x_O >>= mlpkgen(skm)) knowing
+Substitutions:
+Facts:
+Elsefind:
+
+Adding (x_O >>= mlpkgen(skm))
+simplif_add (x_O_2 >>= exp(g, x)) knowing
+Substitutions:
+(x_O >>= mlpkgen(skm))
+Facts:
+Elsefind:
+
+Adding (x_O_2 >>= exp(g, x))
+simplif_add (x_O_4 >>= exp(g, mult(x, y))) knowing
+Substitutions:
+(x_O_2 >>= exp(g, x))
+(x_O >>= mlpkgen(skm))
+Facts:
+Elsefind:
+
+Adding (x_O_4 >>= exp(g, mult(x, y)))
+simplif_add (ssm >>= mlencap_ss(pkm, s)) knowing
+Substitutions:
+(x_O_4 >>= exp(g, mult(x, y)))
+(x_O >>= mlpkgen(skm))
+(x_O_2 >>= exp(g, x))
+Facts:
+Elsefind:
+
+Adding (ssm >>= mlencap_ss(pkm, s))
+simplif_add (epk >>= exp(g, y)) knowing
+Substitutions:
+(ssm >>= mlencap_ss(pkm, s))
+(x_O_2 >>= exp(g, x))
+(x_O >>= mlpkgen(skm))
+(x_O_4 >>= exp(g, mult(x, y)))
+Facts:
+Elsefind:
+
+Adding (epk >>= exp(g, y))
+simplif_add (pkm >>= mlpkgen(skm)) knowing
+Substitutions:
+(epk >>= exp(g, y))
+(x_O_4 >>= exp(g, mult(x, y)))
+(x_O >>= mlpkgen(skm))
+(x_O_2 >>= exp(g, x))
+(ssm >>= mlencap_ss(pkm, s))
+Facts:
+Elsefind:
+
+Adding (pkm >>= mlpkgen(skm))
+simplif_add (x_O_7 >>= ctq) knowing
+Substitutions:
+(pkm >>= mlpkgen(skm))
+(ssm >>= mlencap_ss(pkm, s))
+(x_O_2 >>= exp(g, x))
+(x_O >>= mlpkgen(skm))
+(x_O_4 >>= exp(g, mult(x, y)))
+(epk >>= exp(g, y))
+Facts:
+Elsefind:
+
+Adding (x_O_7 >>= ctq)
+simplif_add (x_O_9 >>= epkq) knowing
+Substitutions:
+(x_O_7 >>= ctq)
+(epk >>= exp(g, y))
+(x_O_4 >>= exp(g, mult(x, y)))
+(x_O >>= mlpkgen(skm))
+(x_O_2 >>= exp(g, x))
+(ssm >>= mlencap_ss(pkm, s))
+(pkm >>= mlpkgen(skm))
+Facts:
+Elsefind:
+
+Adding (x_O_9 >>= epkq)
+simplif_add (x_O_11 >>= mldecap(ctq, skm)) knowing
+Substitutions:
+(x_O_9 >>= epkq)
+(pkm >>= mlpkgen(skm))
+(ssm >>= mlencap_ss(pkm, s))
+(x_O_2 >>= exp(g, x))
+(x_O >>= mlpkgen(skm))
+(x_O_4 >>= exp(g, mult(x, y)))
+(epk >>= exp(g, y))
+(x_O_7 >>= ctq)
+Facts:
+Elsefind:
+
+Adding (x_O_11 >>= mldecap(ctq, skm))
+simplif_add (x_O_10 >>= exp(epkq, x)) knowing
+Substitutions:
+(x_O_11 >>= mldecap(ctq, skm))
+(x_O_7 >>= ctq)
+(epk >>= exp(g, y))
+(x_O_4 >>= exp(g, mult(x, y)))
+(x_O >>= mlpkgen(skm))
+(x_O_2 >>= exp(g, x))
+(ssm >>= mlencap_ss(pkm, s))
+(pkm >>= mlpkgen(skm))
+(x_O_9 >>= epkq)
+Facts:
+Elsefind:
+
+Adding (x_O_10 >>= exp(epkq, x))
+simplif_add (x_O_8 >>= exp(g, x)) knowing
+Substitutions:
+(x_O_10 >>= exp(epkq, x))
+(x_O_9 >>= epkq)
+(pkm >>= mlpkgen(skm))
+(ssm >>= mlencap_ss(pkm, s))
+(x_O_2 >>= exp(g, x))
+(x_O >>= mlpkgen(skm))
+(x_O_4 >>= exp(g, mult(x, y)))
+(epk >>= exp(g, y))
+(x_O_7 >>= ctq)
+(x_O_11 >>= mldecap(ctq, skm))
+Facts:
+Elsefind:
+
+Adding (x_O_8 >>= exp(g, x))
+simplif_add (x_O_6 >>= mlpkgen(skm)) knowing
+Substitutions:
+(x_O_8 >>= exp(g, x))
+(x_O_11 >>= mldecap(ctq, skm))
+(x_O_7 >>= ctq)
+(epk >>= exp(g, y))
+(x_O_4 >>= exp(g, mult(x, y)))
+(x_O >>= mlpkgen(skm))
+(x_O_2 >>= exp(g, x))
+(ssm >>= mlencap_ss(pkm, s))
+(pkm >>= mlpkgen(skm))
+(x_O_9 >>= epkq)
+(x_O_10 >>= exp(epkq, x))
+Facts:
+Elsefind:
+
+Adding (x_O_6 >>= mlpkgen(skm))
+simplif_add (ctm >>= mlencap_ct(pkm, s)) knowing
+Substitutions:
+(x_O_6 >>= mlpkgen(skm))
+(x_O_10 >>= exp(epkq, x))
+(x_O_9 >>= epkq)
+(pkm >>= mlpkgen(skm))
+(ssm >>= mlencap_ss(pkm, s))
+(x_O_2 >>= exp(g, x))
+(x_O >>= mlpkgen(skm))
+(x_O_4 >>= exp(g, mult(x, y)))
+(epk >>= exp(g, y))
+(x_O_7 >>= ctq)
+(x_O_11 >>= mldecap(ctq, skm))
+(x_O_8 >>= exp(g, x))
+Facts:
+Elsefind:
+
+Adding (ctm >>= mlencap_ct(pkm, s))
+simplif_add (b = true) knowing
+Substitutions:
+(ctm >>= mlencap_ct(pkm, s))
+(x_O_8 >>= exp(g, x))
+(x_O_11 >>= mldecap(ctq, skm))
+(x_O_7 >>= ctq)
+(epk >>= exp(g, y))
+(x_O_4 >>= exp(g, mult(x, y)))
+(x_O >>= mlpkgen(skm))
+(x_O_2 >>= exp(g, x))
+(ssm >>= mlencap_ss(pkm, s))
+(pkm >>= mlpkgen(skm))
+(x_O_9 >>= epkq)
+(x_O_10 >>= exp(epkq, x))
+(x_O_6 >>= mlpkgen(skm))
+Facts:
+Elsefind:
+
+Adding b
+simplif_add (x_O_5 >>= mlencap_ss(pkm, s)) knowing
+Substitutions:
+(b = true)
+(x_O_6 >>= mlpkgen(skm))
+(x_O_10 >>= exp(epkq, x))
+(x_O_9 >>= epkq)
+(pkm >>= mlpkgen(skm))
+(ssm >>= mlencap_ss(pkm, s))
+(x_O_2 >>= exp(g, x))
+(x_O >>= mlpkgen(skm))
+(x_O_4 >>= exp(g, mult(x, y)))
+(epk >>= exp(g, y))
+(x_O_7 >>= ctq)
+(x_O_11 >>= mldecap(ctq, skm))
+(x_O_8 >>= exp(g, x))
+(ctm >>= mlencap_ct(pkm, s))
+Facts:
+Elsefind:
+
+Adding (x_O_5 >>= mlencap_ss(pkm, s))
+simplif_add (x_O_3 >>= exp(g, y)) knowing
+Substitutions:
+(x_O_5 >>= mlencap_ss(pkm, s))
+(ctm >>= mlencap_ct(pkm, s))
+(x_O_8 >>= exp(g, x))
+(x_O_11 >>= mldecap(ctq, skm))
+(x_O_7 >>= ctq)
+(epk >>= exp(g, y))
+(x_O_4 >>= exp(g, mult(x, y)))
+(x_O >>= mlpkgen(skm))
+(x_O_2 >>= exp(g, x))
+(ssm >>= mlencap_ss(pkm, s))
+(pkm >>= mlpkgen(skm))
+(x_O_9 >>= epkq)
+(x_O_10 >>= exp(epkq, x))
+(x_O_6 >>= mlpkgen(skm))
+(b = true)
+Facts:
+Elsefind:
+
+Adding (x_O_3 >>= exp(g, y))
+simplif_add (x_O_1 >>= mlencap_ct(pkm, s)) knowing
+Substitutions:
+(x_O_3 >>= exp(g, y))
+(b = true)
+(x_O_6 >>= mlpkgen(skm))
+(x_O_10 >>= exp(epkq, x))
+(x_O_9 >>= epkq)
+(pkm >>= mlpkgen(skm))
+(ssm >>= mlencap_ss(pkm, s))
+(x_O_2 >>= exp(g, x))
+(x_O >>= mlpkgen(skm))
+(x_O_4 >>= exp(g, mult(x, y)))
+(epk >>= exp(g, y))
+(x_O_7 >>= ctq)
+(x_O_11 >>= mldecap(ctq, skm))
+(x_O_8 >>= exp(g, x))
+(ctm >>= mlencap_ct(pkm, s))
+(x_O_5 >>= mlencap_ss(pkm, s))
+Facts:
+Elsefind:
+
+Adding (x_O_1 >>= mlencap_ct(pkm, s))
+simplif_add ((ctq = ctm) && (epkq = epk)) knowing
+Substitutions:
+(x_O_1 >>= mlencap_ct(pkm, s))
+(x_O_5 >>= mlencap_ss(pkm, s))
+(ctm >>= mlencap_ct(pkm, s))
+(x_O_8 >>= exp(g, x))
+(x_O_11 >>= mldecap(ctq, skm))
+(x_O_7 >>= ctq)
+(epk >>= exp(g, y))
+(x_O_4 >>= exp(g, mult(x, y)))
+(x_O >>= mlpkgen(skm))
+(x_O_2 >>= exp(g, x))
+(ssm >>= mlencap_ss(pkm, s))
+(pkm >>= mlpkgen(skm))
+(x_O_9 >>= epkq)
+(x_O_10 >>= exp(epkq, x))
+(x_O_6 >>= mlpkgen(skm))
+(b = true)
+(x_O_3 >>= exp(g, y))
+Facts:
+Elsefind:
+
+Adding false
+Obtained a contradiction.
+Found a usable term: not(((ctq = ctm) && (epkq = epk)))
+__________________
+Elsefind summary: these terms are true:
+not(((ctq = ctm) && (epkq = epk))), not(((ctq = ctm) && (epkq = epk)))
+__________________
+Elsefind begin
+
+__________________
+Elsefind summary: these terms are true:
+
+__________________
+Elsefind begin
+
+-----------------
+Variables known to be currently defined: r_2[ri_4], x_O_12[ri_4], x_O_13[ri_4], x_O_14[ri_4], x_O_15[ri_4], x_O_16[ri_4], x_O_17[ri_4], x6[ri_4], x5[ri_4], x4[ri_4], x3[ri_4], x2[ri_4], x1[ri_4], x_O, x_O_1, x_O_2, x_O_3, x_O_4, x_O_5, ssm, epk, ctm, pkm, y, s, x, skm, b
+Program point known to be executed in an else branch of find: {451}[ri_4]
+Elsefind_fact (before renaming): for all ri; not(defined(x_O_17[ri], x_O_16[ri], x_O_15[ri], x_O_14[ri], x_O_13[ri], x_O_12[ri], r_2[ri]) && ((x_O_17 = x_O_17[ri]) && (x_O_16 = x_O_16[ri]) && (x_O_15 = x_O_15[ri]) && (x_O_14 = x_O_14[ri]) && (x_O_13 = x_O_13[ri]) && (x_O_12 = x_O_12[ri]) && (iH <> ri)))
+Elsefind_fact_vars_before:
+r_2[ri_4], x_O_12[ri_4], x_O_13[ri_4], x_O_14[ri_4], x_O_15[ri_4], x_O_16[ri_4], x_O_17[ri_4], x1[ri_4], x2[ri_4], x3[ri_4], x4[ri_4], x5[ri_4], x6[ri_4], x, skm, b
+Elsefind_fact (after renaming): for all @ri_16; not(defined(r_2[@ri_16]) && ((x_O_17[ri_4] = x_O_17[@ri_16]) && (x_O_16[ri_4] = x_O_16[@ri_16]) && (x_O_15[ri_4] = x_O_15[@ri_16]) && (x_O_14[ri_4] = x_O_14[@ri_16]) && (x_O_13[ri_4] = x_O_13[@ri_16]) && (x_O_12[ri_4] = x_O_12[@ri_16]) && (ri_4 <> @ri_16)))
+Elsefind_fact_try:
+((x_O_17[ri_4] = x_O_17[ri_4]) && (x_O_16[ri_4] = x_O_16[ri_4]) && (x_O_15[ri_4] = x_O_15[ri_4]) && (x_O_14[ri_4] = x_O_14[ri_4]) && (x_O_13[ri_4] = x_O_13[ri_4]) && (x_O_12[ri_4] = x_O_12[ri_4]) && (ri_4 <> ri_4))
+And the def_list':
+r_2[ri_4]
+equal to
+r_2[ri_4]
+Let's assume that r_2[ri_4] is defined after or simultaneously {451}[ri_4]
+Found a usable term: not(((x_O_17[ri_4] = x_O_17[ri_4]) && (x_O_16[ri_4] = x_O_16[ri_4]) && (x_O_15[ri_4] = x_O_15[ri_4]) && (x_O_14[ri_4] = x_O_14[ri_4]) && (x_O_13[ri_4] = x_O_13[ri_4]) && (x_O_12[ri_4] = x_O_12[ri_4]) && (ri_4 <> ri_4)))
+-----------------
+Variables known to be currently defined: r_2[ri_4], x_O_12[ri_4], x_O_13[ri_4], x_O_14[ri_4], x_O_15[ri_4], x_O_16[ri_4], x_O_17[ri_4], x6[ri_4], x5[ri_4], x4[ri_4], x3[ri_4], x2[ri_4], x1[ri_4], x_O, x_O_1, x_O_2, x_O_3, x_O_4, x_O_5, ssm, epk, ctm, pkm, y, s, x, skm, b
+Program point known to be executed in an else branch of find: {451}[ri_4]
+Elsefind_fact (before renaming): for all ri_1; not(defined(x_O_11[ri_1], x_O_10[ri_1], x_O_9[ri_1], x_O_8[ri_1], x_O_7[ri_1], x_O_6[ri_1], r_1[ri_1]) && ((x_O_17 = x_O_11[ri_1]) && (x_O_16 = x_O_10[ri_1]) && (x_O_15 = x_O_9[ri_1]) && (x_O_14 = x_O_8[ri_1]) && (x_O_13 = x_O_7[ri_1]) && (x_O_12 = x_O_6[ri_1])))
+Elsefind_fact_vars_before:
+r_2[ri_4], x_O_12[ri_4], x_O_13[ri_4], x_O_14[ri_4], x_O_15[ri_4], x_O_16[ri_4], x_O_17[ri_4], x1[ri_4], x2[ri_4], x3[ri_4], x4[ri_4], x5[ri_4], x6[ri_4], x, skm, b
+Elsefind_fact (after renaming): for all @ri_17; not(defined(r_1[@ri_17]) && ((x_O_17[ri_4] = x_O_11[@ri_17]) && (x_O_16[ri_4] = x_O_10[@ri_17]) && (x_O_15[ri_4] = x_O_9[@ri_17]) && (x_O_14[ri_4] = x_O_8[@ri_17]) && (x_O_13[ri_4] = x_O_7[@ri_17]) && (x_O_12[ri_4] = x_O_6[@ri_17])))
+-----------------
+Variables known to be currently defined: r_2[ri_4], x_O_12[ri_4], x_O_13[ri_4], x_O_14[ri_4], x_O_15[ri_4], x_O_16[ri_4], x_O_17[ri_4], x6[ri_4], x5[ri_4], x4[ri_4], x3[ri_4], x2[ri_4], x1[ri_4], x_O, x_O_1, x_O_2, x_O_3, x_O_4, x_O_5, ssm, epk, ctm, pkm, y, s, x, skm, b
+Program point known to be executed in an else branch of find: {451}[ri_4]
+Elsefind_fact (before renaming): for all ; not(defined(x_O_5, x_O_4, x_O_3, x_O_2, x_O_1, x_O, r) && ((x_O_17 = x_O_5) && (x_O_16 = x_O_4) && (x_O_15 = x_O_3) && (x_O_14 = x_O_2) && (x_O_13 = x_O_1) && (x_O_12 = x_O)))
+Elsefind_fact_vars_before:
+r_2[ri_4], x_O_12[ri_4], x_O_13[ri_4], x_O_14[ri_4], x_O_15[ri_4], x_O_16[ri_4], x_O_17[ri_4], x1[ri_4], x2[ri_4], x3[ri_4], x4[ri_4], x5[ri_4], x6[ri_4], x, skm, b
+Elsefind_fact (after renaming): for all ; not(defined(r) && ((x_O_17[ri_4] = x_O_5) && (x_O_16[ri_4] = x_O_4) && (x_O_15[ri_4] = x_O_3) && (x_O_14[ri_4] = x_O_2) && (x_O_13[ri_4] = x_O_1) && (x_O_12[ri_4] = x_O)))
+__________________
+Elsefind summary: these terms are true:
+not(((x_O_17[ri_4] = x_O_17[ri_4]) && (x_O_16[ri_4] = x_O_16[ri_4]) && (x_O_15[ri_4] = x_O_15[ri_4]) && (x_O_14[ri_4] = x_O_14[ri_4]) && (x_O_13[ri_4] = x_O_13[ri_4]) && (x_O_12[ri_4] = x_O_12[ri_4]) && (ri_4 <> ri_4)))
+__________________
+Elsefind begin
+
+-----------------
+Variables known to be currently defined: r_1[ri_5], x_O_6[ri_5], x_O_7[ri_5], x_O_8[ri_5], x_O_9[ri_5], x_O_10[ri_5], x_O_11[ri_5], epkq[ri_5], ctq[ri_5], x_O, x_O_1, x_O_2, x_O_3, x_O_4, x_O_5, ssm, epk, ctm, pkm, y, s, x, skm, b
+Program point known to be executed in an else branch of find: {305}[ri_5]
+Elsefind_fact (before renaming): for all ri_2; not(defined(x_O_17[ri_2], x_O_16[ri_2], x_O_15[ri_2], x_O_14[ri_2], x_O_13[ri_2], x_O_12[ri_2], r_2[ri_2]) && ((x_O_11 = x_O_17[ri_2]) && (x_O_10 = x_O_16[ri_2]) && (x_O_9 = x_O_15[ri_2]) && (x_O_8 = x_O_14[ri_2]) && (x_O_7 = x_O_13[ri_2]) && (x_O_6 = x_O_12[ri_2])))
+Elsefind_fact_vars_before:
+r_1[ri_5], x_O_6[ri_5], x_O_7[ri_5], x_O_8[ri_5], x_O_9[ri_5], x_O_10[ri_5], x_O_11[ri_5], ctq[ri_5], epkq[ri_5], x, skm, b
+Elsefind_fact (after renaming): for all @ri_18; not(defined(r_2[@ri_18]) && ((x_O_11[ri_5] = x_O_17[@ri_18]) && (x_O_10[ri_5] = x_O_16[@ri_18]) && (x_O_9[ri_5] = x_O_15[@ri_18]) && (x_O_8[ri_5] = x_O_14[@ri_18]) && (x_O_7[ri_5] = x_O_13[@ri_18]) && (x_O_6[ri_5] = x_O_12[@ri_18])))
+-----------------
+Variables known to be currently defined: r_1[ri_5], x_O_6[ri_5], x_O_7[ri_5], x_O_8[ri_5], x_O_9[ri_5], x_O_10[ri_5], x_O_11[ri_5], epkq[ri_5], ctq[ri_5], x_O, x_O_1, x_O_2, x_O_3, x_O_4, x_O_5, ssm, epk, ctm, pkm, y, s, x, skm, b
+Program point known to be executed in an else branch of find: {305}[ri_5]
+Elsefind_fact (before renaming): for all ri_3; not(defined(x_O_11[ri_3], x_O_10[ri_3], x_O_9[ri_3], x_O_8[ri_3], x_O_7[ri_3], x_O_6[ri_3], r_1[ri_3]) && ((x_O_11 = x_O_11[ri_3]) && (x_O_10 = x_O_10[ri_3]) && (x_O_9 = x_O_9[ri_3]) && (x_O_8 = x_O_8[ri_3]) && (x_O_7 = x_O_7[ri_3]) && (x_O_6 = x_O_6[ri_3]) && (id <> ri_3)))
+Elsefind_fact_vars_before:
+r_1[ri_5], x_O_6[ri_5], x_O_7[ri_5], x_O_8[ri_5], x_O_9[ri_5], x_O_10[ri_5], x_O_11[ri_5], ctq[ri_5], epkq[ri_5], x, skm, b
+Elsefind_fact (after renaming): for all @ri_19; not(defined(r_1[@ri_19]) && ((x_O_11[ri_5] = x_O_11[@ri_19]) && (x_O_10[ri_5] = x_O_10[@ri_19]) && (x_O_9[ri_5] = x_O_9[@ri_19]) && (x_O_8[ri_5] = x_O_8[@ri_19]) && (x_O_7[ri_5] = x_O_7[@ri_19]) && (x_O_6[ri_5] = x_O_6[@ri_19]) && (ri_5 <> @ri_19)))
+Elsefind_fact_try:
+((x_O_11[ri_5] = x_O_11[ri_5]) && (x_O_10[ri_5] = x_O_10[ri_5]) && (x_O_9[ri_5] = x_O_9[ri_5]) && (x_O_8[ri_5] = x_O_8[ri_5]) && (x_O_7[ri_5] = x_O_7[ri_5]) && (x_O_6[ri_5] = x_O_6[ri_5]) && (ri_5 <> ri_5))
+And the def_list':
+r_1[ri_5]
+equal to
+r_1[ri_5]
+Let's assume that r_1[ri_5] is defined after or simultaneously {305}[ri_5]
+Found a usable term: not(((x_O_11[ri_5] = x_O_11[ri_5]) && (x_O_10[ri_5] = x_O_10[ri_5]) && (x_O_9[ri_5] = x_O_9[ri_5]) && (x_O_8[ri_5] = x_O_8[ri_5]) && (x_O_7[ri_5] = x_O_7[ri_5]) && (x_O_6[ri_5] = x_O_6[ri_5]) && (ri_5 <> ri_5)))
+-----------------
+Variables known to be currently defined: r_1[ri_5], x_O_6[ri_5], x_O_7[ri_5], x_O_8[ri_5], x_O_9[ri_5], x_O_10[ri_5], x_O_11[ri_5], epkq[ri_5], ctq[ri_5], x_O, x_O_1, x_O_2, x_O_3, x_O_4, x_O_5, ssm, epk, ctm, pkm, y, s, x, skm, b
+Program point known to be executed in an else branch of find: {305}[ri_5]
+Elsefind_fact (before renaming): for all ; not(defined(x_O_5, x_O_4, x_O_3, x_O_2, x_O_1, x_O, r) && ((x_O_11 = x_O_5) && (x_O_10 = x_O_4) && (x_O_9 = x_O_3) && (x_O_8 = x_O_2) && (x_O_7 = x_O_1) && (x_O_6 = x_O)))
+Elsefind_fact_vars_before:
+r_1[ri_5], x_O_6[ri_5], x_O_7[ri_5], x_O_8[ri_5], x_O_9[ri_5], x_O_10[ri_5], x_O_11[ri_5], ctq[ri_5], epkq[ri_5], x, skm, b
+Elsefind_fact (after renaming): for all ; not(defined(r) && ((x_O_11[ri_5] = x_O_5) && (x_O_10[ri_5] = x_O_4) && (x_O_9[ri_5] = x_O_3) && (x_O_8[ri_5] = x_O_2) && (x_O_7[ri_5] = x_O_1) && (x_O_6[ri_5] = x_O)))
+-----------------
+Variables known to be currently defined: r_1[ri_5], x_O_6[ri_5], x_O_7[ri_5], x_O_8[ri_5], x_O_9[ri_5], x_O_10[ri_5], x_O_11[ri_5], epkq[ri_5], ctq[ri_5], x_O, x_O_1, x_O_2, x_O_3, x_O_4, x_O_5, ssm, epk, ctm, pkm, y, s, x, skm, b
+Program point known to be executed in an else branch of find: {305}[ri_5]
+Elsefind_fact (before renaming): for all ; not(defined(ctm, epk) && ((ctq = ctm) && (epkq = epk)))
+Elsefind_fact_vars_before:
+r_1[ri_5], x_O_6[ri_5], x_O_7[ri_5], x_O_8[ri_5], x_O_9[ri_5], x_O_10[ri_5], x_O_11[ri_5], ctq[ri_5], epkq[ri_5], x, skm, b
+Elsefind_fact (after renaming): for all ; not(defined(epk) && ((ctq[ri_5] = ctm) && (epkq[ri_5] = epk)))
+Elsefind_fact_try:
+((ctq[ri_5] = ctm) && (epkq[ri_5] = epk))
+And the def_list':
+epk
+equal to
+epk
+Let's assume that epk is defined after or simultaneously {305}[ri_5]
+Elsefind_fact add_vars stopped
+Elsefind_fact_future_vars:
+ssm, x_O_5, x_O_4, x_O_3, x_O_2, x_O_1, x_O, s, y, pkm, ctm, epk
+--Args to dependency_collision:
+Cur_array=ri_5
+Order assumptions=epk defined after or at the same time as {305}[ri_5]
+Depinfo=previous lists
+Facts=
+Substitutions:
+(x_O_6[ri_5] >>= mlpkgen(skm))
+(x_O_8[ri_5] >>= exp(g, x))
+(x_O_10[ri_5] >>= exp(epkq[ri_5], x))
+(x_O >>= mlpkgen(skm))
+(x_O_2 >>= exp(g, x))
+(x_O_4 >>= exp(g, mult(x, y)))
+(ssm >>= mlencap_ss(pkm, s))
+(epk >>= exp(g, y))
+(pkm >>= mlpkgen(skm))
+(ctm >>= mlencap_ct(pkm, s))
+(b = true)
+(x_O_5 >>= mlencap_ss(pkm, s))
+(x_O_3 >>= exp(g, y))
+(x_O_1 >>= mlencap_ct(pkm, s))
+(x_O_11[ri_5] >>= mldecap(ctq[ri_5], skm))
+(x_O_9[ri_5] >>= epkq[ri_5])
+(x_O_7[ri_5] >>= ctq[ri_5])
+Facts:
+Elsefind:
+
+t'=((ctq[ri_5] = ctm) && (epkq[ri_5] = epk))
+--End of args
+simplif_add (x_O_6[ri_5] >>= mlpkgen(skm)) knowing
+Substitutions:
+Facts:
+Elsefind:
+
+Adding (x_O_6[ri_5] >>= mlpkgen(skm))
+simplif_add (x_O_8[ri_5] >>= exp(g, x)) knowing
+Substitutions:
+(x_O_6[ri_5] >>= mlpkgen(skm))
+Facts:
+Elsefind:
+
+Adding (x_O_8[ri_5] >>= exp(g, x))
+simplif_add (x_O_10[ri_5] >>= exp(epkq[ri_5], x)) knowing
+Substitutions:
+(x_O_8[ri_5] >>= exp(g, x))
+(x_O_6[ri_5] >>= mlpkgen(skm))
+Facts:
+Elsefind:
+
+Adding (x_O_10[ri_5] >>= exp(epkq[ri_5], x))
+simplif_add (x_O >>= mlpkgen(skm)) knowing
+Substitutions:
+(x_O_10[ri_5] >>= exp(epkq[ri_5], x))
+(x_O_6[ri_5] >>= mlpkgen(skm))
+(x_O_8[ri_5] >>= exp(g, x))
+Facts:
+Elsefind:
+
+Adding (x_O >>= mlpkgen(skm))
+simplif_add (x_O_2 >>= exp(g, x)) knowing
+Substitutions:
+(x_O >>= mlpkgen(skm))
+(x_O_8[ri_5] >>= exp(g, x))
+(x_O_6[ri_5] >>= mlpkgen(skm))
+(x_O_10[ri_5] >>= exp(epkq[ri_5], x))
+Facts:
+Elsefind:
+
+Adding (x_O_2 >>= exp(g, x))
+simplif_add (x_O_4 >>= exp(g, mult(x, y))) knowing
+Substitutions:
+(x_O_2 >>= exp(g, x))
+(x_O_10[ri_5] >>= exp(epkq[ri_5], x))
+(x_O_6[ri_5] >>= mlpkgen(skm))
+(x_O_8[ri_5] >>= exp(g, x))
+(x_O >>= mlpkgen(skm))
+Facts:
+Elsefind:
+
+Adding (x_O_4 >>= exp(g, mult(x, y)))
+simplif_add (ssm >>= mlencap_ss(pkm, s)) knowing
+Substitutions:
+(x_O_4 >>= exp(g, mult(x, y)))
+(x_O >>= mlpkgen(skm))
+(x_O_8[ri_5] >>= exp(g, x))
+(x_O_6[ri_5] >>= mlpkgen(skm))
+(x_O_10[ri_5] >>= exp(epkq[ri_5], x))
+(x_O_2 >>= exp(g, x))
+Facts:
+Elsefind:
+
+Adding (ssm >>= mlencap_ss(pkm, s))
+simplif_add (epk >>= exp(g, y)) knowing
+Substitutions:
+(ssm >>= mlencap_ss(pkm, s))
+(x_O_2 >>= exp(g, x))
+(x_O_10[ri_5] >>= exp(epkq[ri_5], x))
+(x_O_6[ri_5] >>= mlpkgen(skm))
+(x_O_8[ri_5] >>= exp(g, x))
+(x_O >>= mlpkgen(skm))
+(x_O_4 >>= exp(g, mult(x, y)))
+Facts:
+Elsefind:
+
+Adding (epk >>= exp(g, y))
+simplif_add (pkm >>= mlpkgen(skm)) knowing
+Substitutions:
+(epk >>= exp(g, y))
+(x_O_4 >>= exp(g, mult(x, y)))
+(x_O >>= mlpkgen(skm))
+(x_O_8[ri_5] >>= exp(g, x))
+(x_O_6[ri_5] >>= mlpkgen(skm))
+(x_O_10[ri_5] >>= exp(epkq[ri_5], x))
+(x_O_2 >>= exp(g, x))
+(ssm >>= mlencap_ss(pkm, s))
+Facts:
+Elsefind:
+
+Adding (pkm >>= mlpkgen(skm))
+simplif_add (ctm >>= mlencap_ct(pkm, s)) knowing
+Substitutions:
+(pkm >>= mlpkgen(skm))
+(ssm >>= mlencap_ss(pkm, s))
+(x_O_2 >>= exp(g, x))
+(x_O_10[ri_5] >>= exp(epkq[ri_5], x))
+(x_O_6[ri_5] >>= mlpkgen(skm))
+(x_O_8[ri_5] >>= exp(g, x))
+(x_O >>= mlpkgen(skm))
+(x_O_4 >>= exp(g, mult(x, y)))
+(epk >>= exp(g, y))
+Facts:
+Elsefind:
+
+Adding (ctm >>= mlencap_ct(pkm, s))
+simplif_add (b = true) knowing
+Substitutions:
+(ctm >>= mlencap_ct(pkm, s))
+(epk >>= exp(g, y))
+(x_O_4 >>= exp(g, mult(x, y)))
+(x_O >>= mlpkgen(skm))
+(x_O_8[ri_5] >>= exp(g, x))
+(x_O_6[ri_5] >>= mlpkgen(skm))
+(x_O_10[ri_5] >>= exp(epkq[ri_5], x))
+(x_O_2 >>= exp(g, x))
+(ssm >>= mlencap_ss(pkm, s))
+(pkm >>= mlpkgen(skm))
+Facts:
+Elsefind:
+
+Adding b
+simplif_add (x_O_5 >>= mlencap_ss(pkm, s)) knowing
+Substitutions:
+(b = true)
+(pkm >>= mlpkgen(skm))
+(ssm >>= mlencap_ss(pkm, s))
+(x_O_2 >>= exp(g, x))
+(x_O_10[ri_5] >>= exp(epkq[ri_5], x))
+(x_O_6[ri_5] >>= mlpkgen(skm))
+(x_O_8[ri_5] >>= exp(g, x))
+(x_O >>= mlpkgen(skm))
+(x_O_4 >>= exp(g, mult(x, y)))
+(epk >>= exp(g, y))
+(ctm >>= mlencap_ct(pkm, s))
+Facts:
+Elsefind:
+
+Adding (x_O_5 >>= mlencap_ss(pkm, s))
+simplif_add (x_O_3 >>= exp(g, y)) knowing
+Substitutions:
+(x_O_5 >>= mlencap_ss(pkm, s))
+(ctm >>= mlencap_ct(pkm, s))
+(epk >>= exp(g, y))
+(x_O_4 >>= exp(g, mult(x, y)))
+(x_O >>= mlpkgen(skm))
+(x_O_8[ri_5] >>= exp(g, x))
+(x_O_6[ri_5] >>= mlpkgen(skm))
+(x_O_10[ri_5] >>= exp(epkq[ri_5], x))
+(x_O_2 >>= exp(g, x))
+(ssm >>= mlencap_ss(pkm, s))
+(pkm >>= mlpkgen(skm))
+(b = true)
+Facts:
+Elsefind:
+
+Adding (x_O_3 >>= exp(g, y))
+simplif_add (x_O_1 >>= mlencap_ct(pkm, s)) knowing
+Substitutions:
+(x_O_3 >>= exp(g, y))
+(b = true)
+(pkm >>= mlpkgen(skm))
+(ssm >>= mlencap_ss(pkm, s))
+(x_O_2 >>= exp(g, x))
+(x_O_10[ri_5] >>= exp(epkq[ri_5], x))
+(x_O_6[ri_5] >>= mlpkgen(skm))
+(x_O_8[ri_5] >>= exp(g, x))
+(x_O >>= mlpkgen(skm))
+(x_O_4 >>= exp(g, mult(x, y)))
+(epk >>= exp(g, y))
+(ctm >>= mlencap_ct(pkm, s))
+(x_O_5 >>= mlencap_ss(pkm, s))
+Facts:
+Elsefind:
+
+Adding (x_O_1 >>= mlencap_ct(pkm, s))
+simplif_add (x_O_11[ri_5] >>= mldecap(ctq[ri_5], skm)) knowing
+Substitutions:
+(x_O_1 >>= mlencap_ct(pkm, s))
+(x_O_5 >>= mlencap_ss(pkm, s))
+(ctm >>= mlencap_ct(pkm, s))
+(epk >>= exp(g, y))
+(x_O_4 >>= exp(g, mult(x, y)))
+(x_O >>= mlpkgen(skm))
+(x_O_8[ri_5] >>= exp(g, x))
+(x_O_6[ri_5] >>= mlpkgen(skm))
+(x_O_10[ri_5] >>= exp(epkq[ri_5], x))
+(x_O_2 >>= exp(g, x))
+(ssm >>= mlencap_ss(pkm, s))
+(pkm >>= mlpkgen(skm))
+(b = true)
+(x_O_3 >>= exp(g, y))
+Facts:
+Elsefind:
+
+Adding (x_O_11[ri_5] >>= mldecap(ctq[ri_5], skm))
+simplif_add (x_O_9[ri_5] >>= epkq[ri_5]) knowing
+Substitutions:
+(x_O_11[ri_5] >>= mldecap(ctq[ri_5], skm))
+(x_O_3 >>= exp(g, y))
+(b = true)
+(pkm >>= mlpkgen(skm))
+(ssm >>= mlencap_ss(pkm, s))
+(x_O_2 >>= exp(g, x))
+(x_O_10[ri_5] >>= exp(epkq[ri_5], x))
+(x_O_6[ri_5] >>= mlpkgen(skm))
+(x_O_8[ri_5] >>= exp(g, x))
+(x_O >>= mlpkgen(skm))
+(x_O_4 >>= exp(g, mult(x, y)))
+(epk >>= exp(g, y))
+(ctm >>= mlencap_ct(pkm, s))
+(x_O_5 >>= mlencap_ss(pkm, s))
+(x_O_1 >>= mlencap_ct(pkm, s))
+Facts:
+Elsefind:
+
+Adding (x_O_9[ri_5] >>= epkq[ri_5])
+simplif_add (x_O_7[ri_5] >>= ctq[ri_5]) knowing
+Substitutions:
+(x_O_9[ri_5] >>= epkq[ri_5])
+(x_O_1 >>= mlencap_ct(pkm, s))
+(x_O_5 >>= mlencap_ss(pkm, s))
+(ctm >>= mlencap_ct(pkm, s))
+(epk >>= exp(g, y))
+(x_O_4 >>= exp(g, mult(x, y)))
+(x_O >>= mlpkgen(skm))
+(x_O_8[ri_5] >>= exp(g, x))
+(x_O_6[ri_5] >>= mlpkgen(skm))
+(x_O_10[ri_5] >>= exp(epkq[ri_5], x))
+(x_O_2 >>= exp(g, x))
+(ssm >>= mlencap_ss(pkm, s))
+(pkm >>= mlpkgen(skm))
+(b = true)
+(x_O_3 >>= exp(g, y))
+(x_O_11[ri_5] >>= mldecap(ctq[ri_5], skm))
+Facts:
+Elsefind:
+
+Adding (x_O_7[ri_5] >>= ctq[ri_5])
+simplif_add ((ctq[ri_5] = ctm) && (epkq[ri_5] = epk)) knowing
+Substitutions:
+(x_O_7[ri_5] >>= ctq[ri_5])
+(x_O_11[ri_5] >>= mldecap(ctq[ri_5], skm))
+(x_O_3 >>= exp(g, y))
+(b = true)
+(pkm >>= mlpkgen(skm))
+(ssm >>= mlencap_ss(pkm, s))
+(x_O_2 >>= exp(g, x))
+(x_O_10[ri_5] >>= exp(epkq[ri_5], x))
+(x_O_6[ri_5] >>= mlpkgen(skm))
+(x_O_8[ri_5] >>= exp(g, x))
+(x_O >>= mlpkgen(skm))
+(x_O_4 >>= exp(g, mult(x, y)))
+(epk >>= exp(g, y))
+(ctm >>= mlencap_ct(pkm, s))
+(x_O_5 >>= mlencap_ss(pkm, s))
+(x_O_1 >>= mlencap_ct(pkm, s))
+(x_O_9[ri_5] >>= epkq[ri_5])
+Facts:
+Elsefind:
+
+Adding false
+Obtained a contradiction.
+Found a usable term: not(((ctq[ri_5] = ctm) && (epkq[ri_5] = epk)))
+-----------------
+Variables known to be currently defined: r_1[ri_5], x_O_6[ri_5], x_O_7[ri_5], x_O_8[ri_5], x_O_9[ri_5], x_O_10[ri_5], x_O_11[ri_5], epkq[ri_5], ctq[ri_5], x_O, x_O_1, x_O_2, x_O_3, x_O_4, x_O_5, ssm, epk, ctm, pkm, y, s, x, skm, b
+Program point known to be executed in an else branch of find: {159}[ri_5]
+Elsefind_fact (before renaming): for all ; not(defined(ctm, epk) && ((ctq = ctm) && (epkq = epk)))
+Elsefind_fact_vars_before:
+ctq[ri_5], epkq[ri_5], x, skm, b
+Elsefind_fact (after renaming): for all ; not(defined(epk) && ((ctq[ri_5] = ctm) && (epkq[ri_5] = epk)))
+Elsefind_fact_try:
+((ctq[ri_5] = ctm) && (epkq[ri_5] = epk))
+And the def_list':
+epk
+equal to
+epk
+Let's assume that epk is defined after or simultaneously {159}[ri_5]
+Elsefind_fact add_vars stopped
+Elsefind_fact_future_vars:
+ssm, x_O_5, x_O_4, x_O_3, x_O_2, x_O_1, x_O, x_O_11[ri_5], x_O_10[ri_5], x_O_9[ri_5], x_O_8[ri_5], x_O_7[ri_5], x_O_6[ri_5], r_1[ri_5], s, y, pkm, ctm, epk
+--Args to dependency_collision:
+Cur_array=ri_5
+Order assumptions=epk defined after or at the same time as {159}[ri_5]
+Depinfo=previous lists
+Facts=
+Substitutions:
+(x_O_6[ri_5] >>= mlpkgen(skm))
+(x_O_8[ri_5] >>= exp(g, x))
+(x_O_10[ri_5] >>= exp(epkq[ri_5], x))
+(x_O >>= mlpkgen(skm))
+(x_O_2 >>= exp(g, x))
+(x_O_4 >>= exp(g, mult(x, y)))
+(ssm >>= mlencap_ss(pkm, s))
+(epk >>= exp(g, y))
+(pkm >>= mlpkgen(skm))
+(ctm >>= mlencap_ct(pkm, s))
+(b = true)
+(x_O_5 >>= mlencap_ss(pkm, s))
+(x_O_3 >>= exp(g, y))
+(x_O_1 >>= mlencap_ct(pkm, s))
+(x_O_11[ri_5] >>= mldecap(ctq[ri_5], skm))
+(x_O_9[ri_5] >>= epkq[ri_5])
+(x_O_7[ri_5] >>= ctq[ri_5])
+Facts:
+Elsefind:
+
+t'=((ctq[ri_5] = ctm) && (epkq[ri_5] = epk))
+--End of args
+simplif_add (x_O_6[ri_5] >>= mlpkgen(skm)) knowing
+Substitutions:
+Facts:
+Elsefind:
+
+Adding (x_O_6[ri_5] >>= mlpkgen(skm))
+simplif_add (x_O_8[ri_5] >>= exp(g, x)) knowing
+Substitutions:
+(x_O_6[ri_5] >>= mlpkgen(skm))
+Facts:
+Elsefind:
+
+Adding (x_O_8[ri_5] >>= exp(g, x))
+simplif_add (x_O_10[ri_5] >>= exp(epkq[ri_5], x)) knowing
+Substitutions:
+(x_O_8[ri_5] >>= exp(g, x))
+(x_O_6[ri_5] >>= mlpkgen(skm))
+Facts:
+Elsefind:
+
+Adding (x_O_10[ri_5] >>= exp(epkq[ri_5], x))
+simplif_add (x_O >>= mlpkgen(skm)) knowing
+Substitutions:
+(x_O_10[ri_5] >>= exp(epkq[ri_5], x))
+(x_O_6[ri_5] >>= mlpkgen(skm))
+(x_O_8[ri_5] >>= exp(g, x))
+Facts:
+Elsefind:
+
+Adding (x_O >>= mlpkgen(skm))
+simplif_add (x_O_2 >>= exp(g, x)) knowing
+Substitutions:
+(x_O >>= mlpkgen(skm))
+(x_O_8[ri_5] >>= exp(g, x))
+(x_O_6[ri_5] >>= mlpkgen(skm))
+(x_O_10[ri_5] >>= exp(epkq[ri_5], x))
+Facts:
+Elsefind:
+
+Adding (x_O_2 >>= exp(g, x))
+simplif_add (x_O_4 >>= exp(g, mult(x, y))) knowing
+Substitutions:
+(x_O_2 >>= exp(g, x))
+(x_O_10[ri_5] >>= exp(epkq[ri_5], x))
+(x_O_6[ri_5] >>= mlpkgen(skm))
+(x_O_8[ri_5] >>= exp(g, x))
+(x_O >>= mlpkgen(skm))
+Facts:
+Elsefind:
+
+Adding (x_O_4 >>= exp(g, mult(x, y)))
+simplif_add (ssm >>= mlencap_ss(pkm, s)) knowing
+Substitutions:
+(x_O_4 >>= exp(g, mult(x, y)))
+(x_O >>= mlpkgen(skm))
+(x_O_8[ri_5] >>= exp(g, x))
+(x_O_6[ri_5] >>= mlpkgen(skm))
+(x_O_10[ri_5] >>= exp(epkq[ri_5], x))
+(x_O_2 >>= exp(g, x))
+Facts:
+Elsefind:
+
+Adding (ssm >>= mlencap_ss(pkm, s))
+simplif_add (epk >>= exp(g, y)) knowing
+Substitutions:
+(ssm >>= mlencap_ss(pkm, s))
+(x_O_2 >>= exp(g, x))
+(x_O_10[ri_5] >>= exp(epkq[ri_5], x))
+(x_O_6[ri_5] >>= mlpkgen(skm))
+(x_O_8[ri_5] >>= exp(g, x))
+(x_O >>= mlpkgen(skm))
+(x_O_4 >>= exp(g, mult(x, y)))
+Facts:
+Elsefind:
+
+Adding (epk >>= exp(g, y))
+simplif_add (pkm >>= mlpkgen(skm)) knowing
+Substitutions:
+(epk >>= exp(g, y))
+(x_O_4 >>= exp(g, mult(x, y)))
+(x_O >>= mlpkgen(skm))
+(x_O_8[ri_5] >>= exp(g, x))
+(x_O_6[ri_5] >>= mlpkgen(skm))
+(x_O_10[ri_5] >>= exp(epkq[ri_5], x))
+(x_O_2 >>= exp(g, x))
+(ssm >>= mlencap_ss(pkm, s))
+Facts:
+Elsefind:
+
+Adding (pkm >>= mlpkgen(skm))
+simplif_add (ctm >>= mlencap_ct(pkm, s)) knowing
+Substitutions:
+(pkm >>= mlpkgen(skm))
+(ssm >>= mlencap_ss(pkm, s))
+(x_O_2 >>= exp(g, x))
+(x_O_10[ri_5] >>= exp(epkq[ri_5], x))
+(x_O_6[ri_5] >>= mlpkgen(skm))
+(x_O_8[ri_5] >>= exp(g, x))
+(x_O >>= mlpkgen(skm))
+(x_O_4 >>= exp(g, mult(x, y)))
+(epk >>= exp(g, y))
+Facts:
+Elsefind:
+
+Adding (ctm >>= mlencap_ct(pkm, s))
+simplif_add (b = true) knowing
+Substitutions:
+(ctm >>= mlencap_ct(pkm, s))
+(epk >>= exp(g, y))
+(x_O_4 >>= exp(g, mult(x, y)))
+(x_O >>= mlpkgen(skm))
+(x_O_8[ri_5] >>= exp(g, x))
+(x_O_6[ri_5] >>= mlpkgen(skm))
+(x_O_10[ri_5] >>= exp(epkq[ri_5], x))
+(x_O_2 >>= exp(g, x))
+(ssm >>= mlencap_ss(pkm, s))
+(pkm >>= mlpkgen(skm))
+Facts:
+Elsefind:
+
+Adding b
+simplif_add (x_O_5 >>= mlencap_ss(pkm, s)) knowing
+Substitutions:
+(b = true)
+(pkm >>= mlpkgen(skm))
+(ssm >>= mlencap_ss(pkm, s))
+(x_O_2 >>= exp(g, x))
+(x_O_10[ri_5] >>= exp(epkq[ri_5], x))
+(x_O_6[ri_5] >>= mlpkgen(skm))
+(x_O_8[ri_5] >>= exp(g, x))
+(x_O >>= mlpkgen(skm))
+(x_O_4 >>= exp(g, mult(x, y)))
+(epk >>= exp(g, y))
+(ctm >>= mlencap_ct(pkm, s))
+Facts:
+Elsefind:
+
+Adding (x_O_5 >>= mlencap_ss(pkm, s))
+simplif_add (x_O_3 >>= exp(g, y)) knowing
+Substitutions:
+(x_O_5 >>= mlencap_ss(pkm, s))
+(ctm >>= mlencap_ct(pkm, s))
+(epk >>= exp(g, y))
+(x_O_4 >>= exp(g, mult(x, y)))
+(x_O >>= mlpkgen(skm))
+(x_O_8[ri_5] >>= exp(g, x))
+(x_O_6[ri_5] >>= mlpkgen(skm))
+(x_O_10[ri_5] >>= exp(epkq[ri_5], x))
+(x_O_2 >>= exp(g, x))
+(ssm >>= mlencap_ss(pkm, s))
+(pkm >>= mlpkgen(skm))
+(b = true)
+Facts:
+Elsefind:
+
+Adding (x_O_3 >>= exp(g, y))
+simplif_add (x_O_1 >>= mlencap_ct(pkm, s)) knowing
+Substitutions:
+(x_O_3 >>= exp(g, y))
+(b = true)
+(pkm >>= mlpkgen(skm))
+(ssm >>= mlencap_ss(pkm, s))
+(x_O_2 >>= exp(g, x))
+(x_O_10[ri_5] >>= exp(epkq[ri_5], x))
+(x_O_6[ri_5] >>= mlpkgen(skm))
+(x_O_8[ri_5] >>= exp(g, x))
+(x_O >>= mlpkgen(skm))
+(x_O_4 >>= exp(g, mult(x, y)))
+(epk >>= exp(g, y))
+(ctm >>= mlencap_ct(pkm, s))
+(x_O_5 >>= mlencap_ss(pkm, s))
+Facts:
+Elsefind:
+
+Adding (x_O_1 >>= mlencap_ct(pkm, s))
+simplif_add (x_O_11[ri_5] >>= mldecap(ctq[ri_5], skm)) knowing
+Substitutions:
+(x_O_1 >>= mlencap_ct(pkm, s))
+(x_O_5 >>= mlencap_ss(pkm, s))
+(ctm >>= mlencap_ct(pkm, s))
+(epk >>= exp(g, y))
+(x_O_4 >>= exp(g, mult(x, y)))
+(x_O >>= mlpkgen(skm))
+(x_O_8[ri_5] >>= exp(g, x))
+(x_O_6[ri_5] >>= mlpkgen(skm))
+(x_O_10[ri_5] >>= exp(epkq[ri_5], x))
+(x_O_2 >>= exp(g, x))
+(ssm >>= mlencap_ss(pkm, s))
+(pkm >>= mlpkgen(skm))
+(b = true)
+(x_O_3 >>= exp(g, y))
+Facts:
+Elsefind:
+
+Adding (x_O_11[ri_5] >>= mldecap(ctq[ri_5], skm))
+simplif_add (x_O_9[ri_5] >>= epkq[ri_5]) knowing
+Substitutions:
+(x_O_11[ri_5] >>= mldecap(ctq[ri_5], skm))
+(x_O_3 >>= exp(g, y))
+(b = true)
+(pkm >>= mlpkgen(skm))
+(ssm >>= mlencap_ss(pkm, s))
+(x_O_2 >>= exp(g, x))
+(x_O_10[ri_5] >>= exp(epkq[ri_5], x))
+(x_O_6[ri_5] >>= mlpkgen(skm))
+(x_O_8[ri_5] >>= exp(g, x))
+(x_O >>= mlpkgen(skm))
+(x_O_4 >>= exp(g, mult(x, y)))
+(epk >>= exp(g, y))
+(ctm >>= mlencap_ct(pkm, s))
+(x_O_5 >>= mlencap_ss(pkm, s))
+(x_O_1 >>= mlencap_ct(pkm, s))
+Facts:
+Elsefind:
+
+Adding (x_O_9[ri_5] >>= epkq[ri_5])
+simplif_add (x_O_7[ri_5] >>= ctq[ri_5]) knowing
+Substitutions:
+(x_O_9[ri_5] >>= epkq[ri_5])
+(x_O_1 >>= mlencap_ct(pkm, s))
+(x_O_5 >>= mlencap_ss(pkm, s))
+(ctm >>= mlencap_ct(pkm, s))
+(epk >>= exp(g, y))
+(x_O_4 >>= exp(g, mult(x, y)))
+(x_O >>= mlpkgen(skm))
+(x_O_8[ri_5] >>= exp(g, x))
+(x_O_6[ri_5] >>= mlpkgen(skm))
+(x_O_10[ri_5] >>= exp(epkq[ri_5], x))
+(x_O_2 >>= exp(g, x))
+(ssm >>= mlencap_ss(pkm, s))
+(pkm >>= mlpkgen(skm))
+(b = true)
+(x_O_3 >>= exp(g, y))
+(x_O_11[ri_5] >>= mldecap(ctq[ri_5], skm))
+Facts:
+Elsefind:
+
+Adding (x_O_7[ri_5] >>= ctq[ri_5])
+simplif_add ((ctq[ri_5] = ctm) && (epkq[ri_5] = epk)) knowing
+Substitutions:
+(x_O_7[ri_5] >>= ctq[ri_5])
+(x_O_11[ri_5] >>= mldecap(ctq[ri_5], skm))
+(x_O_3 >>= exp(g, y))
+(b = true)
+(pkm >>= mlpkgen(skm))
+(ssm >>= mlencap_ss(pkm, s))
+(x_O_2 >>= exp(g, x))
+(x_O_10[ri_5] >>= exp(epkq[ri_5], x))
+(x_O_6[ri_5] >>= mlpkgen(skm))
+(x_O_8[ri_5] >>= exp(g, x))
+(x_O >>= mlpkgen(skm))
+(x_O_4 >>= exp(g, mult(x, y)))
+(epk >>= exp(g, y))
+(ctm >>= mlencap_ct(pkm, s))
+(x_O_5 >>= mlencap_ss(pkm, s))
+(x_O_1 >>= mlencap_ct(pkm, s))
+(x_O_9[ri_5] >>= epkq[ri_5])
+Facts:
+Elsefind:
+
+Adding false
+Obtained a contradiction.
+Found a usable term: not(((ctq[ri_5] = ctm) && (epkq[ri_5] = epk)))
+__________________
+Elsefind summary: these terms are true:
+not(((ctq[ri_5] = ctm) && (epkq[ri_5] = epk))), not(((ctq[ri_5] = ctm) && (epkq[ri_5] = epk))), not(((x_O_11[ri_5] = x_O_11[ri_5]) && (x_O_10[ri_5] = x_O_10[ri_5]) && (x_O_9[ri_5] = x_O_9[ri_5]) && (x_O_8[ri_5] = x_O_8[ri_5]) && (x_O_7[ri_5] = x_O_7[ri_5]) && (x_O_6[ri_5] = x_O_6[ri_5]) && (ri_5 <> ri_5)))
+Applied collision x_1 <-R Z; forall Y: G; return((exp(g, x_1) = Y)) <=(PCollKey)=> return(false) if Y independent-of x_1 with x_1 -> y, Y -> epkq Probability: PCollKey * Qd
+Done.
+Doing remove assignments of findcond... Done.
+Doing simplify... __________________
+Elsefind begin
+
+-----------------
+Variables known to be currently defined: r_2[ri], x_O_17[ri], x6[ri], x5[ri], x4[ri], x3[ri], x2[ri], x1[ri], x_O_17, x1, x2, x3, x4, x5, x6, x, skm, b
+Program point known to be executed in an else branch of find: {372}[ri]
+Elsefind_fact (before renaming): for all ri; not(defined(x1[ri], x2[ri], x3[ri], x4[ri], x5[ri], x6[ri], x_O_17[ri], r_2[ri]) && ((x1 = x1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) && (x4 = x4[ri]) && (x5 = x5[ri]) && (x6 = x6[ri]) && (iH <> ri)))
+Elsefind_fact_vars_before:
+r_2[ri], x_O_17[ri], x1[ri], x2[ri], x3[ri], x4[ri], x5[ri], x6[ri], x, skm, b
+Elsefind_fact (after renaming): for all @ri_22; not(defined(r_2[@ri_22]) && ((x1[ri] = x1[@ri_22]) && (x2[ri] = x2[@ri_22]) && (x3[ri] = x3[@ri_22]) && (x4[ri] = x4[@ri_22]) && (x5[ri] = x5[@ri_22]) && (x6[ri] = x6[@ri_22]) && (ri <> @ri_22)))
+Elsefind_fact_try:
+((x1[ri] = x1[ri]) && (x2[ri] = x2[ri]) && (x3[ri] = x3[ri]) && (x4[ri] = x4[ri]) && (x5[ri] = x5[ri]) && (x6[ri] = x6[ri]) && (ri <> ri))
+And the def_list':
+r_2[ri]
+equal to
+r_2[ri]
+Let's assume that r_2[ri] is defined after or simultaneously {372}[ri]
+Found a usable term: not(((x1[ri] = x1[ri]) && (x2[ri] = x2[ri]) && (x3[ri] = x3[ri]) && (x4[ri] = x4[ri]) && (x5[ri] = x5[ri]) && (x6[ri] = x6[ri]) && (ri <> ri)))
+-----------------
+Variables known to be currently defined: r_2[ri], x_O_17[ri], x6[ri], x5[ri], x4[ri], x3[ri], x2[ri], x1[ri], x_O_17, x1, x2, x3, x4, x5, x6, x, skm, b
+Program point known to be executed in an else branch of find: {372}[ri]
+Elsefind_fact (before renaming): for all ri_1; not(defined(epkq[ri_1], ctq[ri_1], x_O_11[ri_1], x_O_10[ri_1], x_O_8[ri_1], x_O_6[ri_1], r_1[ri_1]) && ((x1 = x_O_11[ri_1]) && (x2 = x_O_10[ri_1]) && (x3 = epkq[ri_1]) && (x4 = x_O_8[ri_1]) && (x5 = ctq[ri_1]) && (x6 = x_O_6[ri_1])))
+Elsefind_fact_vars_before:
+r_2[ri], x_O_17[ri], x1[ri], x2[ri], x3[ri], x4[ri], x5[ri], x6[ri], x, skm, b
+Elsefind_fact (after renaming): for all @ri_23; not(defined(r_1[@ri_23]) && ((x1[ri] = x_O_11[@ri_23]) && (x2[ri] = x_O_10[@ri_23]) && (x3[ri] = epkq[@ri_23]) && (x4[ri] = x_O_8[@ri_23]) && (x5[ri] = ctq[@ri_23]) && (x6[ri] = x_O_6[@ri_23])))
+-----------------
+Variables known to be currently defined: r_2[ri], x_O_17[ri], x6[ri], x5[ri], x4[ri], x3[ri], x2[ri], x1[ri], x_O_17, x1, x2, x3, x4, x5, x6, x, skm, b
+Program point known to be executed in an else branch of find: {372}[ri]
+Elsefind_fact (before renaming): for all ; not(defined(epk, ctm, pkm, ssm, x_O_4, x_O_2, r) && ((x1 = ssm) && (x2 = x_O_4) && (x3 = epk) && (x4 = x_O_2) && (x5 = ctm) && (x6 = pkm)))
+Elsefind_fact_vars_before:
+r_2[ri], x_O_17[ri], x1[ri], x2[ri], x3[ri], x4[ri], x5[ri], x6[ri], x, skm, b
+Elsefind_fact (after renaming): for all ; not(defined(r) && ((x1[ri] = ssm) && (x2[ri] = x_O_4) && (x3[ri] = epk) && (x4[ri] = x_O_2) && (x5[ri] = ctm) && (x6[ri] = pkm)))
+__________________
+Elsefind summary: these terms are true:
+not(((x1[ri] = x1[ri]) && (x2[ri] = x2[ri]) && (x3[ri] = x3[ri]) && (x4[ri] = x4[ri]) && (x5[ri] = x5[ri]) && (x6[ri] = x6[ri]) && (ri <> ri)))
+
+_________________
+Occ = 243 : 
+Substitutions:
+(x_O_17[u] >>= cst_mlss)
+(x5[u] = x5)
+(x3[u] = x3)
+(x1[u] = x1)
+(x_O_17 >>= cst_mlss)
+(x2[u] = x2)
+(x4[u] = x4)
+(x6[u] = x6)
+Facts:
+(iH <> u)
+Elsefind:
+for all ri_1; not(defined(epkq[ri_1], ctq[ri_1], x_O_11[ri_1], x_O_10[ri_1], x_O_8[ri_1], x_O_6[ri_1], r_1[ri_1]) && ((x1 = x_O_11[ri_1]) && (x2 = x_O_10[ri_1]) && (x3 = epkq[ri_1]) && (x4 = x_O_8[ri_1]) && (x5 = ctq[ri_1]) && (x6 = x_O_6[ri_1])))
+for all ; not(defined(epk, ctm, pkm, ssm, x_O_4, x_O_2, r) && ((x1 = ssm) && (x2 = x_O_4) && (x3 = epk) && (x4 = x_O_2) && (x5 = ctm) && (x6 = pkm)))
+__________________
+Elsefind begin
+
+-----------------
+Variables known to be currently defined: r_1[ri_1], x_O_6[ri_1], x_O_8[ri_1], x_O_10[ri_1], x_O_11[ri_1], ctq[ri_1], epkq[ri_1], x_O_17, x1, x2, x3, x4, x5, x6, x, skm, b
+Program point known to be executed in an else branch of find: {231}[ri_1]
+Elsefind_fact (before renaming): for all ri_2; not(defined(x1[ri_2], x2[ri_2], x3[ri_2], x4[ri_2], x5[ri_2], x6[ri_2], x_O_17[ri_2], r_2[ri_2]) && ((x_O_11 = x1[ri_2]) && (x_O_10 = x2[ri_2]) && (epkq = x3[ri_2]) && (x_O_8 = x4[ri_2]) && (ctq = x5[ri_2]) && (x_O_6 = x6[ri_2])))
+Elsefind_fact_vars_before:
+r_1[ri_1], x_O_6[ri_1], x_O_8[ri_1], x_O_10[ri_1], x_O_11[ri_1], ctq[ri_1], epkq[ri_1], x, skm, b
+Elsefind_fact (after renaming): for all @ri_24; not(defined(r_2[@ri_24]) && ((x_O_11[ri_1] = x1[@ri_24]) && (x_O_10[ri_1] = x2[@ri_24]) && (epkq[ri_1] = x3[@ri_24]) && (x_O_8[ri_1] = x4[@ri_24]) && (ctq[ri_1] = x5[@ri_24]) && (x_O_6[ri_1] = x6[@ri_24])))
+-----------------
+Variables known to be currently defined: r_1[ri_1], x_O_6[ri_1], x_O_8[ri_1], x_O_10[ri_1], x_O_11[ri_1], ctq[ri_1], epkq[ri_1], x_O_17, x1, x2, x3, x4, x5, x6, x, skm, b
+Program point known to be executed in an else branch of find: {231}[ri_1]
+Elsefind_fact (before renaming): for all ri_3; not(defined(epkq[ri_3], ctq[ri_3], x_O_11[ri_3], x_O_10[ri_3], x_O_8[ri_3], x_O_6[ri_3], r_1[ri_3]) && ((x_O_11 = x_O_11[ri_3]) && (x_O_10 = x_O_10[ri_3]) && (epkq = epkq[ri_3]) && (x_O_8 = x_O_8[ri_3]) && (ctq = ctq[ri_3]) && (x_O_6 = x_O_6[ri_3]) && (id <> ri_3)))
+Elsefind_fact_vars_before:
+r_1[ri_1], x_O_6[ri_1], x_O_8[ri_1], x_O_10[ri_1], x_O_11[ri_1], ctq[ri_1], epkq[ri_1], x, skm, b
+Elsefind_fact (after renaming): for all @ri_25; not(defined(r_1[@ri_25]) && ((x_O_11[ri_1] = x_O_11[@ri_25]) && (x_O_10[ri_1] = x_O_10[@ri_25]) && (epkq[ri_1] = epkq[@ri_25]) && (x_O_8[ri_1] = x_O_8[@ri_25]) && (ctq[ri_1] = ctq[@ri_25]) && (x_O_6[ri_1] = x_O_6[@ri_25]) && (ri_1 <> @ri_25)))
+Elsefind_fact_try:
+((x_O_11[ri_1] = x_O_11[ri_1]) && (x_O_10[ri_1] = x_O_10[ri_1]) && (epkq[ri_1] = epkq[ri_1]) && (x_O_8[ri_1] = x_O_8[ri_1]) && (ctq[ri_1] = ctq[ri_1]) && (x_O_6[ri_1] = x_O_6[ri_1]) && (ri_1 <> ri_1))
+And the def_list':
+r_1[ri_1]
+equal to
+r_1[ri_1]
+Let's assume that r_1[ri_1] is defined after or simultaneously {231}[ri_1]
+Found a usable term: not(((x_O_11[ri_1] = x_O_11[ri_1]) && (x_O_10[ri_1] = x_O_10[ri_1]) && (epkq[ri_1] = epkq[ri_1]) && (x_O_8[ri_1] = x_O_8[ri_1]) && (ctq[ri_1] = ctq[ri_1]) && (x_O_6[ri_1] = x_O_6[ri_1]) && (ri_1 <> ri_1)))
+-----------------
+Variables known to be currently defined: r_1[ri_1], x_O_6[ri_1], x_O_8[ri_1], x_O_10[ri_1], x_O_11[ri_1], ctq[ri_1], epkq[ri_1], x_O_17, x1, x2, x3, x4, x5, x6, x, skm, b
+Program point known to be executed in an else branch of find: {231}[ri_1]
+Elsefind_fact (before renaming): for all ; not(defined(ctm, epk) && ((ctq = ctm) && (epkq = epk)))
+Elsefind_fact_vars_before:
+r_1[ri_1], x_O_6[ri_1], x_O_8[ri_1], x_O_10[ri_1], x_O_11[ri_1], ctq[ri_1], epkq[ri_1], x, skm, b
+Elsefind_fact (after renaming): for all ; not(defined(epk) && ((ctq[ri_1] = ctm) && (epkq[ri_1] = epk)))
+__________________
+Elsefind summary: these terms are true:
+not(((x_O_11[ri_1] = x_O_11[ri_1]) && (x_O_10[ri_1] = x_O_10[ri_1]) && (epkq[ri_1] = epkq[ri_1]) && (x_O_8[ri_1] = x_O_8[ri_1]) && (ctq[ri_1] = ctq[ri_1]) && (x_O_6[ri_1] = x_O_6[ri_1]) && (ri_1 <> ri_1)))
+Doing global dependency analysis on x inside simplify... At 7, returned message exp(g, x) depends on x.
+No change
+
+_________________
+Occ = 243 : 
+Substitutions:
+(x6 = mlpkgen(skm))
+(x4 = exp(g, x))
+(x2 = exp(epkq[u_1], x))
+(x1 = mldecap(ctq[u_1], skm))
+(x_O_17 >>= cst_mlss)
+(x3 = epkq[u_1])
+(x5 = ctq[u_1])
+(x_O_11[u_1] >>= mldecap(ctq[u_1], skm))
+(x_O_10[u_1] >>= exp(epkq[u_1], x))
+(x_O_8[u_1] >>= exp(g, x))
+(x_O_6[u_1] >>= mlpkgen(skm))
+Facts:
+Elsefind:
+for all ri; not(defined(x1[ri], x2[ri], x3[ri], x4[ri], x5[ri], x6[ri], x_O_17[ri], r_2[ri]) && ((x1 = x1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) && (x4 = x4[ri]) && (x5 = x5[ri]) && (x6 = x6[ri])))
+for all ; not(defined(epk, ctm, pkm, ssm, x_O_4, x_O_2, r) && ((x1 = ssm) && (x2 = x_O_4) && (x3 = epk) && (x4 = x_O_2) && (x5 = ctm) && (x6 = pkm)))
+__________________
+Elsefind begin
+
+-----------------
+Variables known to be currently defined: r, x_O_2, x_O_4, ssm, pkm, ctm, epk, s, y, x_O_17, x1, x2, x3, x4, x5, x6, x, skm, b
+Program point known to be executed in an else branch of find: {87}
+Elsefind_fact (before renaming): for all ri_4; not(defined(x1[ri_4], x2[ri_4], x3[ri_4], x4[ri_4], x5[ri_4], x6[ri_4], x_O_17[ri_4], r_2[ri_4]) && ((ssm = x1[ri_4]) && (x_O_4 = x2[ri_4]) && (epk = x3[ri_4]) && (x_O_2 = x4[ri_4]) && (ctm = x5[ri_4]) && (pkm = x6[ri_4])))
+Elsefind_fact_vars_before:
+r, x_O_2, x_O_4, ssm, epk, ctm, pkm, y, s, x, skm, b
+Elsefind_fact (after renaming): for all @ri_26; not(defined(r_2[@ri_26]) && ((ssm = x1[@ri_26]) && (x_O_4 = x2[@ri_26]) && (epk = x3[@ri_26]) && (x_O_2 = x4[@ri_26]) && (ctm = x5[@ri_26]) && (pkm = x6[@ri_26])))
+__________________
+Elsefind summary: these terms are true:
+
+Doing global dependency analysis on y inside simplify... At 89, returned message epk depends on y.
+No change
+
+_________________
+Occ = 243 : 
+Substitutions:
+(x4 = exp(g, x))
+(x2 = exp(g, mult(x, y)))
+(x1 = mlencap_ss(pkm, s))
+(b = true)
+(epk >>= exp(g, y))
+(ctm >>= mlencap_ct(pkm, s))
+(pkm >>= mlpkgen(skm))
+(x_O_17 >>= cst_mlss)
+(x6 = mlpkgen(skm))
+(x5 = mlencap_ct(pkm, s))
+(x3 = exp(g, y))
+(ssm >>= mlencap_ss(pkm, s))
+(x_O_4 >>= exp(g, mult(x, y)))
+(x_O_2 >>= exp(g, x))
+Facts:
+Elsefind:
+for all ri; not(defined(x1[ri], x2[ri], x3[ri], x4[ri], x5[ri], x6[ri], x_O_17[ri], r_2[ri]) && ((x1 = x1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) && (x4 = x4[ri]) && (x5 = x5[ri]) && (x6 = x6[ri])))
+for all ri_1; not(defined(epkq[ri_1], ctq[ri_1], x_O_11[ri_1], x_O_10[ri_1], x_O_8[ri_1], x_O_6[ri_1], r_1[ri_1]) && ((x1 = x_O_11[ri_1]) && (x2 = x_O_10[ri_1]) && (x3 = epkq[ri_1]) && (x4 = x_O_8[ri_1]) && (x5 = ctq[ri_1]) && (x6 = x_O_6[ri_1])))
+__________________
+Elsefind begin
+
+-----------------
+Variables known to be currently defined: r_2[ri_2], x_O_17[ri_2], x6[ri_2], x5[ri_2], x4[ri_2], x3[ri_2], x2[ri_2], x1[ri_2], x_O_6, x_O_8, x_O_10, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {372}[ri_2]
+Elsefind_fact (before renaming): for all ri; not(defined(x1[ri], x2[ri], x3[ri], x4[ri], x5[ri], x6[ri], x_O_17[ri], r_2[ri]) && ((x1 = x1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) && (x4 = x4[ri]) && (x5 = x5[ri]) && (x6 = x6[ri]) && (iH <> ri)))
+Elsefind_fact_vars_before:
+r_2[ri_2], x_O_17[ri_2], x1[ri_2], x2[ri_2], x3[ri_2], x4[ri_2], x5[ri_2], x6[ri_2], x, skm, b
+Elsefind_fact (after renaming): for all @ri_27; not(defined(r_2[@ri_27]) && ((x1[ri_2] = x1[@ri_27]) && (x2[ri_2] = x2[@ri_27]) && (x3[ri_2] = x3[@ri_27]) && (x4[ri_2] = x4[@ri_27]) && (x5[ri_2] = x5[@ri_27]) && (x6[ri_2] = x6[@ri_27]) && (ri_2 <> @ri_27)))
+Elsefind_fact_try:
+((x1[ri_2] = x1[ri_2]) && (x2[ri_2] = x2[ri_2]) && (x3[ri_2] = x3[ri_2]) && (x4[ri_2] = x4[ri_2]) && (x5[ri_2] = x5[ri_2]) && (x6[ri_2] = x6[ri_2]) && (ri_2 <> ri_2))
+And the def_list':
+r_2[ri_2]
+equal to
+r_2[ri_2]
+Let's assume that r_2[ri_2] is defined after or simultaneously {372}[ri_2]
+Found a usable term: not(((x1[ri_2] = x1[ri_2]) && (x2[ri_2] = x2[ri_2]) && (x3[ri_2] = x3[ri_2]) && (x4[ri_2] = x4[ri_2]) && (x5[ri_2] = x5[ri_2]) && (x6[ri_2] = x6[ri_2]) && (ri_2 <> ri_2)))
+-----------------
+Variables known to be currently defined: r_2[ri_2], x_O_17[ri_2], x6[ri_2], x5[ri_2], x4[ri_2], x3[ri_2], x2[ri_2], x1[ri_2], x_O_6, x_O_8, x_O_10, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {372}[ri_2]
+Elsefind_fact (before renaming): for all ri_1; not(defined(epkq[ri_1], ctq[ri_1], x_O_11[ri_1], x_O_10[ri_1], x_O_8[ri_1], x_O_6[ri_1], r_1[ri_1]) && ((x1 = x_O_11[ri_1]) && (x2 = x_O_10[ri_1]) && (x3 = epkq[ri_1]) && (x4 = x_O_8[ri_1]) && (x5 = ctq[ri_1]) && (x6 = x_O_6[ri_1])))
+Elsefind_fact_vars_before:
+r_2[ri_2], x_O_17[ri_2], x1[ri_2], x2[ri_2], x3[ri_2], x4[ri_2], x5[ri_2], x6[ri_2], x, skm, b
+Elsefind_fact (after renaming): for all @ri_28; not(defined(r_1[@ri_28]) && ((x1[ri_2] = x_O_11[@ri_28]) && (x2[ri_2] = x_O_10[@ri_28]) && (x3[ri_2] = epkq[@ri_28]) && (x4[ri_2] = x_O_8[@ri_28]) && (x5[ri_2] = ctq[@ri_28]) && (x6[ri_2] = x_O_6[@ri_28])))
+-----------------
+Variables known to be currently defined: r_2[ri_2], x_O_17[ri_2], x6[ri_2], x5[ri_2], x4[ri_2], x3[ri_2], x2[ri_2], x1[ri_2], x_O_6, x_O_8, x_O_10, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {372}[ri_2]
+Elsefind_fact (before renaming): for all ; not(defined(epk, ctm, pkm, ssm, x_O_4, x_O_2, r) && ((x1 = ssm) && (x2 = x_O_4) && (x3 = epk) && (x4 = x_O_2) && (x5 = ctm) && (x6 = pkm)))
+Elsefind_fact_vars_before:
+r_2[ri_2], x_O_17[ri_2], x1[ri_2], x2[ri_2], x3[ri_2], x4[ri_2], x5[ri_2], x6[ri_2], x, skm, b
+Elsefind_fact (after renaming): for all ; not(defined(r) && ((x1[ri_2] = ssm) && (x2[ri_2] = x_O_4) && (x3[ri_2] = epk) && (x4[ri_2] = x_O_2) && (x5[ri_2] = ctm) && (x6[ri_2] = pkm)))
+-----------------
+Variables known to be currently defined: r_2[ri_2], x_O_17[ri_2], x6[ri_2], x5[ri_2], x4[ri_2], x3[ri_2], x2[ri_2], x1[ri_2], x_O_6, x_O_8, x_O_10, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {134}[id]
+Elsefind_fact (before renaming): for all ; not(defined(ctm, epk) && ((ctq = ctm) && (epkq = epk)))
+Elsefind_fact_vars_before:
+x_O_6, x_O_8, x_O_10, x_O_11, ctq, epkq, x, skm, b
+Elsefind_fact (after renaming): for all ; not(defined(epk) && ((ctq = ctm) && (epkq = epk)))
+__________________
+Elsefind summary: these terms are true:
+not(((x1[ri_2] = x1[ri_2]) && (x2[ri_2] = x2[ri_2]) && (x3[ri_2] = x3[ri_2]) && (x4[ri_2] = x4[ri_2]) && (x5[ri_2] = x5[ri_2]) && (x6[ri_2] = x6[ri_2]) && (ri_2 <> ri_2)))
+
+_________________
+Occ = 134 : 
+Substitutions:
+(x_O_17[u_2] >>= cst_mlss)
+(ctq = x5[u_2])
+(epkq = x3[u_2])
+(x1[u_2] = mldecap(ctq, skm))
+(x_O_8 >>= exp(g, x))
+(x_O_11 >>= mldecap(ctq, skm))
+(x_O_10 >>= exp(epkq, x))
+(x_O_6 >>= mlpkgen(skm))
+(x2[u_2] = exp(epkq, x))
+(x4[u_2] = exp(g, x))
+(x6[u_2] = mlpkgen(skm))
+Facts:
+Elsefind:
+for all ri_3; not(defined(epkq[ri_3], ctq[ri_3], x_O_11[ri_3], x_O_10[ri_3], x_O_8[ri_3], x_O_6[ri_3], r_1[ri_3]) && ((x_O_11 = x_O_11[ri_3]) && (x_O_10 = x_O_10[ri_3]) && (epkq = epkq[ri_3]) && (x_O_8 = x_O_8[ri_3]) && (ctq = ctq[ri_3]) && (x_O_6 = x_O_6[ri_3])))
+for all ; not(defined(ctm, epk) && ((ctq = ctm) && (epkq = epk)))
+__________________
+Elsefind begin
+
+-----------------
+Variables known to be currently defined: r_1[ri_3], x_O_6[ri_3], x_O_8[ri_3], x_O_10[ri_3], x_O_11[ri_3], ctq[ri_3], epkq[ri_3], x_O_6, x_O_8, x_O_10, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {231}[ri_3]
+Elsefind_fact (before renaming): for all ri_2; not(defined(x1[ri_2], x2[ri_2], x3[ri_2], x4[ri_2], x5[ri_2], x6[ri_2], x_O_17[ri_2], r_2[ri_2]) && ((x_O_11 = x1[ri_2]) && (x_O_10 = x2[ri_2]) && (epkq = x3[ri_2]) && (x_O_8 = x4[ri_2]) && (ctq = x5[ri_2]) && (x_O_6 = x6[ri_2])))
+Elsefind_fact_vars_before:
+r_1[ri_3], x_O_6[ri_3], x_O_8[ri_3], x_O_10[ri_3], x_O_11[ri_3], ctq[ri_3], epkq[ri_3], x, skm, b
+Elsefind_fact (after renaming): for all @ri_29; not(defined(r_2[@ri_29]) && ((x_O_11[ri_3] = x1[@ri_29]) && (x_O_10[ri_3] = x2[@ri_29]) && (epkq[ri_3] = x3[@ri_29]) && (x_O_8[ri_3] = x4[@ri_29]) && (ctq[ri_3] = x5[@ri_29]) && (x_O_6[ri_3] = x6[@ri_29])))
+-----------------
+Variables known to be currently defined: r_1[ri_3], x_O_6[ri_3], x_O_8[ri_3], x_O_10[ri_3], x_O_11[ri_3], ctq[ri_3], epkq[ri_3], x_O_6, x_O_8, x_O_10, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {231}[ri_3]
+Elsefind_fact (before renaming): for all ri_3; not(defined(epkq[ri_3], ctq[ri_3], x_O_11[ri_3], x_O_10[ri_3], x_O_8[ri_3], x_O_6[ri_3], r_1[ri_3]) && ((x_O_11 = x_O_11[ri_3]) && (x_O_10 = x_O_10[ri_3]) && (epkq = epkq[ri_3]) && (x_O_8 = x_O_8[ri_3]) && (ctq = ctq[ri_3]) && (x_O_6 = x_O_6[ri_3]) && (id <> ri_3)))
+Elsefind_fact_vars_before:
+r_1[ri_3], x_O_6[ri_3], x_O_8[ri_3], x_O_10[ri_3], x_O_11[ri_3], ctq[ri_3], epkq[ri_3], x, skm, b
+Elsefind_fact (after renaming): for all @ri_30; not(defined(r_1[@ri_30]) && ((x_O_11[ri_3] = x_O_11[@ri_30]) && (x_O_10[ri_3] = x_O_10[@ri_30]) && (epkq[ri_3] = epkq[@ri_30]) && (x_O_8[ri_3] = x_O_8[@ri_30]) && (ctq[ri_3] = ctq[@ri_30]) && (x_O_6[ri_3] = x_O_6[@ri_30]) && (ri_3 <> @ri_30)))
+Elsefind_fact_try:
+((x_O_11[ri_3] = x_O_11[ri_3]) && (x_O_10[ri_3] = x_O_10[ri_3]) && (epkq[ri_3] = epkq[ri_3]) && (x_O_8[ri_3] = x_O_8[ri_3]) && (ctq[ri_3] = ctq[ri_3]) && (x_O_6[ri_3] = x_O_6[ri_3]) && (ri_3 <> ri_3))
+And the def_list':
+r_1[ri_3]
+equal to
+r_1[ri_3]
+Let's assume that r_1[ri_3] is defined after or simultaneously {231}[ri_3]
+Found a usable term: not(((x_O_11[ri_3] = x_O_11[ri_3]) && (x_O_10[ri_3] = x_O_10[ri_3]) && (epkq[ri_3] = epkq[ri_3]) && (x_O_8[ri_3] = x_O_8[ri_3]) && (ctq[ri_3] = ctq[ri_3]) && (x_O_6[ri_3] = x_O_6[ri_3]) && (ri_3 <> ri_3)))
+-----------------
+Variables known to be currently defined: r_1[ri_3], x_O_6[ri_3], x_O_8[ri_3], x_O_10[ri_3], x_O_11[ri_3], ctq[ri_3], epkq[ri_3], x_O_6, x_O_8, x_O_10, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {231}[ri_3]
+Elsefind_fact (before renaming): for all ; not(defined(ctm, epk) && ((ctq = ctm) && (epkq = epk)))
+Elsefind_fact_vars_before:
+r_1[ri_3], x_O_6[ri_3], x_O_8[ri_3], x_O_10[ri_3], x_O_11[ri_3], ctq[ri_3], epkq[ri_3], x, skm, b
+Elsefind_fact (after renaming): for all ; not(defined(epk) && ((ctq[ri_3] = ctm) && (epkq[ri_3] = epk)))
+-----------------
+Variables known to be currently defined: r_1[ri_3], x_O_6[ri_3], x_O_8[ri_3], x_O_10[ri_3], x_O_11[ri_3], ctq[ri_3], epkq[ri_3], x_O_6, x_O_8, x_O_10, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {134}[id]
+Elsefind_fact (before renaming): for all ; not(defined(ctm, epk) && ((ctq = ctm) && (epkq = epk)))
+Elsefind_fact_vars_before:
+x_O_6, x_O_8, x_O_10, x_O_11, ctq, epkq, x, skm, b
+Elsefind_fact (after renaming): for all ; not(defined(epk) && ((ctq = ctm) && (epkq = epk)))
+__________________
+Elsefind summary: these terms are true:
+not(((x_O_11[ri_3] = x_O_11[ri_3]) && (x_O_10[ri_3] = x_O_10[ri_3]) && (epkq[ri_3] = epkq[ri_3]) && (x_O_8[ri_3] = x_O_8[ri_3]) && (ctq[ri_3] = ctq[ri_3]) && (x_O_6[ri_3] = x_O_6[ri_3]) && (ri_3 <> ri_3)))
+
+_________________
+Occ = 134 : 
+Substitutions:
+(x_O_6[u_3] >>= mlpkgen(skm))
+(x_O_10[u_3] >>= exp(epkq[u_3], x))
+(ctq[u_3] = ctq)
+(x_O_6 >>= mlpkgen(skm))
+(x_O_10 >>= exp(epkq, x))
+(x_O_11 >>= mldecap(ctq, skm))
+(x_O_8 >>= exp(g, x))
+(epkq[u_3] = epkq)
+(x_O_11[u_3] >>= mldecap(ctq[u_3], skm))
+(x_O_8[u_3] >>= exp(g, x))
+Facts:
+(id <> u_3)
+Elsefind:
+for all ri_2; not(defined(x1[ri_2], x2[ri_2], x3[ri_2], x4[ri_2], x5[ri_2], x6[ri_2], x_O_17[ri_2], r_2[ri_2]) && ((x_O_11 = x1[ri_2]) && (x_O_10 = x2[ri_2]) && (epkq = x3[ri_2]) && (x_O_8 = x4[ri_2]) && (ctq = x5[ri_2]) && (x_O_6 = x6[ri_2])))
+for all ; not(defined(ctm, epk) && ((ctq = ctm) && (epkq = epk)))
+__________________
+Elsefind begin
+
+__________________
+Elsefind summary: these terms are true:
+
+
+_________________
+Occ = 106 : 
+Substitutions:
+(epkq = exp(g, y))
+(ctq = mlencap_ct(pkm, s))
+(pkm >>= mlpkgen(skm))
+(ctm >>= mlencap_ct(pkm, s))
+(epk >>= exp(g, y))
+Facts:
+Elsefind:
+Applied collision x_1 <-R Z; forall Y: G; return((exp(g, x_1) = Y)) <=(PCollKey)=> return(false) if Y independent-of x_1 with x_1 -> y, Y -> exp(g, y-indep) Probability: PCollKey * qH
+__________________
+Elsefind begin
+
+-----------------
+Variables known to be currently defined: x1[ri], x2[ri], x3[ri], x4[ri], x5[ri], x6[ri], r_2[ri], x_O_17[ri], x_O_17, x1, x2, x3, x4, x5, x6, x, skm, b
+Program point known to be executed in an else branch of find: {298}[ri]
+Elsefind_fact (before renaming): for all ri; not(defined(r_2[ri], x6[ri], x5[ri], x4[ri], x3[ri], x2[ri], x1[ri]) && ((x1 = x1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) && (x4 = x4[ri]) && (x5 = x5[ri]) && (x6 = x6[ri]) && (iH <> ri)))
+Elsefind_fact_vars_before:
+r_2[ri], x_O_17[ri], x1[ri], x2[ri], x3[ri], x4[ri], x5[ri], x6[ri], x, skm, b
+Elsefind_fact (after renaming): for all @ri_31; not(defined(r_2[@ri_31]) && ((x1[ri] = x1[@ri_31]) && (x2[ri] = x2[@ri_31]) && (x3[ri] = x3[@ri_31]) && (x4[ri] = x4[@ri_31]) && (x5[ri] = x5[@ri_31]) && (x6[ri] = x6[@ri_31]) && (ri <> @ri_31)))
+Elsefind_fact_try:
+((x1[ri] = x1[ri]) && (x2[ri] = x2[ri]) && (x3[ri] = x3[ri]) && (x4[ri] = x4[ri]) && (x5[ri] = x5[ri]) && (x6[ri] = x6[ri]) && (ri <> ri))
+And the def_list':
+r_2[ri]
+equal to
+r_2[ri]
+Let's assume that r_2[ri] is defined after or simultaneously {298}[ri]
+Found a usable term: not(((x1[ri] = x1[ri]) && (x2[ri] = x2[ri]) && (x3[ri] = x3[ri]) && (x4[ri] = x4[ri]) && (x5[ri] = x5[ri]) && (x6[ri] = x6[ri]) && (ri <> ri)))
+-----------------
+Variables known to be currently defined: x1[ri], x2[ri], x3[ri], x4[ri], x5[ri], x6[ri], r_2[ri], x_O_17[ri], x_O_17, x1, x2, x3, x4, x5, x6, x, skm, b
+Program point known to be executed in an else branch of find: {298}[ri]
+Elsefind_fact (before renaming): for all ri_1; not(defined(epkq[ri_1], ctq[ri_1], x_O_11[ri_1], x_O_10[ri_1], x_O_8[ri_1], x_O_6[ri_1], r_1[ri_1]) && ((x1 = x_O_11[ri_1]) && (x2 = x_O_10[ri_1]) && (x3 = epkq[ri_1]) && (x4 = x_O_8[ri_1]) && (x5 = ctq[ri_1]) && (x6 = x_O_6[ri_1])))
+Elsefind_fact_vars_before:
+r_2[ri], x_O_17[ri], x1[ri], x2[ri], x3[ri], x4[ri], x5[ri], x6[ri], x, skm, b
+Elsefind_fact (after renaming): for all @ri_32; not(defined(r_1[@ri_32]) && ((x1[ri] = x_O_11[@ri_32]) && (x2[ri] = x_O_10[@ri_32]) && (x3[ri] = epkq[@ri_32]) && (x4[ri] = x_O_8[@ri_32]) && (x5[ri] = ctq[@ri_32]) && (x6[ri] = x_O_6[@ri_32])))
+-----------------
+Variables known to be currently defined: x1[ri], x2[ri], x3[ri], x4[ri], x5[ri], x6[ri], r_2[ri], x_O_17[ri], x_O_17, x1, x2, x3, x4, x5, x6, x, skm, b
+Program point known to be executed in an else branch of find: {298}[ri]
+Elsefind_fact (before renaming): for all ; not(defined(epk, ctm, pkm, ssm, x_O_4, x_O_2, r) && ((x1 = ssm) && (x2 = x_O_4) && (x3 = epk) && (x4 = x_O_2) && (x5 = ctm) && (x6 = pkm)))
+Elsefind_fact_vars_before:
+r_2[ri], x_O_17[ri], x1[ri], x2[ri], x3[ri], x4[ri], x5[ri], x6[ri], x, skm, b
+Elsefind_fact (after renaming): for all ; not(defined(r) && ((x1[ri] = ssm) && (x2[ri] = x_O_4) && (x3[ri] = epk) && (x4[ri] = x_O_2) && (x5[ri] = ctm) && (x6[ri] = pkm)))
+__________________
+Elsefind summary: these terms are true:
+not(((x1[ri] = x1[ri]) && (x2[ri] = x2[ri]) && (x3[ri] = x3[ri]) && (x4[ri] = x4[ri]) && (x5[ri] = x5[ri]) && (x6[ri] = x6[ri]) && (ri <> ri)))
+
+_________________
+Occ = 170 : 
+Substitutions:
+(x_O_17[u] >>= cst_mlss)
+(x5[u] = x5)
+(x3[u] = x3)
+(x1[u] = x1)
+(x_O_17 >>= cst_mlss)
+(x2[u] = x2)
+(x4[u] = x4)
+(x6[u] = x6)
+Facts:
+(iH <> u)
+Elsefind:
+for all ri_1; not(defined(epkq[ri_1], ctq[ri_1], x_O_11[ri_1], x_O_10[ri_1], x_O_8[ri_1], x_O_6[ri_1], r_1[ri_1]) && ((x1 = x_O_11[ri_1]) && (x2 = x_O_10[ri_1]) && (x3 = epkq[ri_1]) && (x4 = x_O_8[ri_1]) && (x5 = ctq[ri_1]) && (x6 = x_O_6[ri_1])))
+for all ; not(defined(epk, ctm, pkm, ssm, x_O_4, x_O_2, r) && ((x1 = ssm) && (x2 = x_O_4) && (x3 = epk) && (x4 = x_O_2) && (x5 = ctm) && (x6 = pkm)))
+__________________
+Elsefind begin
+
+-----------------
+Variables known to be currently defined: r_1[ri_1], x_O_6[ri_1], x_O_8[ri_1], x_O_10[ri_1], x_O_11[ri_1], ctq[ri_1], epkq[ri_1], x_O_17, x1, x2, x3, x4, x5, x6, x, skm, b
+Program point known to be executed in an else branch of find: {158}[ri_1]
+Elsefind_fact (before renaming): for all ri_2; not(defined(r_2[ri_2], x6[ri_2], x5[ri_2], x4[ri_2], x3[ri_2], x2[ri_2], x1[ri_2]) && ((x_O_11 = x1[ri_2]) && (x_O_10 = x2[ri_2]) && (epkq = x3[ri_2]) && (x_O_8 = x4[ri_2]) && (ctq = x5[ri_2]) && (x_O_6 = x6[ri_2])))
+Elsefind_fact_vars_before:
+r_1[ri_1], x_O_6[ri_1], x_O_8[ri_1], x_O_10[ri_1], x_O_11[ri_1], ctq[ri_1], epkq[ri_1], x, skm, b
+Elsefind_fact (after renaming): for all @ri_33; not(defined(r_2[@ri_33]) && ((x_O_11[ri_1] = x1[@ri_33]) && (x_O_10[ri_1] = x2[@ri_33]) && (epkq[ri_1] = x3[@ri_33]) && (x_O_8[ri_1] = x4[@ri_33]) && (ctq[ri_1] = x5[@ri_33]) && (x_O_6[ri_1] = x6[@ri_33])))
+-----------------
+Variables known to be currently defined: r_1[ri_1], x_O_6[ri_1], x_O_8[ri_1], x_O_10[ri_1], x_O_11[ri_1], ctq[ri_1], epkq[ri_1], x_O_17, x1, x2, x3, x4, x5, x6, x, skm, b
+Program point known to be executed in an else branch of find: {158}[ri_1]
+Elsefind_fact (before renaming): for all ri_3; not(defined(r_1[ri_3], ctq[ri_3], epkq[ri_3]) && ((epkq = epkq[ri_3]) && (ctq = ctq[ri_3]) && (id <> ri_3)))
+Elsefind_fact_vars_before:
+r_1[ri_1], x_O_6[ri_1], x_O_8[ri_1], x_O_10[ri_1], x_O_11[ri_1], ctq[ri_1], epkq[ri_1], x, skm, b
+Elsefind_fact (after renaming): for all @ri_34; not(defined(r_1[@ri_34]) && ((epkq[ri_1] = epkq[@ri_34]) && (ctq[ri_1] = ctq[@ri_34]) && (ri_1 <> @ri_34)))
+Elsefind_fact_try:
+((epkq[ri_1] = epkq[ri_1]) && (ctq[ri_1] = ctq[ri_1]) && (ri_1 <> ri_1))
+And the def_list':
+r_1[ri_1]
+equal to
+r_1[ri_1]
+Let's assume that r_1[ri_1] is defined after or simultaneously {158}[ri_1]
+Found a usable term: not(((epkq[ri_1] = epkq[ri_1]) && (ctq[ri_1] = ctq[ri_1]) && (ri_1 <> ri_1)))
+-----------------
+Variables known to be currently defined: r_1[ri_1], x_O_6[ri_1], x_O_8[ri_1], x_O_10[ri_1], x_O_11[ri_1], ctq[ri_1], epkq[ri_1], x_O_17, x1, x2, x3, x4, x5, x6, x, skm, b
+Program point known to be executed in an else branch of find: {158}[ri_1]
+Elsefind_fact (before renaming): for all ; not(defined(ctm, epk) && ((ctq = ctm) && (epkq = epk)))
+Elsefind_fact_vars_before:
+r_1[ri_1], x_O_6[ri_1], x_O_8[ri_1], x_O_10[ri_1], x_O_11[ri_1], ctq[ri_1], epkq[ri_1], x, skm, b
+Elsefind_fact (after renaming): for all ; not(defined(epk) && ((ctq[ri_1] = ctm) && (epkq[ri_1] = epk)))
+__________________
+Elsefind summary: these terms are true:
+not(((epkq[ri_1] = epkq[ri_1]) && (ctq[ri_1] = ctq[ri_1]) && (ri_1 <> ri_1)))
+Doing global dependency analysis on x inside simplify... At 7, returned message exp(g, x) depends on x.
+No change
+
+_________________
+Occ = 170 : 
+Substitutions:
+(x6 = mlpkgen(skm))
+(x4 = exp(g, x))
+(x2 = exp(epkq[u_1], x))
+(x1 = mldecap(ctq[u_1], skm))
+(x_O_17 >>= cst_mlss)
+(x3 = epkq[u_1])
+(x5 = ctq[u_1])
+(x_O_11[u_1] >>= mldecap(ctq[u_1], skm))
+(x_O_10[u_1] >>= exp(epkq[u_1], x))
+(x_O_8[u_1] >>= exp(g, x))
+(x_O_6[u_1] >>= mlpkgen(skm))
+Facts:
+Elsefind:
+for all ri; not(defined(r_2[ri], x6[ri], x5[ri], x4[ri], x3[ri], x2[ri], x1[ri]) && ((x1 = x1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) && (x4 = x4[ri]) && (x5 = x5[ri]) && (x6 = x6[ri])))
+for all ; not(defined(epk, ctm, pkm, ssm, x_O_4, x_O_2, r) && ((x1 = ssm) && (x2 = x_O_4) && (x3 = epk) && (x4 = x_O_2) && (x5 = ctm) && (x6 = pkm)))
+__________________
+Elsefind begin
+
+__________________
+Elsefind summary: these terms are true:
+
+Doing global dependency analysis on y inside simplify... At 45, returned message epk depends on y.
+No change
+
+_________________
+Occ = 170 : 
+Substitutions:
+(x4 = exp(g, x))
+(x2 = exp(g, mult(x, y)))
+(x1 = mlencap_ss(pkm, s))
+(b = true)
+(epk >>= exp(g, y))
+(ctm >>= mlencap_ct(pkm, s))
+(pkm >>= mlpkgen(skm))
+(x_O_17 >>= cst_mlss)
+(x6 = mlpkgen(skm))
+(x5 = mlencap_ct(pkm, s))
+(x3 = exp(g, y))
+(ssm >>= mlencap_ss(pkm, s))
+(x_O_4 >>= exp(g, mult(x, y)))
+(x_O_2 >>= exp(g, x))
+Facts:
+Elsefind:
+for all ri; not(defined(r_2[ri], x6[ri], x5[ri], x4[ri], x3[ri], x2[ri], x1[ri]) && ((x1 = x1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) && (x4 = x4[ri]) && (x5 = x5[ri]) && (x6 = x6[ri])))
+for all ri_1; not(defined(epkq[ri_1], ctq[ri_1], x_O_11[ri_1], x_O_10[ri_1], x_O_8[ri_1], x_O_6[ri_1], r_1[ri_1]) && ((x1 = x_O_11[ri_1]) && (x2 = x_O_10[ri_1]) && (x3 = epkq[ri_1]) && (x4 = x_O_8[ri_1]) && (x5 = ctq[ri_1]) && (x6 = x_O_6[ri_1])))
+__________________
+Elsefind begin
+
+-----------------
+Variables known to be currently defined: x1[ri_2], x2[ri_2], x3[ri_2], x4[ri_2], x5[ri_2], x6[ri_2], r_2[ri_2], x_O_17[ri_2], x_O_6, x_O_8, x_O_10, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {298}[ri_2]
+Elsefind_fact (before renaming): for all ri; not(defined(r_2[ri], x6[ri], x5[ri], x4[ri], x3[ri], x2[ri], x1[ri]) && ((x1 = x1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) && (x4 = x4[ri]) && (x5 = x5[ri]) && (x6 = x6[ri]) && (iH <> ri)))
+Elsefind_fact_vars_before:
+r_2[ri_2], x_O_17[ri_2], x1[ri_2], x2[ri_2], x3[ri_2], x4[ri_2], x5[ri_2], x6[ri_2], x, skm, b
+Elsefind_fact (after renaming): for all @ri_35; not(defined(r_2[@ri_35]) && ((x1[ri_2] = x1[@ri_35]) && (x2[ri_2] = x2[@ri_35]) && (x3[ri_2] = x3[@ri_35]) && (x4[ri_2] = x4[@ri_35]) && (x5[ri_2] = x5[@ri_35]) && (x6[ri_2] = x6[@ri_35]) && (ri_2 <> @ri_35)))
+Elsefind_fact_try:
+((x1[ri_2] = x1[ri_2]) && (x2[ri_2] = x2[ri_2]) && (x3[ri_2] = x3[ri_2]) && (x4[ri_2] = x4[ri_2]) && (x5[ri_2] = x5[ri_2]) && (x6[ri_2] = x6[ri_2]) && (ri_2 <> ri_2))
+And the def_list':
+r_2[ri_2]
+equal to
+r_2[ri_2]
+Let's assume that r_2[ri_2] is defined after or simultaneously {298}[ri_2]
+Found a usable term: not(((x1[ri_2] = x1[ri_2]) && (x2[ri_2] = x2[ri_2]) && (x3[ri_2] = x3[ri_2]) && (x4[ri_2] = x4[ri_2]) && (x5[ri_2] = x5[ri_2]) && (x6[ri_2] = x6[ri_2]) && (ri_2 <> ri_2)))
+-----------------
+Variables known to be currently defined: x1[ri_2], x2[ri_2], x3[ri_2], x4[ri_2], x5[ri_2], x6[ri_2], r_2[ri_2], x_O_17[ri_2], x_O_6, x_O_8, x_O_10, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {298}[ri_2]
+Elsefind_fact (before renaming): for all ri_1; not(defined(epkq[ri_1], ctq[ri_1], x_O_11[ri_1], x_O_10[ri_1], x_O_8[ri_1], x_O_6[ri_1], r_1[ri_1]) && ((x1 = x_O_11[ri_1]) && (x2 = x_O_10[ri_1]) && (x3 = epkq[ri_1]) && (x4 = x_O_8[ri_1]) && (x5 = ctq[ri_1]) && (x6 = x_O_6[ri_1])))
+Elsefind_fact_vars_before:
+r_2[ri_2], x_O_17[ri_2], x1[ri_2], x2[ri_2], x3[ri_2], x4[ri_2], x5[ri_2], x6[ri_2], x, skm, b
+Elsefind_fact (after renaming): for all @ri_36; not(defined(r_1[@ri_36]) && ((x1[ri_2] = x_O_11[@ri_36]) && (x2[ri_2] = x_O_10[@ri_36]) && (x3[ri_2] = epkq[@ri_36]) && (x4[ri_2] = x_O_8[@ri_36]) && (x5[ri_2] = ctq[@ri_36]) && (x6[ri_2] = x_O_6[@ri_36])))
+-----------------
+Variables known to be currently defined: x1[ri_2], x2[ri_2], x3[ri_2], x4[ri_2], x5[ri_2], x6[ri_2], r_2[ri_2], x_O_17[ri_2], x_O_6, x_O_8, x_O_10, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {298}[ri_2]
+Elsefind_fact (before renaming): for all ; not(defined(epk, ctm, pkm, ssm, x_O_4, x_O_2, r) && ((x1 = ssm) && (x2 = x_O_4) && (x3 = epk) && (x4 = x_O_2) && (x5 = ctm) && (x6 = pkm)))
+Elsefind_fact_vars_before:
+r_2[ri_2], x_O_17[ri_2], x1[ri_2], x2[ri_2], x3[ri_2], x4[ri_2], x5[ri_2], x6[ri_2], x, skm, b
+Elsefind_fact (after renaming): for all ; not(defined(r) && ((x1[ri_2] = ssm) && (x2[ri_2] = x_O_4) && (x3[ri_2] = epk) && (x4[ri_2] = x_O_2) && (x5[ri_2] = ctm) && (x6[ri_2] = pkm)))
+-----------------
+Variables known to be currently defined: x1[ri_2], x2[ri_2], x3[ri_2], x4[ri_2], x5[ri_2], x6[ri_2], r_2[ri_2], x_O_17[ri_2], x_O_6, x_O_8, x_O_10, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {90}[id]
+Elsefind_fact (before renaming): for all ; not(defined(ctm, epk) && ((ctq = ctm) && (epkq = epk)))
+Elsefind_fact_vars_before:
+x_O_6, x_O_8, x_O_10, x_O_11, ctq, epkq, x, skm, b
+Elsefind_fact (after renaming): for all ; not(defined(epk) && ((ctq = ctm) && (epkq = epk)))
+__________________
+Elsefind summary: these terms are true:
+not(((x1[ri_2] = x1[ri_2]) && (x2[ri_2] = x2[ri_2]) && (x3[ri_2] = x3[ri_2]) && (x4[ri_2] = x4[ri_2]) && (x5[ri_2] = x5[ri_2]) && (x6[ri_2] = x6[ri_2]) && (ri_2 <> ri_2)))
+
+_________________
+Occ = 90 : 
+Substitutions:
+(x_O_17[u_2] >>= cst_mlss)
+(ctq = x5[u_2])
+(epkq = x3[u_2])
+(x1[u_2] = mldecap(ctq, skm))
+(x_O_8 >>= exp(g, x))
+(x_O_11 >>= mldecap(ctq, skm))
+(x_O_10 >>= exp(epkq, x))
+(x_O_6 >>= mlpkgen(skm))
+(x2[u_2] = exp(epkq, x))
+(x4[u_2] = exp(g, x))
+(x6[u_2] = mlpkgen(skm))
+Facts:
+Elsefind:
+for all ri_3; not(defined(r_1[ri_3], ctq[ri_3], epkq[ri_3]) && ((epkq = epkq[ri_3]) && (ctq = ctq[ri_3])))
+for all ; not(defined(ctm, epk) && ((ctq = ctm) && (epkq = epk)))
+__________________
+Elsefind begin
+
+-----------------
+Variables known to be currently defined: epkq[ri_3], ctq[ri_3], r_1[ri_3], x_O_11[ri_3], x_O_10[ri_3], x_O_8[ri_3], x_O_6[ri_3], x_O_6, x_O_8, x_O_10, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {158}[ri_3]
+Elsefind_fact (before renaming): for all ri_2; not(defined(r_2[ri_2], x6[ri_2], x5[ri_2], x4[ri_2], x3[ri_2], x2[ri_2], x1[ri_2]) && ((x_O_11 = x1[ri_2]) && (x_O_10 = x2[ri_2]) && (epkq = x3[ri_2]) && (x_O_8 = x4[ri_2]) && (ctq = x5[ri_2]) && (x_O_6 = x6[ri_2])))
+Elsefind_fact_vars_before:
+r_1[ri_3], x_O_6[ri_3], x_O_8[ri_3], x_O_10[ri_3], x_O_11[ri_3], ctq[ri_3], epkq[ri_3], x, skm, b
+Elsefind_fact (after renaming): for all @ri_37; not(defined(r_2[@ri_37]) && ((x_O_11[ri_3] = x1[@ri_37]) && (x_O_10[ri_3] = x2[@ri_37]) && (epkq[ri_3] = x3[@ri_37]) && (x_O_8[ri_3] = x4[@ri_37]) && (ctq[ri_3] = x5[@ri_37]) && (x_O_6[ri_3] = x6[@ri_37])))
+-----------------
+Variables known to be currently defined: epkq[ri_3], ctq[ri_3], r_1[ri_3], x_O_11[ri_3], x_O_10[ri_3], x_O_8[ri_3], x_O_6[ri_3], x_O_6, x_O_8, x_O_10, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {158}[ri_3]
+Elsefind_fact (before renaming): for all ri_3; not(defined(r_1[ri_3], ctq[ri_3], epkq[ri_3]) && ((epkq = epkq[ri_3]) && (ctq = ctq[ri_3]) && (id <> ri_3)))
+Elsefind_fact_vars_before:
+r_1[ri_3], x_O_6[ri_3], x_O_8[ri_3], x_O_10[ri_3], x_O_11[ri_3], ctq[ri_3], epkq[ri_3], x, skm, b
+Elsefind_fact (after renaming): for all @ri_38; not(defined(r_1[@ri_38]) && ((epkq[ri_3] = epkq[@ri_38]) && (ctq[ri_3] = ctq[@ri_38]) && (ri_3 <> @ri_38)))
+Elsefind_fact_try:
+((epkq[ri_3] = epkq[ri_3]) && (ctq[ri_3] = ctq[ri_3]) && (ri_3 <> ri_3))
+And the def_list':
+r_1[ri_3]
+equal to
+r_1[ri_3]
+Let's assume that r_1[ri_3] is defined after or simultaneously {158}[ri_3]
+Found a usable term: not(((epkq[ri_3] = epkq[ri_3]) && (ctq[ri_3] = ctq[ri_3]) && (ri_3 <> ri_3)))
+-----------------
+Variables known to be currently defined: epkq[ri_3], ctq[ri_3], r_1[ri_3], x_O_11[ri_3], x_O_10[ri_3], x_O_8[ri_3], x_O_6[ri_3], x_O_6, x_O_8, x_O_10, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {158}[ri_3]
+Elsefind_fact (before renaming): for all ; not(defined(ctm, epk) && ((ctq = ctm) && (epkq = epk)))
+Elsefind_fact_vars_before:
+r_1[ri_3], x_O_6[ri_3], x_O_8[ri_3], x_O_10[ri_3], x_O_11[ri_3], ctq[ri_3], epkq[ri_3], x, skm, b
+Elsefind_fact (after renaming): for all ; not(defined(epk) && ((ctq[ri_3] = ctm) && (epkq[ri_3] = epk)))
+-----------------
+Variables known to be currently defined: epkq[ri_3], ctq[ri_3], r_1[ri_3], x_O_11[ri_3], x_O_10[ri_3], x_O_8[ri_3], x_O_6[ri_3], x_O_6, x_O_8, x_O_10, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {90}[id]
+Elsefind_fact (before renaming): for all ; not(defined(ctm, epk) && ((ctq = ctm) && (epkq = epk)))
+Elsefind_fact_vars_before:
+x_O_6, x_O_8, x_O_10, x_O_11, ctq, epkq, x, skm, b
+Elsefind_fact (after renaming): for all ; not(defined(epk) && ((ctq = ctm) && (epkq = epk)))
+__________________
+Elsefind summary: these terms are true:
+not(((epkq[ri_3] = epkq[ri_3]) && (ctq[ri_3] = ctq[ri_3]) && (ri_3 <> ri_3)))
+
+_________________
+Occ = 90 : 
+Substitutions:
+(x_O_6[u_3] >>= mlpkgen(skm))
+(x_O_10[u_3] >>= exp(epkq[u_3], x))
+(ctq[u_3] = ctq)
+(x_O_6 >>= mlpkgen(skm))
+(x_O_10 >>= exp(epkq, x))
+(x_O_11 >>= mldecap(ctq, skm))
+(x_O_8 >>= exp(g, x))
+(epkq[u_3] = epkq)
+(x_O_11[u_3] >>= mldecap(ctq[u_3], skm))
+(x_O_8[u_3] >>= exp(g, x))
+Facts:
+(id <> u_3)
+Elsefind:
+for all ri_2; not(defined(r_2[ri_2], x6[ri_2], x5[ri_2], x4[ri_2], x3[ri_2], x2[ri_2], x1[ri_2]) && ((x_O_11 = x1[ri_2]) && (x_O_10 = x2[ri_2]) && (epkq = x3[ri_2]) && (x_O_8 = x4[ri_2]) && (ctq = x5[ri_2]) && (x_O_6 = x6[ri_2])))
+for all ; not(defined(ctm, epk) && ((ctq = ctm) && (epkq = epk)))
+__________________
+Elsefind begin
+
+__________________
+Elsefind summary: these terms are true:
+
+
+_________________
+Occ = 62 : 
+Substitutions:
+(epkq = exp(g, y))
+(ctq = mlencap_ct(pkm, s))
+(pkm >>= mlpkgen(skm))
+(ctm >>= mlencap_ct(pkm, s))
+(epk >>= exp(g, y))
+Facts:
+Elsefind:
+Run simplify 2 time(s). Fixpoint reached.
+Done.
+Doing move all binders... Done.
+Doing SA rename new without array accesses and remove assignments of findcond... No change.
+Doing merge branches... No change.
+__________________
+Elsefind begin
+
+__________________
+Elsefind summary: these terms are true:
+
+Proof of (one-session) secrecy of b failed:
+  at 27, bad usage(s) of b.
+Trying equivalence rom(H)... Failed.
+Trying equivalence gdh(exp)... Failed.
+Doing remove assignments of binder x_O_4... Done.
+Trying equivalence gdh(exp) with y, x... Failed.
+Doing remove assignments of binder x_O_10... Done.
+Trying equivalence gdh(exp) with y, x... Transf. OK Proba. computed Transf. done Succeeded.
+Doing simplify (non-expanded game)... No change.
+Doing expand... __________________
+Elsefind begin
+
+-----------------
+Variables known to be currently defined: x1[ri], x2[ri], x3[ri], x4[ri], x5[ri], x6[ri], r_2[ri], x1, x2, x3, x4, x5, x6, x, skm, b
+Program point known to be executed in an else branch of find: {302}[ri]
+Elsefind_fact (before renaming): for all ri; not(defined(r_2[ri], x6[ri], x5[ri], x4[ri], x3[ri], x2[ri], x1[ri]) && ((x1 = x1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) && (x4 = x4[ri]) && (x5 = x5[ri]) && (x6 = x6[ri]) && (iH <> ri)))
+Elsefind_fact_vars_before:
+r_2[ri], x1[ri], x2[ri], x3[ri], x4[ri], x5[ri], x6[ri], x, skm, b
+Elsefind_fact (after renaming): for all @ri_39; not(defined(r_2[@ri_39]) && ((x1[ri] = x1[@ri_39]) && (x2[ri] = x2[@ri_39]) && (x3[ri] = x3[@ri_39]) && (x4[ri] = x4[@ri_39]) && (x5[ri] = x5[@ri_39]) && (x6[ri] = x6[@ri_39]) && (ri <> @ri_39)))
+Elsefind_fact_try:
+((x1[ri] = x1[ri]) && (x2[ri] = x2[ri]) && (x3[ri] = x3[ri]) && (x4[ri] = x4[ri]) && (x5[ri] = x5[ri]) && (x6[ri] = x6[ri]) && (ri <> ri))
+And the def_list':
+r_2[ri]
+equal to
+r_2[ri]
+Let's assume that r_2[ri] is defined after or simultaneously {302}[ri]
+Found a usable term: not(((x1[ri] = x1[ri]) && (x2[ri] = x2[ri]) && (x3[ri] = x3[ri]) && (x4[ri] = x4[ri]) && (x5[ri] = x5[ri]) && (x6[ri] = x6[ri]) && (ri <> ri)))
+-----------------
+Variables known to be currently defined: x1[ri], x2[ri], x3[ri], x4[ri], x5[ri], x6[ri], r_2[ri], x1, x2, x3, x4, x5, x6, x, skm, b
+Program point known to be executed in an else branch of find: {302}[ri]
+Elsefind_fact (before renaming): for all ri_1; not(defined(r_1[ri_1], x_O_6[ri_1], ctq[ri_1], x_O_8[ri_1], epkq[ri_1], x_O_11[ri_1]) && ((x1 = x_O_11[ri_1]) && (x2 = exp(epkq[ri_1], x)) && (x3 = epkq[ri_1]) && (x4 = x_O_8[ri_1]) && (x5 = ctq[ri_1]) && (x6 = x_O_6[ri_1])))
+Elsefind_fact_vars_before:
+r_2[ri], x1[ri], x2[ri], x3[ri], x4[ri], x5[ri], x6[ri], x, skm, b
+Elsefind_fact (after renaming): for all @ri_40; not(defined(r_1[@ri_40]) && ((x1[ri] = x_O_11[@ri_40]) && (x2[ri] = exp(epkq[@ri_40], x)) && (x3[ri] = epkq[@ri_40]) && (x4[ri] = x_O_8[@ri_40]) && (x5[ri] = ctq[@ri_40]) && (x6[ri] = x_O_6[@ri_40])))
+__________________
+Elsefind summary: these terms are true:
+not(((x1[ri] = x1[ri]) && (x2[ri] = x2[ri]) && (x3[ri] = x3[ri]) && (x4[ri] = x4[ri]) && (x5[ri] = x5[ri]) && (x6[ri] = x6[ri]) && (ri <> ri)))
+__________________
+Elsefind begin
+
+-----------------
+Variables known to be currently defined: x_O_11[ri_1], epkq[ri_1], x_O_8[ri_1], ctq[ri_1], x_O_6[ri_1], r_1[ri_1], x1, x2, x3, x4, x5, x6, x, skm, b
+Program point known to be executed in an else branch of find: {156}[ri_1]
+Elsefind_fact (before renaming): for all ri_2; not(defined(r_2[ri_2], x6[ri_2], x5[ri_2], x4[ri_2], x3[ri_2], x2[ri_2], x1[ri_2]) && ((x_O_11 = x1[ri_2]) && (x2[ri_2] = exp(epkq, x)) && (epkq = x3[ri_2]) && (x_O_8 = x4[ri_2]) && (ctq = x5[ri_2]) && (x_O_6 = x6[ri_2])))
+Elsefind_fact_vars_before:
+r_1[ri_1], x_O_6[ri_1], x_O_8[ri_1], x_O_11[ri_1], ctq[ri_1], epkq[ri_1], x, skm, b
+Elsefind_fact (after renaming): for all @ri_41; not(defined(r_2[@ri_41]) && ((x_O_11[ri_1] = x1[@ri_41]) && (x2[@ri_41] = exp(epkq[ri_1], x)) && (epkq[ri_1] = x3[@ri_41]) && (x_O_8[ri_1] = x4[@ri_41]) && (ctq[ri_1] = x5[@ri_41]) && (x_O_6[ri_1] = x6[@ri_41])))
+-----------------
+Variables known to be currently defined: x_O_11[ri_1], epkq[ri_1], x_O_8[ri_1], ctq[ri_1], x_O_6[ri_1], r_1[ri_1], x1, x2, x3, x4, x5, x6, x, skm, b
+Program point known to be executed in an else branch of find: {156}[ri_1]
+Elsefind_fact (before renaming): for all ri_3; not(defined(r_1[ri_3], ctq[ri_3], epkq[ri_3]) && ((epkq = epkq[ri_3]) && (ctq = ctq[ri_3]) && (id <> ri_3)))
+Elsefind_fact_vars_before:
+r_1[ri_1], x_O_6[ri_1], x_O_8[ri_1], x_O_11[ri_1], ctq[ri_1], epkq[ri_1], x, skm, b
+Elsefind_fact (after renaming): for all @ri_42; not(defined(r_1[@ri_42]) && ((epkq[ri_1] = epkq[@ri_42]) && (ctq[ri_1] = ctq[@ri_42]) && (ri_1 <> @ri_42)))
+Elsefind_fact_try:
+((epkq[ri_1] = epkq[ri_1]) && (ctq[ri_1] = ctq[ri_1]) && (ri_1 <> ri_1))
+And the def_list':
+r_1[ri_1]
+equal to
+r_1[ri_1]
+Let's assume that r_1[ri_1] is defined after or simultaneously {156}[ri_1]
+Found a usable term: not(((epkq[ri_1] = epkq[ri_1]) && (ctq[ri_1] = ctq[ri_1]) && (ri_1 <> ri_1)))
+-----------------
+Variables known to be currently defined: x_O_11[ri_1], epkq[ri_1], x_O_8[ri_1], ctq[ri_1], x_O_6[ri_1], r_1[ri_1], x1, x2, x3, x4, x5, x6, x, skm, b
+Program point known to be executed in an else branch of find: {156}[ri_1]
+Elsefind_fact (before renaming): for all ; not(defined(ctm, epk) && ((ctq = ctm) && (epkq = epk)))
+Elsefind_fact_vars_before:
+r_1[ri_1], x_O_6[ri_1], x_O_8[ri_1], x_O_11[ri_1], ctq[ri_1], epkq[ri_1], x, skm, b
+Elsefind_fact (after renaming): for all ; not(defined(epk) && ((ctq[ri_1] = ctm) && (epkq[ri_1] = epk)))
+__________________
+Elsefind summary: these terms are true:
+not(((epkq[ri_1] = epkq[ri_1]) && (ctq[ri_1] = ctq[ri_1]) && (ri_1 <> ri_1)))
+__________________
+Elsefind begin
+
+__________________
+Elsefind summary: these terms are true:
+
+__________________
+Elsefind begin
+
+-----------------
+Variables known to be currently defined: x1[ri_2], x2[ri_2], x3[ri_2], x4[ri_2], x5[ri_2], x6[ri_2], r_2[ri_2], x_O_6, x_O_8, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {302}[ri_2]
+Elsefind_fact (before renaming): for all ri; not(defined(r_2[ri], x6[ri], x5[ri], x4[ri], x3[ri], x2[ri], x1[ri]) && ((x1 = x1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) && (x4 = x4[ri]) && (x5 = x5[ri]) && (x6 = x6[ri]) && (iH <> ri)))
+Elsefind_fact_vars_before:
+r_2[ri_2], x1[ri_2], x2[ri_2], x3[ri_2], x4[ri_2], x5[ri_2], x6[ri_2], x, skm, b
+Elsefind_fact (after renaming): for all @ri_43; not(defined(r_2[@ri_43]) && ((x1[ri_2] = x1[@ri_43]) && (x2[ri_2] = x2[@ri_43]) && (x3[ri_2] = x3[@ri_43]) && (x4[ri_2] = x4[@ri_43]) && (x5[ri_2] = x5[@ri_43]) && (x6[ri_2] = x6[@ri_43]) && (ri_2 <> @ri_43)))
+Elsefind_fact_try:
+((x1[ri_2] = x1[ri_2]) && (x2[ri_2] = x2[ri_2]) && (x3[ri_2] = x3[ri_2]) && (x4[ri_2] = x4[ri_2]) && (x5[ri_2] = x5[ri_2]) && (x6[ri_2] = x6[ri_2]) && (ri_2 <> ri_2))
+And the def_list':
+r_2[ri_2]
+equal to
+r_2[ri_2]
+Let's assume that r_2[ri_2] is defined after or simultaneously {302}[ri_2]
+Found a usable term: not(((x1[ri_2] = x1[ri_2]) && (x2[ri_2] = x2[ri_2]) && (x3[ri_2] = x3[ri_2]) && (x4[ri_2] = x4[ri_2]) && (x5[ri_2] = x5[ri_2]) && (x6[ri_2] = x6[ri_2]) && (ri_2 <> ri_2)))
+-----------------
+Variables known to be currently defined: x1[ri_2], x2[ri_2], x3[ri_2], x4[ri_2], x5[ri_2], x6[ri_2], r_2[ri_2], x_O_6, x_O_8, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {302}[ri_2]
+Elsefind_fact (before renaming): for all ri_1; not(defined(r_1[ri_1], x_O_6[ri_1], ctq[ri_1], x_O_8[ri_1], epkq[ri_1], x_O_11[ri_1]) && ((x1 = x_O_11[ri_1]) && (x2 = exp(epkq[ri_1], x)) && (x3 = epkq[ri_1]) && (x4 = x_O_8[ri_1]) && (x5 = ctq[ri_1]) && (x6 = x_O_6[ri_1])))
+Elsefind_fact_vars_before:
+r_2[ri_2], x1[ri_2], x2[ri_2], x3[ri_2], x4[ri_2], x5[ri_2], x6[ri_2], x, skm, b
+Elsefind_fact (after renaming): for all @ri_44; not(defined(r_1[@ri_44]) && ((x1[ri_2] = x_O_11[@ri_44]) && (x2[ri_2] = exp(epkq[@ri_44], x)) && (x3[ri_2] = epkq[@ri_44]) && (x4[ri_2] = x_O_8[@ri_44]) && (x5[ri_2] = ctq[@ri_44]) && (x6[ri_2] = x_O_6[@ri_44])))
+-----------------
+Variables known to be currently defined: x1[ri_2], x2[ri_2], x3[ri_2], x4[ri_2], x5[ri_2], x6[ri_2], r_2[ri_2], x_O_6, x_O_8, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {78}[id]
+Elsefind_fact (before renaming): for all ; not(defined(ctm, epk) && ((ctq = ctm) && (epkq = epk)))
+Elsefind_fact_vars_before:
+x_O_6, x_O_8, x_O_11, ctq, epkq, x, skm, b
+Elsefind_fact (after renaming): for all ; not(defined(epk) && ((ctq = ctm) && (epkq = epk)))
+__________________
+Elsefind summary: these terms are true:
+not(((x1[ri_2] = x1[ri_2]) && (x2[ri_2] = x2[ri_2]) && (x3[ri_2] = x3[ri_2]) && (x4[ri_2] = x4[ri_2]) && (x5[ri_2] = x5[ri_2]) && (x6[ri_2] = x6[ri_2]) && (ri_2 <> ri_2)))
+__________________
+Elsefind begin
+
+-----------------
+Variables known to be currently defined: epkq[ri_3], ctq[ri_3], r_1[ri_3], x_O_11[ri_3], x_O_8[ri_3], x_O_6[ri_3], x_O_6, x_O_8, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {156}[ri_3]
+Elsefind_fact (before renaming): for all ri_2; not(defined(r_2[ri_2], x6[ri_2], x5[ri_2], x4[ri_2], x3[ri_2], x2[ri_2], x1[ri_2]) && ((x_O_11 = x1[ri_2]) && (x2[ri_2] = exp(epkq, x)) && (epkq = x3[ri_2]) && (x_O_8 = x4[ri_2]) && (ctq = x5[ri_2]) && (x_O_6 = x6[ri_2])))
+Elsefind_fact_vars_before:
+r_1[ri_3], x_O_6[ri_3], x_O_8[ri_3], x_O_11[ri_3], ctq[ri_3], epkq[ri_3], x, skm, b
+Elsefind_fact (after renaming): for all @ri_45; not(defined(r_2[@ri_45]) && ((x_O_11[ri_3] = x1[@ri_45]) && (x2[@ri_45] = exp(epkq[ri_3], x)) && (epkq[ri_3] = x3[@ri_45]) && (x_O_8[ri_3] = x4[@ri_45]) && (ctq[ri_3] = x5[@ri_45]) && (x_O_6[ri_3] = x6[@ri_45])))
+-----------------
+Variables known to be currently defined: epkq[ri_3], ctq[ri_3], r_1[ri_3], x_O_11[ri_3], x_O_8[ri_3], x_O_6[ri_3], x_O_6, x_O_8, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {156}[ri_3]
+Elsefind_fact (before renaming): for all ri_3; not(defined(r_1[ri_3], ctq[ri_3], epkq[ri_3]) && ((epkq = epkq[ri_3]) && (ctq = ctq[ri_3]) && (id <> ri_3)))
+Elsefind_fact_vars_before:
+r_1[ri_3], x_O_6[ri_3], x_O_8[ri_3], x_O_11[ri_3], ctq[ri_3], epkq[ri_3], x, skm, b
+Elsefind_fact (after renaming): for all @ri_46; not(defined(r_1[@ri_46]) && ((epkq[ri_3] = epkq[@ri_46]) && (ctq[ri_3] = ctq[@ri_46]) && (ri_3 <> @ri_46)))
+Elsefind_fact_try:
+((epkq[ri_3] = epkq[ri_3]) && (ctq[ri_3] = ctq[ri_3]) && (ri_3 <> ri_3))
+And the def_list':
+r_1[ri_3]
+equal to
+r_1[ri_3]
+Let's assume that r_1[ri_3] is defined after or simultaneously {156}[ri_3]
+Found a usable term: not(((epkq[ri_3] = epkq[ri_3]) && (ctq[ri_3] = ctq[ri_3]) && (ri_3 <> ri_3)))
+-----------------
+Variables known to be currently defined: epkq[ri_3], ctq[ri_3], r_1[ri_3], x_O_11[ri_3], x_O_8[ri_3], x_O_6[ri_3], x_O_6, x_O_8, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {156}[ri_3]
+Elsefind_fact (before renaming): for all ; not(defined(ctm, epk) && ((ctq = ctm) && (epkq = epk)))
+Elsefind_fact_vars_before:
+r_1[ri_3], x_O_6[ri_3], x_O_8[ri_3], x_O_11[ri_3], ctq[ri_3], epkq[ri_3], x, skm, b
+Elsefind_fact (after renaming): for all ; not(defined(epk) && ((ctq[ri_3] = ctm) && (epkq[ri_3] = epk)))
+-----------------
+Variables known to be currently defined: epkq[ri_3], ctq[ri_3], r_1[ri_3], x_O_11[ri_3], x_O_8[ri_3], x_O_6[ri_3], x_O_6, x_O_8, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {78}[id]
+Elsefind_fact (before renaming): for all ; not(defined(ctm, epk) && ((ctq = ctm) && (epkq = epk)))
+Elsefind_fact_vars_before:
+x_O_6, x_O_8, x_O_11, ctq, epkq, x, skm, b
+Elsefind_fact (after renaming): for all ; not(defined(epk) && ((ctq = ctm) && (epkq = epk)))
+__________________
+Elsefind summary: these terms are true:
+not(((epkq[ri_3] = epkq[ri_3]) && (ctq[ri_3] = ctq[ri_3]) && (ri_3 <> ri_3)))
+__________________
+Elsefind begin
+
+__________________
+Elsefind summary: these terms are true:
+
+Done.
+Doing remove assignments of findcond... Done.
+Doing simplify... __________________
+Elsefind begin
+
+-----------------
+Variables known to be currently defined: x1[ri], x2[ri], x3[ri], x4[ri], x5[ri], x6[ri], r_2[ri], x1, x2, x3, x4, x5, x6, x, skm, b
+Program point known to be executed in an else branch of find: {244}[ri]
+Elsefind_fact (before renaming): for all ri; not(defined(r_2[ri], x6[ri], x5[ri], x4[ri], x3[ri], x2[ri], x1[ri]) && ((x1 = x1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) && (x4 = x4[ri]) && (x5 = x5[ri]) && (x6 = x6[ri]) && (iH <> ri)))
+Elsefind_fact_vars_before:
+r_2[ri], x1[ri], x2[ri], x3[ri], x4[ri], x5[ri], x6[ri], x, skm, b
+Elsefind_fact (after renaming): for all @ri_47; not(defined(r_2[@ri_47]) && ((x1[ri] = x1[@ri_47]) && (x2[ri] = x2[@ri_47]) && (x3[ri] = x3[@ri_47]) && (x4[ri] = x4[@ri_47]) && (x5[ri] = x5[@ri_47]) && (x6[ri] = x6[@ri_47]) && (ri <> @ri_47)))
+Elsefind_fact_try:
+((x1[ri] = x1[ri]) && (x2[ri] = x2[ri]) && (x3[ri] = x3[ri]) && (x4[ri] = x4[ri]) && (x5[ri] = x5[ri]) && (x6[ri] = x6[ri]) && (ri <> ri))
+And the def_list':
+r_2[ri]
+equal to
+r_2[ri]
+Let's assume that r_2[ri] is defined after or simultaneously {244}[ri]
+Found a usable term: not(((x1[ri] = x1[ri]) && (x2[ri] = x2[ri]) && (x3[ri] = x3[ri]) && (x4[ri] = x4[ri]) && (x5[ri] = x5[ri]) && (x6[ri] = x6[ri]) && (ri <> ri)))
+-----------------
+Variables known to be currently defined: x1[ri], x2[ri], x3[ri], x4[ri], x5[ri], x6[ri], r_2[ri], x1, x2, x3, x4, x5, x6, x, skm, b
+Program point known to be executed in an else branch of find: {244}[ri]
+Elsefind_fact (before renaming): for all ri_1; not(defined(r_1[ri_1], x_O_6[ri_1], ctq[ri_1], x_O_8[ri_1], epkq[ri_1], x_O_11[ri_1]) && ((x1 = x_O_11[ri_1]) && (x2 = exp(epkq[ri_1], x)) && (x3 = epkq[ri_1]) && (x4 = x_O_8[ri_1]) && (x5 = ctq[ri_1]) && (x6 = x_O_6[ri_1])))
+Elsefind_fact_vars_before:
+r_2[ri], x1[ri], x2[ri], x3[ri], x4[ri], x5[ri], x6[ri], x, skm, b
+Elsefind_fact (after renaming): for all @ri_48; not(defined(r_1[@ri_48]) && ((x1[ri] = x_O_11[@ri_48]) && (x2[ri] = exp(epkq[@ri_48], x)) && (x3[ri] = epkq[@ri_48]) && (x4[ri] = x_O_8[@ri_48]) && (x5[ri] = ctq[@ri_48]) && (x6[ri] = x_O_6[@ri_48])))
+__________________
+Elsefind summary: these terms are true:
+not(((x1[ri] = x1[ri]) && (x2[ri] = x2[ri]) && (x3[ri] = x3[ri]) && (x4[ri] = x4[ri]) && (x5[ri] = x5[ri]) && (x6[ri] = x6[ri]) && (ri <> ri)))
+
+_________________
+Occ = 147 : 
+Substitutions:
+(x6[u] = x6)
+(x4[u] = x4)
+(x2[u] = x2)
+(x1[u] = x1)
+(x3[u] = x3)
+(x5[u] = x5)
+Facts:
+(iH <> u)
+Elsefind:
+for all ri_1; not(defined(r_1[ri_1], x_O_6[ri_1], ctq[ri_1], x_O_8[ri_1], epkq[ri_1], x_O_11[ri_1]) && ((x1 = x_O_11[ri_1]) && (x2 = exp(epkq[ri_1], x)) && (x3 = epkq[ri_1]) && (x4 = x_O_8[ri_1]) && (x5 = ctq[ri_1]) && (x6 = x_O_6[ri_1])))
+__________________
+Elsefind begin
+
+-----------------
+Variables known to be currently defined: x_O_11[ri_1], epkq[ri_1], x_O_8[ri_1], ctq[ri_1], x_O_6[ri_1], r_1[ri_1], x1, x2, x3, x4, x5, x6, x, skm, b
+Program point known to be executed in an else branch of find: {138}[ri_1]
+Elsefind_fact (before renaming): for all ri_2; not(defined(r_2[ri_2], x6[ri_2], x5[ri_2], x4[ri_2], x3[ri_2], x2[ri_2], x1[ri_2]) && ((x_O_11 = x1[ri_2]) && (x2[ri_2] = exp(epkq, x)) && (epkq = x3[ri_2]) && (x_O_8 = x4[ri_2]) && (ctq = x5[ri_2]) && (x_O_6 = x6[ri_2])))
+Elsefind_fact_vars_before:
+r_1[ri_1], x_O_6[ri_1], x_O_8[ri_1], x_O_11[ri_1], ctq[ri_1], epkq[ri_1], x, skm, b
+Elsefind_fact (after renaming): for all @ri_49; not(defined(r_2[@ri_49]) && ((x_O_11[ri_1] = x1[@ri_49]) && (x2[@ri_49] = exp(epkq[ri_1], x)) && (epkq[ri_1] = x3[@ri_49]) && (x_O_8[ri_1] = x4[@ri_49]) && (ctq[ri_1] = x5[@ri_49]) && (x_O_6[ri_1] = x6[@ri_49])))
+-----------------
+Variables known to be currently defined: x_O_11[ri_1], epkq[ri_1], x_O_8[ri_1], ctq[ri_1], x_O_6[ri_1], r_1[ri_1], x1, x2, x3, x4, x5, x6, x, skm, b
+Program point known to be executed in an else branch of find: {138}[ri_1]
+Elsefind_fact (before renaming): for all ri_3; not(defined(r_1[ri_3], ctq[ri_3], epkq[ri_3]) && ((epkq = epkq[ri_3]) && (ctq = ctq[ri_3]) && (id <> ri_3)))
+Elsefind_fact_vars_before:
+r_1[ri_1], x_O_6[ri_1], x_O_8[ri_1], x_O_11[ri_1], ctq[ri_1], epkq[ri_1], x, skm, b
+Elsefind_fact (after renaming): for all @ri_50; not(defined(r_1[@ri_50]) && ((epkq[ri_1] = epkq[@ri_50]) && (ctq[ri_1] = ctq[@ri_50]) && (ri_1 <> @ri_50)))
+Elsefind_fact_try:
+((epkq[ri_1] = epkq[ri_1]) && (ctq[ri_1] = ctq[ri_1]) && (ri_1 <> ri_1))
+And the def_list':
+r_1[ri_1]
+equal to
+r_1[ri_1]
+Let's assume that r_1[ri_1] is defined after or simultaneously {138}[ri_1]
+Found a usable term: not(((epkq[ri_1] = epkq[ri_1]) && (ctq[ri_1] = ctq[ri_1]) && (ri_1 <> ri_1)))
+-----------------
+Variables known to be currently defined: x_O_11[ri_1], epkq[ri_1], x_O_8[ri_1], ctq[ri_1], x_O_6[ri_1], r_1[ri_1], x1, x2, x3, x4, x5, x6, x, skm, b
+Program point known to be executed in an else branch of find: {138}[ri_1]
+Elsefind_fact (before renaming): for all ; not(defined(ctm, epk) && ((ctq = ctm) && (epkq = epk)))
+Elsefind_fact_vars_before:
+r_1[ri_1], x_O_6[ri_1], x_O_8[ri_1], x_O_11[ri_1], ctq[ri_1], epkq[ri_1], x, skm, b
+Elsefind_fact (after renaming): for all ; not(defined(epk) && ((ctq[ri_1] = ctm) && (epkq[ri_1] = epk)))
+__________________
+Elsefind summary: these terms are true:
+not(((epkq[ri_1] = epkq[ri_1]) && (ctq[ri_1] = ctq[ri_1]) && (ri_1 <> ri_1)))
+Doing global dependency analysis on x inside simplify... At 7, returned message exp(g, x) depends on x.
+No change
+
+_________________
+Occ = 147 : 
+Substitutions:
+(x4 = exp(g, x))
+(x6 = mlpkgen(skm))
+(x1 = mldecap(ctq[u_1], skm))
+(x2 = exp(epkq[u_1], x))
+(x3 = epkq[u_1])
+(x5 = ctq[u_1])
+(x_O_11[u_1] >>= mldecap(ctq[u_1], skm))
+(x_O_6[u_1] >>= mlpkgen(skm))
+(x_O_8[u_1] >>= exp(g, x))
+Facts:
+Elsefind:
+for all ri; not(defined(r_2[ri], x6[ri], x5[ri], x4[ri], x3[ri], x2[ri], x1[ri]) && ((x1 = x1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) && (x4 = x4[ri]) && (x5 = x5[ri]) && (x6 = x6[ri])))
+__________________
+Elsefind begin
+
+-----------------
+Variables known to be currently defined: x1[ri_2], x2[ri_2], x3[ri_2], x4[ri_2], x5[ri_2], x6[ri_2], r_2[ri_2], x_O_6, x_O_8, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {244}[ri_2]
+Elsefind_fact (before renaming): for all ri; not(defined(r_2[ri], x6[ri], x5[ri], x4[ri], x3[ri], x2[ri], x1[ri]) && ((x1 = x1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) && (x4 = x4[ri]) && (x5 = x5[ri]) && (x6 = x6[ri]) && (iH <> ri)))
+Elsefind_fact_vars_before:
+r_2[ri_2], x1[ri_2], x2[ri_2], x3[ri_2], x4[ri_2], x5[ri_2], x6[ri_2], x, skm, b
+Elsefind_fact (after renaming): for all @ri_51; not(defined(r_2[@ri_51]) && ((x1[ri_2] = x1[@ri_51]) && (x2[ri_2] = x2[@ri_51]) && (x3[ri_2] = x3[@ri_51]) && (x4[ri_2] = x4[@ri_51]) && (x5[ri_2] = x5[@ri_51]) && (x6[ri_2] = x6[@ri_51]) && (ri_2 <> @ri_51)))
+Elsefind_fact_try:
+((x1[ri_2] = x1[ri_2]) && (x2[ri_2] = x2[ri_2]) && (x3[ri_2] = x3[ri_2]) && (x4[ri_2] = x4[ri_2]) && (x5[ri_2] = x5[ri_2]) && (x6[ri_2] = x6[ri_2]) && (ri_2 <> ri_2))
+And the def_list':
+r_2[ri_2]
+equal to
+r_2[ri_2]
+Let's assume that r_2[ri_2] is defined after or simultaneously {244}[ri_2]
+Found a usable term: not(((x1[ri_2] = x1[ri_2]) && (x2[ri_2] = x2[ri_2]) && (x3[ri_2] = x3[ri_2]) && (x4[ri_2] = x4[ri_2]) && (x5[ri_2] = x5[ri_2]) && (x6[ri_2] = x6[ri_2]) && (ri_2 <> ri_2)))
+-----------------
+Variables known to be currently defined: x1[ri_2], x2[ri_2], x3[ri_2], x4[ri_2], x5[ri_2], x6[ri_2], r_2[ri_2], x_O_6, x_O_8, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {244}[ri_2]
+Elsefind_fact (before renaming): for all ri_1; not(defined(r_1[ri_1], x_O_6[ri_1], ctq[ri_1], x_O_8[ri_1], epkq[ri_1], x_O_11[ri_1]) && ((x1 = x_O_11[ri_1]) && (x2 = exp(epkq[ri_1], x)) && (x3 = epkq[ri_1]) && (x4 = x_O_8[ri_1]) && (x5 = ctq[ri_1]) && (x6 = x_O_6[ri_1])))
+Elsefind_fact_vars_before:
+r_2[ri_2], x1[ri_2], x2[ri_2], x3[ri_2], x4[ri_2], x5[ri_2], x6[ri_2], x, skm, b
+Elsefind_fact (after renaming): for all @ri_52; not(defined(r_1[@ri_52]) && ((x1[ri_2] = x_O_11[@ri_52]) && (x2[ri_2] = exp(epkq[@ri_52], x)) && (x3[ri_2] = epkq[@ri_52]) && (x4[ri_2] = x_O_8[@ri_52]) && (x5[ri_2] = ctq[@ri_52]) && (x6[ri_2] = x_O_6[@ri_52])))
+-----------------
+Variables known to be currently defined: x1[ri_2], x2[ri_2], x3[ri_2], x4[ri_2], x5[ri_2], x6[ri_2], r_2[ri_2], x_O_6, x_O_8, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {68}[id]
+Elsefind_fact (before renaming): for all ; not(defined(ctm, epk) && ((ctq = ctm) && (epkq = epk)))
+Elsefind_fact_vars_before:
+x_O_6, x_O_8, x_O_11, ctq, epkq, x, skm, b
+Elsefind_fact (after renaming): for all ; not(defined(epk) && ((ctq = ctm) && (epkq = epk)))
+__________________
+Elsefind summary: these terms are true:
+not(((x1[ri_2] = x1[ri_2]) && (x2[ri_2] = x2[ri_2]) && (x3[ri_2] = x3[ri_2]) && (x4[ri_2] = x4[ri_2]) && (x5[ri_2] = x5[ri_2]) && (x6[ri_2] = x6[ri_2]) && (ri_2 <> ri_2)))
+
+_________________
+Occ = 68 : 
+Substitutions:
+(x6[u_2] = mlpkgen(skm))
+(x4[u_2] = exp(g, x))
+(x2[u_2] = exp(epkq, x))
+(x_O_6 >>= mlpkgen(skm))
+(x_O_11 >>= mldecap(ctq, skm))
+(x_O_8 >>= exp(g, x))
+(x1[u_2] = mldecap(ctq, skm))
+(epkq = x3[u_2])
+(ctq = x5[u_2])
+Facts:
+Elsefind:
+for all ri_3; not(defined(r_1[ri_3], ctq[ri_3], epkq[ri_3]) && ((epkq = epkq[ri_3]) && (ctq = ctq[ri_3])))
+for all ; not(defined(ctm, epk) && ((ctq = ctm) && (epkq = epk)))
+__________________
+Elsefind begin
+
+-----------------
+Variables known to be currently defined: epkq[ri_3], ctq[ri_3], r_1[ri_3], x_O_11[ri_3], x_O_8[ri_3], x_O_6[ri_3], x_O_6, x_O_8, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {138}[ri_3]
+Elsefind_fact (before renaming): for all ri_2; not(defined(r_2[ri_2], x6[ri_2], x5[ri_2], x4[ri_2], x3[ri_2], x2[ri_2], x1[ri_2]) && ((x_O_11 = x1[ri_2]) && (x2[ri_2] = exp(epkq, x)) && (epkq = x3[ri_2]) && (x_O_8 = x4[ri_2]) && (ctq = x5[ri_2]) && (x_O_6 = x6[ri_2])))
+Elsefind_fact_vars_before:
+r_1[ri_3], x_O_6[ri_3], x_O_8[ri_3], x_O_11[ri_3], ctq[ri_3], epkq[ri_3], x, skm, b
+Elsefind_fact (after renaming): for all @ri_53; not(defined(r_2[@ri_53]) && ((x_O_11[ri_3] = x1[@ri_53]) && (x2[@ri_53] = exp(epkq[ri_3], x)) && (epkq[ri_3] = x3[@ri_53]) && (x_O_8[ri_3] = x4[@ri_53]) && (ctq[ri_3] = x5[@ri_53]) && (x_O_6[ri_3] = x6[@ri_53])))
+-----------------
+Variables known to be currently defined: epkq[ri_3], ctq[ri_3], r_1[ri_3], x_O_11[ri_3], x_O_8[ri_3], x_O_6[ri_3], x_O_6, x_O_8, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {138}[ri_3]
+Elsefind_fact (before renaming): for all ri_3; not(defined(r_1[ri_3], ctq[ri_3], epkq[ri_3]) && ((epkq = epkq[ri_3]) && (ctq = ctq[ri_3]) && (id <> ri_3)))
+Elsefind_fact_vars_before:
+r_1[ri_3], x_O_6[ri_3], x_O_8[ri_3], x_O_11[ri_3], ctq[ri_3], epkq[ri_3], x, skm, b
+Elsefind_fact (after renaming): for all @ri_54; not(defined(r_1[@ri_54]) && ((epkq[ri_3] = epkq[@ri_54]) && (ctq[ri_3] = ctq[@ri_54]) && (ri_3 <> @ri_54)))
+Elsefind_fact_try:
+((epkq[ri_3] = epkq[ri_3]) && (ctq[ri_3] = ctq[ri_3]) && (ri_3 <> ri_3))
+And the def_list':
+r_1[ri_3]
+equal to
+r_1[ri_3]
+Let's assume that r_1[ri_3] is defined after or simultaneously {138}[ri_3]
+Found a usable term: not(((epkq[ri_3] = epkq[ri_3]) && (ctq[ri_3] = ctq[ri_3]) && (ri_3 <> ri_3)))
+-----------------
+Variables known to be currently defined: epkq[ri_3], ctq[ri_3], r_1[ri_3], x_O_11[ri_3], x_O_8[ri_3], x_O_6[ri_3], x_O_6, x_O_8, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {138}[ri_3]
+Elsefind_fact (before renaming): for all ; not(defined(ctm, epk) && ((ctq = ctm) && (epkq = epk)))
+Elsefind_fact_vars_before:
+r_1[ri_3], x_O_6[ri_3], x_O_8[ri_3], x_O_11[ri_3], ctq[ri_3], epkq[ri_3], x, skm, b
+Elsefind_fact (after renaming): for all ; not(defined(epk) && ((ctq[ri_3] = ctm) && (epkq[ri_3] = epk)))
+-----------------
+Variables known to be currently defined: epkq[ri_3], ctq[ri_3], r_1[ri_3], x_O_11[ri_3], x_O_8[ri_3], x_O_6[ri_3], x_O_6, x_O_8, x_O_11, ctq, epkq, x, skm, b
+Program point known to be executed in an else branch of find: {68}[id]
+Elsefind_fact (before renaming): for all ; not(defined(ctm, epk) && ((ctq = ctm) && (epkq = epk)))
+Elsefind_fact_vars_before:
+x_O_6, x_O_8, x_O_11, ctq, epkq, x, skm, b
+Elsefind_fact (after renaming): for all ; not(defined(epk) && ((ctq = ctm) && (epkq = epk)))
+__________________
+Elsefind summary: these terms are true:
+not(((epkq[ri_3] = epkq[ri_3]) && (ctq[ri_3] = ctq[ri_3]) && (ri_3 <> ri_3)))
+
+_________________
+Occ = 68 : 
+Substitutions:
+(x_O_6[u_3] >>= mlpkgen(skm))
+(x_O_11[u_3] >>= mldecap(ctq[u_3], skm))
+(epkq[u_3] = epkq)
+(x_O_8 >>= exp(g, x))
+(x_O_11 >>= mldecap(ctq, skm))
+(x_O_6 >>= mlpkgen(skm))
+(ctq[u_3] = ctq)
+(x_O_8[u_3] >>= exp(g, x))
+Facts:
+(id <> u_3)
+Elsefind:
+for all ri_2; not(defined(r_2[ri_2], x6[ri_2], x5[ri_2], x4[ri_2], x3[ri_2], x2[ri_2], x1[ri_2]) && ((x_O_11 = x1[ri_2]) && (x2[ri_2] = exp(epkq, x)) && (epkq = x3[ri_2]) && (x_O_8 = x4[ri_2]) && (ctq = x5[ri_2]) && (x_O_6 = x6[ri_2])))
+for all ; not(defined(ctm, epk) && ((ctq = ctm) && (epkq = epk)))
+__________________
+Elsefind begin
+
+__________________
+Elsefind summary: these terms are true:
+
+Doing global dependency analysis on y inside simplify... At 31, returned message epk depends on y.
+No change
+
+_________________
+Occ = 45 : 
+Substitutions:
+(epkq = exp(g, y))
+(ctq = mlencap_ct(pkm, s))
+(pkm >>= mlpkgen(skm))
+(ctm >>= mlencap_ct(pkm, s))
+(epk >>= exp(g, y))
+Facts:
+Elsefind:
+Run simplify 1 time(s). Fixpoint reached.
+No change.
+Doing move all binders... No change.
+Doing SA rename new without array accesses and remove assignments of findcond... No change.
+Doing merge branches... Done.
+Proved one-session secrecy of b
+===================== Proof starts =======================
+Initial state
+Game 1 is
+     Ostart() :=
+     hk <-R hashkey;
+     b <-R bool;
+     skm <-R mlsk;
+     x <-R Z;
+     return(skm, exp(g, x));
+     ((
+       Ochall() :=
+       s <-R mlseed;
+       y <-R Z;
+       pkm: mlpk <- mlpkgen(skm);
+       ctm: mlct <- mlencap_ct(pkm, s);
+       ssm: mlss <- mlencap_ss(pkm, s);
+       epk: G <- exp(g, y);
+       k0: key <- H(hk, ssm, exp(exp(g, x), y), epk, exp(g, x), ctm, pkm);
+       k1 <-R key;
+       return(ctm, epk, (if b then k0 else k1))
+     ) | (
+       foreach id <= Qd do
+       Odecap(ctq: mlct, epkq: G) :=
+       if defined(ctm, epk) && (ctq = ctm) && (epkq = epk) then
+         yield
+       else
+         return(H(hk, mldecap(ctq, skm), exp(epkq, x), epkq, exp(g, x), ctq, mlpkgen(skm)))
+     ) | (
+       foreach iH <= qH do
+       OH(x1: mlss, x2: G, x3: G, x4: G, x5: mlct, x6: mlpk) :=
+       return(H(hk, x1, x2, x3, x4, x5, x6))
+     ))
+
+
+Applying expand
+  - Expand if/find/let
+yields
+
+Game 2 is
+     Ostart() :=
+     hk <-R hashkey;
+     b <-R bool;
+     skm <-R mlsk;
+     x <-R Z;
+     return(skm, exp(g, x));
+     ((
+       Ochall() :=
+       s <-R mlseed;
+       y <-R Z;
+       pkm: mlpk <- mlpkgen(skm);
+       ctm: mlct <- mlencap_ct(pkm, s);
+       ssm: mlss <- mlencap_ss(pkm, s);
+       epk: G <- exp(g, y);
+       k0: key <- {32}H(hk, ssm, exp(exp(g, x), y), epk, exp(g, x), ctm, pkm);
+       k1 <-R key;
+       if b then
+         return(ctm, epk, k0)
+       else
+         return(ctm, epk, k1)
+     ) | (
+       foreach id <= Qd do
+       Odecap(ctq: mlct, epkq: G) :=
+       if defined(ctm, epk) && (ctq = ctm) && (epkq = epk) then
+         yield
+       else
+         return(H(hk, mldecap(ctq, skm), exp(epkq, x), epkq, exp(g, x), ctq, mlpkgen(skm)))
+     ) | (
+       foreach iH <= qH do
+       OH(x1: mlss, x2: G, x3: G, x4: G, x5: mlct, x6: mlpk) :=
+       return(H(hk, x1, x2, x3, x4, x5, x6))
+     ))
+
+
+Applying simplify
+  - Simplification pass
+    - Replaced H(hk, ssm, exp(exp(g, x), y), epk, exp(g, x), ctm, pkm) with H(hk, ssm, exp(g, mult(x, y)), epk, exp(g, x), ctm, pkm) at 32
+yields
+
+Game 3 is
+     Ostart() :=
+     hk <-R hashkey;
+     b <-R bool;
+     skm <-R mlsk;
+     x <-R Z;
+     return(skm, exp(g, x));
+     ((
+       Ochall() :=
+       s <-R mlseed;
+       y <-R Z;
+       pkm: mlpk <- mlpkgen(skm);
+       ctm: mlct <- mlencap_ct(pkm, s);
+       ssm: mlss <- mlencap_ss(pkm, s);
+       epk: G <- exp(g, y);
+       k0: key <- H(hk, ssm, exp(g, mult(x, y)), epk, exp(g, x), ctm, pkm);
+       k1 <-R key;
+       if b then
+         return(ctm, epk, k0)
+       else
+         return(ctm, epk, k1)
+     ) | (
+       foreach id <= Qd do
+       Odecap(ctq: mlct, epkq: G) :=
+       if defined(ctm, epk) && (ctq = ctm) && (epkq = epk) then
+         yield
+       else
+         return(H(hk, mldecap(ctq, skm), exp(epkq, x), epkq, exp(g, x), ctq, mlpkgen(skm)))
+     ) | (
+       foreach iH <= qH do
+       OH(x1: mlss, x2: G, x3: G, x4: G, x5: mlct, x6: mlpk) :=
+       return(H(hk, x1, x2, x3, x4, x5, x6))
+     ))
+
+
+Applying move all binders
+  - Move random number generation k1
+  - Move assignment to k0
+  - Move assignment to ssm
+yields
+
+Game 4 is
+     Ostart() :=
+     hk <-R hashkey;
+     b <-R bool;
+     skm <-R mlsk;
+     x <-R Z;
+     return(skm, exp(g, x));
+     ((
+       Ochall() :=
+       s <-R mlseed;
+       y <-R Z;
+       pkm: mlpk <- mlpkgen(skm);
+       ctm: mlct <- mlencap_ct(pkm, s);
+       epk: G <- exp(g, y);
+       if b then
+         ssm: mlss <- mlencap_ss(pkm, s);
+         k0: key <- H(hk, ssm, exp(g, mult(x, y)), epk, exp(g, x), ctm, pkm);
+         return(ctm, epk, k0)
+       else
+         k1 <-R key;
+         return(ctm, epk, k1)
+     ) | (
+       foreach id <= Qd do
+       Odecap(ctq: mlct, epkq: G) :=
+       if defined(ctm, epk) && (ctq = ctm) && (epkq = epk) then
+         yield
+       else
+         return(H(hk, mldecap(ctq, skm), exp(epkq, x), epkq, exp(g, x), ctq, mlpkgen(skm)))
+     ) | (
+       foreach iH <= qH do
+       OH(x1: mlss, x2: G, x3: G, x4: G, x5: mlct, x6: mlpk) :=
+       return(H(hk, x1, x2, x3, x4, x5, x6))
+     ))
+
+
+Applying equivalence rom(H)
+  - Equivalence rom(H) with variables: hk -> hk_1
+yields
+
+Game 5 is
+     Ostart() :=
+     b <-R bool;
+     skm <-R mlsk;
+     x <-R Z;
+     return(skm, exp(g, x));
+     ((
+       Ochall() :=
+       s <-R mlseed;
+       y <-R Z;
+       pkm: mlpk <- mlpkgen(skm);
+       ctm: mlct <- mlencap_ct(pkm, s);
+       epk: G <- exp(g, y);
+       if b then
+         ssm: mlss <- mlencap_ss(pkm, s);
+         k0: key <- (x_O_5: mlss <- ssm; x_O_4: G <- exp(g, mult(x, y)); x_O_3: G <- epk; x_O_2: G <- exp(g, x); x_O_1: mlct <- ctm; x_O: mlpk <- pkm; {51}find [unique] u_5 = ri_5 <= Qd suchthat defined(x_O_11[ri_5], x_O_10[ri_5], x_O_9[ri_5], x_O_8[ri_5], x_O_7[ri_5], x_O_6[ri_5], r_1[ri_5]) && (x_O_5 = x_O_11[ri_5]) && (x_O_4 = x_O_10[ri_5]) && (x_O_3 = x_O_9[ri_5]) && (x_O_2 = x_O_8[ri_5]) && (x_O_1 = x_O_7[ri_5]) && (x_O = x_O_6[ri_5]) then r_1[u_5] orfind u_4 = ri_4 <= qH suchthat defined(x_O_17[ri_4], x_O_16[ri_4], x_O_15[ri_4], x_O_14[ri_4], x_O_13[ri_4], x_O_12[ri_4], r_2[ri_4]) && (x_O_5 = x_O_17[ri_4]) && (x_O_4 = x_O_16[ri_4]) && (x_O_3 = x_O_15[ri_4]) && (x_O_2 = x_O_14[ri_4]) && (x_O_1 = x_O_13[ri_4]) && (x_O = x_O_12[ri_4]) then r_2[u_4] else r <-R key; r);
+         return(ctm, epk, k0)
+       else
+         k1 <-R key;
+         return(ctm, epk, k1)
+     ) | (
+       foreach id <= Qd do
+       Odecap(ctq: mlct, epkq: G) :=
+       if defined(ctm, epk) && (ctq = ctm) && (epkq = epk) then
+         yield
+       else
+         return((x_O_11: mlss <- mldecap(ctq, skm); x_O_10: G <- exp(epkq, x); x_O_9: G <- epkq; x_O_8: G <- exp(g, x); x_O_7: mlct <- ctq; x_O_6: mlpk <- mlpkgen(skm); {183}find [unique]  suchthat defined(x_O_5, x_O_4, x_O_3, x_O_2, x_O_1, x_O, r) && (x_O_11 = x_O_5) && (x_O_10 = x_O_4) && (x_O_9 = x_O_3) && (x_O_8 = x_O_2) && (x_O_7 = x_O_1) && (x_O_6 = x_O) then r orfind u_3 = ri_3 <= Qd suchthat defined(x_O_11[ri_3], x_O_10[ri_3], x_O_9[ri_3], x_O_8[ri_3], x_O_7[ri_3], x_O_6[ri_3], r_1[ri_3]) && (x_O_11 = x_O_11[ri_3]) && (x_O_10 = x_O_10[ri_3]) && (x_O_9 = x_O_9[ri_3]) && (x_O_8 = x_O_8[ri_3]) && (x_O_7 = x_O_7[ri_3]) && (x_O_6 = x_O_6[ri_3]) then r_1[u_3] orfind u_2 = ri_2 <= qH suchthat defined(x_O_17[ri_2], x_O_16[ri_2], x_O_15[ri_2], x_O_14[ri_2], x_O_13[ri_2], x_O_12[ri_2], r_2[ri_2]) && (x_O_11 = x_O_17[ri_2]) && (x_O_10 = x_O_16[ri_2]) && (x_O_9 = x_O_15[ri_2]) && (x_O_8 = x_O_14[ri_2]) && (x_O_7 = x_O_13[ri_2]) && (x_O_6 = x_O_12[ri_2]) then r_2[u_2] else r_1 <-R key; r_1))
+     ) | (
+       foreach iH <= qH do
+       OH(x1: mlss, x2: G, x3: G, x4: G, x5: mlct, x6: mlpk) :=
+       return((x_O_17: mlss <- x1; x_O_16: G <- x2; x_O_15: G <- x3; x_O_14: G <- x4; x_O_13: mlct <- x5; x_O_12: mlpk <- x6; find [unique]  suchthat defined(x_O_5, x_O_4, x_O_3, x_O_2, x_O_1, x_O, r) && (x_O_17 = x_O_5) && (x_O_16 = x_O_4) && (x_O_15 = x_O_3) && (x_O_14 = x_O_2) && (x_O_13 = x_O_1) && (x_O_12 = x_O) then r orfind u_1 = ri_1 <= Qd suchthat defined(x_O_11[ri_1], x_O_10[ri_1], x_O_9[ri_1], x_O_8[ri_1], x_O_7[ri_1], x_O_6[ri_1], r_1[ri_1]) && (x_O_17 = x_O_11[ri_1]) && (x_O_16 = x_O_10[ri_1]) && (x_O_15 = x_O_9[ri_1]) && (x_O_14 = x_O_8[ri_1]) && (x_O_13 = x_O_7[ri_1]) && (x_O_12 = x_O_6[ri_1]) then r_1[u_1] orfind u = ri <= qH suchthat defined(x_O_17[ri], x_O_16[ri], x_O_15[ri], x_O_14[ri], x_O_13[ri], x_O_12[ri], r_2[ri]) && (x_O_17 = x_O_17[ri]) && (x_O_16 = x_O_16[ri]) && (x_O_15 = x_O_15[ri]) && (x_O_14 = x_O_14[ri]) && (x_O_13 = x_O_13[ri]) && (x_O_12 = x_O_12[ri]) then r_2[u] else r_2 <-R key; r_2))
+     ))
+
+
+Applying expand [probability Qd * PCollKey]
+  - Expand if/find/let
+    - Remove branch 1 in find at 183
+    - Remove branch 1 in find at 51
+yields
+
+Game 6 is
+     Ostart() :=
+     b <-R bool;
+     skm <-R mlsk;
+     x <-R Z;
+     return(skm, exp(g, x));
+     ((
+       Ochall() :=
+       s <-R mlseed;
+       y <-R Z;
+       pkm: mlpk <- mlpkgen(skm);
+       ctm: mlct <- mlencap_ct(pkm, s);
+       epk: G <- exp(g, y);
+       if b then
+         ssm: mlss <- mlencap_ss(pkm, s);
+         x_O_5: mlss <- ssm;
+         x_O_4: G <- exp(g, mult(x, y));
+         x_O_3: G <- epk;
+         x_O_2: G <- exp(g, x);
+         x_O_1: mlct <- ctm;
+         x_O: mlpk <- pkm;
+         find [unique] u_4 = ri_4 <= qH suchthat defined(x_O_17[ri_4], x_O_16[ri_4], x_O_15[ri_4], x_O_14[ri_4], x_O_13[ri_4], x_O_12[ri_4], r_2[ri_4]) && (x_O_5 = x_O_17[ri_4]) && (x_O_4 = x_O_16[ri_4]) && (x_O_3 = x_O_15[ri_4]) && (x_O_2 = x_O_14[ri_4]) && (x_O_1 = x_O_13[ri_4]) && (x_O = x_O_12[ri_4]) then
+           k0: key <- r_2[u_4];
+           return(ctm, epk, k0)
+         else
+           r <-R key;
+           k0: key <- r;
+           return(ctm, epk, k0)
+       else
+         k1 <-R key;
+         return(ctm, epk, k1)
+     ) | (
+       foreach id <= Qd do
+       Odecap(ctq: mlct, epkq: G) :=
+       if defined(ctm, epk) && (ctq = ctm) && (epkq = epk) then
+         yield
+       else
+         x_O_11: mlss <- mldecap(ctq, skm);
+         x_O_10: G <- exp(epkq, x);
+         x_O_9: G <- epkq;
+         x_O_8: G <- exp(g, x);
+         x_O_7: mlct <- ctq;
+         x_O_6: mlpk <- mlpkgen(skm);
+         find [unique] u_3 = ri_3 <= Qd suchthat defined(x_O_11[ri_3], x_O_10[ri_3], x_O_9[ri_3], x_O_8[ri_3], x_O_7[ri_3], x_O_6[ri_3], r_1[ri_3]) && (x_O_11 = x_O_11[ri_3]) && (x_O_10 = x_O_10[ri_3]) && (x_O_9 = x_O_9[ri_3]) && (x_O_8 = x_O_8[ri_3]) && (x_O_7 = x_O_7[ri_3]) && (x_O_6 = x_O_6[ri_3]) then
+           return(r_1[u_3])
+         orfind u_2 = ri_2 <= qH suchthat defined(x_O_17[ri_2], x_O_16[ri_2], x_O_15[ri_2], x_O_14[ri_2], x_O_13[ri_2], x_O_12[ri_2], r_2[ri_2]) && (x_O_11 = x_O_17[ri_2]) && (x_O_10 = x_O_16[ri_2]) && (x_O_9 = x_O_15[ri_2]) && (x_O_8 = x_O_14[ri_2]) && (x_O_7 = x_O_13[ri_2]) && (x_O_6 = x_O_12[ri_2]) then
+           return(r_2[u_2])
+         else
+           r_1 <-R key;
+           return(r_1)
+     ) | (
+       foreach iH <= qH do
+       OH(x1: mlss, x2: G, x3: G, x4: G, x5: mlct, x6: mlpk) :=
+       x_O_17: mlss <- x1;
+       x_O_16: G <- x2;
+       x_O_15: G <- x3;
+       x_O_14: G <- x4;
+       x_O_13: mlct <- x5;
+       x_O_12: mlpk <- x6;
+       find [unique]  suchthat defined(x_O_5, x_O_4, x_O_3, x_O_2, x_O_1, x_O, r) && (x_O_17 = x_O_5) && (x_O_16 = x_O_4) && (x_O_15 = x_O_3) && (x_O_14 = x_O_2) && (x_O_13 = x_O_1) && (x_O_12 = x_O) then
+         return(r)
+       orfind u_1 = ri_1 <= Qd suchthat defined(x_O_11[ri_1], x_O_10[ri_1], x_O_9[ri_1], x_O_8[ri_1], x_O_7[ri_1], x_O_6[ri_1], r_1[ri_1]) && (x_O_17 = x_O_11[ri_1]) && (x_O_16 = x_O_10[ri_1]) && (x_O_15 = x_O_9[ri_1]) && (x_O_14 = x_O_8[ri_1]) && (x_O_13 = x_O_7[ri_1]) && (x_O_12 = x_O_6[ri_1]) then
+         return(r_1[u_1])
+       orfind u = ri <= qH suchthat defined(x_O_17[ri], x_O_16[ri], x_O_15[ri], x_O_14[ri], x_O_13[ri], x_O_12[ri], r_2[ri]) && (x_O_17 = x_O_17[ri]) && (x_O_16 = x_O_16[ri]) && (x_O_15 = x_O_15[ri]) && (x_O_14 = x_O_14[ri]) && (x_O_13 = x_O_13[ri]) && (x_O_12 = x_O_12[ri]) then
+         return(r_2[u])
+       else
+         r_2 <-R key;
+         return(r_2)
+     ))
+
+
+Applying remove assignments of findcond
+  - Remove assignments on x_O_17 (definition point kept, all usages removed)
+  - Remove assignments on x_O_16 (definition removed, all usages removed)
+  - Remove assignments on x_O_15 (definition removed, all usages removed)
+  - Remove assignments on x_O_14 (definition removed, all usages removed)
+  - Remove assignments on x_O_13 (definition removed, all usages removed)
+  - Remove assignments on x_O_12 (definition removed, all usages removed)
+  - Remove assignments on x_O_9 (definition removed, all usages removed)
+  - Remove assignments on x_O_7 (definition removed, all usages removed)
+  - Remove assignments on x_O_5 (definition removed, all usages removed)
+  - Remove assignments on x_O_3 (definition removed, all usages removed)
+  - Remove assignments on x_O_1 (definition removed, all usages removed)
+  - Remove assignments on x_O (definition removed, all usages removed)
+  - Remove assignments on k0 (definition removed, all usages removed)
+  - Remove assignments on k0 (definition removed, all usages removed)
+yields
+
+Game 7 is
+     Ostart() :=
+     b <-R bool;
+     skm <-R mlsk;
+     x <-R Z;
+     return(skm, exp(g, x));
+     ((
+       Ochall() :=
+       s <-R mlseed;
+       y <-R Z;
+       pkm: mlpk <- mlpkgen(skm);
+       ctm: mlct <- mlencap_ct(pkm, s);
+       epk: G <- exp(g, y);
+       if b then
+         ssm: mlss <- mlencap_ss(pkm, s);
+         x_O_4: G <- exp(g, mult(x, y));
+         x_O_2: G <- exp(g, x);
+ {42}    find [unique] u_4 = ri_4 <= qH suchthat defined(x1[ri_4], x2[ri_4], x3[ri_4], x4[ri_4], x5[ri_4], x6[ri_4], x_O_17[ri_4], r_2[ri_4]) && {51}((ssm = x1[ri_4]) && (x_O_4 = x2[ri_4]) && (epk = x3[ri_4]) && (x_O_2 = x4[ri_4]) && (ctm = x5[ri_4]) && (pkm = x6[ri_4])) then
+           return(ctm, epk, r_2[u_4])
+         else
+           r <-R key;
+           return(ctm, epk, r)
+       else
+         k1 <-R key;
+         return(ctm, epk, k1)
+     ) | (
+       foreach id <= Qd do
+       Odecap(ctq: mlct, epkq: G) :=
+       if defined(ctm, epk) && (ctq = ctm) && (epkq = epk) then
+         yield
+       else
+         x_O_11: mlss <- mldecap(ctq, skm);
+         x_O_10: G <- exp(epkq, x);
+         x_O_8: G <- exp(g, x);
+         x_O_6: mlpk <- mlpkgen(skm);
+{134}    find [unique] u_3 = ri_3 <= Qd suchthat defined(epkq[ri_3], ctq[ri_3], x_O_11[ri_3], x_O_10[ri_3], x_O_8[ri_3], x_O_6[ri_3], r_1[ri_3]) && {142}((x_O_11 = x_O_11[ri_3]) && (x_O_10 = x_O_10[ri_3]) && (epkq = epkq[ri_3]) && (x_O_8 = x_O_8[ri_3]) && (ctq = ctq[ri_3]) && (x_O_6 = x_O_6[ri_3])) then
+           return(r_1[u_3])
+         orfind u_2 = ri_2 <= qH suchthat defined(x1[ri_2], x2[ri_2], x3[ri_2], x4[ri_2], x5[ri_2], x6[ri_2], x_O_17[ri_2], r_2[ri_2]) && (x_O_11 = x1[ri_2]) && (x_O_10 = x2[ri_2]) && (epkq = x3[ri_2]) && (x_O_8 = x4[ri_2]) && (ctq = x5[ri_2]) && (x_O_6 = x6[ri_2]) then
+           return(r_2[u_2])
+         else
+           r_1 <-R key;
+           return(r_1)
+     ) | (
+       foreach iH <= qH do
+       OH(x1: mlss, x2: G, x3: G, x4: G, x5: mlct, x6: mlpk) :=
+       x_O_17: mlss <- cst_mlss;
+{243}  find [unique]  suchthat defined(epk, ctm, pkm, ssm, x_O_4, x_O_2, r) && (x1 = ssm) && (x2 = x_O_4) && (x3 = epk) && (x4 = x_O_2) && (x5 = ctm) && (x6 = pkm) then
+         return(r)
+       orfind u_1 = ri_1 <= Qd suchthat defined(epkq[ri_1], ctq[ri_1], x_O_11[ri_1], x_O_10[ri_1], x_O_8[ri_1], x_O_6[ri_1], r_1[ri_1]) && (x1 = x_O_11[ri_1]) && (x2 = x_O_10[ri_1]) && (x3 = epkq[ri_1]) && (x4 = x_O_8[ri_1]) && (x5 = ctq[ri_1]) && (x6 = x_O_6[ri_1]) then
+         return(r_1[u_1])
+       orfind u = ri <= qH suchthat defined(x1[ri], x2[ri], x3[ri], x4[ri], x5[ri], x6[ri], x_O_17[ri], r_2[ri]) && (x1 = x1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) && (x4 = x4[ri]) && (x5 = x5[ri]) && (x6 = x6[ri]) then
+         return(r_2[u])
+       else
+         r_2 <-R key;
+         return(r_2)
+     ))
+
+
+Applying simplify [probability qH * PCollKey]
+  - Simplification pass
+    - Replaced defined condition x1[ri], x2[ri], x3[ri], x4[ri], x5[ri], x6[ri], x_O_17[ri], r_2[ri] with r_2[ri], x6[ri], x5[ri], x4[ri], x3[ri], x2[ri], x1[ri] in find at 243
+    - Replaced defined condition x1[ri_2], x2[ri_2], x3[ri_2], x4[ri_2], x5[ri_2], x6[ri_2], x_O_17[ri_2], r_2[ri_2] with r_2[ri_2], x6[ri_2], x5[ri_2], x4[ri_2], x3[ri_2], x2[ri_2], x1[ri_2] in find at 134
+    - Replaced ((x_O_11 = x_O_11[ri_3]) && (x_O_10 = x_O_10[ri_3]) && (epkq = epkq[ri_3]) && (x_O_8 = x_O_8[ri_3]) && (ctq = ctq[ri_3]) && (x_O_6 = x_O_6[ri_3])) with ((epkq = epkq[ri_3]) && (ctq = ctq[ri_3])) at 142
+    - Replaced defined condition epkq[ri_3], ctq[ri_3], x_O_11[ri_3], x_O_10[ri_3], x_O_8[ri_3], x_O_6[ri_3], r_1[ri_3] with r_1[ri_3], ctq[ri_3], epkq[ri_3] in find at 134
+    - Replaced ((ssm = x1[ri_4]) && (x_O_4 = x2[ri_4]) && (epk = x3[ri_4]) && (x_O_2 = x4[ri_4]) && (ctm = x5[ri_4]) && (pkm = x6[ri_4])) with false at 51
+    - Remove branch 1 in find at 42
+    - Find at 42 removed (else branch kept if any)
+yields
+
+Game 8 is
+     Ostart() :=
+     b <-R bool;
+     skm <-R mlsk;
+     x <-R Z;
+     return(skm, exp(g, x));
+     ((
+       Ochall() :=
+       s <-R mlseed;
+       y <-R Z;
+       pkm: mlpk <- mlpkgen(skm);
+       ctm: mlct <- mlencap_ct(pkm, s);
+       epk: G <- exp(g, y);
+       if b then
+         ssm: mlss <- mlencap_ss(pkm, s);
+         x_O_4: G <- exp(g, mult(x, y));
+         x_O_2: G <- exp(g, x);
+         r <-R key;
+         return(ctm, epk, r)
+       else
+         k1 <-R key;
+         return(ctm, epk, k1)
+     ) | (
+       foreach id <= Qd do
+       Odecap(ctq: mlct, epkq: G) :=
+       if defined(ctm, epk) && (ctq = ctm) && (epkq = epk) then
+         yield
+       else
+         x_O_11: mlss <- mldecap(ctq, skm);
+         x_O_10: G <- exp(epkq, x);
+         x_O_8: G <- exp(g, x);
+         x_O_6: mlpk <- mlpkgen(skm);
+         find [unique] u_3 = ri_3 <= Qd suchthat defined(r_1[ri_3], ctq[ri_3], epkq[ri_3]) && (epkq = epkq[ri_3]) && (ctq = ctq[ri_3]) then
+           return(r_1[u_3])
+         orfind u_2 = ri_2 <= qH suchthat defined(r_2[ri_2], x6[ri_2], x5[ri_2], x4[ri_2], x3[ri_2], x2[ri_2], x1[ri_2]) && (x_O_11 = x1[ri_2]) && (x_O_10 = x2[ri_2]) && (epkq = x3[ri_2]) && (x_O_8 = x4[ri_2]) && (ctq = x5[ri_2]) && (x_O_6 = x6[ri_2]) then
+           return(r_2[u_2])
+         else
+           r_1 <-R key;
+           return(r_1)
+     ) | (
+       foreach iH <= qH do
+       OH(x1: mlss, x2: G, x3: G, x4: G, x5: mlct, x6: mlpk) :=
+       x_O_17: mlss <- cst_mlss;
+       find [unique]  suchthat defined(epk, ctm, pkm, ssm, x_O_4, x_O_2, r) && (x1 = ssm) && (x2 = x_O_4) && (x3 = epk) && (x4 = x_O_2) && (x5 = ctm) && (x6 = pkm) then
+         return(r)
+       orfind u_1 = ri_1 <= Qd suchthat defined(epkq[ri_1], ctq[ri_1], x_O_11[ri_1], x_O_10[ri_1], x_O_8[ri_1], x_O_6[ri_1], r_1[ri_1]) && (x1 = x_O_11[ri_1]) && (x2 = x_O_10[ri_1]) && (x3 = epkq[ri_1]) && (x4 = x_O_8[ri_1]) && (x5 = ctq[ri_1]) && (x6 = x_O_6[ri_1]) then
+         return(r_1[u_1])
+       orfind u = ri <= qH suchthat defined(r_2[ri], x6[ri], x5[ri], x4[ri], x3[ri], x2[ri], x1[ri]) && (x1 = x1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) && (x4 = x4[ri]) && (x5 = x5[ri]) && (x6 = x6[ri]) then
+         return(r_2[u])
+       else
+         r_2 <-R key;
+         return(r_2)
+     ))
+
+
+Applying move all binders
+  - Move assignment to x_O_17
+yields
+
+Game 9 is
+     Ostart() :=
+     b <-R bool;
+     skm <-R mlsk;
+     x <-R Z;
+     return(skm, exp(g, x));
+     ((
+       Ochall() :=
+       s <-R mlseed;
+       y <-R Z;
+       pkm: mlpk <- mlpkgen(skm);
+       ctm: mlct <- mlencap_ct(pkm, s);
+       epk: G <- exp(g, y);
+       if b then
+         ssm: mlss <- mlencap_ss(pkm, s);
+         x_O_4: G <- exp(g, mult(x, y));
+         x_O_2: G <- exp(g, x);
+         r <-R key;
+         return(ctm, epk, r)
+       else
+         k1 <-R key;
+         return(ctm, epk, k1)
+     ) | (
+       foreach id <= Qd do
+       Odecap(ctq: mlct, epkq: G) :=
+       if defined(ctm, epk) && (ctq = ctm) && (epkq = epk) then
+         yield
+       else
+         x_O_11: mlss <- mldecap(ctq, skm);
+         x_O_10: G <- exp(epkq, x);
+         x_O_8: G <- exp(g, x);
+         x_O_6: mlpk <- mlpkgen(skm);
+         find [unique] u_3 = ri_3 <= Qd suchthat defined(r_1[ri_3], ctq[ri_3], epkq[ri_3]) && (epkq = epkq[ri_3]) && (ctq = ctq[ri_3]) then
+           return(r_1[u_3])
+         orfind u_2 = ri_2 <= qH suchthat defined(r_2[ri_2], x6[ri_2], x5[ri_2], x4[ri_2], x3[ri_2], x2[ri_2], x1[ri_2]) && (x_O_11 = x1[ri_2]) && (x_O_10 = x2[ri_2]) && (epkq = x3[ri_2]) && (x_O_8 = x4[ri_2]) && (ctq = x5[ri_2]) && (x_O_6 = x6[ri_2]) then
+           return(r_2[u_2])
+         else
+           r_1 <-R key;
+           return(r_1)
+     ) | (
+       foreach iH <= qH do
+       OH(x1: mlss, x2: G, x3: G, x4: G, x5: mlct, x6: mlpk) :=
+       find [unique]  suchthat defined(epk, ctm, pkm, ssm, x_O_4, x_O_2, r) && (x1 = ssm) && (x2 = x_O_4) && (x3 = epk) && (x4 = x_O_2) && (x5 = ctm) && (x6 = pkm) then
+         return(r)
+       orfind u_1 = ri_1 <= Qd suchthat defined(epkq[ri_1], ctq[ri_1], x_O_11[ri_1], x_O_10[ri_1], x_O_8[ri_1], x_O_6[ri_1], r_1[ri_1]) && (x1 = x_O_11[ri_1]) && (x2 = x_O_10[ri_1]) && (x3 = epkq[ri_1]) && (x4 = x_O_8[ri_1]) && (x5 = ctq[ri_1]) && (x6 = x_O_6[ri_1]) then
+         return(r_1[u_1])
+       orfind u = ri <= qH suchthat defined(r_2[ri], x6[ri], x5[ri], x4[ri], x3[ri], x2[ri], x1[ri]) && (x1 = x1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) && (x4 = x4[ri]) && (x5 = x5[ri]) && (x6 = x6[ri]) then
+         return(r_2[u])
+       else
+         r_2 <-R key;
+         return(r_2)
+     ))
+
+
+Applying remove assignments of binder x_O_4
+  - Remove assignments on x_O_4 (definition removed, all usages removed)
+yields
+
+Game 10 is
+     Ostart() :=
+     b <-R bool;
+     skm <-R mlsk;
+     x <-R Z;
+     return(skm, exp(g, x));
+     ((
+       Ochall() :=
+       s <-R mlseed;
+       y <-R Z;
+       pkm: mlpk <- mlpkgen(skm);
+       ctm: mlct <- mlencap_ct(pkm, s);
+       epk: G <- exp(g, y);
+       if b then
+         ssm: mlss <- mlencap_ss(pkm, s);
+         x_O_2: G <- exp(g, x);
+         r <-R key;
+         return(ctm, epk, r)
+       else
+         k1 <-R key;
+         return(ctm, epk, k1)
+     ) | (
+       foreach id <= Qd do
+       Odecap(ctq: mlct, epkq: G) :=
+       if defined(ctm, epk) && (ctq = ctm) && (epkq = epk) then
+         yield
+       else
+         x_O_11: mlss <- mldecap(ctq, skm);
+         x_O_10: G <- exp(epkq, x);
+         x_O_8: G <- exp(g, x);
+         x_O_6: mlpk <- mlpkgen(skm);
+         find [unique] u_3 = ri_3 <= Qd suchthat defined(r_1[ri_3], ctq[ri_3], epkq[ri_3]) && (epkq = epkq[ri_3]) && (ctq = ctq[ri_3]) then
+           return(r_1[u_3])
+         orfind u_2 = ri_2 <= qH suchthat defined(r_2[ri_2], x6[ri_2], x5[ri_2], x4[ri_2], x3[ri_2], x2[ri_2], x1[ri_2]) && (x_O_11 = x1[ri_2]) && (x_O_10 = x2[ri_2]) && (epkq = x3[ri_2]) && (x_O_8 = x4[ri_2]) && (ctq = x5[ri_2]) && (x_O_6 = x6[ri_2]) then
+           return(r_2[u_2])
+         else
+           r_1 <-R key;
+           return(r_1)
+     ) | (
+       foreach iH <= qH do
+       OH(x1: mlss, x2: G, x3: G, x4: G, x5: mlct, x6: mlpk) :=
+       find [unique]  suchthat defined(y, x, epk, ctm, pkm, ssm, x_O_2, r) && (x1 = ssm) && (x2 = exp(g, mult(x, y))) && (x3 = epk) && (x4 = x_O_2) && (x5 = ctm) && (x6 = pkm) then
+         return(r)
+       orfind u_1 = ri_1 <= Qd suchthat defined(epkq[ri_1], ctq[ri_1], x_O_11[ri_1], x_O_10[ri_1], x_O_8[ri_1], x_O_6[ri_1], r_1[ri_1]) && (x1 = x_O_11[ri_1]) && (x2 = x_O_10[ri_1]) && (x3 = epkq[ri_1]) && (x4 = x_O_8[ri_1]) && (x5 = ctq[ri_1]) && (x6 = x_O_6[ri_1]) then
+         return(r_1[u_1])
+       orfind u = ri <= qH suchthat defined(r_2[ri], x6[ri], x5[ri], x4[ri], x3[ri], x2[ri], x1[ri]) && (x1 = x1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) && (x4 = x4[ri]) && (x5 = x5[ri]) && (x6 = x6[ri]) then
+         return(r_2[u])
+       else
+         r_2 <-R key;
+         return(r_2)
+     ))
+
+
+Applying remove assignments of binder x_O_10
+  - Remove assignments on x_O_10 (definition removed, all usages removed)
+yields
+
+Game 11 is
+     Ostart() :=
+     b <-R bool;
+     skm <-R mlsk;
+     x <-R Z;
+     return(skm, exp(g, x));
+     ((
+       Ochall() :=
+       s <-R mlseed;
+       y <-R Z;
+       pkm: mlpk <- mlpkgen(skm);
+       ctm: mlct <- mlencap_ct(pkm, s);
+       epk: G <- exp(g, y);
+       if b then
+         ssm: mlss <- mlencap_ss(pkm, s);
+         x_O_2: G <- exp(g, x);
+         r <-R key;
+         return(ctm, epk, r)
+       else
+         k1 <-R key;
+         return(ctm, epk, k1)
+     ) | (
+       foreach id <= Qd do
+       Odecap(ctq: mlct, epkq: G) :=
+       if defined(ctm, epk) && (ctq = ctm) && (epkq = epk) then
+         yield
+       else
+         x_O_11: mlss <- mldecap(ctq, skm);
+         x_O_8: G <- exp(g, x);
+         x_O_6: mlpk <- mlpkgen(skm);
+         find [unique] u_3 = ri_3 <= Qd suchthat defined(r_1[ri_3], ctq[ri_3], epkq[ri_3]) && (epkq = epkq[ri_3]) && (ctq = ctq[ri_3]) then
+           return(r_1[u_3])
+         orfind u_2 = ri_2 <= qH suchthat defined(r_2[ri_2], x6[ri_2], x5[ri_2], x4[ri_2], x3[ri_2], x2[ri_2], x1[ri_2]) && (x_O_11 = x1[ri_2]) && (exp(epkq, x) = x2[ri_2]) && (epkq = x3[ri_2]) && (x_O_8 = x4[ri_2]) && (ctq = x5[ri_2]) && (x_O_6 = x6[ri_2]) then
+           return(r_2[u_2])
+         else
+           r_1 <-R key;
+           return(r_1)
+     ) | (
+       foreach iH <= qH do
+       OH(x1: mlss, x2: G, x3: G, x4: G, x5: mlct, x6: mlpk) :=
+       find [unique]  suchthat defined(y, x, epk, ctm, pkm, ssm, x_O_2, r) && (x1 = ssm) && (x2 = exp(g, mult(x, y))) && (x3 = epk) && (x4 = x_O_2) && (x5 = ctm) && (x6 = pkm) then
+         return(r)
+       orfind u_1 = ri_1 <= Qd suchthat defined(x, epkq[ri_1], ctq[ri_1], x_O_11[ri_1], x_O_8[ri_1], x_O_6[ri_1], r_1[ri_1]) && (x1 = x_O_11[ri_1]) && (x2 = exp(epkq[ri_1], x)) && (x3 = epkq[ri_1]) && (x4 = x_O_8[ri_1]) && (x5 = ctq[ri_1]) && (x6 = x_O_6[ri_1]) then
+         return(r_1[u_1])
+       orfind u = ri <= qH suchthat defined(r_2[ri], x6[ri], x5[ri], x4[ri], x3[ri], x2[ri], x1[ri]) && (x1 = x1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) && (x4 = x4[ri]) && (x5 = x5[ri]) && (x6 = x6[ri]) then
+         return(r_2[u])
+       else
+         r_2 <-R key;
+         return(r_2)
+     ))
+
+
+Applying equivalence gdh(exp) with y, x [probability pGDH(time_1, 2 * qH) + 2 * pDistRerandom]
+  - Equivalence gdh(exp) with variables: y -> b_1, x -> a
+yields
+
+Game 12 is
+     Ostart() :=
+     b <-R bool;
+     skm <-R mlsk;
+     x <-R Z;
+     return(skm, exp(g, x));
+     ((
+       Ochall() :=
+       s <-R mlseed;
+       y <-R Z;
+       pkm: mlpk <- mlpkgen(skm);
+       ctm: mlct <- mlencap_ct(pkm, s);
+       epk: G <- exp(g, y);
+       if b then
+         ssm: mlss <- mlencap_ss(pkm, s);
+         x_O_2: G <- exp(g, x);
+         r <-R key;
+         return(ctm, epk, r)
+       else
+         k1 <-R key;
+         return(ctm, epk, k1)
+     ) | (
+       foreach id <= Qd do
+       Odecap(ctq: mlct, epkq: G) :=
+       if defined(ctm, epk) && (ctq = ctm) && (epkq = epk) then
+         yield
+       else
+         x_O_11: mlss <- mldecap(ctq, skm);
+         x_O_8: G <- exp(g, x);
+         x_O_6: mlpk <- mlpkgen(skm);
+         find [unique] u_3 = ri_3 <= Qd suchthat defined(r_1[ri_3], ctq[ri_3], epkq[ri_3]) && (epkq = epkq[ri_3]) && (ctq = ctq[ri_3]) then
+           return(r_1[u_3])
+         orfind u_2 = ri_2 <= qH suchthat defined(r_2[ri_2], x6[ri_2], x5[ri_2], x4[ri_2], x3[ri_2], x2[ri_2], x1[ri_2]) && (x_O_11 = x1[ri_2]) && (m: G <- x2[ri_2]; m': G <- epkq; (m = exp(m', x))) && (epkq = x3[ri_2]) && (x_O_8 = x4[ri_2]) && (ctq = x5[ri_2]) && (x_O_6 = x6[ri_2]) then
+           return(r_2[u_2])
+         else
+           r_1 <-R key;
+           return(r_1)
+     ) | (
+       foreach iH <= qH do
+       OH(x1: mlss, x2: G, x3: G, x4: G, x5: mlct, x6: mlpk) :=
+{165}  find [unique]  suchthat defined(r, pkm, ctm, x_O_2, epk, ssm) && (x1 = ssm) && (m_2: G <- x2; false) && (x3 = epk) && (x4 = x_O_2) && (x5 = ctm) && (x6 = pkm) then
+         return(r)
+       orfind u_1 = ri_1 <= Qd suchthat defined(r_1[ri_1], x_O_6[ri_1], ctq[ri_1], x_O_8[ri_1], epkq[ri_1], x_O_11[ri_1]) && (x1 = x_O_11[ri_1]) && (m_3: G <- x2; m'_1: G <- epkq[ri_1]; (m_3 = exp(m'_1, x))) && (x3 = epkq[ri_1]) && (x4 = x_O_8[ri_1]) && (x5 = ctq[ri_1]) && (x6 = x_O_6[ri_1]) then
+         return(r_1[u_1])
+       orfind u = ri <= qH suchthat defined(r_2[ri], x6[ri], x5[ri], x4[ri], x3[ri], x2[ri], x1[ri]) && (x1 = x1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) && (x4 = x4[ri]) && (x5 = x5[ri]) && (x6 = x6[ri]) then
+         return(r_2[u])
+       else
+         r_2 <-R key;
+         return(r_2)
+     ))
+
+
+Applying expand
+  - Expand if/find/let
+    - Remove branch 1 in find at 165
+yields
+
+Game 13 is
+     Ostart() :=
+     b <-R bool;
+     skm <-R mlsk;
+     x <-R Z;
+     return(skm, exp(g, x));
+     ((
+       Ochall() :=
+       s <-R mlseed;
+       y <-R Z;
+       pkm: mlpk <- mlpkgen(skm);
+       ctm: mlct <- mlencap_ct(pkm, s);
+       epk: G <- exp(g, y);
+       if b then
+         ssm: mlss <- mlencap_ss(pkm, s);
+         x_O_2: G <- exp(g, x);
+         r <-R key;
+         return(ctm, epk, r)
+       else
+         k1 <-R key;
+         return(ctm, epk, k1)
+     ) | (
+       foreach id <= Qd do
+       Odecap(ctq: mlct, epkq: G) :=
+       if defined(ctm, epk) && (ctq = ctm) && (epkq = epk) then
+         yield
+       else
+         x_O_11: mlss <- mldecap(ctq, skm);
+         x_O_8: G <- exp(g, x);
+         x_O_6: mlpk <- mlpkgen(skm);
+         find [unique] u_3 = ri_3 <= Qd suchthat defined(r_1[ri_3], ctq[ri_3], epkq[ri_3]) && (epkq = epkq[ri_3]) && (ctq = ctq[ri_3]) then
+           return(r_1[u_3])
+         orfind u_2 = ri_2 <= qH suchthat defined(r_2[ri_2], x6[ri_2], x5[ri_2], x4[ri_2], x3[ri_2], x2[ri_2], x1[ri_2]) && (m: G <- x2[ri_2]; m': G <- epkq; ((x_O_11 = x1[ri_2]) && (m = exp(m', x)) && (epkq = x3[ri_2]) && (x_O_8 = x4[ri_2]) && (ctq = x5[ri_2]) && (x_O_6 = x6[ri_2]))) then
+           return(r_2[u_2])
+         else
+           r_1 <-R key;
+           return(r_1)
+     ) | (
+       foreach iH <= qH do
+       OH(x1: mlss, x2: G, x3: G, x4: G, x5: mlct, x6: mlpk) :=
+       find [unique] u_1 = ri_1 <= Qd suchthat defined(r_1[ri_1], x_O_6[ri_1], ctq[ri_1], x_O_8[ri_1], epkq[ri_1], x_O_11[ri_1]) && (m_3: G <- x2; m'_1: G <- epkq[ri_1]; ((x1 = x_O_11[ri_1]) && (m_3 = exp(m'_1, x)) && (x3 = epkq[ri_1]) && (x4 = x_O_8[ri_1]) && (x5 = ctq[ri_1]) && (x6 = x_O_6[ri_1]))) then
+         return(r_1[u_1])
+       orfind u = ri <= qH suchthat defined(r_2[ri], x6[ri], x5[ri], x4[ri], x3[ri], x2[ri], x1[ri]) && (x1 = x1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) && (x4 = x4[ri]) && (x5 = x5[ri]) && (x6 = x6[ri]) then
+         return(r_2[u])
+       else
+         r_2 <-R key;
+         return(r_2)
+     ))
+
+
+Applying remove assignments of findcond
+  - Remove assignments on m_3 (definition removed, all usages removed)
+  - Remove assignments on m'_1 (definition removed, all usages removed)
+  - Remove assignments on m (definition removed, all usages removed)
+  - Remove assignments on m' (definition removed, all usages removed)
+  - Remove assignments on ssm (definition removed, all usages removed)
+  - Remove assignments on x_O_2 (definition removed, all usages removed)
+yields
+
+Game 14 is
+     Ostart() :=
+     b <-R bool;
+     skm <-R mlsk;
+     x <-R Z;
+     return(skm, exp(g, x));
+     ((
+       Ochall() :=
+       s <-R mlseed;
+       y <-R Z;
+       pkm: mlpk <- mlpkgen(skm);
+       ctm: mlct <- mlencap_ct(pkm, s);
+       epk: G <- exp(g, y);
+ {26}  if b then
+         r <-R key;
+         return(ctm, epk, r)
+       else
+         k1 <-R key;
+         return(ctm, epk, k1)
+     ) | (
+       foreach id <= Qd do
+       Odecap(ctq: mlct, epkq: G) :=
+       if defined(ctm, epk) && (ctq = ctm) && (epkq = epk) then
+         yield
+       else
+         x_O_11: mlss <- mldecap(ctq, skm);
+         x_O_8: G <- exp(g, x);
+         x_O_6: mlpk <- mlpkgen(skm);
+         find [unique] u_3 = ri_3 <= Qd suchthat defined(r_1[ri_3], ctq[ri_3], epkq[ri_3]) && (epkq = epkq[ri_3]) && (ctq = ctq[ri_3]) then
+           return(r_1[u_3])
+         orfind u_2 = ri_2 <= qH suchthat defined(r_2[ri_2], x6[ri_2], x5[ri_2], x4[ri_2], x3[ri_2], x2[ri_2], x1[ri_2]) && (x_O_11 = x1[ri_2]) && (x2[ri_2] = exp(epkq, x)) && (epkq = x3[ri_2]) && (x_O_8 = x4[ri_2]) && (ctq = x5[ri_2]) && (x_O_6 = x6[ri_2]) then
+           return(r_2[u_2])
+         else
+           r_1 <-R key;
+           return(r_1)
+     ) | (
+       foreach iH <= qH do
+       OH(x1: mlss, x2: G, x3: G, x4: G, x5: mlct, x6: mlpk) :=
+       find [unique] u_1 = ri_1 <= Qd suchthat defined(r_1[ri_1], x_O_6[ri_1], ctq[ri_1], x_O_8[ri_1], epkq[ri_1], x_O_11[ri_1]) && (x1 = x_O_11[ri_1]) && (x2 = exp(epkq[ri_1], x)) && (x3 = epkq[ri_1]) && (x4 = x_O_8[ri_1]) && (x5 = ctq[ri_1]) && (x6 = x_O_6[ri_1]) then
+         return(r_1[u_1])
+       orfind u = ri <= qH suchthat defined(r_2[ri], x6[ri], x5[ri], x4[ri], x3[ri], x2[ri], x1[ri]) && (x1 = x1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) && (x4 = x4[ri]) && (x5 = x5[ri]) && (x6 = x6[ri]) then
+         return(r_2[u])
+       else
+         r_2 <-R key;
+         return(r_2)
+     ))
+
+
+Applying merge branches
+  - Merge branches of test at 26
+yields
+
+Game 15 is
+     Ostart() :=
+     b <-R bool;
+     skm <-R mlsk;
+     x <-R Z;
+     return(skm, exp(g, x));
+     ((
+       Ochall() :=
+       s <-R mlseed;
+       y <-R Z;
+       pkm: mlpk <- mlpkgen(skm);
+       ctm: mlct <- mlencap_ct(pkm, s);
+       epk: G <- exp(g, y);
+       k1 <-R key;
+       return(ctm, epk, k1)
+     ) | (
+       foreach id <= Qd do
+       Odecap(ctq: mlct, epkq: G) :=
+       if defined(ctm, epk) && (ctq = ctm) && (epkq = epk) then
+         yield
+       else
+         x_O_11: mlss <- mldecap(ctq, skm);
+         x_O_8: G <- exp(g, x);
+         x_O_6: mlpk <- mlpkgen(skm);
+         find [unique] u_3 = ri_3 <= Qd suchthat defined(r_1[ri_3], ctq[ri_3], epkq[ri_3]) && (epkq = epkq[ri_3]) && (ctq = ctq[ri_3]) then
+           return(r_1[u_3])
+         orfind u_2 = ri_2 <= qH suchthat defined(r_2[ri_2], x6[ri_2], x5[ri_2], x4[ri_2], x3[ri_2], x2[ri_2], x1[ri_2]) && (x_O_11 = x1[ri_2]) && (x2[ri_2] = exp(epkq, x)) && (epkq = x3[ri_2]) && (x_O_8 = x4[ri_2]) && (ctq = x5[ri_2]) && (x_O_6 = x6[ri_2]) then
+           return(r_2[u_2])
+         else
+           r_1 <-R key;
+           return(r_1)
+     ) | (
+       foreach iH <= qH do
+       OH(x1: mlss, x2: G, x3: G, x4: G, x5: mlct, x6: mlpk) :=
+       find [unique] u_1 = ri_1 <= Qd suchthat defined(r_1[ri_1], x_O_6[ri_1], ctq[ri_1], x_O_8[ri_1], epkq[ri_1], x_O_11[ri_1]) && (x1 = x_O_11[ri_1]) && (x2 = exp(epkq[ri_1], x)) && (x3 = epkq[ri_1]) && (x4 = x_O_8[ri_1]) && (x5 = ctq[ri_1]) && (x6 = x_O_6[ri_1]) then
+         return(r_1[u_1])
+       orfind u = ri <= qH suchthat defined(r_2[ri], x6[ri], x5[ri], x4[ri], x3[ri], x2[ri], x1[ri]) && (x1 = x1[ri]) && (x2 = x2[ri]) && (x3 = x3[ri]) && (x4 = x4[ri]) && (x5 = x5[ri]) && (x6 = x6[ri]) then
+         return(r_2[u])
+       else
+         r_2 <-R key;
+         return(r_2)
+     ))
+
+
+Proved bit secrecy of b in game 15
+Adv[Game 1: bit secrecy of b] <= 4 * pDistRerandom + 2 * pGDH(time_1, 2 * qH) + (2 * qH + 2 * Qd) * PCollKey + Adv[Game 15: bit secrecy of b]
+Adv[Game 15: bit secrecy of b] <= 0
+RESULT Proved bit secrecy of b up to probability 4 * pDistRerandom + 2 * pGDH(time_1, 2 * qH) + (2 * Qd + 2 * qH) * PCollKey
+RESULT time_1 = (1 + Qd) * time(mlpkgen) + time(mlencap_ct) + time(mlencap_ss) + Qd * time(mldecap) + time + 3 * time(exp)
+All queries proved.

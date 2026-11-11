@@ -1,0 +1,32 @@
+# security workflow 40538488807 on 6be552c (all 15 PR checks passed)
+test revocation_interpreter::tests::a_fresh_revoke_performs_every_effect_in_order ... ok
+test revocation_interpreter::tests::a_refused_actor_performs_nothing ... ok
+test revocation_interpreter::tests::an_already_revoked_retry_skips_the_sql_record ... ok
+test revocation_interpreter::tests::interpreter_performs_exactly_the_driver_effects_for_every_outcome ... ok
+test revocation_interpreter::tests::logout_writes_exactly_one_marker_then_stops ... ok
+test revocation_interpreter::tests::a_fresh_revoke_performs_every_effect_in_order ... ok
+test revocation_interpreter::tests::a_refused_actor_performs_nothing ... ok
+test revocation_interpreter::tests::an_already_revoked_retry_skips_the_sql_record ... ok
+test revocation_interpreter::tests::interpreter_performs_exactly_the_driver_effects_for_every_outcome ... ok
+test revocation_interpreter::tests::logout_writes_exactly_one_marker_then_stops ... ok
+test revocation_interpreter::tests::a_fresh_revoke_performs_every_effect_in_order ... ok
+test revocation_interpreter::tests::a_refused_actor_performs_nothing ... ok
+test revocation_interpreter::tests::an_already_revoked_retry_skips_the_sql_record ... ok
+test revocation_interpreter::tests::interpreter_performs_exactly_the_driver_effects_for_every_outcome ... ok
+test revocation_interpreter::tests::logout_writes_exactly_one_marker_then_stops ... ok
+test revocation_interpreter::tests::a_fresh_revoke_performs_every_effect_in_order ... ok
+test revocation_interpreter::tests::a_refused_actor_performs_nothing ... ok
+test revocation_interpreter::tests::an_already_revoked_retry_skips_the_sql_record ... ok
+test revocation_interpreter::tests::interpreter_performs_exactly_the_driver_effects_for_every_outcome ... ok
+test revocation_interpreter::tests::logout_writes_exactly_one_marker_then_stops ... ok
+Verified module: Vela_session_policy_revocation_interpreter_lemmas
+revocation interpreter: the handler's loop calls only the executor method for the driver's current effect, stops at the verdict within 4 turns, and ends in the driver state the per-request revocation theorems cover
+logout interpreter: exactly one JTI write, then the verdict, within 1 turn
+f55d26b178a1da5999e1980b95ea1788a6e68640abf234f395356c2b84075f54  proofs/fstar/extraction-revocation-interpreter/Vela_session_policy.Revocation_interpreter.fst
+d7639943b8aa61d66af3c2fbab5543806e11687ee5c22011a88d5f9db557ca9b  proofs/fstar/revocation-interpreter-lemmas/Vela_session_policy_revocation_interpreter_lemmas.fst
+e972666ac7ba5f581a4c033e62896647ea1a41f3393465405947b15a27f66b18  src/revocation_interpreter.rs
+test revocation_interpreter::tests::a_fresh_revoke_performs_every_effect_in_order ... ok
+test revocation_interpreter::tests::a_refused_actor_performs_nothing ... ok
+test revocation_interpreter::tests::an_already_revoked_retry_skips_the_sql_record ... ok
+test revocation_interpreter::tests::interpreter_performs_exactly_the_driver_effects_for_every_outcome ... ok
+test revocation_interpreter::tests::logout_writes_exactly_one_marker_then_stops ... ok

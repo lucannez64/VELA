@@ -16,6 +16,7 @@
 
 use rand_core::{OsRng, RngCore};
 use std::collections::HashMap;
+use zeroize::Zeroize;
 
 use crate::error::{Result, VelaError};
 
@@ -53,10 +54,34 @@ impl ChunkId {
 pub type LeafIdx = u64;
 
 /// A single ORAM block: an optional real chunk, or a dummy filler.
-#[derive(Clone, Debug)]
+///
+/// `data` is decrypted vault-chunk plaintext. It is wiped on drop; `Debug`
+/// prints only the chunk id (and the data length), never the bytes.
+#[derive(Clone)]
 pub enum OramBlock {
     Real { id: ChunkId, data: Vec<u8> },
     Dummy,
+}
+
+impl std::fmt::Debug for OramBlock {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OramBlock::Real { id, data } => f
+                .debug_struct("OramBlock::Real")
+                .field("id", id)
+                .field("data", &format_args!("[REDACTED; {} bytes]", data.len()))
+                .finish(),
+            OramBlock::Dummy => f.write_str("OramBlock::Dummy"),
+        }
+    }
+}
+
+impl Drop for OramBlock {
+    fn drop(&mut self) {
+        if let OramBlock::Real { data, .. } = self {
+            data.zeroize();
+        }
+    }
 }
 
 impl OramBlock {
@@ -264,9 +289,9 @@ impl PathOram {
         let target_idx = self.stash.iter().position(|b| b.chunk_id() == Some(target));
 
         let existing_data = target_idx.map(|i| {
-            let block = self.stash.remove(i);
-            match block {
-                OramBlock::Real { data, .. } => data,
+            let mut block = self.stash.remove(i);
+            match &mut block {
+                OramBlock::Real { data, .. } => std::mem::take(data),
                 OramBlock::Dummy => unreachable!(),
             }
         });
@@ -430,9 +455,30 @@ impl Default for TrivialOram {
     }
 }
 
+impl Drop for TrivialOram {
+    /// Every value is a decrypted vault chunk. `HashMap`'s destructor only
+    /// frees the buffers; this wipes their contents first.
+    fn drop(&mut self) {
+        for data in self.chunks.values_mut() {
+            data.zeroize();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn debug_redacts_decrypted_chunk_bytes() {
+        let block = OramBlock::Real {
+            id: ChunkId([7u8; 16]),
+            data: b"vault plaintext".to_vec(),
+        };
+        let rendered = format!("{block:?}");
+        assert!(rendered.contains("[REDACTED"), "{rendered}");
+        assert!(!rendered.contains("vault plaintext"), "{rendered}");
+    }
 
     #[test]
     fn trivial_oram_read_write() {

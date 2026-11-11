@@ -1,0 +1,3 @@
+Rejected unsafe proof flag: --lax
+Rejected unsafe proof flag: --admit_smt_queries
+Rejected unsafe proof flag: --unsafe_tactic_exec

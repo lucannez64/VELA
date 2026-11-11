@@ -1,0 +1,34 @@
+F-2 cross-driver composition
+============================
+
+Composition module (Vela_cross_driver_composition.fst)
+  lines                                              2188
+  schedule actions                                   22
+  counters                                           12 (11 forbidden-event + accepted-take bound)
+  headline theorem                                   cross_driver_composition_theorem
+  driver-side bridge lemmas                          revoke_effect_authority,
+                                                     revocation_step_keeps_actor_active,
+                                                     login_step_accepted_origin,
+                                                     login_step_accepted_implies_has,
+                                                     pair_preflight_take_opener,
+                                                     revocation_lookup_account,
+                                                     revocation_step_non_target_keeps_account,
+                                                     deletion_step_keeps_same_account,
+                                                     deletion_commit_requires_same_account
+
+Focused extraction (8 modules, 4672 lines)
+  session: challenge 10, login 694, revocation 746, deletion 820
+  enrollment: policy root 349, pairing driver 1211
+  recovery: policy root 194, redemption driver 448
+
+Witnesses / mutations
+  mutants                                            5
+  theorem failures                                   5
+  witnesses verified                                 5
+  counters shown reachable                           11
+
+Gates
+  cross-driver verify.sh                             exit 0
+  formal unittest suite                              54 tests, OK
+  proof boundary                                     14 artifacts, 249 selected postconditions
+  rekey crate verify-fstar.sh                        exit 0 (regenerates the gitignored historical extraction)

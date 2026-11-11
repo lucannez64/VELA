@@ -1,0 +1,14 @@
+--- serverVELA/vela-session-policy/proofs/fstar/extraction-deletion-interpreter/Vela_session_policy.Deletion_interpreter.fst	2026-10-27 10:55:09.833938201 +0100
++++ /tmp/vela-mut/b/Vela_session_policy.Deletion_interpreter.fst	2026-10-27 10:44:37.571765247 +0100
+@@ -236,7 +236,10 @@
+             | Vela_session_policy.Deletion_driver.DeletionEffect_Complete
+             | Vela_session_policy.Deletion_driver.DeletionEffect_Fail _
+             | Vela_session_policy.Deletion_driver.DeletionEffect_Idle  ->
+-              io, transition <: (v_Io & Vela_session_policy.Deletion_driver.t_DeletionTransition)
++              let (tmp0: v_Io), (out: Vela_session_policy.Deletion_driver.t_CommitObservation) =
++                f_commit #v_Io #FStar.Tactics.Typeclasses.solve io
++              in
++              tmp0, transition <: (v_Io & Vela_session_policy.Deletion_driver.t_DeletionTransition)
+           in
+           let transition:Vela_session_policy.Deletion_driver.t_DeletionTransition = hoist17 in
+           io, transition <: (v_Io & Vela_session_policy.Deletion_driver.t_DeletionTransition))

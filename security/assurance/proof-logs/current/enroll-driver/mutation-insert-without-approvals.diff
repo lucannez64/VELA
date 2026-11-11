@@ -1,0 +1,18 @@
+--- serverVELA/vela-enrollment-policy/proofs/fstar/extraction-enroll-driver/Vela_enrollment_policy.Enroll_driver.fst	2026-10-27 22:21:06.344185587 +0100
++++ /tmp/vela-f2-account-b-mut/enroll-insert-without-approvals/Vela_enrollment_policy.Enroll_driver.fst	2026-10-27 22:49:36.627211632 +0100
+@@ -538,14 +538,7 @@
+     then on_account_checked driver observation
+     else idle driver
+   | EnrollEvent_DeviceInserted observation ->
+-    if
+-      (match driver.f_stage <: t_EnrollStage with
+-        | EnrollStage_Insert  -> true
+-        | _ -> false) &&
+-      driver.f_epoch_positive &&
+-      driver.f_rekey_permitted
+-    then on_device_inserted driver observation
+-    else idle driver
++    on_device_inserted driver observation
+ 
+ /// Total wrapper: the handler feeds the challenge consumption outcome.
+ let on_challenge_consumed_event (driver: t_EnrollDriver) (observation: t_ChallengeObservation)

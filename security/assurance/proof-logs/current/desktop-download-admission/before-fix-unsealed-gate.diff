@@ -1,0 +1,11 @@
+--- a/desktopVELA/vela-desktop-core/src/sync.rs
++++ b/desktopVELA/vela-desktop-core/src/sync.rs
+@@ -1112,7 +1112,7 @@
+                     ));
+                 }
+             };
+-            let opened = vela_crypto::rekey::open_sealed_fleet_chunk(
++            let opened = vela_crypto::rekey::open_fleet_chunk(
+                 &key,
+                 &ciphertext,
+                 epoch,

@@ -1,0 +1,44 @@
+test revocation_driver::tests::admission_is_exhaustive_and_precedence_is_fixed ... ok
+test revocation_driver::tests::already_revoked_retry_repeats_lockout_and_cascade_without_record ... ok
+test revocation_driver::tests::bfs_reachable_states_preserve_the_invariant ... ok
+test revocation_driver::tests::cross_account_target_is_refused_without_effects ... ok
+test revocation_driver::tests::done_is_inert_for_every_event ... ok
+test revocation_driver::tests::every_storage_failure_is_terminal_without_a_record ... ok
+test revocation_driver::tests::exhaustive_stage_times_event_is_total_and_sound ... ok
+test revocation_driver::tests::fresh_revoke_orders_lockout_before_record_before_cascade ... ok
+test revocation_driver::tests::logout_writes_one_marker_and_is_terminal ... ok
+test revocation_driver::tests::out_of_order_events_are_inert ... ok
+test revocation_driver::tests::revoked_actor_never_reaches_an_effect ... ok
+All verification conditions discharged successfully
+test revocation_driver::tests::admission_is_exhaustive_and_precedence_is_fixed ... ok
+test revocation_driver::tests::already_revoked_retry_repeats_lockout_and_cascade_without_record ... ok
+test revocation_driver::tests::bfs_reachable_states_preserve_the_invariant ... ok
+test revocation_driver::tests::cross_account_target_is_refused_without_effects ... ok
+test revocation_driver::tests::done_is_inert_for_every_event ... ok
+test revocation_driver::tests::every_storage_failure_is_terminal_without_a_record ... ok
+test revocation_driver::tests::exhaustive_stage_times_event_is_total_and_sound ... ok
+test revocation_driver::tests::fresh_revoke_orders_lockout_before_record_before_cascade ... ok
+test revocation_driver::tests::logout_writes_one_marker_and_is_terminal ... ok
+test revocation_driver::tests::out_of_order_events_are_inert ... ok
+test revocation_driver::tests::revoked_actor_never_reaches_an_effect ... ok
+All verification conditions discharged successfully
+test revocation_driver::tests::admission_is_exhaustive_and_precedence_is_fixed ... ok
+test revocation_driver::tests::already_revoked_retry_repeats_lockout_and_cascade_without_record ... ok
+test revocation_driver::tests::bfs_reachable_states_preserve_the_invariant ... ok
+test revocation_driver::tests::cross_account_target_is_refused_without_effects ... ok
+test revocation_driver::tests::done_is_inert_for_every_event ... ok
+test revocation_driver::tests::every_storage_failure_is_terminal_without_a_record ... ok
+test revocation_driver::tests::exhaustive_stage_times_event_is_total_and_sound ... ok
+test revocation_driver::tests::fresh_revoke_orders_lockout_before_record_before_cascade ... ok
+test revocation_driver::tests::logout_writes_one_marker_and_is_terminal ... ok
+test revocation_driver::tests::out_of_order_events_are_inert ... ok
+test revocation_driver::tests::revoked_actor_never_reaches_an_effect ... ok
+Verified module: Vela_session_policy_revocation_driver_lemmas
+Verified module: Vela_session_policy_revocation_driver_composition
+All verification conditions discharged successfully
+revocation driver: 13 focused Rust functions, 13 soundness postconditions (7 preconditions)
+revocation composition: arbitrary interleavings never authorize a cross-account or revoked-actor revoke and never admit a revoked device's token
+a0f60fcfeba214d5929cf061d090dd3a64c26772acdaacfb0be6e57c2dbd6474  proofs/fstar/extraction-revocation-driver/Vela_session_policy.Revocation_driver.fst
+cb78fec6340dc968f015fc4e34b80822dbc5d0aab3b46a06b3b11ae55234e005  proofs/fstar/revocation-driver-lemmas/Vela_session_policy_revocation_driver_lemmas.fst
+a35d438630d89b875a32271399151c0d5e63c5e980f3fe08142b00360c2f6ffe  proofs/fstar/revocation-driver-composition/Vela_session_policy_revocation_driver_composition.fst
+1ba8ac1d551cbc9fc2feb2ae0e83f313506e42b2ab4ed4eb4cf6c2b081f7174f  src/revocation_driver.rs
