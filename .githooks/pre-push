@@ -1,0 +1,3 @@
+#!/bin/sh
+# Enabled by `scripts/pre-push-checks.sh --install`.
+exec "$(git rev-parse --show-toplevel)/scripts/pre-push-checks.sh"
