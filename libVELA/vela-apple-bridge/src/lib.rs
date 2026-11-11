@@ -834,8 +834,7 @@ fn seal_key_from(bytes: &[u8]) -> FfiResult<[u8; 32]> {
 
 /// The wire encoding of an absent optional key: an empty string.
 fn decode_optional_b64(value: &str) -> FfiResult<Option<Vec<u8>>> {
-    Ok(value
-        .is_empty()
+    Ok((!value.is_empty())
         .then(|| B64.decode(value.as_bytes()))
         .transpose()?)
 }
@@ -1762,6 +1761,39 @@ mod tests {
         assert!(!update.first_contact);
         assert!(admit(&seal(mallory.handle, 3, "{}"), Some(&update.pin)).is_err());
         assert!(admit(&seal(alice.handle, 2, "{}"), Some(&update.pin)).is_err());
+    }
+
+    /// An imported identity keeps the share key and enrollment key it was
+    /// given; only an absent one (the empty string) is generated. Getting this
+    /// backwards replaces a device's stored share key with a random one.
+    #[test]
+    fn identity_import_keeps_supplied_keys_and_generates_absent_ones() {
+        let seal_key = [7u8; 32];
+        let (_, signing_sk) = vela_crypto::signing::generate_keypair().unwrap();
+        let hybrid_sk_b64 = B64.encode(signing_sk.to_bytes());
+        let (share_ek, share_dk) = vela_crypto::kem::generate_keypair();
+        let (hybrid_ek, _) = vela_crypto::kem::generate_keypair();
+
+        let supplied = serde_json::json!({
+            "hybrid_sk_b64": hybrid_sk_b64,
+            "share_dk_b64": B64.encode(share_dk.to_bytes()),
+            "hybrid_ek_b64": B64.encode(hybrid_ek.to_bytes()),
+        })
+        .to_string();
+        let imported = identity_import_impl(&seal_key, &supplied).unwrap();
+        assert_eq!(imported.share_ek_b64, B64.encode(share_ek.to_bytes()));
+        assert_eq!(imported.hybrid_ek_b64, B64.encode(hybrid_ek.to_bytes()));
+
+        let absent = serde_json::json!({
+            "hybrid_sk_b64": hybrid_sk_b64,
+            "share_dk_b64": "",
+            "hybrid_ek_b64": "",
+        })
+        .to_string();
+        let generated = identity_import_impl(&seal_key, &absent).unwrap();
+        assert_eq!(B64.decode(&generated.share_ek_b64).unwrap().len(), 1600);
+        assert_ne!(generated.share_ek_b64, imported.share_ek_b64);
+        assert_ne!(generated.hybrid_ek_b64, imported.hybrid_ek_b64);
     }
 
     #[test]
