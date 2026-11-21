@@ -142,8 +142,13 @@ fn exe_basename(exe: &std::path::Path) -> String {
         .file_name()
         .map(|n| n.to_string_lossy().to_lowercase())
         .unwrap_or_default();
+    // Linux appends " (deleted)" to /proc/<pid>/exe once the file on disk is
+    // replaced — every package upgrade of a browser that is still running.
+    // It is the same binary; without this the extension stays disconnected
+    // until the browser restarts.
+    let name = name.strip_suffix(" (deleted)").unwrap_or(&name);
     // A trailing ".exe" is Windows spelling of the same binary.
-    name.strip_suffix(".exe").unwrap_or(&name).to_string()
+    name.strip_suffix(".exe").unwrap_or(name).to_string()
 }
 
 fn is_host_binary(exe: &std::path::Path) -> bool {
@@ -288,6 +293,17 @@ mod tests {
                 "{name} should be accepted as a browser spawner"
             );
         }
+    }
+
+    #[test]
+    fn browser_upgraded_while_running_is_still_admitted() {
+        // pacman replaced Zen's binary under a running browser: the kernel
+        // now reports its exe with a " (deleted)" suffix.
+        let tree = FakeTree(HashMap::from([
+            (200u32, (Some("vela-native-messaging-host") as Option<&'static str>, Some(100u32))),
+            (100u32, (Some("/opt/zen-browser-bin/zen-bin (deleted)"), None)),
+        ]));
+        assert!(authorize_host(&tree, &peer(200, Some(host_exe()))).is_ok());
     }
 
     #[test]
