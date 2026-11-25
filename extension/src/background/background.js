@@ -241,6 +241,9 @@ function handleExtensionMessage(message, sender, sendResponse) {
     case "fillVaultItem":
       handleFillVaultItem(data, sender, sendResponse);
       return true;
+    case "fillCardInFrames":
+      handleFillCardInFrames(data, sender, sendResponse);
+      return true;
     case "getCards":
       handleGetCards(data, sender, sendResponse);
       return true;
@@ -485,6 +488,26 @@ async function handleFillVaultItem(data, sender, sendResponse) {
     const active = await getActiveTab();
     if (active?.id !== auth.tabId || active.url !== data.url) { sendResponse({success:false, error:"The active page changed."}); return; }
     sendResponse(await tabs.sendMessage(auth.tabId, {command:"fillVaultItem", itemType:data.itemType, item, addressId:data.addressId, url:data.url}, {frameId:0}) || {success:false});
+  } catch (error) { sendResponse({success:false, error:error.message}); }
+}
+
+/**
+ * After a card is picked in one frame, fill the card fields of the other
+ * frames of the same tab that share the picking frame's origin or the top
+ * page's origin (hosted payment fields: number, expiry and CVC each live in
+ * their own frame from the payment provider). The card is resolved again by
+ * ID from the desktop, never taken from the content script.
+ */
+async function handleFillCardInFrames(data, sender, sendResponse) {
+  try {
+    const auth = await authorizeCredentialRequest(data, sender);
+    if (!auth.ok || !sender?.tab) { sendResponse({success:false, error:auth.error}); return; }
+    const response = await sendNativeMessage({action:"getCards", url:data.url, userInitiated:true});
+    const item = response?.success && response.cards?.find(c => String(c.id) === String(data.itemId));
+    if (!item) { sendResponse({success:false}); return; }
+    const origins = [sender.url, sender.tab.url].map((u) => { try { return new URL(u).origin; } catch (_) { return null; } }).filter(Boolean);
+    await tabs.sendMessage(sender.tab.id, {command:"fillCardPeer", item, allowedOrigins:[...new Set(origins)]}).catch(() => {});
+    sendResponse({success:true});
   } catch (error) { sendResponse({success:false, error:error.message}); }
 }
 
@@ -1033,21 +1056,31 @@ async function authorizeCredentialRequest(data, sender) {
     return { ok: false, error: "No active tab" };
   }
 
-  if (!sameHttpDomain(active.url, requestedUrl)) {
-    return { ok: false, error: "Requested URL does not match active tab" };
-  }
-
   if (sender?.tab) {
     if (sender.tab.id !== active.id) {
       return { ok: false, error: "Sender tab is not active" };
     }
-    if (sender.frameId !== undefined && sender.frameId !== 0) {
-      return { ok: false, error: "Credential requests must come from the top frame" };
+    // A sub-frame (an embedded sign-in, a hosted payment field) may ask, but
+    // only about its own address: `sender.url` comes from the browser, so a
+    // frame can never request another site's logins. Its logins are matched
+    // to the frame's domain, not the top page's. Page-load auto-fill never
+    // runs in cross-origin frames (content script); these requests follow a
+    // user's choice in the frame itself.
+    const subFrame = sender.frameId !== undefined && sender.frameId !== 0;
+    if (!subFrame && !sameHttpDomain(active.url, requestedUrl)) {
+      return { ok: false, error: "Requested URL does not match active tab" };
+    }
+    if (subFrame && !sender.url) {
+      return { ok: false, error: "Unknown frame" };
     }
     if (sender.url && !sameHttpDomain(sender.url, requestedUrl)) {
       return { ok: false, error: "Sender URL does not match requested URL" };
     }
     return { ok: true, tabId: active.id };
+  }
+
+  if (!sameHttpDomain(active.url, requestedUrl)) {
+    return { ok: false, error: "Requested URL does not match active tab" };
   }
 
   const extensionOrigin = runtime.getURL("");

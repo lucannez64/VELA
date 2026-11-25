@@ -46,10 +46,15 @@ const invoke=(name,data,sender=ui)=>new Promise(resolve=>context.handlers[name](
     const before=calls.length;
     for (const [url,sender] of [
       ['file:///tmp/test',ui],['https://evil.example',ui],
-      [active.url,{...page,tab:{id:2}}],[active.url,{...page,frameId:1}],
+      [active.url,{...page,tab:{id:2}}],['https://pay.example/',{...page,frameId:1}],
+      ['https://pay.example/',{...page,frameId:1,url:undefined}],
       [active.url,{url:'https://shop.example'}]
     ]) assert.equal((await invoke(name,{url},sender)).success,false);
     assert.equal(calls.length,before,'unauthorized requests never reach native host');
+    // A sub-frame (hosted payment field, embedded sign-in) may ask about its own domain only.
+    const frame={tab:{id:1},frameId:3,url:'https://pay.example/field'};
+    assert.equal((await invoke(name,{url:'https://pay.example/field'},frame)).success,true,'a frame may ask about itself');
+    assert.equal(calls.at(-1).url,'https://pay.example/field');
     assert.equal((await invoke(name,{url:active.url},page)).success,true);
     assert.equal(calls.at(-1).userInitiated,false,'omitting the flag must only request metadata');
     assert.equal((await invoke(name,{url:active.url,userInitiated:true},page)).success,true);
