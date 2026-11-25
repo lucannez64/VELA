@@ -1,0 +1,9 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Address</title><link rel="stylesheet" href="/_style.css"></head><body>
+<h1>Your address</h1>
+<form method="post" action="/api/address">
+  <label for="full-name">Full name</label><input id="full-name" name="full_name" autocomplete="name">
+  <label for="street">Street address</label><textarea id="street" name="street" autocomplete="street-address" rows="2"></textarea>
+  <label for="postal">Postal code</label><input id="postal" name="postal" autocomplete="postal-code">
+  <label for="country-name">Country</label><select id="country-name" name="country" autocomplete="country-name"><option>—</option><option>Canada</option><option>France</option><option>Germany</option><option>United States</option></select>
+  <button>Save</button>
+</form></body></html>

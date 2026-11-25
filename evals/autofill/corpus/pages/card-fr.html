@@ -1,0 +1,9 @@
+<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Paiement sécurisé</title><link rel="stylesheet" href="/_style.css"></head><body>
+<h1>Paiement par carte</h1>
+<form method="post" action="/api/paiement">
+  <label for="numeroCarte">Numéro de carte</label><input id="numeroCarte" name="numeroCarte" type="tel">
+  <label for="dateExpiration">Date d'expiration (MM/AA)</label><input id="dateExpiration" name="dateExpiration">
+  <label for="cryptogramme">Cryptogramme visuel</label><input id="cryptogramme" name="cryptogramme" type="tel" maxlength="3">
+  <label for="titulaire">Titulaire de la carte</label><input id="titulaire" name="titulaire">
+  <button>Payer</button>
+</form></body></html>

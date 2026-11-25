@@ -1,0 +1,196 @@
+{
+  "_comment": "Ground truth for the fixture corpus. Field keys: '<id>' on the page itself, '<shadowHostId>/<id>' inside an open shadow root, '<pageId>#<id>' in another reported page (an iframe). Values: 'login:<id>.<field>', 'card:<id>.<field>', 'identity:<id>.<field>', 'identity:<id>.address.<addrId>.<field>', '@generated' (fresh, not any stored secret), '@same:<fieldKey>'. An array lists acceptable alternatives. See README.md for the scoring rules.",
+  "kinds": ["login", "signup", "email", "identity", "card", "negative"],
+  "pages": [
+    { "id": "login-classic", "host": "acme-bank.test", "path": "/login-classic.html", "kind": "login", "tags": ["autocomplete"],
+      "anchor": "username", "choose": "acme",
+      "expect": { "username": "login:acme.username", "password": "login:acme.password" },
+      "inCore": { "item": "acme", "expect": "signed-in" } },
+
+    { "id": "login-email-noattrs", "host": "mailbox.test", "path": "/login-email-noattrs.html", "kind": "login", "tags": ["no-autocomplete", "label-wraps-input"],
+      "anchor": "email", "choose": "mailbox",
+      "expect": { "email": "login:mailbox.username", "pass": "login:mailbox.password" },
+      "inCore": { "item": "mailbox", "expect": "signed-in" } },
+
+    { "id": "login-two-step", "host": "cloudco.test", "path": "/login-two-step.html", "kind": "login", "tags": ["multi-step", "identifier-first"],
+      "anchor": "identifier", "choose": "cloudco",
+      "steps": [ { "fill": "identifier" }, { "click": "next" }, { "wait": 400 }, { "fill": "password" } ],
+      "expect": { "identifier": "login:cloudco.username", "password": "login:cloudco.password" },
+      "inCore": { "item": "cloudco", "expect": "signed-in" } },
+
+    { "id": "login-password-only", "host": "cloudco.test", "path": "/login-password-only.html", "kind": "login", "tags": ["multi-step", "password-only"],
+      "anchor": "pwd", "choose": "cloudco",
+      "expect": { "pwd": "login:cloudco.password" } },
+
+    { "id": "login-shadow-dom", "host": "widgets.test", "path": "/login-shadow-dom.html", "kind": "login", "tags": ["shadow-dom", "web-component"],
+      "anchor": "widget/user", "choose": "widgets",
+      "expect": { "widget/user": "login:widgets.username", "widget/pass": "login:widgets.password" } },
+
+    { "id": "login-iframe-same-origin", "host": "framed.test", "path": "/login-iframe-same-origin.html", "kind": "login", "tags": ["iframe", "same-origin"],
+      "anchor": "frame-login#login", "choose": "framed",
+      "expect": { "frame-login#login": "login:framed.username", "frame-login#password": "login:framed.password" } },
+    { "id": "frame-login", "host": "framed.test", "path": "/frame-login.html", "role": "frame" },
+
+    { "id": "login-iframe-cross-origin", "host": "portal.test", "path": "/login-iframe-cross-origin.html", "kind": "login", "tags": ["iframe", "cross-origin", "origin-binding"],
+      "anchor": "embedded-login#email", "choose": "idp",
+      "skipModes": { "onload": "security: page-load auto-fill never runs in a cross-origin iframe (a page could embed the real site invisibly)" },
+      "expect": { "embedded-login#email": "login:idp.username", "embedded-login#password": "login:idp.password" },
+      "_note": "The frame is idp.test, so the idp.test login is the right one. portal.test has no login; offering nothing here is a miss, offering a portal.test login would be a bug." },
+    { "id": "embedded-login", "host": "idp.test", "path": "/embedded-login.html", "role": "frame" },
+
+    { "id": "login-spa-controlled", "host": "spa-app.test", "path": "/login-spa-controlled.html", "kind": "login", "tags": ["spa", "late-render", "controlled-inputs"],
+      "anchor": "spa-user", "choose": "spa", "settleMs": 1500,
+      "expect": { "spa-user": "login:spa.username", "spa-pass": "login:spa.password" } },
+
+    { "id": "login-no-form", "host": "noform.test", "path": "/login-no-form.html", "kind": "login", "tags": ["no-form-tag", "placeholder-only"],
+      "anchor": "login-name", "choose": "noform",
+      "expect": { "login-name": "login:noform.username", "login-secret": "login:noform.password" },
+      "inCore": { "item": "noform", "expect": "signed-in" } },
+
+    { "id": "login-with-decoys", "host": "news-portal.test", "path": "/login-with-decoys.html", "kind": "login", "tags": ["decoy-fields", "wordpress-like"],
+      "anchor": "user_login", "choose": "news",
+      "expect": { "user_login": "login:news.username", "user_pass": "login:news.password" },
+      "mustStayEmpty": ["q", "newsletter-email"] },
+
+    { "id": "login-honeypot", "host": "honeypot.test", "path": "/login-honeypot.html", "kind": "login", "tags": ["honeypot", "hidden-fields"],
+      "anchor": "real-user", "choose": "honeypot",
+      "expect": { "real-user": "login:honeypot.username", "real-pass": "login:honeypot.password" },
+      "mustStayEmpty": ["hp-username", "hp-password"] },
+
+    { "id": "login-fr-placeholders", "host": "banque.test", "path": "/login-fr-placeholders.html", "kind": "login", "tags": ["french", "placeholder-only", "opaque-ids"],
+      "anchor": "i0", "choose": "banque",
+      "expect": { "i0": "login:banque.username", "i1": "login:banque.password" } },
+
+    { "id": "login-subdomain", "host": "login.acme-bank.test", "path": "/login-subdomain.html", "kind": "login", "tags": ["subdomain-match"],
+      "anchor": "username", "choose": "acme",
+      "expect": { "username": "login:acme.username", "password": "login:acme.password" } },
+
+    { "id": "login-lookalike", "host": "acme-bank.test.attacker.test", "path": "/login-lookalike.html", "kind": "negative", "tags": ["phishing", "lookalike-domain"],
+      "anchor": "username",
+      "expect": {},
+      "mustStayEmpty": ["username", "password"],
+      "mustNotOffer": true,
+      "inCore": { "expect": "no-candidates" } },
+
+    { "id": "login-multi-account", "host": "multi.test", "path": "/login-multi-account.html", "kind": "login", "tags": ["multiple-accounts", "picker"],
+      "anchor": "username", "choose": "multi-bob",
+      "skipModes": { "onload": "two logins match: page-load auto-fill must not guess, so there is nothing to fill" },
+      "expect": { "username": "login:multi-bob.username", "password": "login:multi-bob.password" } },
+
+    { "id": "login-phone", "host": "phone-login.test", "path": "/login-phone.html", "kind": "login", "tags": ["phone-username", "autocomplete-tel"],
+      "anchor": "phone", "choose": "phone",
+      "expect": { "phone": "login:phone.username", "password": "login:phone.password" } },
+
+    { "id": "signup-new-password", "host": "acme-bank.test", "path": "/signup-new-password.html", "kind": "signup", "tags": ["new-password", "generator"],
+      "anchor": "new-password",
+      "steps": [ { "generate": "new-password" } ],
+      "expect": { "new-password": "@generated", "confirm-password": "@same:new-password" },
+      "mustNotHoldSecrets": ["su-email", "new-password", "confirm-password"] },
+
+    { "id": "change-password", "host": "acme-bank.test", "path": "/change-password.html", "kind": "login", "tags": ["change-password", "new-password"],
+      "anchor": "current", "choose": "acme",
+      "expect": { "current": "login:acme.password" },
+      "mustNotHoldSecrets": ["new1", "new2"] },
+
+    { "id": "email-forgot-password", "host": "acme-bank.test", "path": "/email-forgot-password.html", "kind": "email", "tags": ["lone-email", "account-recovery"],
+      "anchor": "reset-email", "choose": "acme",
+      "expect": { "reset-email": ["login:acme.username", "identity:alice.email"] } },
+
+    { "id": "email-newsletter", "host": "digest.test", "path": "/email-newsletter.html", "kind": "email", "tags": ["no-login-for-site", "autocomplete"],
+      "anchor": "sub-email", "choose": "alice",
+      "expect": { "sub-email": "identity:alice.email", "sub-name": "identity:alice.firstName" } },
+
+    { "id": "email-newsletter-with-search", "host": "acme-bank.test", "path": "/email-newsletter-with-search.html", "kind": "email", "tags": ["lone-email", "search-box-first", "site-has-login", "no-form-tag"],
+      "anchor": "nl-email", "choose": "acme",
+      "expect": { "nl-email": ["login:acme.username", "identity:alice.email"] },
+      "mustStayEmpty": ["q"],
+      "_note": "Shape of a real shop homepage: header search, footer newsletter, no password field. Picking from the newsletter field must fill it, not the search box." },
+
+    { "id": "email-contact-only", "host": "digest.test", "path": "/email-contact-only.html", "kind": "email", "tags": ["lone-email", "no-autocomplete"],
+      "anchor": "c-email", "choose": "alice",
+      "expect": { "c-email": "identity:alice.email" },
+      "mustStayEmpty": ["c-msg"] },
+
+    { "id": "identity-shipping-autocomplete", "host": "shop-checkout.test", "path": "/identity-shipping-autocomplete.html", "kind": "identity", "tags": ["autocomplete", "section-shipping", "country-select"],
+      "anchor": "given", "choose": "alice/home",
+      "expect": {
+        "given": "identity:alice.firstName", "family": "identity:alice.lastName", "ship-email": "identity:alice.email", "ship-tel": "identity:alice.phone",
+        "line1": "identity:alice.address.home.line1", "line2": "identity:alice.address.home.line2", "city": "identity:alice.address.home.city",
+        "region": "identity:alice.address.home.region", "zip": "identity:alice.address.home.postalCode", "country": "identity:alice.address.home.countryCode" } },
+
+    { "id": "identity-names-noattrs", "host": "shop-checkout.test", "path": "/identity-names-noattrs.html", "kind": "identity", "tags": ["no-autocomplete", "uk-naming"],
+      "anchor": "fname", "choose": "alice/home",
+      "expect": {
+        "fname": "identity:alice.firstName", "lname": "identity:alice.lastName", "addr1": "identity:alice.address.home.line1",
+        "town": "identity:alice.address.home.city", "pc": "identity:alice.address.home.postalCode", "mobile": "identity:alice.phone" } },
+
+    { "id": "identity-shipping-billing", "host": "shop-checkout.test", "path": "/identity-shipping-billing.html", "kind": "identity", "tags": ["sections", "shipping-vs-billing"],
+      "anchor": "s-name", "choose": "alice/home",
+      "expect": { "s-name": "identity:alice.fullName", "s-line1": "identity:alice.address.home.line1", "s-city": "identity:alice.address.home.city", "s-zip": "identity:alice.address.home.postalCode" },
+      "mustStayEmpty": ["b-name", "b-line1", "b-city", "b-zip"] },
+
+    { "id": "identity-fr-labels", "host": "boutique.test", "path": "/identity-fr-labels.html", "kind": "identity", "tags": ["french", "no-autocomplete"],
+      "anchor": "prenom", "choose": "alice/paris",
+      "expect": {
+        "prenom": "identity:alice.firstName", "nom": "identity:alice.lastName", "adresse": "identity:alice.address.paris.line1",
+        "cp": "identity:alice.address.paris.postalCode", "ville": "identity:alice.address.paris.city", "tel": "identity:alice.phone" } },
+
+    { "id": "identity-country-names", "host": "boutique.test", "path": "/identity-country-names.html", "kind": "identity", "tags": ["street-address-textarea", "country-name-select"],
+      "anchor": "full-name", "choose": "alice/home",
+      "expect": { "full-name": "identity:alice.fullName", "street": "identity:alice.address.home.street", "postal": "identity:alice.address.home.postalCode", "country-name": "identity:alice.address.home.countryCode" } },
+
+    { "id": "identity-shopify-guest", "host": "shop-checkout.test", "path": "/identity-shopify-guest.html", "kind": "identity", "tags": ["shopify-like", "bracket-names"],
+      "anchor": "checkout_shipping_address_first_name", "choose": "alice/home",
+      "expect": {
+        "checkout_email": "identity:alice.email",
+        "checkout_shipping_address_first_name": "identity:alice.firstName", "checkout_shipping_address_last_name": "identity:alice.lastName",
+        "checkout_shipping_address_address1": "identity:alice.address.home.line1", "checkout_shipping_address_city": "identity:alice.address.home.city",
+        "checkout_shipping_address_zip": "identity:alice.address.home.postalCode" } },
+
+    { "id": "card-autocomplete", "host": "shop-checkout.test", "path": "/card-autocomplete.html", "kind": "card", "tags": ["autocomplete", "combined-expiry"],
+      "anchor": "cc-number", "choose": "visa",
+      "expect": { "cc-name": "card:visa.cardholderName", "cc-number": "card:visa.number", "cc-exp": "card:visa.exp", "cc-csc": "card:visa.cvv" } },
+
+    { "id": "card-split-selects", "host": "shop-checkout.test", "path": "/card-split-selects.html", "kind": "card", "tags": ["select-expiry", "no-autocomplete"],
+      "anchor": "cardNumber", "choose": "visa",
+      "expect": { "cardNumber": "card:visa.number", "expMonth": "card:visa.expMonth", "expYear": "card:visa.expYear", "securityCode": "card:visa.cvv" } },
+
+    { "id": "card-stripe-iframes", "host": "shop-checkout.test", "path": "/card-stripe-iframes.html", "kind": "card", "tags": ["cross-origin-iframes", "stripe-like"],
+      "anchor": "pay-field:cardnumber#field-cardnumber", "choose": "visa",
+      "expect": {
+        "cardholder-name": "card:visa.cardholderName",
+        "pay-field:cardnumber#field-cardnumber": "card:visa.number",
+        "pay-field:exp-date#field-exp-date": "card:visa.exp",
+        "pay-field:cvc#field-cvc": "card:visa.cvv" } },
+    { "id": "pay-field", "host": "js.pay-frame.test", "path": "/pay-field.html", "role": "frame", "variantParam": "field" },
+
+    { "id": "card-fr", "host": "boutique.test", "path": "/card-fr.html", "kind": "card", "tags": ["french", "no-autocomplete"],
+      "anchor": "numeroCarte", "choose": "visa",
+      "expect": { "numeroCarte": "card:visa.number", "dateExpiration": "card:visa.exp", "cryptogramme": "card:visa.cvv", "titulaire": "card:visa.cardholderName" } },
+
+    { "id": "card-placeholder-only", "host": "shop-checkout.test", "path": "/card-placeholder-only.html", "kind": "card", "tags": ["placeholder-only", "opaque-ids"],
+      "anchor": "c0", "choose": "visa",
+      "expect": { "c0": "card:visa.number", "c1": "card:visa.exp", "c2": "card:visa.cvv" } },
+
+    { "id": "card-month-input", "host": "shop-checkout.test", "path": "/card-month-input.html", "kind": "card", "tags": ["input-type-month"],
+      "anchor": "ccnum", "choose": "visa",
+      "expect": { "ccnum": "card:visa.number", "ccexpiry": "card:visa.exp", "cvv": "card:visa.cvv" } },
+
+    { "id": "card-with-billing", "host": "shop-checkout.test", "path": "/card-with-billing.html", "kind": "card", "tags": ["card-plus-address", "cross-kind"],
+      "anchor": "pay-number", "choose": "visa",
+      "expect": { "pay-name": "card:visa.cardholderName", "pay-number": "card:visa.number", "pay-exp": "card:visa.exp", "pay-cvc": "card:visa.cvv" },
+      "mustStayEmpty": ["bill-line1", "bill-city", "bill-zip"] },
+
+    { "id": "card-four-boxes", "host": "banque.test", "path": "/card-four-boxes.html", "kind": "card", "tags": ["split-number"],
+      "anchor": "ccnum1", "choose": "visa",
+      "expect": { "ccnum1": "card:visa.number[0:4]", "ccnum2": "card:visa.number[4:8]", "ccnum3": "card:visa.number[8:12]", "ccnum4": "card:visa.number[12:16]", "card-exp": "card:visa.exp", "card-cvv": "card:visa.cvv" } },
+
+    { "id": "negative-search-contact", "host": "docs-site.test", "path": "/negative-search-contact.html", "kind": "negative", "tags": ["no-credentials-form"],
+      "anchor": "account-number",
+      "expect": {},
+      "mustStayEmpty": ["site-search", "subject", "account-number", "body"],
+      "mustNotOffer": true },
+
+    { "id": "account", "host": "*", "path": "/account.html", "role": "support" }
+  ]
+}

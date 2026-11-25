@@ -1,0 +1,7 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Bank payment</title><link rel="stylesheet" href="/_style.css"></head><body>
+<h1>Card number</h1>
+<form method="post" action="/api/pay">
+  <div class="row"><input id="ccnum1" name="ccnum1" maxlength="4" aria-label="Card number, digits 1 to 4"><input id="ccnum2" name="ccnum2" maxlength="4" aria-label="Card number, digits 5 to 8"><input id="ccnum3" name="ccnum3" maxlength="4" aria-label="Card number, digits 9 to 12"><input id="ccnum4" name="ccnum4" maxlength="4" aria-label="Card number, digits 13 to 16"></div>
+  <div class="row"><div><label for="card-exp">Expiry</label><input id="card-exp" name="cardExpiry" placeholder="MM/YY"></div><div><label for="card-cvv">CVV</label><input id="card-cvv" name="cardCvv"></div></div>
+  <button>Pay</button>
+</form></body></html>

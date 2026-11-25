@@ -1,0 +1,44 @@
+{
+  "_comment": "Synthetic eval vault. Every secret here is fake and exists only for the autofill eval. Values are deliberately distinct across items so a value landing in the wrong field is attributable.",
+  "logins": [
+    { "id": "acme", "name": "Acme Bank", "url": "https://acme-bank.test/", "username": "alice@acme-bank.test", "password": "Acme-Eval-7q!pass" },
+    { "id": "mailbox", "name": "Mailbox", "url": "https://mailbox.test/", "username": "alice.mail@mailbox.test", "password": "Mailbox-Eval-3k#pw" },
+    { "id": "cloudco", "name": "CloudCo", "url": "https://cloudco.test/", "username": "alice_cloud", "password": "Cloud-Eval-9z$pw" },
+    { "id": "widgets", "name": "Widgets", "url": "https://widgets.test/", "username": "alice.widgets", "password": "Widgets-Eval-2m%pw" },
+    { "id": "framed", "name": "Framed", "url": "https://framed.test/", "username": "alice.framed", "password": "Framed-Eval-4n^pw" },
+    { "id": "idp", "name": "Identity Provider", "url": "https://idp.test/", "username": "alice@idp.test", "password": "Idp-Eval-6v&pw" },
+    { "id": "spa", "name": "SPA App", "url": "https://spa-app.test/", "username": "alice.spa", "password": "Spa-Eval-8w*pw" },
+    { "id": "noform", "name": "No Form", "url": "https://noform.test/", "username": "alice.noform", "password": "NoForm-Eval-1x(pw" },
+    { "id": "news", "name": "News Portal", "url": "https://news-portal.test/", "username": "alice.news", "password": "News-Eval-5y)pw" },
+    { "id": "honeypot", "name": "Honeypot", "url": "https://honeypot.test/", "username": "alice.honey", "password": "Honey-Eval-0a_pw" },
+    { "id": "banque", "name": "Banque", "url": "https://banque.test/", "username": "alice.dupont", "password": "Banque-Eval-3b+pw" },
+    { "id": "multi-alice", "name": "Multi (Alice)", "url": "https://multi.test/", "username": "alice.multi", "password": "MultiA-Eval-7c=pw" },
+    { "id": "multi-bob", "name": "Multi (Bob)", "url": "https://multi.test/", "username": "bob.multi", "password": "MultiB-Eval-8d[pw" },
+    { "id": "phone", "name": "Phone Login", "url": "https://phone-login.test/", "username": "+33612345678", "password": "Phone-Eval-2e]pw" },
+    { "id": "lab-app", "name": "Autofill Lab (app)", "url": "https://lab-app.test/", "username": "alice.lab", "password": "Lab-Eval-6f{pw", "appIds": ["com.vela.autofilleval.lab", "dev.vela.autofilleval.lab"] }
+  ],
+  "cards": [
+    { "id": "visa", "name": "Eval Visa", "cardholderName": "Alice Example", "number": "4111111111111111", "exp": "12/2029", "cvv": "737" }
+  ],
+  "identities": [
+    {
+      "id": "alice",
+      "name": "Alice Example",
+      "firstName": "Alice",
+      "middleName": "",
+      "lastName": "Example",
+      "email": "alice@example.org",
+      "phone": "+14155550100",
+      "company": "Example Corp",
+      "addresses": [
+        { "id": "home", "label": "Home", "line1": "1 Market Street", "line2": "Apt 5", "city": "San Francisco", "region": "CA", "postalCode": "94105", "countryCode": "US" },
+        { "id": "paris", "label": "Paris", "line1": "12 rue de la Paix", "line2": "", "city": "Paris", "region": "Île-de-France", "postalCode": "75002", "countryCode": "FR" }
+      ]
+    }
+  ],
+  "_live": {
+    "_comment": "Live-site runs never submit. Every live site gets this synthetic login so the eval can tell whether VELA offered and where the values landed.",
+    "username": "vela.eval@example.org",
+    "password": "Live-Eval-Only-9g}pw"
+  }
+}

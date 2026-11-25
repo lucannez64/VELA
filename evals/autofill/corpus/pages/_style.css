@@ -1,0 +1,9 @@
+body{font:15px/1.4 system-ui,sans-serif;max-width:520px;margin:24px auto;padding:0 16px;color:#1d1d1f}
+label{display:block;margin:10px 0 4px;font-weight:600}
+input,select,textarea{font:inherit;padding:8px;width:100%;box-sizing:border-box;border:1px solid #bbb;border-radius:6px}
+button{margin-top:14px;padding:9px 16px;font:inherit;border-radius:6px;border:0;background:#2a5bd7;color:#fff}
+header,footer{padding:10px 0;border-bottom:1px solid #eee;margin-bottom:12px}
+footer{border:0;border-top:1px solid #eee;margin-top:24px}
+.row{display:flex;gap:8px}.row>*{flex:1}
+.hidden{display:none}
+.offscreen{position:absolute;left:-9999px;top:-9999px}

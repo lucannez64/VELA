@@ -1,0 +1,12 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Checkout – Addresses</title><link rel="stylesheet" href="/_style.css"></head><body>
+<form method="post" action="/api/addresses">
+  <h2>Shipping</h2>
+  <label for="s-name">Full name</label><input id="s-name" autocomplete="shipping name">
+  <label for="s-line1">Address</label><input id="s-line1" autocomplete="shipping address-line1">
+  <div class="row"><div><label for="s-city">City</label><input id="s-city" autocomplete="shipping address-level2"></div><div><label for="s-zip">ZIP</label><input id="s-zip" autocomplete="shipping postal-code"></div></div>
+  <h2>Billing</h2>
+  <label for="b-name">Full name</label><input id="b-name" autocomplete="billing name">
+  <label for="b-line1">Address</label><input id="b-line1" autocomplete="billing address-line1">
+  <div class="row"><div><label for="b-city">City</label><input id="b-city" autocomplete="billing address-level2"></div><div><label for="b-zip">ZIP</label><input id="b-zip" autocomplete="billing postal-code"></div></div>
+  <button>Continue</button>
+</form></body></html>

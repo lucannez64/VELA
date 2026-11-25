@@ -1,0 +1,10 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>News Portal</title><link rel="stylesheet" href="/_style.css"></head><body>
+<header><form role="search" action="/search"><input id="q" name="q" type="text" placeholder="Search news, users, topics"></form></header>
+<h1>Subscriber login</h1>
+<form id="login" method="post" action="/api/login">
+  <label for="user_login">Username</label><input id="user_login" name="log" type="text">
+  <label for="user_pass">Password</label><input id="user_pass" name="pwd" type="password">
+  <button>Log in</button>
+</form>
+<footer><form action="/newsletter"><label for="newsletter-email">Get the daily newsletter</label><input id="newsletter-email" name="EMAIL" type="email" placeholder="you@example.com"><button>Subscribe</button></form></footer>
+</body></html>

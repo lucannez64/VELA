@@ -1,0 +1,1315 @@
+{
+  "_comment": "Real sites for the live tier. Runners only navigate and fill, never submit. Pages drift: a site that no longer shows its form is recorded as 'unreachable', not as a VELA failure. There is no per-field ground truth here; scoring uses the field-role oracle in lib/score.mjs plus screenshots for manual audit. Sites marked needs-click-to-open or needs-cart only count when their steps succeed.",
+  "sites": [
+    {
+      "id": "google",
+      "url": "https://accounts.google.com/signin",
+      "kind": "login",
+      "category": "platform",
+      "tags": [
+        "identifier-first"
+      ]
+    },
+    {
+      "id": "microsoft",
+      "url": "https://login.live.com/",
+      "kind": "login",
+      "category": "platform",
+      "tags": [
+        "identifier-first"
+      ]
+    },
+    {
+      "id": "apple",
+      "url": "https://account.apple.com/sign-in",
+      "kind": "login",
+      "category": "platform",
+      "tags": [
+        "iframe",
+        "identifier-first"
+      ]
+    },
+    {
+      "id": "amazon",
+      "url": "https://www.amazon.com/ap/signin?openid.pape.max_auth_age=0&openid.return_to=https%3A%2F%2Fwww.amazon.com%2F&openid.identity=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select&openid.assoc_handle=usflex&openid.mode=checkid_setup&openid.claimed_id=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select&openid.ns=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0",
+      "kind": "login",
+      "category": "commerce",
+      "tags": [
+        "identifier-first"
+      ]
+    },
+    {
+      "id": "yahoo",
+      "url": "https://login.yahoo.com/",
+      "kind": "login",
+      "category": "platform",
+      "tags": [
+        "identifier-first"
+      ]
+    },
+    {
+      "id": "okta-demo",
+      "url": "https://login.okta.com/",
+      "kind": "login",
+      "category": "platform",
+      "tags": [
+        "identifier-first"
+      ]
+    },
+    {
+      "id": "auth0-demo",
+      "url": "https://manage.auth0.com/",
+      "kind": "login",
+      "category": "platform",
+      "tags": [
+        "identifier-first"
+      ]
+    },
+    {
+      "id": "facebook",
+      "url": "https://www.facebook.com/login/",
+      "kind": "login",
+      "category": "social"
+    },
+    {
+      "id": "instagram",
+      "url": "https://www.instagram.com/accounts/login/",
+      "kind": "login",
+      "category": "social",
+      "tags": [
+        "spa"
+      ]
+    },
+    {
+      "id": "x",
+      "url": "https://x.com/i/flow/login",
+      "kind": "login",
+      "category": "social",
+      "tags": [
+        "spa",
+        "identifier-first"
+      ]
+    },
+    {
+      "id": "linkedin",
+      "url": "https://www.linkedin.com/login",
+      "kind": "login",
+      "category": "social"
+    },
+    {
+      "id": "reddit",
+      "url": "https://www.reddit.com/login/",
+      "kind": "login",
+      "category": "social",
+      "tags": [
+        "shadow-dom"
+      ]
+    },
+    {
+      "id": "pinterest",
+      "url": "https://www.pinterest.com/login/",
+      "kind": "login",
+      "category": "social"
+    },
+    {
+      "id": "tiktok",
+      "url": "https://www.tiktok.com/login/phone-or-email/email",
+      "kind": "login",
+      "category": "social",
+      "tags": [
+        "spa"
+      ]
+    },
+    {
+      "id": "snapchat",
+      "url": "https://accounts.snapchat.com/accounts/v2/login",
+      "kind": "login",
+      "category": "social",
+      "tags": [
+        "identifier-first"
+      ]
+    },
+    {
+      "id": "tumblr",
+      "url": "https://www.tumblr.com/login",
+      "kind": "login",
+      "category": "social"
+    },
+    {
+      "id": "mastodon-social",
+      "url": "https://mastodon.social/auth/sign_in",
+      "kind": "login",
+      "category": "social"
+    },
+    {
+      "id": "bluesky",
+      "url": "https://bsky.app/",
+      "kind": "login",
+      "category": "social",
+      "tags": [
+        "spa",
+        "needs-click-to-open"
+      ]
+    },
+    {
+      "id": "discord",
+      "url": "https://discord.com/login",
+      "kind": "login",
+      "category": "social",
+      "tags": [
+        "spa"
+      ]
+    },
+    {
+      "id": "quora",
+      "url": "https://www.quora.com/",
+      "kind": "login",
+      "category": "social"
+    },
+    {
+      "id": "vk",
+      "url": "https://vk.com/",
+      "kind": "login",
+      "category": "social",
+      "region": "ru"
+    },
+    {
+      "id": "github",
+      "url": "https://github.com/login",
+      "kind": "login",
+      "category": "dev"
+    },
+    {
+      "id": "gitlab",
+      "url": "https://gitlab.com/users/sign_in",
+      "kind": "login",
+      "category": "dev"
+    },
+    {
+      "id": "bitbucket",
+      "url": "https://id.atlassian.com/login",
+      "kind": "login",
+      "category": "dev",
+      "tags": [
+        "identifier-first"
+      ]
+    },
+    {
+      "id": "stackoverflow",
+      "url": "https://stackoverflow.com/users/login",
+      "kind": "login",
+      "category": "dev"
+    },
+    {
+      "id": "npm",
+      "url": "https://www.npmjs.com/login",
+      "kind": "login",
+      "category": "dev"
+    },
+    {
+      "id": "pypi",
+      "url": "https://pypi.org/account/login/",
+      "kind": "login",
+      "category": "dev"
+    },
+    {
+      "id": "docker-hub",
+      "url": "https://login.docker.com/u/login/",
+      "kind": "login",
+      "category": "dev",
+      "tags": [
+        "identifier-first"
+      ]
+    },
+    {
+      "id": "vercel",
+      "url": "https://vercel.com/login",
+      "kind": "login",
+      "category": "dev",
+      "tags": [
+        "email-only"
+      ]
+    },
+    {
+      "id": "netlify",
+      "url": "https://app.netlify.com/login/email",
+      "kind": "login",
+      "category": "dev"
+    },
+    {
+      "id": "heroku",
+      "url": "https://id.heroku.com/login",
+      "kind": "login",
+      "category": "dev"
+    },
+    {
+      "id": "digitalocean",
+      "url": "https://cloud.digitalocean.com/login",
+      "kind": "login",
+      "category": "dev"
+    },
+    {
+      "id": "aws",
+      "url": "https://signin.aws.amazon.com/signin",
+      "kind": "login",
+      "category": "dev",
+      "tags": [
+        "identifier-first"
+      ]
+    },
+    {
+      "id": "azure-portal",
+      "url": "https://portal.azure.com/",
+      "kind": "login",
+      "category": "dev",
+      "tags": [
+        "identifier-first"
+      ]
+    },
+    {
+      "id": "cloudflare",
+      "url": "https://dash.cloudflare.com/login",
+      "kind": "login",
+      "category": "dev",
+      "tags": [
+        "captcha"
+      ]
+    },
+    {
+      "id": "slack",
+      "url": "https://slack.com/signin",
+      "kind": "login",
+      "category": "work",
+      "tags": [
+        "email-only"
+      ]
+    },
+    {
+      "id": "notion",
+      "url": "https://www.notion.so/login",
+      "kind": "login",
+      "category": "work",
+      "tags": [
+        "identifier-first"
+      ]
+    },
+    {
+      "id": "trello",
+      "url": "https://trello.com/login",
+      "kind": "login",
+      "category": "work",
+      "tags": [
+        "identifier-first"
+      ]
+    },
+    {
+      "id": "asana",
+      "url": "https://app.asana.com/-/login",
+      "kind": "login",
+      "category": "work",
+      "tags": [
+        "identifier-first"
+      ]
+    },
+    {
+      "id": "figma",
+      "url": "https://www.figma.com/login",
+      "kind": "login",
+      "category": "work"
+    },
+    {
+      "id": "dropbox",
+      "url": "https://www.dropbox.com/login",
+      "kind": "login",
+      "category": "work",
+      "tags": [
+        "identifier-first"
+      ]
+    },
+    {
+      "id": "box",
+      "url": "https://account.box.com/login",
+      "kind": "login",
+      "category": "work",
+      "tags": [
+        "identifier-first"
+      ]
+    },
+    {
+      "id": "zoom",
+      "url": "https://zoom.us/signin",
+      "kind": "login",
+      "category": "work"
+    },
+    {
+      "id": "salesforce",
+      "url": "https://login.salesforce.com/",
+      "kind": "login",
+      "category": "work"
+    },
+    {
+      "id": "hubspot",
+      "url": "https://app.hubspot.com/login",
+      "kind": "login",
+      "category": "work"
+    },
+    {
+      "id": "zendesk",
+      "url": "https://www.zendesk.com/login/",
+      "kind": "login",
+      "category": "work"
+    },
+    {
+      "id": "wordpress-com",
+      "url": "https://wordpress.com/log-in",
+      "kind": "login",
+      "category": "work",
+      "tags": [
+        "identifier-first"
+      ]
+    },
+    {
+      "id": "wix",
+      "url": "https://users.wix.com/signin",
+      "kind": "login",
+      "category": "work"
+    },
+    {
+      "id": "squarespace",
+      "url": "https://login.squarespace.com/",
+      "kind": "login",
+      "category": "work"
+    },
+    {
+      "id": "shopify-admin",
+      "url": "https://accounts.shopify.com/lookup",
+      "kind": "login",
+      "category": "work",
+      "tags": [
+        "identifier-first"
+      ]
+    },
+    {
+      "id": "mailchimp",
+      "url": "https://login.mailchimp.com/",
+      "kind": "login",
+      "category": "work"
+    },
+    {
+      "id": "proton",
+      "url": "https://account.proton.me/login",
+      "kind": "login",
+      "category": "mail"
+    },
+    {
+      "id": "tuta",
+      "url": "https://app.tuta.com/login",
+      "kind": "login",
+      "category": "mail",
+      "tags": [
+        "spa"
+      ]
+    },
+    {
+      "id": "fastmail",
+      "url": "https://app.fastmail.com/login/",
+      "kind": "login",
+      "category": "mail"
+    },
+    {
+      "id": "zoho",
+      "url": "https://accounts.zoho.com/signin",
+      "kind": "login",
+      "category": "mail",
+      "tags": [
+        "identifier-first"
+      ]
+    },
+    {
+      "id": "gmx",
+      "url": "https://www.gmx.net/",
+      "kind": "login",
+      "category": "mail",
+      "region": "de"
+    },
+    {
+      "id": "orange-fr",
+      "url": "https://login.orange.fr/",
+      "kind": "login",
+      "category": "mail",
+      "region": "fr",
+      "tags": [
+        "identifier-first"
+      ]
+    },
+    {
+      "id": "laposte-net",
+      "url": "https://compte.laposte.net/",
+      "kind": "login",
+      "category": "mail",
+      "region": "fr"
+    },
+    {
+      "id": "ebay",
+      "url": "https://signin.ebay.com/",
+      "kind": "login",
+      "category": "commerce",
+      "tags": [
+        "identifier-first"
+      ]
+    },
+    {
+      "id": "etsy",
+      "url": "https://www.etsy.com/signin",
+      "kind": "login",
+      "category": "commerce"
+    },
+    {
+      "id": "walmart",
+      "url": "https://www.walmart.com/account/login",
+      "kind": "login",
+      "category": "commerce",
+      "tags": [
+        "identifier-first"
+      ]
+    },
+    {
+      "id": "target",
+      "url": "https://www.target.com/login",
+      "kind": "login",
+      "category": "commerce"
+    },
+    {
+      "id": "bestbuy",
+      "url": "https://www.bestbuy.com/identity/global/signin",
+      "kind": "login",
+      "category": "commerce"
+    },
+    {
+      "id": "ikea",
+      "url": "https://www.ikea.com/us/en/profile/login/",
+      "kind": "login",
+      "category": "commerce"
+    },
+    {
+      "id": "aliexpress",
+      "url": "https://login.aliexpress.com/",
+      "kind": "login",
+      "category": "commerce"
+    },
+    {
+      "id": "zalando",
+      "url": "https://www.zalando.fr/login",
+      "kind": "login",
+      "category": "commerce",
+      "region": "fr"
+    },
+    {
+      "id": "cdiscount",
+      "url": "https://order.cdiscount.com/Account/LoginLight.html",
+      "kind": "login",
+      "category": "commerce",
+      "region": "fr"
+    },
+    {
+      "id": "fnac",
+      "url": "https://secure.fnac.com/identity/gateway/signin",
+      "kind": "login",
+      "category": "commerce",
+      "region": "fr"
+    },
+    {
+      "id": "leboncoin",
+      "url": "https://auth.leboncoin.fr/login/",
+      "kind": "login",
+      "category": "commerce",
+      "region": "fr",
+      "tags": [
+        "identifier-first"
+      ]
+    },
+    {
+      "id": "vinted",
+      "url": "https://www.vinted.fr/member/signup/select_type",
+      "kind": "login",
+      "category": "commerce",
+      "region": "fr"
+    },
+    {
+      "id": "rakuten-jp",
+      "url": "https://login.account.rakuten.com/",
+      "kind": "login",
+      "category": "commerce",
+      "region": "jp"
+    },
+    {
+      "id": "mercadolibre",
+      "url": "https://www.mercadolibre.com/jms/mlm/lgz/login",
+      "kind": "login",
+      "category": "commerce",
+      "region": "latam",
+      "tags": [
+        "identifier-first"
+      ]
+    },
+    {
+      "id": "booking",
+      "url": "https://account.booking.com/sign-in",
+      "kind": "login",
+      "category": "travel",
+      "tags": [
+        "identifier-first"
+      ]
+    },
+    {
+      "id": "airbnb",
+      "url": "https://www.airbnb.com/login",
+      "kind": "login",
+      "category": "travel",
+      "tags": [
+        "modal"
+      ]
+    },
+    {
+      "id": "expedia",
+      "url": "https://www.expedia.com/login",
+      "kind": "login",
+      "category": "travel",
+      "tags": [
+        "identifier-first"
+      ]
+    },
+    {
+      "id": "tripadvisor",
+      "url": "https://www.tripadvisor.com/RegistrationController",
+      "kind": "login",
+      "category": "travel"
+    },
+    {
+      "id": "uber",
+      "url": "https://auth.uber.com/",
+      "kind": "login",
+      "category": "travel",
+      "tags": [
+        "identifier-first"
+      ]
+    },
+    {
+      "id": "sncf-connect",
+      "url": "https://www.sncf-connect.com/app/account/login",
+      "kind": "login",
+      "category": "travel",
+      "region": "fr"
+    },
+    {
+      "id": "airfrance",
+      "url": "https://wwws.airfrance.fr/profile/login",
+      "kind": "login",
+      "category": "travel",
+      "region": "fr"
+    },
+    {
+      "id": "ryanair",
+      "url": "https://www.ryanair.com/gb/en/login",
+      "kind": "login",
+      "category": "travel"
+    },
+    {
+      "id": "netflix",
+      "url": "https://www.netflix.com/login",
+      "kind": "login",
+      "category": "media"
+    },
+    {
+      "id": "spotify",
+      "url": "https://accounts.spotify.com/login",
+      "kind": "login",
+      "category": "media"
+    },
+    {
+      "id": "youtube-music",
+      "url": "https://music.youtube.com/",
+      "kind": "login",
+      "category": "media",
+      "tags": [
+        "redirects-to-google"
+      ]
+    },
+    {
+      "id": "twitch",
+      "url": "https://www.twitch.tv/login",
+      "kind": "login",
+      "category": "media",
+      "tags": [
+        "modal"
+      ]
+    },
+    {
+      "id": "disney-plus",
+      "url": "https://www.disneyplus.com/login",
+      "kind": "login",
+      "category": "media",
+      "tags": [
+        "identifier-first"
+      ]
+    },
+    {
+      "id": "hulu",
+      "url": "https://auth.hulu.com/web/login",
+      "kind": "login",
+      "category": "media"
+    },
+    {
+      "id": "max",
+      "url": "https://auth.max.com/login",
+      "kind": "login",
+      "category": "media"
+    },
+    {
+      "id": "deezer",
+      "url": "https://account.deezer.com/login/",
+      "kind": "login",
+      "category": "media",
+      "region": "fr"
+    },
+    {
+      "id": "canal-plus",
+      "url": "https://www.canalplus.com/",
+      "kind": "login",
+      "category": "media",
+      "region": "fr"
+    },
+    {
+      "id": "nytimes",
+      "url": "https://myaccount.nytimes.com/auth/login",
+      "kind": "login",
+      "category": "news",
+      "tags": [
+        "identifier-first"
+      ]
+    },
+    {
+      "id": "wsj",
+      "url": "https://sso.accounts.dowjones.com/login-page",
+      "kind": "login",
+      "category": "news",
+      "tags": [
+        "identifier-first"
+      ]
+    },
+    {
+      "id": "lemonde",
+      "url": "https://secure.lemonde.fr/sfuser/connexion",
+      "kind": "login",
+      "category": "news",
+      "region": "fr"
+    },
+    {
+      "id": "medium",
+      "url": "https://medium.com/m/signin",
+      "kind": "login",
+      "category": "news",
+      "tags": [
+        "email-only"
+      ]
+    },
+    {
+      "id": "substack",
+      "url": "https://substack.com/sign-in",
+      "kind": "login",
+      "category": "news",
+      "tags": [
+        "email-only"
+      ]
+    },
+    {
+      "id": "wikipedia",
+      "url": "https://en.wikipedia.org/w/index.php?title=Special:UserLogin",
+      "kind": "login",
+      "category": "reference"
+    },
+    {
+      "id": "duolingo",
+      "url": "https://www.duolingo.com/?isLoggingIn=true",
+      "kind": "login",
+      "category": "education",
+      "tags": [
+        "modal"
+      ]
+    },
+    {
+      "id": "coursera",
+      "url": "https://www.coursera.org/?authMode=login",
+      "kind": "login",
+      "category": "education",
+      "tags": [
+        "modal"
+      ]
+    },
+    {
+      "id": "khan-academy",
+      "url": "https://www.khanacademy.org/login",
+      "kind": "login",
+      "category": "education"
+    },
+    {
+      "id": "steam",
+      "url": "https://store.steampowered.com/login/",
+      "kind": "login",
+      "category": "gaming",
+      "tags": [
+        "spa"
+      ]
+    },
+    {
+      "id": "epic-games",
+      "url": "https://www.epicgames.com/id/login/email",
+      "kind": "login",
+      "category": "gaming"
+    },
+    {
+      "id": "riot",
+      "url": "https://authenticate.riotgames.com/",
+      "kind": "login",
+      "category": "gaming",
+      "tags": [
+        "spa",
+        "captcha"
+      ]
+    },
+    {
+      "id": "battle-net",
+      "url": "https://account.battle.net/login/",
+      "kind": "login",
+      "category": "gaming"
+    },
+    {
+      "id": "playstation",
+      "url": "https://my.account.sony.com/central/signin/",
+      "kind": "login",
+      "category": "gaming",
+      "tags": [
+        "identifier-first"
+      ]
+    },
+    {
+      "id": "xbox",
+      "url": "https://www.xbox.com/en-US/auth/msa?action=logIn",
+      "kind": "login",
+      "category": "gaming",
+      "tags": [
+        "redirects-to-microsoft"
+      ]
+    },
+    {
+      "id": "ea",
+      "url": "https://signin.ea.com/p/juno/login",
+      "kind": "login",
+      "category": "gaming"
+    },
+    {
+      "id": "ubisoft",
+      "url": "https://account.ubisoft.com/en-US/login",
+      "kind": "login",
+      "category": "gaming"
+    },
+    {
+      "id": "paypal",
+      "url": "https://www.paypal.com/signin",
+      "kind": "login",
+      "category": "finance",
+      "tags": [
+        "identifier-first"
+      ]
+    },
+    {
+      "id": "stripe-dashboard",
+      "url": "https://dashboard.stripe.com/login",
+      "kind": "login",
+      "category": "finance"
+    },
+    {
+      "id": "coinbase",
+      "url": "https://login.coinbase.com/signin",
+      "kind": "login",
+      "category": "finance",
+      "tags": [
+        "identifier-first"
+      ]
+    },
+    {
+      "id": "revolut",
+      "url": "https://app.revolut.com/start",
+      "kind": "login",
+      "category": "finance",
+      "tags": [
+        "phone-first"
+      ]
+    },
+    {
+      "id": "wise",
+      "url": "https://wise.com/login",
+      "kind": "login",
+      "category": "finance"
+    },
+    {
+      "id": "chase",
+      "url": "https://secure.chase.com/web/auth/dashboard",
+      "kind": "login",
+      "category": "finance",
+      "tags": [
+        "iframe"
+      ]
+    },
+    {
+      "id": "bank-of-america",
+      "url": "https://www.bankofamerica.com/",
+      "kind": "login",
+      "category": "finance",
+      "tags": [
+        "homepage-login"
+      ]
+    },
+    {
+      "id": "wells-fargo",
+      "url": "https://connect.secure.wellsfargo.com/auth/login/present",
+      "kind": "login",
+      "category": "finance"
+    },
+    {
+      "id": "boursorama",
+      "url": "https://clients.boursorama.com/connexion/",
+      "kind": "login",
+      "category": "finance",
+      "region": "fr",
+      "tags": [
+        "virtual-keypad"
+      ]
+    },
+    {
+      "id": "credit-agricole",
+      "url": "https://www.credit-agricole.fr/",
+      "kind": "login",
+      "category": "finance",
+      "region": "fr",
+      "tags": [
+        "virtual-keypad"
+      ]
+    },
+    {
+      "id": "impots-gouv",
+      "url": "https://cfspart.impots.gouv.fr/LoginAccess",
+      "kind": "login",
+      "category": "government",
+      "region": "fr",
+      "tags": [
+        "identifier-first"
+      ]
+    },
+    {
+      "id": "ameli",
+      "url": "https://assure.ameli.fr/PortailAS/appmanager/PortailAS/assure",
+      "kind": "login",
+      "category": "government",
+      "region": "fr"
+    },
+    {
+      "id": "login-gov",
+      "url": "https://secure.login.gov/",
+      "kind": "login",
+      "category": "government"
+    },
+    {
+      "id": "gov-uk",
+      "url": "https://signin.account.gov.uk/sign-in-or-create",
+      "kind": "login",
+      "category": "government",
+      "tags": [
+        "identifier-first"
+      ]
+    },
+    {
+      "id": "verizon",
+      "url": "https://secure.verizon.com/signin",
+      "kind": "login",
+      "category": "telco"
+    },
+    {
+      "id": "free-fr",
+      "url": "https://subscribe.free.fr/login/",
+      "kind": "login",
+      "category": "telco",
+      "region": "fr"
+    },
+    {
+      "id": "sfr",
+      "url": "https://www.sfr.fr/cas/login",
+      "kind": "login",
+      "category": "telco",
+      "region": "fr"
+    },
+    {
+      "id": "bitwarden-vault",
+      "url": "https://vault.bitwarden.com/#/login",
+      "kind": "login",
+      "category": "security",
+      "tags": [
+        "spa",
+        "identifier-first"
+      ]
+    },
+    {
+      "id": "1password",
+      "url": "https://my.1password.com/signin",
+      "kind": "login",
+      "category": "security"
+    },
+    {
+      "id": "hackernews",
+      "url": "https://news.ycombinator.com/login",
+      "kind": "login",
+      "category": "reference",
+      "tags": [
+        "two-forms-on-page"
+      ]
+    },
+    {
+      "id": "craigslist",
+      "url": "https://accounts.craigslist.org/login",
+      "kind": "login",
+      "category": "commerce"
+    },
+    {
+      "id": "imdb",
+      "url": "https://www.imdb.com/registration/signin",
+      "kind": "login",
+      "category": "media",
+      "tags": [
+        "provider-chooser"
+      ]
+    },
+    {
+      "id": "goodreads",
+      "url": "https://www.goodreads.com/user/sign_in",
+      "kind": "login",
+      "category": "media",
+      "tags": [
+        "provider-chooser"
+      ]
+    },
+    {
+      "id": "strava",
+      "url": "https://www.strava.com/login",
+      "kind": "login",
+      "category": "health"
+    },
+    {
+      "id": "myfitnesspal",
+      "url": "https://www.myfitnesspal.com/account/login",
+      "kind": "login",
+      "category": "health"
+    },
+    {
+      "id": "doctolib",
+      "url": "https://www.doctolib.fr/sessions/new",
+      "kind": "login",
+      "category": "health",
+      "region": "fr"
+    },
+    {
+      "id": "github-signup",
+      "url": "https://github.com/signup",
+      "kind": "signup",
+      "category": "dev",
+      "tags": [
+        "multi-step",
+        "new-password"
+      ]
+    },
+    {
+      "id": "gitlab-signup",
+      "url": "https://gitlab.com/users/sign_up",
+      "kind": "signup",
+      "category": "dev"
+    },
+    {
+      "id": "reddit-signup",
+      "url": "https://www.reddit.com/register/",
+      "kind": "signup",
+      "category": "social"
+    },
+    {
+      "id": "proton-signup",
+      "url": "https://account.proton.me/signup",
+      "kind": "signup",
+      "category": "mail",
+      "tags": [
+        "iframe"
+      ]
+    },
+    {
+      "id": "wikipedia-signup",
+      "url": "https://en.wikipedia.org/w/index.php?title=Special:CreateAccount",
+      "kind": "signup",
+      "category": "reference"
+    },
+    {
+      "id": "hackernews-signup",
+      "url": "https://news.ycombinator.com/login",
+      "kind": "signup",
+      "category": "reference",
+      "tags": [
+        "second-form"
+      ]
+    },
+    {
+      "id": "mastodon-signup",
+      "url": "https://mastodon.social/auth/sign_up",
+      "kind": "signup",
+      "category": "social"
+    },
+    {
+      "id": "npm-signup",
+      "url": "https://www.npmjs.com/signup",
+      "kind": "signup",
+      "category": "dev"
+    },
+    {
+      "id": "pypi-signup",
+      "url": "https://pypi.org/account/register/",
+      "kind": "signup",
+      "category": "dev"
+    },
+    {
+      "id": "discord-signup",
+      "url": "https://discord.com/register",
+      "kind": "signup",
+      "category": "social",
+      "tags": [
+        "date-selects"
+      ]
+    },
+    {
+      "id": "github-reset",
+      "url": "https://github.com/password_reset",
+      "kind": "email",
+      "category": "dev"
+    },
+    {
+      "id": "gitlab-reset",
+      "url": "https://gitlab.com/users/password/new",
+      "kind": "email",
+      "category": "dev"
+    },
+    {
+      "id": "netflix-reset",
+      "url": "https://www.netflix.com/LoginHelp",
+      "kind": "email",
+      "category": "media"
+    },
+    {
+      "id": "spotify-reset",
+      "url": "https://accounts.spotify.com/password-reset",
+      "kind": "email",
+      "category": "media"
+    },
+    {
+      "id": "pypi-reset",
+      "url": "https://pypi.org/account/request-password-reset/",
+      "kind": "email",
+      "category": "dev"
+    },
+    {
+      "id": "wikipedia-reset",
+      "url": "https://en.wikipedia.org/wiki/Special:PasswordReset",
+      "kind": "email",
+      "category": "reference"
+    },
+    {
+      "id": "substack-subscribe",
+      "url": "https://on.substack.com/",
+      "kind": "email",
+      "category": "news",
+      "tags": [
+        "newsletter"
+      ]
+    },
+    {
+      "id": "mozilla-newsletter",
+      "url": "https://www.mozilla.org/newsletter/",
+      "kind": "email",
+      "category": "news",
+      "tags": [
+        "newsletter"
+      ]
+    },
+    {
+      "id": "python-insider",
+      "url": "https://mail.python.org/mailman3/lists/python-announce-list.python.org/",
+      "kind": "email",
+      "category": "dev",
+      "tags": [
+        "mailing-list"
+      ]
+    },
+    {
+      "id": "usps-zip-lookup",
+      "url": "https://tools.usps.com/zip-code-lookup.htm?byaddress",
+      "kind": "identity",
+      "category": "government",
+      "tags": [
+        "address-only"
+      ]
+    },
+    {
+      "id": "canada-post-find",
+      "url": "https://www.canadapost-postescanada.ca/cpc/en/tools/find-a-postal-code.page",
+      "kind": "identity",
+      "category": "government",
+      "tags": [
+        "address-only"
+      ]
+    },
+    {
+      "id": "laposte-adresse",
+      "url": "https://www.laposte.fr/outils/trouver-un-code-postal",
+      "kind": "identity",
+      "category": "government",
+      "region": "fr",
+      "tags": [
+        "postal-only"
+      ]
+    },
+    {
+      "id": "w3c-autocomplete-demo",
+      "url": "https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#autofill",
+      "kind": "identity",
+      "category": "reference",
+      "tags": [
+        "spec-examples"
+      ]
+    },
+    {
+      "id": "formspree-demo",
+      "url": "https://formspree.io/library/contact/simple-contact-form/",
+      "kind": "identity",
+      "category": "reference",
+      "tags": [
+        "contact-form"
+      ]
+    },
+    {
+      "id": "shopify-demo-checkout",
+      "url": "https://hydrogen.shop/",
+      "kind": "identity",
+      "category": "commerce",
+      "tags": [
+        "needs-cart"
+      ],
+      "notes": "Add any item, then guest checkout; the runner stops at the contact step."
+    },
+    {
+      "id": "wikimedia-donate",
+      "url": "https://donate.wikimedia.org/",
+      "kind": "identity",
+      "category": "nonprofit",
+      "tags": [
+        "donation",
+        "address"
+      ]
+    },
+    {
+      "id": "stripe-checkout-demo",
+      "url": "https://checkout.stripe.dev/preview",
+      "kind": "card",
+      "category": "payments",
+      "tags": [
+        "cross-origin-iframes"
+      ]
+    },
+    {
+      "id": "stripe-elements-demo",
+      "url": "https://stripe.dev/elements-examples/",
+      "kind": "card",
+      "category": "payments",
+      "tags": [
+        "cross-origin-iframes"
+      ]
+    },
+    {
+      "id": "braintree-demo",
+      "url": "https://developer.paypal.com/braintree/docs/start/drop-in",
+      "kind": "card",
+      "category": "payments",
+      "tags": [
+        "hosted-fields"
+      ]
+    },
+    {
+      "id": "adyen-demo",
+      "url": "https://www.adyen.com/drop-in-demo",
+      "kind": "card",
+      "category": "payments",
+      "tags": [
+        "secured-fields"
+      ]
+    },
+    {
+      "id": "square-demo",
+      "url": "https://developer.squareup.com/docs/web-payments/take-card-payment",
+      "kind": "card",
+      "category": "payments",
+      "tags": [
+        "iframe"
+      ]
+    },
+    {
+      "id": "mozilla-donate",
+      "url": "https://foundation.mozilla.org/en/donate/",
+      "kind": "card",
+      "category": "nonprofit",
+      "tags": [
+        "donation"
+      ]
+    },
+    {
+      "id": "eff-donate",
+      "url": "https://supporters.eff.org/donate",
+      "kind": "card",
+      "category": "nonprofit",
+      "tags": [
+        "donation",
+        "plain-fields"
+      ]
+    },
+    {
+      "id": "wikimedia-card",
+      "url": "https://donate.wikimedia.org/w/index.php?title=Special:LandingPage&payment_method=cc",
+      "kind": "card",
+      "category": "nonprofit",
+      "tags": [
+        "donation"
+      ]
+    },
+    {
+      "id": "archive-org-donate",
+      "url": "https://archive.org/donate",
+      "kind": "card",
+      "category": "nonprofit",
+      "tags": [
+        "donation"
+      ]
+    },
+    {
+      "id": "msf-don",
+      "url": "https://soutenir.msf.fr/",
+      "kind": "card",
+      "category": "nonprofit",
+      "region": "fr",
+      "tags": [
+        "donation",
+        "french"
+      ]
+    }
+  ]
+}

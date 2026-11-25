@@ -1,0 +1,289 @@
+{
+  "_comment": "Real apps for the in-app live tier. 'toLogin' are visible texts tapped in order to reach the credential screen; they drift with app updates, and a run that cannot reach the form is recorded as 'unreachable'. Runners never submit.",
+  "apps": [
+    {
+      "id": "instagram",
+      "kind": "login",
+      "android": "com.instagram.android",
+      "ios": "com.burbn.instagram",
+      "toLogin": []
+    },
+    {
+      "id": "facebook",
+      "kind": "login",
+      "android": "com.facebook.katana",
+      "ios": "com.facebook.Facebook",
+      "toLogin": []
+    },
+    {
+      "id": "x",
+      "kind": "login",
+      "android": "com.twitter.android",
+      "ios": "com.atebits.Tweetie2",
+      "toLogin": [
+        "Log in"
+      ]
+    },
+    {
+      "id": "linkedin",
+      "kind": "login",
+      "android": "com.linkedin.android",
+      "ios": "com.linkedin.LinkedIn",
+      "toLogin": [
+        "Sign in"
+      ]
+    },
+    {
+      "id": "reddit",
+      "kind": "login",
+      "android": "com.reddit.frontpage",
+      "ios": "com.reddit.Reddit",
+      "toLogin": [
+        "Log in"
+      ]
+    },
+    {
+      "id": "pinterest",
+      "kind": "login",
+      "android": "com.pinterest",
+      "ios": "pinterest",
+      "toLogin": [
+        "Log in"
+      ]
+    },
+    {
+      "id": "snapchat",
+      "kind": "login",
+      "android": "com.snapchat.android",
+      "ios": "com.toyopagroup.picaboo",
+      "toLogin": [
+        "Log In"
+      ]
+    },
+    {
+      "id": "discord",
+      "kind": "login",
+      "android": "com.discord",
+      "ios": "com.hammerandchisel.discord",
+      "toLogin": [
+        "Log In"
+      ]
+    },
+    {
+      "id": "spotify",
+      "kind": "login",
+      "android": "com.spotify.music",
+      "ios": "com.spotify.client",
+      "toLogin": [
+        "Log in",
+        "Continue with email"
+      ]
+    },
+    {
+      "id": "netflix",
+      "kind": "login",
+      "android": "com.netflix.mediaclient",
+      "ios": "com.netflix.Netflix",
+      "toLogin": [
+        "Sign In"
+      ]
+    },
+    {
+      "id": "amazon",
+      "kind": "login",
+      "android": "com.amazon.mShop.android.shopping",
+      "ios": "com.amazon.Amazon",
+      "toLogin": [
+        "Already a customer? Sign in"
+      ],
+      "tags": [
+        "identifier-first"
+      ]
+    },
+    {
+      "id": "ebay",
+      "kind": "login",
+      "android": "com.ebay.mobile",
+      "ios": "com.ebay.iphone",
+      "toLogin": [
+        "Sign in"
+      ]
+    },
+    {
+      "id": "airbnb",
+      "kind": "login",
+      "android": "com.airbnb.android",
+      "ios": "com.airbnb.app",
+      "toLogin": [
+        "Log in",
+        "Continue with email"
+      ]
+    },
+    {
+      "id": "booking",
+      "kind": "login",
+      "android": "com.booking",
+      "ios": "com.booking.BookingApp",
+      "toLogin": [
+        "Sign in"
+      ]
+    },
+    {
+      "id": "uber",
+      "kind": "login",
+      "android": "com.ubercab",
+      "ios": "com.ubercab.UberClient",
+      "toLogin": [],
+      "tags": [
+        "phone-first"
+      ]
+    },
+    {
+      "id": "github",
+      "kind": "login",
+      "android": "com.github.android",
+      "ios": "com.github.stormbreaker.prod",
+      "toLogin": [
+        "Sign in"
+      ],
+      "tags": [
+        "browser-handoff"
+      ]
+    },
+    {
+      "id": "slack",
+      "kind": "login",
+      "android": "com.Slack",
+      "ios": "com.tinyspeck.chatlyio",
+      "toLogin": [
+        "Sign in"
+      ],
+      "tags": [
+        "email-only"
+      ]
+    },
+    {
+      "id": "dropbox",
+      "kind": "login",
+      "android": "com.dropbox.android",
+      "ios": "com.getdropbox.Dropbox",
+      "toLogin": [
+        "Sign in"
+      ]
+    },
+    {
+      "id": "paypal",
+      "kind": "login",
+      "android": "com.paypal.android.p2pmobile",
+      "ios": "com.yourcompany.PPClient",
+      "toLogin": [
+        "Log In"
+      ]
+    },
+    {
+      "id": "coinbase",
+      "kind": "login",
+      "android": "com.coinbase.android",
+      "ios": "com.vilcsak.bitcoin2",
+      "toLogin": [
+        "Sign in"
+      ]
+    },
+    {
+      "id": "duolingo",
+      "kind": "login",
+      "android": "com.duolingo",
+      "ios": "com.duolingo.DuolingoMobile",
+      "toLogin": [
+        "I already have an account"
+      ]
+    },
+    {
+      "id": "twitch",
+      "kind": "login",
+      "android": "tv.twitch.android.app",
+      "ios": "tv.twitch",
+      "toLogin": [
+        "Log In"
+      ]
+    },
+    {
+      "id": "steam",
+      "kind": "login",
+      "android": "com.valvesoftware.android.steam.community",
+      "ios": "com.valvesoftware.Steam",
+      "toLogin": [
+        "Sign in"
+      ]
+    },
+    {
+      "id": "proton-mail",
+      "kind": "login",
+      "android": "ch.protonmail.android",
+      "ios": "ch.protonmail.protonmail",
+      "toLogin": [
+        "Sign in"
+      ]
+    },
+    {
+      "id": "leboncoin",
+      "kind": "login",
+      "android": "fr.leboncoin",
+      "ios": "fr.leboncoin.Leboncoin",
+      "toLogin": [
+        "Se connecter"
+      ],
+      "region": "fr"
+    },
+    {
+      "id": "vinted",
+      "kind": "login",
+      "android": "fr.vinted",
+      "ios": "com.vinted.Vinted",
+      "toLogin": [
+        "S'inscrire ou se connecter",
+        "e-mail"
+      ],
+      "region": "fr"
+    },
+    {
+      "id": "doctolib",
+      "kind": "login",
+      "android": "fr.doctolib.www",
+      "ios": "fr.doctolib.www",
+      "toLogin": [
+        "Se connecter"
+      ],
+      "region": "fr"
+    },
+    {
+      "id": "sncf-connect",
+      "kind": "login",
+      "android": "com.vsct.vsc.mobile.horaireetresa.android",
+      "ios": "com.vsct.vsc.mobile.horaireetresa",
+      "toLogin": [
+        "Se connecter"
+      ],
+      "region": "fr"
+    },
+    {
+      "id": "deezer",
+      "kind": "login",
+      "android": "deezer.android.app",
+      "ios": "com.deezer.Deezer",
+      "toLogin": [
+        "Se connecter"
+      ],
+      "region": "fr"
+    },
+    {
+      "id": "zalando",
+      "kind": "login",
+      "android": "de.zalando.mobile",
+      "ios": "de.zalando.iphone",
+      "toLogin": [
+        "Log in"
+      ]
+    }
+  ]
+}
