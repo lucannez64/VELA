@@ -295,7 +295,10 @@ a signed release tag. Review source/model changes before updating
 Each CI proof job (`refinement` in `security.yml`) is skipped when its inputs
 are byte-identical to a run that already passed. The key is the git object id
 of the crate, the outside files its scripts read (`deps` in the matrix), the
-workspace `Cargo.toml` and `Cargo.lock`, the two shared source checkers
+workspace `Cargo.toml`, the crate's resolved part of the workspace
+`Cargo.lock` (every package it reaches, printed by
+`security/formal/lock-closure.py`, so a bump the crate never reaches reuses the
+verdict), the two shared source checkers
 (`security/formal/check-driver-proof-sources.py`, `check-sync-chunk-proof.py`),
 the proof-tool pins and the boundary checker, and the workflow itself. Global assurance docs
 and the correspondence map are not shared proof inputs. Crate-local docs,
