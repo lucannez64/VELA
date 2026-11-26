@@ -44,13 +44,16 @@ const EXT_SRC = join(REPO, "extension");
 const CACHE = join(ROOT, ".cache");
 const OUT = join(ROOT, "results", RUN_ID);
 const SERVER = `http://127.0.0.1:${HTTP_PORT}`;
+// Mock host state for the save tier: logins saved/updated, and every save payload.
+const HOST_STATE = join(OUT, "host-state.json");
+const HOST_SAVES = join(OUT, "host-saves.jsonl");
 
 if (MODES.includes("in-core") && HOST !== "real") {
   console.error("in-core needs --host real: the mock host cannot sign in to a site. Dropping in-core from this run.");
   MODES.splice(MODES.indexOf("in-core"), 1);
 }
 
-const { manifest, vault, liveSites } = loadCorpus();
+const { manifest, vault, liveSites, save } = loadCorpus();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ── Extension + native host setup ───────────────────────────────────────────
@@ -80,7 +83,7 @@ function installNativeHost(userDataDir, extensionId) {
     if (!existsSync(path)) throw new Error(`real host not found at ${path}; build it (cargo build -p vela-nm-host --release) or set VELA_NM_HOST`);
   } else {
     path = join(CACHE, "mock-host.sh");
-    writeFileSync(path, `#!/bin/sh\nexport VELA_EVAL_VAULT='${join(ROOT, "corpus/vault.json")}'\nexport VELA_EVAL_LOG='${join(OUT, "native-requests.jsonl")}'\nexport VELA_EVAL_LIVE='${TIER === "fixture" ? 0 : 1}'\nexec '${process.execPath}' '${join(ROOT, "desktop/mock-host.mjs")}' "$@"\n`);
+    writeFileSync(path, `#!/bin/sh\nexport VELA_EVAL_VAULT='${join(ROOT, "corpus/vault.json")}'\nexport VELA_EVAL_LOG='${join(OUT, "native-requests.jsonl")}'\nexport VELA_EVAL_LIVE='${TIER === "live" || TIER === "all" ? 1 : 0}'\nexport VELA_EVAL_STATE='${HOST_STATE}'\nexport VELA_EVAL_SAVES='${HOST_SAVES}'\nexec '${process.execPath}' '${join(ROOT, "desktop/mock-host.mjs")}' "$@"\n`);
     chmodSync(path, 0o755);
   }
   writeFileSync(join(dir, "com.vela.desktop.json"), JSON.stringify({
@@ -524,6 +527,125 @@ async function runLive(env, site, mode) {
   return score;
 }
 
+// ── Save / update capture ───────────────────────────────────────────────────
+//
+// Types like a person (trusted key events), submits, then reads which bar
+// VELA shows on whatever page the submit lands on, opens the review dialog,
+// confirms, and reads what reached the host. Nothing here fills: capture of
+// VELA's own fills is out of scope (synthetic events are ignored by design).
+
+const SAVE_BAR = ".vela-save-bar";
+const lines = (f) => (existsSync(f) ? readFileSync(f, "utf8").split("\n").filter(Boolean) : []);
+
+async function fieldFrame(page, id, timeout = 5000) {
+  const end = Date.now() + timeout;
+  while (Date.now() < end) {
+    for (const f of page.frames()) if (await f.locator(`#${CSS.escape(id)}`).count().catch(() => 0)) return f;
+    await sleep(150);
+  }
+  return null;
+}
+
+async function typeAndSubmit(page, s) {
+  for (const [id, value] of s.type) {
+    const f = await fieldFrame(page, id);
+    if (!f) throw new Error(`no field #${id}`);
+    await f.locator(`#${CSS.escape(id)}`).click();
+    await page.keyboard.type(value, { delay: 12 });
+    // Close VELA's dropdown the way a person would before moving on.
+    await page.keyboard.press("Escape");
+  }
+  if (s.enter) {
+    const f = await fieldFrame(page, s.enter);
+    await f.locator(`#${CSS.escape(s.enter)}`).click();
+    await page.keyboard.press("Enter");
+  } else {
+    const f = await fieldFrame(page, s.submit);
+    if (!f) throw new Error(`no submit #${s.submit}`);
+    await f.locator(`#${CSS.escape(s.submit)}`).click();
+  }
+}
+
+/** The bar VELA shows after a submit, in any frame, or null within `ms`. */
+async function waitSaveBar(page, ms) {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    for (const f of page.frames()) {
+      const bar = f.locator(SAVE_BAR);
+      if (await bar.count().catch(() => 0)) {
+        const text = (await bar.first().innerText().catch(() => "")) || "";
+        return { frame: f, bar: bar.first(), prompt: /same account/i.test(text) ? "update" : "save" };
+      }
+    }
+    await sleep(150);
+  }
+  return null;
+}
+
+async function runSave(env, scenario) {
+  const { ctx } = env;
+  const pageDef = save.pages.find((p) => p.id === scenario.page);
+  const run = `${RUN_ID}.desktop-chromium.save.${scenario.id}`;
+  const url = `https://${pageDef.host}:${HTTPS_PORT}${pageDef.path}?run=${encodeURIComponent(run)}`;
+  writeFileSync(HOST_STATE, JSON.stringify({ added: [], updated: {} }));
+  const page = await ctx.newPage();
+  const t0 = Date.now();
+  const observed = { prompt: "none" };
+  try {
+    if (scenario.neverFirst) {
+      // First visit: the person answers "Never for this site".
+      await page.goto(url, { waitUntil: "load" });
+      await sleep(400);
+      await typeAndSubmit(page, scenario);
+      const first = await waitSaveBar(page, 6000);
+      if (!first) throw new Error("no prompt on the first login, so 'Never' could not be chosen");
+      await first.bar.locator("[data-vela-action='never']").click();
+      await first.frame.locator(".vela-overlay [data-confirm]").click();
+      await sleep(600);
+    }
+    await page.goto(url, { waitUntil: "load" });
+    await sleep(400);
+    const nativeBefore = lines(join(OUT, "native-requests.jsonl")).length;
+    const savesBefore = lines(HOST_SAVES).length;
+    await typeAndSubmit(page, scenario);
+    await page.waitForLoadState("load").catch(() => {});
+    const shown = await waitSaveBar(page, 5000);
+    // Secrets the host handed out after the submit, before the person chose
+    // anything: what capture itself costs.
+    observed.releases = lines(join(OUT, "native-requests.jsonl")).slice(nativeBefore)
+      .map((l) => JSON.parse(l)).filter((r) => r.releasedSecrets && /getLogins|getAvailableLogins/.test(r.action)).length;
+    if (shown) {
+      observed.prompt = shown.prompt;
+      await shown.bar.locator(`[data-vela-action='${shown.prompt === "update" ? "update" : "save"}']`).click();
+      const modal = shown.frame.locator("#vela-save-modal");
+      await modal.waitFor({ timeout: 3000 });
+      observed.dialog = {
+        username: await modal.locator("#vela-save-username").inputValue(),
+        password: await modal.locator("#vela-save-password").inputValue(),
+      };
+      await modal.locator(".vela-modal-actions [data-vela-action='save']").click();
+      const end = Date.now() + 4000;
+      while (Date.now() < end && lines(HOST_SAVES).length === savesBefore) await sleep(150);
+      const saved = lines(HOST_SAVES).slice(savesBefore);
+      observed.payload = saved.length ? JSON.parse(saved[saved.length - 1]) : null;
+      if (saved.length > 1) observed.error = `${saved.length} saves for one submit`;
+    }
+  } catch (e) {
+    observed.error = String(e.message || e).split("\n")[0];
+  }
+  const score = await post("/__eval/result", {
+    runId: RUN_ID, run, tier: "save", scenarioId: scenario.id,
+    surface: "desktop-chromium", platform: "desktop", client: "chromium", mode: "save", host: HOST,
+    durationMs: Date.now() - t0, observed: { ...observed, payload: observed.payload && { ...observed.payload, ts: undefined } },
+  });
+  if (!score.pass) {
+    mkdirSync(join(OUT, "shots"), { recursive: true });
+    await page.screenshot({ path: join(OUT, "shots", `desktop-save-${scenario.id}.png`), fullPage: true }).catch(() => {});
+  }
+  await page.close();
+  return score;
+}
+
 // ── Main ────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -552,6 +674,13 @@ async function main() {
       for (const mode of MODES) for (const s of scenarios) {
         if (!applies(mode, s)) continue;
         log(mode, s.id, await runFixture(env, s, mode));
+      }
+    }
+    if (TIER === "save" || TIER === "all") {
+      for (const s of save.scenarios.filter((x) => !ONLY || ONLY.includes(x.id)).slice(0, LIMIT)) {
+        const r = await runSave(env, s);
+        if (r.pass) tally.pass++; else tally.fail++;
+        console.log(`${r.pass ? "PASS" : "FAIL"}  save     ${s.id.padEnd(34)} prompt=${r.prompt} (want ${r.expectedPrompt})${r.releases ? ` · ${r.releases} secret release(s) during capture` : ""}${r.problems.length ? " · " + r.problems.join("; ") : ""}`);
       }
     }
     if (TIER === "live" || TIER === "all") {

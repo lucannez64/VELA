@@ -1,0 +1,6 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Acme Bank – Verify</title><link rel="stylesheet" href="/_style.css"></head><body>
+<h1>Enter the 6-digit code we sent you</h1>
+<form id="verify-form" method="post" action="/api/site?outcome=ok">
+  <label for="code">Verification code</label><input id="code" name="code" type="password" inputmode="numeric" maxlength="6" autocomplete="one-time-code">
+  <button id="verify" type="submit">Verify</button>
+</form></body></html>

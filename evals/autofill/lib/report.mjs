@@ -76,7 +76,19 @@ function summarize(records) {
       outcomes: inCore.reduce((a, r) => ((a[r.score.inCore.outcome] = (a[r.score.inCore.outcome] || 0) + 1), a), {}),
       medianMs: median(inCore.map((r) => r.score.inCore.durationMs)),
     } : null;
-    out[key] = { score, byKind, live: liveAgg, inCore: inCoreAgg, records: rs.length };
+    const saves = rs.filter((r) => r.tier === "save");
+    const saveAgg = saves.length ? {
+      n: saves.length,
+      pass: saves.filter((r) => r.score.pass).length,
+      shouldPrompt: saves.filter((r) => r.score.expectedPrompt !== "none").length,
+      prompted: saves.filter((r) => r.score.expectedPrompt !== "none" && r.score.promptCorrect).length,
+      quiet: saves.filter((r) => r.score.expectedPrompt === "none").length,
+      falsePrompts: saves.filter((r) => r.score.falsePrompt).length,
+      wrongValues: saves.filter((r) => r.score.promptCorrect && r.score.expectedPrompt !== "none" && !r.score.pass).length,
+      stalePassword: saves.filter((r) => r.score.storedStalePassword).length,
+      releases: saves.reduce((a, r) => a + (r.score.releases || 0), 0),
+    } : null;
+    out[key] = { score, byKind, live: liveAgg, inCore: inCoreAgg, save: saveAgg, records: rs.length };
   }
   return out;
 }
@@ -135,6 +147,21 @@ function render(summary, records, base) {
   if (lv.length) {
     L.push("", "## Live sites and apps", "", "Unreachable = the form did not show (bot wall, region, redesign). It is excluded from the rates.", "", "| Surface · mode | Sites | Reachable | Offered | Core field filled | Misfills | Critical | Pass |", "|---|---:|---:|---:|---:|---:|---:|---:|");
     for (const [key, s] of lv) L.push(`| ${key} | ${s.live.n} | ${s.live.reachable} | ${pct(s.live.offered, s.live.reachable)} | ${pct(s.live.coreFilled, s.live.coreApplicable)} | ${s.live.misfills} | ${s.live.critical ? `**${s.live.critical}**` : 0} | ${pct(s.live.pass, s.live.reachable)} |`);
+  }
+  const sv = Object.entries(summary).filter(([, s]) => s.save);
+  if (sv.length) {
+    L.push("", "## Saving and updating logins", "",
+      "After a person types and submits: the right prompt (save a new login, update a known one, or nothing), with the typed username and the new password, stored for the right site and item. Secret releases = stored passwords the host handed out during capture, before the person chose anything.", "",
+      "| Surface | Scenarios | Pass | Prompted when it should | False prompts | Wrong values | Stored old password | Secret releases |", "|---|---:|---:|---:|---:|---:|---:|---:|");
+    for (const [key, s] of sv) {
+      const x = s.save;
+      L.push(`| ${key} | ${x.n} | ${pct(x.pass, x.n)} | ${pct(x.prompted, x.shouldPrompt)} | ${x.falsePrompts}/${x.quiet} | ${x.wrongValues} | ${x.stalePassword ? `**${x.stalePassword}**` : 0} | ${x.releases} |`);
+    }
+    const bad = records.filter((r) => r.tier === "save" && !r.score.pass);
+    if (bad.length) {
+      L.push("", "| Save scenario | Why |", "|---|---|");
+      for (const r of bad) L.push(`| ${r.scenarioId} | ${r.score.problems.join("; ").replace(/\|/g, "\\|")} |`);
+    }
   }
   const tags = tagTable(records);
   if (tags.length) {

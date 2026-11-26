@@ -1,0 +1,14 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SPA New – Sign in</title><link rel="stylesheet" href="/_style.css"></head><body>
+<h1>SPA New</h1>
+<div id="app"><form id="login" onsubmit="return false">
+  <label for="user">Username</label><input id="user" type="text" autocomplete="username">
+  <label for="pass">Password</label><input id="pass" type="password" autocomplete="current-password">
+  <button id="go" type="button">Continue</button>
+</form></div>
+<script>
+document.getElementById("go").addEventListener("click", async () => {
+  const body = JSON.stringify({ user: document.getElementById("user").value, pass: document.getElementById("pass").value });
+  await fetch("/api/site?outcome=ok", { method: "POST", headers: { "content-type": "application/json" }, body });
+  document.getElementById("app").innerHTML = "<h2 id=\"welcome\">Welcome back</h2>";
+});
+</script></body></html>

@@ -1,9 +1,9 @@
 // Unit tests for the scoring rules: the eval is only as good as its judge.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { loadCorpus, resolveRef, valueMatches, scoreScenario, scoreLive, oracleRole, parseExpiry, fixtureScenarios } from "./score.mjs";
+import { loadCorpus, resolveRef, valueMatches, scoreScenario, scoreLive, oracleRole, parseExpiry, fixtureScenarios, scoreSave } from "./score.mjs";
 
-const { manifest, vault, nativeForms } = loadCorpus();
+const { manifest, vault, nativeForms, save } = loadCorpus();
 const f = (value, extra = {}) => ({ value, type: "text", tag: "input", visible: true, ...extra });
 
 test("every manifest and native-form reference resolves", () => {
@@ -93,6 +93,41 @@ test("live oracle: password in a search box is critical, username in email field
   const bad = scoreLive(site, [{ fields: [f(vault._live.password, { type: "text", name: "q" })] }], { offered: true }, vault);
   assert.equal(bad.pass, false);
   assert.ok(bad.critical >= 1);
+});
+
+test("save corpus: every page exists, every scenario names a page and a valid expectation", async () => {
+  const { existsSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { ROOT } = await import("./score.mjs");
+  for (const p of save.pages) assert.ok(existsSync(join(ROOT, "corpus/pages", p.path)), p.path);
+  for (const s of save.scenarios) {
+    assert.ok(save.pages.some((p) => p.id === s.page), `${s.id}: page`);
+    assert.ok(["save", "update", "none"].includes(s.expect.prompt), `${s.id}: prompt`);
+    if (s.expect.prompt === "update") assert.ok(vault.logins.some((l) => l.id === s.expect.item), `${s.id}: item`);
+    assert.ok(s.submit || s.enter, `${s.id}: how to submit`);
+  }
+});
+
+test("save: an update must update the right item with the NEW password, never add a duplicate", () => {
+  const s = save.scenarios.find((x) => x.id === "save-change-password");
+  const host = "acme-bank.test";
+  const ok = { prompt: "update", dialog: { username: s.expect.username, password: s.expect.password },
+    payload: { username: s.expect.username, password: s.expect.password, url: `https://${host}/x`, item_id: "acme" } };
+  assert.equal(scoreSave({ ...s, host }, ok, vault).pass, true);
+  const stale = { ...ok, payload: { ...ok.payload, password: vault.logins.find((l) => l.id === "acme").password } };
+  const r = scoreSave({ ...s, host }, stale, vault);
+  assert.equal(r.pass, false);
+  assert.equal(r.storedStalePassword, true);
+  const dup = { ...ok, payload: { ...ok.payload, item_id: null } };
+  assert.match(scoreSave({ ...s, host }, dup, vault).problems.join(), /duplicate/);
+});
+
+test("save: any prompt where none is expected fails", () => {
+  const s = save.scenarios.find((x) => x.id === "save-known-wrong-password");
+  const r = scoreSave({ ...s, host: "acme-bank.test" }, { prompt: "update" }, vault);
+  assert.equal(r.pass, false);
+  assert.equal(r.falsePrompt, true);
+  assert.equal(scoreSave({ ...s, host: "acme-bank.test" }, { prompt: "none" }, vault).pass, true);
 });
 
 test("live: a site that opts out of password managers passes only if VELA stays out", () => {

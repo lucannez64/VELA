@@ -21,6 +21,7 @@ corpus/                    ground truth, shared by every platform
   native-forms.json        9 native app forms (Android views / UIKit fields built from one spec)
   live-sites.json          168 real sites (login, signup, recovery, address, card)
   live-apps.json           30 real apps (Android package + iOS bundle id)
+  save.json                15 save/update scenarios (pages/save-*.html)
   vault.json               the synthetic eval vault (fake data only)
 lib/
   server.mjs               fixture hosting (HTTPS, per-host), beacon intake, login backends, scoring endpoint
@@ -107,6 +108,33 @@ autofill, and registers a native-messaging host in the profile:
   login** (`--modes in-core`). Use a dedicated test account: import
   `node lib/export-vault.mjs --live eval.json` into it. The eval copy of the
   extension pre-grants the `cookies` permission in-core needs.
+
+### Saving and updating logins
+
+```sh
+node desktop/run.mjs --tier save --headless
+```
+
+The save tier (`corpus/save.json`, 15 scenarios) types credentials like a
+person (trusted key events), submits, and checks what VELA does next: offer to
+save a new login, offer to update a known one, or stay quiet. When it prompts,
+the runner opens the review dialog, checks what it prefilled, confirms, and
+reads what reached the host. A scenario passes only if the prompt is right and
+the stored login carries the typed username and the **new** password, for the
+right site, as an update of the right item (never a duplicate).
+
+Covered: form POST (button and Enter), SPA over fetch, a login with no form
+that navigates, an identifier-first password step, signup with the name field
+first, a change-password form, a whole-page ASP.NET form with a search box,
+a cross-origin iframe, "Never for this site". Must stay quiet: credentials
+already saved, a wrong password the site rejected, an OTP code and a card PIN
+typed into masked fields.
+
+The mock host keeps saves and updates between requests (`host-state.json`) and
+logs every save payload (`host-saves.jsonl`). The report also counts **secret
+releases**: stored passwords the host handed out during capture, before the
+person chose anything (the extension compares the typed password against the
+vault to decide save vs. update vs. nothing).
 
 Set `VELA_EVAL_DEBUG=1` to print page console errors, the fields holding values,
 and (live tier) the anchor field's state right after the pick.

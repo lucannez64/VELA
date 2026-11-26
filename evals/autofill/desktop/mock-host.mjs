@@ -9,12 +9,43 @@
 // those against the production binaries.
 //
 // Env: VELA_EVAL_VAULT (path to corpus/vault.json), VELA_EVAL_LOG (jsonl),
-//      VELA_EVAL_LIVE=1 (answer any non-fixture site with the synthetic login)
-import { readFileSync, appendFileSync } from "node:fs";
+//      VELA_EVAL_LIVE=1 (answer any non-fixture site with the synthetic login),
+//      VELA_EVAL_STATE (json: logins saved or updated through saveCredentials;
+//      the browser may start a new host per message, so state lives on disk),
+//      VELA_EVAL_SAVES (jsonl: every saveCredentials payload, for scoring).
+import { readFileSync, appendFileSync, existsSync, writeFileSync } from "node:fs";
 
-const vault = JSON.parse(readFileSync(process.env.VELA_EVAL_VAULT, "utf8"));
+const base = JSON.parse(readFileSync(process.env.VELA_EVAL_VAULT, "utf8"));
 const LOG = process.env.VELA_EVAL_LOG;
 const LIVE = process.env.VELA_EVAL_LIVE === "1";
+const STATE = process.env.VELA_EVAL_STATE;
+const SAVES = process.env.VELA_EVAL_SAVES;
+
+function loadState() {
+  try { return STATE && existsSync(STATE) ? JSON.parse(readFileSync(STATE, "utf8")) : { added: [], updated: {} }; }
+  catch { return { added: [], updated: {} }; }
+}
+// The eval vault plus whatever was saved or updated during this scenario.
+function currentVault() {
+  const s = loadState();
+  const logins = base.logins.map((l) => (s.updated[l.id] ? { ...l, password: s.updated[l.id] } : l));
+  return { ...base, logins: [...logins, ...s.added] };
+}
+let vault = currentVault();
+
+function saveCredentials(msg) {
+  if (SAVES) appendFileSync(SAVES, JSON.stringify({ ts: Date.now(), name: msg.name ?? null, username: msg.username ?? null, password: msg.password ?? null, url: msg.url ?? null, item_id: msg.item_id ?? null }) + "\n");
+  if (!STATE) return { success: true };
+  const s = loadState();
+  if (msg.item_id) {
+    if (!vault.logins.some((l) => l.id === msg.item_id)) return { success: false, error: "No such item" };
+    s.updated[msg.item_id] = msg.password;
+  } else {
+    s.added.push({ id: `saved-${s.added.length + 1}`, name: msg.name, url: msg.url, username: msg.username, password: msg.password });
+  }
+  writeFileSync(STATE, JSON.stringify(s));
+  return { success: true, id: msg.item_id || `saved-${s.added.length}` };
+}
 
 // Registrable domain, enough for the fixture hosts and common live sites.
 const MULTI = new Set(["co.uk", "com.au", "co.jp", "com.br", "co.nz", "com.mx", "gouv.fr", "gov.uk", "ac.uk"]);
@@ -69,7 +100,7 @@ function handle(msg) {
           : { id: i.id, name: i.name, addresses: i.addresses.map((a) => ({ id: a.id, label: a.label })) }),
       };
     case "saveCredentials":
-      return { success: true };
+      return saveCredentials(msg);
     case "getTotpCode":
       return { success: false, error: "No authenticator for this login" };
     case "inCoreLoginCandidates":
@@ -88,6 +119,7 @@ process.stdin.on("data", (chunk) => {
     if (buf.length < 4 + len) break;
     const msg = JSON.parse(buf.subarray(4, 4 + len).toString("utf8"));
     buf = buf.subarray(4 + len);
+    vault = currentVault();
     const reply = handle(msg);
     if (LOG) {
       appendFileSync(LOG, JSON.stringify({

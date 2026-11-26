@@ -16,7 +16,7 @@ import { execFileSync, execFile } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
 import { join, extname } from "node:path";
-import { ROOT, loadCorpus, fixtureScenarios, scoreScenario, scoreLive, resolveRef } from "./score.mjs";
+import { ROOT, loadCorpus, fixtureScenarios, scoreScenario, scoreLive, scoreSave, resolveRef } from "./score.mjs";
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((acc, a, i, all) => {
   if (a.startsWith("--")) acc.push([a.slice(2), all[i + 1] && !all[i + 1].startsWith("--") ? all[i + 1] : true]);
@@ -29,7 +29,9 @@ const PUBLIC_PORT = Number(args["public-port"] || HTTPS_PORT);
 const ALLOW_HOST_ACTIONS = !!args["allow-host-actions"];
 
 const corpus = loadCorpus();
-const { manifest, vault, nativeForms, liveSites, liveApps } = corpus;
+const { manifest, vault, nativeForms, liveSites, liveApps, save } = corpus;
+// Every page the server routes: the fill corpus and the save/update corpus.
+const ALL_PAGES = [...manifest.pages, ...save.pages];
 const PAGES_DIR = join(ROOT, "corpus/pages");
 const CACHE = join(ROOT, ".cache");
 const RESULTS = join(ROOT, "results");
@@ -38,7 +40,7 @@ const RESULTS = join(ROOT, "results");
 
 export function fixtureHosts() {
   const hosts = new Set(["localhost"]);
-  for (const p of manifest.pages) if (p.host && p.host !== "*") hosts.add(p.host);
+  for (const p of ALL_PAGES) if (p.host && p.host !== "*") hosts.add(p.host);
   return [...hosts].sort();
 }
 
@@ -197,6 +199,13 @@ function writeResult(body) {
     rec.kind = site.kind;
     rec.tags = site.tags || [];
     rec.score = scoreLive(site, body.frames || [], { offered: body.offered, reachable: body.reachable, optedOut: body.optedOut }, vault);
+  } else if (body.tier === "save") {
+    const scenario = save.scenarios.find((s) => s.id === body.scenarioId);
+    if (!scenario) throw new Error(`unknown save scenario ${body.scenarioId}`);
+    const page = save.pages.find((p) => p.id === (scenario.frame || scenario.page));
+    rec.kind = "save";
+    rec.tags = scenario.tags || [];
+    rec.score = scoreSave({ ...scenario, host: page.host }, body.observed, vault);
   }
   // Never persist full field values for live sites: only what scoring used.
   if (rec.tier === "live" || rec.tier === "live-app") delete rec.frames;
@@ -207,6 +216,8 @@ function writeResult(body) {
 // ── HTTP handling ───────────────────────────────────────────────────────────
 
 const TYPES = { ".html": "text/html; charset=utf-8", ".css": "text/css", ".js": "text/javascript", ".json": "application/json", ".pem": "application/x-pem-file" };
+
+const WELCOME = '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Welcome</title><link rel="stylesheet" href="/_style.css"></head><body><h1 id="welcome">You are signed in</h1></body></html>';
 
 function send(res, status, body, type = "text/plain; charset=utf-8", headers = {}) {
   res.writeHead(status, { "content-type": type, "cache-control": "no-store", ...headers });
@@ -303,8 +314,22 @@ async function handle(req, res, scheme, tls) {
     }
     if (path === "/" && (host === "localhost" || /^[\d.]+$/.test(host))) return send(res, 200, indexHtml(scheme), TYPES[".html"]);
     if (path === "/_style.css") return send(res, 200, readFileSync(join(PAGES_DIR, "_style.css")), TYPES[".css"]);
-    const page = manifest.pages.find((p) => p.path === path && (p.host === host || p.host === "*"));
-    if (page) return send(res, 200, renderPage(page, url, scheme, req), TYPES[".html"]);
+    // A site backend for the save/update pages: `outcome=ok` signs in (form
+    // posts land on a welcome page, fetch gets JSON), `outcome=fail` shows the
+    // same page again with an error, as a site does after a wrong password.
+    if (path === "/api/site" && req.method === "POST") {
+      await readBody(req);
+      const ok = url.searchParams.get("outcome") !== "fail";
+      const json = (req.headers["content-type"] || "").includes("json") || !(req.headers["content-type"] || "").includes("form");
+      if (json) return send(res, ok ? 200 : 401, JSON.stringify({ ok }), TYPES[".json"]);
+      if (ok) return send(res, 200, WELCOME, TYPES[".html"]);
+      const again = save.pages.find((p) => p.path === url.searchParams.get("page") && p.host === host);
+      if (!again) return send(res, 401, "Wrong credentials");
+      return send(res, 200, renderPage(again, url, scheme, req).replace("{{ERROR}}", '<p id="error" role="alert">Wrong email or password.</p>'), TYPES[".html"]);
+    }
+    if (path === "/landed") return send(res, 200, WELCOME, TYPES[".html"]);
+    const page = ALL_PAGES.find((p) => p.path === path && (p.host === host || p.host === "*"));
+    if (page) return send(res, 200, renderPage(page, url, scheme, req).replace("{{ERROR}}", ""), TYPES[".html"]);
     if (path.startsWith("/api/")) return send(res, 200, "ok");
     return send(res, 404, `no fixture at ${host}${path}`);
   } catch (e) {

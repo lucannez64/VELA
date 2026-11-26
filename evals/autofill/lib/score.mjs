@@ -21,7 +21,8 @@ export function loadCorpus() {
     liveSites.sites.push(...JSON.parse(readFileSync(local, "utf8")).sites.filter((s) => !ids.has(s.id)));
   }
   const liveApps = readJson("corpus/live-apps.json");
-  return { manifest, vault, nativeForms, liveSites, liveApps };
+  const save = readJson("corpus/save.json");
+  return { manifest, vault, nativeForms, liveSites, liveApps, save };
 }
 
 /** Scenarios a runner executes: every page that is not a frame/support page. */
@@ -353,4 +354,61 @@ function redact(v) {
   if (v == null) return v;
   const s = String(v);
   return s.length <= 4 ? s : `${s.slice(0, 2)}…(${s.length})`;
+}
+
+/**
+ * Save/update capture. `observed`:
+ *   prompt     "save" | "update" | "none" (which bar VELA showed after submit)
+ *   dialog     { username, password } prefilled in the review dialog
+ *   payload    the saveCredentials message the host received after confirming
+ *   releases   secret-bearing login lookups the host answered between submit
+ *              and the prompt, with no fill chosen by the person
+ *
+ * Pass: the right prompt, and for save/update the dialog and the stored
+ * login both carry the typed username and the NEW password, for the right
+ * site, as an update of the right item (or a new item for save).
+ */
+export function scoreSave(scenario, observed, vault) {
+  const e = scenario.expect;
+  const o = observed || {};
+  const prompt = o.prompt || "none";
+  const r = {
+    prompt, expectedPrompt: e.prompt,
+    promptCorrect: prompt === e.prompt,
+    falsePrompt: e.prompt === "none" && prompt !== "none",
+    missedPrompt: e.prompt !== "none" && prompt === "none",
+    releases: o.releases || 0,
+    problems: [],
+  };
+  if (!r.promptCorrect) r.problems.push(`prompt ${prompt}, expected ${e.prompt}`);
+  if (e.prompt !== "none" && prompt !== "none") {
+    const d = o.dialog || {};
+    const p = o.payload;
+    r.dialogUsername = d.username === e.username;
+    r.dialogPassword = d.password === e.password;
+    if (!r.dialogUsername) r.problems.push(`dialog username ${JSON.stringify(redact(d.username))}`);
+    if (!r.dialogPassword) r.problems.push(`dialog password ${redact(d.password)}`);
+    if (!p) r.problems.push("nothing reached the vault");
+    else {
+      r.storedUsername = p.username === e.username;
+      r.storedPassword = p.password === e.password;
+      let host = "";
+      try { host = new URL(p.url).hostname; } catch {}
+      r.storedHost = host === (e.host || scenario.host);
+      r.storedAs = p.item_id ? "update" : "new";
+      r.rightItem = e.prompt === "update" ? p.item_id === e.item : !p.item_id;
+      if (!r.storedUsername) r.problems.push(`stored username ${JSON.stringify(redact(p.username))}`);
+      if (!r.storedPassword) {
+        // Storing the password the person just replaced loses the change.
+        const old = e.item && vault.logins.find((l) => l.id === e.item)?.password;
+        r.storedStalePassword = !!old && p.password === old;
+        r.problems.push(r.storedStalePassword ? "stored the OLD password" : `stored password ${redact(p.password)}`);
+      }
+      if (!r.storedHost) r.problems.push(`stored for ${host || "?"}`);
+      if (!r.rightItem) r.problems.push(e.prompt === "update" ? `stored as ${p.item_id ? "update of " + p.item_id : "a new item (duplicate)"}` : `overwrote ${p.item_id}`);
+    }
+  }
+  if (o.error) r.problems.push(o.error);
+  r.pass = r.problems.length === 0;
+  return r;
 }
