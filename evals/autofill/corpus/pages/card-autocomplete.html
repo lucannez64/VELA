@@ -1,0 +1,8 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Payment</title><link rel="stylesheet" href="/_style.css"></head><body>
+<h1>Payment</h1>
+<form method="post" action="/api/pay">
+  <label for="cc-name">Name on card</label><input id="cc-name" autocomplete="cc-name">
+  <label for="cc-number">Card number</label><input id="cc-number" inputmode="numeric" autocomplete="cc-number">
+  <div class="row"><div><label for="cc-exp">Expiry (MM / YY)</label><input id="cc-exp" autocomplete="cc-exp" placeholder="MM / YY"></div><div><label for="cc-csc">CVC</label><input id="cc-csc" autocomplete="cc-csc" inputmode="numeric"></div></div>
+  <button>Pay</button>
+</form></body></html>

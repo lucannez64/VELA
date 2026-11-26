@@ -1,0 +1,18 @@
+{
+  "name": "vela-autofill-eval",
+  "private": true,
+  "type": "module",
+  "description": "Cross-platform autofill eval for VELA (desktop extension, Android, iOS)",
+  "scripts": {
+    "serve": "node lib/server.mjs",
+    "desktop": "node desktop/run.mjs",
+    "desktop:fixture": "node desktop/run.mjs --tier fixture --modes click,keyboard,shortcut,onload",
+    "desktop:live": "node desktop/run.mjs --tier live --modes click",
+    "desktop:in-core": "node desktop/run.mjs --tier fixture --modes in-core --host real",
+    "report": "node lib/report.mjs",
+    "test": "node --test lib/"
+  },
+  "devDependencies": {
+    "playwright-core": "1.56.1"
+  }
+}

@@ -1,0 +1,9 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Billing</title><link rel="stylesheet" href="/_style.css"></head><body>
+<h1>Card details</h1>
+<form method="post" action="/api/pay">
+  <label for="cardNumber">Card number</label><input id="cardNumber" name="cardNumber" type="tel">
+  <div class="row"><div><label for="expMonth">Month</label><select id="expMonth" name="expMonth"><option value="">MM</option><option>01</option><option>02</option><option>03</option><option>04</option><option>05</option><option>06</option><option>07</option><option>08</option><option>09</option><option>10</option><option>11</option><option>12</option></select></div>
+  <div><label for="expYear">Year</label><select id="expYear" name="expYear"><option value="">YYYY</option><option>2026</option><option>2027</option><option>2028</option><option>2029</option><option>2030</option><option>2031</option></select></div>
+  <div><label for="securityCode">Security code</label><input id="securityCode" name="securityCode" type="password" maxlength="4"></div></div>
+  <button>Pay now</button>
+</form></body></html>

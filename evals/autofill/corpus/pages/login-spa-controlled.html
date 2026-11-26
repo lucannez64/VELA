@@ -1,0 +1,12 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SPA App</title><link rel="stylesheet" href="/_style.css"></head><body>
+<h1>SPA App</h1><div id="root">Loading…</div>
+<script>
+// Mimics a React controlled form: rendered late, state only follows `input`
+// events, and every re-render writes state back into the DOM. A fill that sets
+// .value without dispatching input is reverted on the next render.
+const state={u:'',p:''};
+function render(){for(const [id,k] of [['spa-user','u'],['spa-pass','p']]){const el=document.getElementById(id);if(el&&el.value!==state[k])el.value=state[k];}}
+setTimeout(()=>{document.getElementById('root').innerHTML=`<form id="spa-form" onsubmit="event.preventDefault()"><label for="spa-user">Username</label><input id="spa-user" autocomplete="username"><label for="spa-pass">Password</label><input id="spa-pass" type="password" autocomplete="current-password"><button>Sign in</button></form>`;
+for(const [id,k] of [['spa-user','u'],['spa-pass','p']])document.getElementById(id).addEventListener('input',e=>{state[k]=e.target.value;});
+setInterval(render,300);},1200);
+</script></body></html>

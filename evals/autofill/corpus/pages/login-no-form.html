@@ -1,0 +1,7 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>NoForm</title><link rel="stylesheet" href="/_style.css"></head><body>
+<h1>NoForm sign-in</h1>
+<div class="login-card">
+  <input id="login-name" placeholder="Username" aria-label="Username">
+  <input id="login-secret" type="password" placeholder="Password" aria-label="Password" style="margin-top:8px">
+  <button type="button" onclick="fetch('/api/login',{method:'POST',body:JSON.stringify({u:document.getElementById('login-name').value,p:document.getElementById('login-secret').value})})">Continue</button>
+</div></body></html>

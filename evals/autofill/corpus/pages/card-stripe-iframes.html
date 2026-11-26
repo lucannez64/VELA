@@ -1,0 +1,9 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Checkout – Pay</title><link rel="stylesheet" href="/_style.css"><style>iframe{width:100%;height:46px;border:1px solid #bbb;border-radius:6px}</style></head><body>
+<h1>Pay with card</h1>
+<form method="post" action="/api/pay">
+  <label for="cardholder-name">Cardholder name</label><input id="cardholder-name" name="name" autocomplete="cc-name">
+  <label>Card number</label><iframe id="frame-number" title="Secure card number input frame" src="{{ORIGIN:js.pay-frame.test}}/pay-field.html?field=cardnumber&run={{RUN}}"></iframe>
+  <div class="row"><div><label>Expiration</label><iframe id="frame-exp" title="Secure expiration date input frame" src="{{ORIGIN:js.pay-frame.test}}/pay-field.html?field=exp-date&run={{RUN}}"></iframe></div>
+  <div><label>CVC</label><iframe id="frame-cvc" title="Secure CVC input frame" src="{{ORIGIN:js.pay-frame.test}}/pay-field.html?field=cvc&run={{RUN}}"></iframe></div></div>
+  <button>Pay</button>
+</form></body></html>

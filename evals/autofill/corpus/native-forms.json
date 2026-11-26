@@ -1,0 +1,71 @@
+{
+  "_comment": "Native app forms, built by the Android and iOS lab apps from this one spec. 'android' carries autofillHints/inputType/resource id/hint text; 'ios' carries textContentType/keyboardType/placeholder. A field with no hints is deliberate: it measures what the platform's own heuristics and VELA do with bare views. Values use the same refs as manifest.json; the app's own login is 'lab-app' (associated by package/bundle id).",
+  "forms": [
+    { "id": "app-login-hinted", "kind": "login", "anchor": "username", "choose": "lab-app",
+      "fields": [
+        { "id": "username", "label": "Username", "android": { "autofillHints": ["username"], "inputType": "text" }, "ios": { "textContentType": "username" } },
+        { "id": "password", "label": "Password", "android": { "autofillHints": ["password"], "inputType": "textPassword" }, "ios": { "textContentType": "password", "secure": true } } ],
+      "expect": { "username": "login:lab-app.username", "password": "login:lab-app.password" } },
+
+    { "id": "app-login-bare", "kind": "login", "anchor": "field_a", "choose": "lab-app",
+      "fields": [
+        { "id": "field_a", "label": "", "placeholder": "Email or username", "android": { "inputType": "textEmailAddress" }, "ios": { "keyboardType": "emailAddress" } },
+        { "id": "field_b", "label": "", "placeholder": "Password", "android": { "inputType": "textPassword" }, "ios": { "secure": true } } ],
+      "expect": { "field_a": "login:lab-app.username", "field_b": "login:lab-app.password" } },
+
+    { "id": "app-login-email-hint", "kind": "login", "anchor": "email", "choose": "lab-app",
+      "fields": [
+        { "id": "email", "label": "Email", "android": { "autofillHints": ["emailAddress"], "inputType": "textEmailAddress" }, "ios": { "textContentType": "emailAddress", "keyboardType": "emailAddress" } },
+        { "id": "password", "label": "Password", "android": { "autofillHints": ["password"], "inputType": "textPassword" }, "ios": { "textContentType": "password", "secure": true } } ],
+      "expect": { "email": "login:lab-app.username", "password": "login:lab-app.password" } },
+
+    { "id": "app-login-with-search", "kind": "login", "anchor": "user", "choose": "lab-app",
+      "fields": [
+        { "id": "search", "label": "Search", "placeholder": "Search", "android": { "inputType": "text", "importantForAutofill": "no" }, "ios": { } },
+        { "id": "user", "label": "Username", "android": { "autofillHints": ["username"], "inputType": "text" }, "ios": { "textContentType": "username" } },
+        { "id": "pass", "label": "Password", "android": { "autofillHints": ["password"], "inputType": "textPassword" }, "ios": { "textContentType": "password", "secure": true } } ],
+      "expect": { "user": "login:lab-app.username", "pass": "login:lab-app.password" },
+      "mustStayEmpty": ["search"] },
+
+    { "id": "app-signup", "kind": "signup", "anchor": "new_password",
+      "fields": [
+        { "id": "email", "label": "Email", "android": { "autofillHints": ["emailAddress"], "inputType": "textEmailAddress" }, "ios": { "textContentType": "emailAddress" } },
+        { "id": "new_password", "label": "New password", "android": { "autofillHints": ["newPassword"], "inputType": "textPassword" }, "ios": { "textContentType": "newPassword", "secure": true } } ],
+      "steps": [ { "generate": "new_password" } ],
+      "expect": { "new_password": "@generated" },
+      "mustNotHoldSecrets": ["email", "new_password"] },
+
+    { "id": "app-card-hinted", "kind": "card", "anchor": "number", "choose": "visa",
+      "fields": [
+        { "id": "name", "label": "Name on card", "android": { "autofillHints": ["personName"], "inputType": "textPersonName" }, "ios": { "textContentType": "name" } },
+        { "id": "number", "label": "Card number", "android": { "autofillHints": ["creditCardNumber"], "inputType": "number" }, "ios": { "textContentType": "creditCardNumber", "keyboardType": "numberPad" } },
+        { "id": "exp", "label": "Expiry (MM/YY)", "android": { "autofillHints": ["creditCardExpirationDate"], "inputType": "text" }, "ios": { "textContentType": "creditCardExpiration" } },
+        { "id": "cvc", "label": "CVC", "android": { "autofillHints": ["creditCardSecurityCode"], "inputType": "numberPassword" }, "ios": { "textContentType": "creditCardSecurityCode", "secure": true } } ],
+      "expect": { "name": "card:visa.cardholderName", "number": "card:visa.number", "exp": "card:visa.exp", "cvc": "card:visa.cvv" } },
+
+    { "id": "app-card-bare", "kind": "card", "anchor": "card_number", "choose": "visa",
+      "fields": [
+        { "id": "card_number", "label": "Card number", "placeholder": "1234 5678 9012 3456", "android": { "inputType": "number" }, "ios": { "keyboardType": "numberPad" } },
+        { "id": "card_expiry", "label": "Expiry", "placeholder": "MM/YY", "android": { "inputType": "text" }, "ios": { } },
+        { "id": "card_cvv", "label": "CVV", "placeholder": "CVV", "android": { "inputType": "numberPassword" }, "ios": { "keyboardType": "numberPad" } } ],
+      "expect": { "card_number": "card:visa.number", "card_expiry": "card:visa.exp", "card_cvv": "card:visa.cvv" } },
+
+    { "id": "app-identity-hinted", "kind": "identity", "anchor": "given", "choose": "alice/home",
+      "fields": [
+        { "id": "given", "label": "First name", "android": { "autofillHints": ["personGivenName"] }, "ios": { "textContentType": "givenName" } },
+        { "id": "family", "label": "Last name", "android": { "autofillHints": ["personFamilyName"] }, "ios": { "textContentType": "familyName" } },
+        { "id": "email", "label": "Email", "android": { "autofillHints": ["emailAddress"], "inputType": "textEmailAddress" }, "ios": { "textContentType": "emailAddress" } },
+        { "id": "phone", "label": "Phone", "android": { "autofillHints": ["phone"], "inputType": "phone" }, "ios": { "textContentType": "telephoneNumber" } },
+        { "id": "street", "label": "Street", "android": { "autofillHints": ["postalAddress"] }, "ios": { "textContentType": "streetAddressLine1" } },
+        { "id": "city", "label": "City", "android": { "autofillHints": ["addressLocality"] }, "ios": { "textContentType": "addressCity" } },
+        { "id": "postal", "label": "Postal code", "android": { "autofillHints": ["postalCode"] }, "ios": { "textContentType": "postalCode" } } ],
+      "expect": {
+        "given": "identity:alice.firstName", "family": "identity:alice.lastName", "email": "identity:alice.email", "phone": "identity:alice.phone",
+        "street": "identity:alice.address.home.line1", "city": "identity:alice.address.home.city", "postal": "identity:alice.address.home.postalCode" } },
+
+    { "id": "app-email-only", "kind": "email", "anchor": "email", "choose": "alice",
+      "fields": [
+        { "id": "email", "label": "Email for receipts", "android": { "autofillHints": ["emailAddress"], "inputType": "textEmailAddress" }, "ios": { "textContentType": "emailAddress" } } ],
+      "expect": { "email": ["identity:alice.email", "login:lab-app.username"] } }
+  ]
+}

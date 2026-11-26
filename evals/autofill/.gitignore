@@ -1,0 +1,10 @@
+node_modules/
+.cache/
+results/
+android/.gradle/
+android/build/
+android/*/build/
+android/local.properties
+ios/*.xcodeproj/
+ios/build/
+corpus/*.local.json

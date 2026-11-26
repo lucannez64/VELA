@@ -1,0 +1,11 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Checkout</title><link rel="stylesheet" href="/_style.css"></head><body>
+<h1>Contact &amp; delivery</h1>
+<form method="post" action="/api/checkout">
+  <label for="checkout_email">Email or mobile phone number</label><input id="checkout_email" name="checkout[email_or_phone]" type="text" autocomplete="shipping email">
+  <div class="row"><div><label for="checkout_shipping_address_first_name">First name</label><input id="checkout_shipping_address_first_name" name="checkout[shipping_address][first_name]" autocomplete="shipping given-name"></div>
+  <div><label for="checkout_shipping_address_last_name">Last name</label><input id="checkout_shipping_address_last_name" name="checkout[shipping_address][last_name]" autocomplete="shipping family-name"></div></div>
+  <label for="checkout_shipping_address_address1">Address</label><input id="checkout_shipping_address_address1" name="checkout[shipping_address][address1]" autocomplete="shipping address-line1">
+  <label for="checkout_shipping_address_city">City</label><input id="checkout_shipping_address_city" name="checkout[shipping_address][city]" autocomplete="shipping address-level2">
+  <label for="checkout_shipping_address_zip">ZIP code</label><input id="checkout_shipping_address_zip" name="checkout[shipping_address][zip]" autocomplete="shipping postal-code">
+  <button>Continue to shipping</button>
+</form></body></html>

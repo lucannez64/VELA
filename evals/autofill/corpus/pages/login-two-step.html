@@ -1,0 +1,10 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CloudCo – Sign in</title><link rel="stylesheet" href="/_style.css"></head><body>
+<h1>Sign in to CloudCo</h1>
+<form id="f" method="post" action="/api/login" onsubmit="return step(event)">
+  <div id="s1"><label for="identifier">Username</label><input id="identifier" name="identifier" type="text" autocomplete="username"></div>
+  <div id="s2" class="hidden"><p>Signing in as <b id="who"></b></p><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password"></div>
+  <button id="next" type="submit">Next</button>
+</form>
+<script>
+function step(e){const s2=document.getElementById('s2');if(s2.classList.contains('hidden')){e.preventDefault();document.getElementById('who').textContent=document.getElementById('identifier').value;document.getElementById('s1').classList.add('hidden');s2.classList.remove('hidden');document.getElementById('next').textContent='Sign in';setTimeout(()=>document.getElementById('password').focus(),50);return false;}return true;}
+</script></body></html>

@@ -1,0 +1,101 @@
+{
+  "about": "Save/update capture: after a person types credentials and submits, does VELA offer to save (new login) or update (known username, new password), with the right values, and stay quiet when it should? Typed values are synthetic. `type` is [fieldId, value] in order; `submit` clicks that element, `enter` presses Enter in that field. expect.prompt is save | update | none; for update, expect.item is the vault login that must be updated (never a new item).",
+  "pages": [
+    { "id": "save-login-new", "host": "shop-new.test", "path": "/save-login-new.html" },
+    { "id": "save-login-acme", "host": "acme-bank.test", "path": "/save-login-acme.html" },
+    { "id": "save-login-acme-wrong", "host": "acme-bank.test", "path": "/save-login-acme-wrong.html" },
+    { "id": "save-signup-name-first", "host": "shop-new.test", "path": "/save-signup-name-first.html" },
+    { "id": "save-change-password", "host": "acme-bank.test", "path": "/save-change-password.html" },
+    { "id": "save-spa-fetch", "host": "spa-new.test", "path": "/save-spa-fetch.html" },
+    { "id": "save-no-form-nav", "host": "shop-new.test", "path": "/save-no-form-nav.html" },
+    { "id": "save-two-step-password", "host": "shop-new.test", "path": "/save-two-step-password.html" },
+    { "id": "save-otp-code", "host": "acme-bank.test", "path": "/save-otp-code.html" },
+    { "id": "save-card-pin", "host": "shop-new.test", "path": "/save-card-pin.html" },
+    { "id": "save-never", "host": "never-save.test", "path": "/save-login-never.html" },
+    { "id": "save-iframe-portal", "host": "portal-save.test", "path": "/save-iframe-portal.html" },
+    { "id": "save-iframe-login", "host": "login-save.test", "path": "/save-iframe-login.html", "role": "frame" },
+    { "id": "save-single-page-form", "host": "shop-new.test", "path": "/save-single-page-form.html" }
+  ],
+  "scenarios": [
+    {
+      "id": "save-new-login", "page": "save-login-new", "tags": ["post"],
+      "type": [["email", "alice.new@shop-new.test"], ["password", "New-Shop-Eval-1g!pw"]], "submit": "signin",
+      "expect": { "prompt": "save", "username": "alice.new@shop-new.test", "password": "New-Shop-Eval-1g!pw" }
+    },
+    {
+      "id": "save-new-login-enter", "page": "save-login-new", "tags": ["post", "enter-key"],
+      "type": [["email", "alice.enter@shop-new.test"], ["password", "Enter-Shop-Eval-2h!pw"]], "enter": "password",
+      "expect": { "prompt": "save", "username": "alice.enter@shop-new.test", "password": "Enter-Shop-Eval-2h!pw" }
+    },
+    {
+      "id": "save-known-same", "page": "save-login-acme", "tags": ["post", "already-saved"],
+      "type": [["username", "alice@acme-bank.test"], ["password", "Acme-Eval-7q!pass"]], "submit": "signin",
+      "expect": { "prompt": "none" }
+    },
+    {
+      "id": "save-known-changed", "page": "save-login-acme", "tags": ["post", "update"],
+      "type": [["username", "alice@acme-bank.test"], ["password", "Acme-Eval-NEW-8r!pass"]], "submit": "signin",
+      "expect": { "prompt": "update", "item": "acme", "username": "alice@acme-bank.test", "password": "Acme-Eval-NEW-8r!pass" }
+    },
+    {
+      "id": "save-known-wrong-password", "page": "save-login-acme-wrong", "tags": ["post", "failed-login"],
+      "type": [["username", "alice@acme-bank.test"], ["password", "Acme-typo-7q!pas"]], "submit": "signin",
+      "expect": { "prompt": "none" },
+      "why": "The site rejected the password (it shows the form again with an error). Offering to overwrite the saved password with a typo would corrupt the vault."
+    },
+    {
+      "id": "save-signup-name-first", "page": "save-signup-name-first", "tags": ["signup", "registration"],
+      "type": [["fullname", "Alice Martin"], ["email", "alice.signup@shop-new.test"], ["password", "Signup-Eval-3j!pw"], ["confirm", "Signup-Eval-3j!pw"]], "submit": "create",
+      "expect": { "prompt": "save", "username": "alice.signup@shop-new.test", "password": "Signup-Eval-3j!pw" }
+    },
+    {
+      "id": "save-change-password", "page": "save-change-password", "tags": ["change-password", "update"],
+      "type": [["current", "Acme-Eval-7q!pass"], ["new1", "Acme-Eval-Rotated-4k!pw"], ["new2", "Acme-Eval-Rotated-4k!pw"]], "submit": "update",
+      "expect": { "prompt": "update", "item": "acme", "username": "alice@acme-bank.test", "password": "Acme-Eval-Rotated-4k!pw" },
+      "why": "The vault must get the NEW password; saving the current one would lose the change."
+    },
+    {
+      "id": "save-spa-fetch", "page": "save-spa-fetch", "tags": ["spa", "no-submit-event"],
+      "type": [["user", "alice.spa.new"], ["pass", "Spa-New-Eval-5l!pw"]], "submit": "go",
+      "expect": { "prompt": "save", "username": "alice.spa.new", "password": "Spa-New-Eval-5l!pw" }
+    },
+    {
+      "id": "save-no-form-nav", "page": "save-no-form-nav", "tags": ["no-form", "navigation"],
+      "type": [["user", "alice.noform.new"], ["pass", "NoForm-New-Eval-6m!pw"]], "submit": "go",
+      "expect": { "prompt": "save", "username": "alice.noform.new", "password": "NoForm-New-Eval-6m!pw" }
+    },
+    {
+      "id": "save-two-step-password", "page": "save-two-step-password", "tags": ["multi-step", "identifier-first"],
+      "type": [["password", "TwoStep-Eval-7n!pw"]], "submit": "signin",
+      "expect": { "prompt": "save", "username": "alice.twostep@shop-new.test", "password": "TwoStep-Eval-7n!pw" },
+      "why": "Step 2 of an identifier-first login: the username was typed on step 1 and is only in a hidden field here."
+    },
+    {
+      "id": "save-otp-code", "page": "save-otp-code", "tags": ["negative", "otp"],
+      "type": [["code", "482913"]], "submit": "verify",
+      "expect": { "prompt": "none" }
+    },
+    {
+      "id": "save-card-pin", "page": "save-card-pin", "tags": ["negative", "card"],
+      "type": [["cardnumber", "4111111111111111"], ["pin", "7302"]], "submit": "pay",
+      "expect": { "prompt": "none" }
+    },
+    {
+      "id": "save-never-for-site", "page": "save-never", "tags": ["never-save"], "neverFirst": true,
+      "type": [["email", "alice.never@never-save.test"], ["password", "Never-Eval-8p!pw"]], "submit": "signin",
+      "expect": { "prompt": "none" },
+      "why": "The person chose 'Never for this site' on the first login; the second login must stay quiet."
+    },
+    {
+      "id": "save-iframe-login", "page": "save-iframe-portal", "frame": "save-iframe-login", "tags": ["iframe", "cross-origin"],
+      "type": [["email", "alice.frame@login-save.test"], ["password", "Frame-Save-Eval-9q!pw"]], "submit": "signin",
+      "expect": { "prompt": "save", "username": "alice.frame@login-save.test", "password": "Frame-Save-Eval-9q!pw", "host": "login-save.test" }
+    },
+    {
+      "id": "save-single-page-form", "page": "save-single-page-form", "tags": ["aspnet", "decoy"],
+      "type": [["search", "running shoes"], ["username", "alice.webforms"], ["password", "WebForms-Eval-0r!pw"]], "submit": "signin",
+      "expect": { "prompt": "save", "username": "alice.webforms", "password": "WebForms-Eval-0r!pw" },
+      "why": "ASP.NET WebForms wrap the whole page in one <form>: the header search box is in the same form, before the login fields."
+    }
+  ]
+}

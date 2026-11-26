@@ -1,0 +1,12 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Checkout – Shipping</title><link rel="stylesheet" href="/_style.css"></head><body>
+<h1>Shipping address</h1>
+<form method="post" action="/api/ship">
+  <div class="row"><div><label for="given">First name</label><input id="given" autocomplete="shipping given-name"></div><div><label for="family">Last name</label><input id="family" autocomplete="shipping family-name"></div></div>
+  <label for="ship-email">Email</label><input id="ship-email" type="email" autocomplete="email">
+  <label for="ship-tel">Phone</label><input id="ship-tel" type="tel" autocomplete="shipping tel">
+  <label for="line1">Address</label><input id="line1" autocomplete="shipping address-line1">
+  <label for="line2">Apartment, suite</label><input id="line2" autocomplete="shipping address-line2">
+  <div class="row"><div><label for="city">City</label><input id="city" autocomplete="shipping address-level2"></div><div><label for="region">State</label><input id="region" autocomplete="shipping address-level1"></div><div><label for="zip">ZIP</label><input id="zip" autocomplete="shipping postal-code"></div></div>
+  <label for="country">Country</label><select id="country" autocomplete="shipping country"><option value="">Select…</option><option value="CA">Canada</option><option value="FR">France</option><option value="GB">United Kingdom</option><option value="US">United States</option></select>
+  <button>Continue</button>
+</form></body></html>

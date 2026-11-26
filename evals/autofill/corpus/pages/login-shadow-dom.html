@@ -1,0 +1,6 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Widgets</title><link rel="stylesheet" href="/_style.css"></head><body>
+<h1>Widgets account</h1>
+<login-box id="widget"></login-box>
+<script>
+customElements.define('login-box',class extends HTMLElement{connectedCallback(){const r=this.attachShadow({mode:'open'});r.innerHTML=`<style>input{display:block;width:100%;padding:8px;margin:6px 0 12px;box-sizing:border-box}</style><form method="post" action="/api/login"><label>Username<input id="user" name="user" autocomplete="username"></label><label>Password<input id="pass" name="pass" type="password" autocomplete="current-password"></label><button>Sign in</button></form>`;}});
+</script></body></html>

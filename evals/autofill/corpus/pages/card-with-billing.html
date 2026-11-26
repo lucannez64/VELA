@@ -1,0 +1,11 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Checkout</title><link rel="stylesheet" href="/_style.css"></head><body>
+<form method="post" action="/api/pay">
+  <h2>Card</h2>
+  <label for="pay-name">Name on card</label><input id="pay-name" autocomplete="cc-name">
+  <label for="pay-number">Card number</label><input id="pay-number" autocomplete="cc-number">
+  <div class="row"><div><label for="pay-exp">Expiry</label><input id="pay-exp" autocomplete="cc-exp"></div><div><label for="pay-cvc">CVC</label><input id="pay-cvc" autocomplete="cc-csc"></div></div>
+  <h2>Billing address</h2>
+  <label for="bill-line1">Address</label><input id="bill-line1" autocomplete="billing address-line1">
+  <div class="row"><div><label for="bill-city">City</label><input id="bill-city" autocomplete="billing address-level2"></div><div><label for="bill-zip">ZIP</label><input id="bill-zip" autocomplete="billing postal-code"></div></div>
+  <button>Pay</button>
+</form></body></html>

@@ -1,0 +1,7 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Secure field</title><style>body{margin:0}input{border:0;width:100%;height:44px;padding:0 10px;font:15px system-ui;box-sizing:border-box;outline:none}</style></head><body>
+<input id="field">
+<script>
+const kind=new URLSearchParams(location.search).get('field');const el=document.getElementById('field');
+const m={cardnumber:['cardnumber','cc-number','1234 1234 1234 1234','Credit or debit card number'],'exp-date':['exp-date','cc-exp','MM / YY','Credit or debit card expiration date'],cvc:['cvc','cc-csc','CVC','Credit or debit card CVC/CVV']}[kind];
+el.name=m[0];el.autocomplete=m[1];el.placeholder=m[2];el.setAttribute('aria-label',m[3]);el.inputMode='numeric';el.id='field-'+kind;
+</script></body></html>

@@ -104,6 +104,11 @@
   let velaHostRisk = { level: "none", reasons: [], unicode: "" };
   let velaSelectedIndex = -1;
   let velaHoveredField = null;
+  // An email field that fell back to identities because the site has no login.
+  let velaIdentityFallbackField = null;
+  // The last page field the user focused; survives the dropdown closing, so a
+  // pick fills the field it was made from.
+  let velaLastFocusedField = null;
   // Credentials typed into password fields but not yet offered to the user.
   // Lets us still capture SPA logins that never fire a `submit` event.
   let velaPendingCreds = null;
@@ -179,6 +184,15 @@
           const anchor = fields.includes(document.activeElement) ? document.activeElement : fields[0];
           const count = anchor ? (message.itemType === "card" ? velaFillCard(message.item, anchor) : velaFillIdentity(message.item, anchor, message.addressId)) : 0;
           sendResponse({success:count > 0, error:count ? undefined : "No matching form fields on this page."});
+          break;
+        }
+        case "fillCardPeer": {
+          // A card the user picked in another frame of this tab. The
+          // background only sends it to frames that share the picking
+          // frame's or the top page's origin; check again here.
+          if (!Array.isArray(message.allowedOrigins) || !message.allowedOrigins.includes(location.origin)) { sendResponse({success:false}); break; }
+          const count = velaFillCard(message.item, null);
+          sendResponse({success:count > 0});
           break;
         }
         case "fillWithLogin":
@@ -492,7 +506,9 @@
   }
 
   async function collectPageDetails() {
-    if (pageDetails && lastLocationHref === globalThis.location.href) return pageDetails;
+    // Always re-read the page. Identifier-first logins reveal the password
+    // field by toggling a class, with no navigation, so a cached snapshot
+    // would still say the password field is hidden.
     const forms = await queryAutofillForms();
     const fields = await queryAutofillFields();
     pageDetails = {
@@ -519,10 +535,14 @@
       userInitiated
     }).then((resp) => ({
       logins: resp && resp.logins ? resp.logins : [],
-      requiresBiometric: resp && resp.requires_biometric === true
+      requiresBiometric: resp && resp.requires_biometric === true,
+      // Not an answer about this site: the background refused (this tab was
+      // not the active one) or the desktop could not be reached.
+      refused: !resp || (resp.success === false && resp.requires_biometric !== true)
     })).catch(() => ({
       logins: [],
-      requiresBiometric: false
+      requiresBiometric: false,
+      refused: true
     })).finally(() => {
       setTimeout(() => {
         if (velaLoginRequestKey === key) {
@@ -566,30 +586,90 @@
     }
   }
 
-  // Opt-in, per-site: fill the single matching login as soon as a password
-  // field is present, with no click. Never on a lookalike domain, never when
-  // the match is ambiguous, and never when the site is set to never autofill.
+  // Opt-in, per-site: fill the single matching login with no click. Never on
+  // a lookalike domain, never when the match is ambiguous, never when the site
+  // is set to never autofill, and never inside a cross-origin iframe (a page
+  // could embed the real site invisibly and harvest a fill it never earned).
+  //
+  // Forms are not always there at load: SPAs render late and identifier-first
+  // sites reveal the password after "Next". So the first attempt is followed
+  // by a short watch that fills newly shown, still-empty login fields.
+  const VELA_ONLOAD_WATCH_MS = 30000;
+  let velaOnLoadLogin = null;
+  let velaOnLoadNoMatch = false;
+  let velaOnLoadAnyFilled = false;
+  let velaOnLoadFilled = new WeakSet();
+
+  function velaInCrossOriginFrame() {
+    if (globalThis.top === globalThis) return false;
+    try { return globalThis.top.location.origin !== globalThis.location.origin; } catch (_) { return true; }
+  }
+
   async function velaAutoFillOnLoad() {
     if (!velaSiteSettings.autoFillOnLoad || velaSiteSettings.neverAutofill) return;
-    if (velaHostRisk.level === "warn") return;
+    if (velaHostRisk.level === "warn" || velaInCrossOriginFrame()) return;
+    await velaAutoFillOnLoadAttempt();
+    let timer = null;
+    const observer = new MutationObserver(() => {
+      if (timer) return;
+      timer = setTimeout(() => { timer = null; velaAutoFillOnLoadAttempt(); }, 300);
+    });
+    try {
+      observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "style", "hidden", "type"] });
+      setTimeout(() => observer.disconnect(), VELA_ONLOAD_WATCH_MS);
+    } catch (_) {}
+  }
+
+  async function velaAutoFillOnLoadAttempt() {
     try {
       const details = await collectPageDetails();
       if (!details || !details.fields) return;
-      const passwordField = details.fields.find(
-        (f) => f.viewable && f.type === "password" && !f.value
-      );
-      if (!passwordField) return;
-      // Metadata first: auto-fill must be unambiguous.
-      const passive = await velaRequestLogins(false);
-      if (passive.requiresBiometric) return;
-      if (!passive.logins || passive.logins.length !== 1) return;
-      const full = await getLoginsForPage(globalThis.location.href, true);
-      if (!full || full.length !== 1) return;
-      if (passwordField.value) return;
-      const fillScript = generateFillScript(details, full[0]);
-      if (fillScript) {
+      const elementFor = (f) => queryAllElements(`[data-opid="${CSS.escape(f.opid)}"]`)[0];
+      const empty = details.fields.filter((f) => f.viewable && !f.value && !f.disabled && !f.readonly);
+      const passwordField = empty.find((f) => f.type === "password" && f.autoCompleteType !== "new-password");
+      // Identifier-first step: no visible password field anywhere yet, nothing
+      // filled so far, and a field that says it is the username. Weaker hints
+      // ("user" in a search placeholder) are not enough without a click, and
+      // off-screen fields are honeypots.
+      const anyVisiblePassword = details.fields.some((f) => f.viewable && f.type === "password");
+      const strongUsername = (el) => /\b(username|email)\b/.test((el.autocomplete || "").toLowerCase()) && el.type !== "search" && !el.closest("[role=search]");
+      const onScreen = (el) => { const r = el.getBoundingClientRect(); return r.right > 0 && r.bottom > 0 && r.left < Math.max(innerWidth, document.documentElement.scrollWidth); };
+      const usernameEl = passwordField || anyVisiblePassword || velaOnLoadAnyFilled ? null
+        : empty.map(elementFor).find((el) => el && el.type !== "password" && strongUsername(el) && onScreen(el) && !velaIsCardField(el));
+      if (!passwordField && !usernameEl) return;
+      if (passwordField && velaOnLoadFilled.has(elementFor(passwordField))) return;
+      if (usernameEl && velaOnLoadFilled.has(usernameEl)) return;
+      if (velaOnLoadNoMatch) return;
+      if (!velaOnLoadLogin) {
+        // Metadata first: auto-fill must be unambiguous. One answer per page:
+        // the watch must not ask the desktop again on every DOM change.
+        const passive = await velaRequestLogins(false);
+        if (passive.requiresBiometric || !passive.logins || passive.logins.length !== 1) { velaOnLoadNoMatch = true; return; }
+        const full = await getLoginsForPage(globalThis.location.href, true);
+        if (!full || full.length !== 1) { velaOnLoadNoMatch = true; return; }
+        velaOnLoadLogin = full[0];
+      }
+      const login = velaOnLoadLogin;
+      if (passwordField) {
+        const fresh = await collectPageDetails();
+        const fillScript = generateFillScript(fresh, login);
+        if (!fillScript) return;
+        // Leave anything the user already typed alone.
+        fillScript.script = fillScript.script.filter((op) => {
+          const el = queryAllElements(`[data-opid="${CSS.escape(op.opid)}"]`)[0];
+          return el && !el.value;
+        });
+        for (const op of fillScript.script) {
+          const el = queryAllElements(`[data-opid="${CSS.escape(op.opid)}"]`)[0];
+          if (el) velaOnLoadFilled.add(el);
+        }
+        velaOnLoadAnyFilled = true;
         performFill(fillScript);
-        velaRecordTotpPending(full[0], details);
+        velaRecordTotpPending(login, fresh);
+      } else if (login.username) {
+        velaOnLoadFilled.add(usernameEl);
+        velaOnLoadAnyFilled = true;
+        fillElement(usernameEl, login.username);
       }
     } catch (e) {}
   }
@@ -900,9 +980,19 @@
         }
       }
       if (login.username) {
-        const textField = pageDetails.fields.find((f) =>
+        // No password field (identifier-first step, or a lone email box):
+        // fill the field the user chose from, else the first one that looks
+        // like a username. Never "the first text field": that is usually the
+        // site's search box.
+        const textFields = pageDetails.fields.filter((f) =>
           f.viewable && ["text", "email", "tel", "url"].includes(f.type || "text")
         );
+        const elementOf = (f) => queryAllElements(`[data-opid="${CSS.escape(f.opid)}"]`)[0];
+        const chosen = velaLastFocusedField && velaLastFocusedField.isConnected ? velaLastFocusedField.getAttribute("data-opid") : null;
+        const textField = textFields.find((f) => f.opid === chosen) || textFields.find((f) => {
+          const el = elementOf(f);
+          return el && el.type !== "search" && !el.closest("[role=search]") && velaIsAutofillable(el);
+        });
         if (textField) {
           script.script.push({ opid: textField.opid, action: "fill", value: login.username });
           return script;
@@ -994,8 +1084,10 @@
         // an opid would end the attribute value and change which element the
         // selector matches — or throw — rather than inject HTML, but the fix is
         // the same shape and costs nothing.
+        const opidSelector = `[data-opid="${CSS.escape(String(op.opid ?? ""))}"]`;
         let element =
-          document.querySelector(`[data-opid="${CSS.escape(String(op.opid ?? ""))}"]`) ||
+          document.querySelector(opidSelector) ||
+          queryAllElements(opidSelector)[0] ||
           document.querySelector(`[opid="${CSS.escape(String(op.opid ?? ""))}"]`);
         if (!element) {
           const allElements = document.querySelectorAll("[opid]");
@@ -1096,6 +1188,9 @@
     document.addEventListener("keydown", velaOnKeyDown, true);
     document.addEventListener("submit", velaOnFormSubmit, true);
     document.addEventListener("click", velaOnDocClick, true);
+    // A field the page autofocused never gets another focus event when the
+    // user clicks into it; treat that click as the focus it stands for.
+    document.addEventListener("mousedown", velaOnFieldPress, true);
     window.addEventListener("scroll", velaRepositionDropdown, { passive: true, capture: true });
     window.addEventListener("resize", velaRepositionDropdown, { passive: true });
 
@@ -1119,8 +1214,21 @@
     if (["username", "email", "current-password", "new-password"].includes(ac)) return true;
     const attrs = [el.name, el.id, el.placeholder, el.getAttribute("aria-label"), el.getAttribute("title")]
       .filter(Boolean).join(" ").toLowerCase().replace(/[^a-z0-9]/g, "");
-    const patterns = ["user", "email", "login", "account", "mail", "identifier", "phone", "signin", "username"];
-    return patterns.some((p) => attrs.includes(p));
+    const patterns = ["user", "email", "login", "account", "mail", "identif", "phone", "signin", "username",
+      "utilisateur", "courriel", "benutzer", "usuario", "pseudo", "connexion", "anmelde"];
+    if (patterns.some((p) => attrs.includes(p))) return true;
+    return velaPrecedesPassword(el);
+  }
+
+  // A text field whose next visible field is a password is the username of a
+  // login form, whatever it is called ("i0", "Identifiant", "Kundennummer").
+  function velaPrecedesPassword(el) {
+    const scope = el.form || el.closest("form") || el.getRootNode();
+    if (!scope || !scope.querySelectorAll) return false;
+    const inputs = Array.from(scope.querySelectorAll("input"))
+      .filter((i) => !["hidden", "submit", "button", "checkbox", "radio", "image", "reset"].includes((i.type || "text").toLowerCase()) && velaVisibleField(i));
+    const index = inputs.indexOf(el);
+    return index >= 0 && index + 1 < inputs.length && (inputs[index + 1].type || "").toLowerCase() === "password";
   }
 
   function velaIsNewPasswordField(el) {
@@ -1134,8 +1242,30 @@
     return ["confirm", "repeat", "retype", "register", "signup", "sign_up", "create.account"].some((s) => formHtml.includes(s));
   }
 
+  // Events from inside a shadow root are retargeted to its host; the field
+  // the user is actually in is the first entry of the composed path.
+  function velaEventField(e) {
+    const path = typeof e.composedPath === "function" ? e.composedPath() : [];
+    return path[0] instanceof Element ? path[0] : e.target;
+  }
+
+  // The innermost focused element, through shadow roots.
+  function velaDeepActiveElement() {
+    let a = document.activeElement;
+    while (a && a.shadowRoot && a.shadowRoot.activeElement) a = a.shadowRoot.activeElement;
+    return a;
+  }
+
   async function velaOnFocusIn(e) {
-    const el = e.target;
+    let el = velaEventField(e);
+    // Some sites mark the field readonly until their own focus handler runs
+    // (an old trick against password managers). Ours runs first, in the
+    // capture phase, so look again once theirs has had its turn.
+    if (el && el.tagName === "INPUT" && el.readOnly) {
+      await new Promise((r) => setTimeout(r, 80));
+      if (el.readOnly || velaDeepActiveElement() !== el) return;
+    }
+    if (el && el.tagName === "INPUT" && !el.closest("[data-vela-ui]")) velaLastFocusedField = el;
 
     if (velaSiteSettings.neverAutofill) return;
 
@@ -1174,16 +1304,41 @@
       velaInjectFieldIcon(el);
     }
 
+    let refused = false;
     try {
       const result = await velaRequestLogins(false);
       velaCurrentLogins = result.logins;
       velaRequiresBiometric = result.requiresBiometric;
+      refused = result.refused;
     } catch (_) {
       velaCurrentLogins = [];
       velaRequiresBiometric = false;
+      refused = true;
+    }
+
+    // A page that focuses its field while the tab is in the background gets
+    // a refusal, not an answer. Saying "no saved logins" then would be wrong:
+    // stay quiet and ask again when the user actually comes to this tab.
+    if (refused) {
+      velaCurrentLogins = null;
+      if (velaActiveField === el) velaHideDropdown();
+      velaRetryWhenVisible(el);
+      return;
     }
 
     if (velaActiveField !== el) return;
+
+    // A lone email field on a site with no saved login (newsletter, contact,
+    // receipt email) is a contact field: offer identities, from the icon like
+    // every other identity field, instead of an empty login list.
+    if (!velaRequiresBiometric && (!velaCurrentLogins || !velaCurrentLogins.length) &&
+        (el.type || "").toLowerCase() !== "password" && velaIdentityFieldKind(el) === "email") {
+      velaIdentityFallbackField = el;
+      velaHideDropdown();
+      velaActiveField = el; // hiding clears it; ArrowDown and the icon need it
+      velaInjectFieldIcon(el);
+      return;
+    }
 
     const isNewPw = velaIsNewPasswordField(el);
     velaShowDropdown(
@@ -1196,7 +1351,9 @@
   function velaOnFocusOut(e) {
     setTimeout(() => {
       if (!velaDropdownEl) return;
-      const active = document.activeElement;
+      // Follow focus into shadow roots: document.activeElement is only the host.
+      let active = document.activeElement;
+      while (active && active.shadowRoot && active.shadowRoot.activeElement) active = active.shadowRoot.activeElement;
       if (active && (velaDropdownEl.contains(active) || velaFieldIconEl?.contains(active))) return;
       if (active && active === velaActiveField) return;
       velaHideDropdown();
@@ -1250,9 +1407,9 @@
       // Cards and identities never open on focus alone (a page can focus a
       // field itself). The keyboard equivalent of clicking the field icon:
       if (e.key === "ArrowDown" && e.isTrusted && !e.altKey && !e.ctrlKey && !e.metaKey) {
-        const field = e.target;
+        const field = velaEventField(e);
         if (field === velaActiveField && velaIsCardField(field)) { e.preventDefault(); velaShowCardsForField(field); }
-        else if (field === velaActiveField && velaIsIdentityField(field)) { e.preventDefault(); velaShowIdentityDropdown(field); }
+        else if (field === velaActiveField && (velaIsIdentityField(field) || velaIdentityFallbackField === field)) { e.preventDefault(); velaShowIdentityDropdown(field); }
       }
       return;
     }
@@ -1296,10 +1453,32 @@
     });
   }
 
+  function velaRetryWhenVisible(el) {
+    const retry = () => {
+      if (document.visibilityState !== "visible") return;
+      globalThis.removeEventListener("focus", retry);
+      document.removeEventListener("visibilitychange", retry);
+      if (el.isConnected && velaDeepActiveElement() === el && !velaDropdownEl) velaOnFocusIn({ target: el, composedPath: () => [el] });
+    };
+    globalThis.addEventListener("focus", retry);
+    document.addEventListener("visibilitychange", retry);
+  }
+
+  function velaOnFieldPress(e) {
+    // An open dropdown with real choices stays as it is; an empty one is
+    // refreshed by the click, in case it was answered while the tab was hidden.
+    if (velaDropdownEl && velaDropdownEl.querySelector(".vela-dd-item")) return;
+    if (!e.isTrusted || velaSiteSettings.neverAutofill) return;
+    const el = velaEventField(e);
+    if (!el || el.tagName !== "INPUT" || el.closest("[data-vela-ui]") || velaDeepActiveElement() !== el) return;
+    velaCurrentLogins = null;
+    setTimeout(() => velaOnFocusIn({ target: el, composedPath: () => [el] }), 0);
+  }
+
   function velaOnDocClick(e) {
     if (!velaDropdownEl) return;
     const t = e.target;
-    if (e.composedPath().some(node => node === velaDropdownEl || node === velaFieldIconEl)) return;
+    if (e.composedPath().some(node => node === velaDropdownEl || node === velaFieldIconEl || node === velaActiveField)) return;
     if (t?.closest?.("[data-vela-ui]")) return;
     if (!velaDropdownEl.contains(t) && t !== velaActiveField && t !== velaFieldIconEl) {
       velaHideDropdown();
@@ -1339,7 +1518,7 @@
       }
       {
         velaActiveField = field;
-        if (velaIsIdentityField(field)) {
+        if (velaIsIdentityField(field) || velaIdentityFallbackField === field) {
           velaShowIdentityDropdown(field);
           return;
         } else if (velaIsCardField(field)) {
@@ -1350,7 +1529,9 @@
           velaShowTotpDropdown(field);
           return;
         }
-        if (velaCurrentLogins !== null) {
+        // A cached empty answer may be a refusal from when this tab was not
+        // the active one (a page autofocused its field in a background tab).
+        if (velaCurrentLogins !== null && (velaCurrentLogins.length || velaRequiresBiometric)) {
           if (velaRequiresBiometric) {
             velaShowDropdown(field, { requiresBiometric: true }, velaIsNewPasswordField(field));
           } else {
@@ -1634,7 +1815,11 @@
             "numerocarte", "numcarte", "cbnum", "cardpan")) return "number";
     if (has("ccexp", "cardexp", "ccxp", "expirationdate", "expirydate", "cardexpiry",
             "cardexpiration", "paymentcardexpiration", "validite", "dateexpiration")) return "exp";
-    if (has("cardholder", "ccname", "cardname", "nameoncard")) return "name";
+    if (has("cardholder", "ccname", "cardname", "nameoncard", "titulaire", "nomsurlacarte", "karteninhaber")) return "name";
+    // Placeholder-only payment forms: a 13+ digit example number, or an
+    // MM/YY mask (not a DD/MM/YYYY date, which also contains "mmyy").
+    if (/\d{13,}/.test(t)) return "number";
+    if (has("mmyy", "mmaa") && !t.includes("dd") && !t.includes("jj")) return "exp";
     return null;
   }
 
@@ -1784,16 +1969,32 @@
     const scope = (anchor && (anchor.form || anchor.closest("form"))) || document;
     const section = velaFieldSection(anchor);
     const byKind = {};
+    const numberFields = [];
     for (const el of scope.querySelectorAll("input,select")) {
       const kind = velaCardFieldKind(el);
-      if (kind && velaVisibleField(el) && velaSameSection(section, el) && !byKind[kind]) byKind[kind] = el;
+      if (!kind || !velaVisibleField(el) || !velaSameSection(section, el)) continue;
+      if (kind === "number") numberFields.push(el);
+      if (!byKind[kind]) byKind[kind] = el;
     }
     const exp = velaParseExpiry(card.exp);
     let count = 0;
     const put = (field, value) => { if (field && value) { if (velaFillValue(field, value)) count++; } };
 
     put(byKind.name, card.cardholderName);
-    put(byKind.number, String(card.number || "").replace(/\s+/g, ""));
+    const digits = String(card.number || "").replace(/\s+/g, "");
+    if (numberFields.length > 1) {
+      // Several short boxes ("1234 | 5678 | …"): each takes as many digits as
+      // its maxlength allows, in order.
+      let offset = 0;
+      numberFields.forEach((field, i) => {
+        const max = parseInt(field.getAttribute("maxlength") || "0", 10);
+        const take = i === numberFields.length - 1 ? digits.length - offset : (max > 0 ? max : Math.ceil(digits.length / numberFields.length));
+        put(field, digits.slice(offset, offset + take));
+        offset += take;
+      });
+    } else {
+      put(byKind.number, digits);
+    }
     if (exp) {
       put(byKind.exp, byKind.exp?.type === "month" ? `${exp.yyyy}-${exp.mm}` : byKind.exp ? velaExpiryString(byKind.exp, exp) : "");
       put(byKind.expMonth, exp.mm);
@@ -1829,18 +2030,31 @@
     const token = tokens.find(t => velaIdentityTokens[t]);
     if (token) return velaIdentityTokens[token];
     const names = [el.name,el.id].filter(Boolean).map(n => n.toLowerCase().replace(/[^a-z0-9]/g, ""));
-    const aliases = {firstname:"firstName", givenname:"firstName", lastname:"lastName", surname:"lastName", fullname:"fullName", middlename:"middleName", address:"street", address1:"line1", address2:"line2", state:"region", province:"region", zip:"postalCode", telephone:"phone", company:"company", addressline2:"line2", addresslineone:"line1", addressline1:"line1", streetaddress:"street", postalcode:"postalCode", zipcode:"postalCode", city:"city", country:"countryCode", phone:"phone", email:"email"};
-    return names.map(n => aliases[n]).find(Boolean) || null;
+    const aliases = {firstname:"firstName", givenname:"firstName", lastname:"lastName", surname:"lastName", fullname:"fullName", middlename:"middleName", address:"street", address1:"line1", address2:"line2", state:"region", province:"region", zip:"postalCode", telephone:"phone", company:"company", addressline2:"line2", addresslineone:"line1", addressline1:"line1", streetaddress:"street", postalcode:"postalCode", zipcode:"postalCode", city:"city", country:"countryCode", phone:"phone", email:"email",
+      fname:"firstName", forename:"firstName", lname:"lastName", familyname:"lastName", addr1:"line1", addr2:"line2", street:"line1", town:"city", county:"region", pc:"postalCode", postcode:"postalCode", mobile:"phone", mobilephone:"phone", cellphone:"phone", phonenumber:"phone", tel:"phone", organization:"company", organisation:"company",
+      prenom:"firstName", nom:"lastName", nomdefamille:"lastName", adresse:"line1", adresse1:"line1", adresse2:"line2", complementadresse:"line2", codepostal:"postalCode", cp:"postalCode", ville:"city", localite:"city", pays:"countryCode", societe:"company", entreprise:"company", portable:"phone",
+      vorname:"firstName", nachname:"lastName", strasse:"line1", plz:"postalCode", ort:"city", stadt:"city", land:"countryCode", firma:"company",
+      nombre:"firstName", apellido:"lastName", apellidos:"lastName", direccion:"line1", ciudad:"city", codigopostal:"postalCode", telefono:"phone"};
+    const byName = names.map(n => aliases[n]).find(Boolean);
+    if (byName) return byName;
+    // Last resort: the visible label, for forms whose ids say nothing.
+    const label = (el.labels && el.labels[0] ? el.labels[0].textContent : el.getAttribute("aria-label") || "")
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    return aliases[label] || null;
   }
   function velaIsIdentityField(el) {
     const kind = velaIdentityFieldKind(el);
     if (!kind) return false;
     // A login email remains a login. Contact fields join identity forms only
-    // when a name/address field exists in the same form.
+    // when a name or address field exists in the same form; a country picker
+    // alone (common on sign-in pages) does not make it an address form, and a
+    // field named as the account's username never does.
     if (["email","phone"].includes(kind)) {
+      const ids = `${el.id} ${el.name}`.toLowerCase();
+      if (/user|login|credential|identifier|signin/.test(ids) || (el.autocomplete || "").toLowerCase().split(/\s+/).includes("username")) return false;
       const scope = el.form || el.closest("form");
       return !!scope && Array.from(scope.querySelectorAll("input,select,textarea")).some(f => {
-        const k = velaIdentityFieldKind(f); return k && !["email","phone","company"].includes(k);
+        const k = velaIdentityFieldKind(f); return k && !["email","phone","company","countryCode","countryName"].includes(k);
       });
     }
     return true;
@@ -1879,7 +2093,12 @@
       const item = response?.success && response[type === "card" ? "cards" : "identities"]?.find(item => String(item.id) === String(id));
       if (!item) { velaShowToast("Unlock VELA Desktop and try again.", true); return; }
       velaHideDropdown();
-      if (type === "card") velaFillCard(item,field); else velaFillIdentity(item,field,addressId);
+      if (type === "card") {
+        velaFillCard(item,field);
+        // Hosted payment fields put number, expiry and CVC in separate
+        // frames; fill the rest of the card where it lives.
+        sendExtensionMessage("fillCardInFrames", {url, itemId:id}).catch(() => {});
+      } else velaFillIdentity(item,field,addressId);
     } catch (_) { velaShowToast("Could not fill this item. Try again.", true); }
     finally { delete dropdown.dataset.filling; }
   }
@@ -1928,6 +2147,15 @@
   }
 
   function velaPrepareDropdown(dd) {
+    // A click on VELA's dropdown is not a click on the page. Sites close their
+    // sign-in popovers on any outside click, which would remove the very field
+    // being filled; keep pointer events from bubbling out of the dropdown.
+    if (!dd.dataset.velaContained) {
+      dd.dataset.velaContained = "true";
+      for (const type of ["pointerdown", "pointerup", "mousedown", "mouseup", "click", "touchstart", "touchend"]) {
+        dd.addEventListener(type, (e) => e.stopPropagation());
+      }
+    }
     if (!dd.querySelector(".vela-dd-warning")) {
       const warning = velaPhishingWarningHtml();
       if (warning) dd.insertAdjacentHTML("afterbegin", warning);
@@ -2102,7 +2330,34 @@
     // before this page's prompt can be seen, and the landing page picks the
     // credentials up from the pagehide stash.
     velaPendingCreds = { ...creds, at: Date.now() };
-    velaOfferCapture(creds);
+
+    // Do not prompt yet: a submit is an attempt, not a success. If the page
+    // navigates, the landing page decides (and stays quiet when it shows the
+    // login form again). If it stays (a script handled the submit), prompt
+    // only once the password fields have been cleared or removed, which is
+    // what a script does after a successful sign-in.
+    const pwFields = Array.from(form.querySelectorAll("input[type='password']")).filter((f) => f.value && !f.hasAttribute("data-vela-ui"));
+    const snapshot = pwFields.map((f) => f.value);
+    const hrefAtSubmit = location.href;
+    setTimeout(() => {
+      if (!velaPendingCreds || velaCredsKey(velaPendingCreds) !== velaCredsKey(creds)) return;
+      if (location.href !== hrefAtSubmit && !velaPageShowsLoginForm()) {
+        velaOfferCapture(creds);
+        return;
+      }
+      const stillThere = pwFields.some((f, i) => f.isConnected && f.value === snapshot[i] && velaVisibleField(f));
+      if (stillThere) return;
+      velaOfferCapture(creds);
+    }, 1200);
+  }
+
+  /**
+   * A visible, empty account-password field: the page asks for a password
+   * (again). After a submit that means the sign-in did not go through.
+   */
+  function velaPageShowsLoginForm() {
+    return Array.from(document.querySelectorAll("input[type='password']"))
+      .some((f) => !f.hasAttribute("data-vela-ui") && !f.value && !velaIsCodeLikeSecret(f) && velaVisibleField(f));
   }
 
   /**
@@ -2114,25 +2369,89 @@
    * carry.
    */
   function velaCaptureFormCredentials(form) {
-    const pwFields = Array.from(form.querySelectorAll("input[type='password']")).filter((f) => !f.hasAttribute("data-vela-ui"));
-    if (!pwFields.length) return null;
+    // Masked fields that are not account passwords: one-time codes, card PINs
+    // and security codes. Saving those as a login would be wrong every time.
+    const pwFields = Array.from(form.querySelectorAll("input[type='password']"))
+      .filter((f) => !f.hasAttribute("data-vela-ui") && !velaIsCodeLikeSecret(f));
+    const filled = pwFields.filter((f) => f.value);
+    if (!filled.length) return null;
 
-    const pwValue = pwFields[0].value;
-    if (!pwValue) return null;
-
-    const allInputs = Array.from(form.querySelectorAll("input:not([type='password']):not([type='hidden']):not([data-vela-ui])"));
-    let userValue = "";
-    for (const inp of allInputs) {
-      const type = (inp.type || "text").toLowerCase();
-      if (!["text", "email", "tel", "url"].includes(type)) continue;
-      if (inp.value) { userValue = inp.value; break; }
+    // Which value is the password to keep. A change-password or signup form
+    // names its new password (autocomplete="new-password"); without hints, a
+    // trio is current/new/confirm and a differing pair is current/new.
+    const ac = (f) => (f.autocomplete || "").toLowerCase();
+    const fresh = filled.filter((f) => ac(f) === "new-password");
+    let password, currentPassword = "";
+    if (fresh.length) {
+      password = fresh[0].value;
+      const current = filled.find((f) => ac(f) !== "new-password");
+      if (current) currentPassword = current.value;
+    } else if (filled.length >= 3) {
+      currentPassword = filled[0].value;
+      password = filled[1].value;
+    } else if (filled.length === 2 && filled[0].value !== filled[1].value) {
+      currentPassword = filled[0].value;
+      password = filled[1].value;
+    } else {
+      password = filled[0].value;
     }
 
-    const isRegistration =
-      pwFields.length >= 2 ||
-      pwFields.some((f) => (f.autocomplete || "").toLowerCase() === "new-password");
+    const isRegistration = !currentPassword && (filled.length >= 2 || fresh.length > 0);
+    return {
+      username: velaCapturedUsername(form, filled[0]),
+      password,
+      currentPassword,
+      isRegistration
+    };
+  }
 
-    return { username: userValue, password: pwValue, isRegistration };
+  /** One-time codes, PINs and card security codes typed into masked inputs. */
+  function velaIsCodeLikeSecret(field) {
+    const ac = (field.autocomplete || "").toLowerCase();
+    if (ac.includes("one-time-code") || ac.startsWith("cc-")) return true;
+    const hint = `${field.name || ""} ${field.id || ""} ${field.placeholder || ""} ${field.getAttribute("aria-label") || ""}`.toLowerCase();
+    if (/(^|[^a-z])(otp|totp|pin|cvv|cvc|csc|cid|code)([^a-z]|$)|one.?time|security.?code|verification|pincode/.test(hint)) return true;
+    const max = Number(field.getAttribute("maxlength")) || 0;
+    const numeric = (field.getAttribute("inputmode") || "").toLowerCase() === "numeric" || /^(\[0-9\]|\\d)/.test(field.getAttribute("pattern") || "");
+    return numeric && max > 0 && max <= 8;
+  }
+
+  /**
+   * The username that goes with `pwField`. Scored, not "first filled text
+   * field": signup forms put the full name first, and some sites wrap the
+   * whole page (search box included) in one form. Hidden inputs count only
+   * when they declare the username: identifier-first logins keep the
+   * identifier typed on step one in one on the password step.
+   */
+  function velaCapturedUsername(form, pwField) {
+    const inputs = Array.from(form.querySelectorAll("input")).filter((i) => !i.hasAttribute("data-vela-ui") && (i.value || "").trim());
+    const textTypes = ["text", "email", "tel", "url", ""];
+    const NOT_USER = /^(name|given-name|family-name|additional-name|nickname|honorific|organization|street|address|postal|country|tel-|cc-|bday|sex|one-time-code|new-password|current-password)/;
+    let best = null, bestScore = -Infinity;
+    for (const i of inputs) {
+      const type = (i.getAttribute("type") || "text").toLowerCase();
+      const ac = (i.autocomplete || "").toLowerCase();
+      const hint = `${i.name || ""} ${i.id || ""} ${i.placeholder || ""} ${i.getAttribute("aria-label") || ""}`.toLowerCase();
+      let score;
+      if (type === "hidden") {
+        if (!/\busername\b/.test(ac)) continue;
+        score = 4;
+      } else {
+        if (!textTypes.includes(type) && type !== "search") continue;
+        if (type === "search" || /search|query|keyword|(^|[^a-z])q([^a-z]|$)/.test(hint)) continue;
+        if (NOT_USER.test(ac)) continue;
+        score = 0;
+        if (/\busername\b/.test(ac)) score += 4;
+        if (type === "email" || ac === "email") score += 3;
+        if (/user|login|e-?mail|ident|account|phone|mobile|courriel|utilisateur|benutzer/.test(hint)) score += 2;
+        if (type === "tel") score += 1;
+      }
+      // Ties go to the field nearest before the password, then to any before it.
+      const before = pwField && (i.compareDocumentPosition(pwField) & Node.DOCUMENT_POSITION_FOLLOWING);
+      score += before ? 0.5 : 0;
+      if (score > bestScore || (score === bestScore && before)) { best = i; bestScore = score; }
+    }
+    return best ? best.value.trim() : "";
   }
 
   // =========================================================
@@ -2181,7 +2500,13 @@
         return;
       }
 
-      const match = logins.find((l) => l.username === creds.username);
+      let match = creds.username ? logins.find((l) => l.username === creds.username) : null;
+      // A change-password form often shows no username: the current
+      // password the person typed says which saved login is changing.
+      if (!match && creds.currentPassword) {
+        const owners = logins.filter((l) => l.password && l.password === creds.currentPassword);
+        if (owners.length === 1) match = owners[0];
+      }
       if (match) {
         if (!match.password || match.password === creds.password) {
           // Same credentials as the vault: nothing to capture.
@@ -2283,6 +2608,7 @@
         creds: {
           username: velaPendingCreds.username,
           password: velaPendingCreds.password,
+          currentPassword: velaPendingCreds.currentPassword || "",
           isRegistration: velaPendingCreds.isRegistration
         }
       });
@@ -2305,7 +2631,13 @@
     try {
       const response = await sendExtensionMessage("getPendingCapture", { url: location.href });
       if (response && response.success && response.creds && response.creds.password) {
-        setTimeout(() => velaOfferCapture(response.creds), 600);
+        setTimeout(() => {
+          // Landing on a page that asks for the password again means the
+          // site rejected it: offering to save (or overwrite the vault with)
+          // what was typed would store a typo.
+          if (velaPageShowsLoginForm()) return;
+          velaOfferCapture(response.creds);
+        }, 600);
       }
     } catch (_) {}
   }
@@ -2673,6 +3005,14 @@
           onUseCb(currentPassword);
         } else if (targetField) {
           fillElement(targetField, currentPassword);
+          // "Confirm password" fields that follow the new one get the same
+          // value; a current-password field never does.
+          const scope = targetField.form || targetField.closest("form") || targetField.getRootNode();
+          const pws = Array.from(scope.querySelectorAll("input[type='password']"));
+          for (const other of pws.slice(pws.indexOf(targetField) + 1)) {
+            if (other.autocomplete === "current-password" || other.value || !velaVisibleField(other)) continue;
+            fillElement(other, currentPassword);
+          }
           targetField.type = "text";
           setTimeout(() => { targetField.type = "password"; }, 1500);
           setTimeout(() => {
