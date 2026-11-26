@@ -678,9 +678,14 @@ jobs:
           paths=("$CRATE_DIR" $DEPS security/formal/check-driver-proof-sources.py security/formal/check-sync-chunk-proof.py \
                  security/assurance/bounded.sh security/assurance/install-hax.sh \
                  security/assurance/opam-lock/hax-engine.opam.locked \
-                 security/assurance/check-proof-boundary.py security/assurance/fstar-cache .github/workflows/security.yml)
-          for f in "$root/Cargo.toml" "$root/Cargo.lock"; do [[ -e $f ]] && paths+=("$f"); done
-          key=$(for p in "${paths[@]}"; do printf '%s %s\n' "$p" "$(git rev-parse --verify "HEAD:$p")"; done | sha256sum | cut -c1-40)
+                 security/assurance/check-proof-boundary.py security/assurance/fstar-cache .github/workflows/security.yml \
+                 security/formal/lock-closure.py)
+          [[ -e $root/Cargo.toml ]] && paths+=("$root/Cargo.toml")
+          # Only the packages this crate resolves to, not the whole workspace
+          # lockfile: a bump in a crate the proof never reaches reuses the verdict.
+          closure=
+          [[ -e $root/Cargo.lock ]] && closure=$(python3 -I security/formal/lock-closure.py "$root/Cargo.lock" "$CRATE_DIR")
+          key=$( { for p in "${paths[@]}"; do printf '%s %s\n' "$p" "$(git rev-parse --verify "HEAD:$p")"; done; printf '%s\n' "$closure"; } | sha256sum | cut -c1-40)
           echo "key=proof-verdict-v1-$MODE-$NAME-$key" >> "$GITHUB_OUTPUT"
           echo "mode=$MODE" >> "$GITHUB_OUTPUT"
           echo "proof input key for $NAME ($MODE): $key"
