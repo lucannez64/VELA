@@ -32,6 +32,11 @@ runs (CI `fresh` jobs, published proof logs) do not use this shim.
 Without VELA_FSTAR_CACHE (or with it set to 0), and for calls that do not pass
 --cache_off, the real fstar.exe runs with the arguments unchanged. Set
 VELA_FSTAR_HINTS=0 to skip hints, VELA_FSTAR_CACHE_LOG=1 for hit/miss counts.
+
+VELA_FSTAR_CACHE_RESTORE=0 makes the store write-only: nothing is restored and
+no stored hint is read, so every module is checked from source exactly as in an
+uncached run, and the results are stored for later runs. CI's cold runs on
+main use it to fill the store pull requests read.
 """
 
 import hashlib
@@ -210,6 +215,7 @@ def cached_run(fstar, args, files, cfg, store, run):
     i = args.index("--cache_off")
     base = args[:i] + ["--cache_checked_modules", "--cache_dir", checked_dir] + args[i + 1:]
     hints = os.environ.get("VELA_FSTAR_HINTS", "1") != "0"
+    restore = os.environ.get("VELA_FSTAR_CACHE_RESTORE", "1") != "0"
 
     graph = dep_graph(fstar, base)
     if graph is None:
@@ -233,7 +239,7 @@ def cached_run(fstar, args, files, cfg, store, run):
     restored, prebuilt, failed = {}, 0, 0
     for t in topo(ours):
         modes = ["verified"] if t in verify else ["verified", "admitted"]
-        hit = next((entry(m, t) for m in modes if os.path.isfile(entry(m, t))), None)
+        hit = restore and next((entry(m, t) for m in modes if os.path.isfile(entry(m, t))), None)
         if hit:
             shutil.copyfile(hit, t)
             os.utime(hit)
@@ -257,7 +263,7 @@ def cached_run(fstar, args, files, cfg, store, run):
     hints = hints and any(t not in restored for t in verify)
     main_args = base + (["--hint_dir", hint_dir, "--use_hints", "--record_hints"] if hints else [])
     hdir = os.path.join(store, "hints", cfg[:16])
-    if hints and os.path.isdir(hdir):
+    if hints and restore and os.path.isdir(hdir):
         for t in verify:
             hp = os.path.join(hdir, os.path.basename(t)[: -len(".checked")] + ".hints")
             if os.path.isfile(hp):
