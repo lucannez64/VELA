@@ -266,7 +266,8 @@ The updated workflow defines:
 
 | Job | Gates / evidence |
 |---|---|
-| `formal-rekey` | Correspondence drift check, network models, full all-model run, executable server models and cross-client Rust tests; uploads `assurance-symbolic-logs` even on failure |
+| `formal-rekey` | Correspondence drift check, network models, full all-model run; uploads `assurance-symbolic-logs` even on failure |
+| `formal-conformance` | Executable server models and cross-client Rust tests, in three parallel shards (`deletion`, `revocation`, `models`) |
 | `sharing-boundaries` | Desktop-core unit suite, including repeated acceptance, stale snapshot and interrupted-commit regressions; uploads `assurance-sharing-logs` |
 | `refinement` | Pinned hax/F*/Z3 installation and fresh extraction/checking of eight policy crates and the production share-fact constructor; uploads `assurance-refinement-logs` even on failure |
 | `static-scan` | semgrep, Rust scan, cargo audit/deny |
@@ -295,7 +296,10 @@ a signed release tag. Review source/model changes before updating
 Each CI proof job (`refinement` in `security.yml`) is skipped when its inputs
 are byte-identical to a run that already passed. The key is the git object id
 of the crate, the outside files its scripts read (`deps` in the matrix), the
-workspace `Cargo.toml` and `Cargo.lock`, the two shared source checkers
+workspace `Cargo.toml`, the crate's resolved part of the workspace
+`Cargo.lock` (every package it reaches, printed by
+`security/formal/lock-closure.py`, so a bump the crate never reaches reuses the
+verdict), the two shared source checkers
 (`security/formal/check-driver-proof-sources.py`, `check-sync-chunk-proof.py`),
 the proof-tool pins and the boundary checker, and the workflow itself. Global assurance docs
 and the correspondence map are not shared proof inputs. Crate-local docs,
@@ -321,13 +325,18 @@ with their obligations assumed, as in an uncached run. Solver hints are shared
 by module name; they only guide z3 and cannot make a query pass.
 
 F★ trusts a `.checked` file without re-verifying it, so the cache adds the
-store's integrity to the trusted base of a cached run. The store lives on the
-build box and is written only by the owner's runs: local `vela-heavy` runs and
-CI proof jobs on the box, which only run for the owner's own branches. Pull
-request and manual CI runs on the box use it; pushes to `main`, hosted runners
-and manual runs with `cold` check everything from source, and their verdicts
-are keyed apart (`proof-verdict-v1-cold-…`) so a cached verdict never stands in
-for a cold one. Published proof logs come from cold runs. On the vault executors
+store's integrity to the trusted base of a cached run. On the build box the
+store is a directory written only by the owner's runs: local `vela-heavy` runs
+and CI proof jobs on the box, which only run for the owner's own branches. On
+hosted runners it is the Actions cache (`fstar-store-v1-<job>-…`): pushes to
+`main` write it with `VELA_FSTAR_CACHE_RESTORE=0`, so they restore nothing and
+check every module from source, and a pull request reads what `main` wrote and
+what its own earlier runs wrote. GitHub scopes each cache to the ref that wrote
+it, so one pull request's entries never reach `main` or another pull request.
+Pull request and manual CI runs use the store; pushes to `main` and manual
+runs with `cold` check everything from source, and their verdicts are keyed
+apart (`proof-verdict-v1-cold-…`) so a cached verdict never stands in for a
+cold one. Published proof logs come from cold runs. On the vault executors
 gate (extraction, proofs and 27 mutants) a run with an unchanged tree took
 1074 s uncached and 209 s with the cache and four parallel mutants
 (`VELA_MUTANT_JOBS`, default 4, in each executor mutation script).

@@ -20,6 +20,7 @@ SHARED = [
     'security/assurance/install-hax.sh',
     'security/assurance/check-proof-boundary.py',
     '.github/workflows/security.yml',
+    'security/formal/lock-closure.py',
 ]
 
 RELATIVE = re.compile(r'(?<![\w.])((?:\.\./)+[A-Za-z0-9_.\-/]+)')
@@ -63,6 +64,8 @@ class ProofInputKeyTest(unittest.TestCase):
         for entry in matrix():
             crate = entry['dir']
             root = crate.split('/')[0]
+            # The key holds the crate's resolved part of the workspace lockfile
+            # (lock-closure.py), which is all of it cargo reads for the crate.
             covers = [crate, f'{root}/Cargo.toml', f'{root}/Cargo.lock', *SHARED]
             covers += (entry.get('deps') or '').split()
             for script, path in sorted(outside_paths(crate)):

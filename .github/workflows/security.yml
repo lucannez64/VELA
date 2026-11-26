@@ -323,118 +323,6 @@ jobs:
             VELA_PROOF_OUT="$RUNNER_TEMP/assurance-logs/cryptoverif" \
             security/formal/run-cryptoverif-proofs.sh
 
-      - name: Bounded conformance - rekey_state_model
-        timeout-minutes: 30
-        run: cargo test --manifest-path serverVELA/Cargo.toml --test rekey_state_model
-
-      - name: Bounded conformance - session_capability_model
-        timeout-minutes: 30
-        run: cargo test --manifest-path serverVELA/Cargo.toml --test session_capability_model
-
-      - name: Bounded conformance - enrollment_ceremony_model
-        timeout-minutes: 30
-        run: cargo test --manifest-path serverVELA/Cargo.toml --test enrollment_ceremony_model
-
-      - name: Bounded conformance - recovery_lifecycle_model
-        timeout-minutes: 30
-        run: cargo test --manifest-path serverVELA/Cargo.toml --test recovery_lifecycle_model
-
-      - name: Bounded conformance - share_channel_model
-        timeout-minutes: 30
-        run: cargo test --manifest-path serverVELA/Cargo.toml --test share_channel_model
-
-      - name: Bounded conformance - recovery_possession_model
-        timeout-minutes: 30
-        run: cargo test --manifest-path serverVELA/Cargo.toml --test recovery_possession_model
-
-      - name: Bounded conformance - pairing_model
-        timeout-minutes: 30
-        run: cargo test --manifest-path serverVELA/Cargo.toml --test pairing_model
-
-      - name: Bounded conformance - challenge_single_use_model
-        timeout-minutes: 30
-        run: cargo test --manifest-path serverVELA/Cargo.toml --test challenge_single_use_model
-
-      - name: Bounded conformance - login_driver_handler
-        timeout-minutes: 30
-        run: cargo test --manifest-path serverVELA/Cargo.toml --test login_driver_handler
-
-      - name: Bounded conformance - login_driver
-        timeout-minutes: 30
-        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-session-policy --test login_driver
-
-      - name: Bounded conformance - vela-session-policy revocation_driver
-        timeout-minutes: 30
-        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-session-policy --lib revocation_driver
-
-      - name: Bounded conformance - vela-session-policy deletion_driver
-        timeout-minutes: 30
-        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-session-policy --lib deletion_driver
-
-      - name: Bounded conformance - vela-session-policy deletion_interpreter
-        timeout-minutes: 30
-        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-session-policy --lib deletion_interpreter
-
-      - name: Bounded conformance - vela-session-policy library
-        timeout-minutes: 30
-        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-session-policy --lib
-
-      - name: Bounded conformance - account_deletion_model
-        timeout-minutes: 30
-        run: cargo test --manifest-path serverVELA/Cargo.toml --test account_deletion_model
-
-      - name: Bounded conformance - device_revocation_model
-        timeout-minutes: 30
-        run: cargo test --manifest-path serverVELA/Cargo.toml --test device_revocation_model -- --nocapture
-
-      - name: Bounded conformance - redemption_driver
-        timeout-minutes: 30
-        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-recovery-policy --test redemption_driver
-
-      - name: Bounded conformance - driver
-        timeout-minutes: 30
-        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-share-policy --test driver
-
-      - name: Bounded conformance - vela-share-policy library
-        timeout-minutes: 30
-        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-share-policy --lib
-
-      - name: Bounded conformance - possession_driver
-        timeout-minutes: 30
-        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-recovery-policy --test possession_driver
-
-      - name: Bounded conformance - webauthn_driver
-        timeout-minutes: 30
-        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-recovery-policy --test webauthn_driver
-
-      - name: Bounded conformance - integration
-        timeout-minutes: 30
-        run: cargo test --manifest-path serverVELA/Cargo.toml --test integration
-
-      - name: Bounded conformance - vela-enrollment-policy vela-enrollment-policy
-        timeout-minutes: 30
-        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-enrollment-policy
-
-      - name: Bounded conformance - vela-rekey-policy library
-        timeout-minutes: 30
-        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-rekey-policy --lib
-
-      - name: Bounded conformance - bounded_refinement
-        timeout-minutes: 30
-        run: cargo test --manifest-path libVELA/vela-client-recovery-policy/Cargo.toml --test bounded_refinement
-
-      - name: Verify the desktop, Android, Apple, and web epoch wire contract
-        env:
-          CARGO_TARGET_DIR: ${{ github.workspace }}/target-lib
-        run: |
-          cargo test --manifest-path libVELA/vela-client-share-policy/Cargo.toml
-          cargo test --manifest-path libVELA/vela-crypto/Cargo.toml --lib
-          cargo test --manifest-path libVELA/vela-crypto/Cargo.toml \
-            rekey::tests::fleet_wire_matrix_is_cross_client_and_epoch_compatible
-          cargo test --manifest-path libVELA/vela-android-bridge/Cargo.toml --lib
-          cargo test --manifest-path libVELA/vela-apple-bridge/Cargo.toml --lib
-          cargo test --manifest-path libVELA/vela-wasm-bridge/Cargo.toml --lib
-
       - name: Run every assurance model, including the credential-release ladder
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}/target-lib
@@ -449,6 +337,187 @@ jobs:
           path: |
             ${{ runner.temp }}/assurance-logs
             ${{ runner.temp }}/network-proofs
+
+  # The executable models and cross-client Rust tests, split off formal-rekey
+  # so they run beside the symbolic proofs. Each shard runs the same commands
+  # with the same container and environment as before; the two slowest models
+  # (minutes each, single-threaded by design) get a shard of their own.
+  formal-conformance:
+    name: conformance (${{ matrix.shard }})
+    needs: proof-image
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        shell: bash -e {0}
+    container:
+      image: ${{ needs.proof-image.outputs.hosted_image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [deletion, revocation, models]
+    env:
+      # Compilation uses all runner cores; tests stay serial.
+      RUST_TEST_THREADS: 1
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      CARGO_INCREMENTAL: 0
+      VELA_IN_PROOF_IMAGE: ${{ needs.proof-image.outputs.hosted_in_image }}
+      VELA_BOUNDED: ${{ needs.proof-image.outputs.hosted_in_image == 'true' && '1' || '0' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: dtolnay/rust-toolchain@d124f86f28ff42855784ff3319f48ac182c248f8 # 1.99.1
+        if: env.VELA_IN_PROOF_IMAGE != 'true'
+
+      # Same target layout as formal-rekey (see there); one cache per shard,
+      # since each shard builds a different set of test binaries.
+      - uses: swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: |
+            serverVELA -> ../target
+            libVELA/vela-android-bridge -> ../../target-lib
+          shared-key: security-conformance-v1-${{ matrix.shard }}
+
+      - name: Bounded conformance - rekey_state_model
+        if: matrix.shard == 'models'
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml --test rekey_state_model
+
+      - name: Bounded conformance - session_capability_model
+        if: matrix.shard == 'models'
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml --test session_capability_model
+
+      - name: Bounded conformance - enrollment_ceremony_model
+        if: matrix.shard == 'models'
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml --test enrollment_ceremony_model
+
+      - name: Bounded conformance - recovery_lifecycle_model
+        if: matrix.shard == 'models'
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml --test recovery_lifecycle_model
+
+      - name: Bounded conformance - share_channel_model
+        if: matrix.shard == 'models'
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml --test share_channel_model
+
+      - name: Bounded conformance - recovery_possession_model
+        if: matrix.shard == 'models'
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml --test recovery_possession_model
+
+      - name: Bounded conformance - pairing_model
+        if: matrix.shard == 'models'
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml --test pairing_model
+
+      - name: Bounded conformance - challenge_single_use_model
+        if: matrix.shard == 'models'
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml --test challenge_single_use_model
+
+      - name: Bounded conformance - login_driver_handler
+        if: matrix.shard == 'models'
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml --test login_driver_handler
+
+      - name: Bounded conformance - login_driver
+        if: matrix.shard == 'models'
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-session-policy --test login_driver
+
+      - name: Bounded conformance - vela-session-policy revocation_driver
+        if: matrix.shard == 'models'
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-session-policy --lib revocation_driver
+
+      - name: Bounded conformance - vela-session-policy deletion_driver
+        if: matrix.shard == 'models'
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-session-policy --lib deletion_driver
+
+      - name: Bounded conformance - vela-session-policy deletion_interpreter
+        if: matrix.shard == 'models'
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-session-policy --lib deletion_interpreter
+
+      - name: Bounded conformance - vela-session-policy library
+        if: matrix.shard == 'models'
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-session-policy --lib
+
+      - name: Bounded conformance - account_deletion_model
+        if: matrix.shard == 'deletion'
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml --test account_deletion_model
+
+      - name: Bounded conformance - device_revocation_model
+        if: matrix.shard == 'revocation'
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml --test device_revocation_model -- --nocapture
+
+      - name: Bounded conformance - redemption_driver
+        if: matrix.shard == 'models'
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-recovery-policy --test redemption_driver
+
+      - name: Bounded conformance - driver
+        if: matrix.shard == 'models'
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-share-policy --test driver
+
+      - name: Bounded conformance - vela-share-policy library
+        if: matrix.shard == 'models'
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-share-policy --lib
+
+      - name: Bounded conformance - possession_driver
+        if: matrix.shard == 'models'
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-recovery-policy --test possession_driver
+
+      - name: Bounded conformance - webauthn_driver
+        if: matrix.shard == 'models'
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-recovery-policy --test webauthn_driver
+
+      - name: Bounded conformance - integration
+        if: matrix.shard == 'models'
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml --test integration
+
+      - name: Bounded conformance - vela-enrollment-policy vela-enrollment-policy
+        if: matrix.shard == 'models'
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-enrollment-policy
+
+      - name: Bounded conformance - vela-rekey-policy library
+        if: matrix.shard == 'models'
+        timeout-minutes: 30
+        run: cargo test --manifest-path serverVELA/Cargo.toml -p vela-rekey-policy --lib
+
+      - name: Bounded conformance - bounded_refinement
+        if: matrix.shard == 'models'
+        timeout-minutes: 30
+        run: cargo test --manifest-path libVELA/vela-client-recovery-policy/Cargo.toml --test bounded_refinement
+
+      - name: Verify the desktop, Android, Apple, and web epoch wire contract
+        if: matrix.shard == 'revocation'
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target-lib
+        run: |
+          cargo test --manifest-path libVELA/vela-client-share-policy/Cargo.toml
+          cargo test --manifest-path libVELA/vela-crypto/Cargo.toml --lib
+          cargo test --manifest-path libVELA/vela-crypto/Cargo.toml \
+            rekey::tests::fleet_wire_matrix_is_cross_client_and_epoch_compatible
+          cargo test --manifest-path libVELA/vela-android-bridge/Cargo.toml --lib
+          cargo test --manifest-path libVELA/vela-apple-bridge/Cargo.toml --lib
+          cargo test --manifest-path libVELA/vela-wasm-bridge/Cargo.toml --lib
 
   sharing-boundaries:
     needs: proof-image
@@ -660,17 +729,17 @@ jobs:
       # run's logs and checked extractions for the boundary job.
       # test_proof_inputs.py fails if a script reads an outside path the key
       # does not cover.
-      # Pull requests and manual runs on the build box reuse checked F* modules
-      # from its shared store (security/assurance/fstar-cache). Pushes to main,
-      # hosted runners and manual runs with `cold` check everything from source;
-      # their verdicts are kept apart from cached ones.
+      # Pull requests and manual runs reuse checked F* modules from the shared
+      # store (security/assurance/fstar-cache; see "Locate the F* store").
+      # Pushes to main and manual runs with `cold` check everything from
+      # source; their verdicts are kept apart from cached ones.
       - name: Compute proof input key
         id: inputs
         env:
           CRATE_DIR: ${{ matrix.dir }}
           DEPS: ${{ matrix.deps }}
           NAME: ${{ matrix.name }}
-          MODE: ${{ (runner.environment == 'self-hosted' && github.event_name != 'push' && !inputs.cold) && 'cached' || 'cold' }}
+          MODE: ${{ (github.event_name != 'push' && !inputs.cold) && 'cached' || 'cold' }}
         run: |
           set -euo pipefail
           root=${CRATE_DIR%%/*}
@@ -678,9 +747,14 @@ jobs:
           paths=("$CRATE_DIR" $DEPS security/formal/check-driver-proof-sources.py security/formal/check-sync-chunk-proof.py \
                  security/assurance/bounded.sh security/assurance/install-hax.sh \
                  security/assurance/opam-lock/hax-engine.opam.locked \
-                 security/assurance/check-proof-boundary.py security/assurance/fstar-cache .github/workflows/security.yml)
-          for f in "$root/Cargo.toml" "$root/Cargo.lock"; do [[ -e $f ]] && paths+=("$f"); done
-          key=$(for p in "${paths[@]}"; do printf '%s %s\n' "$p" "$(git rev-parse --verify "HEAD:$p")"; done | sha256sum | cut -c1-40)
+                 security/assurance/check-proof-boundary.py security/assurance/fstar-cache .github/workflows/security.yml \
+                 security/formal/lock-closure.py)
+          [[ -e $root/Cargo.toml ]] && paths+=("$root/Cargo.toml")
+          # Only the packages this crate resolves to, not the whole workspace
+          # lockfile: a bump in a crate the proof never reaches reuses the verdict.
+          closure=
+          [[ -e $root/Cargo.lock ]] && closure=$(python3 -I security/formal/lock-closure.py "$root/Cargo.lock" "$CRATE_DIR")
+          key=$( { for p in "${paths[@]}"; do printf '%s %s\n' "$p" "$(git rev-parse --verify "HEAD:$p")"; done; printf '%s\n' "$closure"; } | sha256sum | cut -c1-40)
           echo "key=proof-verdict-v1-$MODE-$NAME-$key" >> "$GITHUB_OUTPUT"
           echo "mode=$MODE" >> "$GITHUB_OUTPUT"
           echo "proof input key for $NAME ($MODE): $key"
@@ -776,12 +850,40 @@ jobs:
           shared-key: refinement-rust-v2-${{ matrix.name }}
           key: ${{ hashFiles('security/assurance/install-hax.sh', 'security/assurance/opam-lock/hax-engine.opam.locked') }}
           cache-bin: false
+      # The F* store: on the build box, its own directory; on hosted runners, the
+      # Actions cache. Pull requests restore it (from main or from their own
+      # earlier runs; GitHub never lets a pull request write a cache another
+      # ref reads). Pushes to main stay cold: the shim restores nothing
+      # (VELA_FSTAR_CACHE_RESTORE=0), checks every module from source and only
+      # records the results for pull requests.
+      - name: Locate the F* store
+        id: fstar-store
+        if: steps.verdict.outputs.cache-hit != 'true' && (steps.inputs.outputs.mode == 'cached' || (runner.environment == 'github-hosted' && github.event_name == 'push'))
+        env:
+          HOSTED: ${{ runner.environment == 'github-hosted' }}
+          MODE: ${{ steps.inputs.outputs.mode }}
+        run: |
+          if [[ $HOSTED == true ]]; then dir="$RUNNER_TEMP/vela-fstar"; else dir="$HOME/.cache/vela-fstar"; fi
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+          echo "restore=$([[ $MODE == cached ]] && echo 1 || echo 0)" >> "$GITHUB_OUTPUT"
+      - name: Restore the F* store
+        if: steps.fstar-store.outputs.dir != '' && runner.environment == 'github-hosted' && steps.fstar-store.outputs.restore == '1'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ steps.fstar-store.outputs.dir }}
+          key: fstar-store-v1-${{ matrix.name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: fstar-store-v1-${{ matrix.name }}-
       - name: Use the shared F* cache
-        if: steps.verdict.outputs.cache-hit != 'true' && steps.inputs.outputs.mode == 'cached'
+        if: steps.fstar-store.outputs.dir != ''
+        env:
+          STORE: ${{ steps.fstar-store.outputs.dir }}
+          RESTORE: ${{ steps.fstar-store.outputs.restore }}
         run: |
           echo "$GITHUB_WORKSPACE/security/assurance/fstar-cache" >> "$GITHUB_PATH"
-          echo "VELA_FSTAR_CACHE=$HOME/.cache/vela-fstar" >> "$GITHUB_ENV"
-          echo "F* cache: $HOME/.cache/vela-fstar" | tee -a "$RUNNER_TEMP/refinement-logs/toolchain-activation-${{ matrix.name }}.log"
+          echo "VELA_FSTAR_CACHE=$STORE" >> "$GITHUB_ENV"
+          echo "VELA_FSTAR_CACHE_RESTORE=$RESTORE" >> "$GITHUB_ENV"
+          echo "VELA_FSTAR_CACHE_LOG=1" >> "$GITHUB_ENV"
+          echo "F* cache: $STORE (restore=$RESTORE)" | tee -a "$RUNNER_TEMP/refinement-logs/toolchain-activation-${{ matrix.name }}.log"
       - name: Extract and check ${{ matrix.name }}
         if: steps.verdict.outputs.cache-hit != 'true'
         env:
@@ -805,6 +907,12 @@ jobs:
             tail -n 100 "$log"
             exit 1
           fi
+      - name: Save the F* store
+        if: success() && steps.fstar-store.outputs.dir != '' && runner.environment == 'github-hosted'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ steps.fstar-store.outputs.dir }}
+          key: fstar-store-v1-${{ matrix.name }}-${{ github.run_id }}-${{ github.run_attempt }}
       # Keep repository-relative paths so the boundary job can lay them back.
       - name: Collect checked extractions
         if: always() && steps.verdict.outputs.cache-hit != 'true'
