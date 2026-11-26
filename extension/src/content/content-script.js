@@ -2330,7 +2330,34 @@
     // before this page's prompt can be seen, and the landing page picks the
     // credentials up from the pagehide stash.
     velaPendingCreds = { ...creds, at: Date.now() };
-    velaOfferCapture(creds);
+
+    // Do not prompt yet: a submit is an attempt, not a success. If the page
+    // navigates, the landing page decides (and stays quiet when it shows the
+    // login form again). If it stays (a script handled the submit), prompt
+    // only once the password fields have been cleared or removed, which is
+    // what a script does after a successful sign-in.
+    const pwFields = Array.from(form.querySelectorAll("input[type='password']")).filter((f) => f.value && !f.hasAttribute("data-vela-ui"));
+    const snapshot = pwFields.map((f) => f.value);
+    const hrefAtSubmit = location.href;
+    setTimeout(() => {
+      if (!velaPendingCreds || velaCredsKey(velaPendingCreds) !== velaCredsKey(creds)) return;
+      if (location.href !== hrefAtSubmit && !velaPageShowsLoginForm()) {
+        velaOfferCapture(creds);
+        return;
+      }
+      const stillThere = pwFields.some((f, i) => f.isConnected && f.value === snapshot[i] && velaVisibleField(f));
+      if (stillThere) return;
+      velaOfferCapture(creds);
+    }, 1200);
+  }
+
+  /**
+   * A visible, empty account-password field: the page asks for a password
+   * (again). After a submit that means the sign-in did not go through.
+   */
+  function velaPageShowsLoginForm() {
+    return Array.from(document.querySelectorAll("input[type='password']"))
+      .some((f) => !f.hasAttribute("data-vela-ui") && !f.value && !velaIsCodeLikeSecret(f) && velaVisibleField(f));
   }
 
   /**
@@ -2342,25 +2369,89 @@
    * carry.
    */
   function velaCaptureFormCredentials(form) {
-    const pwFields = Array.from(form.querySelectorAll("input[type='password']")).filter((f) => !f.hasAttribute("data-vela-ui"));
-    if (!pwFields.length) return null;
+    // Masked fields that are not account passwords: one-time codes, card PINs
+    // and security codes. Saving those as a login would be wrong every time.
+    const pwFields = Array.from(form.querySelectorAll("input[type='password']"))
+      .filter((f) => !f.hasAttribute("data-vela-ui") && !velaIsCodeLikeSecret(f));
+    const filled = pwFields.filter((f) => f.value);
+    if (!filled.length) return null;
 
-    const pwValue = pwFields[0].value;
-    if (!pwValue) return null;
-
-    const allInputs = Array.from(form.querySelectorAll("input:not([type='password']):not([type='hidden']):not([data-vela-ui])"));
-    let userValue = "";
-    for (const inp of allInputs) {
-      const type = (inp.type || "text").toLowerCase();
-      if (!["text", "email", "tel", "url"].includes(type)) continue;
-      if (inp.value) { userValue = inp.value; break; }
+    // Which value is the password to keep. A change-password or signup form
+    // names its new password (autocomplete="new-password"); without hints, a
+    // trio is current/new/confirm and a differing pair is current/new.
+    const ac = (f) => (f.autocomplete || "").toLowerCase();
+    const fresh = filled.filter((f) => ac(f) === "new-password");
+    let password, currentPassword = "";
+    if (fresh.length) {
+      password = fresh[0].value;
+      const current = filled.find((f) => ac(f) !== "new-password");
+      if (current) currentPassword = current.value;
+    } else if (filled.length >= 3) {
+      currentPassword = filled[0].value;
+      password = filled[1].value;
+    } else if (filled.length === 2 && filled[0].value !== filled[1].value) {
+      currentPassword = filled[0].value;
+      password = filled[1].value;
+    } else {
+      password = filled[0].value;
     }
 
-    const isRegistration =
-      pwFields.length >= 2 ||
-      pwFields.some((f) => (f.autocomplete || "").toLowerCase() === "new-password");
+    const isRegistration = !currentPassword && (filled.length >= 2 || fresh.length > 0);
+    return {
+      username: velaCapturedUsername(form, filled[0]),
+      password,
+      currentPassword,
+      isRegistration
+    };
+  }
 
-    return { username: userValue, password: pwValue, isRegistration };
+  /** One-time codes, PINs and card security codes typed into masked inputs. */
+  function velaIsCodeLikeSecret(field) {
+    const ac = (field.autocomplete || "").toLowerCase();
+    if (ac.includes("one-time-code") || ac.startsWith("cc-")) return true;
+    const hint = `${field.name || ""} ${field.id || ""} ${field.placeholder || ""} ${field.getAttribute("aria-label") || ""}`.toLowerCase();
+    if (/(^|[^a-z])(otp|totp|pin|cvv|cvc|csc|cid|code)([^a-z]|$)|one.?time|security.?code|verification|pincode/.test(hint)) return true;
+    const max = Number(field.getAttribute("maxlength")) || 0;
+    const numeric = (field.getAttribute("inputmode") || "").toLowerCase() === "numeric" || /^(\[0-9\]|\\d)/.test(field.getAttribute("pattern") || "");
+    return numeric && max > 0 && max <= 8;
+  }
+
+  /**
+   * The username that goes with `pwField`. Scored, not "first filled text
+   * field": signup forms put the full name first, and some sites wrap the
+   * whole page (search box included) in one form. Hidden inputs count only
+   * when they declare the username: identifier-first logins keep the
+   * identifier typed on step one in one on the password step.
+   */
+  function velaCapturedUsername(form, pwField) {
+    const inputs = Array.from(form.querySelectorAll("input")).filter((i) => !i.hasAttribute("data-vela-ui") && (i.value || "").trim());
+    const textTypes = ["text", "email", "tel", "url", ""];
+    const NOT_USER = /^(name|given-name|family-name|additional-name|nickname|honorific|organization|street|address|postal|country|tel-|cc-|bday|sex|one-time-code|new-password|current-password)/;
+    let best = null, bestScore = -Infinity;
+    for (const i of inputs) {
+      const type = (i.getAttribute("type") || "text").toLowerCase();
+      const ac = (i.autocomplete || "").toLowerCase();
+      const hint = `${i.name || ""} ${i.id || ""} ${i.placeholder || ""} ${i.getAttribute("aria-label") || ""}`.toLowerCase();
+      let score;
+      if (type === "hidden") {
+        if (!/\busername\b/.test(ac)) continue;
+        score = 4;
+      } else {
+        if (!textTypes.includes(type) && type !== "search") continue;
+        if (type === "search" || /search|query|keyword|(^|[^a-z])q([^a-z]|$)/.test(hint)) continue;
+        if (NOT_USER.test(ac)) continue;
+        score = 0;
+        if (/\busername\b/.test(ac)) score += 4;
+        if (type === "email" || ac === "email") score += 3;
+        if (/user|login|e-?mail|ident|account|phone|mobile|courriel|utilisateur|benutzer/.test(hint)) score += 2;
+        if (type === "tel") score += 1;
+      }
+      // Ties go to the field nearest before the password, then to any before it.
+      const before = pwField && (i.compareDocumentPosition(pwField) & Node.DOCUMENT_POSITION_FOLLOWING);
+      score += before ? 0.5 : 0;
+      if (score > bestScore || (score === bestScore && before)) { best = i; bestScore = score; }
+    }
+    return best ? best.value.trim() : "";
   }
 
   // =========================================================
@@ -2409,7 +2500,13 @@
         return;
       }
 
-      const match = logins.find((l) => l.username === creds.username);
+      let match = creds.username ? logins.find((l) => l.username === creds.username) : null;
+      // A change-password form often shows no username: the current
+      // password the person typed says which saved login is changing.
+      if (!match && creds.currentPassword) {
+        const owners = logins.filter((l) => l.password && l.password === creds.currentPassword);
+        if (owners.length === 1) match = owners[0];
+      }
       if (match) {
         if (!match.password || match.password === creds.password) {
           // Same credentials as the vault: nothing to capture.
@@ -2511,6 +2608,7 @@
         creds: {
           username: velaPendingCreds.username,
           password: velaPendingCreds.password,
+          currentPassword: velaPendingCreds.currentPassword || "",
           isRegistration: velaPendingCreds.isRegistration
         }
       });
@@ -2533,7 +2631,13 @@
     try {
       const response = await sendExtensionMessage("getPendingCapture", { url: location.href });
       if (response && response.success && response.creds && response.creds.password) {
-        setTimeout(() => velaOfferCapture(response.creds), 600);
+        setTimeout(() => {
+          // Landing on a page that asks for the password again means the
+          // site rejected it: offering to save (or overwrite the vault with)
+          // what was typed would store a typo.
+          if (velaPageShowsLoginForm()) return;
+          velaOfferCapture(response.creds);
+        }, 600);
       }
     } catch (_) {}
   }
