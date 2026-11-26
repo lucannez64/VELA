@@ -27,6 +27,9 @@ on:
       - ".github/workflows/desktop-macos.yml"
       - ".github/scripts/ipc_ping.py"
       - ".github/scripts/smoke_gpui_macos.sh"
+      # A lockfile-only PR (a dependency bump) is gated by security.yml; the
+      # build still runs on the push to main.
+      - "!**/Cargo.lock"
 
 # One run per ref; cancel superseded in-progress runs to avoid pile-ups.
 concurrency:
