@@ -21,6 +21,9 @@ on:
       - "libVELA/vela-crypto/**"
       - "libVELA/vela-sync-policy/**"
       - ".github/workflows/release-desktop.yml"
+      # A lockfile-only PR (a dependency bump) is gated by security.yml; the
+      # build still runs on the push to main.
+      - "!**/Cargo.lock"
   push:
     branches: [main]
     paths:
