@@ -22,6 +22,13 @@ screenshots, `video/` for recordings, `run-<app>.log` for app stderr.
 **Look at the screenshots.** A black frame means the app never rendered,
 which the exit code will not tell you.
 
+**Start from `docs/feature-map.md`.** It names each desktop feature (D1,
+D2, ...) and the screenshot or e2e test that proves it. "Verify D2" means
+open `shots/gpui-share.png` and `shots/tauri-share.png` and check them. A
+feature marked `none` has no automated proof: say so instead of claiming it
+works. When you add a screenshot that covers a feature, add it to the map;
+`scripts/check-feature-map.py` fails if a mapped screenshot disappears.
+
 ## The things that are not obvious
 
 **Never run it against your real vault.** The store path comes from
