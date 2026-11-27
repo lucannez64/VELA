@@ -237,6 +237,14 @@ jobs:
           python3 -I security/formal/check-bridge-thinness.py
           python3 -I -m unittest discover -s security/formal/tests -p 'test_bridge_thinness.py'
 
+      - name: Check the crate graph keeps its layers
+        run: |
+          python3 -I security/formal/check-crate-boundaries.py
+          python3 -I -m unittest discover -s security/formal/tests -p 'test_crate_boundaries.py'
+
+      - name: Check every proof in the desktop feature map exists
+        run: python3 -I scripts/check-feature-map.py
+
       - name: Check the proof jobs' reuse keys cover their inputs
         run: python3 -m unittest discover -s security/formal/tests -p 'test_proof_inputs.py'
 

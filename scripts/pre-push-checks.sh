@@ -46,6 +46,9 @@ gate "rendered SQL matches the schema"      python3 security/formal/check-sql-sc
 gate "SQL schema (tests)"                   unit test_sql_schema.py
 gate "bridge exports are thin core calls"   python3 -I security/formal/check-bridge-thinness.py
 gate "bridge thinness (tests)"              unit test_bridge_thinness.py -I
+gate "crate graph keeps its layers"         python3 -I security/formal/check-crate-boundaries.py
+gate "crate boundaries (tests)"             unit test_crate_boundaries.py -I
+gate "feature map proofs exist"             python3 -I scripts/check-feature-map.py
 gate "proof reuse keys cover their inputs"  unit test_proof_inputs.py
 
 # Not a CI gate, so only a reminder: the manifest lists reviewed artifacts.
