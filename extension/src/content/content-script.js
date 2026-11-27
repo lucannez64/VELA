@@ -1791,7 +1791,10 @@
   function velaCardText(el) {
     return [el.name, el.id, el.getAttribute("autocomplete"), el.getAttribute("x-autocomplete"),
             el.getAttribute("x-webkit-autocomplete"), el.getAttribute("data-stripe"),
-            el.placeholder, el.getAttribute("aria-label"), el.getAttribute("title")]
+            el.placeholder, el.getAttribute("aria-label"), el.getAttribute("title"),
+            // Forms that name fields `payment[holder]` / `payment[number]` say
+            // "card" only in the visible label.
+            el.labels && el.labels[0] ? el.labels[0].textContent : ""]
       .filter(Boolean).join(" ").toLowerCase().replace(/[^a-z0-9]/g, "");
   }
 
@@ -1811,11 +1814,12 @@
     // Split expiry before the combined expiry names, which also contain "exp".
     if (has("ccexpmonth", "cardexpmonth", "expmonth", "expirymonth", "expmo", "cardmonth", "ccmm", "cbdatemois")) return "expMonth";
     if (has("ccexpyear", "cardexpyear", "expyear", "expiryyear", "expyy", "cardyear", "ccyy", "cbdateann")) return "expYear";
+    // Holder before number: `creditCardHolder` also contains "creditcard".
+    if (has("cardholder", "ccname", "cardname", "nameoncard", "titulaire", "nomsurlacarte", "karteninhaber")) return "name";
     if (has("ccnumber", "cardnumber", "creditcard", "ccnum", "cardnum", "ccno", "cardno",
-            "numerocarte", "numcarte", "cbnum", "cardpan")) return "number";
+            "numerocarte", "numcarte", "cbnum", "cardpan", "kknr", "kartennummer")) return "number";
     if (has("ccexp", "cardexp", "ccxp", "expirationdate", "expirydate", "cardexpiry",
             "cardexpiration", "paymentcardexpiration", "validite", "dateexpiration")) return "exp";
-    if (has("cardholder", "ccname", "cardname", "nameoncard", "titulaire", "nomsurlacarte", "karteninhaber")) return "name";
     // Placeholder-only payment forms: a 13+ digit example number, or an
     // MM/YY mask (not a DD/MM/YYYY date, which also contains "mmyy").
     if (/\d{13,}/.test(t)) return "number";
@@ -2029,17 +2033,21 @@
     if (tokens.includes("username") || tokens.some(t => /password|cc-|one-time-code/.test(t))) return null;
     const token = tokens.find(t => velaIdentityTokens[t]);
     if (token) return velaIdentityTokens[token];
-    const names = [el.name,el.id].filter(Boolean).map(n => n.toLowerCase().replace(/[^a-z0-9]/g, ""));
+    // Framework forms nest names (`signup[street]`, `contact.city`): try the
+    // whole name, then its last segment.
+    const names = [el.name,el.id].filter(Boolean).flatMap(n => [n, n.split(/[[\].]/).filter(Boolean).pop()])
+      .map(n => n.toLowerCase().replace(/[^a-z0-9]/g, ""));
     const aliases = {firstname:"firstName", givenname:"firstName", lastname:"lastName", surname:"lastName", fullname:"fullName", middlename:"middleName", address:"street", address1:"line1", address2:"line2", state:"region", province:"region", zip:"postalCode", telephone:"phone", company:"company", addressline2:"line2", addresslineone:"line1", addressline1:"line1", streetaddress:"street", postalcode:"postalCode", zipcode:"postalCode", city:"city", country:"countryCode", phone:"phone", email:"email",
-      fname:"firstName", forename:"firstName", lname:"lastName", familyname:"lastName", addr1:"line1", addr2:"line2", street:"line1", town:"city", county:"region", pc:"postalCode", postcode:"postalCode", mobile:"phone", mobilephone:"phone", cellphone:"phone", phonenumber:"phone", tel:"phone", organization:"company", organisation:"company",
+      fname:"firstName", forename:"firstName", lname:"lastName", familyname:"lastName", addr1:"line1", addr2:"line2", street:"line1", streethousenumber:"line1", streetandhousenumber:"line1", streetandnumber:"line1", housenumberstreet:"line1", town:"city", county:"region", pc:"postalCode", postcode:"postalCode", mobile:"phone", mobilephone:"phone", cellphone:"phone", phonenumber:"phone", tel:"phone", organization:"company", organisation:"company",
       prenom:"firstName", nom:"lastName", nomdefamille:"lastName", adresse:"line1", adresse1:"line1", adresse2:"line2", complementadresse:"line2", codepostal:"postalCode", cp:"postalCode", ville:"city", localite:"city", pays:"countryCode", societe:"company", entreprise:"company", portable:"phone",
       vorname:"firstName", nachname:"lastName", strasse:"line1", plz:"postalCode", ort:"city", stadt:"city", land:"countryCode", firma:"company",
       nombre:"firstName", apellido:"lastName", apellidos:"lastName", direccion:"line1", ciudad:"city", codigopostal:"postalCode", telefono:"phone"};
     const byName = names.map(n => aliases[n]).find(Boolean);
     if (byName) return byName;
-    // Last resort: the visible label, for forms whose ids say nothing.
+    // Last resort: the visible label, for forms whose ids say nothing. A
+    // format hint such as "Phone (+491234567)" is not part of the name.
     const label = (el.labels && el.labels[0] ? el.labels[0].textContent : el.getAttribute("aria-label") || "")
-      .normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+      .replace(/\([^)]*\)/g, "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
     return aliases[label] || null;
   }
   function velaIsIdentityField(el) {

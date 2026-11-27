@@ -37,6 +37,34 @@ const sectionSource = content.slice(content.indexOf('  function velaSameSection'
 const sameSection = vm.runInNewContext(sectionSource + '\nvelaSameSection');
 assert.equal(sameSection('shipping', {autocomplete:''}), true, 'common contact fields join a shipping fill');
 assert.equal(sameSection('shipping', {autocomplete:'billing address-line1'}), false, 'billing addresses stay outside a shipping fill');
+// Hetzner's sign-up form: bracketed names, label hints, no autocomplete.
+const kindSource = content.slice(content.indexOf('  const velaIdentityTokens'), content.indexOf('  function velaIsIdentityField'));
+const fieldKind = vm.runInNewContext(kindSource + '\nvelaIdentityFieldKind');
+const field = (key, label) => ({tagName:'INPUT', type:'text', name:`sign_up_master_data[${key}]`, id:`sign_up_master_data_${key}`, autocomplete:'',
+  labels:[{textContent:label}], closest:()=>null, hasAttribute:()=>false, getAttribute:()=>null});
+for (const [key, label, kind] of [['firstName','First name*','firstName'], ['surname','Last name*','lastName'], ['street','Street / House number*','line1'],
+  ['postalCode','Postal code*','postalCode'], ['city','City*','city'], ['telephone','Phone (+491234567)*','phone'], ['vatNumber','VAT ID',null]]) {
+  assert.equal(fieldKind(field(key, label)), kind, `Hetzner ${key} field`);
+  assert.equal(fieldKind({...field(key, label), name:'', id:''}), kind, `Hetzner ${key} label`);
+}
+// Payment fields whose names are generic and only the label says "card".
+const cardSource = content.slice(content.indexOf('  function velaCardText'), content.indexOf('  // The trigger check'));
+const cardKind = vm.runInNewContext(cardSource + '\nvelaCardFieldKind');
+const cardField = (key, label) => ({tagName:'INPUT', type:'text', name:`payment[${key}]`, id:`payment_${key}`, placeholder:'',
+  labels:[{textContent:label}], hasAttribute:()=>false, getAttribute:()=>null});
+for (const [key, label, kind] of [['holder','Card holder*','name'], ['number','Card number*','number'], ['expiry','Expires (MM/YY)*','exp'], ['cvc','CVC code*','cvv']]) {
+  assert.equal(cardKind(cardField(key, label)), kind, `labelled card ${key} field`);
+}
+assert.equal(cardKind({...cardField('number','House number'), labels:[{textContent:'House number'}]}), null, 'a plain number field is not a card');
+// Computop's hosted payment frame (Hetzner): the holder's name contains "creditcard".
+const computop = (name, label) => ({tagName:'INPUT', type:'text', name, id:name, placeholder:'', labels:label ? [{textContent:label}] : [],
+  hasAttribute:()=>false, getAttribute:(a)=>a === 'autocomplete' ? 'off' : null});
+for (const label of ['Card holder*', null]) {
+  assert.equal(cardKind(computop('creditCardHolder', label)), 'name', 'Computop holder is not the number');
+}
+for (const label of ['Card number*', null]) assert.equal(cardKind(computop('_KKnr', label)), 'number', 'Computop number');
+assert.equal(cardKind(computop('expiry_date', 'Expires (MM/YY)*')), 'exp');
+assert.equal(cardKind(computop('cccvc', 'CVC code*')), 'cvv');
 
 const ui = {url:'chrome-extension://test/popup/popup.html'};
 const page = {tab:{id:1},frameId:0,url:active.url};
